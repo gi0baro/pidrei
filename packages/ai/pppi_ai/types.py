@@ -486,6 +486,10 @@ class StreamOptions:
     env: ProviderEnv | None = None
     # pi's ProviderStreamOptions allows arbitrary extra provider options.
     extra: dict[str, Any] | None = None
+    # Models-only (pi: ModelsStreamTransforms.transformHeaders): transform fully
+    # assembled model/auth/request headers before provider dispatch. Sync or
+    # async; stripped before options reach the provider.
+    transform_headers: Callable[[ProviderHeaders], ProviderHeaders | Awaitable[ProviderHeaders]] | None = None
 
 
 @dataclass(slots=True)

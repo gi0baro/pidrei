@@ -45,6 +45,7 @@ extend-ignore = [
     'F403',   # import * is fine
     'N818',   # leave to us exceptions naming
     'S101',   # assert is fine
+    'S110',   # silent best-effort catches mirror pi's error handling
 ]
 mccabe = { max-complexity = 44 }
 
