@@ -15,5 +15,9 @@ lint:
 test:
 	uv run pytest -v
 
+.PHONY: models-data
+models-data:
+	uv run python packages/ai/scripts/generate_models.py
+
 .PHONY: all
 all: format lint test
