@@ -22,6 +22,7 @@ from pidrei_ai.types import (
     Model,
     ModelCost,
     ModelCostTier,
+    SimpleStreamOptions,
     StartEvent,
     StreamOptions,
     Usage,
@@ -153,6 +154,20 @@ async def test_complete_applies_auth_and_dispatches():
     assert len(api.calls) == 1
     _model, _context, options = api.calls[0]
     assert options is not None
+    assert options.api_key == "static-key"
+
+
+@pytest.mark.tonio
+async def test_complete_simple_defaults_to_simple_options():
+    # pidrei-only regression: pi passes untyped `options ?? {}` everywhere, but
+    # the dataclass split means a None default here must build SimpleStreamOptions
+    # (adapters read `.reasoning`), not StreamOptions.
+    models, api = make_models_with_echo()
+    await models.complete_simple(make_model(), Context(messages=[]))
+
+    options = api.calls[0][2]
+    assert isinstance(options, SimpleStreamOptions)
+    assert options.reasoning is None
     assert options.api_key == "static-key"
 
 

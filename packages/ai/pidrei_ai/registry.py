@@ -545,7 +545,9 @@ class Models:
     ) -> AssistantMessageEventStream:
         async def _setup():
             provider = self._require_provider(model)
-            request_model, request_options = await self._apply_auth(model, options)
+            request_model, request_options = await self._apply_auth(
+                model, options if options is not None else StreamOptions()
+            )
             return provider.stream(request_model, context, request_options)
 
         return lazy_stream(model, _setup)
@@ -561,7 +563,9 @@ class Models:
     ) -> AssistantMessageEventStream:
         async def _setup():
             provider = self._require_provider(model)
-            request_model, request_options = await self._apply_auth(model, options)
+            request_model, request_options = await self._apply_auth(
+                model, options if options is not None else SimpleStreamOptions()
+            )
             return provider.stream_simple(request_model, context, request_options)
 
         return lazy_stream(model, _setup)
