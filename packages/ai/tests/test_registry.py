@@ -2,11 +2,11 @@
 
 import pytest
 
-from pppi_ai.auth.resolve import ModelsError
-from pppi_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
-from pppi_ai.models_store import InMemoryModelsStore, ModelsStoreEntry
-from pppi_ai.providers.faux import faux_assistant_message
-from pppi_ai.registry import (
+from pidrei_ai.auth.resolve import ModelsError
+from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.models_store import InMemoryModelsStore, ModelsStoreEntry
+from pidrei_ai.providers.faux import faux_assistant_message
+from pidrei_ai.registry import (
     Models,
     ModelsRefreshOptions,
     calculate_cost,
@@ -16,7 +16,7 @@ from pppi_ai.registry import (
     get_supported_thinking_levels,
     models_are_equal,
 )
-from pppi_ai.types import (
+from pidrei_ai.types import (
     Context,
     DoneEvent,
     Model,
@@ -26,7 +26,7 @@ from pppi_ai.types import (
     StreamOptions,
     Usage,
 )
-from pppi_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
 def make_model(provider: str = "test", id: str = "model-1", **overrides) -> Model:

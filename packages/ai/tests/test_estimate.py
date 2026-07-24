@@ -4,8 +4,8 @@ The `buildBaseOptions` assertion from the original suite lands with the
 simple-options port (PLAN.md Phase 1).
 """
 
-from pppi_ai.types import AssistantMessage, Context, TextContent, ToolCall, Usage, UserMessage
-from pppi_ai.utils.estimate import ContextUsageEstimate, estimate_context_tokens, estimate_message_tokens
+from pidrei_ai.types import AssistantMessage, Context, TextContent, ToolCall, Usage, UserMessage
+from pidrei_ai.utils.estimate import ContextUsageEstimate, estimate_context_tokens, estimate_message_tokens
 
 
 def create_assistant(timestamp: int, total_tokens: int) -> AssistantMessage:

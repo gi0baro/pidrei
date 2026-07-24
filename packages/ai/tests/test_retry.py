@@ -3,10 +3,10 @@
 import pytest
 import tonio.colored as tonio
 
-from pppi_ai.providers.faux import faux_assistant_message
-from pppi_ai.types import TextContent
-from pppi_ai.utils.cancel import CancelToken
-from pppi_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_assistant_call
+from pidrei_ai.providers.faux import faux_assistant_message
+from pidrei_ai.types import TextContent
+from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_assistant_call
 
 
 OPENAI_EXPLICIT_RETRY_MESSAGE = (

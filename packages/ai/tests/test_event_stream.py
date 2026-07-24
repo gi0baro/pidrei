@@ -1,7 +1,7 @@
 import pytest
 import tonio.colored as tonio
 
-from pppi_ai.utils.event_stream import EventStream
+from pidrei_ai.utils.event_stream import EventStream
 
 
 def make_stream() -> EventStream[dict, object]:

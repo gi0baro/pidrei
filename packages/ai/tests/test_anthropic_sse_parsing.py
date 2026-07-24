@@ -9,9 +9,9 @@ import time
 
 import pytest
 
-from pppi_ai.api.anthropic_messages import AnthropicOptions, stream as stream_anthropic
-from pppi_ai.providers.all import get_builtin_model
-from pppi_ai.types import Context, TextContent, Tool, UserMessage
+from pidrei_ai.api.anthropic_messages import AnthropicOptions, stream as stream_anthropic
+from pidrei_ai.providers.all import get_builtin_model
+from pidrei_ai.types import Context, TextContent, Tool, UserMessage
 
 
 def sse_body(events: list[tuple[str, str]]) -> bytes:

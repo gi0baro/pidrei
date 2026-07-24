@@ -1,5 +1,5 @@
-from pppi_ai.types import ImageContent, TextContent, ThinkingContent, ToolCall
-from pppi_ai.utils.text import content_text
+from pidrei_ai.types import ImageContent, TextContent, ThinkingContent, ToolCall
+from pidrei_ai.utils.text import content_text
 
 
 def test_plain_string_passthrough():

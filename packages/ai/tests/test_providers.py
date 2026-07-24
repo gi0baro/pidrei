@@ -2,8 +2,8 @@
 
 import pytest
 
-from pppi_ai.env_api_keys import AMBIENT_AUTH_MARKER, find_env_keys, get_env_api_key
-from pppi_ai.providers.all import (
+from pidrei_ai.env_api_keys import AMBIENT_AUTH_MARKER, find_env_keys, get_env_api_key
+from pidrei_ai.providers.all import (
     builtin_models,
     get_builtin_model,
     get_builtin_model_data_generated_at,
@@ -53,7 +53,7 @@ async def test_anthropic_env_auth_resolution():
     models = builtin_models()
     result = await models.get_auth("anthropic")
     # Depending on the host env this may or may not resolve; force it via overrides.
-    from pppi_ai.auth.resolve import AuthResolutionOverrides
+    from pidrei_ai.auth.resolve import AuthResolutionOverrides
 
     forced = await models.get_auth("anthropic", AuthResolutionOverrides(api_key="sk-test"))
     assert forced is not None

@@ -1,7 +1,7 @@
 import pytest
 import tonio.colored as tonio
 
-from pppi_ai.utils.cancel import AbortError, CancelToken, combine_cancel_tokens
+from pidrei_ai.utils.cancel import AbortError, CancelToken, combine_cancel_tokens
 
 
 def test_initial_state():

@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 import pytest
 import tonio.colored as tonio
 
-from pppi_ai.auth.credential_store import InMemoryCredentialStore
-from pppi_ai.auth.resolve import AuthResolutionOverrides, ModelsError, resolve_provider_auth
-from pppi_ai.auth.types import (
+from pidrei_ai.auth.credential_store import InMemoryCredentialStore
+from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError, resolve_provider_auth
+from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
     AuthResult,

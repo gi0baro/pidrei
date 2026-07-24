@@ -2,12 +2,12 @@
 
 from dataclasses import replace
 
-from pppi_ai.api.transform_messages import (
+from pidrei_ai.api.transform_messages import (
     NON_VISION_TOOL_IMAGE_PLACEHOLDER,
     NON_VISION_USER_IMAGE_PLACEHOLDER,
     transform_messages,
 )
-from pppi_ai.types import (
+from pidrei_ai.types import (
     AssistantMessage,
     ImageContent,
     TextContent,

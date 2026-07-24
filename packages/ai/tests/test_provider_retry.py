@@ -8,8 +8,8 @@ identical.
 import pytest
 import tonio.colored as tonio
 
-from pppi_ai.utils.cancel import AbortError, CancelToken
-from pppi_ai.utils.provider_retry import retry_provider_request
+from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_ai.utils.provider_retry import retry_provider_request
 
 
 class ProviderError(Exception):

@@ -1,4 +1,4 @@
-from pppi_ai.utils.hash import short_hash
+from pidrei_ai.utils.hash import short_hash
 
 
 def test_deterministic():

@@ -1,8 +1,8 @@
 """Tests for the vendored catalog loader (models_generated.py)."""
 
-from pppi_ai.models_generated import MODELS
-from pppi_ai.registry import get_supported_thinking_levels
-from pppi_ai.types import AnthropicMessagesCompat, Model, OpenAIResponsesCompat
+from pidrei_ai.models_generated import MODELS
+from pidrei_ai.registry import get_supported_thinking_levels
+from pidrei_ai.types import AnthropicMessagesCompat, Model, OpenAIResponsesCompat
 
 
 def test_catalog_contains_phase1_providers():

@@ -1,7 +1,7 @@
 import pytest
 
-from pppi_ai.utils.cancel import AbortError, CancelToken
-from pppi_ai.utils.sse import ServerSentEvent, iterate_sse_messages
+from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_ai.utils.sse import ServerSentEvent, iterate_sse_messages
 
 
 async def _chunks(*parts: bytes):

@@ -1,4 +1,4 @@
-from pppi_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 
 
 def test_preserves_valid_emoji_and_text():

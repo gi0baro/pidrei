@@ -2,7 +2,7 @@
 
 Fetches https://models.dev/api.json and emits pi-shaped catalog JSON
 (camelCase keys, grouped `{api: {modelId: Model}}`, sorted) into
-`pppi_ai/providers/data/<provider>.json`. Keeping pi's exact JSON shape keeps
+`pidrei_ai/providers/data/<provider>.json`. Keeping pi's exact JSON shape keeps
 our vendored data diffable against pi's generated catalog.
 
 Scope grows with the adapters (PLAN.md): currently anthropic + openai.
@@ -21,7 +21,7 @@ import tonio.colored as tonio
 from punkreq.tonio import Client
 
 
-DATA_DIR = Path(__file__).parent.parent / "pppi_ai" / "providers" / "data"
+DATA_DIR = Path(__file__).parent.parent / "pidrei_ai" / "providers" / "data"
 
 MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = {"gpt-5.6"}
 OPENAI_TOOL_SEARCH_MODEL_IDS = {
@@ -162,7 +162,7 @@ def apply_models_dev_reasoning_option_metadata(model: dict[str, Any], reasoning_
 
 
 def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
-    # Branches for providers pppi does not emit yet are added with those providers.
+    # Branches for providers pidrei does not emit yet are added with those providers.
     model_id = model["id"]
     if model["api"] in ("openai-responses", "azure-openai-responses") and model_id.startswith("gpt-5"):
         merge_thinking_level_map(model, {"off": None})

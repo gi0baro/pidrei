@@ -2,8 +2,8 @@
 
 import time
 
-from pppi_ai.types import AssistantMessage, Usage
-from pppi_ai.utils.overflow import is_context_overflow
+from pidrei_ai.types import AssistantMessage, Usage
+from pidrei_ai.utils.overflow import is_context_overflow
 
 
 def create_error_message(error_message: str) -> AssistantMessage:

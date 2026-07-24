@@ -1,6 +1,6 @@
 import pytest
 
-from pppi_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json, repair_json
+from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json, repair_json
 
 
 def test_repair_doubles_invalid_escapes():

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pppi-ai"
+name = "pidrei-ai"
 version = "0.1.0.dev0"
-description = "Unified multi-provider LLM API layer of pppi (port of pi-ai)"
+description = "Unified multi-provider LLM API layer of pidrei (port of pi-ai)"
 requires-python = ">=3.14"
 
 authors = [
@@ -31,4 +31,4 @@ dependencies = [
 tonio = { path = "../../../tonio", package = true }
 
 [tool.hatch.build.targets.wheel]
-packages = ["pppi_ai"]
+packages = ["pidrei_ai"]

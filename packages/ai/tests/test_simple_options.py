@@ -1,8 +1,8 @@
 """Tests for simple-options (incl. the buildBaseOptions assertion deferred
 from pi's context-estimate.test.ts)."""
 
-from pppi_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_reasoning
-from pppi_ai.types import Context, ModelCost, SimpleStreamOptions, ThinkingBudgets, UserMessage
+from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_reasoning
+from pidrei_ai.types import Context, ModelCost, SimpleStreamOptions, ThinkingBudgets, UserMessage
 from tests.test_estimate import create_assistant
 from tests.test_registry import make_model
 

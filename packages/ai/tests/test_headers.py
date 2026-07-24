@@ -1,4 +1,4 @@
-from pppi_ai.utils.headers import merge_headers, provider_headers_to_record
+from pidrei_ai.utils.headers import merge_headers, provider_headers_to_record
 
 
 def test_provider_headers_to_record_drops_nulls():
