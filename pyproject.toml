@@ -46,6 +46,7 @@ extend-ignore = [
     'N818',   # leave to us exceptions naming
     'S101',   # assert is fine
     'S110',   # silent best-effort catches mirror pi's error handling
+    'TRY002', # plain Exceptions mirror pi's `throw new Error(...)`
 ]
 mccabe = { max-complexity = 44 }
 
@@ -55,4 +56,4 @@ lines-after-imports = 2
 known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_server', 'pidrei_tui', 'tests']
 
 [tool.ruff.lint.per-file-ignores]
-'packages/*/tests/**' = ['B017', 'B018', 'E711', 'E712', 'F841', 'S110']
+'packages/*/tests/**' = ['B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S110']
