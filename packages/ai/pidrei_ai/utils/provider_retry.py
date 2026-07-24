@@ -107,7 +107,7 @@ def _validate_server_retry_delay_ms(
 def _parse_http_date_delay_ms(value: str) -> float | None:
     try:
         target = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     import time as _time
 

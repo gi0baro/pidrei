@@ -240,7 +240,7 @@ class AnthropicOptions(StreamOptions):
     # Anthropic tool choice: "auto" | "any" | "none" | {"type": "tool", "name": ...}.
     tool_choice: str | dict[str, str] | None = None
     # Pre-built client instance (test injection / alternative transports).
-    client: "AnthropicClient | None" = None
+    client: AnthropicClient | None = None
 
 
 class AnthropicResponseLike(Protocol):

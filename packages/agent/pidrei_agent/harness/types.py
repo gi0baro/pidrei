@@ -68,7 +68,7 @@ def to_error(error: Any) -> Exception:
         return Exception(error)
     try:
         return Exception(json.dumps(error))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return Exception(str(error))
 
 

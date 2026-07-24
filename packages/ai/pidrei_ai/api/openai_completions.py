@@ -82,7 +82,7 @@ class OpenAICompletionsOptions(StreamOptions):
     tool_choice: Any = None
     reasoning_effort: str | None = None  # "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     # Pre-built client instance (test injection / alternative transports).
-    client: "OpenAICompletionsClient | None" = None
+    client: OpenAICompletionsClient | None = None
 
 
 class OpenAIResponseLike(Protocol):

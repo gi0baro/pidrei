@@ -56,7 +56,7 @@ class OpenAIResponsesOptions(StreamOptions):
     service_tier: str | None = None
     tool_choice: Any = None
     # Pre-built client instance (test injection / alternative transports).
-    client: "OpenAIResponsesClient | None" = None
+    client: OpenAIResponsesClient | None = None
 
 
 class OpenAIResponseLike(Protocol):

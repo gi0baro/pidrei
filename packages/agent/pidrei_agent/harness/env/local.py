@@ -213,7 +213,9 @@ class LocalExecutionEnv:
             return aborted
 
         def read() -> str:
-            with open(resolved, encoding="utf-8", errors="replace") as file:
+            # newline="" disables universal-newline translation: Node's
+            # readFile preserves \r\n and the edit tool depends on it.
+            with open(resolved, encoding="utf-8", errors="replace", newline="") as file:
                 return file.read()
 
         try:
