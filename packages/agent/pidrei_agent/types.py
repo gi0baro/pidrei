@@ -97,6 +97,8 @@ class AgentTool[TDetails]:
     label: str
     description: str
     parameters: dict[str, Any]  # JSON Schema (pi: TypeBox TSchema)
+    # pi-ai `Tool` field carried through (adapters read it when converting tools).
+    constrained_sampling: Any = None
     # Per-tool execution mode override; None applies the loop default.
     execution_mode: ToolExecutionMode | None = None
     prepare_arguments: PrepareArguments | None = None
