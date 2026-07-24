@@ -1,15 +1,17 @@
-"""Mirror of pi agent/test/harness/session.test.ts (in-memory storage suite).
+"""Mirror of pi agent/test/harness/session.test.ts (both storage backends)."""
 
-The JSONL storage variant of the suite joins with the JSONL storage port.
-"""
+import json
+import os
 
 import pytest
 
+from pidrei_agent.harness.env.local import LocalExecutionEnv
+from pidrei_agent.harness.session.jsonl_storage import JsonlSessionStorage
 from pidrei_agent.harness.session.memory_storage import InMemorySessionStorage
 from pidrei_agent.harness.session.session import Session, SessionContextBuildOptions
 from pidrei_agent.harness.types import SessionModelRef
 from pidrei_ai.types import Usage, UsageCost
-from tests.session_helpers import create_assistant_message, create_user_message
+from tests.session_helpers import create_assistant_message, create_temp_dir, create_user_message
 
 
 def _get_text_data(data) -> str:
@@ -19,9 +21,26 @@ def _get_text_data(data) -> str:
     return value if isinstance(value, str) else ""
 
 
+@pytest.fixture(params=["memory", "jsonl"])
+def make_storage(request):
+    state: dict = {"backend": request.param}
+
+    async def factory():
+        if request.param == "memory":
+            return InMemorySessionStorage()
+        directory = create_temp_dir()
+        state["dir"] = directory
+        state["file_path"] = os.path.join(directory, "session.jsonl")
+        env = LocalExecutionEnv(cwd=directory)
+        return await JsonlSessionStorage.create(env, state["file_path"], cwd=directory, session_id="session-1")
+
+    factory.state = state
+    return factory
+
+
 @pytest.mark.tonio
-async def test_appends_messages_and_builds_context_in_order():
-    session = Session(InMemorySessionStorage())
+async def test_appends_messages_and_builds_context_in_order(make_storage):
+    session = Session(await make_storage())
     await session.append_message(create_user_message("one"))
     await session.append_message(create_assistant_message("two"))
     context = await session.build_context()
@@ -29,8 +48,8 @@ async def test_appends_messages_and_builds_context_in_order():
 
 
 @pytest.mark.tonio
-async def test_tracks_model_and_thinking_level_changes():
-    session = Session(InMemorySessionStorage())
+async def test_tracks_model_and_thinking_level_changes(make_storage):
+    session = Session(await make_storage())
     await session.append_message(create_user_message("one"))
     await session.append_model_change("openai", "gpt-4.1")
     await session.append_thinking_level_change("high")
@@ -40,8 +59,8 @@ async def test_tracks_model_and_thinking_level_changes():
 
 
 @pytest.mark.tonio
-async def test_supports_branching_by_moving_the_leaf_and_appending_a_new_branch():
-    session = Session(InMemorySessionStorage())
+async def test_supports_branching_by_moving_the_leaf_and_appending_a_new_branch(make_storage):
+    session = Session(await make_storage())
     user1 = await session.append_message(create_user_message("one"))
     assistant1 = await session.append_message(create_assistant_message("two"))
     await session.append_message(create_user_message("three"))
@@ -55,8 +74,8 @@ async def test_supports_branching_by_moving_the_leaf_and_appending_a_new_branch(
 
 
 @pytest.mark.tonio
-async def test_supports_moving_the_leaf_to_root():
-    session = Session(InMemorySessionStorage())
+async def test_supports_moving_the_leaf_to_root(make_storage):
+    session = Session(await make_storage())
     await session.append_message(create_user_message("one"))
     await session.move_to(None)
     assert await session.get_leaf_id() is None
@@ -64,8 +83,8 @@ async def test_supports_moving_the_leaf_to_root():
 
 
 @pytest.mark.tonio
-async def test_reconstructs_compaction_summaries_in_context():
-    session = Session(InMemorySessionStorage())
+async def test_reconstructs_compaction_summaries_in_context(make_storage):
+    session = Session(await make_storage())
     await session.append_message(create_user_message("one"))
     await session.append_message(create_assistant_message("two"))
     user2 = await session.append_message(create_user_message("three"))
@@ -92,8 +111,8 @@ async def test_reconstructs_compaction_summaries_in_context():
 
 
 @pytest.mark.tonio
-async def test_supports_moving_with_branch_summary_entries_in_context():
-    session = Session(InMemorySessionStorage())
+async def test_supports_moving_with_branch_summary_entries_in_context(make_storage):
+    session = Session(await make_storage())
     user1 = await session.append_message(create_user_message("one"))
     summary_id = await session.move_to(user1, {"summary": "summary text"})
     assert summary_id
@@ -105,8 +124,8 @@ async def test_supports_moving_with_branch_summary_entries_in_context():
 
 
 @pytest.mark.tonio
-async def test_persists_compaction_usage():
-    session = Session(InMemorySessionStorage())
+async def test_persists_compaction_usage(make_storage):
+    session = Session(await make_storage())
     first_kept_entry_id = await session.append_message(create_user_message("one"))
     usage = Usage(
         input=1,
@@ -125,8 +144,8 @@ async def test_persists_compaction_usage():
 
 
 @pytest.mark.tonio
-async def test_persists_branch_summary_usage():
-    session = Session(InMemorySessionStorage())
+async def test_persists_branch_summary_usage(make_storage):
+    session = Session(await make_storage())
     user1 = await session.append_message(create_user_message("one"))
     usage = Usage(
         input=1,
@@ -145,8 +164,8 @@ async def test_persists_branch_summary_usage():
 
 
 @pytest.mark.tonio
-async def test_supports_custom_message_entries_in_context():
-    session = Session(InMemorySessionStorage())
+async def test_supports_custom_message_entries_in_context(make_storage):
+    session = Session(await make_storage())
     await session.append_message(create_user_message("one"))
     await session.append_custom_message_entry("custom", "hello", True, {"ok": True})
     context = await session.build_context()
@@ -154,8 +173,8 @@ async def test_supports_custom_message_entries_in_context():
 
 
 @pytest.mark.tonio
-async def test_keeps_custom_entries_in_context_entries_but_omits_them_from_messages_by_default():
-    session = Session(InMemorySessionStorage())
+async def test_keeps_custom_entries_in_context_entries_but_omits_them_from_messages_by_default(make_storage):
+    session = Session(await make_storage())
     await session.append_message(create_user_message("one"))
     await session.append_custom_entry("chat_message", {"text": "hello"})
     context_entries = await session.build_context_entries()
@@ -165,9 +184,9 @@ async def test_keeps_custom_entries_in_context_entries_but_omits_them_from_messa
 
 
 @pytest.mark.tonio
-async def test_projects_custom_entries_with_configured_custom_entry_projectors():
+async def test_projects_custom_entries_with_configured_custom_entry_projectors(make_storage):
     session = Session(
-        InMemorySessionStorage(),
+        await make_storage(),
         SessionContextBuildOptions(
             entry_projectors={
                 "chat_message": lambda entry, _index, _entries: [
@@ -184,7 +203,7 @@ async def test_projects_custom_entries_with_configured_custom_entry_projectors()
 
 
 @pytest.mark.tonio
-async def test_applies_context_entry_transforms_after_default_compaction_selection():
+async def test_applies_context_entry_transforms_after_default_compaction_selection(make_storage):
     observed_first_entry_type = None
 
     def drop_compaction(entries):
@@ -192,7 +211,7 @@ async def test_applies_context_entry_transforms_after_default_compaction_selecti
         observed_first_entry_type = entries[0].type if entries else None
         return [entry for entry in entries if entry.type != "compaction"]
 
-    session = Session(InMemorySessionStorage(), SessionContextBuildOptions(entry_transforms=[drop_compaction]))
+    session = Session(await make_storage(), SessionContextBuildOptions(entry_transforms=[drop_compaction]))
     await session.append_message(create_user_message("one"))
     kept = await session.append_message(create_user_message("two"))
     await session.append_compaction("summary", kept, 1234)
@@ -203,15 +222,15 @@ async def test_applies_context_entry_transforms_after_default_compaction_selecti
 
 
 @pytest.mark.tonio
-async def test_normalizes_session_names():
-    session = Session(InMemorySessionStorage())
+async def test_normalizes_session_names(make_storage):
+    session = Session(await make_storage())
     await session.append_session_name(" hello\nworld\r\nagain ")
     assert await session.get_session_name() == "hello world again"
 
 
 @pytest.mark.tonio
-async def test_supports_labels_and_session_info_entries_without_affecting_context():
-    session = Session(InMemorySessionStorage())
+async def test_supports_labels_and_session_info_entries_without_affecting_context(make_storage):
+    session = Session(await make_storage())
     user1 = await session.append_message(create_user_message("one"))
     await session.append_label(user1, "checkpoint")
     await session.append_session_name("name")
@@ -224,15 +243,15 @@ async def test_supports_labels_and_session_info_entries_without_affecting_contex
 
 
 @pytest.mark.tonio
-async def test_rejects_labels_for_missing_entries():
-    session = Session(InMemorySessionStorage())
+async def test_rejects_labels_for_missing_entries(make_storage):
+    session = Session(await make_storage())
     with pytest.raises(Exception, match="Entry missing not found"):
         await session.append_label("missing", "checkpoint")
 
 
 @pytest.mark.tonio
-async def test_persists_leaf_changes_and_appended_entries_via_storage():
-    storage = InMemorySessionStorage()
+async def test_persists_leaf_changes_and_appended_entries_via_storage(make_storage):
+    storage = await make_storage()
     session = Session(storage)
     user1 = await session.append_message(create_user_message("one"))
     await session.append_message(create_assistant_message("two"))
@@ -245,3 +264,17 @@ async def test_persists_leaf_changes_and_appended_entries_via_storage():
     assert [getattr(m, "role", None) for m in context.messages] == ["user", "assistant"]
     assert await session2.get_label(user1) == "checkpoint"
     assert await session2.get_session_name() == "name"
+
+    # pi's JSONL variant inspects the persisted file after this test.
+    if make_storage.state["backend"] == "jsonl":
+        with open(make_storage.state["file_path"], encoding="utf-8") as file:
+            lines = file.read().strip().split("\n")
+        assert len(lines) > 1
+        header = json.loads(lines[0])
+        assert header["type"] == "session"
+        assert header["version"] == 3
+        entries = [json.loads(line) for line in lines[1:]]
+        assert any(entry["type"] == "leaf" for entry in entries)
+        for entry in entries:
+            assert entry["type"] != "entry"
+            assert isinstance(entry["id"], str)

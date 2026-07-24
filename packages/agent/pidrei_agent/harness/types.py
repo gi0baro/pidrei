@@ -864,3 +864,11 @@ class NavigateTreeResult:
     cancelled: bool
     editor_text: str | None = None
     summary_entry: BranchSummaryEntry | None = None
+
+
+@dataclass(slots=True, kw_only=True)
+class JsonlSessionMetadata(SessionMetadata):
+    cwd: str
+    path: str
+    parent_session_path: str | None = None
+    metadata: dict[str, Any] | None = None
