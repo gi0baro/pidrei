@@ -23,6 +23,7 @@ dependencies = [
     "tonio>=0.8.3",
     "punkreq~=0.1.1",
     "partial-json-parser>=0.2.1.1.post7",
+    "jsonschema>=4.26.0",
 ]
 
 [tool.uv.sources]
