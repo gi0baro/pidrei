@@ -18,6 +18,8 @@ from typing import Any
 from tonio.colored import Event
 from tonio.colored.sync import channel
 
+from pppi_ai.types import AssistantMessage, AssistantMessageEvent
+
 
 _SENTINEL = object()
 _UNSET: Any = object()
@@ -69,3 +71,31 @@ class EventStream[T, R]:
         """Resolve to the extracted result of the completing event."""
         await self._result_event.wait()
         return self._result  # type: ignore[return-value]
+
+
+class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMessage]):
+    """Event stream of a single assistant response (pi: event-stream.ts:69-83).
+
+    Completes on a `done` event (result: the final message) or an `error`
+    event (result: the error `AssistantMessage` — returned, not raised).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(self._event_is_complete, self._event_extract_result)
+
+    @staticmethod
+    def _event_is_complete(event: AssistantMessageEvent) -> bool:
+        return event.type in ("done", "error")
+
+    @staticmethod
+    def _event_extract_result(event: AssistantMessageEvent) -> AssistantMessage:
+        if event.type == "done":
+            return event.message
+        if event.type == "error":
+            return event.error
+        raise ValueError("Unexpected event type for final result")
+
+
+def create_assistant_message_event_stream() -> AssistantMessageEventStream:
+    """Factory for AssistantMessageEventStream (for use in extensions)."""
+    return AssistantMessageEventStream()

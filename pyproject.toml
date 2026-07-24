@@ -36,14 +36,15 @@ extend-select = [
     'W',      # pycodestyle
 ]
 extend-ignore = [
-    'B006', # mutable function args are fine
-    'B008', # function calls in args defaults are fine
-    'B009', # getattr with constants is fine
-    'B904', # rising without from is fine
-    'E731', # assigning lambdas is fine
-    'F403', # import * is fine
-    'N818', # leave to us exceptions naming
-    'S101', # assert is fine
+    'B006',   # mutable function args are fine
+    'B008',   # function calls in args defaults are fine
+    'B009',   # getattr with constants is fine
+    'B904',   # rising without from is fine
+    'BLE001', # catch-all fallbacks mirror pi's error handling
+    'E731',   # assigning lambdas is fine
+    'F403',   # import * is fine
+    'N818',   # leave to us exceptions naming
+    'S101',   # assert is fine
 ]
 mccabe = { max-complexity = 44 }
 
