@@ -423,40 +423,6 @@ def _create_client(
     return _PunkreqAnthropicClient(model.base_url, headers), False
 
 
-_DONE = object()
-_CANCELLED = object()
-
-
-async def _cancellable_bytes(source: AsyncIterable[bytes], cancel: CancelToken | None) -> AsyncGenerator[bytes]:
-    """Yield chunks, aborting a pending read when the token cancels (pi: fetch abort)."""
-    if cancel is None:
-        async for chunk in source:
-            yield chunk
-        return
-
-    iterator = aiter(source)
-    while True:
-        if cancel.cancelled:
-            raise RuntimeError("Request was aborted")
-
-        async def _next() -> object:
-            try:
-                return await anext(iterator)
-            except StopAsyncIteration:
-                return _DONE
-
-        async def _aborted() -> object:
-            await cancel.wait()
-            return _CANCELLED
-
-        winner = await tonio.select(_next(), _aborted())
-        if winner is _CANCELLED:
-            raise RuntimeError("Request was aborted")
-        if winner is _DONE:
-            return
-        yield winner  # type: ignore[misc]
-
-
 async def _iterate_anthropic_events(
     response: AnthropicResponseLike,
     cancel: CancelToken | None,
@@ -464,7 +430,7 @@ async def _iterate_anthropic_events(
     saw_message_start = False
     saw_message_end = False
 
-    async for sse in iterate_sse_messages(_cancellable_bytes(response.aiter_bytes(), cancel)):
+    async for sse in iterate_sse_messages(http.cancellable_bytes(response.aiter_bytes(), cancel)):
         if sse.event == "error":
             raise RuntimeError(sse.data)
 

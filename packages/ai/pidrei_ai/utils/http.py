@@ -7,10 +7,13 @@ whole request — a legitimately long SSE stream must not hit a total deadline.
 """
 
 import threading
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Mapping
 
+import tonio.colored as tonio
 from punkreq import Limits, Timeout
 from punkreq.tonio import Client
+
+from pidrei_ai.utils.cancel import CancelToken
 
 
 STREAMING_TIMEOUT = Timeout(connect=30.0, read=600.0, pool=30.0, total=None)
@@ -27,6 +30,45 @@ def shared_client() -> Client:
         if _shared_client is None:
             _shared_client = create_client()
         return _shared_client
+
+
+_STREAM_DONE = object()
+_STREAM_CANCELLED = object()
+
+
+async def cancellable_bytes(source: AsyncIterable[bytes], cancel: CancelToken | None) -> AsyncGenerator[bytes]:
+    """Yield chunks, aborting a pending read when the token cancels.
+
+    Mirrors pi's fetch-abort semantics: each chunk read races the cancel token
+    via `tonio.select`, so a hung read is genuinely interruptible and the
+    transport's cancel-safe teardown releases the connection.
+    """
+    if cancel is None:
+        async for chunk in source:
+            yield chunk
+        return
+
+    iterator = aiter(source)
+    while True:
+        if cancel.cancelled:
+            raise RuntimeError("Request was aborted")
+
+        async def _next() -> object:
+            try:
+                return await anext(iterator)
+            except StopAsyncIteration:
+                return _STREAM_DONE
+
+        async def _aborted() -> object:
+            await cancel.wait()
+            return _STREAM_CANCELLED
+
+        winner = await tonio.select(_next(), _aborted())
+        if winner is _STREAM_CANCELLED:
+            raise RuntimeError("Request was aborted")
+        if winner is _STREAM_DONE:
+            return
+        yield winner  # type: ignore[misc]
 
 
 def request_timeout(timeout_ms: float | None) -> Timeout:

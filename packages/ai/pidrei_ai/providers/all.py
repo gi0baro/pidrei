@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.providers.anthropic import anthropic_provider
+from pidrei_ai.providers.openai import openai_provider
 from pidrei_ai.registry import Models, Provider, create_models
 from pidrei_ai.types import Model
 
@@ -42,11 +43,13 @@ def get_builtin_model_data_generated_at() -> int | None:
 
 
 def builtin_providers() -> list[Provider]:
-    """All built-in providers, freshly constructed."""
+    """All built-in providers, freshly constructed.
+
+    The rest of pi's ~38 providers join with their adapters (PLAN.md).
+    """
     return [
         anthropic_provider(),
-        # openai_provider() joins with the openai-responses adapter (PLAN.md),
-        # followed by the rest of pi's ~38 providers with theirs.
+        openai_provider(),
     ]
 
 
