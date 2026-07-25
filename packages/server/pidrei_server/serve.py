@@ -51,21 +51,9 @@ async def serve() -> int:
     print(f"server listening on {socket_path}", flush=True)
 
     # Keep serving until a signal triggers shutdown.
-    receiver = tonio_signals.signal_receiver(signal_module.SIGINT, signal_module.SIGTERM)
-    receiver.__enter__()
-    try:
+    with tonio_signals.signal_receiver(signal_module.SIGINT, signal_module.SIGTERM) as receiver:
         async for _sig in receiver:
             break
-    finally:
-        try:
-            receiver.__exit__(None, None, None)
-        except AttributeError:
-            # Workaround for a tonio bug: the colored signal_receiver's
-            # __exit__ crashes cancelling its inner tasks (`_SpawnJoinCollect`
-            # has no `throw`; see TONIO_BUGS.md). The signals are already
-            # deregistered at that point, so suppressing is safe. Use the
-            # plain `with` statement once fixed in tonio.
-            pass
 
     server.close()
     await supervisor.shutdown()

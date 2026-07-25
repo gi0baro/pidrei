@@ -444,11 +444,6 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     if parsed.version:
         print(VERSION)
-        # Workaround for a tonio runtime teardown race: a top-level coroutine
-        # that completes without ever parking on the timer machinery can hang
-        # the process on exit (see TONIO_BUGS.md "run_until_complete teardown
-        # hang"); one timed await avoids it. Drop once fixed in tonio.
-        await tonio.time.sleep(0.01)
         raise SystemExit(0)
 
     if parsed.export:

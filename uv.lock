@@ -8,6 +8,7 @@ members = [
     "pidrei-agent",
     "pidrei-ai",
     "pidrei-server",
+    "pidrei-tui",
 ]
 
 [manifest.dependency-groups]
@@ -222,6 +223,17 @@ requires-dist = [
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "tonio", directory = "../tonio" },
 ]
+
+[[package]]
+name = "pidrei-tui"
+version = "0.1.0.dev0"
+source = { editable = "packages/tui" }
+dependencies = [
+    { name = "tonio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tonio", directory = "../tonio" }]
 
 [[package]]
 name = "pillow"

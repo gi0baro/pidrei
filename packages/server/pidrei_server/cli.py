@@ -141,13 +141,7 @@ async def _main(argv: list[str]) -> int:
 
 
 async def main(argv: list[str]) -> int:
-    code = await _main(argv)
-    # Workaround for a tonio runtime teardown race: a top-level coroutine
-    # that completes without ever parking on the timer machinery can hang
-    # the process on exit (see TONIO_BUGS.md "run_until_complete teardown
-    # hang"); one timed await avoids it. Drop once fixed in tonio.
-    await tonio.time.sleep(0.01)
-    return code
+    return await _main(argv)
 
 
 def run() -> None:
