@@ -1,7 +1,9 @@
 """Mirror of pi tui src/index.ts (re-exports grow as modules are ported)."""
 
+from .autocomplete import CombinedAutocompleteProvider
 from .components.box import Box
 from .components.cancellable_loader import CancellableLoader
+from .components.editor import Editor, word_wrap_line
 from .components.image import Image
 from .components.input import Input
 from .components.loader import Loader
@@ -11,6 +13,7 @@ from .components.settings_list import SettingsList
 from .components.spacer import Spacer
 from .components.text import Text
 from .components.truncated_text import TruncatedText
+from .editor_component import EditorComponent
 from .fuzzy import fuzzy_filter, fuzzy_match
 from .keybindings import (
     TUI_KEYBINDINGS,
@@ -80,8 +83,11 @@ __all__ = [
     "TUI_KEYBINDINGS",
     "Box",
     "CancellableLoader",
+    "CombinedAutocompleteProvider",
     "Component",
     "Container",
+    "Editor",
+    "EditorComponent",
     "Focusable",
     "Image",
     "Input",
@@ -138,5 +144,6 @@ __all__ = [
     "slice_by_column",
     "truncate_to_width",
     "visible_width",
+    "word_wrap_line",
     "wrap_text_with_ansi",
 ]

@@ -2,6 +2,7 @@
 
 from .box import Box
 from .cancellable_loader import CancellableLoader
+from .editor import Editor
 from .image import Image
 from .input import Input
 from .loader import Loader
@@ -15,6 +16,7 @@ from .truncated_text import TruncatedText
 __all__ = [
     "Box",
     "CancellableLoader",
+    "Editor",
     "Image",
     "Input",
     "Loader",
