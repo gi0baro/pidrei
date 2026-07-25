@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, TextContent
@@ -41,11 +42,7 @@ class ReadToolDetails:
 
 class LocalReadOperations:
     async def read_file(self, absolute_path: str) -> bytes:
-        def read() -> bytes:
-            with open(absolute_path, "rb") as f:
-                return f.read()
-
-        return await tonio.spawn_blocking(read)
+        return await fs.Path(absolute_path).read_bytes()
 
     async def access(self, absolute_path: str) -> None:
         def check() -> None:

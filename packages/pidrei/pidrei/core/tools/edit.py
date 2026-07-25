@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -69,18 +70,10 @@ EDIT_SCHEMA = {
 
 class LocalEditOperations:
     async def read_file(self, absolute_path: str) -> bytes:
-        def read() -> bytes:
-            with open(absolute_path, "rb") as f:
-                return f.read()
-
-        return await tonio.spawn_blocking(read)
+        return await fs.Path(absolute_path).read_bytes()
 
     async def write_file(self, absolute_path: str, content: str) -> None:
-        def write() -> None:
-            with open(absolute_path, "w", encoding="utf-8", newline="") as f:
-                f.write(content)
-
-        await tonio.spawn_blocking(write)
+        await fs.Path(absolute_path).write_text(content, encoding="utf-8", newline="")
 
     async def access(self, absolute_path: str) -> None:
         """Check the file is readable and writable (raise if not)."""

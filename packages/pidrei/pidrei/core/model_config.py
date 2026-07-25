@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 import jsonschema
-import tonio.colored as tonio
+from tonio.colored import fs
 
 from ..utils.json_util import strip_json_comments
 from ..utils.paths import normalize_path
@@ -273,12 +273,8 @@ class ModelConfig:
             return ModelConfig({})
         path = normalize_path(models_json_path)
 
-        def read() -> str:
-            with open(path, encoding="utf-8") as f:
-                return f.read()
-
         try:
-            content = await tonio.spawn_blocking(read)
+            content = await fs.Path(path).read_text(encoding="utf-8")
         except FileNotFoundError:
             return ModelConfig({})
         except Exception as error:

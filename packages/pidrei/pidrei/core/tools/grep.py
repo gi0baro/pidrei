@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -62,11 +63,7 @@ class LocalGrepOperations:
         return os.path.isdir(absolute_path)
 
     async def read_file(self, absolute_path: str) -> str:
-        def read() -> str:
-            with open(absolute_path, encoding="utf-8", errors="replace", newline="") as f:
-                return f.read()
-
-        return await tonio.spawn_blocking(read)
+        return await fs.Path(absolute_path).read_text(encoding="utf-8", errors="replace", newline="")
 
 
 async def _run_and_capture_lines(argv: list[str], cancel) -> tuple[int | None, list[str], str]:

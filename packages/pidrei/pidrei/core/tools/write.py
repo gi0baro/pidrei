@@ -3,7 +3,7 @@
 import os
 from typing import Any
 
-import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -26,14 +26,10 @@ WRITE_SCHEMA = {
 
 class LocalWriteOperations:
     async def write_file(self, absolute_path: str, content: str) -> None:
-        def write() -> None:
-            with open(absolute_path, "w", encoding="utf-8", newline="") as f:
-                f.write(content)
-
-        await tonio.spawn_blocking(write)
+        await fs.Path(absolute_path).write_text(content, encoding="utf-8", newline="")
 
     async def mkdir(self, dir: str) -> None:
-        await tonio.spawn_blocking(os.makedirs, dir, exist_ok=True)
+        await fs.Path(dir).mkdir(parents=True, exist_ok=True)
 
 
 def _js_string_length(text: str) -> int:

@@ -8,7 +8,7 @@ coding-agent-only preview helpers (compute_edits_diff / compute_edit_diff).
 import errno
 from dataclasses import dataclass
 
-import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.harness.tools.edit_diff import (
     Edit,
@@ -53,12 +53,8 @@ async def compute_edits_diff(path: str, edits: list[Edit], cwd: str) -> EditDiff
 
     try:
         # Check if file exists and is readable
-        def read() -> str:
-            with open(absolute_path, encoding="utf-8", newline="") as f:
-                return f.read()
-
         try:
-            raw_content = await tonio.spawn_blocking(read)
+            raw_content = await fs.Path(absolute_path).read_text(encoding="utf-8", newline="")
         except OSError as error:
             return EditDiffError(error=f"Could not edit file: {path}. {_error_code_message(error)}.")
 
