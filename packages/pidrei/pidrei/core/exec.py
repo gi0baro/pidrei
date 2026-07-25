@@ -58,8 +58,8 @@ async def exec_command(
 
     async def force_kill_after_grace() -> None:
         # Force kill after 5 seconds if SIGTERM doesn't work.
-        waiter = await exited.wait(5.0)
-        if not waiter.is_set():
+        await exited.wait(5.0)
+        if not exited.is_set():
             try:
                 process.kill()
             except Exception:
@@ -81,8 +81,8 @@ async def exec_command(
     async def watchdog() -> None:
         if timeout is None or timeout <= 0:
             return
-        waiter = await exited.wait(timeout / 1000)
-        if not waiter.is_set():
+        await exited.wait(timeout / 1000)
+        if not exited.is_set():
             kill_process()
             await force_kill_after_grace()
 

@@ -36,5 +36,8 @@ pidrei-ai = { workspace = true }
 # workflow; `package = true` forces uv to build/install it here anyway.
 tonio = { path = "../../../tonio", package = true }
 
+[project.scripts]
+pidrei = "pidrei.__main__:run"
+
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei"]

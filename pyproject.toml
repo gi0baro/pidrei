@@ -58,3 +58,7 @@ known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_server', 'pi
 
 [tool.ruff.lint.per-file-ignores]
 'packages/*/tests/**' = ['ASYNC230', 'B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S108', 'S110']
+# S608 false positive: the --help template contains "update ... Update" lines
+# that pattern-match ruff's SQL heuristic inside a multiline f-string, where
+# no noqa comment can be placed outside the string.
+'packages/pidrei/pidrei/cli/args.py' = ['S608']

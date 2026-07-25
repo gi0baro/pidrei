@@ -5,6 +5,7 @@ installation has no pidrei equivalent (HTTP transport is punkreq's concern).
 """
 
 import math
+import os
 from typing import Any
 
 
@@ -41,3 +42,12 @@ def format_http_idle_timeout_ms(timeout_ms: int) -> str:
         if choice["timeout_ms"] == timeout_ms:
             return choice["label"]
     return f"{timeout_ms / 1000:g} sec"
+
+
+def apply_http_proxy_settings(http_proxy: str | None) -> None:
+    """Default HTTP(S)_PROXY from settings without overriding the environment."""
+    proxy = http_proxy.strip() if http_proxy else None
+    if not proxy:
+        return
+    os.environ.setdefault("HTTP_PROXY", proxy)
+    os.environ.setdefault("HTTPS_PROXY", proxy)

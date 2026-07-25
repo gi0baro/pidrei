@@ -76,6 +76,33 @@ class ExtensionFlag:
 
     type: str  # "boolean" | "string"
     description: str | None = None
+    # Flag name without the leading "--" (pi carries it on the flag object;
+    # pidrei registries also key flag maps by it).
+    name: str = ""
+    # Path of the extension that registered the flag.
+    extension_path: str = ""
+
+
+@dataclass(slots=True)
+class ExtensionUIDialogOptions:
+    """Options for extension UI dialog methods (pi's ExtensionUIDialogOptions).
+
+    `cancel` stands in for pi's AbortSignal; `timeout` is in milliseconds."""
+
+    cancel: Any = None
+    timeout: float | None = None
+
+
+@dataclass(slots=True)
+class ProjectTrustContext:
+    """Context handed to project_trust extension handlers and the trust
+    prompt (pi's ProjectTrustContext). `mode` is "tui" | "print" | "json" |
+    "rpc"; `ui` exposes select/confirm/input/notify."""
+
+    cwd: str
+    mode: str
+    has_ui: bool
+    ui: Any = None
 
 
 @dataclass(slots=True)

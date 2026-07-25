@@ -116,10 +116,13 @@ async def create_agent_session(
     system_prompt: str = "Test",
     resource_loader: Any = None,
     session_manager: SessionManager | None = None,
+    model: Any = None,
+    provider_auth: str | None = "anthropic",
 ) -> AgentSession:
     """AgentSession over an in-memory session with a stubbed provider auth."""
     temp_dir = str(temp_dir)
-    model = get_builtin_model("anthropic", "claude-sonnet-4-5")
+    if model is None:
+        model = get_builtin_model("anthropic", "claude-sonnet-4-5")
     agent = Agent(
         stream_fn=stream_fn,
         get_api_key=lambda _provider: "test-key",
@@ -138,7 +141,8 @@ async def create_agent_session(
     async def set_key(_credential):
         return ApiKeyCredential(key="test-key")
 
-    await auth_storage.modify("anthropic", set_key)
+    if provider_auth is not None:
+        await auth_storage.modify(provider_auth, set_key)
     model_runtime = await ModelRuntime.create(
         credentials=auth_storage, models_path=os.path.join(temp_dir, "models.json"), allow_model_network=False
     )
