@@ -41,6 +41,10 @@ def get_package_dir() -> str:
     return str(Path(__file__).resolve().parent)
 
 
+def get_docs_path() -> str:
+    return os.path.join(get_package_dir(), "docs")
+
+
 # =============================================================================
 # User Config Paths (~/.pidrei/agent/*)
 # =============================================================================

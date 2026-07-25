@@ -100,6 +100,11 @@ def _parse_model(raw: dict[str, Any]) -> Model:
     )
 
 
+def parse_model_dict(raw: dict[str, Any]) -> Model:
+    """Parse one pi-shaped camelCase model object (vendored data, pi.dev catalog)."""
+    return _parse_model(raw)
+
+
 def _load_catalog() -> dict[str, list[Model]]:
     catalog: dict[str, list[Model]] = {}
     for path in sorted(_DATA_DIR.glob("*.json")):

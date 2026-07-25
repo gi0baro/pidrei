@@ -147,6 +147,7 @@ name = "pidrei"
 version = "0.1.0.dev0"
 source = { editable = "packages/pidrei" }
 dependencies = [
+    { name = "jsonschema" },
     { name = "pidrei-agent" },
     { name = "pidrei-ai" },
     { name = "pyyaml" },
@@ -155,6 +156,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonschema", specifier = ">=4.0" },
     { name = "pidrei-agent", editable = "packages/agent" },
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pyyaml", specifier = ">=6.0" },

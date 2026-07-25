@@ -20,7 +20,7 @@ class LockedError(Exception):
         self.code = "ELOCKED"
 
 
-def lock_sync(path: str, *, lockfile_path: str | None = None) -> Callable[[], None]:
+def lock_sync(path: str, *, lockfile_path: str | None = None, stale: float = STALE_SECONDS) -> Callable[[], None]:
     """Acquire the lock for `path`, returning a release callable.
 
     Raises LockedError (code ELOCKED) when the lock is held by someone else.
@@ -33,7 +33,7 @@ def lock_sync(path: str, *, lockfile_path: str | None = None) -> Callable[[], No
             mtime = os.stat(lock_dir).st_mtime
         except OSError:
             mtime = None
-        if mtime is not None and time.time() - mtime > STALE_SECONDS:
+        if mtime is not None and time.time() - mtime > stale:
             # Stale lock left behind by a dead process: steal it.
             try:
                 os.utime(lock_dir)

@@ -24,6 +24,7 @@ dependencies = [
     "pidrei-ai",
     "tonio>=0.8.3",
     "pyyaml>=6.0",
+    "jsonschema>=4.0",
 ]
 
 [tool.uv.sources]
