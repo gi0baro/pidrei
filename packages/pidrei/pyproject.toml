@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pidrei"
+version = "0.1.0.dev0"
+description = "pidrei coding agent CLI (port of pi coding-agent)"
+requires-python = ">=3.14"
+
+authors = [
+    { name = "Giovanni Barillari", email = "g@baro.dev" }
+]
+
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
+
+dependencies = [
+    "pidrei-agent",
+    "pidrei-ai",
+    "tonio>=0.8.3",
+    "pyyaml>=6.0",
+]
+
+[tool.uv.sources]
+pidrei-agent = { workspace = true }
+pidrei-ai = { workspace = true }
+# The local tonio checkout sets `tool.uv.package = false` for its own dev
+# workflow; `package = true` forces uv to build/install it here anyway.
+tonio = { path = "../../../tonio", package = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["pidrei"]
