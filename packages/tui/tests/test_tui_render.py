@@ -1,0 +1,591 @@
+"""Mirror of pi tui test/tui-render.test.ts.
+
+The Kitty-image cases built on the Image component defer to the components
+slice; the encode_kitty-based ones are ported here. Viewport expectations are
+right-stripped (see virtual_terminal.py).
+"""
+
+import os
+
+import pytest
+
+from pidrei_tui.terminal_image import delete_kitty_image, encode_kitty
+from pidrei_tui.tui import TUI
+
+from .tui_helpers import env_var
+from .virtual_terminal import LoggingVirtualTerminal, VirtualTerminal
+
+
+class TestComponent:
+    __test__ = False  # not a pytest class
+
+    def __init__(self):
+        self.lines = []
+
+    def render(self, width):
+        return self.lines
+
+    def invalidate(self):
+        pass
+
+
+# TUI debug logging
+
+
+@pytest.mark.tonio
+async def test_writes_redraw_logs_to_the_provided_directory(tmp_dir):
+    with env_var("PIDREI_DEBUG_REDRAW", "1"):
+        terminal = VirtualTerminal(40, 10)
+        tui = TUI(terminal, None, str(tmp_dir))
+        component = TestComponent()
+        tui.add_child(component)
+        component.lines = ["test"]
+        await tui.start()
+        await terminal.wait_for_render()
+
+        with open(os.path.join(str(tmp_dir), "pidrei-debug.log"), encoding="utf-8") as log_file:
+            assert "fullRender: first render" in log_file.read()
+        await tui.stop()
+
+
+# TUI Kitty image cleanup (encode_kitty-based cases)
+
+
+@pytest.mark.tonio
+async def test_deletes_changed_image_ids_before_drawing_moved_placements():
+    terminal = LoggingVirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    old_image = encode_kitty("AAAA", columns=2, rows=2, image_id=42, move_cursor=False)
+    component.lines = ["top", old_image]
+    await tui.start()
+    await terminal.wait_for_render()
+    terminal.clear_writes()
+
+    new_image = encode_kitty("BBBB", columns=2, rows=1, image_id=42, move_cursor=False)
+    component.lines = [new_image, ""]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    writes = terminal.get_writes()
+    delete_index = writes.find(delete_kitty_image(42))
+    draw_index = writes.find(new_image)
+    assert delete_index >= 0, "changed old image should be deleted"
+    assert draw_index >= 0, "new image should be drawn"
+    assert delete_index < draw_index, "old image must be deleted before the new placement is drawn"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_redraws_image_lines_when_an_earlier_reserved_image_row_changes():
+    terminal = LoggingVirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    image = encode_kitty("AAAA", columns=2, rows=2, image_id=88, move_cursor=False)
+    component.lines = ["", image]
+    await tui.start()
+    await terminal.wait_for_render()
+    terminal.clear_writes()
+
+    component.lines = ["covered", image]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    writes = terminal.get_writes()
+    delete_index = writes.find(delete_kitty_image(88))
+    draw_index = writes.find(image)
+    assert delete_index >= 0, "image should be deleted when a reserved row changes"
+    assert draw_index >= 0, "unchanged image line should be redrawn after deleting the placement"
+    assert delete_index < draw_index, "old placement must be deleted before the image line is redrawn"
+    assert "\x1b[2J" not in writes, "reserved row changes should not force a full redraw"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_deletes_previously_rendered_image_ids_during_full_redraws():
+    terminal = LoggingVirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = [encode_kitty("AAAA", columns=2, rows=2, image_id=77, move_cursor=False)]
+    await tui.start()
+    await terminal.wait_for_render()
+    terminal.clear_writes()
+
+    component.lines = ["plain text"]
+    tui.request_render(True)
+    await terminal.wait_for_render()
+
+    writes = terminal.get_writes()
+    delete_index = writes.find(delete_kitty_image(77))
+    clear_index = writes.find("\x1b[2J")
+    assert delete_index >= 0, "previous image should be deleted during full redraw"
+    assert clear_index >= 0, "full redraw should clear the screen"
+    assert delete_index < clear_index, "old image should be deleted before the screen is cleared"
+
+    await tui.stop()
+
+
+# TUI resize handling
+
+
+@pytest.mark.tonio
+async def test_triggers_full_re_render_when_terminal_height_changes():
+    with env_var("TERMUX_VERSION", None):
+        terminal = VirtualTerminal(40, 10)
+        tui = TUI(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+
+        component.lines = ["Line 0", "Line 1", "Line 2"]
+        await tui.start()
+        await terminal.wait_for_render()
+
+        initial_redraws = tui.full_redraws
+
+        # Resize height
+        terminal.resize(40, 15)
+        await terminal.wait_for_render()
+
+        # Should have triggered a full redraw
+        assert tui.full_redraws > initial_redraws, "Height change should trigger full redraw"
+
+        viewport = terminal.get_viewport()
+        assert "Line 0" in viewport[0], "Content preserved after height change"
+
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_skips_full_re_render_on_height_changes_in_termux():
+    with env_var("TERMUX_VERSION", "1"):
+        terminal = LoggingVirtualTerminal(40, 10)
+        tui = TUI(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+
+        component.lines = [f"Line {i}" for i in range(20)]
+        await tui.start()
+        await terminal.wait_for_render()
+        terminal.clear_writes()
+
+        initial_redraws = tui.full_redraws
+        for height in [15, 8, 14, 11]:
+            terminal.resize(40, height)
+            await terminal.wait_for_render()
+
+        assert tui.full_redraws == initial_redraws, "Height change should not trigger full redraw"
+        assert "\x1b[2J" not in terminal.get_writes(), "Height change should not clear the screen"
+        assert "\x1b[3J" not in terminal.get_writes(), "Height change should not clear scrollback"
+
+        viewport = terminal.get_viewport()
+        assert "Line 19" in "\n".join(viewport), "Latest content remains visible after resize"
+
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_triggers_full_re_render_when_terminal_width_changes():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["Line 0", "Line 1", "Line 2"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    initial_redraws = tui.full_redraws
+
+    # Resize width
+    terminal.resize(60, 10)
+    await terminal.wait_for_render()
+
+    # Should have triggered a full redraw
+    assert tui.full_redraws > initial_redraws, "Width change should trigger full redraw"
+
+    await tui.stop()
+
+
+# TUI content shrinkage
+
+
+@pytest.mark.tonio
+async def test_clears_empty_rows_when_content_shrinks_significantly():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    tui.set_clear_on_shrink(True)  # Explicitly enable (may be disabled via env var)
+    component = TestComponent()
+    tui.add_child(component)
+
+    # Start with many lines
+    component.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4", "Line 5"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    initial_redraws = tui.full_redraws
+
+    # Shrink to fewer lines
+    component.lines = ["Line 0", "Line 1"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    # Should have triggered a full redraw to clear empty rows
+    assert tui.full_redraws > initial_redraws, "Content shrinkage should trigger full redraw"
+
+    viewport = terminal.get_viewport()
+    assert "Line 0" in viewport[0], "First line preserved"
+    assert "Line 1" in viewport[1], "Second line preserved"
+    # Lines below should be empty (cleared)
+    assert viewport[2].strip() == "", "Line 2 should be cleared"
+    assert viewport[3].strip() == "", "Line 3 should be cleared"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_handles_shrink_to_single_line():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    tui.set_clear_on_shrink(True)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["Line 0", "Line 1", "Line 2", "Line 3"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Shrink to single line
+    component.lines = ["Only line"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert "Only line" in viewport[0], "Single line rendered"
+    assert viewport[1].strip() == "", "Line 1 should be cleared"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_handles_shrink_to_empty():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    tui.set_clear_on_shrink(True)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["Line 0", "Line 1", "Line 2"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Shrink to empty
+    component.lines = []
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    # All lines should be empty
+    assert viewport[0].strip() == "", "Line 0 should be cleared"
+    assert viewport[1].strip() == "", "Line 1 should be cleared"
+
+    await tui.stop()
+
+
+# TUI differential rendering
+
+
+@pytest.mark.tonio
+async def test_tracks_cursor_correctly_when_content_shrinks_with_unchanged_remaining_lines():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    # Initial render: 5 identical lines
+    component.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Shrink to 3 lines, all identical to before (no content changes in remaining lines)
+    component.lines = ["Line 0", "Line 1", "Line 2"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    # cursor_row should be 2 (last line of new content)
+    # Verify by doing another render with a change on line 1
+    component.lines = ["Line 0", "CHANGED", "Line 2"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    # Line 1 should show "CHANGED", proving cursor tracking was correct
+    assert "CHANGED" in viewport[1], f'Expected "CHANGED" on line 1, got: {viewport[1]}'
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_renders_correctly_when_only_a_middle_line_changes_spinner_case():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    # Initial render
+    component.lines = ["Header", "Working...", "Footer"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Simulate spinner animation - only middle line changes
+    for frame in ["|", "/", "-", "\\"]:
+        component.lines = ["Header", f"Working {frame}", "Footer"]
+        tui.request_render()
+        await terminal.wait_for_render()
+
+        viewport = terminal.get_viewport()
+        assert "Header" in viewport[0], f"Header preserved: {viewport[0]}"
+        assert f"Working {frame}" in viewport[1], f"Spinner updated: {viewport[1]}"
+        assert "Footer" in viewport[2], f"Footer preserved: {viewport[2]}"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_resets_styles_after_each_rendered_line():
+    terminal = VirtualTerminal(20, 6)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["\x1b[3mItalic", "Plain"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    assert terminal.get_cell_italic(1, 0) == 0
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_renders_correctly_when_first_line_changes_but_rest_stays_same():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["Line 0", "Line 1", "Line 2", "Line 3"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Change only first line
+    component.lines = ["CHANGED", "Line 1", "Line 2", "Line 3"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert "CHANGED" in viewport[0], f"First line changed: {viewport[0]}"
+    assert "Line 1" in viewport[1], f"Line 1 preserved: {viewport[1]}"
+    assert "Line 2" in viewport[2], f"Line 2 preserved: {viewport[2]}"
+    assert "Line 3" in viewport[3], f"Line 3 preserved: {viewport[3]}"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_renders_correctly_when_last_line_changes_but_rest_stays_same():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["Line 0", "Line 1", "Line 2", "Line 3"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Change only last line
+    component.lines = ["Line 0", "Line 1", "Line 2", "CHANGED"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert "Line 0" in viewport[0], f"Line 0 preserved: {viewport[0]}"
+    assert "Line 1" in viewport[1], f"Line 1 preserved: {viewport[1]}"
+    assert "Line 2" in viewport[2], f"Line 2 preserved: {viewport[2]}"
+    assert "CHANGED" in viewport[3], f"Last line changed: {viewport[3]}"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_renders_correctly_when_multiple_non_adjacent_lines_change():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    # Change lines 1 and 3, keep 0, 2, 4 the same
+    component.lines = ["Line 0", "CHANGED 1", "Line 2", "CHANGED 3", "Line 4"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert "Line 0" in viewport[0], f"Line 0 preserved: {viewport[0]}"
+    assert "CHANGED 1" in viewport[1], f"Line 1 changed: {viewport[1]}"
+    assert "Line 2" in viewport[2], f"Line 2 preserved: {viewport[2]}"
+    assert "CHANGED 3" in viewport[3], f"Line 3 changed: {viewport[3]}"
+    assert "Line 4" in viewport[4], f"Line 4 preserved: {viewport[4]}"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_handles_transition_from_content_to_empty_and_back_to_content():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    # Start with content
+    component.lines = ["Line 0", "Line 1", "Line 2"]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert "Line 0" in viewport[0], "Initial content rendered"
+
+    # Clear to empty
+    component.lines = []
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    # Add content back - this should work correctly even after empty state
+    component.lines = ["New Line 0", "New Line 1"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert "New Line 0" in viewport[0], f"New content rendered: {viewport[0]}"
+    assert "New Line 1" in viewport[1], f"New content line 1: {viewport[1]}"
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_full_re_renders_when_deleted_lines_move_the_viewport_upward():
+    terminal = VirtualTerminal(20, 5)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = [f"Line {i}" for i in range(12)]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    initial_redraws = tui.full_redraws
+
+    component.lines = [f"Line {i}" for i in range(7)]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    assert tui.full_redraws > initial_redraws, "Shrink should trigger a full redraw"
+    assert terminal.get_viewport() == ["Line 2", "Line 3", "Line 4", "Line 5", "Line 6"]
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_appends_after_a_shrink_without_another_full_redraw_once_the_viewport_is_reset():
+    terminal = VirtualTerminal(20, 5)
+    tui = TUI(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+
+    component.lines = [f"Line {i}" for i in range(8)]
+    await tui.start()
+    await terminal.wait_for_render()
+
+    initial_redraws = tui.full_redraws
+
+    component.lines = ["Line 0", "Line 1"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    assert tui.full_redraws > initial_redraws, "Shrink should reset the viewport with a full redraw"
+    redraws_after_shrink = tui.full_redraws
+
+    component.lines = ["Line 0", "Line 1", "Line 2"]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    assert tui.full_redraws == redraws_after_shrink, "Append should stay on the differential path"
+    assert terminal.get_viewport() == ["Line 0", "Line 1", "Line 2", "", ""]
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_clears_stale_content_when_max_lines_rendered_was_inflated_by_a_transient_component():
+    terminal = VirtualTerminal(40, 10)
+    tui = TUI(terminal)
+    chat = TestComponent()
+    editor = TestComponent()
+    tui.add_child(chat)
+    tui.add_child(editor)
+
+    long_chat = [f"Chat {i}" for i in range(15)]
+    short_chat = [f"Chat {i}" for i in range(12)]
+    editor_lines = ["Editor 0", "Editor 1", "Editor 2"]
+    selector_lines = [f"Selector {i}" for i in range(8)]
+
+    chat.lines = long_chat
+    editor.lines = editor_lines
+    await tui.start()
+    await terminal.wait_for_render()
+
+    editor.lines = selector_lines
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    editor.lines = editor_lines
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    redraws_before_switch = tui.full_redraws
+    chat.lines = short_chat
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    assert tui.full_redraws > redraws_before_switch, "Branch switch should trigger a full redraw"
+
+    viewport = terminal.get_viewport()
+    for i in range(10):
+        line = viewport[i]
+        assert "Chat 12" not in line, f'Stale "Chat 12" at viewport row {i}'
+        assert "Chat 13" not in line, f'Stale "Chat 13" at viewport row {i}'
+        assert "Chat 14" not in line, f'Stale "Chat 14" at viewport row {i}'
+
+    assert viewport == [
+        "Chat 5",
+        "Chat 6",
+        "Chat 7",
+        "Chat 8",
+        "Chat 9",
+        "Chat 10",
+        "Chat 11",
+        "Editor 0",
+        "Editor 1",
+        "Editor 2",
+    ]
+
+    await tui.stop()

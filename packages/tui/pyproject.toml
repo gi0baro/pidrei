@@ -20,6 +20,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "grapheme>=0.6.0",
     "tonio>=0.8.3",
 ]
 
