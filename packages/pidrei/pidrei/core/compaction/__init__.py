@@ -1,0 +1,81 @@
+"""Mirror of pi coding-agent src/core/compaction/index.ts.
+
+Compaction and summarization utilities.
+"""
+
+from .branch_summarization import (
+    BranchPreparation,
+    BranchSummaryDetails,
+    BranchSummaryResult,
+    CollectEntriesResult,
+    collect_entries_for_branch_summary,
+    generate_branch_summary,
+    prepare_branch_entries,
+)
+from .compaction import (
+    DEFAULT_COMPACTION_SETTINGS,
+    CompactionDetails,
+    CompactionPreparation,
+    CompactionResult,
+    CompactionSettings,
+    ContextUsageEstimate,
+    CutPointResult,
+    calculate_context_tokens,
+    compact,
+    complete_summarization,
+    estimate_context_tokens,
+    estimate_tokens,
+    find_cut_point,
+    find_turn_start_index,
+    generate_summary,
+    generate_summary_with_usage,
+    get_last_assistant_usage,
+    prepare_compaction,
+    should_compact,
+)
+from .utils import (
+    SUMMARIZATION_SYSTEM_PROMPT,
+    FileOperations,
+    compute_file_lists,
+    create_file_ops,
+    extract_file_ops_from_message,
+    format_file_operations,
+    serialize_conversation,
+)
+
+
+__all__ = [
+    "DEFAULT_COMPACTION_SETTINGS",
+    "SUMMARIZATION_SYSTEM_PROMPT",
+    "BranchPreparation",
+    "BranchSummaryDetails",
+    "BranchSummaryResult",
+    "CollectEntriesResult",
+    "CompactionDetails",
+    "CompactionPreparation",
+    "CompactionResult",
+    "CompactionSettings",
+    "ContextUsageEstimate",
+    "CutPointResult",
+    "FileOperations",
+    "calculate_context_tokens",
+    "collect_entries_for_branch_summary",
+    "compact",
+    "complete_summarization",
+    "compute_file_lists",
+    "create_file_ops",
+    "estimate_context_tokens",
+    "estimate_tokens",
+    "extract_file_ops_from_message",
+    "find_cut_point",
+    "find_turn_start_index",
+    "format_file_operations",
+    "generate_branch_summary",
+    "generate_summary",
+    "generate_summary_with_usage",
+    "get_last_assistant_usage",
+    "prepare_branch_entries",
+    "prepare_compaction",
+    "serialize_conversation",
+    "should_compact",
+]

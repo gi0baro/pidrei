@@ -10,31 +10,17 @@ call sites port unchanged.
 import os
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
-from typing import Any
+from dataclasses import dataclass, replace
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
 from .diagnostics import ResourceCollision, ResourceDiagnostic
+from .extensions.types import ExtensionLoadError, LoadExtensionsResult
 from .package_manager import DefaultPackageManager, ResolvedResource
 from .prompt_templates import PromptTemplate, load_prompt_templates
 from .settings_manager import SettingsManager
 from .skills import LoadSkillsResult, Skill, load_skills
 from .source_info import PathMetadata, SourceInfo, create_source_info
-
-
-@dataclass(slots=True)
-class ExtensionLoadError:
-    path: str
-    error: str
-
-
-@dataclass(slots=True)
-class LoadExtensionsResult:
-    """Placeholder for pi's LoadExtensionsResult until extensions land (Phase 5)."""
-
-    extensions: list[Any] = field(default_factory=list)
-    errors: list[ExtensionLoadError] = field(default_factory=list)
 
 
 @dataclass(slots=True)
