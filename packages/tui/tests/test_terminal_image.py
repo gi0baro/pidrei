@@ -8,6 +8,7 @@ components slice.
 
 import contextlib
 
+from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
     delete_all_kitty_images,
     delete_kitty_image,
@@ -427,6 +428,49 @@ def test_honors_max_height_cells_by_reducing_rendered_width():
         assert result
         assert result["rows"] == 5
         assert ",c=1,r=5" in result["sequence"]
+    finally:
+        reset_capabilities_cache()
+        set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+def test_caps_image_component_height_to_a_square_pixel_box_by_default():
+    set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
+    set_cell_dimensions({"widthPx": 10, "heightPx": 20})
+    try:
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: value},
+            {"maxWidthCells": 10},
+            {"widthPx": 10, "heightPx": 100},
+        )
+        lines = image.render(12)
+        assert len(lines) == 5
+        assert ",c=1,r=5" in lines[0]
+    finally:
+        reset_capabilities_cache()
+        set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+def test_places_image_sequence_on_first_line_with_empty_padding_rows():
+    set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
+    set_cell_dimensions({"widthPx": 10, "heightPx": 10})
+    try:
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: value},
+            {"maxWidthCells": 2},
+            {"widthPx": 20, "heightPx": 20},
+        )
+        lines = image.render(4)
+        image_id = image.get_image_id()
+        assert isinstance(image_id, int)
+        assert lines[0].startswith("\x1b_G")
+        assert ",C=1," in lines[0]
+        assert f",i={image_id}" in lines[0]
+        assert lines[0].endswith("\x1b\\")
+        assert lines[1:] == [""]
     finally:
         reset_capabilities_cache()
         set_cell_dimensions({"widthPx": 9, "heightPx": 18})

@@ -1,5 +1,17 @@
 """Mirror of pi tui src/index.ts (re-exports grow as modules are ported)."""
 
+from .components.box import Box
+from .components.cancellable_loader import CancellableLoader
+from .components.image import Image
+from .components.input import Input
+from .components.loader import Loader
+from .components.markdown import Markdown
+from .components.select_list import SelectList
+from .components.settings_list import SettingsList
+from .components.spacer import Spacer
+from .components.text import Text
+from .components.truncated_text import TruncatedText
+from .fuzzy import fuzzy_filter, fuzzy_match
 from .keybindings import (
     TUI_KEYBINDINGS,
     KeybindingsManager,
@@ -66,15 +78,26 @@ __all__ = [
     "CURSOR_MARKER",
     "TUI",
     "TUI_KEYBINDINGS",
+    "Box",
+    "CancellableLoader",
     "Component",
     "Container",
     "Focusable",
+    "Image",
+    "Input",
     "Key",
     "KeybindingsManager",
+    "Loader",
+    "Markdown",
     "OverlayHandle",
     "ProcessTerminal",
+    "SelectList",
+    "SettingsList",
+    "Spacer",
     "StdinBuffer",
     "Terminal",
+    "Text",
+    "TruncatedText",
     "allocate_image_id",
     "calculate_image_rows",
     "decode_kitty_printable",
@@ -83,6 +106,8 @@ __all__ = [
     "detect_capabilities",
     "encode_iterm2",
     "encode_kitty",
+    "fuzzy_filter",
+    "fuzzy_match",
     "get_capabilities",
     "get_cell_dimensions",
     "get_gif_dimensions",

@@ -1,15 +1,21 @@
 """Mirror of pi tui test/tui-render.test.ts.
 
-The Kitty-image cases built on the Image component defer to the components
-slice; the encode_kitty-based ones are ported here. Viewport expectations are
-right-stripped (see virtual_terminal.py).
+Viewport expectations are right-stripped (see virtual_terminal.py).
 """
 
 import os
+from contextlib import contextmanager
 
 import pytest
 
-from pidrei_tui.terminal_image import delete_kitty_image, encode_kitty
+from pidrei_tui.components.image import Image
+from pidrei_tui.terminal_image import (
+    delete_kitty_image,
+    encode_kitty,
+    reset_capabilities_cache,
+    set_capabilities,
+    set_cell_dimensions,
+)
 from pidrei_tui.tui import TUI
 
 from .tui_helpers import env_var
@@ -589,3 +595,161 @@ async def test_clears_stale_content_when_max_lines_rendered_was_inflated_by_a_tr
     ]
 
     await tui.stop()
+
+
+# TUI Kitty image handling (Image-component cases, deferred from the renderer slice)
+
+
+@contextmanager
+def kitty_capabilities():
+    set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
+    set_cell_dimensions({"widthPx": 10, "heightPx": 10})
+    try:
+        yield
+    finally:
+        reset_capabilities_cache()
+        set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+@pytest.mark.tonio
+async def test_clears_reserved_kitty_image_rows_before_drawing_appended_image_placements():
+    with kitty_capabilities():
+        terminal = LoggingVirtualTerminal(40, 10)
+        tui = TUI(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+
+        component.lines = ["before"]
+        await tui.start()
+        await terminal.wait_for_render()
+        terminal.clear_writes()
+
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: value},
+            {"maxWidthCells": 2},
+            {"widthPx": 20, "heightPx": 20},
+        )
+        image_lines = image.render(40)
+        image_sequence = image_lines[0]
+        component.lines = ["before", *image_lines, "after"]
+        tui.request_render()
+        await terminal.wait_for_render()
+
+        writes = terminal.get_writes()
+        assert f"\x1b[2K\r\n\x1b[2K\x1b[1A{image_sequence}\x1b[1B" in writes, (
+            "reserved rows should be cleared before the image placement is drawn"
+        )
+        assert f"{image_sequence}\r\n\x1b[2K" not in writes, (
+            "reserved row clears must not run after the image placement is drawn"
+        )
+
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_falls_back_to_full_redraw_when_kitty_image_pre_clear_would_scroll():
+    with kitty_capabilities():
+        terminal = LoggingVirtualTerminal(40, 2)
+        tui = TUI(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+
+        component.lines = ["before"]
+        await tui.start()
+        await terminal.wait_for_render()
+        redraws_before_image = tui.full_redraws
+        terminal.clear_writes()
+
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: value},
+            {"maxWidthCells": 3},
+            {"widthPx": 30, "heightPx": 30},
+        )
+        component.lines = ["before", *image.render(40), "after"]
+        tui.request_render()
+        await terminal.wait_for_render()
+
+        assert tui.full_redraws > redraws_before_image, "unsafe image pre-clear should force a full redraw"
+        assert "\x1b[2J" in terminal.get_writes(), "fallback should clear and fully redraw"
+
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_reserves_kitty_image_rows_before_drawing_during_full_redraw_fallbacks():
+    with kitty_capabilities():
+        terminal = LoggingVirtualTerminal(40, 5)
+        tui = TUI(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+
+        component.lines = ["l0", "l1", "l2", "l3", "l4"]
+        await tui.start()
+        await terminal.wait_for_render()
+        redraws_before_image = tui.full_redraws
+        terminal.clear_writes()
+
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: value},
+            {"maxWidthCells": 3},
+            {"widthPx": 30, "heightPx": 30},
+        )
+        image_lines = image.render(40)
+        image_sequence = image_lines[0]
+        component.lines = ["l0", "l1", "l2", "l3", "l4", *image_lines, "after"]
+        tui.request_render()
+        await terminal.wait_for_render()
+
+        writes = terminal.get_writes()
+        assert tui.full_redraws > redraws_before_image, "scrolling image append should force a full redraw"
+        assert f"\r\n\r\n\x1b[2A{image_sequence}\x1b[2B" in writes, (
+            "full redraw should reserve visible image rows before drawing the placement"
+        )
+        assert f"{image_sequence}\r\n\x1b[0m" not in writes, (
+            "full redraw must not write reserved padding rows after drawing the placement"
+        )
+
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_does_not_use_cursor_up_placement_for_kitty_images_taller_than_the_viewport():
+    with kitty_capabilities():
+        terminal = LoggingVirtualTerminal(40, 5)
+        tui = TUI(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+
+        component.lines = ["before"]
+        await tui.start()
+        await terminal.wait_for_render()
+        terminal.clear_writes()
+
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: value},
+            {"maxWidthCells": 6},
+            {"widthPx": 60, "heightPx": 60},
+        )
+        image_lines = image.render(40)
+        image_sequence = image_lines[0]
+        assert len(image_lines) > terminal.rows, "test image should exceed the viewport height"
+
+        component.lines = ["before", *image_lines, "after"]
+        tui.request_render(True)
+        await terminal.wait_for_render()
+
+        writes = terminal.get_writes()
+        assert image_sequence in writes, "image placement should be drawn"
+        assert f"\x1b[{len(image_lines) - 1}A{image_sequence}" not in writes, (
+            "taller-than-viewport images must keep the #4461 first-row placement path"
+        )
+
+        await tui.stop()

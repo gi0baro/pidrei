@@ -144,6 +144,10 @@ class VirtualTerminal:
         char = self._screen.buffer[row][col]
         return 1 if char.italics else 0
 
+    def get_cell_underline(self, row: int, col: int) -> int:
+        char = self._screen.buffer[row][col]
+        return 1 if char.underscore else 0
+
     async def wait_for_render(self) -> None:
         """Wait for TUI's throttled render pipeline to settle."""
         await tonio.sleep(0.05)

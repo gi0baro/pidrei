@@ -21,7 +21,11 @@ classifiers = [
 
 dependencies = [
     "grapheme>=0.6.0",
+    "jieba>=0.42.1",
+    "linkify-it-py>=2.0.3",
+    "markdown-it-py>=4.0.0",
     "tonio>=0.8.3",
+    "uniseg>=0.10.0",
 ]
 
 [tool.uv.sources]

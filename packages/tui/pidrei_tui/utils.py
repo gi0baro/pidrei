@@ -6,8 +6,14 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
 
 - Grapheme segmentation: ``Intl.Segmenter`` (grapheme granularity) → the
   pure-Python ``grapheme`` package (UAX #29 extended clusters incl. ZWJ
-  sequences, flag pairs, Thai/Lao AM joining). pi's shared word segmenter is
-  not ported yet — it lands with the editor slice.
+  sequences, flag pairs, Thai/Lao AM joining).
+- Word segmentation: ``Intl.Segmenter`` (word granularity) →
+  ``uniseg.wordbreak`` (UAX #29 word boundaries, incl. WB6/WB7 so
+  ``foo.bar``/``foo:bar`` stay single word-like segments) refined for Han
+  runs with ``jieba`` dictionary segmentation (UAX #29 alone breaks every
+  ideograph apart; ICU — and therefore pi — uses a frequency dictionary so
+  ``你好世界`` segments as ``你好|世界``). ``isWordLike`` is approximated as
+  "contains a letter or digit" (categories L*/N*).
 - ``get-east-asian-width`` → ``unicodedata.east_asian_width`` (W/F → 2,
   everything else → 1; ambiguous stays narrow like pi's default).
 - JS ``\\p{...}`` property regexes → ``unicodedata.category`` checks plus a
@@ -31,6 +37,88 @@ import threading
 import unicodedata
 
 import grapheme as grapheme_lib
+from uniseg.wordbreak import words as _uniseg_words
+
+
+# =============================================================================
+# Word segmentation
+# =============================================================================
+
+_jieba_lock = threading.Lock()
+_jieba_cut = None
+
+
+def _get_jieba_cut():
+    global _jieba_cut
+    if _jieba_cut is None:
+        with _jieba_lock:
+            if _jieba_cut is None:
+                import logging
+                import warnings
+
+                with warnings.catch_warnings():
+                    # jieba 0.42.1 still ships pre-3.12 invalid escape sequences.
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    import jieba
+
+                jieba.setLogLevel(logging.ERROR)
+                jieba.initialize()
+                _jieba_cut = jieba.cut
+    return _jieba_cut
+
+
+def _is_han(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x4E00 <= code <= 0x9FFF  # CJK Unified Ideographs
+        or 0x3400 <= code <= 0x4DBF  # Extension A
+        or 0xF900 <= code <= 0xFAFF  # Compatibility Ideographs
+        or 0x20000 <= code <= 0x3FFFF  # Extensions B+
+    )
+
+
+def _is_word_like(segment: str) -> bool:
+    return any(unicodedata.category(char)[0] in ("L", "N") for char in segment)
+
+
+class _WordSegmenter:
+    """Mirror of ``Intl.Segmenter`` (word granularity) as used by pi.
+
+    ``segment(text)`` yields ``{"segment", "index", "isWordLike"}`` records.
+    """
+
+    def segment(self, text: str) -> list[dict]:
+        segments: list[dict] = []
+        index = 0
+        han_run = ""
+
+        def flush_han_run() -> None:
+            nonlocal han_run, index
+            if not han_run:
+                return
+            for word in _get_jieba_cut()(han_run):
+                segments.append({"segment": word, "index": index, "isWordLike": True})
+                index += len(word)
+            han_run = ""
+
+        for raw_segment in _uniseg_words(text):
+            if all(_is_han(char) for char in raw_segment):
+                han_run += raw_segment
+                continue
+            flush_han_run()
+            segments.append({"segment": raw_segment, "index": index, "isWordLike": _is_word_like(raw_segment)})
+            index += len(raw_segment)
+        flush_han_run()
+
+        return segments
+
+
+_word_segmenter = _WordSegmenter()
+
+
+def get_word_segmenter() -> _WordSegmenter:
+    """Get the shared word segmenter (mirror of utils.ts ``getWordSegmenter``)."""
+    return _word_segmenter
 
 
 # =============================================================================

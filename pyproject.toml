@@ -63,3 +63,7 @@ known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_server', 'pi
 # that pattern-match ruff's SQL heuristic inside a multiline f-string, where
 # no noqa comment can be placed outside the string.
 'packages/pidrei/pidrei/cli/args.py' = ['S608']
+# S105 false positives: markdown token dispatch compares variables named
+# token_type/next_token_type against literals like "codespan", which trips
+# ruff's hardcoded-password heuristic.
+'packages/tui/pidrei_tui/components/markdown.py' = ['S105']
