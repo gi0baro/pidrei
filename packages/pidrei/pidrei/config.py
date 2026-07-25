@@ -45,6 +45,14 @@ def get_docs_path() -> str:
     return os.path.join(get_package_dir(), "docs")
 
 
+def get_readme_path() -> str:
+    return os.path.join(get_package_dir(), "README.md")
+
+
+def get_examples_path() -> str:
+    return os.path.join(get_package_dir(), "examples")
+
+
 # =============================================================================
 # User Config Paths (~/.pidrei/agent/*)
 # =============================================================================

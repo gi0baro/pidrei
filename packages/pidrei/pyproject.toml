@@ -25,6 +25,7 @@ dependencies = [
     "tonio>=0.8.3",
     "pyyaml>=6.0",
     "jsonschema>=4.0",
+    "pathspec>=0.12",
 ]
 
 [tool.uv.sources]
