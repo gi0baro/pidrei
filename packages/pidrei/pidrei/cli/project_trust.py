@@ -1,9 +1,10 @@
 """Mirror of pi coding-agent src/cli/project-trust.ts.
 
-pi's interactive branches route through the startup TUI selector
-(src/cli/startup-ui.ts), which lands with the Phase 4 TUI slice. Until
-then interactive select/confirm/input resolve to "no answer", exactly like
-pi's non-interactive modes.
+This is the *startup* trust context, used before interactive mode owns a TUI;
+the in-session one is `InteractiveMode._create_project_trust_context`. The
+interactive branches route through the startup TUI helpers
+(`startup_ui.show_startup_selector` / `show_startup_input`); non-interactive
+modes and headless runs resolve to "no answer" as pi does.
 """
 
 import sys
@@ -12,6 +13,7 @@ from typing import Any
 
 from ..core.extensions.types import ProjectTrustContext
 from ..utils.colors import cyan, red, yellow
+from .startup_ui import show_startup_input, show_startup_selector
 
 
 @dataclass(slots=True, kw_only=True)
@@ -31,24 +33,31 @@ class _ProjectTrustUI:
             return None
         if self._options.mode != "interactive":
             return None
-        # TODO(Phase 4): show_startup_selector(settings_manager, title, options)
-        return None
+        return await show_startup_selector(
+            self._options.settings_manager,
+            title,
+            [{"label": option, "value": option} for option in select_options],
+        )
 
     async def confirm(self, title: str, message: str) -> bool:
         if not self._options.has_ui:
             return False
         if self._options.mode != "interactive":
             return False
-        # TODO(Phase 4): show_startup_selector(settings_manager, title+message, yes/no)
-        return False
+        selected = await show_startup_selector(
+            self._options.settings_manager,
+            f"{title}\n{message}",
+            [{"label": "Yes", "value": True}, {"label": "No", "value": False}],
+        )
+        # pi: `?? false` — a selected `False` must survive, only cancel defaults.
+        return selected if selected is not None else False
 
     async def input(self, title: str, placeholder: str | None = None) -> str | None:
         if not self._options.has_ui:
             return None
         if self._options.mode != "interactive":
             return None
-        # TODO(Phase 4): show_startup_input(settings_manager, title, placeholder)
-        return None
+        return await show_startup_input(self._options.settings_manager, title, placeholder)
 
     def notify(self, message: str, type: str = "info") -> None:
         if self._options.mode != "interactive":
