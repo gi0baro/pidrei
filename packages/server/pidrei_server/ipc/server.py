@@ -8,22 +8,16 @@ node's socket.write is synchronously queued; the supervisor's event
 subscribers rely on that (they are plain sync callbacks). The equivalent
 here is a per-connection outbound channel drained by a writer task, so
 callbacks stay synchronous and write ordering is preserved.
-
-tonio has no unix-listener helper (only `open_unix_socket` for the client
-side), so the listener is assembled from a raw AF_UNIX socket; see
-TONIO_BUGS.md enhancement requests.
 """
 
 import json
 import os
-import socket as stdlib_socket
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import net
-from tonio.colored.net.socket import socket as tonio_socket
 from tonio.colored.sync.channel import unbounded
 
 from ..config import get_socket_path
@@ -168,14 +162,7 @@ async def start_ipc_server(handler: IpcRequestHandler) -> IpcServer:
     socket_path = get_socket_path()
     await _remove_stale_socket_if_needed(socket_path)
 
-    sock = tonio_socket(stdlib_socket.AF_UNIX, stdlib_socket.SOCK_STREAM)
-    try:
-        await sock.bind(socket_path)
-        sock.listen()
-    except BaseException:
-        sock.close()
-        raise
-    listener = net.SocketListener(sock)
+    listener = await net.open_unix_listener(socket_path)
     tonio.spawn.without_tracking(_accept_loop(listener, handler))
     return IpcServer(listener)
 
