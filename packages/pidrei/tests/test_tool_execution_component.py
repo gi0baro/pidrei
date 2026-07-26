@@ -246,7 +246,7 @@ class TestToolExecutionComponentParity:
     def test_shares_renderer_state_across_custom_call_and_result_slots(self):
         def render_call(_args, _theme, context):
             if context["state"].get("token") is None:
-                context["state"]["token"] = "shared-token"  # noqa: S105 - render-state marker, not a secret
+                context["state"]["token"] = "shared-token"
             return Text(f"custom call {context['state']['token']}", 0, 0)
 
         def render_result(_result, _options, _theme, context):

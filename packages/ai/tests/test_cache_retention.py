@@ -1,4 +1,4 @@
-"""Mirror of pi's cache-retention.test.ts (PI_CACHE_RETENTION).
+"""Mirror of pi's cache-retention.test.ts (PIDREI_CACHE_RETENTION).
 
 pi's API-key-gated variants assert the same payloads as the fake-key ones
 (`onPayload` fires before any request), so everything mirrors as unit tests.
@@ -43,18 +43,18 @@ def cache_retention_env(value: str | None):
     """In-test env handling: yield fixtures (monkeypatch) can't be used in
     tonio-marked tests — the tonio pytest plugin interprets generator fixtures
     as coroutines (open tonio bug). Plain return fixtures are fine."""
-    original = os.environ.get("PI_CACHE_RETENTION")
+    original = os.environ.get("PIDREI_CACHE_RETENTION")
     if value is None:
-        os.environ.pop("PI_CACHE_RETENTION", None)
+        os.environ.pop("PIDREI_CACHE_RETENTION", None)
     else:
-        os.environ["PI_CACHE_RETENTION"] = value
+        os.environ["PIDREI_CACHE_RETENTION"] = value
     try:
         yield
     finally:
         if original is None:
-            os.environ.pop("PI_CACHE_RETENTION", None)
+            os.environ.pop("PIDREI_CACHE_RETENTION", None)
         else:
-            os.environ["PI_CACHE_RETENTION"] = original
+            os.environ["PIDREI_CACHE_RETENTION"] = original
 
 
 def make_context() -> Context:
@@ -155,21 +155,21 @@ async def test_anthropic_1h_ttl_when_cache_retention_option_is_long():
 
 
 def test_responses_no_prompt_cache_retention_by_default(monkeypatch):
-    monkeypatch.delenv("PI_CACHE_RETENTION", raising=False)
+    monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
     params = build_responses_params(make_responses_model(), make_context(), OpenAIResponsesOptions())
 
     assert "prompt_cache_retention" not in params
 
 
 def test_responses_prompt_cache_retention_when_env_long(monkeypatch):
-    monkeypatch.setenv("PI_CACHE_RETENTION", "long")
+    monkeypatch.setenv("PIDREI_CACHE_RETENTION", "long")
     params = build_responses_params(make_responses_model(), make_context(), OpenAIResponsesOptions())
 
     assert params["prompt_cache_retention"] == "24h"
 
 
 def test_responses_prompt_cache_retention_for_proxy_base_url(monkeypatch):
-    monkeypatch.delenv("PI_CACHE_RETENTION", raising=False)
+    monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
     model = make_responses_model(base_url="https://my-proxy.example.com/v1")
     params = build_responses_params(model, make_context(), OpenAIResponsesOptions(cache_retention="long"))
 
@@ -177,7 +177,7 @@ def test_responses_prompt_cache_retention_for_proxy_base_url(monkeypatch):
 
 
 def test_responses_omits_retention_when_supports_long_cache_retention_is_false(monkeypatch):
-    monkeypatch.delenv("PI_CACHE_RETENTION", raising=False)
+    monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
     model = make_responses_model(compat=OpenAIResponsesCompat(supports_long_cache_retention=False))
     params = build_responses_params(model, make_context(), OpenAIResponsesOptions(cache_retention="long"))
 
@@ -188,7 +188,7 @@ def test_responses_omits_retention_when_supports_long_cache_retention_is_false(m
 
 
 def test_completions_prompt_cache_retention_for_proxy_base_url(monkeypatch):
-    monkeypatch.delenv("PI_CACHE_RETENTION", raising=False)
+    monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
     model = make_completions_model(provider="custom", base_url="https://my-proxy.example.com/v1")
     params = build_completions_params(
         model, make_context(), OpenAICompletionsOptions(cache_retention="long", session_id="session-completions")
@@ -199,7 +199,7 @@ def test_completions_prompt_cache_retention_for_proxy_base_url(monkeypatch):
 
 
 def test_completions_omits_retention_when_supports_long_cache_retention_is_false(monkeypatch):
-    monkeypatch.delenv("PI_CACHE_RETENTION", raising=False)
+    monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
     model = make_completions_model(
         provider="custom",
         base_url="https://my-proxy.example.com/v1",
@@ -214,7 +214,7 @@ def test_completions_omits_retention_when_supports_long_cache_retention_is_false
 
 
 def test_completions_env_long_applies_retention(monkeypatch):
-    monkeypatch.setenv("PI_CACHE_RETENTION", "long")
+    monkeypatch.setenv("PIDREI_CACHE_RETENTION", "long")
     params = build_completions_params(
         make_completions_model(), make_context(), OpenAICompletionsOptions(session_id="sess")
     )

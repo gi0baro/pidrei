@@ -10,6 +10,7 @@ from typing import Any, Protocol
 import tonio.colored as tonio
 
 from pidrei_ai.api.constrained_sampling import create_grammar_tool_input_properties
+from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
 from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
@@ -186,7 +187,7 @@ def _detect_session_affinity_format(model: Model) -> str:
 def _resolve_cache_retention(cache_retention: CacheRetention | None, env: ProviderEnv | None) -> CacheRetention:
     if cache_retention:
         return cache_retention
-    if get_provider_env_value("PI_CACHE_RETENTION", env) == "long":
+    if get_provider_env_value("PIDREI_CACHE_RETENTION", env) == "long":
         return "long"
     return "short"
 
@@ -255,8 +256,7 @@ def _create_client(
     compat = get_compat(model)
     headers: dict[str, Any] = dict(model.headers or {})
     if model.provider == "github-copilot":
-        # Copilot dynamic headers land with the github-copilot provider wiring (PLAN.md).
-        raise NotImplementedError("github-copilot responses transport is not wired yet")
+        headers.update(build_copilot_dynamic_headers(context.messages, has_copilot_vision_input(context.messages)))
 
     if session_id:
         if compat.session_affinity_format == "openrouter":

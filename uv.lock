@@ -243,6 +243,7 @@ name = "pidrei-ai"
 version = "0.1.0.dev0"
 source = { editable = "packages/ai" }
 dependencies = [
+    { name = "httpunk" },
     { name = "jsonschema" },
     { name = "partial-json-parser" },
     { name = "punkreq" },
@@ -251,6 +252,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpunk", specifier = "~=0.1.2" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "partial-json-parser", specifier = ">=0.2.1.1.post7" },
     { name = "punkreq", specifier = "~=0.1.1" },

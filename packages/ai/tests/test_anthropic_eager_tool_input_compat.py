@@ -99,6 +99,7 @@ def transport_headers(model: Model, context: Context) -> dict[str, str]:
         _should_use_fine_grained_beta(model, context),
         None,
         None,
+        None,
     )
     return client._headers
 

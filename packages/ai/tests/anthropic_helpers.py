@@ -16,7 +16,7 @@ import time
 from dataclasses import replace
 
 from pidrei_ai.api import anthropic_messages
-from pidrei_ai.api.anthropic_messages import stream_simple
+from pidrei_ai.api.anthropic_messages import AnthropicOptions, stream, stream_simple
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, UserMessage
 
 
@@ -35,9 +35,16 @@ def make_context() -> Context:
 
 async def capture_payload(
     model: Model,
-    options: SimpleStreamOptions | None = None,
+    options: SimpleStreamOptions | AnthropicOptions | None = None,
     context: Context | None = None,
 ) -> dict:
+    """The payload the adapter would send.
+
+    `AnthropicOptions` goes through `stream`, everything else through
+    `stream_simple` — the same split pi's suites make. A caller-supplied
+    `api_key` is kept (the OAuth and Copilot header branches depend on its
+    shape); otherwise a placeholder stands in.
+    """
     captured: list[dict] = []
 
     def on_payload(payload, _model):
@@ -45,9 +52,11 @@ async def capture_payload(
         raise PayloadCaptured()
 
     payload_capture_model = replace(model, base_url="http://127.0.0.1:9")
-    opts = replace(options if options is not None else SimpleStreamOptions(), api_key="fake-key", on_payload=on_payload)
+    given = options if options is not None else SimpleStreamOptions()
+    opts = replace(given, api_key=given.api_key or "fake-key", on_payload=on_payload)
+    run = stream if isinstance(opts, AnthropicOptions) else stream_simple
 
-    await stream_simple(payload_capture_model, context if context is not None else make_context(), opts).result()
+    await run(payload_capture_model, context if context is not None else make_context(), opts).result()
 
     if not captured:
         raise AssertionError("Expected payload to be captured before request failure")
@@ -74,7 +83,7 @@ def _recording_transport():
 
 async def capture_request(
     model: Model,
-    options: SimpleStreamOptions | None = None,
+    options: SimpleStreamOptions | AnthropicOptions | None = None,
     context: Context | None = None,
 ) -> tuple[dict[str, str], dict]:
     """The (headers, payload) the adapter would put on the wire."""

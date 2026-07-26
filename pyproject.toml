@@ -58,7 +58,9 @@ lines-after-imports = 2
 known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_server', 'pidrei_tui', 'tests']
 
 [tool.ruff.lint.per-file-ignores]
-'packages/*/tests/**' = ['ASYNC230', 'B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S108', 'S110']
+# S105/S106: the OAuth mirrors are full of token URLs and fixture tokens named
+# `*_token`, all of which trip ruff's hardcoded-password heuristic.
+'packages/*/tests/**' = ['ASYNC230', 'B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S105', 'S106', 'S108', 'S110']
 # S608 false positive: the --help template contains "update ... Update" lines
 # that pattern-match ruff's SQL heuristic inside a multiline f-string, where
 # no noqa comment can be placed outside the string.

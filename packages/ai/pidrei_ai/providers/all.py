@@ -15,6 +15,7 @@ from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.providers.cerebras import cerebras_provider
 from pidrei_ai.providers.deepseek import deepseek_provider
 from pidrei_ai.providers.fireworks import fireworks_provider
+from pidrei_ai.providers.github_copilot import github_copilot_provider
 from pidrei_ai.providers.groq import groq_provider
 from pidrei_ai.providers.huggingface import huggingface_provider
 from pidrei_ai.providers.kimi_coding import kimi_coding_provider
@@ -72,9 +73,9 @@ def builtin_providers() -> list[Provider]:
     """All built-in providers, freshly constructed, in pi's order.
 
     Still to join, with their adapters (PLAN.md): amazon-bedrock, azure-openai-
-    responses, cloudflare-ai-gateway, cloudflare-workers-ai, github-copilot,
-    google, google-vertex, mistral, openai-codex. Their models are in the
-    vendored catalog already, so the catalog reads above cover them.
+    responses, cloudflare-ai-gateway, cloudflare-workers-ai, google,
+    google-vertex, mistral, openai-codex. Their models are in the vendored
+    catalog already, so the catalog reads above cover them.
     """
     return [
         ant_ling_provider(),
@@ -82,6 +83,7 @@ def builtin_providers() -> list[Provider]:
         cerebras_provider(),
         deepseek_provider(),
         fireworks_provider(),
+        github_copilot_provider(),
         groq_provider(),
         huggingface_provider(),
         kimi_coding_provider(),

@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol
 import tonio.colored as tonio
 
 from pidrei_ai.api.constrained_sampling import resolve_json_schema_strict_sampling
+from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
 from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import calculate_cost
@@ -126,10 +127,13 @@ def _from_claude_code_name(name: str, tools: list[Tool] | None) -> str:
 
 
 def _resolve_cache_retention(cache_retention: CacheRetention | None, env: ProviderEnv | None) -> CacheRetention:
-    """Defaults to "short"; PI_CACHE_RETENTION kept for backward compatibility."""
+    """Defaults to "short". pi reads `PI_CACHE_RETENTION` "for backward
+    compatibility" with its own older releases; there is no pidrei release to be
+    compatible with, so the knob keeps its role under the renamed env var.
+    """
     if cache_retention:
         return cache_retention
-    if get_provider_env_value("PI_CACHE_RETENTION", env) == "long":
+    if get_provider_env_value("PIDREI_CACHE_RETENTION", env) == "long":
         return "long"
     return "short"
 
@@ -373,6 +377,7 @@ def _create_client(
     interleaved_thinking: bool,
     use_fine_grained_beta: bool,
     options_headers: ProviderHeaders | None,
+    dynamic_headers: dict[str, str] | None,
     session_id: str | None,
     env: ProviderEnv | None = None,
 ) -> tuple[AnthropicClient, bool]:
@@ -385,10 +390,6 @@ def _create_client(
     if needs_interleaved_beta:
         beta_features.append(INTERLEAVED_THINKING_BETA)
 
-    if model.provider == "github-copilot":
-        # Copilot dynamic headers land with the github-copilot provider wiring (PLAN.md).
-        raise NotImplementedError("github-copilot anthropic transport is not wired yet")
-
     base = {
         "accept": "application/json",
         "anthropic-dangerous-direct-browser-access": "true",
@@ -396,6 +397,18 @@ def _create_client(
     }
     if beta_features:
         base["anthropic-beta"] = ",".join(beta_features)
+
+    # Copilot: Bearer auth, selective betas.
+    if model.provider == "github-copilot":
+        merged = _merge_headers(
+            base,
+            {"authorization": f"Bearer {api_key}"} if api_key else None,
+            model.headers,
+            dynamic_headers,
+            options_headers,
+        )
+        headers = {key: value for key, value in merged.items() if value is not None}
+        return _PunkreqAnthropicClient(model.base_url, headers, env), False
 
     # OAuth: Bearer auth, Claude Code identity headers.
     if api_key and _is_oauth_token(api_key):
@@ -527,6 +540,11 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             else:
                 api_key = opts.api_key
                 _assert_request_auth(model.provider, api_key, opts.headers)
+                copilot_dynamic_headers: dict[str, str] | None = None
+                if model.provider == "github-copilot":
+                    copilot_dynamic_headers = build_copilot_dynamic_headers(
+                        context.messages, has_copilot_vision_input(context.messages)
+                    )
                 cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
                 cache_session_id = None if cache_retention == "none" else opts.session_id
                 client, is_oauth = _create_client(
@@ -535,6 +553,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                     opts.interleaved_thinking if opts.interleaved_thinking is not None else True,
                     _should_use_fine_grained_beta(model, context),
                     opts.headers,
+                    copilot_dynamic_headers,
                     cache_session_id,
                     opts.env,
                 )

@@ -1,17 +1,22 @@
-"""The punkreq seam: the only pidrei module that imports punkreq.
+"""The HTTP-stack seam: the only pidrei module that imports punkreq or httpunk.
 
 Adapters obtain clients and HTTP types exclusively from here, so alpha-stage
 punkreq API churn stays contained in one file (see PLAN.md). The defaults
 encode the LLM-streaming idiom: bound connect and per-chunk reads, never the
 whole request — a legitimately long SSE stream must not hit a total deadline.
+
+`h1_server` reaches one layer below punkreq for the serving side, which punkreq
+(a client) does not expose.
 """
 
 import inspect
 import threading
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping
+from typing import Any
 
 import tonio.colored as tonio
-from punkreq import Limits, Timeout
+from httpunk import Backend, H1Server
+from punkreq import Limits, Timeout, TimeoutException
 from punkreq.tonio import Client
 
 from pidrei_ai.utils.cancel import CancelToken
@@ -20,6 +25,10 @@ from pidrei_ai.utils.http_proxy import resolve_http_proxy_url_for_target
 
 STREAMING_TIMEOUT = Timeout(connect=30.0, read=600.0, pool=30.0, total=None)
 DEFAULT_LIMITS = Limits(max_connections=64)
+
+# Re-exported so callers can recognize a timeout without importing punkreq
+# themselves (this module is the only one that may).
+RequestTimeout = TimeoutException
 
 _shared_client: Client | None = None
 _shared_client_guard = threading.Lock()
@@ -171,6 +180,32 @@ def request_timeout(timeout_ms: float | None) -> Timeout:
     if timeout_ms is None:
         return STREAMING_TIMEOUT
     return Timeout(connect=30.0, read=timeout_ms / 1000, pool=30.0, total=None)
+
+
+def h1_server(transport: Any) -> H1Server:
+    """A server-side HTTP/1 connection over an already-accepted tonio socket.
+
+    The OAuth callback servers' side of the seam. httpunk owns the protocol —
+    head parsing, keep-alive, the automatic 400/414/431 for a malformed or
+    oversized head, `Expect: 100-continue`, the slowloris header-read timeout —
+    and the caller owns accepting the socket, the same split
+    `hyper::server::conn::http1` makes. A tonio `SocketStream` is already the
+    transport httpunk wants: `receive_some`/`send_all`/`close`.
+    """
+    return H1Server(transport, backend=Backend.tonio)
+
+
+def oneshot_timeout(timeout_ms: float | None) -> Timeout:
+    """Whole-request bound for the non-streaming calls (OAuth token exchanges).
+
+    The streaming default deliberately leaves `total` unset because a long SSE
+    stream is legitimate; a token exchange is one small round trip, so pi's
+    `AbortSignal.timeout(...)` maps to `total` here.
+    """
+    if timeout_ms is None:
+        return STREAMING_TIMEOUT
+    seconds = timeout_ms / 1000
+    return Timeout(connect=min(30.0, seconds), read=seconds, pool=min(30.0, seconds), total=seconds)
 
 
 def create_client(
