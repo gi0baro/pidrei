@@ -23,6 +23,8 @@ from typing import Any
 
 import tonio.colored as tonio
 
+from pidrei_ai.types import ImageContent
+
 from ...core.agent_session import ExtensionBindings, PromptOptions
 from ...core.json_wire import to_wire
 from ...core.output_guard import (
@@ -791,7 +793,6 @@ def _parse_images(images: Any) -> list[Any] | None:
     """Convert wire image dicts to ImageContent values."""
     if not images:
         return None
-    from pidrei_ai.types import ImageContent
 
     parsed: list[Any] = []
     for image in images:

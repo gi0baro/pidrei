@@ -13,9 +13,12 @@ real threads. The async discovery helpers (`list`, `list_all`) run their
 blocking scans via `tonio.spawn_blocking` with pi's 10-way concurrency bound.
 """
 
+import codecs
+import dataclasses
 import json
 import math
 import os
+import re
 import threading
 import uuid as uuid_module
 from collections.abc import Callable
@@ -122,7 +125,6 @@ def _create_session_id() -> str:
 
 
 def assert_valid_session_id(session_id: str) -> None:
-    import re
 
     if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", session_id or ""):
         raise Exception(
@@ -322,8 +324,6 @@ def session_entry_to_context_messages(entry: dict[str, Any]) -> list[Any]:
         # Session files are parsed without validation; old versions, forks, or
         # hand-edited files can contain messages with null/missing content.
         if getattr(message, "role", None) in ("user", "assistant", "toolResult") and message.content is None:
-            import dataclasses
-
             return [dataclasses.replace(message, content=[])]
         return [message]
     if entry_type == "custom_message":
@@ -409,7 +409,6 @@ def build_session_context(
 def _get_default_session_dir_path(cwd: str, agent_dir: str | None = None) -> str:
     """Compute the default session directory for a cwd.
     Encodes cwd into a safe directory name under ~/.pidrei/agent/sessions/."""
-    import re
 
     resolved_cwd = resolve_path(cwd)
     resolved_agent_dir = resolve_path(agent_dir if agent_dir is not None else get_default_agent_dir())
@@ -434,8 +433,6 @@ def _load_wire_entries_from_file(file_path: str) -> list[dict[str, Any]]:
     resolved_file_path = normalize_path(file_path)
     if not os.path.exists(resolved_file_path):
         return []
-
-    import codecs
 
     # Chunked read with an incremental decoder: session files can be far larger
     # than what should ever be materialized as a single string (pi streams with
@@ -489,7 +486,6 @@ def _parse_session_header_candidate(line: str) -> Any:
 
 
 def _read_session_header(file_path: str) -> dict[str, Any] | None:
-    import codecs
 
     with open(file_path, "rb") as handle:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -1017,7 +1013,6 @@ class SessionManager:
 
     def append_session_info(self, name: str) -> str:
         """Append a session info entry (e.g., display name). Returns entry id."""
-        import re
 
         with self._lock:
             sanitized_name = re.sub(r"[\r\n]+", " ", name).strip()
@@ -1432,14 +1427,19 @@ class SessionManager:
                 if os.path.isdir(os.path.join(sessions_dir, name))
             ]
 
-            # Count total files first for accurate progress
-            all_files: list[str] = []
-            for directory in dirs:
+            # Count total files first for accurate progress. Listed concurrently:
+            # one thread per project directory, which is the cold-cache cost here.
+            def list_jsonl(directory: str) -> list[str]:
                 try:
-                    names = await tonio.spawn_blocking(os.listdir, directory)
-                    all_files.extend(os.path.join(directory, name) for name in names if name.endswith(".jsonl"))
-                except Exception:  # noqa: S112 - skip unreadable project dirs like pi
-                    continue
+                    names = os.listdir(directory)
+                except Exception:
+                    return []  # skip unreadable project dirs like pi's
+                return [os.path.join(directory, name) for name in names if name.endswith(".jsonl")]
+
+            listings = await tonio.map_blocking(list_jsonl, dirs)
+            if len(dirs) == 1:
+                listings = [listings]  # tonio #4
+            all_files: list[str] = [path for listing in listings for path in listing]
 
             loaded = 0
             loaded_guard = threading.Lock()

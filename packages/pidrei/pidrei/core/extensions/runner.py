@@ -3,6 +3,7 @@
 Executes extension handlers and owns the hook bus AgentSession emits into.
 """
 
+import copy
 import inspect
 import sys
 import traceback
@@ -875,7 +876,6 @@ class ExtensionRunner:
         return None
 
     async def emit_context(self, messages: list[Any]) -> list[Any]:
-        import copy
 
         ctx = self.create_context()
         # pi structuredClones here; only pay for the deep copy when a handler exists.

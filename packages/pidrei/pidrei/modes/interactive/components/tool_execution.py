@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/tool-execution.ts."""
 
+import json
+
 import tonio.colored as tonio
 
 from pidrei_tui import Box, Container, Image, Spacer, Text, get_capabilities
@@ -308,12 +310,12 @@ class ToolExecutionComponent(Container):
             self._hide_component = True
 
     def _get_text_output(self) -> str:
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
         from ....core.tools.render_utils import get_text_output
 
         return get_text_output(self._result, self._show_images)
 
     def _format_tool_execution(self) -> str:
-        import json
 
         text = theme.fg("toolTitle", theme.bold(self._tool_name))
         content = json.dumps(self._args, indent=2)

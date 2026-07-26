@@ -7,7 +7,7 @@ every provider present in the vendored data regardless.
 
 import json
 from datetime import datetime
-from pathlib import Path
+from importlib import resources
 
 from pidrei_ai.images_models import ImagesModels, create_images_models
 from pidrei_ai.models_generated import MODELS
@@ -71,9 +71,9 @@ def get_builtin_providers() -> list[str]:
 
 def get_builtin_model_data_generated_at() -> int | None:
     """Generation timestamp (ms) shared by all built-in provider catalogs."""
-    manifest_path = Path(__file__).parent / "data" / "_manifest.json"
+    manifest_path = resources.files("pidrei_ai.providers") / "data" / "_manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text())
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         return int(datetime.fromisoformat(manifest["generatedAt"]).timestamp() * 1000)
     except Exception:
         return None

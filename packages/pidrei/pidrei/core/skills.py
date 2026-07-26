@@ -1,6 +1,7 @@
 """Mirror of pi coding-agent src/core/skills.ts (npm `ignore` → pathspec)."""
 
 import os
+import stat as stat_module
 from dataclasses import dataclass
 
 import pathspec
@@ -159,7 +160,6 @@ def _stat_kind(full_path: str) -> tuple[bool, bool] | None:
         stats = os.stat(full_path)
     except OSError:
         return None
-    import stat as stat_module
 
     return stat_module.S_ISDIR(stats.st_mode), stat_module.S_ISREG(stats.st_mode)
 

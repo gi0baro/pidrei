@@ -44,7 +44,6 @@ async def _start_server(tmp_dir, extra_env=None):
         "PIDREI_OFFLINE": "1",
         **(extra_env or {}),
     }
-    env.pop("RADIUS_API_KEY", None)
     process = await tonio.open_process(
         [_server_script(), "serve"],
         stdin=subprocess.DEVNULL,

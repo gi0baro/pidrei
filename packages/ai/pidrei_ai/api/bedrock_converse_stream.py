@@ -22,6 +22,7 @@ import re
 import time
 from dataclasses import dataclass, fields
 from typing import Any
+from urllib.parse import urlparse
 
 import tonio.colored as tonio
 
@@ -72,11 +73,13 @@ from pidrei_ai.types import (
     TextEndEvent,
     TextStartEvent,
     ThinkingBudgets,
+    ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingLevel,
     ThinkingStartEvent,
     Tool,
+    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
@@ -420,8 +423,6 @@ def _handle_content_block_start(
     start = event.get("start") or {}
 
     if start.get("toolUse"):
-        from pidrei_ai.types import ToolCall
-
         block = ToolCall(
             id=start["toolUse"].get("toolUseId") or "", name=start["toolUse"].get("name") or "", arguments={}
         )
@@ -458,8 +459,6 @@ def _handle_content_block_delta(
             ToolCallDeltaEvent(content_index=index, delta=delta["toolUse"].get("input") or "", partial=output)
         )
     elif delta.get("reasoningContent"):
-        from pidrei_ai.types import ThinkingContent
-
         thinking_block = block
         thinking_index = index
 
@@ -826,7 +825,6 @@ def _get_configured_bedrock_credentials(env: ProviderEnv | None = None) -> dict[
 def _get_standard_bedrock_endpoint_region(base_url: str | None) -> str | None:
     if not base_url:
         return None
-    from urllib.parse import urlparse
 
     hostname = urlparse(base_url).hostname
     if not hostname:

@@ -44,6 +44,7 @@ def to_wire(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [to_wire(item) for item in value]
     if isinstance(value, Model):
+        # lazy: import cycle within core
         from .model_wire import model_to_dict
 
         return model_to_dict(value)

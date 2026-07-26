@@ -4,12 +4,15 @@ Configured pidrei-ai Models collection used by the coding agent and SDK
 consumers.
 
 Deviations from pi (documented):
-- radius gateway providers (`oauth: "radius"` in models.json swapping in a
-  radius builtin) are not ported — the radius provider is Phase 5; such
-  configs compose as plain api-key providers.
+- radius gateway providers are not ported at all. pi lets models.json declare
+  `oauth: "radius"` to swap in a radius builtin; the provider was a documented
+  drop, and Phase 6 removed the last remnants of the pathway, so the key is now
+  an unrecognised entry that models.json ignores and such configs compose as
+  plain api-key providers.
 - `PI_OFFLINE` → `PIDREI_OFFLINE`.
 """
 
+import inspect
 import os
 import threading
 from dataclasses import dataclass, field, replace
@@ -253,8 +256,8 @@ class ModelRuntime:
         async def check_all() -> list[tuple[str, AuthCheck | None]]:
             if not providers:
                 return []
-            results = await tonio.spawn(*[check_one(provider) for provider in providers])
-            return [results] if len(providers) == 1 else list(results)
+            results = await tonio.map(check_one, providers)
+            return [results] if len(providers) == 1 else list(results)  # tonio #4
 
         available, checks, credentials = await tonio.spawn(
             self._models.get_available(), check_all(), self._credentials.list()
@@ -469,8 +472,6 @@ class ModelRuntime:
         transform_headers = provider_options.transform_headers
         headers = merge_headers(resolution.auth.headers, provider_options.headers)
         if transform_headers is not None:
-            import inspect
-
             transformed = transform_headers(headers if headers is not None else {})
             headers = await transformed if inspect.isawaitable(transformed) else transformed
         env = (

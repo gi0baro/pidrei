@@ -463,6 +463,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         raise SystemExit(0)
 
     if parsed.export:
+        # lazy: import cycle within core
         from .core.export_html import export_from_file
 
         try:
@@ -765,6 +766,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         print_timings()
         await run_rpc_mode(runtime)
     elif app_mode == "interactive":
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
         from .modes import InteractiveMode
 
         interactive_mode = InteractiveMode(

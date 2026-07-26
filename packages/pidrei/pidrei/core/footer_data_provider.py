@@ -10,6 +10,7 @@ seams so mirrored tests can patch and count them separately.
 import os
 import re
 import subprocess
+import sys
 import threading
 
 from ..utils import fs_watch
@@ -84,7 +85,6 @@ def _resolve_branch_with_git_async(repo_dir: str) -> str | None:
 
 
 def _is_wsl_environment() -> bool:
-    import sys
 
     return sys.platform == "linux" and bool(os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"))
 

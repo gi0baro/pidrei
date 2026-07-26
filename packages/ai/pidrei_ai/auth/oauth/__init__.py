@@ -6,6 +6,6 @@ this so bundlers cannot follow the import into Node-only code; pidrei keeps it
 so a plain `pidrei` start never pays for the flows, the callback servers, or
 their sockets.
 
-`radius.ts` is deliberately absent — Phase 7 drops the radius provider as a
-pi-specific service (PLAN.md).
+`radius.ts` is deliberately absent: the radius provider is a pi-specific
+service, dropped in Phase 7 step 1 along with the server presence integration.
 """

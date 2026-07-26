@@ -36,6 +36,7 @@ class CatalogResponse:
 
 
 async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> CatalogResponse:
+    # lazy: resolved per call so the http seam stays swappable in tests
     from pidrei_ai.utils.http import shared_client
 
     response = await shared_client().get(url, headers=headers)

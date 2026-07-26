@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal as signal_module
 import sys
 from typing import Any
 
@@ -145,7 +146,6 @@ async def main(argv: list[str]) -> int:
 
 
 def run() -> None:
-    import signal as signal_module
 
     argv = sys.argv[1:]
     # serve() waits on a tonio signal receiver, which requires the runtime to

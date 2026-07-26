@@ -155,6 +155,7 @@ async def create_agent_session_services(options: CreateAgentSessionServicesOptio
                 )
             )
     extensions_result.runtime.pending_native_provider_registrations = []
+    # lazy: import cycle within core
     from .model_runtime import ModelsRefreshOptions
 
     await model_runtime.refresh(ModelsRefreshOptions(allow_network=False))

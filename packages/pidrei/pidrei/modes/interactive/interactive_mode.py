@@ -14,14 +14,17 @@ import contextlib
 import errno
 import json
 import os
+import posixpath
 import re
 import signal
+import subprocess
 import sys
 import tempfile
 import time
 import traceback
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import tonio.colored as tonio
 from tonio.colored import signals as tonio_signals
@@ -892,8 +895,6 @@ class InteractiveMode:
         if not os.environ.get("TMUX"):
             return None
 
-        import subprocess
-
         def run_tmux_show(option: str) -> str | None:
             try:
                 result = subprocess.run(  # noqa: S603
@@ -1003,8 +1004,6 @@ class InteractiveMode:
             # If full_path is under the same node_modules root as base_dir,
             # preserve that relative topology.
             if npm_root_match and normalized_full_path.startswith(f"{npm_root_match.group(1)}/"):
-                import posixpath
-
                 return posixpath.relpath(normalized_full_path, normalized_base_dir)
 
             relative_path = os.path.relpath(os.path.abspath(full_path), os.path.abspath(base_dir))
@@ -1047,7 +1046,6 @@ class InteractiveMode:
         return source
 
     def _get_compact_extension_label(self, resource_path: str, source_info=None) -> str:
-        import posixpath
 
         if not self._is_package_source(source_info):
             return self._get_compact_path_label(resource_path, source_info)
@@ -1495,6 +1493,7 @@ class InteractiveMode:
 
     async def _bind_current_session_extensions(self) -> None:
         """Initialize the extension system with TUI-based UI context."""
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
         from ...core.agent_session import ExtensionBindings
 
         ui_context = self._create_extension_ui_context()
@@ -1966,6 +1965,7 @@ class InteractiveMode:
             return get_expanded() if get_expanded is not None else self.editor.get_text()
 
         def set_theme_from_extension(theme_or_name):
+            # lazy: core <-> modes import cycle (see modes/__init__.py)
             from .theme import Theme as ThemeClass
 
             if isinstance(theme_or_name, ThemeClass):
@@ -2417,8 +2417,6 @@ class InteractiveMode:
         try:
             image = await read_clipboard_image()
             if image:
-                import tempfile
-
                 ext = extension_for_image_mime_type(image["mimeType"]) or "png"
                 file_name = f"{APP_NAME}-clipboard-{uuid.uuid4()}.{ext}"
                 file_path = os.path.join(tempfile.gettempdir(), file_name)
@@ -2837,8 +2835,6 @@ class InteractiveMode:
                 else:
                     self.show_status("Auto-compaction cancelled")
             elif event.result is not None:
-                from datetime import UTC, datetime
-
                 self._chat_container.clear()
                 self._rebuild_chat_from_messages()
                 self._add_message_to_chat(
@@ -2965,7 +2961,6 @@ class InteractiveMode:
             component = BashExecutionComponent(message.command, self.ui, message.exclude_from_context)
             if message.output:
                 component.append_output(message.output)
-            from types import SimpleNamespace
 
             component.set_complete(
                 message.exit_code,
@@ -5083,7 +5078,6 @@ class InteractiveMode:
             await self._handle_fatal_runtime_error("Failed to import session", error)
 
     async def _handle_share_command(self) -> None:
-        import subprocess
 
         # Check if gh is available and logged in
         def run_gh_auth_status():

@@ -26,7 +26,7 @@ import threading
 from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import tonio.colored as tonio
 
@@ -180,7 +180,6 @@ class BedrockRuntimeClient:
         return f"https://bedrock-runtime.{self._region()}.amazonaws.com"
 
     def _url(self, model_id: str) -> str:
-        from urllib.parse import quote
 
         return f"{self._endpoint()}/model/{quote(model_id, safe='')}/converse-stream"
 

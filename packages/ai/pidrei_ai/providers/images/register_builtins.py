@@ -27,6 +27,7 @@ async def generate_images_openrouter(
     model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None
 ) -> AssistantImages:
     try:
+        # lazy: api adapters load on demand (see api/*_lazy.py)
         from pidrei_ai.api import openrouter_images
 
         return await openrouter_images.generate_images(model, context, options)

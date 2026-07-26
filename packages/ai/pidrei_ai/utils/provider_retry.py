@@ -12,6 +12,7 @@ The backoff sleep is interruptible: it races tonio's sleep against the
 
 import math
 import random
+import time as _time
 from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -109,7 +110,6 @@ def _parse_http_date_delay_ms(value: str) -> float | None:
         target = parsedate_to_datetime(value)
     except TypeError, ValueError:
         return None
-    import time as _time
 
     return target.timestamp() * 1000 - _time.time() * 1000
 

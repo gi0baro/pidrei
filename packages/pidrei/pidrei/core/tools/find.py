@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent src/core/tools/find.ts."""
 
+import inspect
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -242,7 +243,6 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
 
 
 async def _maybe_await(value: Any) -> Any:
-    import inspect
 
     return await value if inspect.isawaitable(value) else value
 

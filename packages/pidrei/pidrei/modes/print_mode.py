@@ -150,6 +150,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
         await rebind_session()
 
         if options.initial_message:
+            # lazy: core <-> modes import cycle (see modes/__init__.py)
             from ..core.agent_session import PromptOptions
 
             await session.prompt(options.initial_message, PromptOptions(images=options.initial_images))

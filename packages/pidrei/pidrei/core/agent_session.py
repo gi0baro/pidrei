@@ -13,12 +13,15 @@ export_to_html landed with the Phase 4 export-html slice; export_to_jsonl
 is here.
 """
 
+import inspect
+import json
 import os
 import re
 import threading
+import time as time_module
 from collections.abc import Callable
 from dataclasses import dataclass, replace as dataclass_replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import tonio.colored as tonio
@@ -27,10 +30,13 @@ from pidrei_agent.agent import Agent
 from pidrei_agent.types import (
     AfterToolCallContext,
     AfterToolCallResult,
+    AgentContext,
     AgentEndEvent,
     AgentEvent,
+    AgentLoopTurnUpdate,
     AgentTool,
     BeforeToolCallContext,
+    BeforeToolCallResult,
     MessageEndEvent as AgentMessageEndEvent,
     MessageStartEvent as AgentMessageStartEvent,
     PrepareNextTurnContext,
@@ -74,13 +80,11 @@ from .tools.tool_definition_wrapper import create_tool_definition_from_agent_too
 
 
 def _now_ms() -> int:
-    import time as time_module
 
     return int(time_module.time() * 1000)
 
 
 def _iso_now() -> str:
-    from datetime import UTC
 
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -565,7 +569,6 @@ class AgentSession:
                 raise Exception(f"Extension failed, blocking execution: {err}")
             if result is None:
                 return None
-            from pidrei_agent.types import BeforeToolCallResult
 
             return BeforeToolCallResult(block=result.get("block"), reason=result.get("reason"))
 
@@ -607,16 +610,12 @@ class AgentSession:
 
             async def adapted(_turn: PrepareNextTurnContext, cancel=None):
                 result = previous_plain(cancel)
-                import inspect
 
                 return await result if inspect.isawaitable(result) else result
 
             previous_with_context = adapted
 
         async def prepare_next_turn_with_context(turn: PrepareNextTurnContext, cancel=None):
-            import inspect
-
-            from pidrei_agent.types import AgentContext, AgentLoopTurnUpdate
 
             previous_snapshot = None
             if previous_with_context is not None:
@@ -1228,12 +1227,12 @@ class AgentSession:
 
         try:
             result = command.handler(args, ctx)
-            import inspect
 
             if inspect.isawaitable(result):
                 await result
             return True
         except Exception as err:
+            # lazy: import cycle within core
             from .extensions.types import ExtensionError
 
             self._extension_runner.emit_error(
@@ -1264,6 +1263,7 @@ class AgentSession:
             )
             return f"{skill_block}\n\n{args}" if args else skill_block
         except Exception as err:
+            # lazy: import cycle within core
             from .extensions.types import ExtensionError
 
             self._extension_runner.emit_error(
@@ -2100,6 +2100,7 @@ class AgentSession:
 
     def _bind_extension_core(self, runner: ExtensionRunner) -> None:
         def get_commands() -> list[Any]:
+            # lazy: import cycle within core
             from .slash_commands import SlashCommandInfo
 
             extension_commands = [
@@ -2139,6 +2140,7 @@ class AgentSession:
                 try:
                     await self.send_custom_message(message, options)
                 except Exception as err:
+                    # lazy: import cycle within core
                     from .extensions.types import ExtensionError
 
                     runner.emit_error(ExtensionError(extension_path="<runtime>", event="send_message", error=str(err)))
@@ -2150,6 +2152,7 @@ class AgentSession:
                 try:
                     await self.send_user_message(content, options)
                 except Exception as err:
+                    # lazy: import cycle within core
                     from .extensions.types import ExtensionError
 
                     runner.emit_error(
@@ -2252,6 +2255,7 @@ class AgentSession:
                 excluded_tool_names is not None and name in excluded_tool_names
             )
 
+        # lazy: import cycle within core
         from .extensions.types import RegisteredTool
 
         registered_tools = self._extension_runner.get_all_registered_tools()
@@ -2382,7 +2386,6 @@ class AgentSession:
         )
 
     async def reload(self, before_session_start: Callable[[], Any] | None = None) -> None:
-        import inspect
 
         previous_flag_values = self._extension_runner.get_flag_values()
         await emit_session_shutdown_event(self._extension_runner, {"type": "session_shutdown", "reason": "reload"})
@@ -2800,6 +2803,8 @@ class AgentSession:
 
     async def export_to_html(self, output_path: str | None = None) -> str:
         """Export session to HTML; returns the path to the exported file."""
+        # lazy: core <-> modes import cycle (see modes/__init__.py); export_html
+        # closes the same loop back through here
         from ..modes.interactive.theme import get_theme_by_name, theme
         from .export_html import create_tool_html_renderer, export_session_to_html
 
@@ -2827,6 +2832,7 @@ class AgentSession:
         """Session statistics. Aggregates over ALL session entries (including
         history that was compacted away), so token/cost totals reflect what was
         actually billed."""
+        # lazy: import cycle within core
         from .usage_totals import add_usage_to_totals, create_usage_totals
 
         user_messages = 0
@@ -2917,8 +2923,8 @@ class AgentSession:
     def export_to_jsonl(self, output_path: str | None = None) -> str:
         """Export the current session branch to a JSONL file: session header
         followed by all entries on the current branch path (re-chained linear)."""
-        import json
 
+        # lazy: import cycle within core
         from .session_manager import _dump_json, _entry_to_wire
 
         default_name = f"session-{_iso_now().replace(':', '-').replace('.', '-')}.jsonl"

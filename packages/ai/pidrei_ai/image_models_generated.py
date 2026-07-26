@@ -5,14 +5,19 @@ Loads the vendored catalog JSON into `ImagesModel` dataclasses, the same shape
 """
 
 import json
-from pathlib import Path
+from importlib import resources
 
 from pidrei_ai.types import ImagesModel, ModelCost
 
 
 # Deliberately not under `providers/data/`: that directory is the chat catalog,
 # and its manifest validator owns every file in it.
-_DATA_DIR = Path(__file__).parent / "providers" / "image_data"
+_DATA_DIR = resources.files("pidrei_ai.providers") / "image_data"
+
+
+def _json_files(directory):
+    """`.json` entries in a Traversable directory (importlib.resources)."""
+    return [entry for entry in directory.iterdir() if entry.name.endswith(".json")]
 
 
 def _to_model(raw: dict) -> ImagesModel:
@@ -37,7 +42,7 @@ def _to_model(raw: dict) -> ImagesModel:
 
 def _load() -> dict[str, dict[str, ImagesModel]]:
     catalog: dict[str, dict[str, ImagesModel]] = {}
-    for path in sorted(_DATA_DIR.glob("*.json")):
+    for path in sorted(_json_files(_DATA_DIR), key=lambda entry: entry.name):
         raw = json.loads(path.read_text())
         catalog[path.stem] = {id: _to_model(model) for id, model in raw.items()}
     return catalog

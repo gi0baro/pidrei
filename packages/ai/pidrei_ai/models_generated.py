@@ -10,7 +10,7 @@ present-with-None entries — the null-vs-missing distinction drives
 import json
 import re
 from dataclasses import fields
-from pathlib import Path
+from importlib import resources
 from typing import Any
 
 from pidrei_ai.types import (
@@ -25,7 +25,13 @@ from pidrei_ai.types import (
 )
 
 
-_DATA_DIR = Path(__file__).parent / "providers" / "data"
+_DATA_DIR = resources.files("pidrei_ai.providers") / "data"
+
+
+def _json_files(directory):
+    """`.json` entries in a Traversable directory (importlib.resources)."""
+    return [entry for entry in directory.iterdir() if entry.name.endswith(".json")]
+
 
 _COMPAT_CLASSES: dict[str, type] = {
     "openai-completions": OpenAICompletionsCompat,
@@ -107,7 +113,9 @@ def parse_model_dict(raw: dict[str, Any]) -> Model:
 
 def _load_catalog() -> dict[str, list[Model]]:
     catalog: dict[str, list[Model]] = {}
-    for path in sorted(_DATA_DIR.glob("*.json")):
+    # Traversable has no glob(); iterdir() + an explicit key keeps the
+    # filename ordering the generated catalogs rely on.
+    for path in sorted(_json_files(_DATA_DIR), key=lambda entry: entry.name):
         if path.stem.startswith("_"):  # _manifest.json and friends
             continue
         provider_id = path.stem

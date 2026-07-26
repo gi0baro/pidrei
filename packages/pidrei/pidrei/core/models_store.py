@@ -45,6 +45,7 @@ class FileModelsStore(ModelsStore):
     """Locked JSON-backed storage for dynamically refreshed provider catalogs."""
 
     def __init__(self, path: str | None = None):
+        # lazy: import cycle within core
         from .auth_storage import FileAuthStorageBackend
 
         if path is None:

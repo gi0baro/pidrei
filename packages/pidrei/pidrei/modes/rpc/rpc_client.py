@@ -8,6 +8,8 @@ pi spawns `node dist/cli.js`; pidrei spawns `python -m pidrei` (or
 tests use). Wire payloads are returned as parsed JSON dicts.
 """
 
+import json
+import os
 import signal as signal_module
 import subprocess
 import sys
@@ -94,8 +96,6 @@ class RpcClient:
 
         env = None
         if self._options.env is not None:
-            import os
-
             env = {**os.environ, **self._options.env}
 
         process = await tonio.open_process(
@@ -402,7 +402,6 @@ class RpcClient:
     # =========================================================================
 
     def _handle_line(self, line: str) -> None:
-        import json
 
         try:
             data = json.loads(line)

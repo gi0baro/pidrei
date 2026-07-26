@@ -41,7 +41,6 @@ type KnownProvider = Literal[
     "openai",
     "azure-openai-responses",
     "openai-codex",
-    "radius",
     "nvidia",
     "deepseek",
     "github-copilot",

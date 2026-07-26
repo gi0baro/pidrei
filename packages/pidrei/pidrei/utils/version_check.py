@@ -88,6 +88,7 @@ async def get_latest_release(current_version: str, options: dict | None = None) 
         return None
     options = options or {}
 
+    # lazy: resolved per call so the http seam stays swappable in tests
     from pidrei_ai.utils.http import request_timeout, shared_client
 
     timeout_ms = options.get("timeoutMs", _DEFAULT_VERSION_CHECK_TIMEOUT_MS)

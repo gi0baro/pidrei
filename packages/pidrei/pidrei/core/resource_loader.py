@@ -608,6 +608,7 @@ class DefaultResourceLoader:
     def _update_themes_from_paths(
         self, theme_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
     ) -> None:
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
         from ..modes.interactive.theme import load_theme_from_path
 
         if self._no_themes and not theme_paths:

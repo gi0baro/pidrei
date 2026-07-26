@@ -233,7 +233,6 @@ _PROVIDER_CONFIG = {
         "baseUrl": _NON_EMPTY_STRING,
         "apiKey": _NON_EMPTY_STRING,
         "api": _NON_EMPTY_STRING,
-        "oauth": {"const": "radius"},
         "headers": _STRING_RECORD,
         "compat": _PROVIDER_COMPAT,
         "authHeader": _BOOLEAN,

@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent src/core/tools/ls.ts."""
 
+import inspect
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -88,7 +89,6 @@ class LocalLsOperations:
 
 
 async def _maybe_await(value: Any) -> Any:
-    import inspect
 
     return await value if inspect.isawaitable(value) else value
 

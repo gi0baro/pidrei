@@ -32,9 +32,11 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
   lock-free (a racing double-compute is benign).
 """
 
+import logging
 import re
 import threading
 import unicodedata
+import warnings
 
 import grapheme as grapheme_lib
 from uniseg.wordbreak import words as _uniseg_words
@@ -53,12 +55,10 @@ def _get_jieba_cut():
     if _jieba_cut is None:
         with _jieba_lock:
             if _jieba_cut is None:
-                import logging
-                import warnings
-
                 with warnings.catch_warnings():
                     # jieba 0.42.1 still ships pre-3.12 invalid escape sequences.
                     warnings.simplefilter("ignore", SyntaxWarning)
+                    # lazy: jieba is heavy and only needed for CJK segmentation
                     import jieba
 
                 jieba.setLogLevel(logging.ERROR)

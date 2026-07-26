@@ -35,6 +35,7 @@ from pidrei_ai.types import (
     Model,
     ProviderEnv,
     ProviderHeaders,
+    ProviderResponse,
     SimpleStreamOptions,
     StartEvent,
     StopReason,
@@ -572,7 +573,6 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 max_retry_delay_ms=opts.max_retry_delay_ms,
                 cancel=opts.cancel,
             )
-            from pidrei_ai.types import ProviderResponse
 
             await _maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model

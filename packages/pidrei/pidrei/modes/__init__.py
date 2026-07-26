@@ -6,6 +6,9 @@ would close an import cycle back through core.agent_session (pi's ESM live
 bindings tolerate that cycle; Python module init does not).
 """
 
+import importlib
+
+
 _EXPORTS = {
     "InteractiveMode": ("interactive.interactive_mode", "InteractiveMode"),
     "JsonlLineDecoder": ("rpc.jsonl", "JsonlLineDecoder"),
@@ -34,7 +37,6 @@ def __getattr__(name: str):
         module_name, attr = _EXPORTS[name]
     except KeyError:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
-    import importlib
 
     module = importlib.import_module(f".{module_name}", __name__)
     return getattr(module, attr)

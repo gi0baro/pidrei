@@ -104,14 +104,17 @@ def _to_oauth_credential(value: Any) -> OAuthCredential:
 
 def _get_api_provider(api: str) -> Any | None:
     if api == "anthropic-messages":
+        # lazy: api adapters load on demand (see api/*_lazy.py)
         from pidrei_ai.api import anthropic_messages
 
         return anthropic_messages
     if api == "openai-completions":
+        # lazy: api adapters load on demand (see api/*_lazy.py)
         from pidrei_ai.api import openai_completions
 
         return openai_completions
     if api == "openai-responses":
+        # lazy: api adapters load on demand (see api/*_lazy.py)
         from pidrei_ai.api import openai_responses
 
         return openai_responses
@@ -201,8 +204,6 @@ def apply_models_json(
 ) -> list[Model]:
     if not config:
         return list(base_models)
-    if config.get("oauth") and not config.get("baseUrl"):
-        raise Exception(f'Provider {provider_id}: "baseUrl" is required when "oauth" is set.')
     has_overrides = bool(config.get("modelOverrides"))
     if (
         not config.get("models")
@@ -211,7 +212,6 @@ def apply_models_json(
         and not config.get("compat")
         and not has_overrides
         and not config.get("apiKey")
-        and not config.get("oauth")
         and "authHeader" not in config
     ):
         raise Exception(
@@ -221,7 +221,7 @@ def apply_models_json(
     models = [
         replace(
             model,
-            base_url=model.base_url if config.get("oauth") == "radius" else _nn(config.get("baseUrl"), model.base_url),
+            base_url=_nn(config.get("baseUrl"), model.base_url),
             compat=merge_compat(model.api, model.compat, config.get("compat")),
         )
         for model in base_models
