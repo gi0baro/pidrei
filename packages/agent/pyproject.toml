@@ -7,6 +7,8 @@ name = "pidrei-agent"
 version = "0.1.0.dev0"
 description = "Agent loop, harness and core tools of pidrei (port of pi-agent-core)"
 requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
 
 authors = [
     { name = "Giovanni Barillari", email = "g@baro.dev" }
