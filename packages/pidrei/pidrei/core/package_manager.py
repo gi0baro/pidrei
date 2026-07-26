@@ -32,6 +32,8 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Any
 
+import tonio.colored as tonio
+
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
@@ -84,6 +86,15 @@ class ConfiguredPackage:
     source: str
     scope: str  # "user" | "project"
     installed_path: str | None = None
+
+
+@dataclass(slots=True)
+class PackageUpdate:
+    source: str
+    display_name: str
+    scope: str  # "user" | "project"
+    #: pi carries "npm" | "git"; only git sources exist here.
+    type: str = "git"
 
 
 @dataclass(slots=True)
@@ -794,12 +805,88 @@ class DefaultPackageManager:
         await self.remove(source, local=local)
         return self.remove_source_from_settings(source, local=local)
 
+    async def _get_git_upstream_ref(self, target_dir: str) -> str | None:
+        try:
+            ref = (
+                await self._run_command(
+                    "git", ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], cwd=target_dir
+                )
+            ).strip()
+        except Exception:
+            return None
+        if not ref or "/" not in ref:
+            return None
+        # "origin/main" -> "main": ls-remote wants the ref name, not the
+        # remote-tracking form.
+        return ref.split("/", 1)[1] or None
+
+    async def _get_remote_git_head(self, target_dir: str) -> str:
+        upstream_ref = await self._get_git_upstream_ref(target_dir)
+        if upstream_ref:
+            output = await self._run_command("git", ["ls-remote", "origin", upstream_ref], cwd=target_dir)
+            match = re.search(r"^([0-9a-f]{40})\s+", output, re.MULTILINE)
+            if match:
+                return match.group(1)
+
+        output = await self._run_command("git", ["ls-remote", "origin", "HEAD"], cwd=target_dir)
+        match = re.search(r"^([0-9a-f]{40})\s+HEAD$", output, re.MULTILINE)
+        if not match:
+            raise Exception("Failed to determine remote HEAD")
+        return match.group(1)
+
+    async def _git_has_available_update(self, installed_path: str) -> bool:
+        if is_offline_mode_enabled():
+            return False
+        try:
+            local_head = (await self._run_command("git", ["rev-parse", "HEAD"], cwd=installed_path)).strip()
+            return local_head != (await self._get_remote_git_head(installed_path)).strip()
+        except Exception:
+            return False
+
+    async def check_for_available_updates(self) -> list[PackageUpdate]:
+        """Configured git packages whose remote has moved.
+
+        Every check is a network round-trip, so they run concurrently and any
+        failure is swallowed into "no update" — this feeds a startup notice, and
+        a flaky remote must not delay or break a session.
+        """
+        if is_offline_mode_enabled():
+            return []
+
+        candidates: list[tuple[GitSource, str, str]] = []
+        for package in self.list_configured_packages():
+            if package.scope == "temporary":
+                continue
+            parsed = self.parse_source(package.source)
+            # A pinned ref is a checkout target, not a moving branch.
+            if not isinstance(parsed, GitSource) or parsed.pinned:
+                continue
+            installed_path = self._get_git_install_path(parsed, package.scope)
+            if not os.path.exists(installed_path):
+                continue
+            candidates.append((parsed, package.scope, package.source))
+
+        if not candidates:
+            return []
+
+        async def check_one(candidate: tuple[GitSource, str, str]) -> PackageUpdate | None:
+            parsed, scope, source = candidate
+            installed_path = self._get_git_install_path(parsed, scope)
+            if not await self._git_has_available_update(installed_path):
+                return None
+            return PackageUpdate(
+                source=source,
+                display_name=f"{parsed.host}/{parsed.path}",
+                scope=scope,
+                type="git",
+            )
+
+        results = await tonio.map(check_one, candidates)
+        return [update for update in results if update is not None]
+
     async def update(self, source: str | None = None) -> None:
         """Update configured git packages. Sources with a pinned ref are
         checkout targets, so they are re-reconciled rather than skipped."""
-        if is_offline_mode_enabled():
-            return
-
         targets: list[tuple[GitSource, str, str]] = []
         for package in self.list_configured_packages():
             if source is not None and self._source_match_key_for_input(
@@ -812,6 +899,12 @@ class DefaultPackageManager:
 
         if source is not None and not targets:
             raise Exception(f"No matching package found for {source}")
+
+        # After the no-match check, not before: pi validates the requested
+        # source and only then skips the network work, so `update <unknown>`
+        # reports the bad source offline too.
+        if is_offline_mode_enabled():
+            return
 
         for parsed, scope, source_str in targets:
             await self._with_progress(

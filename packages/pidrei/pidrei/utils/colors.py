@@ -59,6 +59,10 @@ def red(text: str) -> str:
     return _style(text, "31", "39")
 
 
+def green(text: str) -> str:
+    return _style(text, "32", "39")
+
+
 def yellow(text: str) -> str:
     return _style(text, "33", "39")
 

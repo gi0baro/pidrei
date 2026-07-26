@@ -1,8 +1,16 @@
 """Managed-binary lookup for fd/ripgrep (from pi coding-agent src/utils/tools-manager.ts).
 
-Only the lookup half is ported: the managed bin dir is checked first, then
-PATH. pi's GitHub-release download machinery is Phase 5; a missing tool
-resolves to None and the calling tool reports it as unavailable.
+Lookup only: the managed bin dir first, then PATH. **pidrei does not download
+tools** (decided 2026-07-27). pi fetches fd and ripgrep from GitHub releases
+when they are missing — resolving the release, picking a platform asset,
+downloading, extracting and verifying it. That is the one runtime-network
+surface the Phase 7 purge otherwise removed, and both tools are a package
+manager away on every platform pidrei runs on.
+
+The consequence is real and deliberate: the `find` and `grep` tools do not work
+without them. `MISSING_TOOL_HINT` is what the model is told, and it says so
+plainly instead of pi's "could not be downloaded", which here would describe an
+attempt that never happens.
 """
 
 import os
@@ -34,6 +42,19 @@ def get_tool_path(tool: str) -> str | None:
     return None
 
 
+#: Install hints for the tools `find` and `grep` shell out to.
+_INSTALL_HINTS = {
+    "fd": "fd (https://github.com/sharkdp/fd)",
+    "rg": "ripgrep (https://github.com/BurntSushi/ripgrep)",
+}
+
+
+def missing_tool_message(tool: str) -> str:
+    """What the model sees when the binary is absent."""
+    name = _INSTALL_HINTS.get(tool, tool)
+    return f"{name} is not installed. Install it and make sure it is on PATH, or use the bash tool instead."
+
+
 async def ensure_tool(tool: str, silent: bool = False) -> str | None:
-    """Resolve a tool path; downloading missing tools is Phase 5."""
+    """Resolve a tool path. Never downloads — see the module docstring."""
     return get_tool_path(tool)

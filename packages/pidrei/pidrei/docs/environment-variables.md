@@ -30,6 +30,12 @@ runs, so scripts and hooks can find the session they belong to:
 | `PIDREI_SESSION_ID` | Current session id |
 | `PIDREI_SESSION_FILE` | Path to the session JSONL file |
 
+## External tools
+
+The `find` and `grep` tools shell out to `fd` and `ripgrep`, which must be
+installed and on `PATH` — pidrei never downloads binaries. pidrei also looks in
+its own `bin` directory under the agent dir first, if you put them there.
+
 ## Terminal and display
 
 | Variable | Effect |

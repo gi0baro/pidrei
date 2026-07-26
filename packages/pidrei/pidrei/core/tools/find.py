@@ -10,7 +10,7 @@ from pidrei_ai.types import TextContent
 from pidrei_tui import Text
 
 from ...modes.interactive.components.keybinding_hints import key_hint
-from ...utils.tools_manager import ensure_tool
+from ...utils.tools_manager import ensure_tool, missing_tool_message
 from ..extensions.types import ToolDefinition
 from .grep import _run_and_capture_lines
 from .path_utils import path_exists, resolve_to_cwd
@@ -158,7 +158,7 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         fd_path = await ensure_tool("fd", True)
         _throw_if_aborted(cancel)
         if not fd_path:
-            raise Exception("fd is not available and could not be downloaded")
+            raise Exception(missing_tool_message("fd"))
 
         args: list[str] = [fd_path, "--glob", "--color=never", "--hidden"]
 

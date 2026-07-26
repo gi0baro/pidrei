@@ -38,6 +38,11 @@ sees. The deliberate exceptions:
   the extension artifacts cannot. See [extensions.md](extensions.md).
 - **Packages install from git or a local path.** pi also supports `npm:`
   sources; pidrei refuses them with a clear error. See [packages.md](packages.md).
+- **pidrei never updates itself.** `pidrei update` covers packages and model
+  catalogs; updating pidrei means re-running the install command.
+- **`fd` and `ripgrep` must be on PATH** for the `find` and `grep` tools. pi
+  downloads them from GitHub releases when missing; pidrei does not download
+  anything at runtime.
 - **Its own config**: `~/.pidrei/` and `PIDREI_*` variables. Session files keep
   pi's JSONL format, so transcripts stay interchangeable.
 - **Syntax highlighting is Pygments**, not highlight.js.

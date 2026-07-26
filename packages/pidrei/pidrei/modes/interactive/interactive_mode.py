@@ -881,13 +881,8 @@ class InteractiveMode:
                 agent_dir=get_agent_dir(),
                 settings_manager=self.settings_manager,
             )
-            check = getattr(package_manager, "check_for_available_updates", None)
-            if check is None:
-                # Package update *checking* is Phase 7, with the
-                # package-manager subcommands and the distribution channel.
-                return []
-            updates = await check()
-            return [update["displayName"] if isinstance(update, dict) else update.display_name for update in updates]
+            updates = await package_manager.check_for_available_updates()
+            return [update.display_name for update in updates]
         except Exception:
             return []
 

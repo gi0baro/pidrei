@@ -82,12 +82,29 @@ Take part of a package with a filter:
 
 ## Commands
 
-Package resources appear in `/extensions`, `/skills`, `/prompts` and `/themes`
-with the package as their source. `/reload` re-reads them without restarting.
+```bash
+pidrei install <source> [-l]     # add a source and install it
+pidrei remove <source> [-l]      # remove it again (alias: uninstall)
+pidrei list                      # what is configured, and where it lives
+pidrei update [source]           # update installed packages
+pidrei update --models           # refresh model catalogs
+pidrei update --all              # both
+pidrei config [-l]               # enable/disable individual resources (TUI)
+```
 
-The `install` / `update` / `list` subcommands are not implemented yet; add
-sources to `settings.json` by hand for now. The machinery underneath —
-cloning, pinned refs, updates, containment checks — is in place.
+`-l` targets project settings instead of global; it needs project trust, so
+`--approve` / `--no-approve` decide that for a single command. Every subcommand
+takes `--help`.
+
+**pidrei does not update itself.** pi's `update` also reinstalls pi through
+whichever package manager installed it; pidrei installs from git or Homebrew,
+where updating means re-running the install command with a new version — so
+`pidrei update --self` tells you the command rather than guessing at your
+installation.
+
+Package resources also appear in `/extensions`, `/skills`, `/prompts` and
+`/themes` with the package as their source. `/reload` re-reads them without
+restarting.
 
 ## Offline
 

@@ -19,16 +19,16 @@ The main reasons behind PiDrei existence are:
 
 Alpha, and the honest kind. PiDrei is a port in progress, validated the only way
 a port sensibly can be: by porting Pi's own test suites module by module and
-keeping them green (2,923 mirrored cases so far).
+keeping them green (2,958 mirrored cases so far).
 
 Working today: the agent loop and its tools, the TUI and interactive mode, the
 headless CLI and RPC server, all 37 of Pi's providers, image generation, OAuth
 login for the ones that need it, and extensions — loading, the full hook bus,
 and packages installed from git.
 
-Not yet: the `install` / `update` / `list` subcommands for extension packages —
-the package manager under them works, nobody has written the CLI on top — and
-Pi's bundled llama.cpp extension.
+Not yet: Pi's bundled llama.cpp extension. PiDrei also never updates itself —
+`pidrei update` handles packages and model catalogs, and tells you which install
+command to re-run for PiDrei.
 
 ## Installation
 

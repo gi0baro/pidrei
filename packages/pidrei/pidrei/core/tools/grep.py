@@ -14,7 +14,7 @@ from pidrei_ai.types import TextContent
 from pidrei_tui import Text
 
 from ...modes.interactive.components.keybinding_hints import key_hint
-from ...utils.tools_manager import ensure_tool
+from ...utils.tools_manager import ensure_tool, missing_tool_message
 from ..extensions.types import ToolDefinition
 from .path_utils import resolve_to_cwd
 from .render_utils import get_text_output, invalid_arg_text, shorten_path, str_or_none
@@ -181,7 +181,7 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
 
         rg_path = await ensure_tool("rg", True)
         if not rg_path:
-            raise Exception("ripgrep (rg) is not available and could not be downloaded")
+            raise Exception(missing_tool_message("rg"))
 
         search_path = resolve_to_cwd(search_dir or ".", cwd)
         ops = custom_ops if custom_ops is not None else LocalGrepOperations()

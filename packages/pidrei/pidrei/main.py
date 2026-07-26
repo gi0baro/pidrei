@@ -7,9 +7,9 @@ the heavy lifting.
 Port notes (Phase 3):
 - POSIX-only: pi's win32 branches (self-update quarantine cleanup) are not
   ported.
-- The `install/remove/uninstall/update/list/config` subcommands
-  (package-manager-cli.ts) are Phase 7: they depend on the distribution
-  channel decision. The package manager underneath them is ported.
+- The `install/remove/uninstall/update/list/config` subcommands live in
+  `cli/package_commands.py` and are dispatched below, before the argument
+  parse. pi's self-update half is deliberately absent (Phase 7 step 6).
 - migrations.ts is not ported: all migrations are pi-version-legacy
   cleanups a fresh ~/.pidrei/ cannot contain (see PLAN); the interactive
   deprecation-warning display that reads its output is skipped with it.
@@ -26,6 +26,7 @@ from .cli.args import Args, parse_args, print_help
 from .cli.file_processor import process_file_arguments
 from .cli.initial_message import InitialMessageResult, build_initial_message
 from .cli.list_models import list_models
+from .cli.package_commands import handle_config_command, handle_package_command
 from .cli.project_trust import CreateProjectTrustContextOptions, create_project_trust_context
 from .cli.session_picker import select_session
 from .cli.startup_ui import should_run_first_time_setup, show_first_time_setup, show_startup_selector
@@ -445,8 +446,13 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     bootstrap_settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=False)
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
 
-    # pi handles the install/remove/uninstall/update/list/config subcommands
-    # here (package-manager-cli.ts); those are Phase 7 (distribution channel).
+    # The package subcommands run and exit here, before the normal argument
+    # parse, exactly as pi dispatches them (package-manager-cli.ts).
+    handled = await handle_package_command(args, extension_factories=extension_factories)
+    if handled is False:
+        handled = await handle_config_command(args, extension_factories=extension_factories)
+    if handled is not False:
+        raise SystemExit(handled)
 
     parsed = parse_args(args)
     if parsed.diagnostics:
