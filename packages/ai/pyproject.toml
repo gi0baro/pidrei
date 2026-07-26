@@ -30,6 +30,15 @@ dependencies = [
     # Sans-io WebSocket frame codec only (no client, no asyncio): the Codex
     # responses transport drives it over httpunk's H1Upgraded (utils/websocket.py).
     "websockets>=15.0",
+    # Sans-io only: AWS credential resolution, SigV4 signing and the
+    # vnd.amazon.eventstream frame decoder for Bedrock (api/bedrock_runtime.py).
+    # punkreq still makes the request. Pure Python, so free-threading is safe by
+    # construction. pi gets all three from @aws-sdk/client-bedrock-runtime.
+    "botocore>=1.40",
+    # RSA-SHA256 only, and only for Vertex AI service-account credentials: ADC
+    # signs a JWT assertion to exchange for an access token (auth/google_adc.py).
+    # pi gets this from google-auth-library via @google/genai.
+    "cryptography>=46.0",
     "partial-json-parser>=0.2.1.1.post7",
     "jsonschema>=4.26.0",
 ]

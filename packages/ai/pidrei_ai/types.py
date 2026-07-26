@@ -2,8 +2,7 @@
 
 Attribute names are snake_case; every observable string *value* (stop reasons,
 roles, event type tags, thinking levels, …) is byte-identical to pi's, since
-those appear in the event protocol and in serialized sessions. Images-API
-types are deferred along with the images providers (PLAN.md Phase 5).
+those appear in the event protocol and in serialized sessions.
 
 TypeBox tool schemas are plain JSON Schema dicts here; pi's validation/coercion
 semantics are ported separately (`utils/validation`, Phase 1).
@@ -29,6 +28,9 @@ type KnownApi = Literal[
     "pi-messages",
 ]
 type Api = str  # KnownApi or any custom string
+
+type KnownImagesApi = Literal["openrouter-images"]
+type ImagesApi = str  # KnownImagesApi or any custom string
 
 type KnownProvider = Literal[
     "amazon-bedrock",
@@ -71,6 +73,9 @@ type KnownProvider = Literal[
     "xiaomi-token-plan-sgp",
 ]
 type ProviderId = str  # KnownProvider or any custom string
+
+type KnownImagesProvider = Literal["openrouter"]
+type ImagesProviderId = str  # KnownImagesProvider or any custom string
 
 type ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 type ModelThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -625,3 +630,67 @@ class ProviderStreams(Protocol):
 # AssistantMessageEventStream; once invoked, failures are encoded in the stream
 # (an `error` event with stopReason "error"/"aborted"), never thrown.
 type StreamFunction = Callable[..., Any]
+
+
+# --- images ------------------------------------------------------------------
+
+type ImagesInputContent = TextContent | ImageContent
+type ImagesOutputContent = TextContent | ImageContent
+type ImagesStopReason = Literal["stop", "error", "aborted"]
+
+
+@dataclass(slots=True)
+class ImagesModel:
+    """`Model` minus the chat-only fields, plus the produced modalities."""
+
+    id: str
+    name: str
+    api: ImagesApi
+    provider: ImagesProviderId
+    base_url: str
+    input: list[Literal["text", "image"]]
+    output: list[Literal["text", "image"]]
+    cost: ModelCost
+    headers: dict[str, str] | None = None
+
+
+@dataclass(slots=True)
+class ImagesContext:
+    input: list[ImagesInputContent] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class AssistantImages:
+    api: ImagesApi
+    provider: ImagesProviderId
+    model: str
+    output: list[ImagesOutputContent]
+    stop_reason: ImagesStopReason
+    timestamp: int  # Unix timestamp in milliseconds
+    response_id: str | None = None
+    usage: Usage | None = None
+    error_message: str | None = None
+
+
+@dataclass(slots=True)
+class ImagesOptions:
+    cancel: CancelToken | None = None  # pi: `signal?: AbortSignal`
+    api_key: str | None = None
+    # Provider-scoped environment values, taking precedence over os.environ.
+    env: ProviderEnv | None = None
+    # Inspect or replace the provider payload before sending (return None to keep unchanged).
+    on_payload: OnPayload | None = None
+    # Invoked after an HTTP response is received.
+    on_response: OnResponse | None = None
+    # Merged with provider defaults; caller values override; None suppresses a default header.
+    headers: ProviderHeaders | None = None
+    timeout_ms: float | None = None
+    max_retries: int | None = None
+    max_retry_delay_ms: float | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ProviderImages(Protocol):
+    async def generate_images(
+        self, model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> AssistantImages: ...

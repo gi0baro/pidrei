@@ -9,18 +9,26 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from pidrei_ai.images_models import ImagesModels, create_images_models
 from pidrei_ai.models_generated import MODELS
+from pidrei_ai.providers.amazon_bedrock import amazon_bedrock_provider
 from pidrei_ai.providers.ant_ling import ant_ling_provider
 from pidrei_ai.providers.anthropic import anthropic_provider
+from pidrei_ai.providers.azure_openai_responses import azure_openai_responses_provider
 from pidrei_ai.providers.cerebras import cerebras_provider
+from pidrei_ai.providers.cloudflare_ai_gateway import cloudflare_ai_gateway_provider
+from pidrei_ai.providers.cloudflare_workers_ai import cloudflare_workers_ai_provider
 from pidrei_ai.providers.deepseek import deepseek_provider
 from pidrei_ai.providers.fireworks import fireworks_provider
 from pidrei_ai.providers.github_copilot import github_copilot_provider
+from pidrei_ai.providers.google import google_provider
+from pidrei_ai.providers.google_vertex import google_vertex_provider
 from pidrei_ai.providers.groq import groq_provider
 from pidrei_ai.providers.huggingface import huggingface_provider
 from pidrei_ai.providers.kimi_coding import kimi_coding_provider
 from pidrei_ai.providers.minimax import minimax_provider
 from pidrei_ai.providers.minimax_cn import minimax_cn_provider
+from pidrei_ai.providers.mistral import mistral_provider
 from pidrei_ai.providers.moonshotai import moonshotai_provider
 from pidrei_ai.providers.moonshotai_cn import moonshotai_cn_provider
 from pidrei_ai.providers.nvidia import nvidia_provider
@@ -29,6 +37,7 @@ from pidrei_ai.providers.openai_codex import openai_codex_provider
 from pidrei_ai.providers.opencode import opencode_provider
 from pidrei_ai.providers.opencode_go import opencode_go_provider
 from pidrei_ai.providers.openrouter import openrouter_provider
+from pidrei_ai.providers.openrouter_images import openrouter_images_provider
 from pidrei_ai.providers.qwen_token_plan import qwen_token_plan_provider
 from pidrei_ai.providers.qwen_token_plan_cn import qwen_token_plan_cn_provider
 from pidrei_ai.providers.together import together_provider
@@ -73,23 +82,28 @@ def get_builtin_model_data_generated_at() -> int | None:
 def builtin_providers() -> list[Provider]:
     """All built-in providers, freshly constructed, in pi's order.
 
-    Still to join, with their adapters (PLAN.md): amazon-bedrock, azure-openai-
-    responses, cloudflare-ai-gateway, cloudflare-workers-ai, google,
-    google-vertex, mistral. Their models are in the vendored catalog already,
-    so the catalog reads above cover them.
+    Complete except for pi's `radius`, deliberately dropped (FEASIBILITY.md):
+    it is a pi-specific service that does nothing without pi's own credentials.
     """
     return [
+        amazon_bedrock_provider(),
         ant_ling_provider(),
         anthropic_provider(),
+        azure_openai_responses_provider(),
         cerebras_provider(),
+        cloudflare_ai_gateway_provider(),
+        cloudflare_workers_ai_provider(),
         deepseek_provider(),
         fireworks_provider(),
         github_copilot_provider(),
+        google_provider(),
+        google_vertex_provider(),
         groq_provider(),
         huggingface_provider(),
         kimi_coding_provider(),
         minimax_provider(),
         minimax_cn_provider(),
+        mistral_provider(),
         moonshotai_provider(),
         moonshotai_cn_provider(),
         nvidia_provider(),
@@ -110,6 +124,19 @@ def builtin_providers() -> list[Provider]:
         zai_provider(),
         zai_coding_cn_provider(),
     ]
+
+
+def builtin_images_providers() -> list:
+    """All built-in image-generation providers, freshly constructed."""
+    return [openrouter_images_provider()]
+
+
+def builtin_images_models(**options) -> ImagesModels:
+    """An `ImagesModels` collection with every built-in image provider registered."""
+    models = create_images_models(**options)
+    for provider in builtin_images_providers():
+        models.set_provider(provider)
+    return models
 
 
 def builtin_models(**options) -> Models:
