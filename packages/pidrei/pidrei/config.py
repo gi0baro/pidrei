@@ -67,12 +67,17 @@ def get_bundled_interactive_asset_path(name: str) -> str:
     return os.path.join(get_interactive_assets_dir(), name)
 
 
-DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/"
+def get_share_viewer_url(gist_id: str) -> str | None:
+    """URL of a viewer that renders a shared session gist, if one is configured.
 
-
-def get_share_viewer_url(gist_id: str) -> str:
-    base_url = os.environ.get("PIDREI_SHARE_VIEWER_URL") or DEFAULT_SHARE_VIEWER_URL
-    return f"{base_url}#{gist_id}"
+    pi defaults this to its own hosted viewer (`pi.dev/session/`). pidrei ships
+    no viewer, and pointing our users at pi's would send them somewhere that
+    cannot read our gists — so there is no default and `/share` prints the gist
+    URL alone, which is complete on its own. The override stays so anyone
+    running a viewer can point at it without a code change.
+    """
+    base_url = os.environ.get("PIDREI_SHARE_VIEWER_URL")
+    return f"{base_url}#{gist_id}" if base_url else None
 
 
 def get_changelog_path() -> str:

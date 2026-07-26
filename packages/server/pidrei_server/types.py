@@ -10,10 +10,11 @@ InstanceStatus: "starting" | "online" | "stopping" | "stopped" | "error"
 
 MachineRecord: {id, createdAt, lastSeenAt?, label?}
 
-RadiusRegistration: {heartbeatIntervalMs, expiresInMs}
-
 InstanceRecord: {id, status, cwd, createdAt, lastSeenAt?, label?,
-sessionId?, sessionFile?, radiusPiId?}
+sessionId?, sessionFile?}
+
+pi's RadiusRegistration and the InstanceRecord `radiusPiId` field are absent:
+the radius integration was dropped in Phase 7 step 1.
 """
 
 from datetime import UTC, datetime

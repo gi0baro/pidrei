@@ -80,7 +80,6 @@ from ...core.package_manager import DefaultPackageManager
 from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
 from ...core.session_manager import SessionManager, session_entry_to_context_messages
 from ...core.slash_commands import BUILTIN_SLASH_COMMANDS
-from ...core.telemetry import is_install_telemetry_enabled
 from ...core.tools.truncate import TruncationResult
 from ...core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
 from ...core.usage_totals import get_usage_cost_breakdown
@@ -92,8 +91,7 @@ from ...utils.git import parse_git_url
 from ...utils.paths import get_cwd_relative_path
 from ...utils.shell import kill_tracked_detached_children
 from ...utils.tools_manager import ensure_tool
-from ...utils.user_agent import get_pidrei_user_agent
-from ...utils.version_check import check_for_new_version
+from ...utils.version_check import RELEASES_URL, check_for_new_version
 from .components import (
     ArminComponent,
     AssistantMessageComponent,
@@ -946,40 +944,16 @@ class InteractiveMode:
         entries = parse_changelog(changelog_path)
 
         if not last_version:
-            # Fresh install - record the version, send telemetry, don't show
-            # changelog
+            # Fresh install - record the version, don't show changelog
             self.settings_manager.set_last_changelog_version(VERSION)
-            self._report_install_telemetry(VERSION)
             return None
 
         new_entries = get_new_entries(entries, last_version)
         if new_entries:
             self.settings_manager.set_last_changelog_version(VERSION)
-            self._report_install_telemetry(VERSION)
             return "\n\n".join(normalize_changelog_links(e["content"], e) for e in new_entries)
 
         return None
-
-    def _report_install_telemetry(self, version: str) -> None:
-        if os.environ.get("PIDREI_OFFLINE"):
-            return
-
-        if not is_install_telemetry_enabled(self.settings_manager):
-            return
-
-        async def report() -> None:
-            import urllib.parse
-
-            from pidrei_ai.utils.http import request_timeout, shared_client
-
-            with contextlib.suppress(Exception):
-                await shared_client().get(
-                    f"https://pi.dev/api/report-install?version={urllib.parse.quote(version)}",
-                    headers={"User-Agent": get_pidrei_user_agent(version)},
-                    timeout=request_timeout(5000),
-                )
-
-        tonio.spawn.without_tracking(report())
 
     def _get_markdown_theme_with_settings(self) -> dict:
         return {
@@ -3554,13 +3528,14 @@ class InteractiveMode:
     def show_new_version_notification(self, release: dict) -> None:
         action = theme.fg("accent", f"{APP_NAME} update")
         update_instruction = theme.fg("muted", f"New version {release['version']} is available. Run ") + action
-        changelog_url = "https://pi.dev/changelog"
+        # The release's own page, from the same record the check produced.
+        changelog_url = release.get("url") or RELEASES_URL
         changelog_link = (
             hyperlink(theme.fg("accent", changelog_url), changelog_url)
             if get_capabilities()["hyperlinks"]
             else theme.fg("accent", changelog_url)
         )
-        changelog_line = theme.fg("muted", "Changelog: ") + changelog_link
+        changelog_line = theme.fg("muted", "Release notes: ") + changelog_link
         note = (release.get("note") or "").strip()
 
         self._chat_container.add_child(Spacer(1))
@@ -5188,9 +5163,10 @@ class InteractiveMode:
                 self.show_error("Failed to parse gist ID from gh output")
                 return
 
-            # Create the preview URL
+            # The gist URL is the share URL; a viewer link is added only when
+            # one is configured (PIDREI_SHARE_VIEWER_URL).
             preview_url = get_share_viewer_url(gist_id)
-            self.show_status(f"Share URL: {preview_url}\nGist: {gist_url}")
+            self.show_status(f"Share URL: {preview_url}\nGist: {gist_url}" if preview_url else f"Gist: {gist_url}")
         except Exception as error:
             if not loader.signal.cancelled:
                 restore_editor()

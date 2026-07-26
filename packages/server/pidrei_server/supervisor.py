@@ -3,27 +3,28 @@
 Instance records are plain camelCase dicts (see types.py). None stands in
 for JS undefined: merging updates drops None-valued keys, matching pi's
 spread + JSON.stringify-drops-undefined behavior on persisted records.
+
+pi registers, updates and disconnects each instance with its radius presence
+service throughout this file, and exposes a coordinator back to it; the
+integration was dropped in Phase 7 step 1, so none of that is here.
 """
 
-import sys
 import threading
 import uuid
 from typing import Any
 
 import tonio.colored as tonio
 
-from .radius import radius_presence
 from .rpc_process import RpcProcessInstance, RpcProcessOptions, create_rpc_process_instance
 from .storage import get_instance, load_instances, remove_instance, save_instances, upsert_instance
 from .types import InstanceRecord, InstanceStatus, timestamp
 
 
 class _LiveInstanceResources:
-    __slots__ = ("radius_pi_id", "rpc_process", "session_id")
+    __slots__ = ("rpc_process", "session_id")
 
     def __init__(self) -> None:
         self.rpc_process: RpcProcessInstance | None = None
-        self.radius_pi_id: str | None = None
         self.session_id: str | None = None
 
 
@@ -118,8 +119,6 @@ class ServerSupervisor:
 
     def _update_record(self, live: _LiveInstance, updates: dict[str, Any]) -> None:
         live.record = _merge_record(live.record, {**updates, "lastSeenAt": timestamp()})
-        if updates.get("radiusPiId") is not None:
-            live.resources.radius_pi_id = updates["radiusPiId"]
         if updates.get("sessionId") is not None:
             live.resources.session_id = updates["sessionId"]
         upsert_instance(live.record)
@@ -163,13 +162,6 @@ class ServerSupervisor:
             self._set_status(live, "error")
         self._clear_bindings(live)
         live.resources.rpc_process = None
-        if live.resources.radius_pi_id:
-            try:
-                await radius_presence.disconnect_pi(live.record)
-                live.record.pop("radiusPiId", None)
-                self._update_record(live, {})
-            except Exception as error:
-                print(f"Failed to disconnect Radius Pi {live.record['id']}: {error}", file=sys.stderr)
         self._live_instances.pop(live.record["id"], None)
 
     def _get_rpc_process(self, live: _LiveInstance) -> RpcProcessInstance | None:
@@ -190,10 +182,6 @@ class ServerSupervisor:
     async def _cleanup_acquired_resources(self, live: _LiveInstance) -> None:
         rpc_process = live.resources.rpc_process
         self._clear_bindings(live)
-        if live.resources.radius_pi_id:
-            await radius_presence.disconnect_pi(live.record)
-            live.resources.radius_pi_id = None
-            live.record = _merge_record(live.record, {"radiusPiId": None, "lastSeenAt": timestamp()})
         live.resources.session_id = None
         if rpc_process is not None:
             live.resources.rpc_process = None
@@ -213,7 +201,6 @@ class ServerSupervisor:
         live = self._live_instances.get(instance["id"])
         if live is not None:
             live.record = instance
-            live.resources.radius_pi_id = instance.get("radiusPiId")
             live.resources.session_id = instance.get("sessionId")
         upsert_instance(instance)
 
@@ -245,8 +232,6 @@ class ServerSupervisor:
             )
             for instance in load_instances()
         ]
-        for instance in instances:
-            await radius_presence.disconnect_pi(instance)
         save_instances(instances)
 
     def list_instances(self) -> list[InstanceRecord]:
@@ -280,8 +265,6 @@ class ServerSupervisor:
             )
             self._bind_rpc_process(live, rpc_process)
             await self._sync_instance_record(live)
-            registered_record = await radius_presence.register_pi(live.record)
-            self._update_record(live, {"radiusPiId": registered_record.get("radiusPiId")})
             self._set_status(live, "online")
             return _clone_instance(live.record)
         except Exception as error:
@@ -319,20 +302,3 @@ class ServerSupervisor:
 
 
 supervisor = ServerSupervisor()
-
-
-class _SupervisorCoordinator:
-    @staticmethod
-    def get_live_instance(instance_id: str) -> InstanceRecord | None:
-        return supervisor.get_live_instance(instance_id)
-
-    @staticmethod
-    def list_live_instances() -> list[InstanceRecord]:
-        return supervisor.list_live_instances()
-
-    @staticmethod
-    def update_instance(instance: InstanceRecord) -> None:
-        supervisor.update_instance(instance)
-
-
-radius_presence.set_coordinator(_SupervisorCoordinator())

@@ -15,7 +15,6 @@ from tonio.colored import signals as tonio_signals
 from .config import get_socket_path
 from .handler import handle_ipc_request, open_rpc_stream
 from .ipc.server import IpcRequestHandler, start_ipc_server
-from .radius import get_radius_server_base_url, is_radius_enabled, radius_presence
 from .supervisor import supervisor
 
 
@@ -30,18 +29,9 @@ async def serve() -> int:
     )
 
     try:
+        # pi starts its radius presence heartbeat here; the integration was
+        # dropped in Phase 7 step 1.
         await supervisor.recover_after_restart()
-        if is_radius_enabled():
-            machine = await radius_presence.start()
-            # console.log flushes immediately; Python block-buffers stdout on pipes
-            print(f"radius integration enabled: {socket_path} -> {get_radius_server_base_url()}", flush=True)
-            if machine is not None:
-                print(f"radius machine id: {machine['id']}", flush=True)
-        else:
-            print(
-                "radius integration disabled: login radius in ~/.pidrei/agent/auth.json or set RADIUS_API_KEY",
-                flush=True,
-            )
     except BaseException:
         server.close()
         if os.path.exists(socket_path):
@@ -57,7 +47,6 @@ async def serve() -> int:
 
     server.close()
     await supervisor.shutdown()
-    await radius_presence.stop()
     if os.path.exists(socket_path):
         os.unlink(socket_path)
     return 0

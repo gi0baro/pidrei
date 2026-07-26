@@ -1458,7 +1458,12 @@ def _extract_account_id(token: str) -> str:
 def _codex_user_agent() -> str:
     # pi: `pi (${os.platform()} ${os.release()}; ${os.arch()})`. Node reports
     # "x64"/"arm64" where platform.machine() reports "x86_64"/"aarch64"; the raw
-    # Python value is sent (same call as pidrei_server/radius.py).
+    # Python value is sent.
+    #
+    # Deliberately still "pi", unlike the Phase 7 step 1 attribution swap: this
+    # pairs with the `originator: pi` header below, and the Codex backend may
+    # gate on known originator values. Changing both needs a live Codex account
+    # to verify — see PLAN, step 1 follow-up.
     return f"pi ({platform.system().lower()} {platform.release()}; {platform.machine()})"
 
 

@@ -19,14 +19,17 @@ The main reasons behind PiDrei existence are:
 
 Alpha, and the honest kind. PiDrei is a port in progress, validated the only way
 a port sensibly can be: by porting Pi's own test suites module by module and
-keeping them green (2,607 mirrored cases so far).
+keeping them green (2,879 mirrored cases so far).
 
 Working today: the agent loop and its tools, the TUI and interactive mode, the
-headless CLI and RPC server, all 37 of Pi's providers, image generation, and
-OAuth login for the ones that need it.
+headless CLI and RPC server, all 37 of Pi's providers, image generation, OAuth
+login for the ones that need it, and extensions — loading, the full hook bus,
+and packages installed from git.
 
-Not yet: extension *loading* — the ~35-event hook bus is fully ported, there is
-just nothing to plug into it yet.
+Not yet: the `install` / `update` / `list` subcommands for managing extension
+packages (the package manager underneath them works, the CLI on top of it does
+not exist yet), Pi's bundled llama.cpp extension, and the shipped `docs/`
+directory the agent's own system prompt points at.
 
 ## Installation
 
@@ -63,8 +66,16 @@ Deliberate, and not going away:
   files keep Pi's JSONL format, so transcripts stay interchangeable.
 - **Syntax highlighting is Pygments**, not highlight.js — close enough to look
   right, not close enough to diff.
-- **No `radius` provider.** It is a Pi-specific service that does nothing
-  without Pi's own credentials.
+- **No `radius`.** Neither the provider nor the server-side presence
+  integration: it is a Pi-specific service that does nothing without Pi's own
+  credentials.
+- **Nothing phones home.** Pi pings `pi.dev` on install and asks it for the
+  latest version; PiDrei does neither — the update check reads this repository's
+  GitHub releases. The model catalog still refreshes from Pi's public catalog and
+  [models.dev](https://models.dev), because that is where the data lives. Where
+  Pi identifies itself to a provider that credits the calling app (OpenRouter's
+  leaderboard, NVIDIA's billing origin), PiDrei sends its own identity rather
+  than Pi's; `PIDREI_TELEMETRY=0` turns that off.
 
 Everything else is meant to be behaviourally identical, down to the strings the
 model sees. Where it isn't, that's a bug, not a design decision.

@@ -393,8 +393,8 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
   {ENV_SESSION_DIR.ljust(32)} - Session storage directory (overridden by --session-dir)
   PIDREI_PACKAGE_DIR               - Override package directory (for Nix/Guix store paths)
   PIDREI_OFFLINE                   - Disable startup network operations when set to 1/true/yes
-  PIDREI_TELEMETRY                 - Override install telemetry when set to 1/true/yes or 0/false/no
-  PIDREI_SHARE_VIEWER_URL          - Base URL for /share command (default: https://pi.dev/session/)
+  PIDREI_TELEMETRY                 - Override provider attribution headers when set to 1/true/yes or 0/false/no
+  PIDREI_SHARE_VIEWER_URL          - Base URL of a session viewer for /share (default: none, print the gist URL)
 
 {bold("Built-in Tool Names:")}
   read   - Read file contents

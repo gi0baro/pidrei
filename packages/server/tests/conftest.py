@@ -7,10 +7,8 @@ import pytest
 
 
 def pytest_configure(config):
-    # Hermetic runs: no remote-catalog network and no accidental radius
-    # activation from the developer's environment.
+    # Hermetic runs: no remote-catalog network.
     os.environ["PIDREI_OFFLINE"] = "1"
-    os.environ.pop("RADIUS_API_KEY", None)
 
 
 @pytest.fixture

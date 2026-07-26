@@ -30,7 +30,7 @@ class TestSupervisorLifecycle:
                 assert record["label"] == "one"
                 assert record["sessionId"] == "sess-1"
                 assert record["sessionFile"] == "/tmp/sess-1.jsonl"
-                assert "radiusPiId" not in record  # radius disabled
+                assert "radiusPiId" not in record  # pi's radius field; integration dropped
 
                 stored = load_instances()
                 assert [instance["id"] for instance in stored] == [record["id"]]

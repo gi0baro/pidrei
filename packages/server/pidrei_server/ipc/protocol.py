@@ -14,8 +14,8 @@ Responses (server -> client; every response carries ok: bool and error?):
   {instanceId?}, status_result {instance?}, rpc_result {response},
   rpc_ready {instance?}, error {ok: false, error}.
 
-InstanceSummary: {id, status, cwd, label?, sessionId?, sessionFile?,
-radiusPiId?}.
+InstanceSummary: {id, status, cwd, label?, sessionId?, sessionFile?}.
+(pi also carries radiusPiId; the radius integration was dropped.)
 
 After rpc_ready on an rpc_stream connection, the socket carries RpcCommand
 or extension_ui_response lines client -> server, and RpcResponse /

@@ -14,7 +14,8 @@ def to_instance_summary(instance: InstanceRecord) -> dict[str, Any]:
         "status": instance["status"],
         "cwd": instance["cwd"],
     }
-    for key in ("label", "sessionId", "sessionFile", "radiusPiId"):
+    # pi also carries "radiusPiId"; nothing sets it since radius was dropped.
+    for key in ("label", "sessionId", "sessionFile"):
         if instance.get(key) is not None:
             summary[key] = instance[key]
     return summary

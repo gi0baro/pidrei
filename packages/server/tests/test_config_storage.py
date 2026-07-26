@@ -1,4 +1,4 @@
-"""Config paths, storage round-trips, protocol framing, radius helpers."""
+"""Config paths, storage round-trips, protocol framing."""
 
 import json
 import os
@@ -11,13 +11,6 @@ from pidrei_server.config import (
     get_socket_path,
 )
 from pidrei_server.ipc.protocol import encode_message, parse_request_line, parse_response_line
-from pidrei_server.radius import (
-    HEARTBEAT_BACKOFF_MAX_MS,
-    compute_backoff_delay_ms,
-    get_radius_server_base_url,
-    get_radius_url,
-    is_radius_enabled,
-)
 from pidrei_server.storage import (
     delete_machine,
     get_instance,
@@ -88,25 +81,3 @@ class TestProtocol:
         assert "café" in encoded  # unicode unescaped like JSON.stringify
         assert parse_request_line(encoded.strip()) == message
         assert parse_response_line(encoded.strip()) == message
-
-
-class TestRadiusHelpers:
-    def test_urls(self):
-        with env_var("PIDREI_RADIUS_URL", None), env_var("PIDREI_RADIUS_SERVER_URL", None):
-            assert get_radius_url() == "https://radius.pi.dev/"
-            assert get_radius_server_base_url() == "https://radius.pi.dev/v1/"
-        with env_var("PIDREI_RADIUS_URL", "https://example.com/base/"):
-            with env_var("PIDREI_RADIUS_SERVER_URL", None):
-                assert get_radius_server_base_url() == "https://example.com/v1/"
-            with env_var("PIDREI_RADIUS_SERVER_URL", "http://localhost:1234/api/"):
-                assert get_radius_server_base_url() == "http://localhost:1234/api/"
-
-    def test_backoff_bounds(self):
-        assert 1000 <= compute_backoff_delay_ms(1) <= 1250
-        for count in range(1, 12):
-            assert compute_backoff_delay_ms(count) <= HEARTBEAT_BACKOFF_MAX_MS
-
-    def test_radius_disabled_without_credentials(self, tmp_dir):
-        # No stored credential (agent dir pointed at an empty tmp) and no API key.
-        with env_var("PIDREI_CODING_AGENT_DIR", str(tmp_dir)), env_var("RADIUS_API_KEY", None):
-            assert is_radius_enabled() is False
