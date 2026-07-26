@@ -13,7 +13,7 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei.config import ENV_AGENT_DIR
-from pidrei_server.config import ENV_SERVER_DIR, get_socket_path
+from pidrei_server.config import ENV_SERVER_DIR, VERSION, get_socket_path
 from pidrei_server.ipc.client import send_ipc_request
 
 from .server_helpers import env_var
@@ -144,7 +144,9 @@ class TestServeEndToEnd:
 class TestCliBasics:
     @pytest.mark.tonio
     async def test_version_and_help_exit_cleanly(self, tmp_dir):
-        for args, expect in ((["--version"], "0.1.0"), (["--help"], "Usage:")):
+        # Not a version literal: the number moves with every release, and the
+        # scheme is asserted in pidrei's test_version_scheme.py.
+        for args, expect in ((["--version"], VERSION.encode()), (["--help"], b"Usage:")):
             process = await tonio.open_process(
                 [_server_script(), *args],
                 stdin=subprocess.DEVNULL,
@@ -163,7 +165,7 @@ class TestCliBasics:
                 await process.wait()
                 raise Exception(f"pidrei-server {args} hung on exit")
             assert result == 0
-            assert expect in b"".join(out).decode("utf-8")
+            assert expect in b"".join(out)
 
     @pytest.mark.tonio
     async def test_list_command_prints_response(self, tmp_dir):
