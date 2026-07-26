@@ -1,0 +1,69 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+lint = [
+    "ruff~=0.11",
+]
+test = [
+    "pyte>=0.8.2",
+    "pytest>=8.0",
+]
+
+[tool.uv]
+default-groups = ["lint", "test"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/*/tests"]
+addopts = "--import-mode=importlib"
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.format]
+quote-style = 'double'
+
+[tool.ruff.lint]
+extend-select = [
+    # E and F are enabled by default
+    'B',      # flake8-bugbear
+    'C4',     # flake8-comprehensions
+    'C90',    # mccabe
+    'I',      # isort
+    'N',      # pep8-naming
+    'Q',      # flake8-quotes
+    'RUF100', # ruff (unused noqa)
+    'S',      # flake8-bandit
+    'W',      # pycodestyle
+]
+extend-ignore = [
+    'B006',   # mutable function args are fine
+    'B008',   # function calls in args defaults are fine
+    'B009',   # getattr with constants is fine
+    'B904',   # rising without from is fine
+    'BLE001', # catch-all fallbacks mirror pi's error handling
+    'E731',   # assigning lambdas is fine
+    'F403',   # import * is fine
+    'N818',   # leave to us exceptions naming
+    'S101',   # assert is fine
+    'S110',   # silent best-effort catches mirror pi's error handling
+    'TRY002', # plain Exceptions mirror pi's `throw new Error(...)`
+]
+mccabe = { max-complexity = 44 }
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+lines-after-imports = 2
+known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_server', 'pidrei_tui', 'tests']
+
+[tool.ruff.lint.per-file-ignores]
+'packages/*/tests/**' = ['ASYNC230', 'B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S108', 'S110']
+# S608 false positive: the --help template contains "update ... Update" lines
+# that pattern-match ruff's SQL heuristic inside a multiline f-string, where
+# no noqa comment can be placed outside the string.
+'packages/pidrei/pidrei/cli/args.py' = ['S608']
+# S105 false positives: markdown token dispatch compares variables named
+# token_type/next_token_type against literals like "codespan", which trips
+# ruff's hardcoded-password heuristic.
+'packages/tui/pidrei_tui/components/markdown.py' = ['S105']

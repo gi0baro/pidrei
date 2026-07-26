@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-07-24T14:59:42+00:00",
+  "source": "https://models.dev/api.json",
+  "providers": [
+    "anthropic",
+    "openai"
+  ]
+}

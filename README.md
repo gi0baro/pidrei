@@ -1,4 +1,4 @@
-# pppi
+# pidrei
 
 A rewrite of the [pi coding agent](https://github.com/badlogic/pi-mono) in Python,
 built on [tonio](https://github.com/gi0baro/tonio) (free-threaded CPython 3.14+)
@@ -19,7 +19,7 @@ Phase 0 (foundations): core primitives (`EventStream`, `CancelToken`, SSE
 decoding) and project scaffolding.
 
 The repository is a uv workspace mirroring pi's monorepo; packages live under
-`packages/` (`pppi-ai` is the first) and join the workspace as their
+`packages/` (`pidrei-ai` is the first) and join the workspace as their
 implementation phase begins.
 
 ## Development
