@@ -1,29 +1,69 @@
-"""Mirror of pi coding-agent src/core/extensions/runner.ts (Phase 3 subset).
+"""Mirror of pi coding-agent src/core/extensions/runner.ts.
 
-The full hook bus is ported so AgentSession's event flow is 1:1 with pi; in
-Phase 3 the extension list is always empty, so every emit loop is a no-op
-with identical observable behavior to pi running without extensions.
-
-Not ported yet: get_shortcuts()/shortcut diagnostics (needs the keybindings
-system, Phase 4) and the project-trust extension emit path beyond
-emit_project_trust_event (extension loading is Phase 5).
+Executes extension handlers and owns the hook bus AgentSession emits into.
 """
 
 import inspect
+import sys
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from pidrei.core.diagnostics import ResourceDiagnostic
 
 from .types import (
     Extension,
     ExtensionError,
     ExtensionFlag,
     ExtensionRuntime,
+    ExtensionShortcut,
     LoadExtensionsResult,
     RegisteredTool,
     ResolvedCommand,
 )
+
+
+# Extension shortcuts compete with canonical keybinding ids from keybindings.json.
+# Only editor-global shortcuts are reserved here; picker-specific bindings are not.
+RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = (
+    "app.interrupt",
+    "app.clear",
+    "app.exit",
+    "app.suspend",
+    "app.thinking.cycle",
+    "app.model.cycleForward",
+    "app.model.cycleBackward",
+    "app.model.select",
+    "app.tools.expand",
+    "app.thinking.toggle",
+    "app.editor.external",
+    "app.message.copy",
+    "app.message.followUp",
+    "tui.input.submit",
+    "tui.select.confirm",
+    "tui.select.cancel",
+    "tui.input.copy",
+    "tui.editor.deleteToLineEnd",
+)
+
+
+def _build_builtin_keybindings(resolved_keybindings: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    builtin: dict[str, dict[str, Any]] = {}
+    for keybinding, keys in resolved_keybindings.items():
+        if keys is None:
+            continue
+        key_list = keys if isinstance(keys, list) else [keys]
+        restrict_override = keybinding in RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS
+        for key in key_list:
+            normalized_key = key.lower()
+            # When several actions bind the same key the reserved one wins, so
+            # extensions stay blocked regardless of iteration order.
+            existing = builtin.get(normalized_key)
+            if existing is not None and existing["restrict_override"] and not restrict_override:
+                continue
+            builtin[normalized_key] = {"keybinding": keybinding, "restrict_override": restrict_override}
+    return builtin
 
 
 _STALE_MESSAGE_DEFAULT = (
@@ -335,6 +375,7 @@ class ExtensionRunner:
         self._session_manager = session_manager
         self._model_registry = model_registry
         self._error_listeners: list[Callable[[ExtensionError], None]] = []
+        self._shortcut_diagnostics: list[ResourceDiagnostic] = []
         self._stale_message: str | None = None
 
         self._get_model: Callable[[], Any] = lambda: None
@@ -433,19 +474,19 @@ class ExtensionRunner:
 
         # From this point on, provider registration/unregistration takes effect
         # immediately without requiring a /reload.
-        def runtime_register_provider(name: str, config: Any) -> None:
+        def runtime_register_provider(name: str, config: Any, _extension_path: str = "<unknown>") -> None:
             if register_provider is not None:
                 register_provider(name, config)
                 return
             self._model_registry.register_provider(name, config)
 
-        def runtime_register_native_provider(provider: Any) -> None:
+        def runtime_register_native_provider(provider: Any, _extension_path: str = "<unknown>") -> None:
             if register_native_provider is not None:
                 register_native_provider(provider)
                 return
             self._model_registry.register_provider(provider)
 
-        def runtime_unregister_provider(name: str) -> None:
+        def runtime_unregister_provider(name: str, _extension_path: str = "<unknown>") -> None:
             if unregister_provider is not None:
                 unregister_provider(name)
                 return
@@ -516,6 +557,55 @@ class ExtensionRunner:
 
     def get_flag_values(self) -> dict[str, Any]:
         return dict(self._runtime.flag_values)
+
+    def get_shortcuts(self, resolved_keybindings: dict[str, Any]) -> dict[str, ExtensionShortcut]:
+        """Extension shortcuts, minus the ones a reserved built-in owns.
+
+        Reserved keys are refused outright; every other collision is allowed
+        with a warning and last-registered wins.
+        """
+        self._shortcut_diagnostics = []
+        builtin_keybindings = _build_builtin_keybindings(resolved_keybindings)
+        extension_shortcuts: dict[str, ExtensionShortcut] = {}
+
+        def add_diagnostic(message: str, extension_path: str) -> None:
+            self._shortcut_diagnostics.append(ResourceDiagnostic(type="warning", message=message, path=extension_path))
+            if not self.has_ui():
+                print(message, file=sys.stderr)
+
+        for ext in self._extensions:
+            for key, shortcut in ext.shortcuts.items():
+                normalized_key = key.lower()
+
+                builtin = builtin_keybindings.get(normalized_key)
+                if builtin is not None and builtin["restrict_override"]:
+                    add_diagnostic(
+                        f"Extension shortcut '{key}' from {shortcut.extension_path} conflicts with "
+                        "built-in shortcut. Skipping.",
+                        shortcut.extension_path,
+                    )
+                    continue
+
+                if builtin is not None and not builtin["restrict_override"]:
+                    add_diagnostic(
+                        f"Extension shortcut conflict: '{key}' is built-in shortcut for "
+                        f"{builtin['keybinding']} and {shortcut.extension_path}. Using {shortcut.extension_path}.",
+                        shortcut.extension_path,
+                    )
+
+                existing = extension_shortcuts.get(normalized_key)
+                if existing is not None:
+                    add_diagnostic(
+                        f"Extension shortcut conflict: '{key}' registered by both {existing.extension_path} "
+                        f"and {shortcut.extension_path}. Using {shortcut.extension_path}.",
+                        shortcut.extension_path,
+                    )
+                extension_shortcuts[normalized_key] = shortcut
+
+        return extension_shortcuts
+
+    def get_shortcut_diagnostics(self) -> list[ResourceDiagnostic]:
+        return self._shortcut_diagnostics
 
     def get_model_registry(self) -> Any:
         return self._model_registry

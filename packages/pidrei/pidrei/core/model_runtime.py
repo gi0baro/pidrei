@@ -11,6 +11,7 @@ Deviations from pi (documented):
 """
 
 import os
+import threading
 from dataclasses import dataclass, field, replace
 
 import tonio.colored as tonio
@@ -106,6 +107,13 @@ class ModelRuntime:
         self._snapshot = _Snapshot()
         self._availability_refresh: _AvailabilityRun | None = None
         self._availability_error: str | None = None
+        # pi composes providers on one event loop, so a mutation and a rebuild
+        # can never interleave. Here a detached refresh rebuilds on another
+        # thread while a caller registers or unregisters on this one, and the
+        # window inside _recompose_provider (compose, *then* publish) is wide
+        # enough to lose an unregister. Every mutation of the composition
+        # inputs and every publish of a composed provider holds this.
+        self._composition_guard = threading.RLock()
         self._models = create_models(credentials=credentials, models_store=models_store)
         self._rebuild_providers()
 
@@ -189,40 +197,42 @@ class ModelRuntime:
         return list(seen.keys())
 
     def _recompose_provider(self, provider_id: str) -> None:
-        base = self._native_extension_providers.get(provider_id) or self._builtins.get(provider_id)
-        extension = self._extension_providers.get(provider_id)
-        if base is None and self._config.get_provider(provider_id) is None and extension is None:
-            self._models.delete_provider(provider_id)
-            self._composition_errors.pop(provider_id, None)
-            return
-        if base is not None and self._config.get_provider(provider_id) is None and extension is None:
-            # No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
-            self._models.set_provider(base)
-            self._composition_errors.pop(provider_id, None)
-            return
-        try:
-            self._models.set_provider(compose_model_provider(provider_id, base, self._config, extension))
-            self._composition_errors.pop(provider_id, None)
-        except Exception as error:
-            self._composition_errors[provider_id] = str(error)
-            if base is not None:
-                self._models.set_provider(base)
-            else:
+        with self._composition_guard:
+            base = self._native_extension_providers.get(provider_id) or self._builtins.get(provider_id)
+            extension = self._extension_providers.get(provider_id)
+            if base is None and self._config.get_provider(provider_id) is None and extension is None:
                 self._models.delete_provider(provider_id)
+                self._composition_errors.pop(provider_id, None)
+                return
+            if base is not None and self._config.get_provider(provider_id) is None and extension is None:
+                # No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
+                self._models.set_provider(base)
+                self._composition_errors.pop(provider_id, None)
+                return
+            try:
+                self._models.set_provider(compose_model_provider(provider_id, base, self._config, extension))
+                self._composition_errors.pop(provider_id, None)
+            except Exception as error:
+                self._composition_errors[provider_id] = str(error)
+                if base is not None:
+                    self._models.set_provider(base)
+                else:
+                    self._models.delete_provider(provider_id)
 
     def _rebuild_providers(self) -> None:
         # pi clears the collection and recomposes; its event loop makes that
         # atomic. Here mutations run truly in parallel with readers (detached
         # refresh tasks), so rebuild in place: recompose every desired
         # provider, then drop only the removed ones — no empty window.
-        self._composition_errors.clear()
-        desired = set(self._provider_ids())
-        for provider_id in desired:
-            self._recompose_provider(provider_id)
-        for provider in self._models.get_providers():
-            if provider.id not in desired:
-                self._models.delete_provider(provider.id)
-        self._update_model_snapshot()
+        with self._composition_guard:
+            self._composition_errors.clear()
+            desired = set(self._provider_ids())
+            for provider_id in desired:
+                self._recompose_provider(provider_id)
+            for provider in self._models.get_providers():
+                if provider.id not in desired:
+                    self._models.delete_provider(provider.id)
+            self._update_model_snapshot()
 
     def _update_model_snapshot(self) -> None:
         all_models = list(self._models.get_models())
@@ -513,10 +523,13 @@ class ModelRuntime:
 
     async def refresh(self, options: ModelsRefreshOptions | None = None) -> ModelsRefreshResult:
         options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
-        self._config = await ModelConfig.load(self._models_path)
-        self._rebuild_providers()
+        config = await ModelConfig.load(self._models_path)
+        with self._composition_guard:
+            self._config = config
+            self._rebuild_providers()
         result = await self._models.refresh(options)
-        self._update_model_snapshot()
+        with self._composition_guard:
+            self._update_model_snapshot()
         try:
             await self._await_run(self._force_refresh_availability())
         except Exception:
@@ -526,47 +539,50 @@ class ModelRuntime:
     def register_native_provider(self, provider: Provider) -> None:
         if not provider.id.strip():
             raise Exception("Provider id must not be empty.")
-        self._extension_providers.pop(provider.id, None)
-        self._native_extension_providers[provider.id] = provider
-        self._recompose_provider(provider.id)
-        self._update_model_snapshot()
+        with self._composition_guard:
+            self._extension_providers.pop(provider.id, None)
+            self._native_extension_providers[provider.id] = provider
+            self._recompose_provider(provider.id)
+            self._update_model_snapshot()
         tonio.spawn.without_tracking(self.refresh(ModelsRefreshOptions(allow_network=False)))
 
     def register_provider(self, provider_id: str, config: ProviderConfigInput) -> None:
-        # Validate the incoming registration on its own, like the legacy registry:
-        # a broken re-registration must throw without touching the stored config.
-        validate_extension_provider(
-            provider_id, self._builtins.get(provider_id), self._config.get_provider(provider_id), config
-        )
-        self._native_extension_providers.pop(provider_id, None)
-        # Re-registration merges defined values over the previous registration and
-        # preserves undefined ones, matching the legacy ModelRegistry contract.
-        previous = self._extension_providers.get(provider_id)
-        effective: ProviderConfigInput = {**(previous or {}), **config}
-        self._extension_providers[provider_id] = effective
-        self._recompose_provider(provider_id)
-        self._update_model_snapshot()
-        configured = configured_request_auth_status(self._config.get_provider(provider_id), effective)
-        if provider_id in self._snapshot.stored_providers or (configured is not None and configured.configured):
-            configured_providers = set(self._snapshot.configured_providers) | {provider_id}
-            auth = dict(self._snapshot.auth)
-            # Provisional entry until the async refresh lands; never clobber a real check result.
-            if not auth.get(provider_id):
-                auth[provider_id] = AuthCheck(
-                    type="oauth" if effective.get("oauth") and not effective.get("apiKey") else "api_key",
-                    source="configured provider",
-                )
-            self._snapshot = replace(
-                self._snapshot,
-                auth=auth,
-                configured_providers=configured_providers,
-                available=[model for model in self._snapshot.all if model.provider in configured_providers],
+        with self._composition_guard:
+            # Validate the incoming registration on its own, like the legacy registry:
+            # a broken re-registration must throw without touching the stored config.
+            validate_extension_provider(
+                provider_id, self._builtins.get(provider_id), self._config.get_provider(provider_id), config
             )
+            self._native_extension_providers.pop(provider_id, None)
+            # Re-registration merges defined values over the previous registration and
+            # preserves undefined ones, matching the legacy ModelRegistry contract.
+            previous = self._extension_providers.get(provider_id)
+            effective: ProviderConfigInput = {**(previous or {}), **config}
+            self._extension_providers[provider_id] = effective
+            self._recompose_provider(provider_id)
+            self._update_model_snapshot()
+            configured = configured_request_auth_status(self._config.get_provider(provider_id), effective)
+            if provider_id in self._snapshot.stored_providers or (configured is not None and configured.configured):
+                configured_providers = set(self._snapshot.configured_providers) | {provider_id}
+                auth = dict(self._snapshot.auth)
+                # Provisional entry until the async refresh lands; never clobber a real check result.
+                if not auth.get(provider_id):
+                    auth[provider_id] = AuthCheck(
+                        type="oauth" if effective.get("oauth") and not effective.get("apiKey") else "api_key",
+                        source="configured provider",
+                    )
+                self._snapshot = replace(
+                    self._snapshot,
+                    auth=auth,
+                    configured_providers=configured_providers,
+                    available=[model for model in self._snapshot.all if model.provider in configured_providers],
+                )
         tonio.spawn.without_tracking(self.refresh(ModelsRefreshOptions(allow_network=False)))
 
     def unregister_provider(self, provider_id: str) -> None:
-        self._extension_providers.pop(provider_id, None)
-        self._native_extension_providers.pop(provider_id, None)
-        self._recompose_provider(provider_id)
-        self._update_model_snapshot()
+        with self._composition_guard:
+            self._extension_providers.pop(provider_id, None)
+            self._native_extension_providers.pop(provider_id, None)
+            self._recompose_provider(provider_id)
+            self._update_model_snapshot()
         tonio.spawn.without_tracking(self.refresh(ModelsRefreshOptions(allow_network=False)))

@@ -1,20 +1,42 @@
-"""Local-resource subset of pi coding-agent src/core/package-manager.ts.
+"""Mirror of pi coding-agent src/core/package-manager.ts.
 
-Ports the resolution of *local* resources: settings-configured entries with
-include/exclude patterns, and auto-discovery from the user/project resource
-directories (extensions/, skills/, prompts/, themes/, plus ancestor
-.agents/skills dirs). npm/git package installation, pi-manifest handling, and
-the extension temp folder are Phase 5; configured `packages` entries are
-ignored here (documented deviation) and `resolve()` covers everything pi's
-DefaultPackageManager.resolve() does for a package-free configuration.
+Resolves local resources (settings-configured entries with include/exclude
+patterns, and auto-discovery from the user/project resource directories) and
+`packages` sources.
+
+**Package sources are git and local only** (decided 2026-07-26). pi also
+supports `npm:`, and roughly a third of its package-manager is the npm/pnpm/bun
+side of that: install roots, version ranges, `npm view` update checks, legacy
+global-install migration. A pidrei extension is a directory of `.py` modules,
+which is exactly what a git checkout hands you, so `npm:` has no analogue worth
+inventing — a PyPI story would buy a package-manager dependency and its own
+update path for a distribution channel we have not committed to yet (Phase 7).
+`npm:` sources are refused by name rather than silently ignored.
+
+Two further consequences of that decision, both deliberate:
+
+- pi runs `npm install --omit=dev` in a freshly cloned git package. The Python
+  equivalent would be installing a cloned package's dependencies into the host
+  interpreter, which is not something a config file should be able to do
+  silently; a git package is expected to be self-contained or to declare its
+  needs in its README.
+- pi's manifest is `package.json`'s `pi` key; here it is `pyproject.toml`'s
+  `[tool.pidrei]` table, the same file the extension loader reads.
 """
 
+import glob
+import hashlib
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..config import CONFIG_DIR_NAME
-from ..utils.paths import canonicalize_path, resolve_path
+from ..utils.git import parse_git_url
+from ..utils.paths import canonicalize_path, is_local_path, resolve_path
+from .exec import exec_command
+from .extensions.loader import is_extension_file, read_pidrei_manifest, resolve_extension_entries
 from .settings_manager import SettingsManager
 from .skills import IgnoreMatcher, add_ignore_rules
 from .source_info import PathMetadata
@@ -23,7 +45,8 @@ from .source_info import PathMetadata
 RESOURCE_TYPES = ("extensions", "skills", "prompts", "themes")
 
 _FILE_PATTERNS: dict[str, re.Pattern] = {
-    "extensions": re.compile(r"\.(ts|js|py)$"),
+    # pi matches `.ts`/`.js`; a pidrei extension is a Python module.
+    "extensions": re.compile(r"\.py$"),
     "skills": re.compile(r"\.md$"),
     "prompts": re.compile(r"\.md$"),
     "themes": re.compile(r"\.json$"),
@@ -43,6 +66,59 @@ class ResolvedPaths:
     skills: list[ResolvedResource] = field(default_factory=list)
     prompts: list[ResolvedResource] = field(default_factory=list)
     themes: list[ResolvedResource] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ProgressEvent:
+    """pi's ProgressEvent: `type` is start|complete|error, `action` is
+    install|pull|remove|update."""
+
+    type: str
+    action: str
+    source: str
+    message: str | None = None
+
+
+@dataclass(slots=True)
+class ConfiguredPackage:
+    source: str
+    scope: str  # "user" | "project"
+    installed_path: str | None = None
+
+
+@dataclass(slots=True)
+class LocalSource:
+    path: str
+    type: str = "local"
+
+
+@dataclass(slots=True)
+class GitSource:
+    repo: str
+    host: str
+    path: str
+    ref: str | None = None
+    type: str = "git"
+
+    @property
+    def pinned(self) -> bool:
+        """A configured ref is a checkout target, not a floating branch."""
+        return self.ref is not None
+
+
+class UnsupportedSourceError(Exception):
+    """Raised for a source pidrei deliberately does not support (`npm:`)."""
+
+
+def is_offline_mode_enabled() -> bool:
+    return bool(os.environ.get("PIDREI_OFFLINE"))
+
+
+def get_extension_temp_folder(agent_dir: str) -> str:
+    temp_folder = os.path.join(agent_dir, "tmp", "extensions")
+    os.makedirs(temp_folder, mode=0o700, exist_ok=True)
+    os.chmod(temp_folder, 0o700)
+    return temp_folder
 
 
 def _get_home_dir() -> str:
@@ -141,8 +217,35 @@ def _matches_any_exact_pattern(file_path: str, patterns: list[str], base_dir: st
     return False
 
 
+def _is_override_pattern(value: str) -> bool:
+    return value.startswith(("!", "+", "-"))
+
+
+def _has_glob_pattern(value: str) -> bool:
+    return "*" in value or "?" in value
+
+
 def _get_override_patterns(entries: list[str]) -> list[str]:
-    return [pattern for pattern in entries if pattern.startswith(("!", "+", "-"))]
+    return [pattern for pattern in entries if _is_override_pattern(pattern)]
+
+
+def apply_autoload_disabled_patterns(all_paths: list[str], patterns: list[str], base_dir: str) -> dict[str, bool]:
+    """Patterns for an `autoload: false` package: only what a pattern names is
+    decided at all, so the package contributes nothing by default."""
+    result: dict[str, bool] = {}
+    for pattern in patterns:
+        target = pattern[1:] if pattern.startswith(("+", "-", "!")) else pattern
+        enabled = not pattern.startswith(("-", "!"))
+        exact = pattern.startswith(("+", "-"))
+        for file_path in all_paths:
+            matched = (
+                _matches_any_exact_pattern(file_path, [target], base_dir)
+                if exact
+                else _matches_any_pattern(file_path, [target], base_dir)
+            )
+            if matched:
+                result[file_path] = enabled
+    return result
 
 
 def is_enabled_by_overrides(file_path: str, patterns: list[str], base_dir: str) -> bool:
@@ -354,11 +457,16 @@ def _collect_flat_entries(dir: str, suffix: str) -> list[str]:
 
 
 def _collect_auto_extension_entries(dir: str) -> list[str]:
-    """Auto-discovery of extension entry files (extension loading is Phase 5;
-    discovery keeps enable/disable bookkeeping consistent)."""
+    """Auto-discovery of extension entry files (pi's collectAutoExtensionEntries)."""
     entries: list[str] = []
     if not os.path.exists(dir):
         return entries
+
+    # A directory that declares its own entry points is one extension, not a
+    # folder of them.
+    root_entries = resolve_extension_entries(dir)
+    if root_entries:
+        return root_entries
 
     ig = IgnoreMatcher()
     add_ignore_rules(ig, dir, dir)
@@ -385,8 +493,12 @@ def _collect_auto_extension_entries(dir: str) -> list[str]:
         if ig.ignores(ignore_path):
             continue
 
-        if is_file and _FILE_PATTERNS["extensions"].search(entry.name):
+        if is_file and is_extension_file(entry.name):
             entries.append(full_path)
+        elif is_dir:
+            resolved_entries = resolve_extension_entries(full_path)
+            if resolved_entries:
+                entries.extend(resolved_entries)
 
     return entries
 
@@ -429,15 +541,373 @@ def collect_ancestor_agents_skill_dirs(start_dir: str) -> list[str]:
 
 
 class DefaultPackageManager:
-    """Local-resource resolver (see module docstring for the Phase 5 gaps)."""
+    """Resource and package-source resolver (see the module docstring for what
+    the git-only decision drops)."""
 
     def __init__(self, *, cwd: str, agent_dir: str, settings_manager: SettingsManager):
         self._cwd = resolve_path(cwd)
         self._agent_dir = resolve_path(agent_dir)
         self._settings_manager = settings_manager
+        self._progress_callback = None
+
+    # -- progress ----------------------------------------------------------------
+
+    def set_progress_callback(self, callback) -> None:
+        self._progress_callback = callback
+
+    def _emit_progress(self, event: ProgressEvent) -> None:
+        if self._progress_callback is not None:
+            self._progress_callback(event)
+
+    async def _with_progress(self, action: str, source: str, message: str, operation) -> None:
+        self._emit_progress(ProgressEvent(type="start", action=action, source=source, message=message))
+        try:
+            await operation()
+        except Exception as error:
+            self._emit_progress(ProgressEvent(type="error", action=action, source=source, message=str(error)))
+            raise
+        self._emit_progress(ProgressEvent(type="complete", action=action, source=source))
+
+    # -- source parsing ----------------------------------------------------------
+
+    def parse_source(self, source: str) -> LocalSource | GitSource:
+        """pi returns an npm|git|local union; here `npm:` is refused by name so
+        a stale pi config fails loudly instead of resolving to nothing."""
+        if source.startswith("npm:"):
+            raise UnsupportedSourceError(
+                f"npm package sources are not supported: {source}. "
+                "Use a git source (git:… or an https:// URL) or a local path."
+            )
+
+        if is_local_path(source):
+            return LocalSource(path=source)
+
+        parsed = parse_git_url(source)
+        if parsed is not None:
+            return GitSource(repo=parsed["repo"], host=parsed["host"], path=parsed["path"], ref=parsed.get("ref"))
+
+        return LocalSource(path=source)
+
+    def _get_package_source_string(self, package: Any) -> str:
+        return package if isinstance(package, str) else package["source"]
+
+    def _get_package_filter(self, package: Any) -> dict | None:
+        return None if isinstance(package, str) else package
+
+    def _get_package_identity(self, source: str, scope: str | None = None) -> str:
+        parsed = self.parse_source(source)
+        if isinstance(parsed, GitSource):
+            # host/path, so ssh and https forms of one repo are one package.
+            return f"git:{parsed.host}/{parsed.path}"
+        if scope:
+            return f"local:{self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope))}"
+        return f"local:{self._resolve_resource_path(parsed.path)}"
+
+    def _resolve_resource_path(self, path: str) -> str:
+        return resolve_path(path, self._cwd, home_dir=_get_home_dir(), trim=True)
 
     def _resolve_path_from_base(self, input: str, base_dir: str) -> str:
         return resolve_path(input, base_dir, home_dir=_get_home_dir(), trim=True)
+
+    # -- scopes and managed paths -------------------------------------------------
+
+    def _assert_project_trusted_for_scope(self, scope: str) -> None:
+        if scope == "project" and not self._settings_manager.is_project_trusted():
+            raise Exception("Project is not trusted; refusing to access project package storage")
+
+    def _get_base_dir_for_scope(self, scope: str) -> str:
+        if scope == "project":
+            self._assert_project_trusted_for_scope(scope)
+            return os.path.join(self._cwd, CONFIG_DIR_NAME)
+        if scope == "user":
+            return self._agent_dir
+        return self._cwd
+
+    def _resolve_managed_path(self, root: str, *parts: str) -> str:
+        resolved_root = os.path.abspath(root)
+        resolved_path = os.path.abspath(os.path.join(resolved_root, *parts))
+        if resolved_path != resolved_root and not resolved_path.startswith(f"{resolved_root}{os.sep}"):
+            raise Exception(f"Refusing to use path outside package install root: {resolved_path}")
+        return resolved_path
+
+    def _get_temporary_dir(self, prefix: str, suffix: str | None = None) -> str:
+        root = self._resolve_managed_path(get_extension_temp_folder(self._agent_dir), prefix)
+        digest = hashlib.sha256(f"{prefix}-{suffix or ''}".encode()).hexdigest()[:8]
+        return self._resolve_managed_path(root, digest, suffix or "")
+
+    def _get_git_install_root(self, scope: str) -> str | None:
+        if scope == "temporary":
+            return None
+        if scope == "project":
+            self._assert_project_trusted_for_scope(scope)
+            return os.path.join(self._cwd, CONFIG_DIR_NAME, "git")
+        return os.path.join(self._agent_dir, "git")
+
+    def _get_git_install_path(self, source: GitSource, scope: str) -> str:
+        if scope == "temporary":
+            return self._get_temporary_dir(f"git-{source.host}", source.path)
+        install_root = self._get_git_install_root(scope)
+        if not install_root:
+            raise Exception("Missing git install root")
+        return self._resolve_managed_path(install_root, source.host, source.path)
+
+    def get_installed_path(self, source: str, scope: str) -> str | None:
+        parsed = self.parse_source(source)
+        if isinstance(parsed, GitSource):
+            return self._get_git_install_path(parsed, scope)
+        return None
+
+    # -- git ---------------------------------------------------------------------
+
+    @staticmethod
+    def _ensure_git_ignore(git_root: str) -> None:
+        os.makedirs(git_root, exist_ok=True)
+        ignore_path = os.path.join(git_root, ".gitignore")
+        if not os.path.exists(ignore_path):
+            with open(ignore_path, "w", encoding="utf-8") as handle:
+                handle.write("*\n")
+
+    async def _run_command(self, command: str, args: list[str], *, cwd: str | None = None) -> str:
+        result = await exec_command(command, args, cwd or self._cwd)
+        if result.code != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise Exception(f"{command} {' '.join(args)} failed: {detail}")
+        return result.stdout
+
+    async def _ensure_git_ref(self, target_dir: str, fetch_args: list[str], ref: str) -> None:
+        await self._run_command("git", fetch_args, cwd=target_dir)
+        await self._run_command("git", ["checkout", "--force", ref], cwd=target_dir)
+
+    async def _get_local_git_update_target(self, target_dir: str) -> tuple[list[str], str]:
+        """Track the checked-out branch when the source pins no ref."""
+        try:
+            branch = (await self._run_command("git", ["rev-parse", "--abbrev-ref", "HEAD"], cwd=target_dir)).strip()
+        except Exception:
+            branch = ""
+        if not branch or branch == "HEAD":
+            return ["fetch", "origin"], "FETCH_HEAD"
+        return ["fetch", "origin", branch], "FETCH_HEAD"
+
+    async def _install_git(self, source: GitSource, scope: str) -> None:
+        target_dir = self._get_git_install_path(source, scope)
+        if os.path.exists(target_dir):
+            # Reconcile an existing checkout rather than re-cloning.
+            if source.ref:
+                await self._ensure_git_ref(target_dir, ["fetch", "origin", source.ref], "FETCH_HEAD")
+                return
+            fetch_args, ref = await self._get_local_git_update_target(target_dir)
+            await self._ensure_git_ref(target_dir, fetch_args, ref)
+            return
+
+        git_root = self._get_git_install_root(scope)
+        if git_root:
+            self._ensure_git_ignore(git_root)
+        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+
+        await self._run_command("git", ["clone", source.repo, target_dir])
+        if source.ref:
+            await self._run_command("git", ["checkout", source.ref], cwd=target_dir)
+
+    async def _update_git(self, source: GitSource, scope: str) -> None:
+        target_dir = self._get_git_install_path(source, scope)
+        if not os.path.exists(target_dir):
+            await self._install_git(source, scope)
+            return
+        if source.ref:
+            await self._ensure_git_ref(target_dir, ["fetch", "origin", source.ref], "FETCH_HEAD")
+            return
+        fetch_args, ref = await self._get_local_git_update_target(target_dir)
+        await self._ensure_git_ref(target_dir, fetch_args, ref)
+
+    async def _refresh_temporary_git_source(self, source: GitSource, source_str: str) -> None:
+        if is_offline_mode_enabled():
+            return
+        try:
+            await self._with_progress(
+                "pull", source_str, f"Refreshing {source_str}...", lambda: self._update_git(source, "temporary")
+            )
+        except Exception:
+            pass  # Keep the cached temporary checkout if the refresh fails.
+
+    async def _install_parsed_source(self, parsed: LocalSource | GitSource, scope: str) -> None:
+        if isinstance(parsed, GitSource):
+            await self._install_git(parsed, scope)
+
+    async def _remove_git(self, source: GitSource, scope: str) -> None:
+        target_dir = self._get_git_install_path(source, scope)
+        if not os.path.exists(target_dir):
+            return
+        shutil.rmtree(target_dir, ignore_errors=True)
+        self._prune_empty_git_parents(target_dir, self._get_git_install_root(scope))
+
+    @staticmethod
+    def _prune_empty_git_parents(target_dir: str, install_root: str | None) -> None:
+        if not install_root:
+            return
+        resolved_root = os.path.abspath(install_root)
+        current = os.path.dirname(target_dir)
+        while current.startswith(resolved_root) and current != resolved_root:
+            if not os.path.exists(current):
+                current = os.path.dirname(current)
+                continue
+            if os.listdir(current):
+                break
+            try:
+                shutil.rmtree(current, ignore_errors=True)
+            except OSError:
+                break
+            current = os.path.dirname(current)
+
+    # -- install / remove / update ------------------------------------------------
+
+    async def install(self, source: str, *, local: bool = False) -> None:
+        parsed = self.parse_source(source)
+        scope = "project" if local else "user"
+        self._assert_project_trusted_for_scope(scope)
+
+        async def run() -> None:
+            if isinstance(parsed, GitSource):
+                await self._install_git(parsed, scope)
+                return
+            resolved = self._resolve_resource_path(parsed.path)
+            if not os.path.exists(resolved):
+                raise Exception(f"Path does not exist: {resolved}")
+
+        await self._with_progress("install", source, f"Installing {source}...", run)
+
+    async def install_and_persist(self, source: str, *, local: bool = False) -> None:
+        await self.install(source, local=local)
+        self.add_source_to_settings(source, local=local)
+
+    async def remove(self, source: str, *, local: bool = False) -> None:
+        parsed = self.parse_source(source)
+        scope = "project" if local else "user"
+        self._assert_project_trusted_for_scope(scope)
+
+        async def run() -> None:
+            if isinstance(parsed, GitSource):
+                await self._remove_git(parsed, scope)
+
+        await self._with_progress("remove", source, f"Removing {source}...", run)
+
+    async def remove_and_persist(self, source: str, *, local: bool = False) -> bool:
+        await self.remove(source, local=local)
+        return self.remove_source_from_settings(source, local=local)
+
+    async def update(self, source: str | None = None) -> None:
+        """Update configured git packages. Sources with a pinned ref are
+        checkout targets, so they are re-reconciled rather than skipped."""
+        if is_offline_mode_enabled():
+            return
+
+        targets: list[tuple[GitSource, str, str]] = []
+        for package in self.list_configured_packages():
+            if source is not None and self._source_match_key_for_input(
+                package.source
+            ) != self._source_match_key_for_input(source):
+                continue
+            parsed = self.parse_source(package.source)
+            if isinstance(parsed, GitSource):
+                targets.append((parsed, package.scope, package.source))
+
+        if source is not None and not targets:
+            raise Exception(f"No matching package found for {source}")
+
+        for parsed, scope, source_str in targets:
+            await self._with_progress(
+                "update",
+                source_str,
+                f"Updating {source_str}...",
+                lambda parsed=parsed, scope=scope: self._update_git(parsed, scope),
+            )
+
+    # -- settings -----------------------------------------------------------------
+
+    def _source_match_key_for_input(self, source: str) -> str:
+        parsed = self.parse_source(source)
+        if isinstance(parsed, GitSource):
+            return f"git:{parsed.host}/{parsed.path}"
+        return f"local:{self._resolve_resource_path(parsed.path)}"
+
+    def _source_match_key_for_settings(self, source: str, scope: str) -> str:
+        parsed = self.parse_source(source)
+        if isinstance(parsed, GitSource):
+            return f"git:{parsed.host}/{parsed.path}"
+        return f"local:{self._resolve_path_from_base(parsed.path, self._get_base_dir_for_scope(scope))}"
+
+    def _package_sources_match(self, existing: Any, input_source: str, scope: str) -> bool:
+        left = self._source_match_key_for_settings(self._get_package_source_string(existing), scope)
+        return left == self._source_match_key_for_input(input_source)
+
+    def _normalize_package_source_for_settings(self, source: str, scope: str) -> str:
+        """Local sources are stored relative to their scope's settings base."""
+        parsed = self.parse_source(source)
+        if not isinstance(parsed, LocalSource):
+            return source
+        base_dir = self._get_base_dir_for_scope(scope)
+        return os.path.relpath(self._resolve_resource_path(parsed.path), base_dir) or "."
+
+    def _set_packages(self, packages: list[Any], scope: str) -> None:
+        if scope == "project":
+            self._settings_manager.set_project_packages(packages)
+        else:
+            self._settings_manager.set_packages(packages)
+
+    def _current_packages(self, scope: str) -> list[Any]:
+        settings = (
+            self._settings_manager.get_project_settings()
+            if scope == "project"
+            else self._settings_manager.get_global_settings()
+        )
+        return list(settings.get("packages") or [])
+
+    def add_source_to_settings(self, source: str, *, local: bool = False) -> bool:
+        scope = "project" if local else "user"
+        current_packages = self._current_packages(scope)
+        normalized = self._normalize_package_source_for_settings(source, scope)
+
+        for index, existing in enumerate(current_packages):
+            if not self._package_sources_match(existing, source, scope):
+                continue
+            if self._get_package_source_string(existing) == normalized:
+                return False
+            next_packages = list(current_packages)
+            # Replacing a ref must not drop the entry's resource filters.
+            next_packages[index] = normalized if isinstance(existing, str) else {**existing, "source": normalized}
+            self._set_packages(next_packages, scope)
+            return True
+
+        self._set_packages([*current_packages, normalized], scope)
+        return True
+
+    def remove_source_from_settings(self, source: str, *, local: bool = False) -> bool:
+        scope = "project" if local else "user"
+        current_packages = self._current_packages(scope)
+        next_packages = [
+            existing for existing in current_packages if not self._package_sources_match(existing, source, scope)
+        ]
+        if len(next_packages) == len(current_packages):
+            return False
+        self._set_packages(next_packages, scope)
+        return True
+
+    def list_configured_packages(self) -> list[ConfiguredPackage]:
+        configured: list[ConfiguredPackage] = []
+        for scope, settings in (
+            ("user", self._settings_manager.get_global_settings()),
+            ("project", self._settings_manager.get_project_settings()),
+        ):
+            for package in settings.get("packages") or []:
+                source = self._get_package_source_string(package)
+                installed = self.get_installed_path(source, scope)
+                configured.append(
+                    ConfiguredPackage(
+                        source=source,
+                        scope=scope,
+                        installed_path=installed if installed and os.path.exists(installed) else None,
+                    )
+                )
+        return configured
 
     def _collect_files_from_paths(self, paths: list[str], resource_type: str) -> list[str]:
         files: list[str] = []
@@ -648,12 +1118,249 @@ class DefaultPackageManager:
     def _create_accumulator(self) -> dict[str, dict[str, tuple[PathMetadata, bool]]]:
         return {resource_type: {} for resource_type in RESOURCE_TYPES}
 
-    async def resolve(self) -> ResolvedPaths:
+    # -- package resources -------------------------------------------------------
+
+    def _collect_files_from_manifest_entries(self, entries: list[str], root: str, resource_type: str) -> list[str]:
+        source_entries = [entry for entry in entries if not _is_override_pattern(entry)]
+        resolved: list[str] = []
+        for entry in source_entries:
+            if not _has_glob_pattern(entry):
+                resolved.append(os.path.abspath(os.path.join(root, entry)))
+                continue
+            resolved.extend(
+                os.path.abspath(os.path.join(root, match)) for match in glob.glob(entry, root_dir=root, recursive=True)
+            )
+        return self._collect_files_from_paths(resolved, resource_type)
+
+    def _collect_manifest_files(self, package_root: str, resource_type: str) -> list[str]:
+        manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
+        entries = (manifest or {}).get(resource_type)
+        if entries:
+            all_files = self._collect_files_from_manifest_entries(entries, package_root, resource_type)
+            manifest_patterns = _get_override_patterns(entries)
+            if manifest_patterns:
+                enabled = apply_patterns(all_files, manifest_patterns, package_root)
+                return [file for file in all_files if file in enabled]
+            return all_files
+
+        convention_dir = os.path.join(package_root, resource_type)
+        if not os.path.exists(convention_dir):
+            return []
+        return _collect_resource_files(convention_dir, resource_type)
+
+    def _add_manifest_entries(
+        self,
+        entries: list[str] | None,
+        root: str,
+        resource_type: str,
+        target: dict[str, tuple[PathMetadata, bool]],
+        metadata: PathMetadata,
+    ) -> None:
+        if not entries:
+            return
+        all_files = self._collect_files_from_manifest_entries(entries, root, resource_type)
+        enabled_paths = apply_patterns(all_files, _get_override_patterns(entries), root)
+        for file in all_files:
+            if file in enabled_paths:
+                self._add_resource(target, file, metadata, True)
+
+    def _collect_default_resources(
+        self,
+        package_root: str,
+        resource_type: str,
+        target: dict[str, tuple[PathMetadata, bool]],
+        metadata: PathMetadata,
+    ) -> None:
+        manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
+        entries = (manifest or {}).get(resource_type)
+        if entries:
+            self._add_manifest_entries(entries, package_root, resource_type, target, metadata)
+            return
+        directory = os.path.join(package_root, resource_type)
+        if os.path.exists(directory):
+            for file in _collect_resource_files(directory, resource_type):
+                self._add_resource(target, file, metadata, True)
+
+    def _apply_package_filter(
+        self,
+        package_root: str,
+        user_patterns: list[str],
+        resource_type: str,
+        target: dict[str, tuple[PathMetadata, bool]],
+        metadata: PathMetadata,
+    ) -> None:
+        all_files = self._collect_manifest_files(package_root, resource_type)
+        if not user_patterns:
+            # An explicitly empty list disables every resource of this type.
+            for file in all_files:
+                self._add_resource(target, file, metadata, False)
+            return
+
+        enabled_by_user = apply_patterns(all_files, user_patterns, package_root)
+        for file in all_files:
+            self._add_resource(target, file, metadata, file in enabled_by_user)
+
+    def _apply_package_delta_filter(
+        self,
+        package_root: str,
+        user_patterns: list[str],
+        resource_type: str,
+        target: dict[str, tuple[PathMetadata, bool]],
+        metadata: PathMetadata,
+    ) -> None:
+        if not user_patterns:
+            return
+        all_files = self._collect_manifest_files(package_root, resource_type)
+        for file_path, enabled in apply_autoload_disabled_patterns(all_files, user_patterns, package_root).items():
+            self._add_resource(target, file_path, metadata, enabled)
+
+    def _collect_package_resources(
+        self,
+        package_root: str,
+        accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
+        filter: dict | None,
+        metadata: PathMetadata,
+    ) -> bool:
+        if filter is not None:
+            for resource_type in RESOURCE_TYPES:
+                patterns = filter.get(resource_type)
+                target = accumulator[resource_type]
+                if filter.get("autoload") is False:
+                    self._apply_package_delta_filter(package_root, patterns or [], resource_type, target, metadata)
+                elif patterns is not None:
+                    self._apply_package_filter(package_root, patterns, resource_type, target, metadata)
+                else:
+                    self._collect_default_resources(package_root, resource_type, target, metadata)
+            return True
+
+        manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
+        if manifest:
+            for resource_type in RESOURCE_TYPES:
+                self._add_manifest_entries(
+                    manifest.get(resource_type), package_root, resource_type, accumulator[resource_type], metadata
+                )
+            return True
+
+        has_any_dir = False
+        for resource_type in RESOURCE_TYPES:
+            directory = os.path.join(package_root, resource_type)
+            if os.path.exists(directory):
+                for file in _collect_resource_files(directory, resource_type):
+                    self._add_resource(accumulator[resource_type], file, metadata, True)
+                has_any_dir = True
+        return has_any_dir
+
+    def _resolve_local_extension_source(
+        self,
+        source: LocalSource,
+        accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
+        filter: dict | None,
+        metadata: PathMetadata,
+        base_dir: str,
+    ) -> None:
+        resolved = self._resolve_path_from_base(source.path, base_dir)
+        if not os.path.exists(resolved):
+            return
+        try:
+            if os.path.isfile(resolved):
+                metadata.base_dir = os.path.dirname(resolved)
+                self._add_resource(accumulator["extensions"], resolved, metadata, True)
+                return
+            if os.path.isdir(resolved):
+                metadata.base_dir = resolved
+                if not self._collect_package_resources(resolved, accumulator, filter, metadata):
+                    self._add_resource(accumulator["extensions"], resolved, metadata, True)
+        except OSError:
+            return
+
+    # -- package sources ---------------------------------------------------------
+
+    def _dedupe_packages(self, packages: list[tuple[Any, str]]) -> list[tuple[Any, str]]:
+        result: list[tuple[Any, str]] = []
+        seen: dict[str, int] = {}
+        for package, scope in packages:
+            identity = self._get_package_identity(self._get_package_source_string(package), scope)
+            index = seen.get(identity)
+            if index is None:
+                seen[identity] = len(result)
+                result.append((package, scope))
+                continue
+            existing_package, existing_scope = result[index]
+            if existing_scope == "project" and scope == "user":
+                # A project delta entry layers over the global package, so both stay.
+                if isinstance(existing_package, dict) and existing_package.get("autoload") is False:
+                    result.append((package, scope))
+            elif scope == "project":
+                result[index] = (package, scope)
+        return result
+
+    def _find_autoload_delta_base(
+        self, package: Any, scope: str, sources: list[tuple[Any, str]]
+    ) -> tuple[str, str] | None:
+        if scope != "project" or not isinstance(package, dict) or package.get("autoload") is not False:
+            return None
+        identity = self._get_package_identity(package["source"], scope)
+        for entry_package, entry_scope in sources:
+            if entry_scope != "user":
+                continue
+            if self._get_package_identity(self._get_package_source_string(entry_package), "user") == identity:
+                return self._get_package_source_string(entry_package), "user"
+        return None
+
+    async def _resolve_package_sources(
+        self,
+        sources: list[tuple[Any, str]],
+        accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
+        on_missing=None,
+    ) -> None:
+        for package, scope in sources:
+            source_str = self._get_package_source_string(package)
+            filter = self._get_package_filter(package)
+            delta_base = self._find_autoload_delta_base(package, scope, sources)
+            resolved_source = delta_base[0] if delta_base else source_str
+            resolved_scope = delta_base[1] if delta_base else scope
+            parsed = self.parse_source(resolved_source)
+            metadata = PathMetadata(source=source_str, scope=scope, origin="package")
+
+            if isinstance(parsed, LocalSource):
+                base_dir = self._get_base_dir_for_scope(resolved_scope)
+                self._resolve_local_extension_source(parsed, accumulator, filter, metadata, base_dir)
+                continue
+
+            async def install_missing(parsed=parsed, resolved_source=resolved_source, scope=resolved_scope) -> bool:
+                if is_offline_mode_enabled():
+                    return False
+                if on_missing is None:
+                    await self._install_parsed_source(parsed, scope)
+                    return True
+                action = await on_missing(resolved_source)
+                if action == "skip":
+                    return False
+                if action == "error":
+                    raise Exception(f"Missing source: {resolved_source}")
+                await self._install_parsed_source(parsed, scope)
+                return True
+
+            installed_path = self._get_git_install_path(parsed, resolved_scope)
+            if not os.path.exists(installed_path):
+                if not await install_missing():
+                    continue
+            elif resolved_scope == "temporary" and not parsed.pinned and not is_offline_mode_enabled():
+                await self._refresh_temporary_git_source(parsed, resolved_source)
+            metadata.base_dir = installed_path
+            self._collect_package_resources(installed_path, accumulator, filter, metadata)
+
+    async def resolve(self, on_missing=None) -> ResolvedPaths:
         accumulator = self._create_accumulator()
         global_settings = self._settings_manager.get_global_settings()
         project_settings = self._settings_manager.get_project_settings()
 
-        # Configured `packages` sources are Phase 5 (npm/git installation).
+        # Project first, so cwd resources win collisions.
+        all_packages: list[tuple[Any, str]] = [
+            *[(package, "project") for package in (project_settings.get("packages") or [])],
+            *[(package, "user") for package in (global_settings.get("packages") or [])],
+        ]
+        await self._resolve_package_sources(self._dedupe_packages(all_packages), accumulator, on_missing)
 
         global_base_dir = self._agent_dir
         project_base_dir = os.path.join(self._cwd, CONFIG_DIR_NAME)
@@ -686,20 +1393,10 @@ class DefaultPackageManager:
     async def resolve_extension_sources(
         self, sources: list[str], *, local: bool = False, temporary: bool = False
     ) -> ResolvedPaths:
-        """Resolve CLI-passed sources. Only local paths are supported for now
-        (npm/git sources are Phase 5)."""
+        """Resolve CLI-passed sources through the same path as configured
+        packages, so a `--extension` pointing at a package directory picks up
+        its skills and themes too."""
         accumulator = self._create_accumulator()
         scope = "temporary" if temporary else ("project" if local else "user")
-        metadata = PathMetadata(source="cli" if temporary else "local", scope=scope, origin="top-level")
-
-        for source in sources:
-            resolved = self._resolve_path_from_base(source, self._cwd)
-            if not os.path.exists(resolved):
-                continue
-            if os.path.isdir(resolved):
-                for file in _collect_auto_extension_entries(resolved):
-                    self._add_resource(accumulator["extensions"], file, metadata, True)
-            elif _FILE_PATTERNS["extensions"].search(resolved):
-                self._add_resource(accumulator["extensions"], resolved, metadata, True)
-
+        await self._resolve_package_sources([(source, scope) for source in sources], accumulator)
         return self._to_resolved_paths(accumulator)

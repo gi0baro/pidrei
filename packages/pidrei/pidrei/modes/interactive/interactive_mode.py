@@ -882,7 +882,8 @@ class InteractiveMode:
             )
             check = getattr(package_manager, "check_for_available_updates", None)
             if check is None:
-                # Package installation/update checking is Phase 5.
+                # Package update *checking* is Phase 7, with the
+                # package-manager subcommands and the distribution channel.
                 return []
             updates = await check()
             return [update["displayName"] if isinstance(update, dict) else update.display_name for update in updates]

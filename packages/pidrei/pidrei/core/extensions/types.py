@@ -1,11 +1,11 @@
-"""Subset of pi coding-agent src/core/extensions/types.ts.
+"""Mirror of pi coding-agent src/core/extensions/types.ts.
 
 The tool layer pieces (ToolDefinition) plus the structural records the
-ExtensionRunner and AgentSession need (Extension, ExtensionRuntime,
-RegisteredTool, commands, LoadExtensionsResult). Extension *loading* (the
-ExtensionAPI surface handed to extension factories, discovery, the Python
-extension ABI) is Phase 5 — in Phase 3 every LoadExtensionsResult carries an
-empty extension list, so the runner's hook bus runs with zero handlers.
+ExtensionRunner, the loader and AgentSession need (Extension,
+ExtensionRuntime, RegisteredTool, commands, LoadExtensionsResult). The
+context objects extensions actually receive live in `runner.py`
+(`_RunnerContext`/`_RunnerCommandContext`), because every field on them
+resolves through the runner at access time.
 """
 
 from collections.abc import Callable
@@ -13,11 +13,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-class ExtensionContext:
-    """Placeholder for pi's ExtensionContext (Phase 5).
+RUNTIME_NOT_INITIALIZED = "Extension runtime not initialized. Action methods cannot be called during extension loading."
 
-    Tools only duck-read optional attributes from it (session_manager, model,
-    thinking_level, ...); a plain attribute bag keeps the seam alive.
+
+class ExtensionContext:
+    """Duck-typed stand-in for pi's ExtensionContext.
+
+    The real context an extension sees is the runner's; this is the shape
+    tools accept when there is no session behind them (they only duck-read
+    optional attributes: session_manager, model, thinking_level, ...).
     """
 
     def __init__(self, **attributes: Any):
@@ -74,7 +78,7 @@ class ExtensionError:
 
 @dataclass(slots=True)
 class ExtensionFlag:
-    """CLI flag registered by an extension (pi's ExtensionFlag subset)."""
+    """CLI flag registered by an extension (pi's ExtensionFlag)."""
 
     type: str  # "boolean" | "string"
     description: str | None = None
@@ -82,6 +86,17 @@ class ExtensionFlag:
     # pidrei registries also key flag maps by it).
     name: str = ""
     # Path of the extension that registered the flag.
+    extension_path: str = ""
+    default: Any = None
+
+
+@dataclass(slots=True)
+class ExtensionShortcut:
+    """Keyboard shortcut registered by an extension (pi's ExtensionShortcut)."""
+
+    shortcut: str
+    handler: Any  # (ctx) -> None | awaitable
+    description: str | None = None
     extension_path: str = ""
 
 
@@ -123,6 +138,8 @@ class RegisteredCommand:
     handler: Any  # async (args: str, ctx) -> None
     description: str | None = None
     source_info: Any = None
+    # (argument_prefix) -> list[AutocompleteItem] | None, optionally awaitable.
+    get_argument_completions: Any = None
 
 
 @dataclass(slots=True)
@@ -134,13 +151,15 @@ class ResolvedCommand(RegisteredCommand):
 
 @dataclass(slots=True)
 class Extension:
-    """Loaded extension record iterated by the ExtensionRunner.
-
-    Phase 3 never constructs these (loading is Phase 5); the runner and its
-    tests only need the structural shape.
-    """
+    """Loaded extension record iterated by the ExtensionRunner."""
 
     path: str
+    # Absolute path the module was imported from. For inline extensions
+    # (`<inline:name>`) pi keeps the pseudo-path in both fields.
+    resolved_path: str = ""
+    source_info: Any = None
+    # Omit this extension from the startup Extensions list.
+    hidden: bool = False
     # event type -> handlers; a single extension may register several per event.
     handlers: dict[str, list[Any]] = field(default_factory=dict)
     tools: dict[str, RegisteredTool] = field(default_factory=dict)
@@ -164,6 +183,10 @@ class ExtensionRuntime:
         self.pending_provider_registrations: list[Any] = []
         self.pending_native_provider_registrations: list[Any] = []
 
+        # register_tool() is valid during extension load; a refresh is only
+        # needed once the session is bound.
+        self.refresh_tools: Callable[[], None] = lambda: None
+
         # Actions copied in by ExtensionRunner.bind_core().
         self.send_message: Callable[..., None] | None = None
         self.send_user_message: Callable[..., None] | None = None
@@ -174,23 +197,42 @@ class ExtensionRuntime:
         self.get_active_tools: Callable[[], list[str]] = list
         self.get_all_tools: Callable[[], list[Any]] = list
         self.set_active_tools: Callable[..., None] | None = None
-        self.refresh_tools: Callable[[], None] | None = None
         self.get_commands: Callable[[], list[Any]] = list
         self.set_model: Callable[..., Any] | None = None
         self.get_thinking_level: Callable[[], Any] = lambda: "off"
         self.set_thinking_level: Callable[..., None] | None = None
 
-        # Provider registration hooks (rebound by bind_core to take effect
-        # immediately without a /reload).
-        self.register_provider: Callable[..., None] | None = None
-        self.register_native_provider: Callable[..., None] | None = None
-        self.unregister_provider: Callable[..., None] | None = None
+        # Provider registration hooks. Pre-bind they queue, so a registration
+        # made while extensions are still loading survives until the model
+        # registry exists; bind_core() flushes the queues and replaces these
+        # with direct calls, so later registrations need no /reload.
+        self.register_provider: Callable[..., None] = self._queue_provider
+        self.register_native_provider: Callable[..., None] = self._queue_native_provider
+        self.unregister_provider: Callable[..., None] = self._unqueue_provider
 
         self._stale_message: str | None = None
+
+    def _queue_provider(self, name: str, config: Any, extension_path: str = "<unknown>") -> None:
+        self.pending_provider_registrations.append({"name": name, "config": config, "extension_path": extension_path})
+
+    def _queue_native_provider(self, provider: Any, extension_path: str = "<unknown>") -> None:
+        self.pending_native_provider_registrations.append({"provider": provider, "extension_path": extension_path})
+
+    def _unqueue_provider(self, name: str, _extension_path: str = "<unknown>") -> None:
+        self.pending_provider_registrations = [
+            entry for entry in self.pending_provider_registrations if entry["name"] != name
+        ]
+        self.pending_native_provider_registrations = [
+            entry for entry in self.pending_native_provider_registrations if entry["provider"].id != name
+        ]
 
     def invalidate(self, message: str) -> None:
         if self._stale_message is None:
             self._stale_message = message
+
+    def assert_active(self) -> None:
+        if self._stale_message is not None:
+            raise RuntimeError(self._stale_message)
 
 
 @dataclass(slots=True)
@@ -201,8 +243,7 @@ class ExtensionLoadError:
 
 @dataclass(slots=True)
 class LoadExtensionsResult:
-    """pi's LoadExtensionsResult; extension loading itself is Phase 5, so the
-    extension list is always empty in Phase 3 while the runtime is real."""
+    """pi's LoadExtensionsResult."""
 
     extensions: list[Extension] = field(default_factory=list)
     errors: list[ExtensionLoadError] = field(default_factory=list)

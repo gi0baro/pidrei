@@ -1,26 +1,32 @@
-"""Mirror of pi coding-agent src/core/resource-loader.ts (Phase 3 subset).
+"""Mirror of pi coding-agent src/core/resource-loader.ts.
 
-Loads skills, prompt templates, AGENTS.md context files, and SYSTEM.md /
-APPEND_SYSTEM.md, with the project-trust bootstrap flow. Extensions load as
-an empty result (the extension system is Phase 5); both keep their
-option/override seams so the
-call sites port unchanged.
+Loads extensions, skills, prompt templates, AGENTS.md context files, and
+SYSTEM.md / APPEND_SYSTEM.md, with the project-trust bootstrap flow.
 """
 
 import os
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from typing import Any
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
 from .diagnostics import ResourceCollision, ResourceDiagnostic
-from .extensions.types import ExtensionLoadError, LoadExtensionsResult
+from .event_bus import EventBus
+from .extensions.loader import (
+    clear_extension_cache,
+    create_extension_runtime,
+    load_extension_from_factory,
+    load_extensions_cached,
+)
+from .extensions.types import Extension, ExtensionLoadError, ExtensionRuntime, LoadExtensionsResult
 from .package_manager import DefaultPackageManager, ResolvedResource
 from .prompt_templates import PromptTemplate, load_prompt_templates
 from .settings_manager import SettingsManager
 from .skills import LoadSkillsResult, Skill, load_skills
 from .source_info import PathMetadata, SourceInfo, create_source_info
+from .timings import reset_timings
 
 
 @dataclass(slots=True)
@@ -110,6 +116,8 @@ class DefaultResourceLoader:
         cwd: str,
         agent_dir: str,
         settings_manager: SettingsManager | None = None,
+        event_bus: EventBus | None = None,
+        extension_factories: list[Any] | None = None,
         additional_extension_paths: list[str] | None = None,
         additional_skill_paths: list[str] | None = None,
         additional_prompt_template_paths: list[str] | None = None,
@@ -121,6 +129,7 @@ class DefaultResourceLoader:
         no_context_files: bool = False,
         system_prompt: str | None = None,
         append_system_prompt: list[str] | None = None,
+        extensions_override: Callable[[LoadExtensionsResult], LoadExtensionsResult] | None = None,
         skills_override: Callable[[LoadSkillsResult], LoadSkillsResult] | None = None,
         prompts_override: Callable[[LoadPromptsResult], LoadPromptsResult] | None = None,
         agents_files_override: Callable[[list[AgentsFile]], list[AgentsFile]] | None = None,
@@ -135,6 +144,8 @@ class DefaultResourceLoader:
         self._package_manager = DefaultPackageManager(
             cwd=self._cwd, agent_dir=self._agent_dir, settings_manager=self._settings_manager
         )
+        self._event_bus = event_bus if event_bus is not None else EventBus()
+        self._extension_factories = extension_factories or []
         self._additional_extension_paths = additional_extension_paths or []
         self._additional_skill_paths = additional_skill_paths or []
         self._additional_prompt_template_paths = additional_prompt_template_paths or []
@@ -146,13 +157,15 @@ class DefaultResourceLoader:
         self._no_context_files = no_context_files
         self._system_prompt_source = system_prompt
         self._append_system_prompt_source = append_system_prompt
+        self._extensions_override = extensions_override
         self._skills_override = skills_override
         self._prompts_override = prompts_override
         self._agents_files_override = agents_files_override
         self._system_prompt_override = system_prompt_override
         self._append_system_prompt_override = append_system_prompt_override
 
-        self._extensions_result = LoadExtensionsResult()
+        self._extensions_result = LoadExtensionsResult(runtime=create_extension_runtime())
+        self._loaded = False
         self._skills: list[Skill] = []
         self._skill_diagnostics: list[ResourceDiagnostic] = []
         self._prompts: list[PromptTemplate] = []
@@ -226,14 +239,19 @@ class DefaultResourceLoader:
         # extensions/packages out while still loading user/global and temporary CLI extensions.
         self._settings_manager.set_project_trusted(False)
         self._settings_manager.reload()
-        # Extension loading is Phase 5; the bootstrap pass yields no extensions.
-        return LoadExtensionsResult()
+        return await self._load_current_extension_set(include_inline_factories=True)
 
     async def reload(
         self,
         *,
         resolve_project_trust: Callable[[LoadExtensionsResult], Awaitable[bool]] | None = None,
     ) -> None:
+        reset_timings("extensions")
+
+        if self._loaded:
+            clear_extension_cache()
+
+        pre_trust_extensions: LoadExtensionsResult | None = None
         if resolve_project_trust is not None:
             pre_trust_extensions = await self.load_project_trust_extensions()
             project_trusted = await resolve_project_trust(pre_trust_extensions)
@@ -259,20 +277,26 @@ class DefaultResourceLoader:
         def get_enabled_paths(resources: list[ResolvedResource]) -> list[str]:
             return [resource.path for resource in get_enabled_resources(resources)]
 
+        enabled_extensions = get_enabled_paths(resolved_paths.extensions)
         enabled_skill_resources = get_enabled_resources(resolved_paths.skills)
         enabled_prompts = get_enabled_paths(resolved_paths.prompts)
 
         enabled_skills = [self._map_skill_path(resource, metadata_by_path) for resource in enabled_skill_resources]
 
-        for resource in cli_extension_paths.skills:
+        for resource in [*cli_extension_paths.extensions, *cli_extension_paths.skills]:
             if resource.path not in metadata_by_path:
                 metadata_by_path[resource.path] = PathMetadata(source="cli", scope="temporary", origin="top-level")
 
+        cli_enabled_extensions = get_enabled_paths(cli_extension_paths.extensions)
         cli_enabled_skills = get_enabled_paths(cli_extension_paths.skills)
         cli_enabled_prompts = get_enabled_paths(cli_extension_paths.prompts)
 
-        # Extension loading is Phase 5: report missing explicit extension paths only.
-        extensions_result = LoadExtensionsResult()
+        if self._no_extensions:
+            extension_paths = cli_enabled_extensions
+        else:
+            extension_paths = self._merge_paths(cli_enabled_extensions, enabled_extensions)
+
+        extensions_result = await self._load_final_extension_set(extension_paths, pre_trust_extensions)
         for path in self._additional_extension_paths:
             if is_local_path(path):
                 resolved = self._resolve_resource_path(path)
@@ -280,7 +304,10 @@ class DefaultResourceLoader:
                     extensions_result.errors.append(
                         ExtensionLoadError(path=resolved, error=f"Extension path does not exist: {resolved}")
                     )
-        self._extensions_result = extensions_result
+        self._extensions_result = (
+            self._extensions_override(extensions_result) if self._extensions_override else extensions_result
+        )
+        self._apply_extension_source_info(self._extensions_result.extensions, metadata_by_path)
 
         if self._no_skills:
             skill_paths = self._merge_paths(cli_enabled_skills, self._additional_skill_paths)
@@ -356,6 +383,142 @@ class DefaultResourceLoader:
             if self._append_system_prompt_override is not None
             else base_append
         )
+        self._loaded = True
+
+    # -- extension loading -------------------------------------------------------
+
+    async def _load_current_extension_set(self, *, include_inline_factories: bool) -> LoadExtensionsResult:
+        resolved_paths = await self._package_manager.resolve()
+        cli_extension_paths = await self._package_manager.resolve_extension_sources(
+            self._additional_extension_paths, temporary=True
+        )
+        enabled = [resource.path for resource in resolved_paths.extensions if resource.enabled]
+        cli_enabled = [resource.path for resource in cli_extension_paths.extensions if resource.enabled]
+        extension_paths = cli_enabled if self._no_extensions else self._merge_paths(cli_enabled, enabled)
+
+        extensions_result = await load_extensions_cached(extension_paths, self._cwd, self._event_bus)
+        if not include_inline_factories:
+            return extensions_result
+
+        inline_extensions, inline_errors = await self._load_extension_factories(extensions_result.runtime)
+        extensions_result.extensions.extend(inline_extensions)
+        extensions_result.errors.extend(inline_errors)
+        return extensions_result
+
+    def _resolve_extension_load_path(self, path: str) -> str:
+        return resolve_path(path, self._cwd, normalize_unicode_spaces=True)
+
+    async def _load_final_extension_set(
+        self, extension_paths: list[str], pre_trust_extensions: LoadExtensionsResult | None
+    ) -> LoadExtensionsResult:
+        if pre_trust_extensions is None:
+            extensions_result = await load_extensions_cached(extension_paths, self._cwd, self._event_bus)
+            inline_extensions, inline_errors = await self._load_extension_factories(extensions_result.runtime)
+            extensions_result.extensions.extend(inline_extensions)
+            extensions_result.errors.extend(inline_errors)
+            self._add_extension_conflict_diagnostics(extensions_result)
+            return extensions_result
+
+        # The bootstrap pass already ran these factories; re-running them would
+        # double every registration, so only the paths it did not reach load now.
+        preloaded_by_path = {
+            extension.resolved_path: extension
+            for extension in pre_trust_extensions.extensions
+            if not extension.path.startswith("<inline:")
+        }
+        failed_preload_paths = {self._resolve_extension_load_path(error.path) for error in pre_trust_extensions.errors}
+        remaining_paths = [
+            path
+            for path in extension_paths
+            if self._resolve_extension_load_path(path) not in preloaded_by_path
+            and self._resolve_extension_load_path(path) not in failed_preload_paths
+        ]
+        remaining = await load_extensions_cached(
+            remaining_paths, self._cwd, self._event_bus, pre_trust_extensions.runtime
+        )
+        loaded_by_path = dict(preloaded_by_path)
+        for extension in remaining.extensions:
+            loaded_by_path[extension.resolved_path] = extension
+
+        inline_extensions = [
+            extension for extension in pre_trust_extensions.extensions if extension.path.startswith("<inline:")
+        ]
+        ordered = [
+            extension
+            for path in extension_paths
+            if (extension := loaded_by_path.get(self._resolve_extension_load_path(path))) is not None
+        ]
+        ordered.extend(inline_extensions)
+
+        extensions_result = LoadExtensionsResult(
+            extensions=ordered,
+            errors=[*pre_trust_extensions.errors, *remaining.errors],
+            runtime=pre_trust_extensions.runtime,
+        )
+        self._add_extension_conflict_diagnostics(extensions_result)
+        return extensions_result
+
+    async def _load_extension_factories(
+        self, runtime: ExtensionRuntime
+    ) -> tuple[list[Extension], list[ExtensionLoadError]]:
+        extensions: list[Extension] = []
+        errors: list[ExtensionLoadError] = []
+
+        for index, entry in enumerate(self._extension_factories):
+            named = not callable(entry)
+            factory = entry.factory if named else entry
+            extension_path = f"<inline:{entry.name if named else index + 1}>"
+            try:
+                extension = await load_extension_from_factory(
+                    factory, self._cwd, self._event_bus, runtime, extension_path
+                )
+                extension.hidden = bool(named and getattr(entry, "hidden", False))
+                extensions.append(extension)
+            except Exception as error:
+                errors.append(ExtensionLoadError(path=extension_path, error=str(error)))
+
+        return extensions, errors
+
+    def _add_extension_conflict_diagnostics(self, extensions_result: LoadExtensionsResult) -> None:
+        """Conflicts are reported, never resolved: every extension stays
+        loaded and load order decides precedence."""
+        for path, message in self._detect_extension_conflicts(extensions_result.extensions):
+            extensions_result.errors.append(ExtensionLoadError(path=path, error=message))
+
+    def _detect_extension_conflicts(self, extensions: list[Extension]) -> list[tuple[str, str]]:
+        conflicts: list[tuple[str, str]] = []
+        tool_owners: dict[str, str] = {}
+        flag_owners: dict[str, str] = {}
+
+        for extension in extensions:
+            for tool_name in extension.tools:
+                owner = tool_owners.get(tool_name)
+                if owner is not None and owner != extension.path:
+                    conflicts.append((extension.path, f'Tool "{tool_name}" conflicts with {owner}'))
+                else:
+                    tool_owners[tool_name] = extension.path
+
+            for flag_name in extension.flags:
+                owner = flag_owners.get(flag_name)
+                if owner is not None and owner != extension.path:
+                    conflicts.append((extension.path, f'Flag "--{flag_name}" conflicts with {owner}'))
+                else:
+                    flag_owners[flag_name] = extension.path
+
+        return conflicts
+
+    def _apply_extension_source_info(
+        self, extensions: list[Extension], metadata_by_path: dict[str, PathMetadata]
+    ) -> None:
+        for extension in extensions:
+            source_info = self._find_source_info_for_path(
+                extension.path, None, metadata_by_path
+            ) or self._get_default_source_info_for_path(extension.path)
+            extension.source_info = source_info
+            for command in extension.commands.values():
+                command.source_info = source_info
+            for tool in extension.tools.values():
+                tool.source_info = source_info
 
     # -- helpers ----------------------------------------------------------------
 

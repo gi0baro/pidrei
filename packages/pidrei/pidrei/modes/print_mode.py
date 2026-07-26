@@ -59,8 +59,8 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
     def register_signal_handlers() -> None:
         # pi awaits runtime disposal before exiting on a signal; a sync
         # Python signal handler cannot await, so the handler kills tracked
-        # children and exits directly (extension shutdown on signal is
-        # revisited with extension loading in Phase 5).
+        # children and exits directly. Extension shutdown on signal is
+        # pi's regression 5080, still to mirror.
         def make_handler(exit_status: int):
             def handler(_signum, _frame) -> None:
                 kill_tracked_detached_children()

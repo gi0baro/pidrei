@@ -10,8 +10,7 @@ pi's six AbortController scopes map to named CancelTokens: prompt (owned by
 the Agent), compaction, auto-compaction, branch-summary, retry, and bash.
 
 export_to_html landed with the Phase 4 export-html slice; export_to_jsonl
-is here. Extension loading is Phase 5 — the
-ExtensionRunner runs with zero extensions but the full event flow is wired.
+is here.
 """
 
 import os

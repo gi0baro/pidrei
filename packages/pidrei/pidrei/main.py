@@ -8,7 +8,8 @@ Port notes (Phase 3):
 - POSIX-only: pi's win32 branches (self-update quarantine cleanup) are not
   ported.
 - The `install/remove/uninstall/update/list/config` subcommands
-  (package-manager-cli.ts) land with npm/git package sources in Phase 5.
+  (package-manager-cli.ts) are Phase 7: they depend on the distribution
+  channel decision. The package manager underneath them is ported.
 - migrations.ts is not ported: all migrations are pi-version-legacy
   cleanups a fresh ~/.pidrei/ cannot contain (see PLAN); the interactive
   deprecation-warning display that reads its output is skipped with it.
@@ -52,6 +53,7 @@ from .core.session_manager import SessionManager, assert_valid_session_id
 from .core.settings_manager import SettingsManager
 from .core.timings import print_timings, reset_timings, time
 from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
+from .extensions import builtin_extensions
 from .modes import run_print_mode, run_rpc_mode
 from .modes.interactive.theme import init_theme, stop_theme_watcher
 from .modes.print_mode import PrintModeOptions
@@ -433,9 +435,7 @@ async def main(args: list[str], *, extension_factories: list[Any] | None = None)
 
 async def _main(args: list[str], *, extension_factories: list[Any] | None = None) -> None:
     reset_timings()
-    # Built-in extensions (pi bundles the llama extension) arrive with
-    # extension loading in Phase 5.
-    extension_factories = list(extension_factories or [])
+    extension_factories = [*builtin_extensions(), *(extension_factories or [])]
     offline_mode = "--offline" in args or _is_truthy_env_flag(os.environ.get("PIDREI_OFFLINE"))
     if offline_mode:
         os.environ["PIDREI_OFFLINE"] = "1"
@@ -446,7 +446,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
 
     # pi handles the install/remove/uninstall/update/list/config subcommands
-    # here (package-manager-cli.ts); they land with Phase 5 package sources.
+    # here (package-manager-cli.ts); those are Phase 7 (distribution channel).
 
     parsed = parse_args(args)
     if parsed.diagnostics:
@@ -606,9 +606,8 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 resource_loader_reload_options=(
                     {"resolve_project_trust": resolve_trust} if should_resolve_project_trust else None
                 ),
-                # pi also passes extensionFactories here; the resource loader
-                # grows that option with extension loading in Phase 5.
                 resource_loader_options={
+                    "extension_factories": extension_factories,
                     "additional_extension_paths": resolved_extension_paths,
                     "additional_skill_paths": resolved_skill_paths,
                     "additional_prompt_template_paths": resolved_prompt_template_paths,
