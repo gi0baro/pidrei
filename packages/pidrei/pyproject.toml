@@ -43,6 +43,9 @@ tonio = { path = "../../../tonio", package = true }
 
 [project.scripts]
 pidrei = "pidrei.__main__:run"
+# Short alias (open decision 11). The config dir stays ~/.pidrei — the alias is
+# a convenience, not a second identity.
+pi3 = "pidrei.__main__:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei"]
