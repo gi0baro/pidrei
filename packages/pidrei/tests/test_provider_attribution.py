@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from pidrei.core.provider_attribution import (
+    ATTRIBUTION_ENV,
     ATTRIBUTION_NAME,
     ATTRIBUTION_URL,
     merge_provider_attribution_headers,
@@ -28,15 +29,15 @@ def model(provider: str, base_url: str = "https://api.example.com/v1"):
 
 
 def settings(enabled: bool = True):
-    return SimpleNamespace(get_enable_install_telemetry=lambda: enabled)
+    return SimpleNamespace(get_enable_provider_attribution=lambda: enabled)
 
 
 @pytest.fixture(autouse=True)
 def _clear_env_override(request):
-    """PIDREI_TELEMETRY wins over the setting, so it must not leak in."""
-    previous = os.environ.pop("PIDREI_TELEMETRY", None)
+    """The env override wins over the setting, so it must not leak in."""
+    previous = os.environ.pop(ATTRIBUTION_ENV, None)
     if previous is not None:
-        request.addfinalizer(lambda: os.environ.__setitem__("PIDREI_TELEMETRY", previous))
+        request.addfinalizer(lambda: os.environ.__setitem__(ATTRIBUTION_ENV, previous))
 
 
 class TestIdentity:
@@ -77,11 +78,11 @@ class TestOpenRouter:
         assert merge_provider_attribution_headers(model("openrouter"), settings(False), None) is None
 
     def test_env_override_disables_attribution(self):
-        os.environ["PIDREI_TELEMETRY"] = "0"
+        os.environ[ATTRIBUTION_ENV] = "0"
         assert merge_provider_attribution_headers(model("openrouter"), settings(True), None) is None
 
     def test_env_override_enables_attribution(self):
-        os.environ["PIDREI_TELEMETRY"] = "1"
+        os.environ[ATTRIBUTION_ENV] = "1"
         headers = merge_provider_attribution_headers(model("openrouter"), settings(False), None)
         assert headers["HTTP-Referer"] == ATTRIBUTION_URL
 

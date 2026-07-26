@@ -469,10 +469,10 @@ class SettingsSelectorComponent(Container):
                 "values": ["true", "false"],
             },
             {
-                "id": "install-telemetry",
+                "id": "provider-attribution",
                 "label": "Provider attribution",
                 "description": "Identify pidrei to providers that credit the calling app (OpenRouter, NVIDIA, opencode)",
-                "currentValue": "true" if config["enableInstallTelemetry"] else "false",
+                "currentValue": "true" if config["enableProviderAttribution"] else "false",
                 "values": ["true", "false"],
             },
             {
@@ -690,8 +690,8 @@ class SettingsSelectorComponent(Container):
                 callbacks["onCollapseChangelogChange"](new_value == "true")
             elif item_id == "quiet-startup":
                 callbacks["onQuietStartupChange"](new_value == "true")
-            elif item_id == "install-telemetry":
-                callbacks["onEnableInstallTelemetryChange"](new_value == "true")
+            elif item_id == "provider-attribution":
+                callbacks["onEnableProviderAttributionChange"](new_value == "true")
             elif item_id == "default-project-trust":
                 default_project_trust = DEFAULT_PROJECT_TRUST_BY_LABEL.get(new_value)
                 if default_project_trust:

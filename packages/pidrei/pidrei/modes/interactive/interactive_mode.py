@@ -3883,7 +3883,7 @@ class InteractiveMode:
                     "availableThemes": get_available_themes(),
                     "hideThinkingBlock": self._hide_thinking_block,
                     "collapseChangelog": self.settings_manager.get_collapse_changelog(),
-                    "enableInstallTelemetry": self.settings_manager.get_enable_install_telemetry(),
+                    "enableProviderAttribution": self.settings_manager.get_enable_provider_attribution(),
                     "doubleEscapeAction": self.settings_manager.get_double_escape_action(),
                     "treeFilterMode": self.settings_manager.get_tree_filter_mode(),
                     "showHardwareCursor": self.settings_manager.get_show_hardware_cursor(),
@@ -3916,8 +3916,8 @@ class InteractiveMode:
                     "onCollapseChangelogChange": lambda collapsed: self.settings_manager.set_collapse_changelog(
                         collapsed
                     ),
-                    "onEnableInstallTelemetryChange": lambda enabled: (
-                        self.settings_manager.set_enable_install_telemetry(enabled)
+                    "onEnableProviderAttributionChange": lambda enabled: (
+                        self.settings_manager.set_enable_provider_attribution(enabled)
                     ),
                     "onQuietStartupChange": lambda enabled: self.settings_manager.set_quiet_startup(enabled),
                     "onDefaultProjectTrustChange": lambda default_project_trust: (

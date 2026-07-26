@@ -214,6 +214,13 @@ class SettingsManager:
             settings["steeringMode"] = settings["queueMode"]
             del settings["queueMode"]
 
+        # Migrate enableInstallTelemetry -> enableProviderAttribution. pi's key
+        # named an install ping that Phase 7 step 1 removed; the toggle now
+        # gates provider attribution headers only.
+        if "enableInstallTelemetry" in settings and "enableProviderAttribution" not in settings:
+            settings["enableProviderAttribution"] = settings["enableInstallTelemetry"]
+        settings.pop("enableInstallTelemetry", None)
+
         # Migrate legacy websockets boolean -> transport enum
         if "transport" not in settings and isinstance(settings.get("websockets"), bool):
             settings["transport"] = "websocket" if settings["websockets"] else "sse"
@@ -667,13 +674,13 @@ class SettingsManager:
         self._mark_modified("collapseChangelog")
         self._save()
 
-    def get_enable_install_telemetry(self) -> bool:
-        enabled = self._settings.get("enableInstallTelemetry")
+    def get_enable_provider_attribution(self) -> bool:
+        enabled = self._settings.get("enableProviderAttribution")
         return enabled if enabled is not None else True
 
-    def set_enable_install_telemetry(self, enabled: bool) -> None:
-        self._global_settings["enableInstallTelemetry"] = enabled
-        self._mark_modified("enableInstallTelemetry")
+    def set_enable_provider_attribution(self, enabled: bool) -> None:
+        self._global_settings["enableProviderAttribution"] = enabled
+        self._mark_modified("enableProviderAttribution")
         self._save()
 
     def get_enable_analytics(self) -> bool:

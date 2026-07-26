@@ -11,10 +11,10 @@ than removing the mechanism, since attribution itself is legitimate and useful.
 
 The gate below was `core/telemetry.py`, which existed to carry pi's
 install-ping opt-out. The ping is gone; the toggle survives as the switch for
-these headers and now lives with its only consumer. The user-visible names
-(`PIDREI_TELEMETRY`, the `enableInstallTelemetry` setting) still say
-"telemetry" — they are renamed with every other config key in step 2, so the
-storage format changes exactly once.
+these headers and now lives with its only consumer. Step 2 (2026-07-26)
+renamed it to match: `PIDREI_TELEMETRY` → `PIDREI_PROVIDER_ATTRIBUTION`,
+`enableInstallTelemetry` → `enableProviderAttribution`, the old settings key
+being carried across by `SettingsManager._migrate_settings`.
 """
 
 import os
@@ -26,6 +26,8 @@ from urllib.parse import urlparse
 ATTRIBUTION_URL = "https://github.com/gi0baro/pidrei"
 #: Short name sent as the app/client/billing-origin identifier.
 ATTRIBUTION_NAME = "pidrei"
+#: Session-scoped override for the `enableProviderAttribution` setting.
+ATTRIBUTION_ENV = "PIDREI_PROVIDER_ATTRIBUTION"
 
 _OPENROUTER_HOST = "openrouter.ai"
 _NVIDIA_NIM_HOST = "integrate.api.nvidia.com"
@@ -42,12 +44,12 @@ def _is_truthy_env_flag(value: str | None) -> bool:
     return value == "1" or value.lower() in ("true", "yes")
 
 
-def is_attribution_enabled(settings_manager: Any, telemetry_env: Any = _UNSET) -> bool:
-    if telemetry_env is _UNSET:
-        telemetry_env = os.environ.get("PIDREI_TELEMETRY")
-    if telemetry_env is not None:
-        return _is_truthy_env_flag(telemetry_env)
-    return settings_manager.get_enable_install_telemetry()
+def is_attribution_enabled(settings_manager: Any, attribution_env: Any = _UNSET) -> bool:
+    if attribution_env is _UNSET:
+        attribution_env = os.environ.get(ATTRIBUTION_ENV)
+    if attribution_env is not None:
+        return _is_truthy_env_flag(attribution_env)
+    return settings_manager.get_enable_provider_attribution()
 
 
 def _matches_host(base_url: str, expected_host: str) -> bool:

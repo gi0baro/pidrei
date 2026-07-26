@@ -418,3 +418,52 @@ class TestGetShellPath:
         write_json(agent_dir / "settings.json", {"shellPath": "~"})
         manager = SettingsManager.create(str(project_dir), str(agent_dir))
         assert manager.get_shell_path() == HOME
+
+
+class TestProviderAttributionMigration:
+    """pidrei-only: `enableInstallTelemetry` -> `enableProviderAttribution`.
+
+    pi has no tests for its own settings migrations, so this covers ours. The
+    key it renames is the one thing standing between an existing config and a
+    silently reset preference.
+    """
+
+    def test_carries_the_legacy_key_across(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"enableInstallTelemetry": False, "theme": "dark"})
+
+        manager = SettingsManager.create(str(project_dir), str(agent_dir))
+
+        assert manager.get_enable_provider_attribution() is False
+
+    def test_drops_the_legacy_key_on_the_next_write(self, dirs):
+        agent_dir, project_dir = dirs
+        settings_path = agent_dir / "settings.json"
+        write_json(settings_path, {"enableInstallTelemetry": False, "theme": "dark"})
+
+        manager = SettingsManager.create(str(project_dir), str(agent_dir))
+        manager.set_theme("light")
+        manager.flush()
+
+        saved = read_json(settings_path)
+        assert "enableInstallTelemetry" not in saved
+        assert saved["enableProviderAttribution"] is False
+
+    def test_the_new_key_wins_when_both_are_present(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(
+            agent_dir / "settings.json",
+            {"enableInstallTelemetry": True, "enableProviderAttribution": False},
+        )
+
+        manager = SettingsManager.create(str(project_dir), str(agent_dir))
+
+        assert manager.get_enable_provider_attribution() is False
+
+    def test_defaults_to_enabled_without_either_key(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"theme": "dark"})
+
+        manager = SettingsManager.create(str(project_dir), str(agent_dir))
+
+        assert manager.get_enable_provider_attribution() is True
