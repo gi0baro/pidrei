@@ -19,15 +19,15 @@ The main reasons behind PiDrei existence are:
 
 Alpha, and the honest kind. PiDrei is a port in progress, validated the only way
 a port sensibly can be: by porting Pi's own test suites module by module and
-keeping them green (2,349 mirrored cases so far).
+keeping them green (2,391 mirrored cases so far).
 
 Working today: the agent loop and its tools, the TUI and interactive mode, the
-headless CLI and RPC server, 29 of Pi's 37 providers, and OAuth login for the
+headless CLI and RPC server, 30 of Pi's 37 providers, and OAuth login for the
 ones that need it.
 
 Not yet: the Google, Bedrock, Azure, Mistral and Cloudflare adapters; image
-models; the OpenAI Codex responses API; and extension *loading* — the ~35-event
-hook bus is fully ported, there is just nothing to plug into it yet.
+models; and extension *loading* — the ~35-event hook bus is fully ported, there
+is just nothing to plug into it yet.
 
 ## Installation
 

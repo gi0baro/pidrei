@@ -46,6 +46,12 @@ from pidrei_ai.utils.json_parse import parse_streaming_json
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 
 
+# Python has one absent value where JavaScript has two; this stands in for
+# `undefined` where a caller may also pass an explicit `null` (see
+# `convert_responses_tools`).
+UNSET: Any = object()
+
+
 # =============================================================================
 # Utilities
 # =============================================================================
@@ -295,12 +301,15 @@ def convert_responses_messages(
 def convert_responses_tools(
     tools: list[Tool],
     *,
-    strict: bool | None = None,
+    strict: bool | None = UNSET,
     supports_strict_mode: bool = True,
     supports_openai_grammar_tools: bool = False,
     defer_loading: bool = False,
 ) -> list[dict]:
-    default_strict = False if strict is None else strict
+    # pi: `options?.strict === undefined ? false : options.strict` — an explicit
+    # `null` (the Codex adapter sends one) must survive as `strict: null`, so
+    # "not passed" needs its own value distinct from None.
+    default_strict = False if strict is UNSET else strict
 
     converted: list[dict] = []
     for tool in tools:

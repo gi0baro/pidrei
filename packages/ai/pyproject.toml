@@ -27,6 +27,9 @@ dependencies = [
     # punkreq's own transport, declared directly because the OAuth callback
     # servers use its server-side HTTP/1 connection (utils/http.py).
     "httpunk~=0.1.2",
+    # Sans-io WebSocket frame codec only (no client, no asyncio): the Codex
+    # responses transport drives it over httpunk's H1Upgraded (utils/websocket.py).
+    "websockets>=15.0",
     "partial-json-parser>=0.2.1.1.post7",
     "jsonschema>=4.26.0",
 ]

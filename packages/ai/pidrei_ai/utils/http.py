@@ -15,7 +15,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Mapping
 from typing import Any
 
 import tonio.colored as tonio
-from httpunk import Backend, H1Server
+from httpunk import Backend, H1Connection, H1Server
 from punkreq import Limits, Timeout, TimeoutException
 from punkreq.tonio import Client
 
@@ -193,6 +193,33 @@ def h1_server(transport: Any) -> H1Server:
     transport httpunk wants: `receive_some`/`send_all`/`close`.
     """
     return H1Server(transport, backend=Backend.tonio)
+
+
+async def h1_client_upgrade(
+    transport: Any,
+    target: str,
+    headers: Mapping[str, str],
+) -> tuple[int, dict[str, str], Any | None]:
+    """Client HTTP/1 request expecting a `101 Switching Protocols` upgrade.
+
+    Returns `(status, response headers, raw upgraded stream or None)`. The
+    WebSocket side of the seam (see `utils/websocket.py`): httpunk owns the
+    handshake's HTTP — writing the head, parsing the response, and handing back
+    an `H1Upgraded` whose reads "first drain any bytes already received past the
+    response head", the classic handshake footgun. The caller owns the transport
+    from there and never touches the `H1Connection` again (the driver detaches on
+    upgrade, so closing the connection would close the caller's stream).
+
+    punkreq does not expose upgrades, so this reaches one layer below it, the
+    same split `h1_server` makes for the serving side.
+    """
+    connection = H1Connection(transport, backend=Backend.tonio)
+    response = await connection.request("GET", target, headers=headers)
+    response_headers = {key: bytes(value).decode("latin-1") for key, value in response.headers.items()}
+    upgraded = response.upgraded
+    if upgraded is None:
+        await response.aclose()
+    return response.status, response_headers, upgraded
 
 
 def oneshot_timeout(timeout_ms: float | None) -> Timeout:

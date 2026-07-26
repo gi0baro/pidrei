@@ -25,6 +25,7 @@ from pidrei_ai.providers.moonshotai import moonshotai_provider
 from pidrei_ai.providers.moonshotai_cn import moonshotai_cn_provider
 from pidrei_ai.providers.nvidia import nvidia_provider
 from pidrei_ai.providers.openai import openai_provider
+from pidrei_ai.providers.openai_codex import openai_codex_provider
 from pidrei_ai.providers.opencode import opencode_provider
 from pidrei_ai.providers.opencode_go import opencode_go_provider
 from pidrei_ai.providers.openrouter import openrouter_provider
@@ -74,8 +75,8 @@ def builtin_providers() -> list[Provider]:
 
     Still to join, with their adapters (PLAN.md): amazon-bedrock, azure-openai-
     responses, cloudflare-ai-gateway, cloudflare-workers-ai, google,
-    google-vertex, mistral, openai-codex. Their models are in the vendored
-    catalog already, so the catalog reads above cover them.
+    google-vertex, mistral. Their models are in the vendored catalog already,
+    so the catalog reads above cover them.
     """
     return [
         ant_ling_provider(),
@@ -93,6 +94,7 @@ def builtin_providers() -> list[Provider]:
         moonshotai_cn_provider(),
         nvidia_provider(),
         openai_provider(),
+        openai_codex_provider(),
         opencode_provider(),
         opencode_go_provider(),
         openrouter_provider(),
