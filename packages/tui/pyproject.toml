@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-tui"
-version = "0.82.0.0.dev0"
+version = "0.82.0.0"
 description = "pidrei terminal UI package: terminal driver, input stack, renderer and components (port of pi tui)"
 requires-python = ">=3.14"
 license = "MIT"
@@ -22,18 +22,15 @@ classifiers = [
 ]
 
 dependencies = [
-    "grapheme>=0.6.0",
-    "jieba>=0.42.1",
-    "linkify-it-py>=2.0.3",
-    "markdown-it-py>=4.0.0",
-    "tonio>=0.8.3",
-    "uniseg>=0.10.0",
+    "grapheme~=0.6.0",
+    "jieba~=0.42.1",
+    "linkify-it-py~=2.1",
+    "markdown-it-py~=4.2",
+    "tonio~=0.9.1",
+    "uniseg~=0.10.1",
 ]
 
 [tool.uv.sources]
-# The local tonio checkout sets `tool.uv.package = false` for its own dev
-# workflow; `package = true` forces uv to build/install it here anyway.
-tonio = { path = "../../../tonio", package = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei_tui"]

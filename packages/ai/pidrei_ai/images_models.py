@@ -111,7 +111,6 @@ class ImagesModels:
             except Exception:
                 pass
 
-        # Result discarded, so tonio #4 (bare value for a single item) cannot bite.
         await tonio.map(_safe, self.get_providers())
 
     # -- auth / generation -----------------------------------------------------

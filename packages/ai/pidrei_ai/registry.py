@@ -348,8 +348,6 @@ class Models:
         errors: dict[str, Exception] = {}
         if refreshable:
             results = await tonio.map(refresh_one, refreshable)
-            if len(refreshable) == 1:
-                results = [results]  # tonio #4
             for provider_id, error in results:
                 if error is not None:
                     errors[provider_id] = error
@@ -437,8 +435,6 @@ class Models:
         if not providers:
             return []
         checks = await tonio.map(check_one, providers)
-        if len(providers) == 1:
-            checks = [checks]  # tonio #4
 
         available: list[Model] = []
         for provider, credential, auth in checks:

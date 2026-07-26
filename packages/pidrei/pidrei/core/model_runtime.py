@@ -256,8 +256,7 @@ class ModelRuntime:
         async def check_all() -> list[tuple[str, AuthCheck | None]]:
             if not providers:
                 return []
-            results = await tonio.map(check_one, providers)
-            return [results] if len(providers) == 1 else list(results)  # tonio #4
+            return await tonio.map(check_one, providers)
 
         available, checks, credentials = await tonio.spawn(
             self._models.get_available(), check_all(), self._credentials.list()

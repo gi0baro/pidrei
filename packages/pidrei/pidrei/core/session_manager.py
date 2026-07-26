@@ -1437,8 +1437,6 @@ class SessionManager:
                 return [os.path.join(directory, name) for name in names if name.endswith(".jsonl")]
 
             listings = await tonio.map_blocking(list_jsonl, dirs)
-            if len(dirs) == 1:
-                listings = [listings]  # tonio #4
             all_files: list[str] = [path for listing in listings for path in listing]
 
             loaded = 0

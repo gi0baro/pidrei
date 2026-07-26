@@ -3,11 +3,11 @@ members = ["packages/*"]
 
 [dependency-groups]
 lint = [
-    "ruff~=0.11",
+    "ruff~=0.16.0",
 ]
 test = [
-    "pyte>=0.8.2",
-    "pytest>=8.0",
+    "pyte~=0.8.2",
+    "pytest~=9.1",
 ]
 
 [tool.uv]
