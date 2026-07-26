@@ -117,9 +117,10 @@ def _extract_error_message(body: str) -> str:
 class _PunkreqResponsesClient:
     """Default transport: POST {base_url}/responses through the punkreq seam."""
 
-    def __init__(self, base_url: str, headers: dict[str, str]):
+    def __init__(self, base_url: str, headers: dict[str, str], env: ProviderEnv | None = None):
         self._url = f"{base_url.rstrip('/')}/responses"
         self._headers = headers
+        self._env = env
 
     async def create(
         self,
@@ -128,7 +129,7 @@ class _PunkreqResponsesClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ) -> OpenAIResponseLike:
-        client = http.shared_client()
+        client = http.client_for(self._url, self._env)
         timeout = http.request_timeout(timeout_ms)
         response = await client.post(self._url, json=params, headers=self._headers, timeout=timeout)
         if not 200 <= response.status_code < 300:
@@ -249,6 +250,7 @@ def _create_client(
     api_key: str,
     options_headers: ProviderHeaders | None,
     session_id: str | None,
+    env: ProviderEnv | None = None,
 ) -> OpenAIResponsesClient:
     compat = get_compat(model)
     headers: dict[str, Any] = dict(model.headers or {})
@@ -269,7 +271,7 @@ def _create_client(
 
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
-    return _PunkreqResponsesClient(model.base_url, final_headers)
+    return _PunkreqResponsesClient(model.base_url, final_headers, env)
 
 
 def build_params(
@@ -398,7 +400,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             client = (
                 opts.client
                 if opts.client is not None
-                else _create_client(model, context, api_key, opts.headers, cache_session_id)
+                else _create_client(model, context, api_key, opts.headers, cache_session_id, opts.env)
             )
             params = build_params(model, context, opts, compat, grammar_tool_input_properties)
             next_params = await _maybe_call(opts.on_payload, params, model)

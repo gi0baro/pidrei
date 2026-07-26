@@ -145,9 +145,10 @@ def _extract_error_message(body: str) -> str:
 class _PunkreqOpenAIClient:
     """Default transport: POST {base_url}/chat/completions through the punkreq seam."""
 
-    def __init__(self, base_url: str, headers: dict[str, str]):
+    def __init__(self, base_url: str, headers: dict[str, str], env: ProviderEnv | None = None):
         self._url = f"{base_url.rstrip('/')}/chat/completions"
         self._headers = headers
+        self._env = env
 
     async def create(
         self,
@@ -156,7 +157,7 @@ class _PunkreqOpenAIClient:
         timeout_ms: float | None,
         cancel: CancelToken | None,
     ) -> OpenAIResponseLike:
-        client = http.shared_client()
+        client = http.client_for(self._url, self._env)
         timeout = http.request_timeout(timeout_ms)
         response = await client.post(self._url, json=params, headers=self._headers, timeout=timeout)
         if not 200 <= response.status_code < 300:
@@ -501,6 +502,7 @@ def _create_client(
     options_headers: ProviderHeaders | None,
     session_id: str | None,
     compat: _ResolvedCompat,
+    env: ProviderEnv | None = None,
 ) -> OpenAICompletionsClient:
     headers: dict[str, Any] = dict(model.headers or {})
     if model.provider == "github-copilot":
@@ -522,7 +524,7 @@ def _create_client(
 
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
-    return _PunkreqOpenAIClient(model.base_url, final_headers)
+    return _PunkreqOpenAIClient(model.base_url, final_headers, env)
 
 
 def _get_compat_cache_control(compat: _ResolvedCompat, cache_retention: CacheRetention) -> dict | None:
@@ -1037,7 +1039,7 @@ def stream(  # noqa: C901
                 api_key = _get_client_api_key(model.provider, opts.api_key, opts.headers)
                 cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
                 cache_session_id = None if cache_retention == "none" else opts.session_id
-                client = _create_client(model, context, api_key, opts.headers, cache_session_id, compat)
+                client = _create_client(model, context, api_key, opts.headers, cache_session_id, compat, opts.env)
 
             params = build_params(model, context, opts, compat, None, grammar_tool_input_properties)
             next_params = await _maybe_call(opts.on_payload, params, model)

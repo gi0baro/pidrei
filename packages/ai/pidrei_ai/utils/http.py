@@ -15,6 +15,7 @@ from punkreq import Limits, Timeout
 from punkreq.tonio import Client
 
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.http_proxy import resolve_http_proxy_url_for_target
 
 
 STREAMING_TIMEOUT = Timeout(connect=30.0, read=600.0, pool=30.0, total=None)
@@ -22,6 +23,7 @@ DEFAULT_LIMITS = Limits(max_connections=64)
 
 _shared_client: Client | None = None
 _shared_client_guard = threading.Lock()
+_proxied_clients: dict[str, Client] = {}
 
 
 def shared_client() -> Client:
@@ -31,6 +33,44 @@ def shared_client() -> Client:
         if _shared_client is None:
             _shared_client = create_client()
         return _shared_client
+
+
+def client_for(target_url: str, env: Mapping[str, str] | None = None) -> Client:
+    """The pooled client for `target_url`, honouring provider-scoped proxy env.
+
+    The shared client already picks up `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` from
+    `os.environ` (punkreq `trust_env`). Only a *scoped* override — a proxy var in
+    `options.env`, which punkreq cannot see — needs its own client, so one is
+    pooled per distinct proxy URL rather than created per request.
+    """
+    if not env:
+        return shared_client()
+    proxy = resolve_http_proxy_url_for_target(target_url, env)
+    if proxy is None:
+        # An `env` that resolves to no proxy may still be a NO_PROXY override of
+        # an ambient proxy, so the shared client is only correct when the process
+        # env agrees.
+        if resolve_http_proxy_url_for_target(target_url) is None:
+            return shared_client()
+        return _no_proxy_client()
+    with _shared_client_guard:
+        client = _proxied_clients.get(proxy)
+        if client is None:
+            client = create_client(proxy=proxy)
+            _proxied_clients[proxy] = client
+        return client
+
+
+_NO_PROXY = "<none>"
+
+
+def _no_proxy_client() -> Client:
+    with _shared_client_guard:
+        client = _proxied_clients.get(_NO_PROXY)
+        if client is None:
+            client = create_client(trust_env=False)
+            _proxied_clients[_NO_PROXY] = client
+        return client
 
 
 _STREAM_DONE = object()
@@ -141,6 +181,7 @@ def create_client(
     verify: bool = True,
     timeout: Timeout = STREAMING_TIMEOUT,
     limits: Limits = DEFAULT_LIMITS,
+    trust_env: bool = True,
 ) -> Client:
     return Client(
         base_url=base_url,
@@ -149,4 +190,5 @@ def create_client(
         verify=verify,
         timeout=timeout,
         limits=limits,
+        trust_env=trust_env,
     )
