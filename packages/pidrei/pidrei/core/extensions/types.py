@@ -5,9 +5,7 @@ ExtensionRunner and AgentSession need (Extension, ExtensionRuntime,
 RegisteredTool, commands, LoadExtensionsResult). Extension *loading* (the
 ExtensionAPI surface handed to extension factories, discovery, the Python
 extension ABI) is Phase 5 — in Phase 3 every LoadExtensionsResult carries an
-empty extension list, so the runner's hook bus runs with zero handlers. The
-TUI render hooks (renderCall/renderResult/renderShell) are Phase 4 and are
-represented only by the optional `render_shell` marker.
+empty extension list, so the runner's hook bus runs with zero handlers.
 """
 
 from collections.abc import Callable
@@ -50,8 +48,12 @@ class ToolDefinition:
     prompt_guidelines: list[str] | None = None
     # Optional provider-side constrained sampling request for this tool.
     constrained_sampling: Any = None
-    # TUI shell rendering marker ("default" | "self"); renderers themselves are Phase 4.
+    # TUI shell rendering marker ("default" | "self").
     render_shell: str | None = None
+    # TUI render hooks: render_call(args, theme, context) -> Component and
+    # render_result(result, options, theme, context) -> Component.
+    render_call: Any = None
+    render_result: Any = None
     # Optional compatibility shim to prepare raw tool call arguments before schema validation.
     prepare_arguments: Any = None
     # Per-tool execution mode override ("sequential" | "parallel").

@@ -202,6 +202,7 @@ dependencies = [
     { name = "pidrei-agent" },
     { name = "pidrei-ai" },
     { name = "pillow" },
+    { name = "pygments" },
     { name = "pyyaml" },
     { name = "tonio" },
 ]
@@ -213,6 +214,7 @@ requires-dist = [
     { name = "pidrei-agent", editable = "packages/agent" },
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pillow", specifier = ">=11.0" },
+    { name = "pygments", specifier = ">=2.18" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tonio", directory = "../tonio" },
 ]

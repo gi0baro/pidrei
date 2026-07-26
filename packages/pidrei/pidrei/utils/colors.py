@@ -22,8 +22,12 @@ def _color_enabled() -> bool:
 
 
 def _style(text: str, open_code: str, close_code: str) -> str:
-    if not _color_enabled():
+    if not text or not _color_enabled():
         return text
+    # chalk keeps outer styles active by replacing nested close codes with
+    # this style's open code.
+    if "\x1b" in text:
+        text = text.replace(f"\x1b[{close_code}m", f"\x1b[{open_code}m")
     return f"\x1b[{open_code}m{text}\x1b[{close_code}m"
 
 
@@ -33,6 +37,22 @@ def bold(text: str) -> str:
 
 def dim(text: str) -> str:
     return _style(text, "2", "22")
+
+
+def italic(text: str) -> str:
+    return _style(text, "3", "23")
+
+
+def underline(text: str) -> str:
+    return _style(text, "4", "24")
+
+
+def inverse(text: str) -> str:
+    return _style(text, "7", "27")
+
+
+def strikethrough(text: str) -> str:
+    return _style(text, "9", "29")
 
 
 def red(text: str) -> str:

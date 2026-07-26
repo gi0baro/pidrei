@@ -10,9 +10,8 @@ Port notes (Phase 3):
 - The `install/remove/uninstall/update/list/config` subcommands
   (package-manager-cli.ts) land with npm/git package sources in Phase 5.
 - migrations.ts is not ported: all migrations are pi-version-legacy
-  cleanups a fresh ~/.pidrei/ cannot contain (see PLAN).
-- Interactive mode, first-time setup, theme init, and --export (HTML
-  export needs the theme system) land with the Phase 4 TUI slice.
+  cleanups a fresh ~/.pidrei/ cannot contain (see PLAN); the interactive
+  deprecation-warning display that reads its output is skipped with it.
 """
 
 import os
@@ -28,6 +27,7 @@ from .cli.initial_message import InitialMessageResult, build_initial_message
 from .cli.list_models import list_models
 from .cli.project_trust import CreateProjectTrustContextOptions, create_project_trust_context
 from .cli.session_picker import select_session
+from .cli.startup_ui import should_run_first_time_setup, show_first_time_setup, show_startup_selector
 from .config import ENV_SESSION_DIR, VERSION, expand_tilde_path, get_agent_dir
 from .core.agent_session_runtime import CreateAgentSessionRuntimeResult, create_agent_session_runtime
 from .core.agent_session_services import (
@@ -43,12 +43,17 @@ from .core.model_resolver import resolve_cli_model, resolve_model_scope
 from .core.output_guard import restore_stdout, take_over_stdout
 from .core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
 from .core.sdk import CreateAgentSessionOptions
-from .core.session_cwd import MissingSessionCwdError, get_missing_session_cwd_issue
+from .core.session_cwd import (
+    MissingSessionCwdError,
+    format_missing_session_cwd_prompt,
+    get_missing_session_cwd_issue,
+)
 from .core.session_manager import SessionManager, assert_valid_session_id
 from .core.settings_manager import SettingsManager
 from .core.timings import print_timings, reset_timings, time
 from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
 from .modes import run_print_mode, run_rpc_mode
+from .modes.interactive.theme import init_theme, stop_theme_watcher
 from .modes.print_mode import PrintModeOptions
 from .utils.colors import dim, red, yellow
 from .utils.paths import is_local_path, normalize_path, resolve_path
@@ -391,6 +396,17 @@ def _build_session_options(
     )
 
 
+async def _prompt_for_missing_session_cwd(issue, settings_manager: SettingsManager) -> str | None:
+    return await show_startup_selector(
+        settings_manager,
+        format_missing_session_cwd_prompt(issue),
+        [
+            {"label": "Continue", "value": issue.fallback_cwd},
+            {"label": "Cancel", "value": None},
+        ],
+    )
+
+
 def _resolve_cli_paths(cwd: str, paths: list[str] | None) -> list[str] | None:
     if paths is None:
         return None
@@ -447,10 +463,16 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         raise SystemExit(0)
 
     if parsed.export:
-        # pi exports the session file to HTML and exits; export-html lands
-        # with the Phase 4 theme system.
-        print(red("Error: HTML export is not available yet"), file=sys.stderr)
-        raise SystemExit(1)
+        from .core.export_html import export_from_file
+
+        try:
+            output_path = parsed.messages[0] if parsed.messages else None
+            result = await export_from_file(parsed.export, output_path)
+        except Exception as error:
+            print(red(f"Error: {error}"), file=sys.stderr)
+            raise SystemExit(1) from None
+        print(f"Exported to: {result}")
+        raise SystemExit(0)
 
     app_mode = _resolve_app_mode(parsed, sys.stdin.isatty(), sys.stdout.isatty())
     should_take_over_stdout = app_mode != "interactive" and not _is_plain_runtime_metadata_command(parsed)
@@ -471,8 +493,17 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     startup_settings_manager = SettingsManager.create(cwd, agent_dir)
     _report_diagnostics(_collect_settings_diagnostics(startup_settings_manager, "startup session lookup"))
 
-    # pi shows the first-time setup (theme + analytics opt-in) here in
-    # interactive mode; that lands with the Phase 4 TUI slice.
+    # Experimental first-time setup: theme choice and analytics opt-in.
+    # Runs before any runtime services are created so the chosen settings
+    # apply everywhere.
+    if (
+        app_mode == "interactive"
+        and not parsed.help
+        and parsed.list_models is None
+        and should_run_first_time_setup()
+    ):
+        await show_first_time_setup(startup_settings_manager)
+        time("firstTimeSetup")
 
     # Decide the final runtime cwd before creating cwd-bound runtime services.
     # --session and --resume may select a session from another project, so project-local
@@ -488,10 +519,14 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     session_manager = await _create_session_manager(parsed, cwd, session_dir, startup_settings_manager)
     missing_session_cwd_issue = get_missing_session_cwd_issue(session_manager, cwd)
     if missing_session_cwd_issue:
-        # pi offers a continue/cancel selector in interactive mode; the
-        # Phase 4 TUI slice brings that back.
-        print(red(str(MissingSessionCwdError(missing_session_cwd_issue))), file=sys.stderr)
-        raise SystemExit(1)
+        if app_mode == "interactive":
+            selected_cwd = await _prompt_for_missing_session_cwd(missing_session_cwd_issue, startup_settings_manager)
+            if not selected_cwd:
+                raise SystemExit(0)
+            session_manager = SessionManager.open(missing_session_cwd_issue.session_file, session_dir, selected_cwd)
+        else:
+            print(red(str(MissingSessionCwdError(missing_session_cwd_issue))), file=sys.stderr)
+            raise SystemExit(1)
     if parsed.name is not None:
         name = parsed.name.strip()
         if not name:
@@ -502,7 +537,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     trust_store = ProjectTrustStore(agent_dir)
     session_cwd = session_manager.get_cwd()
-    auto_trust_on_reload_cwd = (  # noqa: F841 - handed to InteractiveMode in Phase 4
+    auto_trust_on_reload_cwd = (
         session_cwd
         if parsed.project_trust_override is None and not has_trust_requiring_project_resources(session_cwd)
         else None
@@ -697,9 +732,11 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     initial = await _prepare_initial_message(parsed, settings_manager.get_image_auto_resize(), stdin_content)
     time("prepareInitialMessage")
-    # pi initializes the theme system here; it lands with the Phase 4 TUI
-    # slice (deprecation warnings are interactive-only as well).
+    init_theme(settings_manager.get_theme(), app_mode == "interactive")
     time("initTheme")
+
+    # pi shows deprecation warnings from runMigrations here in interactive
+    # mode; migrations.ts is not ported (see module docstring).
 
     time("resolveModelScope")
     _report_diagnostics(runtime.diagnostics)
@@ -734,12 +771,35 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         print_timings()
         await run_rpc_mode(runtime)
     elif app_mode == "interactive":
-        # InteractiveMode lands with the Phase 4 TUI slice.
-        print(
-            red("Error: interactive mode is not available yet; use -p/--print, --mode json, or --mode rpc"),
-            file=sys.stderr,
+        from .modes import InteractiveMode
+
+        interactive_mode = InteractiveMode(
+            runtime,
+            {
+                # migrations.ts is not ported, so there are never migrated
+                # providers to announce.
+                "modelFallbackMessage": runtime.model_fallback_message,
+                "autoTrustOnReloadCwd": auto_trust_on_reload_cwd,
+                "initialMessage": initial.initial_message,
+                "initialImages": initial.initial_images,
+                "initialMessages": parsed.messages,
+                "verbose": parsed.verbose,
+            },
         )
-        raise SystemExit(1)
+        if startup_benchmark:
+            await interactive_mode.init()
+            time("interactiveMode.init")
+            # Give the TUI's stdin handler a brief chance to consume terminal
+            # query replies (Kitty keyboard protocol, device attributes, cell
+            # size) before restoring the terminal.
+            await tonio.time.sleep(0.15)
+            await interactive_mode.stop()
+            stop_theme_watcher()
+            print_timings()
+            return
+
+        print_timings()
+        await interactive_mode.run()
     else:
         print_timings()
         exit_code = await run_print_mode(
@@ -751,6 +811,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 initial_images=initial.initial_images,
             ),
         )
+        stop_theme_watcher()
         restore_stdout()
         if exit_code != 0:
             raise SystemExit(exit_code)

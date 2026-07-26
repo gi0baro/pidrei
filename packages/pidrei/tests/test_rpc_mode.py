@@ -480,16 +480,20 @@ class TestRpcMode:
             await harness.stop()
 
     @pytest.mark.tonio
-    async def test_export_html_reports_phase3_deviation(self, tmp_dir):
-        # pi exports to HTML here; pidrei's export-html lands with the Phase 4
-        # theme system, so the RPC command answers with an error response.
+    async def test_export_html_exports_the_session(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
-            response = await harness.request({"id": "e1", "type": "export_html"})
-            assert response["success"] is False
-            assert "HTML export is not available yet" in response["error"]
+            harness.send({"id": "p1", "type": "prompt", "message": "hello"})
+            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+
+            output_path = str(tmp_dir / "export.html")
+            response = await harness.request({"id": "e1", "type": "export_html", "outputPath": output_path})
+            assert response["success"] is True
+            assert response["data"]["path"] == output_path
+            with open(output_path, encoding="utf-8") as f:
+                assert "<!DOCTYPE html>" in f.read(200)
         finally:
             await harness.stop()
 

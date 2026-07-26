@@ -1,4 +1,4 @@
-"""Mirror of pi coding-agent src/core/tools/find.ts (execute path; renderers Phase 4)."""
+"""Mirror of pi coding-agent src/core/tools/find.ts."""
 
 import os
 from dataclasses import dataclass
@@ -6,13 +6,65 @@ from typing import Any
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
+from pidrei_tui import Text
 
+from ...modes.interactive.components.keybinding_hints import key_hint
 from ...utils.tools_manager import ensure_tool
 from ..extensions.types import ToolDefinition
 from .grep import _run_and_capture_lines
 from .path_utils import path_exists, resolve_to_cwd
+from .render_utils import get_text_output, invalid_arg_text, shorten_path, str_or_none
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .truncate import DEFAULT_MAX_BYTES, TruncationResult, format_size, truncate_head
+
+
+def _format_find_call(args: dict | None, theme) -> str:
+    args = args or {}
+    pattern = str_or_none(args.get("pattern"))
+    raw_path = str_or_none(args.get("path"))
+    path = shorten_path(raw_path or ".") if raw_path is not None else None
+    limit = args.get("limit")
+    invalid_arg = invalid_arg_text(theme)
+    text = (
+        theme.fg("toolTitle", theme.bold("find"))
+        + " "
+        + (invalid_arg if pattern is None else theme.fg("accent", pattern or ""))
+        + theme.fg("toolOutput", f" in {invalid_arg if path is None else path}")
+    )
+    if limit is not None:
+        text += theme.fg("toolOutput", f" (limit {limit})")
+    return text
+
+
+def _format_find_result(result, options: dict, theme, show_images: bool) -> str:
+    output = get_text_output(result, show_images).strip()
+    text = ""
+    if output:
+        lines = output.split("\n")
+        max_lines = len(lines) if options.get("expanded") else 20
+        display_lines = lines[:max_lines]
+        remaining = len(lines) - max_lines
+        text += "\n" + "\n".join(theme.fg("toolOutput", line) for line in display_lines)
+        if remaining > 0:
+            text += (
+                theme.fg("muted", f"\n... ({remaining} more lines,")
+                + " "
+                + key_hint("app.tools.expand", "to expand")
+                + theme.fg("muted", ")")
+            )
+
+    details = result.get("details") if isinstance(result, dict) else getattr(result, "details", None)
+    result_limit = getattr(details, "result_limit_reached", None) if details is not None else None
+    truncation = getattr(details, "truncation", None) if details is not None else None
+    if result_limit or (truncation is not None and truncation.truncated):
+        warnings = []
+        if result_limit:
+            warnings.append(f"{result_limit} results limit")
+        if truncation is not None and truncation.truncated:
+            max_bytes = truncation.max_bytes if truncation.max_bytes is not None else DEFAULT_MAX_BYTES
+            warnings.append(f"{format_size(max_bytes)} limit")
+        text += "\n" + theme.fg("warning", f"[Truncated: {', '.join(warnings)}]")
+    return text
 
 
 FIND_SCHEMA = {
@@ -163,6 +215,16 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
 
         return _build_details_result(relativized, effective_limit)
 
+    def render_call(args, theme, context):
+        text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
+        text.set_text(_format_find_call(args, theme))
+        return text
+
+    def render_result(result, options, theme, context):
+        text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
+        text.set_text(_format_find_result(result, options, theme, context["showImages"]))
+        return text
+
     return ToolDefinition(
         name="find",
         label="find",
@@ -174,6 +236,8 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         prompt_snippet="Find files by glob pattern (respects .gitignore)",
         parameters=FIND_SCHEMA,
         execute=execute,
+        render_call=render_call,
+        render_result=render_result,
     )
 
 

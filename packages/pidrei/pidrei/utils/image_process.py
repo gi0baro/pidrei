@@ -71,6 +71,26 @@ def convert_image_bytes_to_png(data: bytes) -> bytes | None:
         return None
 
 
+def convert_to_png(base64_data: str, mime_type: str) -> dict | None:
+    """Convert image to PNG for terminal display (kitty requires PNG).
+
+    Mirror of pi utils/image-convert.ts convertToPng; Pillow replaces Photon.
+    Returns ``{"data", "mimeType"}`` or None if conversion failed.
+    """
+    if mime_type == "image/png":
+        return {"data": base64_data, "mimeType": mime_type}
+
+    try:
+        data = base64.b64decode(base64_data)
+    except Exception:
+        return None
+    png_bytes = convert_image_bytes_to_png(data)
+    if png_bytes is None:
+        return None
+
+    return {"data": base64.b64encode(png_bytes).decode("ascii"), "mimeType": "image/png"}
+
+
 def _encode(image: Image.Image, format: str, quality: int | None = None) -> tuple[str, int, str]:
     buffer = io.BytesIO()
     if format == "PNG":

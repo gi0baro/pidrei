@@ -27,6 +27,7 @@ dependencies = [
     "jsonschema>=4.0",
     "pathspec>=0.12",
     "pillow>=11.0",
+    "pygments>=2.18",
 ]
 
 [tool.uv.sources]

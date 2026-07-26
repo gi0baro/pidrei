@@ -53,6 +53,37 @@ def get_examples_path() -> str:
     return os.path.join(get_package_dir(), "examples")
 
 
+def get_themes_dir() -> str:
+    """Get path to built-in themes directory (shipped with the package)."""
+    return os.path.join(get_package_dir(), "modes", "interactive", "theme")
+
+
+def get_interactive_assets_dir() -> str:
+    return os.path.join(get_package_dir(), "modes", "interactive", "assets")
+
+
+def get_bundled_interactive_asset_path(name: str) -> str:
+    """Get path to a bundled interactive asset."""
+    return os.path.join(get_interactive_assets_dir(), name)
+
+
+DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/"
+
+
+def get_share_viewer_url(gist_id: str) -> str:
+    base_url = os.environ.get("PIDREI_SHARE_VIEWER_URL") or DEFAULT_SHARE_VIEWER_URL
+    return f"{base_url}#{gist_id}"
+
+
+def get_changelog_path() -> str:
+    return os.path.abspath(os.path.join(get_package_dir(), "CHANGELOG.md"))
+
+
+def get_export_template_dir() -> str:
+    """Get path to the HTML export template directory (shipped with the package)."""
+    return os.path.join(get_package_dir(), "core", "export_html")
+
+
 # =============================================================================
 # User Config Paths (~/.pidrei/agent/*)
 # =============================================================================

@@ -608,9 +608,8 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 return success(id, "get_session_stats", stats)
 
             case "export_html":
-                # pi exports the session to HTML here; the export-html module
-                # lands with the Phase 4 theme system.
-                return error(id, "export_html", "HTML export is not available yet")
+                path = await session.export_to_html(command.get("outputPath"))
+                return success(id, "export_html", {"path": path})
 
             case "switch_session":
                 result = await runtime_host.switch_session(command.get("sessionPath"))

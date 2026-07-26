@@ -2,8 +2,8 @@
 
 Loads skills, prompt templates, AGENTS.md context files, and SYSTEM.md /
 APPEND_SYSTEM.md, with the project-trust bootstrap flow. Extensions load as
-an empty result (the extension system is Phase 5) and themes are not loaded
-(the theme system is Phase 4); both keep their option/override seams so the
+an empty result (the extension system is Phase 5); both keep their
+option/override seams so the
 call sites port unchanged.
 """
 
@@ -164,6 +164,8 @@ class DefaultResourceLoader:
         self._extension_skill_source_infos: dict[str, SourceInfo] = {}
         self._extension_prompt_source_infos: dict[str, SourceInfo] = {}
         self._last_prompt_paths: list[str] = []
+        self._themes: list = []
+        self._theme_diagnostics: list[ResourceDiagnostic] = []
 
     # -- getters ---------------------------------------------------------------
 
@@ -175,6 +177,10 @@ class DefaultResourceLoader:
 
     def get_prompts(self) -> LoadPromptsResult:
         return LoadPromptsResult(prompts=self._prompts, diagnostics=self._prompt_diagnostics)
+
+    def get_themes(self) -> dict:
+        """Loaded themes as a ``{"themes", "diagnostics"}`` record."""
+        return {"themes": self._themes, "diagnostics": self._theme_diagnostics}
 
     def get_agents_files(self) -> list[AgentsFile]:
         return self._agents_files
@@ -308,6 +314,16 @@ class DefaultResourceLoader:
                         ResourceDiagnostic(type="error", message="Prompt template path does not exist", path=resolved)
                     )
 
+        enabled_themes = get_enabled_paths(resolved_paths.themes)
+        cli_enabled_themes = get_enabled_paths(cli_extension_paths.themes)
+        if self._no_themes:
+            theme_paths = self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
+        else:
+            theme_paths = self._merge_paths(
+                [*cli_enabled_themes, *enabled_themes], self._additional_theme_paths
+            )
+        self._update_themes_from_paths(theme_paths, metadata_by_path)
+
         agents_files = (
             [] if self._no_context_files else load_project_context_files(cwd=self._cwd, agent_dir=self._agent_dir)
         )
@@ -427,6 +443,92 @@ class DefaultResourceLoader:
             for prompt in resolved_prompts.prompts
         ]
         self._prompt_diagnostics = resolved_prompts.diagnostics
+
+    def _update_themes_from_paths(
+        self, theme_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
+    ) -> None:
+        from ..modes.interactive.theme import load_theme_from_path
+
+        if self._no_themes and not theme_paths:
+            themes: list = []
+            diagnostics: list[ResourceDiagnostic] = []
+        else:
+            themes = []
+            diagnostics = []
+            # Default theme directories (agent-level and project-level)
+            if not self._no_themes:
+                default_dirs = [
+                    os.path.join(self._agent_dir, "themes"),
+                    os.path.join(self._cwd, CONFIG_DIR_NAME, "themes"),
+                ]
+                for theme_dir in default_dirs:
+                    self._load_themes_from_dir(theme_dir, themes, diagnostics, load_theme_from_path)
+
+            for path in theme_paths:
+                resolved = self._resolve_resource_path(path)
+                if not os.path.exists(resolved):
+                    diagnostics.append(
+                        ResourceDiagnostic(type="warning", message="theme path does not exist", path=resolved)
+                    )
+                    continue
+                if os.path.isdir(resolved):
+                    self._load_themes_from_dir(resolved, themes, diagnostics, load_theme_from_path)
+                else:
+                    self._load_theme_from_file(resolved, themes, diagnostics, load_theme_from_path)
+
+            deduped_themes, dedupe_diagnostics = self._dedupe_themes(themes)
+            themes = deduped_themes
+            diagnostics = [*diagnostics, *dedupe_diagnostics]
+
+        for loaded_theme in themes:
+            source_path = loaded_theme.source_path
+            if source_path:
+                loaded_theme.source_info = self._find_source_info_for_path(
+                    source_path, None, metadata_by_path
+                ) or self._get_default_source_info_for_path(source_path)
+        self._themes = themes
+        self._theme_diagnostics = diagnostics
+
+    def _load_themes_from_dir(self, theme_dir: str, themes: list, diagnostics: list, load_theme_from_path) -> None:
+        if not os.path.exists(theme_dir):
+            return
+
+        try:
+            for entry in sorted(os.listdir(theme_dir)):
+                full_path = os.path.join(theme_dir, entry)
+                if not os.path.isfile(full_path):
+                    continue
+                if not entry.endswith(".json"):
+                    continue
+                self._load_theme_from_file(full_path, themes, diagnostics, load_theme_from_path)
+        except OSError as error:
+            diagnostics.append(ResourceDiagnostic(type="warning", message=str(error), path=theme_dir))
+
+    def _load_theme_from_file(self, file_path: str, themes: list, diagnostics: list, load_theme_from_path) -> None:
+        try:
+            themes.append(load_theme_from_path(file_path))
+        except Exception as error:
+            diagnostics.append(ResourceDiagnostic(type="warning", message=str(error), path=file_path))
+
+    def _dedupe_themes(self, themes: list) -> tuple[list, list]:
+        seen: dict = {}
+        diagnostics: list[ResourceDiagnostic] = []
+
+        for t in themes:
+            name = t.name if t.name is not None else "unnamed"
+            existing = seen.get(name)
+            if existing is not None:
+                diagnostics.append(
+                    ResourceDiagnostic(
+                        type="collision",
+                        message=f'name "{name}" collision',
+                        path=t.source_path,
+                    )
+                )
+            else:
+                seen[name] = t
+
+        return list(seen.values()), diagnostics
 
     def _find_source_info_for_path(
         self,

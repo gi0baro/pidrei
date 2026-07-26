@@ -682,6 +682,12 @@ class TUI(Container):
             # Absorb requests that arrived up to this point; requests during
             # _do_render re-arm the loop (pi: renderRequested re-check).
             self._render_signal.clear()
+            # stop() sets _stopped and then the render signal; if that lands
+            # between this loop's wakeup and the clear() above, the wakeup is
+            # consumed here and the next wait() would block forever with
+            # stop() stuck awaiting this task. Re-check after clearing.
+            if self._stopped:
+                return
             self._last_render_at = _time.monotonic()
             self._do_render()
 

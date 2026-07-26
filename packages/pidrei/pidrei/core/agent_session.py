@@ -9,8 +9,8 @@ auto), bash execution, and tree navigation. Modes add their own I/O layer.
 pi's six AbortController scopes map to named CancelTokens: prompt (owned by
 the Agent), compaction, auto-compaction, branch-summary, retry, and bash.
 
-Not ported in Phase 3: export_to_html (the theme system and HTML export are
-Phase 4); export_to_jsonl is here. Extension loading is Phase 5 — the
+export_to_html landed with the Phase 4 export-html slice; export_to_jsonl
+is here. Extension loading is Phase 5 — the
 ExtensionRunner runs with zero extensions but the full event flow is wired.
 """
 
@@ -2798,6 +2798,31 @@ class AgentSession:
                 result.append({"entryId": entry["id"], "text": text})
 
         return result
+
+    async def export_to_html(self, output_path: str | None = None) -> str:
+        """Export session to HTML; returns the path to the exported file."""
+        from ..modes.interactive.theme import get_theme_by_name, theme
+        from .export_html import create_tool_html_renderer, export_session_to_html
+
+        configured_theme_name = self.settings_manager.get_theme()
+        theme_name = (
+            configured_theme_name if configured_theme_name and get_theme_by_name(configured_theme_name) else None
+        )
+
+        # Create tool renderer for custom tool HTML rendering
+        tool_renderer = create_tool_html_renderer(
+            {
+                "getToolDefinition": self.get_tool_definition,
+                "theme": theme,
+                "cwd": self.session_manager.get_cwd(),
+            }
+        )
+
+        return await export_session_to_html(
+            self.session_manager,
+            self.state,
+            {"outputPath": output_path, "themeName": theme_name, "toolRenderer": tool_renderer},
+        )
 
     def get_session_stats(self) -> SessionStats:
         """Session statistics. Aggregates over ALL session entries (including
