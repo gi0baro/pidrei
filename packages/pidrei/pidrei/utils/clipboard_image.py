@@ -46,9 +46,7 @@ def extension_for_image_mime_type(mime_type: str) -> str | None:
 
 
 def _select_preferred_image_mime_type(mime_types: list) -> str | None:
-    normalized = [
-        {"raw": t.strip(), "base": _base_mime_type(t.strip())} for t in mime_types if t.strip()
-    ]
+    normalized = [{"raw": t.strip(), "base": _base_mime_type(t.strip())} for t in mime_types if t.strip()]
 
     for preferred in SUPPORTED_IMAGE_MIME_TYPES:
         match = next((t for t in normalized if t["base"] == preferred), None)
@@ -72,7 +70,7 @@ def _run_command(command: list, *, timeout_s: float = _DEFAULT_READ_TIMEOUT_S, e
             env=env,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return {"ok": False, "stdout": b""}
 
     if result.returncode != 0:

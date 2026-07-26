@@ -319,9 +319,7 @@ class DefaultResourceLoader:
         if self._no_themes:
             theme_paths = self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
         else:
-            theme_paths = self._merge_paths(
-                [*cli_enabled_themes, *enabled_themes], self._additional_theme_paths
-            )
+            theme_paths = self._merge_paths([*cli_enabled_themes, *enabled_themes], self._additional_theme_paths)
         self._update_themes_from_paths(theme_paths, metadata_by_path)
 
         agents_files = (

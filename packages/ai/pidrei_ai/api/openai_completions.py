@@ -121,6 +121,9 @@ class _PunkreqResponse:
     def aiter_bytes(self) -> AsyncIterable[bytes]:
         return self._response.iter_bytes()
 
+    async def close(self) -> None:
+        await self._response.close()
+
 
 def _parse_error_body(body: str) -> dict | None:
     try:
@@ -468,17 +471,24 @@ def _parse_chunk_usage(raw_usage: dict, model: Model) -> Usage:
 async def _iterate_chunks(response: OpenAIResponseLike, cancel: CancelToken | None) -> AsyncGenerator[dict]:
     """SSE chunk iteration mirroring the openai SDK stream: data events, a
     `[DONE]` terminator, and error chunks raised as stream errors."""
-    async for sse in iterate_sse_messages(http.cancellable_bytes(response.aiter_bytes(), cancel)):
-        if sse.event == "error":
-            raise RuntimeError(sse.data)
-        if sse.data == "[DONE]":
-            return
-        chunk = json.loads(sse.data)
-        if isinstance(chunk, dict) and chunk.get("error"):
-            error = chunk["error"]
-            message = error.get("message") if isinstance(error, dict) else None
-            raise RuntimeError(message or json.dumps(error, ensure_ascii=False))
-        yield chunk
+    body = response.aiter_bytes()
+    ended = False
+    try:
+        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+            if sse.event == "error":
+                raise RuntimeError(sse.data)
+            if sse.data == "[DONE]":
+                ended = True
+                return
+            chunk = json.loads(sse.data)
+            if isinstance(chunk, dict) and chunk.get("error"):
+                error = chunk["error"]
+                message = error.get("message") if isinstance(error, dict) else None
+                raise RuntimeError(message or json.dumps(error, ensure_ascii=False))
+            yield chunk
+        ended = True
+    finally:
+        await http.finish_body(body, response, drain=ended)
 
 
 # --- client / params ----------------------------------------------------------

@@ -145,9 +145,7 @@ class TestSetToolsExpanded:
             _tool_output_expanded=False,
             _custom_header=None,
             _built_in_header=SimpleNamespace(set_expanded=header_calls.append),
-            _loaded_resources_container=SimpleNamespace(
-                children=[SimpleNamespace(set_expanded=loaded_calls.append)]
-            ),
+            _loaded_resources_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=loaded_calls.append)]),
             _chat_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=chat_calls.append)]),
             ui=SimpleNamespace(request_render=lambda force=False: request_render_calls.append(force)),
         )
@@ -263,6 +261,7 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
     ui.set_focus(palette)
     await ui.start()
     try:
+
         def overlay_factory(_tui, _theme, _keybindings, done):
             closers["overlay"] = done
             return overlay
@@ -475,9 +474,7 @@ def create_show_loaded_resources_fake(
             get_shortcut_diagnostics=list,
         ),
         resource_loader=SimpleNamespace(
-            get_agents_files=lambda: [
-                SimpleNamespace(path=item["path"]) for item in (context_files or [])
-            ],
+            get_agents_files=lambda: [SimpleNamespace(path=item["path"]) for item in (context_files or [])],
             get_skills=lambda: SimpleNamespace(
                 skills=[
                     SimpleNamespace(file_path=skill["filePath"], name=skill["name"], source_info=None)
@@ -701,9 +698,7 @@ class TestShowLoadedResources:
             }
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
@@ -723,9 +718,7 @@ class TestShowLoadedResources:
             }
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
@@ -755,15 +748,11 @@ class TestShowLoadedResources:
             },
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
-        assert normalize_rendered_output(fake._loaded_resources_container) == (
-            "[Extensions]\n  plan-mode, webfetch.ts"
-        )
+        assert normalize_rendered_output(fake._loaded_resources_container) == ("[Extensions]\n  plan-mode, webfetch.ts")
 
     def test_multiple_index_ts_with_unique_parent_dirs_need_no_disambiguation(self):
         extensions = [
@@ -780,9 +769,7 @@ class TestShowLoadedResources:
             for name in ("foo", "bar")
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
@@ -803,9 +790,7 @@ class TestShowLoadedResources:
             for name in ("alpha", "beta")
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
@@ -827,9 +812,7 @@ class TestShowLoadedResources:
             }
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
@@ -849,15 +832,11 @@ class TestShowLoadedResources:
             }
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 
-        assert normalize_rendered_output(fake._loaded_resources_container) == (
-            "[Extensions]\n  pi-markdown-preview"
-        )
+        assert normalize_rendered_output(fake._loaded_resources_container) == ("[Extensions]\n  pi-markdown-preview")
 
     def test_labels_npm_sibling_extensions_relative_to_the_declaring_package(self):
         extensions = [
@@ -883,9 +862,7 @@ class TestShowLoadedResources:
             },
         ]
 
-        fake = create_show_loaded_resources_fake(
-            quiet_startup=False, extensions=extensions, use_real_scope_groups=True
-        )
+        fake = create_show_loaded_resources_fake(quiet_startup=False, extensions=extensions, use_real_scope_groups=True)
 
         InteractiveMode._show_loaded_resources(fake, {"force": False})
 

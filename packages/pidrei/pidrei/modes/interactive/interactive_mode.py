@@ -622,9 +622,7 @@ class InteractiveMode:
         if self.settings_manager.get_collapse_changelog():
             version_match = re.search(r"##\s+\[?(\d+\.\d+\.\d+)\]?", self._changelog_markdown)
             latest_version = version_match.group(1) if version_match else self._version
-            condensed_text = (
-                f"Updated to v{latest_version}. Use {theme.bold('/changelog')} to view full changelog."
-            )
+            condensed_text = f"Updated to v{latest_version}. Use {theme.bold('/changelog')} to view full changelog."
             self._chat_container.add_child(Text(condensed_text, 1, 0))
         else:
             self._chat_container.add_child(Text(theme.bold(theme.fg("accent", "What's New")), 1, 0))
@@ -646,15 +644,18 @@ class InteractiveMode:
 
         # Ensure fd and rg are available. Both are needed: fd for
         # autocomplete, rg for the grep tool and bash commands.
-        fd_path = ensure_tool("fd")
-        ensure_tool("rg")
+        fd_path, _ = await tonio.map(ensure_tool, ("fd", "rg"))
         self._fd_path = fd_path
 
-        if self.session.scoped_models and (self._options.get("verbose") or not self.settings_manager.get_quiet_startup()):
+        if self.session.scoped_models and (
+            self._options.get("verbose") or not self.settings_manager.get_quiet_startup()
+        ):
             model_parts = []
             for sm in self.session.scoped_models:
                 model = sm["model"] if isinstance(sm, dict) else sm.model
-                thinking_level = sm.get("thinkingLevel") if isinstance(sm, dict) else getattr(sm, "thinking_level", None)
+                thinking_level = (
+                    sm.get("thinkingLevel") if isinstance(sm, dict) else getattr(sm, "thinking_level", None)
+                )
                 thinking_str = f":{thinking_level}" if thinking_level else ""
                 model_parts.append(f"{model.id}{thinking_str}")
             model_list = ", ".join(model_parts)
@@ -776,7 +777,7 @@ class InteractiveMode:
         self._footer_data_provider.on_branch_change(lambda: self.ui.request_render())
 
         # Initialize available provider count for footer display
-        await self._update_available_provider_count()
+        self._update_available_provider_count()
 
     def _update_terminal_title(self) -> None:
         """Update terminal title with session name and cwd."""
@@ -800,7 +801,7 @@ class InteractiveMode:
             async def refresh_models() -> None:
                 with contextlib.suppress(Exception):
                     await self.session.model_runtime.refresh()
-                    await self._update_available_provider_count()
+                    self._update_available_provider_count()
 
             tonio.spawn.without_tracking(refresh_models())
 
@@ -808,7 +809,7 @@ class InteractiveMode:
         async def version_check() -> None:
             new_release = await check_for_new_version(self._version)
             if new_release:
-                self._show_new_version_notification(new_release)
+                self.show_new_version_notification(new_release)
 
         tonio.spawn.without_tracking(version_check())
 
@@ -816,7 +817,7 @@ class InteractiveMode:
         async def package_update_check() -> None:
             updates = await self._check_for_package_updates()
             if updates:
-                self._show_package_update_notification(updates)
+                self.show_package_update_notification(updates)
 
         tonio.spawn.without_tracking(package_update_check())
 
@@ -904,7 +905,7 @@ class InteractiveMode:
                     timeout=2,
                     check=False,
                 )
-            except (OSError, subprocess.TimeoutExpired):
+            except OSError, subprocess.TimeoutExpired:
                 return None
             return result.stdout.strip() if result.returncode == 0 else None
 
@@ -995,7 +996,7 @@ class InteractiveMode:
 
         # Replace home directory with ~
         if result.startswith(home):
-            result = f"~{result[len(home):]}"
+            result = f"~{result[len(home) :]}"
 
         return result
 
@@ -1273,7 +1274,9 @@ class InteractiveMode:
         for name, collision_list in collisions.items():
             first_entry = collision_list[0]
             first = (
-                first_entry.get("collision") if isinstance(first_entry, dict) else getattr(first_entry, "collision", None)
+                first_entry.get("collision")
+                if isinstance(first_entry, dict)
+                else getattr(first_entry, "collision", None)
             )
             if first is None:
                 continue
@@ -1577,11 +1580,11 @@ class InteractiveMode:
                 mode="tui",
                 abort_handler=lambda: self._restore_queued_messages_to_editor({"abort": True}),
                 command_context_actions={
-                    "waitForIdle": lambda: self.session.wait_for_idle(),
-                    "newSession": new_session_action,
+                    "wait_for_idle": lambda: self.session.wait_for_idle(),
+                    "new_session": new_session_action,
                     "fork": fork_action,
-                    "navigateTree": navigate_tree_action,
-                    "switchSession": switch_session_action,
+                    "navigate_tree": navigate_tree_action,
+                    "switch_session": switch_session_action,
                     "reload": reload_action,
                 },
                 shutdown_handler=shutdown_handler,
@@ -1637,7 +1640,7 @@ class InteractiveMode:
         else:
             await self._bind_current_session_extensions()
             self._subscribe_to_agent()
-        await self._update_available_provider_count()
+        self._update_available_provider_count()
         self._update_editor_border_color()
         self._update_terminal_title()
 
@@ -1701,7 +1704,7 @@ class InteractiveMode:
                 "abort": lambda: self._restore_queued_messages_to_editor({"abort": True}),
                 "hasPendingMessages": lambda: self.session.pending_message_count > 0,
                 "shutdown": lambda: setattr(self, "_shutdown_requested", True),
-                "getContextUsage": lambda: self.session.get_context_usage,
+                "getContextUsage": lambda: self.session.get_context_usage(),
                 "compact": compact,
                 "getSystemPrompt": lambda: self.session.system_prompt,
             }
@@ -2351,9 +2354,7 @@ class InteractiveMode:
         if stack:
             # Show stack trace in dim color, indented (skip first line, it
             # duplicates the error message)
-            stack_lines = "\n".join(
-                theme.fg("dim", f"  {line.strip()}") for line in stack.split("\n")[1:]
-            )
+            stack_lines = "\n".join(theme.fg("dim", f"  {line.strip()}") for line in stack.split("\n")[1:])
             if stack_lines:
                 self._chat_container.add_child(Text(stack_lines, 1, 0))
         self.ui.request_render()
@@ -2394,9 +2395,7 @@ class InteractiveMode:
         # Register app action handlers
         self._default_editor.on_action("app.clear", lambda: self._handle_ctrl_c())
         self._default_editor.on_ctrl_d = lambda: self._handle_ctrl_d()
-        self._default_editor.on_action(
-            "app.suspend", lambda: tonio.spawn.without_tracking(self._handle_ctrl_z())
-        )
+        self._default_editor.on_action("app.suspend", lambda: tonio.spawn.without_tracking(self._handle_ctrl_z()))
         self._default_editor.on_action("app.thinking.cycle", lambda: self._cycle_thinking_level())
         self._default_editor.on_action(
             "app.model.cycleForward", lambda: tonio.spawn.without_tracking(self._cycle_model("forward"))
@@ -2760,9 +2759,7 @@ class InteractiveMode:
                     if not error_message:
                         error_message = self._streaming_message.error_message or "Error"
                     for component in self._pending_tools.values():
-                        component.update_result(
-                            {"content": [{"type": "text", "text": error_message}], "isError": True}
-                        )
+                        component.update_result({"content": [{"type": "text", "text": error_message}], "isError": True})
                     self._pending_tools.clear()
                 else:
                     # Args are now complete - trigger diff computation for
@@ -2904,9 +2901,7 @@ class InteractiveMode:
             # Show error only on final failure (success shows normal
             # response)
             if not event.success:
-                self.show_error(
-                    f"Retry failed after {event.attempt} attempts: {event.final_error or 'Unknown error'}"
-                )
+                self.show_error(f"Retry failed after {event.attempt} attempts: {event.final_error or 'Unknown error'}")
             self.ui.request_render()
 
         elif event_type == "summarization_retry_scheduled":
@@ -3028,9 +3023,7 @@ class InteractiveMode:
                 skill_block = parse_skill_block(text_content)
                 if skill_block is not None:
                     # Render skill block (collapsible)
-                    component = SkillInvocationMessageComponent(
-                        skill_block, self._get_markdown_theme_with_settings()
-                    )
+                    component = SkillInvocationMessageComponent(skill_block, self._get_markdown_theme_with_settings())
                     component.set_expanded(self._tool_output_expanded)
                     self._chat_container.add_child(component)
                     # Render user message separately if present
@@ -3376,7 +3369,7 @@ class InteractiveMode:
                             return
                         kill_tracked_detached_children()
                         await self.shutdown({"fromSignal": True})
-            except (ValueError, RuntimeError):
+            except ValueError, RuntimeError:
                 # Signals can only be watched from the main thread (tests).
                 return
 
@@ -3947,16 +3940,14 @@ class InteractiveMode:
                     "onCollapseChangelogChange": lambda collapsed: self.settings_manager.set_collapse_changelog(
                         collapsed
                     ),
-                    "onEnableInstallTelemetryChange": lambda enabled: self.settings_manager.set_enable_install_telemetry(
-                        enabled
+                    "onEnableInstallTelemetryChange": lambda enabled: (
+                        self.settings_manager.set_enable_install_telemetry(enabled)
                     ),
                     "onQuietStartupChange": lambda enabled: self.settings_manager.set_quiet_startup(enabled),
-                    "onDefaultProjectTrustChange": lambda default_project_trust: self.settings_manager.set_default_project_trust(
-                        default_project_trust
+                    "onDefaultProjectTrustChange": lambda default_project_trust: (
+                        self.settings_manager.set_default_project_trust(default_project_trust)
                     ),
-                    "onDoubleEscapeActionChange": lambda action: self.settings_manager.set_double_escape_action(
-                        action
-                    ),
+                    "onDoubleEscapeActionChange": lambda action: self.settings_manager.set_double_escape_action(action),
                     "onTreeFilterModeChange": lambda mode: self.settings_manager.set_tree_filter_mode(mode),
                     "onShowHardwareCursorChange": on_show_hardware_cursor_change,
                     "onEditorPaddingXChange": on_editor_padding_x_change,
@@ -4297,9 +4288,7 @@ class InteractiveMode:
                         wants_summary = summary_choice != "No summary"
 
                         if summary_choice == "Summarize with custom prompt":
-                            custom_instructions = await self._show_extension_editor(
-                                "Custom summarization instructions"
-                            )
+                            custom_instructions = await self._show_extension_editor("Custom summarization instructions")
                             if custom_instructions is None:
                                 # User cancelled - loop back to summary selector
                                 continue
@@ -4509,8 +4498,7 @@ class InteractiveMode:
         return [
             provider
             for provider in self.get_login_provider_options()
-            if provider["id"].lower() == normalized_provider_ref
-            or provider["name"].lower() == normalized_provider_ref
+            if provider["id"].lower() == normalized_provider_ref or provider["name"].lower() == normalized_provider_ref
         ]
 
     async def _handle_login_command(self, provider_ref: str | None = None) -> None:
@@ -4711,9 +4699,7 @@ class InteractiveMode:
     ) -> None:
         await self.session.model_runtime.get_available()
 
-        action_label = (
-            f"Logged in to {provider_name}" if auth_type == "oauth" else f"Saved API key for {provider_name}"
-        )
+        action_label = f"Logged in to {provider_name}" if auth_type == "oauth" else f"Saved API key for {provider_name}"
 
         selected_model = None
         selection_error: str | None = None
@@ -5093,9 +5079,7 @@ class InteractiveMode:
             self.show_error("Usage: /import <path.jsonl>")
             return
 
-        confirmed = await self._show_extension_confirm(
-            "Import session", f"Replace current session with {input_path}?"
-        )
+        confirmed = await self._show_extension_confirm("Import session", f"Replace current session with {input_path}?")
         if not confirmed:
             self.show_status("Import cancelled")
             return
@@ -5238,9 +5222,7 @@ class InteractiveMode:
         self.session.set_session_name(name)
         session_name = self.session_manager.get_session_name()
         if session_name != name:
-            self.show_warning(
-                f"Session name was normalized from {json.dumps(name)} to {json.dumps(session_name)}"
-            )
+            self.show_warning(f"Session name was normalized from {json.dumps(name)} to {json.dumps(session_name)}")
         self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(
             Text(theme.fg("dim", f"Session name set: {session_name if session_name is not None else name}"), 1, 0)
@@ -5435,9 +5417,7 @@ class InteractiveMode:
         if shortcuts:
             hotkeys += "\n**Extensions**\n| Key | Action |\n|-----|--------|\n"
             for key, shortcut in shortcuts.items():
-                description = (
-                    shortcut.description if shortcut.description is not None else shortcut.extension_path
-                )
+                description = shortcut.description if shortcut.description is not None else shortcut.extension_path
                 key_display = format_key_text(key, {"capitalize": True})
                 hotkeys += f"| `{key_display}` | {description} |\n"
 

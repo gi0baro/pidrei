@@ -93,6 +93,9 @@ class _PunkreqResponse:
     def aiter_bytes(self) -> AsyncIterable[bytes]:
         return self._response.iter_bytes()
 
+    async def close(self) -> None:
+        await self._response.close()
+
 
 def _parse_error_body(body: str) -> dict | None:
     try:
@@ -142,12 +145,19 @@ class _PunkreqResponsesClient:
 
 
 async def _iterate_events(response: OpenAIResponseLike, cancel: CancelToken | None) -> AsyncGenerator[dict]:
-    async for sse in iterate_sse_messages(http.cancellable_bytes(response.aiter_bytes(), cancel)):
-        if sse.data == "[DONE]":
-            return
-        event = json.loads(sse.data)
-        if isinstance(event, dict):
-            yield event
+    body = response.aiter_bytes()
+    ended = False
+    try:
+        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+            if sse.data == "[DONE]":
+                ended = True
+                return
+            event = json.loads(sse.data)
+            if isinstance(event, dict):
+                yield event
+        ended = True
+    finally:
+        await http.finish_body(body, response, drain=ended)
 
 
 # --- compat / options ---------------------------------------------------------

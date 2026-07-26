@@ -52,8 +52,7 @@ class TestOAuthSelectorComponent:
 
         api_key_options = InteractiveMode.get_login_provider_options(fake, "api_key")
         assert [
-            (option["id"], option["name"], option["authType"], option["method"].name)
-            for option in api_key_options
+            (option["id"], option["name"], option["authType"], option["method"].name) for option in api_key_options
         ] == [
             ("anthropic", "Anthropic", "api_key", "Anthropic API key"),
             ("google-vertex", "Google Vertex AI", "api_key", "Google Cloud credentials"),
@@ -63,6 +62,7 @@ class TestOAuthSelectorComponent:
         assert [(option["id"], option["name"], option["authType"]) for option in oauth_options] == [
             ("anthropic", "Anthropic", "oauth")
         ]
+
     def test_renders_an_option_without_compiled_auth_status_as_unconfigured(self):
         selector = OAuthSelectorComponent(
             "login",

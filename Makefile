@@ -11,6 +11,10 @@ lint:
 	uv run ruff check $(pysources)
 	uv run ruff format --check $(pysources)
 
+.PHONY: audit
+audit:
+	uv run python scripts/audit.py
+
 .PHONY: test
 test:
 	uv run pytest -v
@@ -20,4 +24,4 @@ models-data:
 	uv run python packages/ai/scripts/generate_models.py
 
 .PHONY: all
-all: format lint test
+all: format lint audit test

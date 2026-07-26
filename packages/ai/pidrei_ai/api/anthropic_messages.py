@@ -281,6 +281,9 @@ class _PunkreqResponse:
     def aiter_bytes(self) -> AsyncIterable[bytes]:
         return self._response.iter_bytes()
 
+    async def close(self) -> None:
+        await self._response.close()
+
 
 class _PunkreqAnthropicClient:
     """Default transport: POST {base_url}/v1/messages through the punkreq seam."""
@@ -430,23 +433,31 @@ async def _iterate_anthropic_events(
     saw_message_start = False
     saw_message_end = False
 
-    async for sse in iterate_sse_messages(http.cancellable_bytes(response.aiter_bytes(), cancel)):
-        if sse.event == "error":
-            raise RuntimeError(sse.data)
+    body = response.aiter_bytes()
+    ended = False
+    try:
+        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+            if sse.event == "error":
+                raise RuntimeError(sse.data)
 
-        if (sse.event or "") not in _ANTHROPIC_MESSAGE_EVENTS:
-            continue
+            if (sse.event or "") not in _ANTHROPIC_MESSAGE_EVENTS:
+                continue
 
-        try:
-            event = parse_json_with_repair(sse.data)
-        except Exception as error:
-            raw = "\\n".join(sse.raw)
-            raise RuntimeError(f"Could not parse Anthropic SSE event {sse.event}: {error}; data={sse.data}; raw={raw}")
-        if event.get("type") == "message_start":
-            saw_message_start = True
-        elif event.get("type") == "message_stop":
-            saw_message_end = True
-        yield event
+            try:
+                event = parse_json_with_repair(sse.data)
+            except Exception as error:
+                raw = "\\n".join(sse.raw)
+                raise RuntimeError(
+                    f"Could not parse Anthropic SSE event {sse.event}: {error}; data={sse.data}; raw={raw}"
+                )
+            if event.get("type") == "message_start":
+                saw_message_start = True
+            elif event.get("type") == "message_stop":
+                saw_message_end = True
+            yield event
+        ended = True
+    finally:
+        await http.finish_body(body, response, drain=ended)
 
     if saw_message_start and not saw_message_end:
         raise RuntimeError("Anthropic stream ended before message_stop")

@@ -59,9 +59,7 @@ def _load_themes(resources: list) -> list:
 
 
 async def _load_startup_themes(settings_manager: SettingsManager) -> list:
-    global_settings_manager = SettingsManager.in_memory(
-        settings_manager.get_global_settings(), project_trusted=False
-    )
+    global_settings_manager = SettingsManager.in_memory(settings_manager.get_global_settings(), project_trusted=False)
     package_manager = DefaultPackageManager(
         cwd=os.getcwd(),
         agent_dir=get_agent_dir(),

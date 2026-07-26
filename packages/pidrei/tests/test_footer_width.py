@@ -57,7 +57,9 @@ def create_session(
             get_session_name=lambda: session_name,
             get_cwd=lambda: "/tmp/project",
         ),
-        get_context_usage=SimpleNamespace(context_window=200_000, percent=12.3),
+        # AgentSession.get_context_usage is a method (pi calls it too) — the
+        # fake must be callable, not a data attribute.
+        get_context_usage=lambda: SimpleNamespace(context_window=200_000, percent=12.3),
         model_runtime=SimpleNamespace(is_using_oauth=lambda provider_id: False),
     )
 

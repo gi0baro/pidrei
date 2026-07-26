@@ -107,7 +107,7 @@ class FooterComponent:
         # Calculate context usage from session (handles compaction
         # correctly). After compaction, tokens are unknown until the next LLM
         # response.
-        context_usage = self._session.get_context_usage
+        context_usage = self._session.get_context_usage()
         if context_usage is not None:
             context_window = context_usage.context_window
         elif state.model is not None:

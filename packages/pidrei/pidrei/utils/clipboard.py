@@ -29,7 +29,7 @@ def _run_with_input(command: list, text: str) -> bool:
             check=True,
         )
         return True
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return False
 
 
@@ -41,7 +41,7 @@ def _read_output(command: list) -> str | None:
             timeout=_EXEC_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     if result.returncode != 0:
         return None

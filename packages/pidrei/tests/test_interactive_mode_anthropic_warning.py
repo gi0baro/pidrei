@@ -39,12 +39,8 @@ async def test_warns_once_when_anthropic_subscription_auth_is_detected():
     model_runtime = _create_model_runtime(None, "sk-ant-oat01-test")
     fake = _create_fake(model_runtime)
 
-    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(
-        fake, SimpleNamespace(provider="anthropic")
-    )
-    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(
-        fake, SimpleNamespace(provider="anthropic")
-    )
+    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(fake, SimpleNamespace(provider="anthropic"))
+    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(fake, SimpleNamespace(provider="anthropic"))
 
     assert len(fake.warnings_shown) == 1
     assert len(model_runtime.get_auth_calls) == 1
@@ -55,9 +51,7 @@ async def test_warns_when_anthropic_oauth_is_stored_even_if_token_refresh_lookup
     model_runtime = _create_model_runtime(SimpleNamespace(type="oauth"))
     fake = _create_fake(model_runtime)
 
-    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(
-        fake, SimpleNamespace(provider="anthropic")
-    )
+    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(fake, SimpleNamespace(provider="anthropic"))
 
     assert len(fake.warnings_shown) == 1
     assert model_runtime.get_auth_calls == []
@@ -79,9 +73,7 @@ async def test_does_not_warn_when_anthropic_extra_usage_warning_is_disabled():
     model_runtime = _create_model_runtime(None)
     fake = _create_fake(model_runtime, {"anthropicExtraUsage": False})
 
-    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(
-        fake, SimpleNamespace(provider="anthropic")
-    )
+    await InteractiveMode._maybe_warn_about_anthropic_subscription_auth(fake, SimpleNamespace(provider="anthropic"))
 
     assert fake.warnings_shown == []
     assert model_runtime.check_auth_calls == []

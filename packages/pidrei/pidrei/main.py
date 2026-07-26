@@ -496,12 +496,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     # Experimental first-time setup: theme choice and analytics opt-in.
     # Runs before any runtime services are created so the chosen settings
     # apply everywhere.
-    if (
-        app_mode == "interactive"
-        and not parsed.help
-        and parsed.list_models is None
-        and should_run_first_time_setup()
-    ):
+    if app_mode == "interactive" and not parsed.help and parsed.list_models is None and should_run_first_time_setup():
         await show_first_time_setup(startup_settings_manager)
         time("firstTimeSetup")
 

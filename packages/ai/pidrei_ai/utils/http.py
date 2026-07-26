@@ -6,6 +6,7 @@ encode the LLM-streaming idiom: bound connect and per-chunk reads, never the
 whole request — a legitimately long SSE stream must not hit a total deadline.
 """
 
+import inspect
 import threading
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping
 
@@ -69,6 +70,55 @@ async def cancellable_bytes(source: AsyncIterable[bytes], cancel: CancelToken | 
         if winner is _STREAM_DONE:
             return
         yield winner  # type: ignore[misc]
+
+
+_DRAIN_TIMEOUT_S = 1.0
+
+
+async def finish_body(body: AsyncIterable[bytes], response: object, *, drain: bool) -> None:
+    """Settle the transport body an adapter stopped reading.
+
+    Adapters stop at the terminal SSE event (`[DONE]`, `message_stop`), which
+    leaves the transport's body generator suspended. Async generators are
+    only finalized by `aclose()` or the garbage collector, and GC
+    finalization cannot await — an abandoned body printed "async generator
+    ignored GeneratorExit" on the user's terminal mid-turn (found by the boot
+    smoke test) and held the pooled connection until GC ran.
+
+    An SSE body ends immediately after its terminal event, so draining it
+    lets the transport's own tail run (punkreq's `iter_raw` releases the
+    response there) and nothing is left for the GC. The drain is bounded: a
+    provider that keeps the connection open past the terminal event falls
+    back to closing the response, which aborts the exchange. Error and cancel
+    paths never drain — they abort. Injected test clients without a `close`
+    are a no-op.
+    """
+    if drain:
+        try:
+            _result, completed = await tonio.time.timeout(_drain_body(body), _DRAIN_TIMEOUT_S)
+            if completed:
+                return
+        except Exception:
+            return
+    await close_response(response)
+
+
+async def _drain_body(body: AsyncIterable[bytes]) -> None:
+    try:
+        async for _chunk in body:
+            pass
+    except Exception:
+        pass
+
+
+async def close_response(response: object) -> None:
+    """Abort a streaming response (punkreq's idempotent release)."""
+    close = getattr(response, "close", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
 
 
 def request_timeout(timeout_ms: float | None) -> Timeout:

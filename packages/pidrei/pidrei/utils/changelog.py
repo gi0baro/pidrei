@@ -72,7 +72,7 @@ def _normalize_changelog_link_target(target: str, tag: str) -> str:
         for branch in ("main", "master"):
             floating_ref_prefix = f"{repo_url}/{route}/{branch}/"
             if canonical_target.startswith(floating_ref_prefix):
-                canonical_target = f"{repo_url}/{route}/{tag}/{canonical_target[len(floating_ref_prefix):]}"
+                canonical_target = f"{repo_url}/{route}/{tag}/{canonical_target[len(floating_ref_prefix) :]}"
 
     if canonical_target.startswith(("#", "//")) or _URL_SCHEME_RE.match(canonical_target):
         return canonical_target
@@ -165,7 +165,7 @@ def get_new_entries(entries: list, last_version: str) -> list:
         pieces = last_version.split(".")
         try:
             return int(pieces[index])
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             return 0
 
     last = {"major": part(0), "minor": part(1), "patch": part(2), "content": ""}

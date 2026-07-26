@@ -71,7 +71,7 @@ def _split_ref(url: str) -> dict:
 def _decode_for_validation(value: str) -> str | None:
     try:
         return urllib.parse.unquote(value, errors="strict")
-    except (UnicodeDecodeError, ValueError):
+    except UnicodeDecodeError, ValueError:
         return None
 
 
