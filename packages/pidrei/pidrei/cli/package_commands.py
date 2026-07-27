@@ -45,7 +45,8 @@ CONFIG_COMMAND_USAGE = f"{APP_NAME} config [-l] [--approve|--no-approve]"
 #: How to actually update pidrei, since `update --self` will not.
 SELF_UPDATE_HINT = (
     f"{APP_NAME} does not update itself. Re-run the install command with the new version:\n"
-    f"  uv tool install -p 3.14t git+https://github.com/gi0baro/pidrei@<version>\n"
+    f"  uv tool install -p 3.14t 'git+https://github.com/gi0baro/pidrei"
+    f"@<version>#subdirectory=packages/pidrei'\n"
     f"  brew upgrade pidrei"
 )
 
@@ -156,7 +157,7 @@ Short forms:
 
 Updating {APP_NAME}:
   Re-run the install command with the new version.
-  uv tool install -p 3.14t git+https://github.com/gi0baro/pidrei@<version>
+  uv tool install -p 3.14t 'git+https://github.com/gi0baro/pidrei@<version>#subdirectory=packages/pidrei'
   brew upgrade pidrei
 """)
         return

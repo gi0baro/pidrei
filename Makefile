@@ -19,6 +19,10 @@ audit:
 test:
 	uv run pytest -v
 
+.PHONY: release-check
+release-check:
+	uv run python scripts/release_check.py
+
 .PHONY: models-data
 models-data:
 	uv run python packages/ai/scripts/generate_models.py

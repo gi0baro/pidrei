@@ -1,0 +1,103 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      # Four segments: pi's version plus our build number, with a leading v.
+      - v*.*.*.*
+
+env:
+  UV_PYTHON: 3.14t
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
+      - name: Install
+        run: |
+          uv python install ${{ env.UV_PYTHON }}
+          uv venv .venv
+          uv sync --all-packages --group test
+
+      - name: Release checks
+        # Tag vs tree version, the five package versions, the intra-repo pins,
+        # the LICENSE copies, and the upstream ref. Same script as
+        # `make release-check`, so it is runnable before tagging.
+        run: |
+          uv run python scripts/release_check.py "${GITHUB_REF_NAME}"
+
+      - name: Test
+        run: make test
+
+      - name: Build distributions
+        run: |
+          # --all-packages, not bare `uv build`: the repo root is a uv
+          # workspace with no [project], where bare `uv build` silently
+          # produces an "unknown-0.0.0" artifact instead of failing.
+          uv build --all-packages
+
+      - name: Verify the built artifacts
+        # The workspace can never catch a missing intra-repo dependency —
+        # `uv sync --all-packages` installs every member either way — so the
+        # wheels are installed into a venv *outside* it, resolving only from
+        # dist/. This is how the missing `pidrei-tui` dependency was found.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for name in pidrei pidrei_ai pidrei_agent pidrei_tui pidrei_server; do
+            test -f "dist/${name}-${version}-py3-none-any.whl" \
+              || { echo "missing wheel: ${name}-${version}"; exit 1; }
+            test -f "dist/${name}-${version}.tar.gz" \
+              || { echo "missing sdist: ${name}-${version}"; exit 1; }
+          done
+
+          uv venv --python ${{ env.UV_PYTHON }} /tmp/release-check
+          # --find-links only, no --no-index: the five pidrei wheels exist on
+          # no index and must come from dist/, while tonio and the rest still
+          # resolve from PyPI. --no-index blocks both and fails to resolve.
+          uv pip install --python /tmp/release-check/bin/python \
+            --find-links dist "pidrei==${version}"
+          test "$(/tmp/release-check/bin/pidrei --version)" = "${version}" \
+            || { echo "installed --version does not report ${version}"; exit 1; }
+          /tmp/release-check/bin/pi3 --version >/dev/null
+          # The shipped docs and examples must survive packaging.
+          /tmp/release-check/bin/python -c "
+          import os
+          from pidrei.config import get_docs_path, get_examples_path, get_readme_path
+          assert os.path.isfile(get_readme_path()), 'README.md not in the wheel'
+          assert len(os.listdir(get_docs_path())) >= 13, 'docs/ not in the wheel'
+          assert os.path.isdir(get_examples_path()), 'examples/ not in the wheel'
+          "
+
+      - name: Generate the Homebrew formula
+        # sha256s of the artifacts just built. The third-party resources are
+        # filled in with `brew update-python-resources` inside the tap; this
+        # only covers the five distributions that exist on no index.
+        run: |
+          uv run python scripts/brew_formula.py "${GITHUB_REF_NAME}" dist > pidrei.rb
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*.whl dist/*.tar.gz
+
+      - name: Upload the formula
+        # Attached rather than pushed: the tap is a separate repo, and pushing
+        # to it needs a cross-repo token. Copy it in, run
+        # `brew update-python-resources`, commit.
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula
+          path: pidrei.rb

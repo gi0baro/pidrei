@@ -37,8 +37,12 @@ premises above, you will need a free-threaded CPython 3.14. `uv` fetches one for
 you, so this is the whole procedure:
 
 ```
-uv tool install -p 3.14t git+https://github.com/gi0baro/pidrei@v0.82.0.0
+uv tool install -p 3.14t \
+  'git+https://github.com/gi0baro/pidrei@v0.82.0.0#subdirectory=packages/pidrei'
 ```
+
+Yes, the `#subdirectory` is ugly. PiDrei mirrors Pi's monorepo, five packages and
+all, and the CLI is only one of them.
 
 Or, if you would rather Homebrew did the honours:
 
@@ -48,7 +52,8 @@ brew install gi0baro/tap/pidrei
 
 Wheels and source tarballs are attached to every
 [GitHub release](https://github.com/gi0baro/pidrei/releases), if you prefer to
-install from those.
+install from those — all five, since they reference each other by exact
+version.
 
 ## Differences with Pi
 
