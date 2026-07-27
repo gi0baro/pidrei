@@ -49,11 +49,11 @@ async def handle_ipc_request(request: dict[str, Any]) -> dict[str, Any]:
         return {
             "type": "list_result",
             "ok": True,
-            "instances": [to_instance_summary(instance) for instance in supervisor.list_instances()],
+            "instances": [to_instance_summary(instance) for instance in await supervisor.list_instances()],
         }
 
     if request_type == "status":
-        instance = supervisor.get_instance(request["instanceId"])
+        instance = await supervisor.get_instance(request["instanceId"])
         if instance is None:
             return _unknown_instance_error(request["instanceId"])
 
@@ -86,7 +86,7 @@ async def handle_ipc_request(request: dict[str, Any]) -> dict[str, Any]:
         }
 
     if request_type == "rpc_stream":
-        instance = supervisor.get_instance(request["instanceId"])
+        instance = await supervisor.get_instance(request["instanceId"])
         if instance is None:
             return _unknown_instance_error(request["instanceId"])
         return {

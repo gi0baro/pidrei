@@ -7,14 +7,14 @@ import pytest
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components import OAuthSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 
 @pytest.fixture(autouse=True)
 def _setup():
-    init_theme("dark")
+    init_theme_sync("dark")
     set_keybindings(KeybindingsManager())
 
 

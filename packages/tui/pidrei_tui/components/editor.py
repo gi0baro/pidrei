@@ -550,7 +550,7 @@ class Editor:
 
         return result
 
-    def handle_input(self, data: str) -> None:  # noqa: C901
+    async def handle_input(self, data: str) -> None:  # noqa: C901
         kb = get_keybindings()
 
         # Handle character jump mode (awaiting next character to jump to)
@@ -590,7 +590,7 @@ class Editor:
                 remaining = self._paste_buffer[end_index + 6 :]
                 self._paste_buffer = ""
                 if remaining:
-                    self.handle_input(remaining)
+                    await self.handle_input(remaining)
                 return
             return
 
@@ -610,7 +610,7 @@ class Editor:
                 return
 
             if kb.matches(data, "tui.select.up") or kb.matches(data, "tui.select.down"):
-                self._autocomplete_list.handle_input(data)
+                await self._autocomplete_list.handle_input(data)
                 return
 
             if kb.matches(data, "tui.input.tab"):

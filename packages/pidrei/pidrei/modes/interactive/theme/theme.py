@@ -20,6 +20,10 @@ import math
 import os
 import re
 import threading
+from collections.abc import Awaitable
+
+import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_tui import get_capabilities
 
@@ -397,11 +401,22 @@ def _get_builtin_themes() -> dict:
     return _BUILTIN_THEMES
 
 
-def get_available_themes() -> list:
-    return [info["name"] for info in get_available_themes_with_paths()]
+async def prime_theme_cache() -> None:
+    """Warm `_BUILTIN_THEMES` off the runtime.
+
+    pi caches these too, so priming is not a divergence — it only moves the
+    one-time read off whatever thread happens to ask first. `set_theme` for a
+    builtin or a registered theme then does no I/O at all, which matters
+    because it is reached from a sync TUI callback.
+    """
+    await tonio.spawn_blocking(_get_builtin_themes)
 
 
-def get_available_themes_with_paths() -> list:
+async def get_available_themes() -> list:
+    return [info["name"] for info in await get_available_themes_with_paths()]
+
+
+async def get_available_themes_with_paths() -> list:
     """Return ``{"name", "path"}`` records for every known theme."""
     themes_dir = get_themes_dir()
     result: list = []
@@ -418,7 +433,7 @@ def get_available_themes_with_paths() -> list:
         add_theme({"name": name, "path": os.path.join(themes_dir, f"{name}.json")})
 
     # Custom themes
-    for theme_info in _get_custom_theme_infos():
+    for theme_info in await _get_custom_theme_infos():
         add_theme(theme_info)
 
     for name, registered in _registered_themes.items():
@@ -427,20 +442,29 @@ def get_available_themes_with_paths() -> list:
     return sorted(result, key=lambda info: (info["name"].lower(), info["name"]))
 
 
-def _get_custom_theme_infos() -> list:
+def _scan_custom_theme_dir(custom_themes_dir: str) -> list[str]:
+    """One pool hop for the exists+listdir pair."""
+    if not os.path.exists(custom_themes_dir):
+        return []
+    return sorted(f for f in os.listdir(custom_themes_dir) if f.endswith(".json"))
+
+
+async def _get_custom_theme_infos() -> list:
+    """Re-scans on every call, like pi's `getCustomThemeInfos`.
+
+    Deliberately not cached: pi picks up a theme file dropped in mid-session,
+    and caching would silently require a restart. The scan is offloaded rather
+    than memoised.
+    """
     custom_themes_dir = get_custom_themes_dir()
     result: list = []
-    if not os.path.exists(custom_themes_dir):
-        return result
-
-    for file in sorted(os.listdir(custom_themes_dir)):
-        if not file.endswith(".json"):
-            continue
+    entries = await tonio.spawn_blocking(_scan_custom_theme_dir, custom_themes_dir)
+    for file in entries:
         theme_path = os.path.join(custom_themes_dir, file)
         # Invalid themes are ignored here; the resource loader reports them
         # during normal startup/reload.
         with contextlib.suppress(Exception):
-            custom_theme = load_theme_from_path(theme_path)
+            custom_theme = await load_theme_from_path(theme_path)
             if custom_theme.name:
                 result.append({"name": custom_theme.name, "path": theme_path})
     return result
@@ -479,23 +503,21 @@ def _parse_theme_json_content(label: str, content: str) -> dict:
     return _parse_theme_json(label, json_value)
 
 
-def _load_theme_json(name: str) -> dict:
+async def _load_theme_json(name: str) -> dict:
     builtin_themes = _get_builtin_themes()
     if name in builtin_themes:
         return builtin_themes[name]
     registered_theme = _registered_themes.get(name)
     if registered_theme is not None and registered_theme.source_path:
-        with open(registered_theme.source_path, encoding="utf-8") as f:
-            content = f.read()
+        content = await fs.Path(registered_theme.source_path).read_text(encoding="utf-8")
         return _parse_theme_json_content(registered_theme.source_path, content)
     if registered_theme is not None:
         raise ValueError(f'Theme "{name}" does not have a source path for export')
     custom_themes_dir = get_custom_themes_dir()
     theme_path = os.path.join(custom_themes_dir, f"{name}.json")
-    if not os.path.exists(theme_path):
+    if not await fs.Path(theme_path).exists():
         raise ValueError(f"Theme not found: {name}")
-    with open(theme_path, encoding="utf-8") as f:
-        content = f.read()
+    content = await fs.Path(theme_path).read_text(encoding="utf-8")
     return _parse_theme_json_content(name, content)
 
 
@@ -512,24 +534,34 @@ def _create_theme(theme_json: dict, mode: str | None = None, source_path: str | 
     return Theme(fg_colors, bg_colors, color_mode, {"name": theme_json["name"], "sourcePath": source_path})
 
 
-def load_theme_from_path(theme_path: str, mode: str | None = None) -> Theme:
+def _load_theme_from_path_sync(theme_path: str, mode: str | None = None) -> Theme:
+    """Blocking read+parse. Only for callers already off the runtime.
+
+    The theme watcher's reload runs on a `threading.Timer` daemon thread,
+    which is outside the never-block rule by construction, so it calls this
+    directly instead of reaching back into the runtime.
+    """
     with open(theme_path, encoding="utf-8") as f:
         content = f.read()
     theme_json = _parse_theme_json_content(theme_path, content)
     return _create_theme(theme_json, mode, theme_path)
 
 
-def _load_theme(name: str, mode: str | None = None) -> Theme:
+def load_theme_from_path(theme_path: str, mode: str | None = None) -> Awaitable[Theme]:
+    return tonio.spawn_blocking(_load_theme_from_path_sync, theme_path, mode)
+
+
+async def _load_theme(name: str, mode: str | None = None) -> Theme:
     registered_theme = _registered_themes.get(name)
     if registered_theme is not None:
         return registered_theme
-    theme_json = _load_theme_json(name)
+    theme_json = await _load_theme_json(name)
     return _create_theme(theme_json, mode)
 
 
-def get_theme_by_name(name: str) -> Theme | None:
+async def get_theme_by_name(name: str) -> Theme | None:
     try:
-        return _load_theme(name)
+        return await _load_theme(name)
     except Exception:
         return None
 
@@ -696,39 +728,80 @@ def set_registered_themes(themes: list) -> None:
             _registered_themes[theme_instance.name] = theme_instance
 
 
-def init_theme(theme_name: str | None = None, enable_watcher: bool = False) -> None:
+def init_theme_sync(theme_name: str | None = None, enable_watcher: bool = False) -> None:
+    """Blocking theme init. Only for callers already off the runtime.
+
+    Test fixtures run outside `tonio.run`, which is outside the never-block
+    rule by construction; pytest also cannot drive an async autouse
+    fixture. Production code uses the async `init_theme`.
+    """
     global _current_theme_name
     name = theme_name if theme_name is not None else get_default_theme()
+    try:
+        loaded, fallback = _load_theme_sync(name), None
+    except Exception as error:
+        loaded, fallback = _load_theme_sync("dark"), str(error)
     with _theme_state_lock:
-        _current_theme_name = name
-        try:
-            _set_global_theme(_load_theme(name))
-            if enable_watcher:
-                _start_theme_watcher()
-        except Exception:
-            # Theme is invalid - fall back to dark theme silently
-            _current_theme_name = "dark"
-            _set_global_theme(_load_theme("dark"))
-            # Don't start watcher for fallback theme
+        _current_theme_name = "dark" if fallback else name
+        _set_global_theme(loaded)
+        if enable_watcher and not fallback:
+            _start_theme_watcher()
 
 
-def set_theme(name: str, enable_watcher: bool = False) -> dict:
+def _load_theme_sync(name: str, mode: str | None = None) -> Theme:
+    registered_theme = _registered_themes.get(name)
+    if registered_theme is not None:
+        return registered_theme
+    builtin_themes = _get_builtin_themes()
+    if name in builtin_themes:
+        return _create_theme(builtin_themes[name], mode)
+    theme_path = os.path.join(get_custom_themes_dir(), f"{name}.json")
+    if not os.path.exists(theme_path):
+        raise ValueError(f"Theme not found: {name}")
+    return _load_theme_from_path_sync(theme_path, mode)
+
+
+async def init_theme(theme_name: str | None = None, enable_watcher: bool = False) -> None:
     global _current_theme_name
+    name = theme_name if theme_name is not None else get_default_theme()
+    loaded, fallback = await _load_theme_or_fallback(name)
     with _theme_state_lock:
-        _current_theme_name = name
-        try:
-            _set_global_theme(_load_theme(name))
-            if enable_watcher:
-                _start_theme_watcher()
-            if _on_theme_change_callback is not None:
-                _on_theme_change_callback()
-            return {"success": True}
-        except Exception as error:
-            # Theme is invalid - fall back to dark theme
-            _current_theme_name = "dark"
-            _set_global_theme(_load_theme("dark"))
-            # Don't start watcher for fallback theme
-            return {"success": False, "error": str(error)}
+        _current_theme_name = "dark" if fallback else name
+        _set_global_theme(loaded)
+        # No watcher for the fallback theme.
+        if enable_watcher and not fallback:
+            _start_theme_watcher()
+
+
+async def _load_theme_or_fallback(name: str) -> tuple[Theme, str | None]:
+    """Load `name`, or the dark theme if it is invalid.
+
+    Both reads happen here, deliberately outside `_theme_state_lock`: the lock
+    guards in-memory theme state only and must never be held across an await.
+    Returns the theme plus the error that forced a fallback (None on success).
+    """
+    try:
+        return await _load_theme(name), None
+    except Exception as error:
+        return await _load_theme("dark"), str(error)
+
+
+async def set_theme(name: str, enable_watcher: bool = False) -> dict:
+    global _current_theme_name
+    loaded, error = await _load_theme_or_fallback(name)
+    with _theme_state_lock:
+        _current_theme_name = "dark" if error else name
+        _set_global_theme(loaded)
+        # No watcher for the fallback theme.
+        if enable_watcher and not error:
+            _start_theme_watcher()
+        callback = _on_theme_change_callback
+    # Outside the lock: the callback re-enters UI code.
+    if error:
+        return {"success": False, "error": error}
+    if callback is not None:
+        callback()
+    return {"success": True}
 
 
 def set_theme_instance(theme_instance: Theme) -> None:
@@ -779,7 +852,7 @@ def _start_theme_watcher() -> None:
 
             try:
                 # Reload the theme from disk and refresh the registry cache
-                reloaded_theme = load_theme_from_path(theme_file)
+                reloaded_theme = _load_theme_from_path_sync(theme_file)
                 _registered_themes[watched_theme_name] = reloaded_theme
                 _set_global_theme(reloaded_theme)
                 # Notify callback (to invalidate UI)
@@ -880,14 +953,14 @@ def _ansi_256_to_hex(index: int) -> str:
     return f"#{gray_hex}{gray_hex}{gray_hex}"
 
 
-def get_resolved_theme_colors(theme_name: str | None = None) -> dict:
+async def get_resolved_theme_colors(theme_name: str | None = None) -> dict:
     """Get resolved theme colors as CSS-compatible hex strings.
 
     Used by HTML export to generate CSS custom properties.
     """
     name = theme_name or _current_theme_name or get_default_theme()
     is_light = name == "light"
-    theme_json = _load_theme_json(name)
+    theme_json = await _load_theme_json(name)
     resolved = _resolve_theme_colors(_with_theme_color_fallbacks(theme_json["colors"]), theme_json.get("vars"))
 
     # Default text color for empty values (terminal uses default fg color)
@@ -911,14 +984,14 @@ def is_light_theme(theme_name: str | None = None) -> bool:
     return theme_name == "light"
 
 
-def get_theme_export_colors(theme_name: str | None = None) -> dict:
+async def get_theme_export_colors(theme_name: str | None = None) -> dict:
     """Get explicit export colors from theme JSON, if specified.
 
     Returns None for each color that isn't explicitly set.
     """
     name = theme_name or _current_theme_name or get_default_theme()
     try:
-        theme_json = _load_theme_json(name)
+        theme_json = await _load_theme_json(name)
         export_section = theme_json.get("export")
         if not export_section:
             return {}

@@ -553,5 +553,6 @@ class TestMaxThinkingLevel:
 
         settings = SettingsManager.in_memory()
         settings.set_default_thinking_level("max")
-        settings.flush()
+        # No flush: the in-memory backend writes inline, so there is
+        # nothing queued to wait for.
         assert settings.get_default_thinking_level() == "max"

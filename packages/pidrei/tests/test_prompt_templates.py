@@ -350,22 +350,26 @@ class TestIntegration:
 
 class TestLoadPromptTemplatesArgumentHint:
     @pytest.fixture
-    def prompts_dir(self, tmp_path):
-        return tmp_path / "prompts"
+    def prompts_dir(self, tmp_dir):
+        # `tmp_dir`, not pytest's `tmp_path`: these tests are tonio tests now
+        # that `load_prompt_templates` is async, and the tonio plugin cannot
+        # wrap a yield fixture.
+        return tmp_dir / "prompts"
 
     def write_template(self, prompts_dir, name, content):
         prompts_dir.mkdir(parents=True, exist_ok=True)
         (prompts_dir / f"{name}.md").write_text(content, encoding="utf-8")
 
-    def load(self, tmp_path, prompts_dir):
+    def load(self, tmp_dir, prompts_dir):
         return load_prompt_templates(
-            cwd=str(tmp_path / "cwd"),
-            agent_dir=str(tmp_path / "agent"),
+            cwd=str(tmp_dir / "cwd"),
+            agent_dir=str(tmp_dir / "agent"),
             prompt_paths=[str(prompts_dir)],
             include_defaults=False,
         )
 
-    def test_parses_required_argument_hint_from_frontmatter(self, tmp_path, prompts_dir):
+    @pytest.mark.tonio
+    async def test_parses_required_argument_hint_from_frontmatter(self, tmp_dir, prompts_dir):
         self.write_template(
             prompts_dir,
             "pr",
@@ -373,12 +377,13 @@ class TestLoadPromptTemplatesArgumentHint:
             'argument-hint: "<PR-URL>"\n---\nYou are given one or more GitHub PR URLs: $@',
         )
 
-        templates = self.load(tmp_path, prompts_dir)
+        templates = await self.load(tmp_dir, prompts_dir)
         pr = next(t for t in templates if t.name == "pr")
         assert pr.argument_hint == "<PR-URL>"
         assert pr.description == "Review PRs from URLs with structured issue and code analysis"
 
-    def test_parses_optional_argument_hint_from_frontmatter(self, tmp_path, prompts_dir):
+    @pytest.mark.tonio
+    async def test_parses_optional_argument_hint_from_frontmatter(self, tmp_dir, prompts_dir):
         self.write_template(
             prompts_dir,
             "wr",
@@ -386,12 +391,13 @@ class TestLoadPromptTemplatesArgumentHint:
             'argument-hint: "[instructions]"\n---\nWrap it. Additional instructions: $ARGUMENTS',
         )
 
-        templates = self.load(tmp_path, prompts_dir)
+        templates = await self.load(tmp_dir, prompts_dir)
         wr = next(t for t in templates if t.name == "wr")
         assert wr.argument_hint == "[instructions]"
         assert wr.description == "Finish the current task end-to-end with changelog, commit, and push"
 
-    def test_leaves_argument_hint_none_when_not_specified(self, tmp_path, prompts_dir):
+    @pytest.mark.tonio
+    async def test_leaves_argument_hint_none_when_not_specified(self, tmp_dir, prompts_dir):
         self.write_template(
             prompts_dir,
             "cl",
@@ -399,22 +405,24 @@ class TestLoadPromptTemplatesArgumentHint:
             "Audit changelog entries for all commits since the last release.",
         )
 
-        templates = self.load(tmp_path, prompts_dir)
+        templates = await self.load(tmp_dir, prompts_dir)
         cl = next(t for t in templates if t.name == "cl")
         assert cl.argument_hint is None
 
-    def test_ignores_empty_argument_hint(self, tmp_path, prompts_dir):
+    @pytest.mark.tonio
+    async def test_ignores_empty_argument_hint(self, tmp_dir, prompts_dir):
         self.write_template(
             prompts_dir,
             "empty-hint",
             '---\ndescription: A command with empty hint\nargument-hint: ""\n---\nDo something',
         )
 
-        templates = self.load(tmp_path, prompts_dir)
+        templates = await self.load(tmp_dir, prompts_dir)
         tmpl = next(t for t in templates if t.name == "empty-hint")
         assert tmpl.argument_hint is None
 
-    def test_preserves_argument_hint_with_special_characters(self, tmp_path, prompts_dir):
+    @pytest.mark.tonio
+    async def test_preserves_argument_hint_with_special_characters(self, tmp_dir, prompts_dir):
         self.write_template(
             prompts_dir,
             "is",
@@ -422,6 +430,6 @@ class TestLoadPromptTemplatesArgumentHint:
             'argument-hint: "<issue>"\n---\nAnalyze GitHub issue(s): $ARGUMENTS',
         )
 
-        templates = self.load(tmp_path, prompts_dir)
+        templates = await self.load(tmp_dir, prompts_dir)
         is_template = next(t for t in templates if t.name == "is")
         assert is_template.argument_hint == "<issue>"

@@ -533,22 +533,24 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                             continue
                         if aborted or (_is_codex_non_transport_error(error) and not connection_limit_before_start):
                             raise
-                        append_assistant_message_diagnostic(
-                            output,
-                            create_assistant_message_diagnostic(
-                                "provider_transport_failure",
-                                error,
-                                {
-                                    "configuredTransport": transport,
-                                    "fallbackTransport": None if websocket_started.value else "sse",
-                                    "eventsEmitted": websocket_started.value,
-                                    "phase": "after_message_stream_start"
-                                    if websocket_started.value
-                                    else "before_message_stream_start",
-                                    "requestBytes": len(body_json.encode()),
-                                },
-                            ),
+                        # Building the diagnostic renders a traceback, and
+                        # `traceback.format_exception` reads the source files to
+                        # do it — real filesystem I/O on an error path.
+                        diagnostic = await tonio.spawn_blocking(
+                            create_assistant_message_diagnostic,
+                            "provider_transport_failure",
+                            error,
+                            {
+                                "configuredTransport": transport,
+                                "fallbackTransport": None if websocket_started.value else "sse",
+                                "eventsEmitted": websocket_started.value,
+                                "phase": "after_message_stream_start"
+                                if websocket_started.value
+                                else "before_message_stream_start",
+                                "requestBytes": len(body_json.encode()),
+                            },
                         )
+                        append_assistant_message_diagnostic(output, diagnostic)
                         _record_websocket_failure(cache_session_id, error)
                         if websocket_started.value:
                             raise

@@ -2,9 +2,11 @@
 
 import os
 import stat as stat_module
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
 import pathspec
+import tonio.colored as tonio
 
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.frontmatter import parse_frontmatter
@@ -143,15 +145,19 @@ def _create_skill_source_info(file_path: str, base_dir: str, source: str) -> Sou
     return create_synthetic_source_info(file_path, source=source, base_dir=base_dir)
 
 
-def load_skills_from_dir(*, dir: str, source: str) -> LoadSkillsResult:
+def load_skills_from_dir(*, dir: str, source: str) -> Awaitable[LoadSkillsResult]:
     """Load skills from a directory.
 
     Discovery rules:
     - if a directory contains SKILL.md, treat it as a skill root and do not recurse further
     - otherwise, load direct .md children in the root
     - recurse into subdirectories to find SKILL.md
+
+    A recursive scan plus one read per skill is a single blocking unit, so it
+    goes to the pool whole; the helpers below stay sync because they only run
+    there.
     """
-    return _load_skills_from_dir_internal(dir, source, True)
+    return tonio.spawn_blocking(_load_skills_from_dir_internal, dir, source, True)
 
 
 def _stat_kind(full_path: str) -> tuple[bool, bool] | None:
@@ -343,8 +349,28 @@ def load_skills(
     agent_dir: str | None,
     skill_paths: list[str],
     include_defaults: bool,
+) -> Awaitable[LoadSkillsResult]:
+    """Load skills from all configured locations, deduplicating by name.
+
+    Offloaded whole, like `load_skills_from_dir`: the scan and every read
+    belong to one blocking unit.
+    """
+    return tonio.spawn_blocking(
+        _load_skills_sync,
+        cwd=cwd,
+        agent_dir=agent_dir,
+        skill_paths=skill_paths,
+        include_defaults=include_defaults,
+    )
+
+
+def _load_skills_sync(
+    *,
+    cwd: str,
+    agent_dir: str | None,
+    skill_paths: list[str],
+    include_defaults: bool,
 ) -> LoadSkillsResult:
-    """Load skills from all configured locations, deduplicating by name."""
     resolved_cwd = resolve_path(cwd)
     resolved_agent_dir = resolve_path(agent_dir if agent_dir is not None else get_agent_dir())
 

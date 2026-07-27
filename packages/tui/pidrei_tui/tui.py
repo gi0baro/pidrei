@@ -32,6 +32,7 @@ import re
 import secrets
 import threading
 import time as _time
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -92,6 +93,18 @@ def _extract_kitty_image_ids(line: str) -> list[int]:
 def _extract_kitty_image_rows(line: str) -> int:
     header = _parse_kitty_image_header(line)
     return header["rows"] if header else 1
+
+
+def _append_debug_log(path: str, message: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as log_file:
+        log_file.write(message)
+
+
+def _write_crash_log(path: str, data: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as crash_file:
+        crash_file.write(data)
 
 
 class Component(Protocol):
@@ -585,8 +598,8 @@ class TUI(Container):
         await self.terminal.start(self._handle_input, self.request_render)
         self.terminal.hide_cursor()
         if self._color_scheme_notifications_enabled:
-            self.terminal.write("\x1b[?2031h")
-        self._query_cell_size()
+            await self.terminal.write("\x1b[?2031h")
+        await self._query_cell_size()
         self._render_scope = tonio.scope()
         await self._render_scope.__aenter__()
         self._render_scope.spawn(self._render_loop())
@@ -615,20 +628,20 @@ class TUI(Container):
 
         return unsubscribe
 
-    def set_terminal_color_scheme_notifications(self, enabled: bool) -> None:
+    async def set_terminal_color_scheme_notifications(self, enabled: bool) -> None:
         if self._color_scheme_notifications_enabled == enabled:
             return
         self._color_scheme_notifications_enabled = enabled
         if not self._stopped:
-            self.terminal.write("\x1b[?2031h" if enabled else "\x1b[?2031l")
+            await self.terminal.write("\x1b[?2031h" if enabled else "\x1b[?2031l")
 
-    def _query_cell_size(self) -> None:
+    async def _query_cell_size(self) -> None:
         # Only query if terminal supports images (cell size is only used for image rendering)
         if not get_capabilities()["images"]:
             return
         # Query terminal for cell size in pixels: CSI 16 t
         # Response format: CSI 6 ; height ; width t
-        self.terminal.write("\x1b[16t")
+        await self.terminal.write("\x1b[16t")
 
     async def stop(self) -> None:
         self._stopped = True
@@ -637,18 +650,18 @@ class TUI(Container):
             await self._render_scope.__aexit__(None, None, None)
             self._render_scope = None
         if self._color_scheme_notifications_enabled:
-            self.terminal.write("\x1b[?2031l")
+            await self.terminal.write("\x1b[?2031l")
         # Move cursor to the end of the content to prevent overwriting/artifacts on exit
         if self._previous_lines:
             # Overwrite the inverted cursor with a normal space to clear the artifact
-            self.terminal.write(" ")
+            await self.terminal.write(" ")
             target_row = len(self._previous_lines)  # Line after the last content
             line_diff = target_row - self._hardware_cursor_row
             if line_diff > 0:
-                self.terminal.write(f"\x1b[{line_diff}B")
+                await self.terminal.write(f"\x1b[{line_diff}B")
             elif line_diff < 0:
-                self.terminal.write(f"\x1b[{-line_diff}A")
-            self.terminal.write("\r\n")
+                await self.terminal.write(f"\x1b[{-line_diff}A")
+            await self.terminal.write("\r\n")
 
         self.terminal.show_cursor()
         await self.terminal.stop()
@@ -689,16 +702,16 @@ class TUI(Container):
             if self._stopped:
                 return
             self._last_render_at = _time.monotonic()
-            self._do_render()
+            await self._do_render()
 
     # ------------------------------------------------------------------
     # Input handling
     # ------------------------------------------------------------------
 
-    def _handle_input(self, data: str) -> None:
+    async def _handle_input(self, data: str) -> None:
         if self._consume_osc11_background_response(data):
             return
-        if self._consume_terminal_color_scheme_report(data):
+        if await self._consume_terminal_color_scheme_report(data):
             return
 
         if self._input_listeners:
@@ -755,7 +768,7 @@ class TUI(Container):
             # Filter out key release events unless component opts in
             if is_key_release(data) and not getattr(focused, "wants_key_release", False):
                 return
-            handle(data)
+            await handle(data)
             self.request_render()
 
     def _consume_osc11_background_response(self, data: str) -> bool:
@@ -775,13 +788,17 @@ class TUI(Container):
                 query.event.set()
         return True
 
-    def _consume_terminal_color_scheme_report(self, data: str) -> bool:
+    async def _consume_terminal_color_scheme_report(self, data: str) -> bool:
         scheme = parse_terminal_color_scheme_report(data)
         if not scheme:
             return False
 
         for listener in list(self._color_scheme_listeners):
-            listener(scheme)
+            # Listeners may be sync or coroutine-returning: reacting to a
+            # scheme change can mean loading a theme from disk.
+            result = listener(scheme)
+            if isinstance(result, Awaitable):
+                await result
         return True
 
     def _consume_cell_size_response(self, data: str) -> bool:
@@ -1116,7 +1133,7 @@ class TUI(Container):
     # Differential rendering
     # ------------------------------------------------------------------
 
-    def _do_render(self) -> None:  # noqa: C901
+    async def _do_render(self) -> None:  # noqa: C901
         if self._stopped:
             return
         width = self.terminal.columns
@@ -1148,7 +1165,7 @@ class TUI(Container):
         new_lines = self._apply_line_resets(new_lines)
 
         # Helper to clear scrollback and viewport and render all new lines
-        def full_render(clear: bool) -> None:
+        async def full_render(clear: bool) -> None:
             self._full_redraw_count += 1
             buffer = "\x1b[?2026h"  # Begin synchronized output
             if clear:
@@ -1171,7 +1188,7 @@ class TUI(Container):
                 buffer += line
                 i += 1
             buffer += "\x1b[?2026l"  # End synchronized output
-            self.terminal.write(buffer)
+            await self.terminal.write(buffer)
             self._cursor_row = max(0, len(new_lines) - 1)
             self._hardware_cursor_row = self._cursor_row
             # Reset max lines when clearing, otherwise track growth
@@ -1181,7 +1198,7 @@ class TUI(Container):
                 self._max_lines_rendered = max(self._max_lines_rendered, len(new_lines))
             buffer_length = max(height, len(new_lines))
             self._previous_viewport_top = max(0, buffer_length - height)
-            self._position_hardware_cursor(cursor_pos, len(new_lines))
+            await self._position_hardware_cursor(cursor_pos, len(new_lines))
             self._previous_lines = new_lines
             self._previous_kitty_image_ids = self._collect_kitty_image_ids(new_lines)
             self._previous_width = width
@@ -1189,7 +1206,7 @@ class TUI(Container):
 
         debug_redraw = os.environ.get("PIDREI_DEBUG_REDRAW") == "1"
 
-        def log_redraw(reason: str) -> None:
+        async def log_redraw(reason: str) -> None:
             if not debug_redraw:
                 return
             log_path = os.path.join(self._log_directory, "pidrei-debug.log")
@@ -1198,35 +1215,33 @@ class TUI(Container):
                 f"[{timestamp}] fullRender: {reason} "
                 f"(prev={len(self._previous_lines)}, new={len(new_lines)}, height={height})\n"
             )
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as log_file:
-                log_file.write(msg)
+            await tonio.spawn_blocking(_append_debug_log, log_path, msg)
 
         # First render - just output everything without clearing (assumes clean screen)
         if not self._previous_lines and not width_changed and not height_changed:
-            log_redraw("first render")
-            full_render(False)
+            await log_redraw("first render")
+            await full_render(False)
             return
 
         # Width changes always need a full re-render because wrapping changes.
         if width_changed:
-            log_redraw(f"terminal width changed ({self._previous_width} -> {width})")
-            full_render(True)
+            await log_redraw(f"terminal width changed ({self._previous_width} -> {width})")
+            await full_render(True)
             return
 
         # Height changes normally need a full re-render to keep the visible viewport aligned,
         # but Termux changes height when the software keyboard shows or hides.
         # In that environment, a full redraw causes the entire history to replay on every toggle.
         if height_changed and not _is_termux_session():
-            log_redraw(f"terminal height changed ({self._previous_height} -> {height})")
-            full_render(True)
+            await log_redraw(f"terminal height changed ({self._previous_height} -> {height})")
+            await full_render(True)
             return
 
         # Content shrunk below the working area and no overlays - re-render to clear empty rows
         # (overlays need the padding, so only do this when no overlays are active)
         if self._clear_on_shrink and len(new_lines) < self._max_lines_rendered and not self._overlay_stack:
-            log_redraw(f"clearOnShrink (maxLinesRendered={self._max_lines_rendered})")
-            full_render(True)
+            await log_redraw(f"clearOnShrink (maxLinesRendered={self._max_lines_rendered})")
+            await full_render(True)
             return
 
         # Find first and last changed lines
@@ -1254,7 +1269,7 @@ class TUI(Container):
 
         # No changes - but still need to update hardware cursor position if it moved
         if first_changed == -1:
-            self._position_hardware_cursor(cursor_pos, len(new_lines))
+            await self._position_hardware_cursor(cursor_pos, len(new_lines))
             self._previous_viewport_top = prev_viewport_top
             self._previous_height = height
             return
@@ -1267,8 +1282,8 @@ class TUI(Container):
                 # Move to end of new content (clamp to 0 for empty content)
                 target_row = max(0, len(new_lines) - 1)
                 if target_row < prev_viewport_top:
-                    log_redraw(f"deleted lines moved viewport up ({target_row} < {prev_viewport_top})")
-                    full_render(True)
+                    await log_redraw(f"deleted lines moved viewport up ({target_row} < {prev_viewport_top})")
+                    await full_render(True)
                     return
                 line_diff = compute_line_diff(target_row)
                 if line_diff > 0:
@@ -1279,8 +1294,8 @@ class TUI(Container):
                 # Clear extra lines without scrolling
                 extra_lines = len(self._previous_lines) - len(new_lines)
                 if extra_lines > height:
-                    log_redraw(f"extraLines > height ({extra_lines} > {height})")
-                    full_render(True)
+                    await log_redraw(f"extraLines > height ({extra_lines} > {height})")
+                    await full_render(True)
                     return
                 clear_start_offset = 0 if len(new_lines) == 0 else 1
                 if extra_lines > 0 and clear_start_offset > 0:
@@ -1293,10 +1308,10 @@ class TUI(Container):
                 if move_back > 0:
                     buffer += f"\x1b[{move_back}A"
                 buffer += "\x1b[?2026l"
-                self.terminal.write(buffer)
+                await self.terminal.write(buffer)
                 self._cursor_row = target_row
                 self._hardware_cursor_row = target_row
-            self._position_hardware_cursor(cursor_pos, len(new_lines))
+            await self._position_hardware_cursor(cursor_pos, len(new_lines))
             self._previous_lines = new_lines
             self._previous_kitty_image_ids = self._collect_kitty_image_ids(new_lines)
             self._previous_width = width
@@ -1307,8 +1322,8 @@ class TUI(Container):
         # Differential rendering can only touch what was actually visible.
         # If the first changed line is above the previous viewport, we need a full redraw.
         if first_changed < prev_viewport_top:
-            log_redraw(f"firstChanged < viewportTop ({first_changed} < {prev_viewport_top})")
-            full_render(True)
+            await log_redraw(f"firstChanged < viewportTop ({first_changed} < {prev_viewport_top})")
+            await full_render(True)
             return
 
         # Render from first changed line to end
@@ -1350,10 +1365,10 @@ class TUI(Container):
             if image_reserved_rows > 1:
                 image_start_screen_row = i - viewport_top
                 if image_start_screen_row < 0 or image_start_screen_row + image_reserved_rows > height:
-                    log_redraw(
+                    await log_redraw(
                         f"kitty image pre-clear would scroll ({image_start_screen_row} + {image_reserved_rows} > {height})"
                     )
-                    full_render(True)
+                    await full_render(True)
                     return
 
                 buffer += "\x1b[2K"
@@ -1380,9 +1395,7 @@ class TUI(Container):
                         "",
                     ]
                 )
-                os.makedirs(os.path.dirname(crash_log_path), exist_ok=True)
-                with open(crash_log_path, "w", encoding="utf-8") as crash_file:
-                    crash_file.write(crash_data)
+                await tonio.spawn_blocking(_write_crash_log, crash_log_path, crash_data)
 
                 # Terminal cleanup happens in the caller's shutdown path; pi
                 # calls the sync stop() here, but stop() is async in the port
@@ -1447,11 +1460,10 @@ class TUI(Container):
                     repr(buffer),
                 ]
             )
-            with open(debug_path, "w", encoding="utf-8") as debug_file:
-                debug_file.write(debug_data)
+            await tonio.spawn_blocking(_write_crash_log, debug_path, debug_data)
 
         # Write entire buffer at once
-        self.terminal.write(buffer)
+        await self.terminal.write(buffer)
 
         # Track cursor position for next render
         # cursor_row tracks end of content (for viewport calculation)
@@ -1463,14 +1475,14 @@ class TUI(Container):
         self._previous_viewport_top = max(prev_viewport_top, final_cursor_row - height + 1)
 
         # Position hardware cursor for IME
-        self._position_hardware_cursor(cursor_pos, len(new_lines))
+        await self._position_hardware_cursor(cursor_pos, len(new_lines))
 
         self._previous_lines = new_lines
         self._previous_kitty_image_ids = self._collect_kitty_image_ids(new_lines)
         self._previous_width = width
         self._previous_height = height
 
-    def _position_hardware_cursor(self, cursor_pos: dict | None, total_lines: int) -> None:
+    async def _position_hardware_cursor(self, cursor_pos: dict | None, total_lines: int) -> None:
         """Position the hardware cursor for IME candidate window."""
         if not cursor_pos or total_lines <= 0:
             self.terminal.hide_cursor()
@@ -1491,7 +1503,7 @@ class TUI(Container):
         buffer += f"\x1b[{target_col + 1}G"
 
         if buffer:
-            self.terminal.write(buffer)
+            await self.terminal.write(buffer)
 
         self._hardware_cursor_row = target_row
         if self._show_hardware_cursor:
@@ -1513,7 +1525,7 @@ class TUI(Container):
         with self._query_lock:
             self._pending_osc11_queries.append(query)
             self._pending_osc11_replies += 1
-        self.terminal.write("\x1b]11;?\x07")
+        await self.terminal.write("\x1b]11;?\x07")
 
         await query.event.wait(timeout_ms / 1000)
         with self._query_lock:
@@ -1542,7 +1554,7 @@ class TUI(Container):
 
         unsubscribe = self.on_terminal_color_scheme_change(settle)
         try:
-            self.terminal.write("\x1b[?996n")
+            await self.terminal.write("\x1b[?996n")
             await event.wait(timeout_ms / 1000)
             return result["scheme"]
         finally:

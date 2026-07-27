@@ -6,14 +6,13 @@ waitForChildProcess semantics (earendil-works/pi#5303).
 """
 
 import math
-import os
 import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
-from tonio.colored import time as tonio_time
+from tonio.colored import fs, time as tonio_time
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -214,8 +213,8 @@ class LocalBashOperations:
         timeout_ms = _resolve_timeout_ms(timeout)
         if cancel is not None and cancel.cancelled:
             raise Exception("aborted")
-        shell_config = get_shell_config(self._shell_path)
-        if not os.path.exists(cwd):
+        shell_config = await tonio.spawn_blocking(get_shell_config, self._shell_path)
+        if not await fs.Path(cwd).exists():
             raise Exception(f"Working directory does not exist: {cwd}\nCannot execute bash commands.")
 
         process = await tonio.open_process(

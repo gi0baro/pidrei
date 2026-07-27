@@ -4,14 +4,15 @@ import os
 import re
 import subprocess
 import time
+from collections.abc import Awaitable
 from datetime import datetime
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_tui import Container, Input, Spacer, Text, get_keybindings, truncate_to_width, visible_width
 from pidrei_tui._timers import Timeout
 
-from ....core.keybindings import KeybindingsManager
 from ....utils.paths import canonicalize_path as _canonicalize_path
 from ..theme import theme
 from .dynamic_border import DynamicBorder
@@ -186,16 +187,44 @@ class SessionSelectorHeader:
         return [f"{left}{' ' * spacing}{right_text}", hint_line1, hint_line2]
 
 
-def build_session_tree(sessions: list) -> list:
+def build_canonical_path_map(sessions: list) -> dict[str, str]:
+    """Canonical form of every path a session tree needs, resolved once.
+
+    Blocking (one `realpath` per entry), so callers offload it. It is kept
+    out of `build_session_tree` because that runs on every keystroke in the
+    search box, and resolving symlinks per keypress meant a filesystem storm
+    on a runtime worker.
+    """
+    canonical: dict[str, str] = {}
+    for session in sessions:
+        for path in (session.path, session.parent_session_path):
+            if path and path not in canonical:
+                canonical[path] = _canonicalize_path(path)
+    return canonical
+
+
+def build_session_tree(sessions: list, canonical_by_path: dict[str, str] | None = None) -> list:
     """Build a tree from sessions based on parent_session_path.
 
     Returns root ``{"session", "children", "latestActivity"}`` nodes sorted
     by latest subtree activity (descending).
+
+    `canonical_by_path` comes from `build_canonical_path_map`. Without it the
+    paths are resolved inline, which touches the filesystem — only acceptable
+    off the runtime.
     """
+    lookup = canonical_by_path if canonical_by_path is not None else {}
+
+    def canonical(path: str | None) -> str | None:
+        if not path:
+            return path
+        cached = lookup.get(path)
+        return cached if cached is not None else _canonicalize(path)
+
     by_path: dict = {}
 
     for session in sessions:
-        session_path = _canonicalize(session.path) or session.path
+        session_path = canonical(session.path) or session.path
         by_path[session_path] = {
             "session": session,
             "children": [],
@@ -205,9 +234,9 @@ def build_session_tree(sessions: list) -> list:
     roots: list = []
 
     for session in sessions:
-        session_path = _canonicalize(session.path) or session.path
+        session_path = canonical(session.path) or session.path
         node = by_path[session_path]
-        parent_path = _canonicalize(session.parent_session_path)
+        parent_path = canonical(session.parent_session_path)
 
         if parent_path and parent_path in by_path:
             by_path[parent_path]["children"].append(node)
@@ -269,6 +298,9 @@ class SessionList:
         current_session_file_path: str | None = None,
     ) -> None:
         self._all_sessions = sessions
+        # Populated by `set_sessions`; empty here because a constructor cannot
+        # await, and `build_session_tree` falls back to resolving inline.
+        self._canonical_by_path: dict[str, str] = {}
         self._filtered_sessions: list = []
         self._selected_index = 0
         self._search_input = Input()
@@ -327,9 +359,12 @@ class SessionList:
         self._name_filter = name_filter
         self._filter_sessions(self._search_input.get_value())
 
-    def set_sessions(self, sessions: list, show_cwd: bool) -> None:
+    async def set_sessions(self, sessions: list, show_cwd: bool) -> None:
         self._all_sessions = sessions
         self._show_cwd = show_cwd
+        # Resolve every session path once here, off the runtime, so the
+        # per-keystroke filter below never touches the filesystem.
+        self._canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map, sessions)
         self._filter_sessions(self._search_input.get_value())
 
     def _filter_sessions(self, query: str) -> None:
@@ -341,7 +376,7 @@ class SessionList:
 
         if self._sort_mode == "threaded" and not trimmed:
             # Threaded mode without search: show tree structure
-            roots = build_session_tree(name_filtered)
+            roots = build_session_tree(name_filtered, self._canonical_by_path)
             self._filtered_sessions = flatten_session_tree(roots)
         else:
             # Other modes or with search: flat list
@@ -483,7 +518,7 @@ class SessionList:
         branch = "└─ " if node["isLast"] else "├─ "
         return "".join(parts) + branch
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
 
         # Handle delete confirmation state first - intercept all keys
@@ -502,7 +537,10 @@ class SessionList:
 
         if kb.matches(key_data, "tui.input.tab"):
             if self.on_toggle_scope is not None:
-                self.on_toggle_scope()
+                # Sync or coroutine-returning, like the other selector callbacks.
+                result = self.on_toggle_scope()
+                if isinstance(result, Awaitable):
+                    await result
             return
 
         if kb.matches(key_data, "app.session.toggleSort"):
@@ -539,7 +577,7 @@ class SessionList:
         # forwarded to the input
         if kb.matches(key_data, "app.session.deleteNoninvasive"):
             if len(self._search_input.get_value()) > 0:
-                self._search_input.handle_input(key_data)
+                await self._search_input.handle_input(key_data)
                 self._filter_sessions(self._search_input.get_value())
                 return
 
@@ -568,7 +606,7 @@ class SessionList:
                 self.on_cancel()
         # Pass everything else to search input
         else:
-            self._search_input.handle_input(key_data)
+            await self._search_input.handle_input(key_data)
             self._filter_sessions(self._search_input.get_value())
 
 
@@ -608,7 +646,7 @@ async def delete_session_file(session_path: str) -> dict:
     # If trash reports success, or the file is gone afterwards, treat it as
     # successful
     trash_status = None if isinstance(trash_result, OSError) else trash_result.returncode
-    if trash_status == 0 or not os.path.exists(session_path):
+    if trash_status == 0 or not await fs.Path(session_path).exists():
         return {"ok": True, "method": "trash"}
 
     # Fallback to permanent deletion
@@ -637,7 +675,10 @@ class SessionSelectorComponent(Container):
     ) -> None:
         super().__init__()
         options = options or {}
-        self._keybindings = options.get("keybindings") or KeybindingsManager.create()
+        # Construction-time reads are hoisted out of constructors (PLAN: never
+        # block the runtime). Both callers pass `keybindings`; the fallback is
+        # the already-loaded global rather than a fresh read from disk.
+        self._keybindings = options.get("keybindings") or get_keybindings()
         self._current_sessions_loader = current_sessions_loader
         self._all_sessions_loader = all_sessions_loader
         self._request_render = request_render
@@ -741,7 +782,7 @@ class SessionSelectorComponent(Container):
 
                 sessions = (self._all_sessions or []) if self._scope == "all" else (self._current_sessions or [])
                 show_cwd = self._scope == "all"
-                self._session_list.set_sessions(sessions, show_cwd)
+                await self._session_list.set_sessions(sessions, show_cwd)
 
                 msg = "Session moved to trash" if result["method"] == "trash" else "Session deleted"
                 self._header.set_status_message({"type": "info", "message": msg}, 2000)
@@ -773,16 +814,16 @@ class SessionSelectorComponent(Container):
         if value and self._mode == "rename":
             self._rename_input.focused = True
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         if self._mode == "rename":
             kb = get_keybindings()
             if kb.matches(data, "tui.select.cancel"):
                 self._exit_rename_mode()
                 return
-            self._rename_input.handle_input(data)
+            await self._rename_input.handle_input(data)
             return
 
-        self._session_list.handle_input(data)
+        await self._session_list.handle_input(data)
 
     def _build_base_layout(self, content, options: dict | None = None) -> None:
         options = options or {}
@@ -908,7 +949,7 @@ class SessionSelectorComponent(Container):
                 return
 
             self._header.set_loading(False)
-            self._session_list.set_sessions(sessions, show_cwd)
+            await self._session_list.set_sessions(sessions, show_cwd)
             self._request_render()
         except Exception as err:
             if scope == "current":
@@ -925,7 +966,7 @@ class SessionSelectorComponent(Container):
             self._header.set_status_message({"type": "error", "message": f"Failed to load sessions: {err}"}, 4000)
 
             if reason == "initial":
-                self._session_list.set_sessions([], show_cwd)
+                await self._session_list.set_sessions([], show_cwd)
             self._request_render()
 
     def _toggle_sort_mode(self) -> None:
@@ -949,14 +990,14 @@ class SessionSelectorComponent(Container):
     async def _refresh_sessions_after_mutation(self) -> None:
         await self._load_scope(self._scope, "refresh")
 
-    def _toggle_scope(self) -> None:
+    async def _toggle_scope(self) -> None:
         if self._scope == "current":
             self._scope = "all"
             self._header.set_scope(self._scope)
 
             if self._all_sessions is not None:
                 self._header.set_loading(False)
-                self._session_list.set_sessions(self._all_sessions, True)
+                await self._session_list.set_sessions(self._all_sessions, True)
                 self._request_render()
                 return
 
@@ -967,7 +1008,7 @@ class SessionSelectorComponent(Container):
         self._scope = "current"
         self._header.set_scope(self._scope)
         self._header.set_loading(self._current_loading)
-        self._session_list.set_sessions(self._current_sessions or [], False)
+        await self._session_list.set_sessions(self._current_sessions or [], False)
         self._request_render()
 
     def get_session_list(self) -> SessionList:

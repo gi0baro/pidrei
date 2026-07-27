@@ -279,19 +279,26 @@ arguments.
 |--------|---------|
 | `send_message(message, options=None)` | Queue a message (custom types allowed) |
 | `send_user_message(content, options=None)` | Queue a user message |
-| `append_entry(custom_type, data=None)` | Append a custom session entry |
-| `set_session_name(name)` / `get_session_name()` | Session name |
-| `set_label(entry_id, label)` | Label a session entry |
-| `exec(command, args, *, cwd=None, **options)` | Run a subprocess |
+| `await append_entry(custom_type, data=None)` | Append a custom session entry |
+| `await set_session_name(name)` / `get_session_name()` | Session name |
+| `await set_label(entry_id, label)` | Label a session entry |
+| `await exec(command, args, *, cwd=None, **options)` | Run a subprocess |
 | `get_active_tools()` / `set_active_tools(names)` | The active tool set |
 | `get_all_tools()` | Every registered tool |
 | `get_commands()` | Every registered command |
-| `set_model(model)` | Switch model |
-| `get_thinking_level()` / `set_thinking_level(level)` | Reasoning level |
+| `await set_model(model)` | Switch model |
+| `get_thinking_level()` / `await set_thinking_level(level)` | Reasoning level |
 | `events` | Shared bus for extension-to-extension messages |
 
-`pi.exec` returns an awaitable that starts the command only when awaited, and
-resolves to a result with `stdout`, `stderr`, `code` and `killed`.
+The rows written with `await` return an awaitable and do nothing until you await
+it. Forgetting the `await` is silent — the call appears to succeed and the work
+never happens — so reach for it whenever the table shows it.
+
+`append_entry`, `set_session_name`, `set_label` and `set_thinking_level` write
+to the session or settings file, and awaiting them is what guarantees the write
+landed before the next statement runs. `pi.exec` likewise starts the command
+only when awaited, and resolves to a result with `stdout`, `stderr`, `code` and
+`killed`.
 
 Both `send_message` and `send_user_message` accept `{"deliverAs": "followUp"}`
 to queue behind the current run, and `{"triggerTurn": True}` to start one.

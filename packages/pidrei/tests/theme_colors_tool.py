@@ -11,6 +11,8 @@ import os
 import re
 import sys
 
+import tonio.colored as tonio
+
 from pidrei.modes.interactive.theme import init_theme, theme
 
 
@@ -178,9 +180,9 @@ def cmd_test(file_path: str) -> None:
         )
 
 
-def cmd_theme(theme_name: str) -> None:
+async def cmd_theme(theme_name: str) -> None:
     os.environ["COLORTERM"] = "truecolor"
-    init_theme(theme_name)
+    await init_theme(theme_name)
 
     def parse_ansi_rgb(ansi: str) -> tuple | None:
         match = re.search(r"38;2;(\d+);(\d+);(\d+)", ansi)
@@ -231,7 +233,7 @@ def cmd_theme(theme_name: str) -> None:
 # --- Main ---
 
 
-def main() -> None:
+async def main() -> None:
     args = sys.argv[1:]
     cmd = args[0] if args else None
     arg = args[1] if len(args) > 1 else None
@@ -245,7 +247,7 @@ def main() -> None:
     elif cmd == "test":
         cmd_test(arg or "")
     elif cmd in ("light", "dark"):
-        cmd_theme(cmd)
+        await cmd_theme(cmd)
     else:
         print("Usage:")
         print("  python theme_colors_tool.py light|dark     Test built-in theme")
@@ -254,4 +256,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    tonio.run(main())

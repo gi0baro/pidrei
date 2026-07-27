@@ -90,7 +90,7 @@ class CancellableLoader(Loader):
         """Whether the loader was aborted."""
         return self._token.cancelled
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         kb = get_keybindings()
         if kb.matches(data, "tui.select.cancel"):
             self._token.cancel()

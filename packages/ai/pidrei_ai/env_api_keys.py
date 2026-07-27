@@ -7,6 +7,8 @@ profiles/IAM, Google ADC) surface as the `<authenticated>` marker via
 
 from pathlib import Path
 
+from tonio.colored import fs
+
 from pidrei_ai.types import ProviderEnv
 from pidrei_ai.utils.provider_env import get_provider_env_value
 
@@ -52,20 +54,20 @@ _ENV_MAP: dict[str, str] = {
 _cached_vertex_adc_credentials_exists: bool | None = None
 
 
-def _has_vertex_adc_credentials(env: ProviderEnv | None) -> bool:
+async def _has_vertex_adc_credentials(env: ProviderEnv | None) -> bool:
     global _cached_vertex_adc_credentials_exists
 
     explicit_credentials_path = (env or {}).get("GOOGLE_APPLICATION_CREDENTIALS")
     if explicit_credentials_path:
-        return Path(explicit_credentials_path).exists()
+        return await fs.Path(explicit_credentials_path).exists()
 
     if _cached_vertex_adc_credentials_exists is None:
         gac_path = get_provider_env_value("GOOGLE_APPLICATION_CREDENTIALS", env)
         if gac_path:
-            _cached_vertex_adc_credentials_exists = Path(gac_path).exists()
+            _cached_vertex_adc_credentials_exists = await fs.Path(gac_path).exists()
         else:
             default_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-            _cached_vertex_adc_credentials_exists = default_path.exists()
+            _cached_vertex_adc_credentials_exists = await fs.Path(default_path).exists()
     return _cached_vertex_adc_credentials_exists
 
 
@@ -91,10 +93,13 @@ def find_env_keys(provider: str, env: ProviderEnv | None = None) -> list[str] | 
     return found if found else None
 
 
-def get_env_api_key(provider: str, env: ProviderEnv | None = None) -> str | None:
+async def get_env_api_key(provider: str, env: ProviderEnv | None = None) -> str | None:
     """Get an API key for a provider from known environment variables.
 
     Will not return API keys for providers that require OAuth tokens.
+
+    Async only because of the `google-vertex` branch, which has to check for an
+    ADC credentials file; `find_env_keys` stays sync since it reads env alone.
     """
     env_keys = find_env_keys(provider, env)
     if env_keys:
@@ -103,7 +108,7 @@ def get_env_api_key(provider: str, env: ProviderEnv | None = None) -> str | None
     # Vertex AI supports either an explicit API key or Application Default
     # Credentials (configured via `gcloud auth application-default login`).
     if provider == "google-vertex":
-        has_credentials = _has_vertex_adc_credentials(env)
+        has_credentials = await _has_vertex_adc_credentials(env)
         has_project = bool(
             get_provider_env_value("GOOGLE_CLOUD_PROJECT", env) or get_provider_env_value("GCLOUD_PROJECT", env)
         )

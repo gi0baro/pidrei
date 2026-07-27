@@ -9,7 +9,7 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionInfo
 from pidrei.modes.interactive.components import SessionSelectorComponent
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -78,7 +78,7 @@ CTRL_BACKSPACE = "\x1b[127;5u"
 def _setup():
     # session selector uses the global theme instance; keybindings are a
     # global singleton
-    init_theme("dark")
+    init_theme_sync("dark")
     set_keybindings(KeybindingsManager())
 
 
@@ -108,8 +108,8 @@ class TestSessionSelectorPathDeleteInteractions:
         confirmation_changes = []
         session_list.on_delete_confirmation_change = lambda path: confirmation_changes.append(path)
 
-        session_list.handle_input("a")
-        session_list.handle_input(CTRL_BACKSPACE)
+        await session_list.handle_input("a")
+        await session_list.handle_input(CTRL_BACKSPACE)
 
         assert confirmation_changes == []
 
@@ -124,8 +124,8 @@ class TestSessionSelectorPathDeleteInteractions:
         confirmation_changes = []
         session_list.on_delete_confirmation_change = lambda path: confirmation_changes.append(path)
 
-        session_list.handle_input("a")
-        session_list.handle_input(CTRL_D)
+        await session_list.handle_input("a")
+        await session_list.handle_input(CTRL_D)
 
         assert confirmation_changes == [sessions[0].path]
 
@@ -148,10 +148,10 @@ class TestSessionSelectorPathDeleteInteractions:
 
         session_list.on_delete_session = on_delete_session
 
-        session_list.handle_input(CTRL_BACKSPACE)
+        await session_list.handle_input(CTRL_BACKSPACE)
         assert confirmation_changes == [sessions[0].path]
 
-        session_list.handle_input("\r")
+        await session_list.handle_input("\r")
         await flush_promises()
         assert confirmation_changes == [sessions[0].path, None]
         assert deleted_path == sessions[0].path
@@ -172,8 +172,8 @@ class TestSessionSelectorPathDeleteInteractions:
         await flush_promises()
 
         session_list = selector.get_session_list()
-        session_list.handle_input("\t")  # current -> all (starts async load)
-        session_list.handle_input("\t")  # all -> current
+        await session_list.handle_input("\t")  # current -> all (starts async load)
+        await session_list.handle_input("\t")  # all -> current
 
         all_ready.set()
         await flush_promises()
@@ -199,9 +199,9 @@ class TestSessionSelectorPathDeleteInteractions:
         await flush_promises()
 
         session_list = selector.get_session_list()
-        session_list.handle_input("\t")  # current -> all (starts async load)
-        session_list.handle_input("\t")  # all -> current
-        session_list.handle_input("\t")  # current -> all again while load pending
+        await session_list.handle_input("\t")  # current -> all (starts async load)
+        await session_list.handle_input("\t")  # all -> current
+        await session_list.handle_input("\t")  # current -> all again while load pending
         await flush_promises()
 
         assert all_load_calls == 1
@@ -278,7 +278,7 @@ class TestSessionSelectorPathDeleteInteractions:
 
         session_list.on_error = on_error
 
-        session_list.handle_input(CTRL_D)
+        await session_list.handle_input(CTRL_D)
 
         assert confirmation_changes == []
         assert error_message == "Cannot delete the currently active session"

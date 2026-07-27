@@ -12,7 +12,7 @@ from pidrei_tui import Container, Text
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.theme import get_language_from_path, highlight_code
 from ..extensions.types import ToolDefinition
-from .file_mutation_queue import with_file_mutation_queue
+from .file_mutation_queue import resolve_mutation_queue_key, with_file_mutation_queue
 from .path_utils import resolve_to_cwd
 from .render_utils import normalize_display_text, render_tool_path, replace_tabs, str_or_none
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
@@ -205,7 +205,8 @@ def create_write_tool_definition(cwd: str, *, operations: Any = None) -> ToolDef
                 details=None,
             )
 
-        return await with_file_mutation_queue(absolute_path, run)
+        queue_key = await resolve_mutation_queue_key(absolute_path)
+        return await with_file_mutation_queue(absolute_path, run, queue_key=queue_key)
 
     def render_call(args, theme, context):
         args = args or {}

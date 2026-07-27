@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import tonio.colored as tonio
+
 from ..config import CONFIG_DIR_NAME
 from .extensions.runner import emit_project_trust_event
 from .extensions.types import LoadExtensionsResult, ProjectTrustContext
@@ -41,15 +43,16 @@ async def _select_project_trust_option(cwd: str, ctx: ProjectTrustContext) -> Pr
     return next((option for option in options if option.label == selected), None)
 
 
-def _save_project_trust_prompt_result(trust_store: ProjectTrustStore, result: ProjectTrustOption) -> None:
+async def _save_project_trust_prompt_result(trust_store: ProjectTrustStore, result: ProjectTrustOption) -> None:
     if result.updates:
-        trust_store.set_many(result.updates)
+        await trust_store.set_many(result.updates)
 
 
 async def resolve_project_trusted(options: ResolveProjectTrustedOptions) -> bool:
     if options.trust_override is not None:
         return options.trust_override
-    if not has_trust_requiring_project_resources(options.cwd):
+    # Walks cwd's ancestors probing for project resources — one blocking unit.
+    if not await tonio.spawn_blocking(has_trust_requiring_project_resources, options.cwd):
         return True
 
     if options.extensions_result is not None:
@@ -64,10 +67,10 @@ async def resolve_project_trusted(options: ResolveProjectTrustedOptions) -> bool
         if result is not None:
             trusted = result.get("trusted") == "yes"
             if result.get("remember") is True:
-                options.trust_store.set(options.cwd, trusted)
+                await options.trust_store.set(options.cwd, trusted)
             return trusted
 
-    decision = options.trust_store.get(options.cwd)
+    decision = await options.trust_store.get(options.cwd)
     if decision is not None:
         return decision
 
@@ -82,6 +85,6 @@ async def resolve_project_trusted(options: ResolveProjectTrustedOptions) -> bool
 
     selected = await _select_project_trust_option(options.cwd, options.project_trust_context)
     if selected is not None:
-        _save_project_trust_prompt_result(options.trust_store, selected)
+        await _save_project_trust_prompt_result(options.trust_store, selected)
         return selected.trusted
     return False

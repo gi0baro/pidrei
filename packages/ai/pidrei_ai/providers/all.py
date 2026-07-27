@@ -6,8 +6,11 @@ every provider present in the vendored data regardless.
 """
 
 import json
+from collections.abc import Awaitable
 from datetime import datetime
 from importlib import resources
+
+import tonio.colored as tonio
 
 from pidrei_ai.images_models import ImagesModels, create_images_models
 from pidrei_ai.models_generated import MODELS
@@ -69,14 +72,26 @@ def get_builtin_providers() -> list[str]:
     return list(MODELS.keys())
 
 
-def get_builtin_model_data_generated_at() -> int | None:
-    """Generation timestamp (ms) shared by all built-in provider catalogs."""
+def _read_generated_at() -> int | None:
     manifest_path = resources.files("pidrei_ai.providers") / "data" / "_manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         return int(datetime.fromisoformat(manifest["generatedAt"]).timestamp() * 1000)
     except Exception:
         return None
+
+
+def get_builtin_model_data_generated_at() -> Awaitable[int | None]:
+    """Generation timestamp (ms) shared by all built-in provider catalogs.
+
+    A `Traversable` cannot be awaited, so the read is gated with
+    `spawn_blocking` rather than routed through `fs`. Unlike the catalog
+    modules, which load at import, this runs on every `ModelRuntime.create()`.
+
+    Sync, returning the awaitable: `async def ...: return await ...` would add
+    a coroutine frame for nothing.
+    """
+    return tonio.spawn_blocking(_read_generated_at)
 
 
 def builtin_providers() -> list[Provider]:

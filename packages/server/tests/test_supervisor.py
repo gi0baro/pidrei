@@ -36,7 +36,7 @@ class TestSupervisorLifecycle:
                 assert [instance["id"] for instance in stored] == [record["id"]]
                 assert stored[0]["status"] == "online"
 
-                assert supervisor.get_instance(record["id"])["status"] == "online"
+                assert (await supervisor.get_instance(record["id"]))["status"] == "online"
                 assert supervisor.get_live_instance(record["id"])["id"] == record["id"]
                 assert [instance["id"] for instance in supervisor.list_live_instances()] == [record["id"]]
             finally:
@@ -78,7 +78,7 @@ class TestSupervisorLifecycle:
                 await supervisor.handle_rpc(record["id"], {"type": "exit"})
 
             assert await _wait_for(lambda: supervisor.get_live_instance(record["id"]) is None)
-            stored = supervisor.get_instance(record["id"])
+            stored = await supervisor.get_instance(record["id"])
             assert stored["status"] == "error"
 
     @pytest.mark.tonio

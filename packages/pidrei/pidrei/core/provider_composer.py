@@ -12,6 +12,8 @@ dispatch maps known api names onto pidrei-ai adapter modules directly.
 from dataclasses import dataclass, replace
 from typing import Any
 
+import tonio.colored as tonio
+
 from pidrei_ai.api.lazy import lazy_stream
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
@@ -426,7 +428,10 @@ def compose_api_key_auth(
             **(dict(result.env) if result.env else {}),
         }
         header_env = await _config_context_env(list((raw_headers or {}).values()), ctx, explicit_env)
-        headers = resolve_headers_or_throw(raw_headers, f'provider "{provider_id}"', header_env)
+        # `resolve_config_value` can run a shell command via the `!cmd` syntax.
+        headers = await tonio.spawn_blocking(
+            resolve_headers_or_throw, raw_headers, f'provider "{provider_id}"', header_env
+        )
         return replace(result, auth=_with_configured_auth(result.auth, headers, auth_header))
 
     return ApiKeyAuth(
@@ -458,8 +463,11 @@ def compose_oauth_auth(
     async def to_auth(credential: OAuthCredential) -> ModelAuth:
         auth = await inner_to_auth(credential)
         env = credential.extra.get("env")
-        headers = resolve_headers_or_throw(
-            raw_headers, f'provider "{provider_id}"', env if isinstance(env, dict) else None
+        headers = await tonio.spawn_blocking(
+            resolve_headers_or_throw,
+            raw_headers,
+            f'provider "{provider_id}"',
+            env if isinstance(env, dict) else None,
         )
         return _with_configured_auth(auth, headers, auth_header)
 

@@ -7,6 +7,7 @@ import sys
 import tempfile
 
 import tonio
+from tonio.colored import fs
 
 
 async def edit_in_external_editor(options: dict) -> dict:
@@ -15,13 +16,14 @@ async def edit_in_external_editor(options: dict) -> dict:
     Returns ``{"status": "complete", "content": ...}`` or
     ``{"status": "failed"}``.
     """
-    directory = tempfile.mkdtemp(prefix="pidrei-editor-")
+    directory = await tonio.spawn_blocking(tempfile.mkdtemp, prefix="pidrei-editor-")
     file_path = os.path.join(directory, "prompt.md")
     try:
-        # Blocking file I/O on tiny temp files, exactly like pi's sync
-        # write/read around the editor process.
-        with open(file_path, "w", encoding="utf-8") as f:  # noqa: ASYNC230
-            f.write(options["content"])
+        # pi does these synchronously around the editor process; here they go
+        # through `fs` like every other read/write. `tempfile` and
+        # `shutil.rmtree` have no `fs` equivalent, so those use the pool
+        # directly.
+        await fs.Path(file_path).write_text(options["content"], encoding="utf-8")
         editor, *editor_args = options["command"].split(" ")
         sys.stdout.write(
             f"Launching external editor: {options['command']}\npidrei will resume when the editor exits.\n"
@@ -37,9 +39,8 @@ async def edit_in_external_editor(options: dict) -> dict:
         if exit_code != 0:
             return {"status": "failed"}
 
-        with open(file_path, encoding="utf-8") as f:  # noqa: ASYNC230
-            content = f.read()
+        content = await fs.Path(file_path).read_text(encoding="utf-8")
         return {"status": "complete", "content": re.sub(r"\n$", "", content)}
     finally:
         # Cleanup is best effort.
-        shutil.rmtree(directory, ignore_errors=True)
+        await tonio.spawn_blocking(shutil.rmtree, directory, ignore_errors=True)

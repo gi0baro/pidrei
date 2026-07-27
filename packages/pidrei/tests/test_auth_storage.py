@@ -47,7 +47,7 @@ async def test_reads_and_resolves_stored_api_key_credentials(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     with env_var("TEST_AUTH_STORAGE_KEY", "environment-key"):
         write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "$TEST_AUTH_STORAGE_KEY"}})
-        storage = AuthStorage.create(str(auth_path))
+        storage = await AuthStorage.create(str(auth_path))
         assert await storage.read("anthropic") == ApiKeyCredential(key="environment-key")
 
 
@@ -55,7 +55,7 @@ async def test_reads_and_resolves_stored_api_key_credentials(tmp_dir):
 async def test_resolves_command_backed_api_key_credentials(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "!printf 'command-key'"}})
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
     assert await storage.read("anthropic") == ApiKeyCredential(key="command-key")
 
 
@@ -81,7 +81,7 @@ async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tm
             }
         },
     )
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
     resolved = await storage.read("anthropic")
     assert resolved.key == "scoped-value"
     assert resolved.env == {"SCOPED_KEY": "scoped-value", "REGION": "test-region"}
@@ -91,7 +91,7 @@ async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tm
 async def test_modify_persists_a_credential_while_preserving_unrelated_external_edits(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
     write_auth_json(
         auth_path,
         {"anthropic": {"type": "api_key", "key": "old"}, "openai": {"type": "api_key", "key": "external"}},
@@ -112,7 +112,7 @@ async def test_modify_persists_a_credential_while_preserving_unrelated_external_
 async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
 
     async def keep(_current):
         return None
@@ -125,8 +125,8 @@ async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_dir)
 async def test_serializes_concurrent_modifications(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {})
-    first = AuthStorage.create(str(auth_path))
-    second = AuthStorage.create(str(auth_path))
+    first = await AuthStorage.create(str(auth_path))
+    second = await AuthStorage.create(str(auth_path))
 
     async def set_anthropic(_current):
         return ApiKeyCredential(key="anthropic-key")
@@ -149,7 +149,7 @@ async def test_delete_removes_one_credential_while_preserving_others(tmp_dir):
         auth_path,
         {"anthropic": {"type": "api_key", "key": "anthropic-key"}, "openai": {"type": "api_key", "key": "openai-key"}},
     )
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
     write_auth_json(
         auth_path,
         {
@@ -186,7 +186,7 @@ async def test_in_memory_storage_implements_the_same_credential_store_behavior()
 async def test_does_not_write_after_lock_acquisition_failure_and_recovers_on_retry(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
 
     original_acquire = auth_storage_module._acquire_lock_async
     calls = {"count": 0}
@@ -218,7 +218,7 @@ async def test_does_not_write_after_lock_acquisition_failure_and_recovers_on_ret
 async def test_does_not_overwrite_malformed_auth_files(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    storage = AuthStorage.create(str(auth_path))
+    storage = await AuthStorage.create(str(auth_path))
     auth_path.write_text("{invalid-json", encoding="utf-8")
 
     async def set_openai(_current):

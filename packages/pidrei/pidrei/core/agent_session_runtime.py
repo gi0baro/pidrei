@@ -6,6 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import tonio.colored as tonio
+from tonio.colored import fs
+
 from ..utils.paths import resolve_path
 from .agent_session import AgentSession
 from .agent_session_services import AgentSessionRuntimeDiagnostic, AgentSessionServices
@@ -156,7 +159,7 @@ class AgentSessionRuntime:
             return before_result
 
         previous_session_file = self.session.session_file
-        session_manager = SessionManager.open(session_path, None, cwd_override)
+        session_manager = await SessionManager.open(session_path, None, cwd_override)
         assert_session_cwd_exists(session_manager, self.cwd)
         await self._teardown_current("resume", session_manager.get_session_file())
         self._apply(
@@ -193,7 +196,7 @@ class AgentSessionRuntime:
         previous_session_file = self.session.session_file
         session_dir = self.session.session_manager.get_session_dir()
         session_manager = (
-            SessionManager.create(self.cwd, session_dir)
+            await SessionManager.create(self.cwd, session_dir)
             if self.session.session_manager.is_persisted()
             else SessionManager.in_memory(self.cwd)
         )
@@ -253,7 +256,7 @@ class AgentSessionRuntime:
                 raise Exception("Persisted session is missing a session file")
             session_dir = self.session.session_manager.get_session_dir()
             if not target_leaf_id:
-                session_manager = SessionManager.create(self.cwd, session_dir)
+                session_manager = await SessionManager.create(self.cwd, session_dir)
                 session_manager.new_session({"parentSession": current_session_file})
                 await self._teardown_current("fork", session_manager.get_session_file())
                 self._apply(
@@ -271,13 +274,13 @@ class AgentSessionRuntime:
                 await self._finish_session_replacement(with_session)
                 return {"cancelled": False, "selectedText": selected_text}
 
-            if not os.path.exists(current_session_file):
+            if not await fs.Path(current_session_file).exists():
                 raise Exception(
                     "This session has not been saved yet. Wait for the first assistant response "
                     "before cloning or forking it."
                 )
-            session_manager = SessionManager.open(current_session_file, session_dir)
-            forked_session_path = session_manager.create_branched_session(target_leaf_id)
+            session_manager = await SessionManager.open(current_session_file, session_dir)
+            forked_session_path = await session_manager.create_branched_session(target_leaf_id)
             if not forked_session_path:
                 raise Exception("Failed to create forked session")
             await self._teardown_current("fork", session_manager.get_session_file())
@@ -300,7 +303,7 @@ class AgentSessionRuntime:
         if not target_leaf_id:
             session_manager.new_session({"parentSession": self.session.session_file})
         else:
-            session_manager.create_branched_session(target_leaf_id)
+            await session_manager.create_branched_session(target_leaf_id)
         await self._teardown_current("fork", session_manager.get_session_file())
         self._apply(
             await self._create_runtime(
@@ -324,12 +327,12 @@ class AgentSessionRuntime:
         Raises SessionImportFileNotFoundError when the input path does not exist
         and MissingSessionCwdError when the imported session cwd is unresolvable."""
         resolved_path = resolve_path(input_path)
-        if not os.path.exists(resolved_path):
+        if not await fs.Path(resolved_path).exists():
             raise SessionImportFileNotFoundError(resolved_path)
 
         session_dir = self.session.session_manager.get_session_dir()
-        if not os.path.exists(session_dir):
-            os.makedirs(session_dir, exist_ok=True)
+        if not await fs.Path(session_dir).exists():
+            await fs.Path(session_dir).mkdir(parents=True, exist_ok=True)
 
         destination_path = os.path.join(session_dir, os.path.basename(resolved_path))
         before_result = await self._emit_before_switch("resume", destination_path)
@@ -338,9 +341,10 @@ class AgentSessionRuntime:
 
         previous_session_file = self.session.session_file
         if resolve_path(destination_path) != resolved_path:
-            shutil.copyfile(resolved_path, destination_path)
+            # `shutil.copyfile` has no `fs` equivalent, so it goes to the pool.
+            await tonio.spawn_blocking(shutil.copyfile, resolved_path, destination_path)
 
-        session_manager = SessionManager.open(destination_path, session_dir, cwd_override)
+        session_manager = await SessionManager.open(destination_path, session_dir, cwd_override)
         assert_session_cwd_exists(session_manager, self.cwd)
         await self._teardown_current("resume", session_manager.get_session_file())
         self._apply(

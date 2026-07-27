@@ -9,6 +9,8 @@ import json
 import os
 import sys
 
+from tonio.colored import fs
+
 from pidrei_tui.keybindings import TUI_KEYBINDINGS, KeybindingsManager as TuiKeybindingsManager
 
 from ..config import get_agent_dir
@@ -177,12 +179,11 @@ def _order_keybindings_config(config: dict) -> dict:
     return ordered
 
 
-def _load_raw_config(path: str) -> dict | None:
-    if not os.path.exists(path):
+async def _load_raw_config(path: str) -> dict | None:
+    if not await fs.Path(path).exists():
         return None
     try:
-        with open(path, encoding="utf-8") as f:
-            parsed = json.load(f)
+        parsed = json.loads(await fs.Path(path).read_text(encoding="utf-8"))
     except Exception:
         return None
     if not isinstance(parsed, dict):
@@ -196,24 +197,30 @@ class KeybindingsManager(TuiKeybindingsManager):
         self._config_path = config_path
 
     @staticmethod
-    def create(agent_dir: str | None = None) -> KeybindingsManager:
+    async def create(agent_dir: str | None = None) -> KeybindingsManager:
+        """Load the user's bindings, then construct.
+
+        The read is here rather than in `__init__` so the constructor stays
+        sync: a constructor cannot await, and nothing may block a runtime
+        worker.
+        """
         if agent_dir is None:
             agent_dir = get_agent_dir()
         config_path = os.path.join(agent_dir, "keybindings.json")
-        user_bindings = KeybindingsManager._load_from_file(config_path)
+        user_bindings = await KeybindingsManager._load_from_file(config_path)
         return KeybindingsManager(user_bindings, config_path)
 
-    def reload(self) -> None:
+    async def reload(self) -> None:
         if not self._config_path:
             return
-        self.set_user_bindings(KeybindingsManager._load_from_file(self._config_path))
+        self.set_user_bindings(await KeybindingsManager._load_from_file(self._config_path))
 
     def get_effective_config(self) -> dict:
         return self.get_resolved_bindings()
 
     @staticmethod
-    def _load_from_file(path: str) -> dict:
-        raw_config = _load_raw_config(path)
+    async def _load_from_file(path: str) -> dict:
+        raw_config = await _load_raw_config(path)
         if not raw_config:
             return {}
         return _to_keybindings_config(migrate_keybindings_config(raw_config)["config"])

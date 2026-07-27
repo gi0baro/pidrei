@@ -45,6 +45,6 @@ class EditorComponent(Protocol):
         """Set the text content."""
         ...
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         """Handle raw terminal input (key presses, paste sequences, etc.)."""
         ...

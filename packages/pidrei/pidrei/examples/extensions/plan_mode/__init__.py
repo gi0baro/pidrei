@@ -119,8 +119,8 @@ class PlanMode:
         self.pi.set_active_tools(self.tools_before_plan_mode or self.get_normal_mode_tools(self.pi.get_active_tools()))
         self.tools_before_plan_mode = None
 
-    def persist_state(self) -> None:
-        self.pi.append_entry(
+    async def persist_state(self) -> None:
+        await self.pi.append_entry(
             "plan-mode",
             {
                 "enabled": self.plan_mode_enabled,
@@ -132,7 +132,7 @@ class PlanMode:
             },
         )
 
-    def toggle_plan_mode(self, ctx) -> None:
+    async def toggle_plan_mode(self, ctx) -> None:
         self.plan_mode_enabled = not self.plan_mode_enabled
         self.execution_mode = False
         self.todo_items = []
@@ -144,10 +144,10 @@ class PlanMode:
             self.restore_normal_mode_tools()
             ctx.ui.notify("Plan mode disabled. Full access restored.")
         self.update_status(ctx)
-        self.persist_state()
+        await self.persist_state()
 
     async def plan_command(self, _args: str, ctx) -> None:
-        self.toggle_plan_mode(ctx)
+        await self.toggle_plan_mode(ctx)
 
     async def todos_command(self, _args: str, ctx) -> None:
         todo_items: list[TodoItem] = self.todo_items
@@ -262,7 +262,7 @@ class PlanMode:
 
         if mark_completed_steps(_get_text_content(message), todo_items) > 0:
             self.update_status(ctx)
-        self.persist_state()
+        await self.persist_state()
 
     async def on_agent_end(self, event, ctx) -> None:
         """Handle plan completion and the plan mode prompt."""
@@ -283,7 +283,7 @@ class PlanMode:
                 self.todo_items = []
                 self.update_status(ctx)
                 # Save the cleared state so a resume does not restore it.
-                self.persist_state()
+                await self.persist_state()
             return
 
         if not self.plan_mode_enabled or not ctx.has_ui:
@@ -300,7 +300,7 @@ class PlanMode:
         todo_items = self.todo_items
         if not todo_items:
             return
-        self.persist_state()
+        await self.persist_state()
 
         todo_list_text = "\n".join(f"{index + 1}. ☐ {item.text}" for index, item in enumerate(todo_items))
         plan_todo_list_message = {
@@ -320,7 +320,7 @@ class PlanMode:
             self.execution_mode = True
             self.restore_normal_mode_tools()
             self.update_status(ctx)
-            self.persist_state()
+            await self.persist_state()
 
             remaining_list = "\n".join(f"{item.step}. {item.text}" for item in todo_items)
             exec_message = f"""Execute the plan.

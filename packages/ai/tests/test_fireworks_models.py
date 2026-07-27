@@ -75,11 +75,12 @@ def test_aligns_glm_52_fast_with_glm_52_openai_compatible_config():
     assert fast.thinking_level_map == base.thinking_level_map
 
 
-def test_resolves_fireworks_api_key_from_the_environment():
+@pytest.mark.tonio
+async def test_resolves_fireworks_api_key_from_the_environment():
     env = {"FIREWORKS_API_KEY": "test-fireworks-key"}
 
     assert find_env_keys("fireworks", env) == ["FIREWORKS_API_KEY"]
-    assert get_env_api_key("fireworks", env) == "test-fireworks-key"
+    assert await get_env_api_key("fireworks", env) == "test-fireworks-key"
 
 
 def test_sets_fireworks_compat_for_session_affinity_and_unsupported_tool_fields():

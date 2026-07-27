@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.agent import Agent
 from pidrei_agent.types import (
@@ -708,7 +709,7 @@ class AgentSession:
             role = getattr(message, "role", None)
             if role == "custom":
                 # Persist as CustomMessageEntry
-                self.session_manager.append_custom_message_entry(
+                await self.session_manager.append_custom_message_entry(
                     message.custom_type,
                     message.content,
                     message.display,
@@ -716,7 +717,7 @@ class AgentSession:
                 )
             elif role in ("user", "assistant", "toolResult"):
                 # Regular LLM message - persist as SessionMessageEntry
-                self.session_manager.append_message(message)
+                await self.session_manager.append_message(message)
             # Other message types (bashExecution, compactionSummary, branchSummary)
             # are persisted elsewhere.
 
@@ -1048,7 +1049,7 @@ class AgentSession:
                 await self.agent.continue_()
         finally:
             self._system_prompt_override = None
-            self._flush_pending_bash_messages()
+            await self._flush_pending_bash_messages()
             await self._emit_agent_settled()
 
     async def _handle_post_agent_run(self) -> bool:
@@ -1115,7 +1116,7 @@ class AgentSession:
             # Expand skill commands (/skill:name args) and prompt templates (/template args)
             expanded_text = current_text
             if expand_prompt_templates:
-                expanded_text = self._expand_skill_command(expanded_text)
+                expanded_text = await self._expand_skill_command(expanded_text)
                 expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
 
             # If streaming, queue via steer() or follow_up() based on option
@@ -1134,7 +1135,7 @@ class AgentSession:
                 return
 
             # Flush any pending bash messages before the new prompt
-            self._flush_pending_bash_messages()
+            await self._flush_pending_bash_messages()
 
             # Validate model
             if self.model is None:
@@ -1240,7 +1241,7 @@ class AgentSession:
             )
             return True
 
-    def _expand_skill_command(self, text: str) -> str:
+    async def _expand_skill_command(self, text: str) -> str:
         """Expand skill commands (/skill:name args) to their full content."""
         if not text.startswith("/skill:"):
             return text
@@ -1254,8 +1255,7 @@ class AgentSession:
             return text  # Unknown skill, pass through
 
         try:
-            with open(skill.file_path, encoding="utf-8") as handle:
-                content = handle.read()
+            content = await fs.Path(skill.file_path).read_text(encoding="utf-8")
             body = strip_frontmatter(content).strip()
             skill_block = (
                 f'<skill name="{skill.name}" location="{skill.file_path}">\n'
@@ -1278,7 +1278,7 @@ class AgentSession:
         if text.startswith("/"):
             self._throw_if_extension_command(text)
 
-        expanded_text = self._expand_skill_command(text)
+        expanded_text = await self._expand_skill_command(text)
         expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
 
         await self._queue_steer(expanded_text, images)
@@ -1290,7 +1290,7 @@ class AgentSession:
         if text.startswith("/"):
             self._throw_if_extension_command(text)
 
-        expanded_text = self._expand_skill_command(text)
+        expanded_text = await self._expand_skill_command(text)
         expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
 
         await self._queue_follow_up(expanded_text, images)
@@ -1365,7 +1365,7 @@ class AgentSession:
             await self._run_agent_prompt(app_message)
         else:
             self.agent.state.messages.append(app_message)
-            self.session_manager.append_custom_message_entry(custom_type, content, display, details)
+            await self.session_manager.append_custom_message_entry(custom_type, content, display, details)
             self._emit(AgentMessageStartEvent(message=app_message))
             self._emit(AgentMessageEndEvent(message=app_message))
 
@@ -1459,11 +1459,11 @@ class AgentSession:
         previous_model = self.model
         thinking_level = self._get_thinking_level_for_model_switch()
         self.agent.state.model = model
-        self.session_manager.append_model_change(model.provider, model.id)
+        await self.session_manager.append_model_change(model.provider, model.id)
         self.settings_manager.set_default_model_and_provider(model.provider, model.id)
 
         # Re-clamp thinking level for new model's capabilities
-        self.set_thinking_level(thinking_level)
+        await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(model, previous_model, "set")
 
@@ -1495,12 +1495,12 @@ class AgentSession:
 
         # Apply model
         self.agent.state.model = next_scoped.model
-        self.session_manager.append_model_change(next_scoped.model.provider, next_scoped.model.id)
+        await self.session_manager.append_model_change(next_scoped.model.provider, next_scoped.model.id)
         self.settings_manager.set_default_model_and_provider(next_scoped.model.provider, next_scoped.model.id)
 
         # Apply thinking level: explicit scoped level overrides the session level,
         # None inherits the current session preference. set_thinking_level clamps.
-        self.set_thinking_level(thinking_level)
+        await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(next_scoped.model, current_model, "cycle")
 
@@ -1522,11 +1522,11 @@ class AgentSession:
 
         thinking_level = self._get_thinking_level_for_model_switch()
         self.agent.state.model = next_model
-        self.session_manager.append_model_change(next_model.provider, next_model.id)
+        await self.session_manager.append_model_change(next_model.provider, next_model.id)
         self.settings_manager.set_default_model_and_provider(next_model.provider, next_model.id)
 
         # Re-clamp thinking level for new model's capabilities
-        self.set_thinking_level(thinking_level)
+        await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(next_model, current_model, "cycle")
 
@@ -1536,7 +1536,7 @@ class AgentSession:
     # Thinking Level Management
     # =========================================================================
 
-    def set_thinking_level(self, level: str) -> None:
+    async def set_thinking_level(self, level: str) -> None:
         """Set thinking level, clamped to model capabilities. Saves to session
         and settings only if the level actually changes."""
         available_levels = self.get_available_thinking_levels()
@@ -1549,7 +1549,7 @@ class AgentSession:
         self.agent.state.thinking_level = effective_level
 
         if is_changing:
-            self.session_manager.append_thinking_level_change(effective_level)
+            await self.session_manager.append_thinking_level_change(effective_level)
             if self.supports_thinking() or effective_level != "off":
                 self.settings_manager.set_default_thinking_level(effective_level)
             self._emit(ThinkingLevelChangedEvent(level=effective_level))
@@ -1559,7 +1559,7 @@ class AgentSession:
                 )
             )
 
-    def cycle_thinking_level(self) -> str | None:
+    async def cycle_thinking_level(self) -> str | None:
         """Cycle to next thinking level. None if model doesn't support thinking."""
         if not self.supports_thinking():
             return None
@@ -1568,7 +1568,7 @@ class AgentSession:
         current_index = levels.index(self.thinking_level) if self.thinking_level in levels else -1
         next_level = levels[(current_index + 1) % len(levels)]
 
-        self.set_thinking_level(next_level)
+        await self.set_thinking_level(next_level)
         return next_level
 
     def get_available_thinking_levels(self) -> list[str]:
@@ -1689,7 +1689,7 @@ class AgentSession:
             if self._compaction_cancel.cancelled:
                 raise Exception("Compaction cancelled")
 
-            self.session_manager.append_compaction(
+            await self.session_manager.append_compaction(
                 summary, first_kept_entry_id, tokens_before, details, from_extension, usage
             )
             new_entries = self.session_manager.get_entries()
@@ -1934,7 +1934,7 @@ class AgentSession:
                 self._emit(CompactionEndEvent(reason=reason, result=None, aborted=True, will_retry=False))
                 return False
 
-            self.session_manager.append_compaction(
+            await self.session_manager.append_compaction(
                 summary, first_kept_entry_id, tokens_before, details, from_extension, usage
             )
             new_entries = self.session_manager.get_entries()
@@ -2047,7 +2047,7 @@ class AgentSession:
             "theme_paths": self._build_extension_resource_paths(discovered.theme_paths),
         }
 
-        self._resource_loader.extend_resources(extension_paths)
+        await self._resource_loader.extend_resources(extension_paths)
         self._base_system_prompt = self._rebuild_system_prompt(self.get_active_tool_names())
         self.agent.state.system_prompt = self._base_system_prompt
 
@@ -2161,8 +2161,8 @@ class AgentSession:
 
             tonio.spawn.without_tracking(run())
 
-        def append_entry_action(custom_type: str, data: Any = None) -> None:
-            entry_id = self.session_manager.append_custom_entry(custom_type, data)
+        async def append_entry_action(custom_type: str, data: Any = None) -> None:
+            entry_id = await self.session_manager.append_custom_entry(custom_type, data)
             entry = self.session_manager.get_entry(entry_id)
             if entry is not None:
                 self._emit(EntryAppendedEvent(entry=entry))
@@ -2202,6 +2202,8 @@ class AgentSession:
                 "set_session_name": lambda name: self.set_session_name(name),
                 "get_session_name": lambda: self.session_manager.get_session_name(),
                 "set_label": lambda entry_id, label: self.session_manager.append_label_change(entry_id, label),
+                # `set_session_name`/`set_label`/`append_entry`/`set_thinking_level`
+                # now return coroutines; `loader.py` awaits them.
                 "get_active_tools": lambda: self.get_active_tool_names(),
                 "get_all_tools": lambda: self.get_all_tools(),
                 "set_active_tools": lambda tool_names: self.set_active_tools_by_name(tool_names),
@@ -2389,7 +2391,7 @@ class AgentSession:
 
         previous_flag_values = self._extension_runner.get_flag_values()
         await emit_session_shutdown_event(self._extension_runner, {"type": "session_shutdown", "reason": "reload"})
-        self.settings_manager.reload()  # sync in pidrei (settings writes are sync under a lock)
+        await self.settings_manager.reload()  # drains queued writes first, like pi
         self.sync_queue_modes_from_settings()
         # pi calls resetApiProviders() (the pi-ai compat registry); pidrei's
         # adapters are stateless modules composed per ModelRuntime, so there is
@@ -2549,12 +2551,12 @@ class AgentSession:
                 cancel=self._bash_cancel,
             )
 
-            self.record_bash_result(command, result, options)
+            await self.record_bash_result(command, result, options)
             return result
         finally:
             self._bash_cancel = None
 
-    def record_bash_result(self, command: str, result: BashResult, options: dict[str, Any] | None = None) -> None:
+    async def record_bash_result(self, command: str, result: BashResult, options: dict[str, Any] | None = None) -> None:
         """Record a bash execution result in session history. Used by execute_bash
         and by extensions that handle bash execution themselves."""
         options = options or {}
@@ -2577,7 +2579,7 @@ class AgentSession:
             # Add to agent state immediately
             self.agent.state.messages.append(bash_message)
             # Save to session
-            self.session_manager.append_message(bash_message)
+            await self.session_manager.append_message(bash_message)
 
     def abort_bash(self) -> None:
         """Cancel running bash command."""
@@ -2592,7 +2594,7 @@ class AgentSession:
     def has_pending_bash_messages(self) -> bool:
         return len(self._pending_bash_messages) > 0
 
-    def _flush_pending_bash_messages(self) -> None:
+    async def _flush_pending_bash_messages(self) -> None:
         """Flush pending bash messages to agent state and session. Called after the
         agent turn completes to maintain proper message ordering."""
         if not self._pending_bash_messages:
@@ -2600,7 +2602,7 @@ class AgentSession:
 
         for bash_message in self._pending_bash_messages:
             self.agent.state.messages.append(bash_message)
-            self.session_manager.append_message(bash_message)
+            await self.session_manager.append_message(bash_message)
 
         self._pending_bash_messages = []
 
@@ -2608,9 +2610,9 @@ class AgentSession:
     # Session Management
     # =========================================================================
 
-    def set_session_name(self, name: str) -> None:
+    async def set_session_name(self, name: str) -> None:
         """Set a display name for the current session."""
-        self.session_manager.append_session_info(name)
+        await self.session_manager.append_session_info(name)
         event = SessionInfoChangedEvent(name=self.session_manager.get_session_name())
         self._emit(event)
         tonio.spawn.without_tracking(self._extension_runner.emit({"type": "session_info_changed", "name": event.name}))
@@ -2746,14 +2748,14 @@ class AgentSession:
             # navigation target position (new_leaf_id), not the old branch.
             summary_entry: dict[str, Any] | None = None
             if summary_text:
-                summary_id = self.session_manager.branch_with_summary(
+                summary_id = await self.session_manager.branch_with_summary(
                     new_leaf_id, summary_text, summary_details, from_extension, summary_usage
                 )
                 summary_entry = self.session_manager.get_entry(summary_id)
 
                 # Attach label to the summary entry
                 if label:
-                    self.session_manager.append_label_change(summary_id, label)
+                    await self.session_manager.append_label_change(summary_id, label)
             elif new_leaf_id is None:
                 # No summary, navigating to root - reset leaf
                 self.session_manager.reset_leaf()
@@ -2763,7 +2765,7 @@ class AgentSession:
 
             # Attach label to target entry when not summarizing
             if label and not summary_text:
-                self.session_manager.append_label_change(target_id, label)
+                await self.session_manager.append_label_change(target_id, label)
 
             # Update agent state
             session_context = self.session_manager.build_session_context()
@@ -2810,7 +2812,7 @@ class AgentSession:
 
         configured_theme_name = self.settings_manager.get_theme()
         theme_name = (
-            configured_theme_name if configured_theme_name and get_theme_by_name(configured_theme_name) else None
+            configured_theme_name if configured_theme_name and await get_theme_by_name(configured_theme_name) else None
         )
 
         # Create tool renderer for custom tool HTML rendering
@@ -2920,7 +2922,7 @@ class AgentSession:
 
         return ContextUsage(tokens=estimate.tokens, context_window=context_window, percent=percent)
 
-    def export_to_jsonl(self, output_path: str | None = None) -> str:
+    async def export_to_jsonl(self, output_path: str | None = None) -> str:
         """Export the current session branch to a JSONL file: session header
         followed by all entries on the current branch path (re-chained linear)."""
 
@@ -2930,8 +2932,8 @@ class AgentSession:
         default_name = f"session-{_iso_now().replace(':', '-').replace('.', '-')}.jsonl"
         file_path = resolve_path(output_path if output_path is not None else default_name, os.getcwd())
         directory = os.path.dirname(file_path)
-        if directory and not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
+        if directory and not await fs.Path(directory).exists():
+            await fs.Path(directory).mkdir(parents=True, exist_ok=True)
 
         header = {
             "type": "session",
@@ -2952,8 +2954,7 @@ class AgentSession:
             lines.append(_dump_json(_entry_to_wire(linear)))
             prev_id = entry["id"]
 
-        with open(file_path, "w", encoding="utf-8", newline="") as handle:
-            handle.write("\n".join(lines) + "\n")
+        await fs.Path(file_path).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="")
         return file_path
 
     # =========================================================================

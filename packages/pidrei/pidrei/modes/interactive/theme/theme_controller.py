@@ -8,7 +8,7 @@ from .theme import (
     parse_auto_theme_setting,
     resolve_theme_setting,
     set_theme,
-    set_theme_instance,
+    set_theme_instance as apply_theme_instance,
 )
 
 
@@ -23,62 +23,69 @@ class InteractiveThemeController:
         self._active_theme_name = resolve_theme_setting(
             self._settings_manager.get_theme_setting(), self._terminal_theme
         )
-        init_theme(self._active_theme_name, True)
         self._ui.on_terminal_color_scheme_change(self._apply_terminal_theme)
+
+    async def prime(self) -> None:
+        """Load the initial theme off the runtime.
+
+        `init_theme` reads theme files, so it cannot run in `__init__`;
+        `InteractiveMode.run` calls this before the first render.
+        """
+        await init_theme(self._active_theme_name, True)
 
     async def apply_from_settings(self) -> None:
         theme_setting = self._settings_manager.get_theme_setting()
         auto_theme = parse_auto_theme_setting(theme_setting)
         if auto_theme:
             self._terminal_theme = await detect_terminal_theme_for_auto({"ui": self._ui, "timeoutMs": 100})
-            self._set_auto_sync(True)
-            self._apply_theme_name(
+            await self._set_auto_sync(True)
+            await self._apply_theme_name(
                 auto_theme["lightTheme"] if self._terminal_theme == "light" else auto_theme["darkTheme"],
                 True,
             )
             return
 
-        self._set_auto_sync(False)
+        await self._set_auto_sync(False)
         if theme_setting is not None:
-            self._apply_theme_name(theme_setting, True)
+            await self._apply_theme_name(theme_setting, True)
             return
 
         detection = await detect_terminal_background_theme({"ui": self._ui, "timeoutMs": 100})
         self._terminal_theme = detection["theme"]
-        if not self._apply_theme_name(detection["theme"])["success"]:
+        if not (await self._apply_theme_name(detection["theme"]))["success"]:
             return
         if detection["confidence"] == "high":
             self._settings_manager.set_theme(detection["theme"])
             # pidrei's SettingsManager.flush is synchronous (pi awaits it)
             self._settings_manager.flush()
 
-    def set_theme_name(self, theme_name: str, show_error: bool = False) -> dict:
-        self._set_auto_sync(False)
-        return self._apply_theme_name(theme_name, show_error)
+    async def set_theme_name(self, theme_name: str, show_error: bool = False) -> dict:
+        await self._set_auto_sync(False)
+        return await self._apply_theme_name(theme_name, show_error)
 
-    def set_theme_instance(self, theme_instance) -> dict:
-        self._set_auto_sync(False)
-        set_theme_instance(theme_instance)
+    async def set_theme_instance(self, theme_instance) -> dict:
+        await self._set_auto_sync(False)
+        apply_theme_instance(theme_instance)
         self._active_theme_name = "<in-memory>"
         self._notify_changed()
         return {"success": True}
 
-    def preview(self, theme_setting_or_name: str) -> None:
+    async def preview(self, theme_setting_or_name: str) -> None:
         theme_name = resolve_theme_setting(theme_setting_or_name, self._terminal_theme) or self._active_theme_name
         if not theme_name:
             return
-        if set_theme(theme_name, True)["success"]:
+        if (await set_theme(theme_name, True))["success"]:
             self._ui.invalidate()
             self._ui.request_render()
 
-    def disable_auto_sync(self) -> None:
-        self._set_auto_sync(False)
+    async def disable_auto_sync(self) -> None:
+        await self._set_auto_sync(False)
 
     def get_terminal_theme(self) -> str:
         return self._terminal_theme
 
-    def _apply_theme_name(self, theme_name: str, show_error: bool = False) -> dict:
-        result = set_theme(theme_name, True)
+    async def _apply_theme_name(self, theme_name: str, show_error: bool = False) -> dict:
+        result = await set_theme(theme_name, True)
         self._active_theme_name = theme_name if result["success"] else "dark"
         self._notify_changed()
         if not result["success"] and show_error:
@@ -89,20 +96,20 @@ class InteractiveThemeController:
         self._ui.invalidate()
         self._on_changed()
 
-    def _set_auto_sync(self, enabled: bool) -> None:
+    async def _set_auto_sync(self, enabled: bool) -> None:
         if self._auto_sync_enabled == enabled:
             return
         self._auto_sync_enabled = enabled
-        self._ui.set_terminal_color_scheme_notifications(enabled)
+        await self._ui.set_terminal_color_scheme_notifications(enabled)
 
-    def _apply_terminal_theme(self, terminal_theme: str) -> None:
+    async def _apply_terminal_theme(self, terminal_theme: str) -> None:
         if not self._auto_sync_enabled:
             return
         self._terminal_theme = terminal_theme
         auto_theme = parse_auto_theme_setting(self._settings_manager.get_theme_setting())
         if not auto_theme:
-            self._set_auto_sync(False)
+            await self._set_auto_sync(False)
             return
         theme_name = auto_theme["lightTheme"] if terminal_theme == "light" else auto_theme["darkTheme"]
         if theme_name != self._active_theme_name:
-            self._apply_theme_name(theme_name)
+            await self._apply_theme_name(theme_name)

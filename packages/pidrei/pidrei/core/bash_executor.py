@@ -9,10 +9,11 @@ import os
 import secrets
 import tempfile
 from dataclasses import dataclass
-from typing import Any, BinaryIO
+from typing import Any
 
 from ..utils.ansi import strip_ansi
 from ..utils.shell import sanitize_binary_output
+from ..utils.temp_file_writer import TempFileWriter
 from .tools.truncate import DEFAULT_MAX_BYTES, truncate_tail
 
 
@@ -44,7 +45,7 @@ async def execute_bash_with_operations(
     max_output_bytes = DEFAULT_MAX_BYTES * 2
 
     temp_file_path: str | None = None
-    temp_file: BinaryIO | None = None
+    temp_file: TempFileWriter | None = None
     total_bytes = 0
 
     def ensure_temp_file() -> None:
@@ -52,8 +53,11 @@ async def execute_bash_with_operations(
         if temp_file_path is not None:
             return
         temp_file_path = os.path.join(tempfile.gettempdir(), f"pidrei-bash-{secrets.token_hex(8)}.log")
-        temp_file = open(temp_file_path, "wb")  # noqa: SIM115
-        temp_file.writelines(chunk.encode("utf-8", "replace") for chunk in output_chunks)
+        # Channel-backed, so `write` below stays non-blocking on the
+        # streaming path — pi uses createWriteStream here for the same reason.
+        temp_file = TempFileWriter(temp_file_path)
+        for chunk in output_chunks:
+            temp_file.write(chunk.encode("utf-8", "replace"))
 
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
@@ -82,19 +86,21 @@ async def execute_bash_with_operations(
         if on_chunk is not None:
             on_chunk(text)
 
-    def settle_output() -> tuple[str, Any]:
+    async def settle_output() -> tuple[str, Any]:
         full_output = "".join(output_chunks)
         truncation_result = truncate_tail(full_output)
         if truncation_result.truncated:
             ensure_temp_file()
         if temp_file is not None:
-            temp_file.close()
+            # Drains before returning: `full_output_path` is handed back to
+            # the caller to read. pi does not wait here; see TempFileWriter.
+            await temp_file.close()
         return full_output, truncation_result
 
     try:
         result = await operations.exec(command, cwd, on_data=on_data, cancel=cancel)
 
-        full_output, truncation_result = settle_output()
+        full_output, truncation_result = await settle_output()
         cancelled = cancel.cancelled if cancel is not None else False
 
         return BashResult(
@@ -107,7 +113,7 @@ async def execute_bash_with_operations(
     except Exception:
         # Check if it was an abort
         if cancel is not None and cancel.cancelled:
-            full_output, truncation_result = settle_output()
+            full_output, truncation_result = await settle_output()
             return BashResult(
                 output=truncation_result.content if truncation_result.truncated else full_output,
                 exit_code=None,
@@ -117,6 +123,6 @@ async def execute_bash_with_operations(
             )
 
         if temp_file is not None:
-            temp_file.close()
+            await temp_file.close()
 
         raise

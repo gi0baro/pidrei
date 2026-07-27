@@ -121,7 +121,9 @@ async def create_agent_session_services(options: CreateAgentSessionServicesOptio
             models_path=os.path.join(agent_dir, "models.json"),
         )
     settings_manager = (
-        options.settings_manager if options.settings_manager is not None else SettingsManager.create(cwd, agent_dir)
+        options.settings_manager
+        if options.settings_manager is not None
+        else await SettingsManager.create(cwd, agent_dir)
     )
     resource_loader = DefaultResourceLoader(
         **(options.resource_loader_options or {}),

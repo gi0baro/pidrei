@@ -20,8 +20,9 @@ class _FakeTui:
         pass
 
 
-def create_dialog() -> LoginDialogComponent:
-    init_theme("dark")
+@pytest.mark.tonio
+async def create_dialog() -> LoginDialogComponent:
+    await init_theme("dark")
     return LoginDialogComponent(_FakeTui(), "prompt-repro", lambda *_args: None, "Prompt Repro")
 
 
@@ -35,15 +36,15 @@ def count_rendered_value(lines: list[str], value: str) -> int:
 
 @pytest.mark.tonio
 async def test_keeps_previous_prompt_input_stable_when_a_later_prompt_is_active():
-    dialog = create_dialog()
+    dialog = await create_dialog()
 
     first_prompt = dialog.show_prompt("First prompt:", "first-value")
-    dialog.handle_input("first-value")
-    dialog.handle_input("\n")
+    await dialog.handle_input("first-value")
+    await dialog.handle_input("\n")
     assert await first_prompt == "first-value"
 
     second_prompt = dialog.show_prompt("Second prompt:")
-    dialog.handle_input("second-secret-demo")
+    await dialog.handle_input("second-secret-demo")
 
     lines = render_dialog(dialog)
     output = "\n".join(lines)
@@ -52,13 +53,13 @@ async def test_keeps_previous_prompt_input_stable_when_a_later_prompt_is_active(
     assert count_rendered_value(lines, "first-value") == 1
     assert count_rendered_value(lines, "second-secret-demo") == 1
 
-    dialog.handle_input("\n")
+    await dialog.handle_input("\n")
     assert await second_prompt == "second-secret-demo"
 
 
 @pytest.mark.tonio
 async def test_preserves_auth_instructions_when_showing_a_prompt():
-    dialog = create_dialog()
+    dialog = await create_dialog()
 
     dialog.show_auth("https://example.invalid/login", "Authorize the extension")
     dialog.show_prompt("First prompt:").close()
@@ -71,7 +72,7 @@ async def test_preserves_auth_instructions_when_showing_a_prompt():
 
 @pytest.mark.tonio
 async def test_preserves_neutral_information_and_links_when_showing_a_prompt():
-    dialog = create_dialog()
+    dialog = await create_dialog()
 
     dialog.show_info(
         "Configure credentials outside pidrei.",
@@ -87,7 +88,7 @@ async def test_preserves_neutral_information_and_links_when_showing_a_prompt():
 
 @pytest.mark.tonio
 async def test_preserves_setup_details_when_showing_a_prompt():
-    dialog = create_dialog()
+    dialog = await create_dialog()
 
     dialog.show_details(["AWS credential setup:", "providers.md"])
     dialog.show_prompt("Enter API key:").close()
@@ -100,15 +101,15 @@ async def test_preserves_setup_details_when_showing_a_prompt():
 
 @pytest.mark.tonio
 async def test_keeps_previous_manual_input_stable_when_a_later_prompt_is_active():
-    dialog = create_dialog()
+    dialog = await create_dialog()
 
     manual_input = dialog.show_manual_input("Paste callback URL:")
-    dialog.handle_input("callback-value")
-    dialog.handle_input("\n")
+    await dialog.handle_input("callback-value")
+    await dialog.handle_input("\n")
     assert await manual_input == "callback-value"
 
     prompt = dialog.show_prompt("Second prompt:")
-    dialog.handle_input("second-secret-demo")
+    await dialog.handle_input("second-secret-demo")
 
     lines = render_dialog(dialog)
     output = "\n".join(lines)
@@ -117,5 +118,5 @@ async def test_keeps_previous_manual_input_stable_when_a_later_prompt_is_active(
     assert count_rendered_value(lines, "callback-value") == 1
     assert count_rendered_value(lines, "second-secret-demo") == 1
 
-    dialog.handle_input("\n")
+    await dialog.handle_input("\n")
     assert await prompt == "second-secret-demo"

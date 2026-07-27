@@ -8,9 +8,22 @@ cancellation would not unwind an aborted task, so nothing relies on it).
 already passed the cancellation check will still run. Owners that need
 clearTimeout/clearInterval determinism must re-check identity/generation
 under their own lock inside the callback (see StdinBuffer/ProcessTerminal).
+
+`fn` may be sync or return an awaitable; an awaitable result is awaited rather
+than dropped. Both timers sit on the input path — the StdinBuffer flush and the
+Kitty negotiation flush both re-enter input handling, which is async — so a
+coroutine returned here must not be discarded.
 """
 
+from collections.abc import Awaitable
+
 import tonio.colored as tonio
+
+
+async def _call(fn) -> None:
+    result = fn()
+    if isinstance(result, Awaitable):
+        await result
 
 
 class Timeout:
@@ -24,7 +37,7 @@ class Timeout:
         await self._cancelled.wait(delay_s)
         if self._cancelled.is_set():
             return
-        fn()
+        await _call(fn)
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -42,7 +55,7 @@ class Interval:
             await self._cancelled.wait(delay_s)
             if self._cancelled.is_set():
                 return
-            fn()
+            await _call(fn)
 
     def cancel(self) -> None:
         self._cancelled.set()

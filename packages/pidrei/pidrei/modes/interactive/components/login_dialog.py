@@ -219,7 +219,7 @@ class LoginDialogComponent(Container):
         self._content_container.add_child(Text(theme.fg("dim", message), 1, 0))
         self._tui.request_render()
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         kb = get_keybindings()
 
         if kb.matches(data, "tui.select.cancel"):
@@ -227,4 +227,4 @@ class LoginDialogComponent(Container):
             return
 
         # Pass to input
-        self._input.handle_input(data)
+        await self._input.handle_input(data)

@@ -133,7 +133,7 @@ class ModelRuntime:
         catalog_base_url: str | None = None,
     ) -> ModelRuntime:
         runtime_credentials = RuntimeCredentials(
-            credentials if credentials is not None else AuthStorage.create(auth_path)
+            credentials if credentials is not None else await AuthStorage.create(auth_path)
         )
         resolved_models_path: str | None
         if models_path is None:
@@ -153,7 +153,7 @@ class ModelRuntime:
                 models_store = FileModelsStore(store_path)
             else:
                 models_store = InMemoryCodingAgentModelsStore()
-        builtin_model_data_generated_at = get_builtin_model_data_generated_at()
+        builtin_model_data_generated_at = await get_builtin_model_data_generated_at()
         providers = [
             with_remote_catalog(provider, catalog_base_url, builtin_model_data_generated_at)
             for provider in builtin_providers()
@@ -393,7 +393,9 @@ class ModelRuntime:
         resolution = await self._models.get_auth(provider_or_model, resolution_overrides)
         if resolution is None:
             return None
-        configured_headers = resolve_configured_model_headers(
+        # `resolve_config_value` can run a shell command via the `!cmd` syntax.
+        configured_headers = await tonio.spawn_blocking(
+            resolve_configured_model_headers,
             provider_or_model,
             self._config.get_provider(provider_or_model.provider),
             self._extension_providers.get(provider_or_model.provider),

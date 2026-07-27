@@ -58,7 +58,7 @@ async def _acquire_lock_async(path: str) -> Callable[[], None]:
     attempt = 0
     while True:
         try:
-            return lockfile.lock_sync(path, stale=30.0)
+            return await tonio.spawn_blocking(lockfile.lock_sync, path, stale=30.0)
         except lockfile.LockedError:
             if attempt >= 10:
                 raise
@@ -81,6 +81,11 @@ class FileAuthStorageBackend:
     def _ensure_file_exists(self) -> None:
         if not os.path.exists(self._auth_path):
             self._write("{}")
+
+    def _ensure_ready(self) -> None:
+        """Both preparation steps as one unit, so the async path pays one hop."""
+        self._ensure_parent_dir()
+        self._ensure_file_exists()
 
     def _read(self) -> str | None:
         if not os.path.exists(self._auth_path):
@@ -107,17 +112,20 @@ class FileAuthStorageBackend:
             release()
 
     async def with_lock_async(self, fn: Callable[[str | None], Awaitable[tuple[Any, str | None]]]) -> Any:
-        self._ensure_parent_dir()
-        self._ensure_file_exists()
+        """The callback is async, so this cannot be offloaded as one unit the
+        way `with_lock` can — each filesystem step goes to the pool on its own,
+        including the lock release in the `finally`."""
+        await tonio.spawn_blocking(self._ensure_ready)
 
         release = await _acquire_lock_async(self._auth_path)
         try:
-            result, next_content = await fn(self._read())
+            current = await tonio.spawn_blocking(self._read)
+            result, next_content = await fn(current)
             if next_content is not None:
-                self._write(next_content)
+                await tonio.spawn_blocking(self._write, next_content)
             return result
         finally:
-            release()
+            await tonio.spawn_blocking(release)
 
 
 class InMemoryAuthStorageBackend:
@@ -150,11 +158,15 @@ class AuthStorage(CredentialStore):
     def __init__(self, storage: AuthStorageBackend):
         self._storage = storage
         self._data: dict[str, Credential] = {}
-        self.reload()
+        # No load here: reading auth.json is I/O and a constructor cannot
+        # await. `create()` loads asynchronously; `in_memory()` loads inline
+        # because its backend never touches a file.
 
     @staticmethod
-    def create(auth_path: str | None = None) -> AuthStorage:
-        return AuthStorage(FileAuthStorageBackend(auth_path))
+    async def create(auth_path: str | None = None) -> AuthStorage:
+        storage = AuthStorage(FileAuthStorageBackend(auth_path))
+        await storage.reload_async()
+        return storage
 
     @staticmethod
     def from_storage(storage: AuthStorageBackend) -> AuthStorage:
@@ -165,7 +177,9 @@ class AuthStorage(CredentialStore):
         storage = InMemoryAuthStorageBackend()
         content = _serialize_data(data or {})
         storage.with_lock(lambda _current: (None, content))
-        return AuthStorage.from_storage(storage)
+        store = AuthStorage.from_storage(storage)
+        store.reload()
+        return store
 
     def _parse_storage_data(self, content: str | None) -> dict[str, Credential]:
         if not content:
@@ -173,9 +187,25 @@ class AuthStorage(CredentialStore):
         return {provider: parse_credential(raw) for provider, raw in json.loads(content).items()}
 
     def reload(self) -> None:
-        """Reload credentials from storage."""
+        """Reload credentials from storage.
+
+        Sync, so only safe for a backend that does no file I/O — i.e. the
+        in-memory one. File-backed stores use `reload_async`.
+        """
         try:
             content = self._storage.with_lock(lambda current: (current, None))
+            self._data = self._parse_storage_data(content)
+        except Exception:
+            pass  # Preserve the last valid in-memory snapshot.
+
+    async def reload_async(self) -> None:
+        """Reload credentials from storage without blocking a runtime worker."""
+
+        async def read(current: str | None) -> tuple[str | None, str | None]:
+            return current, None
+
+        try:
+            content = await self._storage.with_lock_async(read)
             self._data = self._parse_storage_data(content)
         except Exception:
             pass  # Preserve the last valid in-memory snapshot.
@@ -186,7 +216,10 @@ class AuthStorage(CredentialStore):
             return credential
         if credential.key is None:
             return credential
-        return ApiKeyCredential(key=resolve_config_value(credential.key, credential.env), env=credential.env)
+        # `resolve_config_value` may run a shell command (`!cmd` syntax), so it
+        # goes to the pool rather than blocking a runtime worker.
+        resolved = await tonio.spawn_blocking(resolve_config_value, credential.key, credential.env)
+        return ApiKeyCredential(key=resolved, env=credential.env)
 
     async def modify(
         self,

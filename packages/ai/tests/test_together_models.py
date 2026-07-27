@@ -5,6 +5,8 @@ pi reads the catalog through `compat.ts`'s `getModel`; pidrei's equivalent read 
 back-compat entrypoint, deleted with its ModelManager migration).
 """
 
+import pytest
+
 from pidrei_ai.env_api_keys import find_env_keys, get_env_api_key
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import ModelCost, OpenAICompletionsCompat
@@ -69,8 +71,9 @@ def test_models_together_reasoning_controls_from_the_together_api_surface():
     assert minimax.compat.supports_reasoning_effort is False
 
 
-def test_resolves_together_api_key_from_the_environment():
+@pytest.mark.tonio
+async def test_resolves_together_api_key_from_the_environment():
     env = {"TOGETHER_API_KEY": "test-together-key"}
 
     assert find_env_keys("together", env) == ["TOGETHER_API_KEY"]
-    assert get_env_api_key("together", env) == "test-together-key"
+    assert await get_env_api_key("together", env) == "test-together-key"

@@ -38,9 +38,13 @@ async def test_pty_pump_negotiation_and_input_end_to_end():
     inputs = []
     pastes_included = []
 
+    async def record_input(data: str) -> None:
+        # Terminal awaits its input handler now.
+        inputs.append(data)
+
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
     try:
-        await terminal.start(inputs.append, lambda: None)
+        await terminal.start(record_input, lambda: None)
 
         # Raw mode entered on the tty: echo off, canonical mode off.
         attrs = termios.tcgetattr(slave)
@@ -76,7 +80,7 @@ async def test_pty_pump_negotiation_and_input_end_to_end():
         assert pastes_included == ["\x1b[200~pasted\x1b[201~"]
 
         # Writes reach the pty unbuffered.
-        terminal.write("out")
+        await terminal.write("out")
         assert await _read_available(master) == b"out"
     finally:
         await terminal.stop()
@@ -100,9 +104,12 @@ async def test_pty_drain_input_returns_after_idle():
     os.set_blocking(master, False)
     inputs = []
 
+    async def record_input(data: str) -> None:
+        inputs.append(data)
+
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
     try:
-        await terminal.start(inputs.append, lambda: None)
+        await terminal.start(record_input, lambda: None)
         await _read_available(master)
 
         # Late input during drain is swallowed, and drain returns on idle

@@ -21,8 +21,8 @@ def write_skill_file(path, frontmatter_lines, body="Content"):
 
 
 @pytest.fixture
-def fixtures_dir(tmp_path):
-    root = tmp_path / "skills"
+def fixtures_dir(tmp_dir):
+    root = tmp_dir / "skills"
     write_skill_file(str(root / "valid-skill" / "SKILL.md"), ["description: A valid skill for testing purposes."])
     write_skill_file(str(root / "name-mismatch" / "SKILL.md"), ["name: different-name", "description: Different name."])
     write_skill_file(
@@ -79,98 +79,115 @@ def create_test_skill(
 
 
 class TestLoadSkillsFromDir:
-    def test_loads_a_valid_skill(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "valid-skill"), source="test")
+    @pytest.mark.tonio
+    async def test_loads_a_valid_skill(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "valid-skill"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].name == "valid-skill"
         assert result.skills[0].description == "A valid skill for testing purposes."
         assert result.skills[0].source_info.source == "test"
         assert result.diagnostics == []
 
-    def test_allows_names_that_dont_match_parent_directory(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "name-mismatch"), source="test")
+    @pytest.mark.tonio
+    async def test_allows_names_that_dont_match_parent_directory(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "name-mismatch"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].name == "different-name"
         assert not any("does not match parent directory" in d.message for d in result.diagnostics)
 
-    def test_warns_when_name_contains_invalid_characters(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "invalid-name-chars"), source="test")
+    @pytest.mark.tonio
+    async def test_warns_when_name_contains_invalid_characters(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "invalid-name-chars"), source="test")
         assert len(result.skills) == 1
         assert any("invalid characters" in d.message for d in result.diagnostics)
 
-    def test_warns_when_name_exceeds_64_characters(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "long-name"), source="test")
+    @pytest.mark.tonio
+    async def test_warns_when_name_exceeds_64_characters(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "long-name"), source="test")
         assert len(result.skills) == 1
         assert any("exceeds 64 characters" in d.message for d in result.diagnostics)
 
-    def test_warns_and_skips_skill_when_description_is_missing(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "missing-description"), source="test")
+    @pytest.mark.tonio
+    async def test_warns_and_skips_skill_when_description_is_missing(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "missing-description"), source="test")
         assert result.skills == []
         assert any("description is required" in d.message for d in result.diagnostics)
 
-    def test_ignores_unknown_frontmatter_fields(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "unknown-field"), source="test")
+    @pytest.mark.tonio
+    async def test_ignores_unknown_frontmatter_fields(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "unknown-field"), source="test")
         assert len(result.skills) == 1
         assert result.diagnostics == []
 
-    def test_loads_nested_skills_recursively(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "nested"), source="test")
+    @pytest.mark.tonio
+    async def test_loads_nested_skills_recursively(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "nested"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].name == "child-skill"
         assert result.diagnostics == []
 
-    def test_prefers_a_directorys_root_skill_md_over_nested_skill_md_files(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "root-skill-preferred"), source="test")
+    @pytest.mark.tonio
+    async def test_prefers_a_directorys_root_skill_md_over_nested_skill_md_files(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "root-skill-preferred"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].name == "root-skill-preferred"
         assert result.skills[0].description == "Root skill should win."
         assert result.diagnostics == []
 
-    def test_skips_files_without_frontmatter(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "no-frontmatter"), source="test")
+    @pytest.mark.tonio
+    async def test_skips_files_without_frontmatter(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "no-frontmatter"), source="test")
         assert result.skills == []
         assert any("description is required" in d.message for d in result.diagnostics)
 
-    def test_warns_and_skips_skill_when_yaml_frontmatter_is_invalid(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "invalid-yaml"), source="test")
+    @pytest.mark.tonio
+    async def test_warns_and_skips_skill_when_yaml_frontmatter_is_invalid(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "invalid-yaml"), source="test")
         assert result.skills == []
         assert any("line" in d.message for d in result.diagnostics)
 
-    def test_preserves_multiline_descriptions_from_yaml(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "multiline-description"), source="test")
+    @pytest.mark.tonio
+    async def test_preserves_multiline_descriptions_from_yaml(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "multiline-description"), source="test")
         assert len(result.skills) == 1
         assert "\n" in result.skills[0].description
         assert "This is a multiline description." in result.skills[0].description
         assert result.diagnostics == []
 
-    def test_warns_when_name_contains_consecutive_hyphens(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "consecutive-hyphens"), source="test")
+    @pytest.mark.tonio
+    async def test_warns_when_name_contains_consecutive_hyphens(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "consecutive-hyphens"), source="test")
         assert len(result.skills) == 1
         assert any("consecutive hyphens" in d.message for d in result.diagnostics)
 
-    def test_loads_all_skills_from_fixture_directory(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir), source="test")
+    @pytest.mark.tonio
+    async def test_loads_all_skills_from_fixture_directory(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir), source="test")
         assert len(result.skills) >= 6
 
-    def test_returns_empty_for_non_existent_directory(self):
-        result = load_skills_from_dir(dir="/non/existent/path", source="test")
+    @pytest.mark.tonio
+    async def test_returns_empty_for_non_existent_directory(self):
+        result = await load_skills_from_dir(dir="/non/existent/path", source="test")
         assert result.skills == []
         assert result.diagnostics == []
 
-    def test_uses_parent_directory_name_when_name_not_in_frontmatter(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "valid-skill"), source="test")
+    @pytest.mark.tonio
+    async def test_uses_parent_directory_name_when_name_not_in_frontmatter(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "valid-skill"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].name == "valid-skill"
 
-    def test_parses_disable_model_invocation_frontmatter_field(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "disable-model-invocation"), source="test")
+    @pytest.mark.tonio
+    async def test_parses_disable_model_invocation_frontmatter_field(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "disable-model-invocation"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].name == "disable-model-invocation"
         assert result.skills[0].disable_model_invocation is True
         assert not any("unknown frontmatter field" in d.message for d in result.diagnostics)
 
-    def test_defaults_disable_model_invocation_to_false_when_not_specified(self, fixtures_dir):
-        result = load_skills_from_dir(dir=str(fixtures_dir / "valid-skill"), source="test")
+    @pytest.mark.tonio
+    async def test_defaults_disable_model_invocation_to_false_when_not_specified(self, fixtures_dir):
+        result = await load_skills_from_dir(dir=str(fixtures_dir / "valid-skill"), source="test")
         assert len(result.skills) == 1
         assert result.skills[0].disable_model_invocation is False
 
@@ -284,13 +301,14 @@ class TestFormatSkillsForPrompt:
 
 
 class TestLoadSkillsWithOptions:
-    def test_loads_from_explicit_skill_paths(self, fixtures_dir, tmp_path):
-        empty_agent_dir = tmp_path / "empty-agent"
-        empty_cwd = tmp_path / "empty-cwd"
+    @pytest.mark.tonio
+    async def test_loads_from_explicit_skill_paths(self, fixtures_dir, tmp_dir):
+        empty_agent_dir = tmp_dir / "empty-agent"
+        empty_cwd = tmp_dir / "empty-cwd"
         empty_agent_dir.mkdir()
         empty_cwd.mkdir()
 
-        result = load_skills(
+        result = await load_skills(
             agent_dir=str(empty_agent_dir),
             cwd=str(empty_cwd),
             skill_paths=[str(fixtures_dir / "valid-skill")],
@@ -300,10 +318,11 @@ class TestLoadSkillsWithOptions:
         assert result.skills[0].source_info.scope == "temporary"
         assert result.diagnostics == []
 
-    def test_warns_when_skill_path_does_not_exist(self, tmp_path):
-        result = load_skills(
-            agent_dir=str(tmp_path / "empty-agent"),
-            cwd=str(tmp_path / "empty-cwd"),
+    @pytest.mark.tonio
+    async def test_warns_when_skill_path_does_not_exist(self, tmp_dir):
+        result = await load_skills(
+            agent_dir=str(tmp_dir / "empty-agent"),
+            cwd=str(tmp_dir / "empty-cwd"),
             skill_paths=["/non/existent/path"],
             include_defaults=True,
         )
@@ -312,16 +331,17 @@ class TestLoadSkillsWithOptions:
 
 
 class TestCollisionHandling:
-    def test_detects_name_collisions_via_load_skills(self, tmp_path):
-        first_dir = tmp_path / "first" / "calendar"
-        second_dir = tmp_path / "second" / "calendar"
+    @pytest.mark.tonio
+    async def test_detects_name_collisions_via_load_skills(self, tmp_dir):
+        first_dir = tmp_dir / "first" / "calendar"
+        second_dir = tmp_dir / "second" / "calendar"
         write_skill_file(str(first_dir / "SKILL.md"), ["name: calendar", "description: First calendar."])
         write_skill_file(str(second_dir / "SKILL.md"), ["name: calendar", "description: Second calendar."])
 
-        result = load_skills(
-            agent_dir=str(tmp_path / "empty-agent"),
-            cwd=str(tmp_path / "empty-cwd"),
-            skill_paths=[str(tmp_path / "first"), str(tmp_path / "second")],
+        result = await load_skills(
+            agent_dir=str(tmp_dir / "empty-agent"),
+            cwd=str(tmp_dir / "empty-cwd"),
+            skill_paths=[str(tmp_dir / "first"), str(tmp_dir / "second")],
             include_defaults=False,
         )
 

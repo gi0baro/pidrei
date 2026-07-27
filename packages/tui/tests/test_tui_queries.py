@@ -35,7 +35,7 @@ class TestTerminal:
     async def drain_input(self, max_ms=1000, idle_ms=50):
         pass
 
-    def write(self, data):
+    async def write(self, data):
         self.writes.append(data)
 
     @property
@@ -74,9 +74,9 @@ class TestTerminal:
     def set_progress(self, active):
         pass
 
-    def send_input(self, data):
+    async def send_input(self, data):
         if self._input_handler is not None:
-            self._input_handler(data)
+            await self._input_handler(data)
 
     def send_resize(self):
         if self._resize_handler is not None:
@@ -90,7 +90,7 @@ class InputRecorder:
     def render(self, width):
         return []
 
-    def handle_input(self, data):
+    async def handle_input(self, data):
         self.inputs.append(data)
 
     def invalidate(self):
@@ -113,7 +113,7 @@ async def test_writes_osc11_query_and_resolves_with_the_parsed_rgb_reply():
         async def reply():
             await tonio.sleep(0.01)
             assert "\x1b]11;?\x07" in terminal.writes
-            terminal.send_input("\x1b]11;#ffffff\x07")
+            await terminal.send_input("\x1b]11;#ffffff\x07")
 
         result, _ = await tonio.spawn(query(), reply())
         assert result == {"r": 255, "g": 255, "b": 255}
@@ -138,7 +138,7 @@ async def test_consumes_osc11_replies_before_input_listeners_and_focused_compone
 
         async def reply():
             await tonio.sleep(0.01)
-            terminal.send_input("\x1b]11;#000000\x07")
+            await terminal.send_input("\x1b]11;#000000\x07")
 
         result, _ = await tonio.spawn(query(), reply())
         assert result == {"r": 0, "g": 0, "b": 0}
@@ -165,7 +165,7 @@ async def test_consumes_unparseable_strict_osc11_replies_and_resolves_none():
 
         async def reply():
             await tonio.sleep(0.01)
-            terminal.send_input("\x1b]11;not-a-color\x07")
+            await terminal.send_input("\x1b]11;not-a-color\x07")
 
         result, _ = await tonio.spawn(query(), reply())
         assert result is None
@@ -195,12 +195,12 @@ async def test_dispatches_non_matching_input_normally_while_waiting_for_an_osc11
 
         async def interact():
             await tonio.sleep(0.01)
-            terminal.send_input("x")
+            await terminal.send_input("x")
             await tonio.sleep(0.01)
             assert state["settled"] is False
             assert listener_inputs == ["x"]
             assert component.inputs == ["x"]
-            terminal.send_input("\x1b]11;#ffffff\x07")
+            await terminal.send_input("\x1b]11;#ffffff\x07")
 
         result, _ = await tonio.spawn(query(), interact())
         assert result == {"r": 255, "g": 255, "b": 255}
@@ -222,7 +222,7 @@ async def test_keeps_consuming_a_late_osc11_reply_after_timeout():
         result = await tui.query_terminal_background_color(timeout_ms=1)
         assert result is None
 
-        terminal.send_input("\x1b]11;#ffffff\x07")
+        await terminal.send_input("\x1b]11;#ffffff\x07")
 
         assert listener_inputs == []
         assert component.inputs == []
@@ -253,7 +253,7 @@ async def test_forwards_bare_escape_even_when_a_cell_size_query_was_sent_at_star
         tui.set_focus(recorder)
         await tui.start()
 
-        terminal.send_input("\x1b")
+        await terminal.send_input("\x1b")
 
         assert recorder.inputs == ["\x1b"]
         await tui.stop()
@@ -271,11 +271,11 @@ async def test_consumes_cell_size_responses_and_still_forwards_later_user_input(
         tui.set_focus(recorder)
         await tui.start()
 
-        terminal.send_input("\x1b[6;20;10t")
+        await terminal.send_input("\x1b[6;20;10t")
         assert recorder.inputs == []
         assert get_cell_dimensions() == {"widthPx": 10, "heightPx": 20}
 
-        terminal.send_input("q")
+        await terminal.send_input("q")
         assert recorder.inputs == ["q"]
         await tui.stop()
         set_cell_dimensions({"widthPx": 9, "heightPx": 18})

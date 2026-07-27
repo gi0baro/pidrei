@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import tonio.colored as tonio
-from tonio.colored import signals as tonio_signals
+from tonio.colored import fs, signals as tonio_signals
 
 from pidrei_agent.harness.session.serde import serialize_message
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
@@ -302,7 +302,9 @@ class InteractiveMode:
         self._status_container = Container()
         self._widget_container_above = Container()
         self._widget_container_below = Container()
-        self._keybindings = KeybindingsManager.create()
+        # Defaults only — the user's keybindings.json is read in `init()`.
+        # A constructor cannot await, and nothing may block a runtime worker.
+        self._keybindings = KeybindingsManager(None, os.path.join(get_agent_dir(), "keybindings.json"))
         set_keybindings(self._keybindings)
         editor_padding_x = self.settings_manager.get_editor_padding_x()
         autocomplete_max_visible = self.settings_manager.get_autocomplete_max_visible()
@@ -640,8 +642,18 @@ class InteractiveMode:
 
         self._register_signal_handlers()
 
+        # Deferred out of __init__: reads the user's keybindings.json.
+        await self._keybindings.reload()
+
+        # Deferred out of __init__: git metadata for the footer branch. After
+        # this, `get_git_branch()` on the render path is a pure cache read.
+        await self._footer_data_provider.prime()
+
+        # Deferred out of __init__: init_theme reads theme files from disk.
+        await self._theme_controller.prime()
+
         # Load changelog (only show new entries, skip for resumed sessions)
-        self._changelog_markdown = self._get_changelog_for_display()
+        self._changelog_markdown = await self._get_changelog_for_display()
 
         # Ensure fd and rg are available. Both are needed: fd for
         # autocomplete, rg for the grep tool and bash commands.
@@ -925,7 +937,7 @@ class InteractiveMode:
 
         return None
 
-    def _get_changelog_for_display(self) -> str | None:
+    async def _get_changelog_for_display(self) -> str | None:
         """Get changelog entries to display on startup.
 
         Only shows new entries since the last seen version; skips resumed
@@ -937,7 +949,7 @@ class InteractiveMode:
 
         last_version = self.settings_manager.get_last_changelog_version()
         changelog_path = get_changelog_path()
-        entries = parse_changelog(changelog_path)
+        entries = await parse_changelog(changelog_path)
 
         if not last_version:
             # Fresh install - record the version, don't show changelog
@@ -1944,6 +1956,11 @@ class InteractiveMode:
     def _create_extension_ui_context(self) -> dict:
         """Create the ExtensionUIContext record for extensions."""
 
+        async def paste_to_editor(text: str) -> None:
+            # `handle_input` is async now, so this cannot stay a lambda. The
+            # extension API already awaits awaitable results from these bindings.
+            await self.editor.handle_input(f"\x1b[200~{text}\x1b[201~")
+
         def set_working_message(message=None) -> None:
             self._working_message = message
             if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
@@ -1959,13 +1976,13 @@ class InteractiveMode:
             get_expanded = getattr(self.editor, "get_expanded_text", None)
             return get_expanded() if get_expanded is not None else self.editor.get_text()
 
-        def set_theme_from_extension(theme_or_name):
+        async def set_theme_from_extension(theme_or_name):
             # lazy: core <-> modes import cycle (see modes/__init__.py)
             from .theme import Theme as ThemeClass
 
             if isinstance(theme_or_name, ThemeClass):
                 return self._theme_controller.set_theme_instance(theme_or_name)
-            result = self._theme_controller.set_theme_name(theme_or_name)
+            result = await self._theme_controller.set_theme_name(theme_or_name)
             if result["success"] and self.settings_manager.get_theme() != theme_or_name:
                 self.settings_manager.set_theme(theme_or_name)
             return result
@@ -1986,7 +2003,7 @@ class InteractiveMode:
             "setHeader": lambda factory: self._set_extension_header(factory),
             "setTitle": lambda title: self.ui.terminal.set_title(title),
             "custom": lambda factory, options=None: self._show_extension_custom(factory, options),
-            "pasteToEditor": lambda text: self.editor.handle_input(f"\x1b[200~{text}\x1b[201~"),
+            "pasteToEditor": paste_to_editor,
             "setEditorText": lambda text: self.editor.set_text(text),
             "getEditorText": get_editor_text,
             "editor": lambda title, prefill=None: self._show_extension_editor(title, prefill),
@@ -2415,8 +2432,7 @@ class InteractiveMode:
                 ext = extension_for_image_mime_type(image["mimeType"]) or "png"
                 file_name = f"{APP_NAME}-clipboard-{uuid.uuid4()}.{ext}"
                 file_path = os.path.join(tempfile.gettempdir(), file_name)
-                with open(file_path, "wb") as f:  # noqa: ASYNC230
-                    f.write(image["bytes"])
+                await fs.Path(file_path).write_bytes(image["bytes"])
 
                 insert = getattr(self.editor, "insert_text_at_cursor", None)
                 if insert is not None:
@@ -2447,7 +2463,7 @@ class InteractiveMode:
 
         # Handle commands
         if text == "/settings":
-            self._show_settings_selector()
+            await self._show_settings_selector()
             self.editor.set_text("")
             return
         if text == "/scoped-models":
@@ -2476,7 +2492,7 @@ class InteractiveMode:
             self.editor.set_text("")
             return
         if text == "/name" or text.startswith("/name "):
-            self._handle_name_command(text)
+            await self._handle_name_command(text)
             self.editor.set_text("")
             return
         if text == "/session":
@@ -2484,7 +2500,7 @@ class InteractiveMode:
             self.editor.set_text("")
             return
         if text == "/changelog":
-            self._handle_changelog_command()
+            await self._handle_changelog_command()
             self.editor.set_text("")
             return
         if text == "/hotkeys":
@@ -2504,7 +2520,7 @@ class InteractiveMode:
             self.editor.set_text("")
             return
         if text == "/trust":
-            self._show_trust_selector()
+            await self._show_trust_selector()
             self.editor.set_text("")
             return
         if text == "/login" or text.startswith("/login "):
@@ -3236,7 +3252,7 @@ class InteractiveMode:
             # the tty, so it must not be skipped if a later terminal-restore
             # write fails on a dead or stalled terminal (see pi #4144).
             await self.runtime_host.dispose()
-            self._theme_controller.disable_auto_sync()
+            await self._theme_controller.disable_auto_sync()
             try:
                 await self.ui.terminal.drain_input(1000)
                 await self.stop()
@@ -3252,7 +3268,7 @@ class InteractiveMode:
         # Drain any in-flight Kitty key release events before stopping.
         # This prevents escape sequences from leaking to the parent shell over
         # slow SSH.
-        self._theme_controller.disable_auto_sync()
+        await self._theme_controller.disable_auto_sync()
         try:
             await self.ui.terminal.drain_input(1000)
             await self.stop()
@@ -3425,8 +3441,8 @@ class InteractiveMode:
             self.editor.border_color = theme.get_thinking_border_color(level)
         self.ui.request_render()
 
-    def _cycle_thinking_level(self) -> None:
-        new_level = self.session.cycle_thinking_level()
+    async def _cycle_thinking_level(self) -> None:
+        new_level = await self.session.cycle_thinking_level()
         if new_level is None:
             self.show_status("Current model does not support thinking")
         else:
@@ -3756,7 +3772,11 @@ class InteractiveMode:
         self.ui.set_focus(created["focus"])
         self.ui.request_render()
 
-    def _show_settings_selector(self) -> None:
+    async def _show_settings_selector(self) -> None:
+        # Resolved before `create` runs: listing themes reads the custom-theme
+        # directory, and `create` is a sync factory.
+        available_themes = await get_available_themes()
+
         def create(done):
             def on_auto_compact_change(enabled: bool) -> None:
                 self.session.set_auto_compaction_enabled(enabled)
@@ -3789,8 +3809,8 @@ class InteractiveMode:
                 self.settings_manager.set_http_idle_timeout_ms(timeout_ms)
                 self.show_status(f"HTTP idle timeout: {format_http_idle_timeout_ms(timeout_ms)}")
 
-            def on_thinking_level_change(level: str) -> None:
-                self.session.set_thinking_level(level)
+            async def on_thinking_level_change(level: str) -> None:
+                await self.session.set_thinking_level(level)
                 self._footer.invalidate()
                 self._update_editor_border_color()
 
@@ -3870,7 +3890,7 @@ class InteractiveMode:
                     "availableThinkingLevels": self.session.get_available_thinking_levels(),
                     "currentTheme": self.settings_manager.get_theme_setting() or "dark",
                     "terminalTheme": self._theme_controller.get_terminal_theme(),
-                    "availableThemes": get_available_themes(),
+                    "availableThemes": available_themes,
                     "hideThinkingBlock": self._hide_thinking_block,
                     "collapseChangelog": self.settings_manager.get_collapse_changelog(),
                     "enableProviderAttribution": self.settings_manager.get_enable_provider_attribution(),
@@ -4002,7 +4022,7 @@ class InteractiveMode:
             # Ignore auth lookup failures for warning-only checks.
             return
 
-    def _maybe_save_implicit_project_trust_after_reload(self) -> bool:
+    async def _maybe_save_implicit_project_trust_after_reload(self) -> bool:
         cwd = self.session_manager.get_cwd()
         if self._auto_trust_on_reload_cwd != cwd:
             return False
@@ -4011,24 +4031,24 @@ class InteractiveMode:
 
         trust_store = ProjectTrustStore(self.runtime_host.services.agent_dir)
         try:
-            if trust_store.get(cwd) is not None:
+            if await trust_store.get(cwd) is not None:
                 self._auto_trust_on_reload_cwd = None
                 return False
-            trust_store.set(cwd, True)
+            await trust_store.set(cwd, True)
             self._auto_trust_on_reload_cwd = None
             return True
         except Exception as error:
             self.show_warning(f"Could not save project trust after reload: {error}")
             return False
 
-    def _show_trust_selector(self) -> None:
+    async def _show_trust_selector(self) -> None:
         cwd = self.session_manager.get_cwd()
         trust_store = ProjectTrustStore(self.runtime_host.services.agent_dir)
-        saved_decision = trust_store.get_entry(cwd)
+        saved_decision = await trust_store.get_entry(cwd)
 
         def create(done):
-            def on_select(selection: dict) -> None:
-                trust_store.set_many(selection["updates"])
+            async def on_select(selection: dict) -> None:
+                await trust_store.set_many(selection["updates"])
                 done()
                 self.show_status(
                     f"Saved trust decision: {'trusted' if selection['trusted'] else 'untrusted'}. "
@@ -4317,8 +4337,8 @@ class InteractiveMode:
                 done()
                 self.ui.request_render()
 
-            def on_label_edit(entry_id: str, label) -> None:
-                self.session_manager.append_label_change(entry_id, label)
+            async def on_label_edit(entry_id: str, label) -> None:
+                await self.session_manager.append_label_change(entry_id, label)
                 self.ui.request_render()
 
             selector = TreeSelectorComponent(
@@ -4350,8 +4370,8 @@ class InteractiveMode:
                 next_value = (next_name or "").strip()
                 if not next_value:
                     return
-                mgr = SessionManager.open(session_file_path)
-                mgr.append_session_info(next_value)
+                mgr = await SessionManager.open(session_file_path)
+                await mgr.append_session_info(next_value)
 
             selector = SessionSelectorComponent(
                 lambda on_progress: SessionManager.list(
@@ -4962,7 +4982,7 @@ class InteractiveMode:
             restore_chat_before_session_start()
             # pi reconfigures the undici HTTP dispatcher here; punkreq owns
             # HTTP transport in pidrei (see core/http_config.py).
-            self._keybindings.reload()
+            await self._keybindings.reload()
             active_header = self._custom_header if self._custom_header is not None else self._built_in_header
             if is_expandable(active_header):
                 active_header.set_expanded(self._tool_output_expanded)
@@ -4988,7 +5008,7 @@ class InteractiveMode:
             runner = self.session.extension_runner
             self._setup_extension_shortcuts(runner)
             self._show_loaded_resources({"force": False, "showDiagnosticsWhenQuiet": True})
-            saved_implicit_project_trust = self._maybe_save_implicit_project_trust_after_reload()
+            saved_implicit_project_trust = await self._maybe_save_implicit_project_trust_after_reload()
             models_json_error = self.session.model_runtime.get_error()
             if models_json_error:
                 self.show_error(f"models.json error: {models_json_error}")
@@ -5009,7 +5029,7 @@ class InteractiveMode:
 
         try:
             if output_path is not None and output_path.endswith(".jsonl"):
-                file_path = self.session.export_to_jsonl(output_path)
+                file_path = await self.session.export_to_jsonl(output_path)
                 self.show_status(f"Session exported to: {file_path}")
             else:
                 file_path = await self.session.export_to_html(output_path)
@@ -5173,7 +5193,7 @@ class InteractiveMode:
         except Exception as error:
             self.show_error(str(error))
 
-    def _handle_name_command(self, text: str) -> None:
+    async def _handle_name_command(self, text: str) -> None:
         name = re.sub(r"^/name\s*", "", text).strip()
         if not name:
             current_name = self.session_manager.get_session_name()
@@ -5185,7 +5205,7 @@ class InteractiveMode:
             self.ui.request_render()
             return
 
-        self.session.set_session_name(name)
+        await self.session.set_session_name(name)
         session_name = self.session_manager.get_session_name()
         if session_name != name:
             self.show_warning(f"Session name was normalized from {json.dumps(name)} to {json.dumps(session_name)}")
@@ -5258,9 +5278,9 @@ class InteractiveMode:
         self._chat_container.add_child(Text(info, 1, 0))
         self.ui.request_render()
 
-    def _handle_changelog_command(self) -> None:
+    async def _handle_changelog_command(self) -> None:
         changelog_path = get_changelog_path()
-        all_entries = parse_changelog(changelog_path)
+        all_entries = await parse_changelog(changelog_path)
 
         changelog_markdown = (
             "\n\n".join(normalize_changelog_links(entry["content"], entry) for entry in reversed(all_entries))
@@ -5497,7 +5517,7 @@ class InteractiveMode:
             )
 
             # Record the result in session
-            self.session.record_bash_result(
+            await self.session.record_bash_result(
                 command,
                 BashResult(
                     output=result.get("output") or "",
@@ -5566,7 +5586,7 @@ class InteractiveMode:
         if self.settings_manager.get_show_terminal_progress():
             self.ui.terminal.set_progress(False)
         self._clear_status_indicator()
-        self._theme_controller.disable_auto_sync()
+        await self._theme_controller.disable_auto_sync()
         self._clear_extension_terminal_input_listeners()
         self._footer.dispose()
         self._footer_data_provider.dispose()

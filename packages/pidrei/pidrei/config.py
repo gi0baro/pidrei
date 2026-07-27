@@ -33,12 +33,22 @@ def expand_tilde_path(path: str) -> str:
     return normalize_path(path)
 
 
+# `Path(__file__).resolve()` costs one lstat per path component, and it was the
+# single largest source of filesystem calls on a tonio runtime worker (2,536 of
+# them across the test suite). `__file__` cannot change during the process, so
+# it is resolved once here, at import time — which is outside the never-block
+# rule by construction. The env override is deliberately *not* folded in: it is
+# a documented user-facing setting (see `cli/args.py`, for Nix/Guix store
+# paths), so it stays a live lookup on every call, exactly as before.
+_RESOLVED_PACKAGE_DIR = str(Path(__file__).resolve().parent)
+
+
 def get_package_dir() -> str:
     """Base directory for resolving package assets shipped with pidrei."""
     env_dir = os.environ.get("PIDREI_PACKAGE_DIR")
     if env_dir:
         return normalize_path(env_dir)
-    return str(Path(__file__).resolve().parent)
+    return _RESOLVED_PACKAGE_DIR
 
 
 def get_docs_path() -> str:

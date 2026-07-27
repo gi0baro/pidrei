@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import sync as tonio_sync
 
 from .rpc_process import RpcProcessInstance, RpcProcessOptions, create_rpc_process_instance
 from .storage import get_instance, load_instances, remove_instance, save_instances, upsert_instance
@@ -112,16 +113,29 @@ class ServerSupervisor:
         # parallel workers the guarded check-then-set sections need this lock
         # so a failed spawn deterministically ends "stopped", never "error".
         self._status_guard = threading.Lock()
+        # Serialises the record writes, which `storage` requires to happen
+        # pool-side. Taken *around* `_status_guard`, never inside it: the guard
+        # is a threading lock and must not be held across an await, and this
+        # ordering keeps a check-set-persist sequence atomic so a later status
+        # cannot be overtaken on disk by an earlier one. FIFO, so persist order
+        # matches the order the statuses were decided in.
+        self._io_lock = tonio_sync.Lock()
 
-    def _set_status(self, live: _LiveInstance, status: InstanceStatus) -> None:
+    def _set_status(self, live: _LiveInstance, status: InstanceStatus) -> InstanceRecord:
+        """In-memory half only. Returns the record for the caller to persist
+        outside `_status_guard` via `_persist`."""
         live.record = _merge_record(live.record, {"status": status, "lastSeenAt": timestamp()})
-        upsert_instance(live.record)
+        return live.record
 
-    def _update_record(self, live: _LiveInstance, updates: dict[str, Any]) -> None:
+    def _update_record(self, live: _LiveInstance, updates: dict[str, Any]) -> InstanceRecord:
+        """In-memory half only; see `_set_status`."""
         live.record = _merge_record(live.record, {**updates, "lastSeenAt": timestamp()})
         if updates.get("sessionId") is not None:
             live.resources.session_id = updates["sessionId"]
-        upsert_instance(live.record)
+        return live.record
+
+    async def _persist(self, record: InstanceRecord) -> None:
+        await tonio.spawn_blocking(upsert_instance, record)
 
     def _clear_bindings(self, live: _LiveInstance) -> None:
         if live.unsubscribe_events is not None:
@@ -154,12 +168,14 @@ class ServerSupervisor:
         rpc_process.set_ui_request_handler(on_ui_request)
 
     async def _handle_unexpected_rpc_exit(self, live: _LiveInstance, _error: Exception | None = None) -> None:
-        with self._status_guard:
-            if self._live_instances.get(live.record["id"]) is not live:
-                return
-            if live.record.get("status") in ("stopping", "stopped"):
-                return
-            self._set_status(live, "error")
+        async with self._io_lock:
+            with self._status_guard:
+                if self._live_instances.get(live.record["id"]) is not live:
+                    return
+                if live.record.get("status") in ("stopping", "stopped"):
+                    return
+                record = self._set_status(live, "error")
+            await self._persist(record)
         self._clear_bindings(live)
         live.resources.rpc_process = None
         self._live_instances.pop(live.record["id"], None)
@@ -170,14 +186,16 @@ class ServerSupervisor:
     async def _sync_instance_record(self, live: _LiveInstance) -> None:
         rpc_process = self._get_rpc_process(live)
         if rpc_process is None:
-            self._update_record(live, {})
+            await self._persist(self._update_record(live, {}))
             return
         response = await rpc_process.send({"type": "get_state"})
         if not _is_get_state_success(response):
-            self._update_record(live, {})
+            await self._persist(self._update_record(live, {}))
             return
         data = response["data"]
-        self._update_record(live, {"sessionId": data.get("sessionId"), "sessionFile": data.get("sessionFile")})
+        await self._persist(
+            self._update_record(live, {"sessionId": data.get("sessionId"), "sessionFile": data.get("sessionFile")})
+        )
 
     async def _cleanup_acquired_resources(self, live: _LiveInstance) -> None:
         rpc_process = live.resources.rpc_process
@@ -188,21 +206,25 @@ class ServerSupervisor:
             await rpc_process.dispose()
 
     async def _fail_spawn(self, live: _LiveInstance, error: Exception) -> None:
-        self._set_status(live, "error")
+        async with self._io_lock:
+            await self._persist(self._set_status(live, "error"))
         try:
             await self._cleanup_acquired_resources(live)
         finally:
-            with self._status_guard:
-                self._set_status(live, "stopped")
-                self._live_instances.pop(live.record["id"], None)
+            async with self._io_lock:
+                with self._status_guard:
+                    record = self._set_status(live, "stopped")
+                    self._live_instances.pop(live.record["id"], None)
+                await self._persist(record)
         raise error
 
-    def update_instance(self, instance: InstanceRecord) -> None:
+    async def update_instance(self, instance: InstanceRecord) -> None:
         live = self._live_instances.get(instance["id"])
         if live is not None:
             live.record = instance
             live.resources.session_id = instance.get("sessionId")
-        upsert_instance(instance)
+        async with self._io_lock:
+            await self._persist(instance)
 
     def open_rpc_stream(self, instance_id: str, on_event: Any, on_ui_request: Any) -> _RpcStreamHandle | None:
         live = self._live_instances.get(instance_id)
@@ -230,18 +252,19 @@ class ServerSupervisor:
                     "lastSeenAt": recovered_at,
                 },
             )
-            for instance in load_instances()
+            for instance in await tonio.spawn_blocking(load_instances)
         ]
-        save_instances(instances)
+        await tonio.spawn_blocking(save_instances, instances)
 
-    def list_instances(self) -> list[InstanceRecord]:
-        return [_clone_instance(instance) for instance in load_instances()]
+    async def list_instances(self) -> list[InstanceRecord]:
+        stored = await tonio.spawn_blocking(load_instances)
+        return [_clone_instance(instance) for instance in stored]
 
-    def get_instance(self, instance_id: str) -> InstanceRecord | None:
+    async def get_instance(self, instance_id: str) -> InstanceRecord | None:
         live = self._live_instances.get(instance_id)
         if live is not None:
             return _clone_instance(live.record)
-        stored = get_instance(instance_id)
+        stored = await tonio.spawn_blocking(get_instance, instance_id)
         return _clone_instance(stored) if stored is not None else None
 
     async def spawn_instance(self, options: dict[str, Any]) -> InstanceRecord:
@@ -257,7 +280,8 @@ class ServerSupervisor:
             record["label"] = options["label"]
         live = _LiveInstance(record)
         self._live_instances[record["id"]] = live
-        upsert_instance(live.record)
+        async with self._io_lock:
+            await self._persist(live.record)
 
         try:
             rpc_process = await create_rpc_process_instance(
@@ -265,7 +289,8 @@ class ServerSupervisor:
             )
             self._bind_rpc_process(live, rpc_process)
             await self._sync_instance_record(live)
-            self._set_status(live, "online")
+            async with self._io_lock:
+                await self._persist(self._set_status(live, "online"))
             return _clone_instance(live.record)
         except Exception as error:
             await self._fail_spawn(live, error)
@@ -276,13 +301,15 @@ class ServerSupervisor:
         if live is None:
             return None
 
-        self._set_status(live, "stopping")
+        async with self._io_lock:
+            await self._persist(self._set_status(live, "stopping"))
         try:
             await self._cleanup_acquired_resources(live)
         finally:
             live.record = _merge_record(live.record, {"status": "stopped", "lastSeenAt": timestamp()})
             self._live_instances.pop(instance_id, None)
-            remove_instance(instance_id)
+            async with self._io_lock:
+                await tonio.spawn_blocking(remove_instance, instance_id)
         return _clone_instance(live.record)
 
     async def handle_rpc(self, instance_id: str, command: dict[str, Any]) -> dict[str, Any] | None:

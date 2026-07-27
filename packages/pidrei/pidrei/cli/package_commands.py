@@ -31,6 +31,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any
 
+import tonio.colored as tonio
+
 from ..config import APP_NAME, CONFIG_DIR_NAME, get_agent_dir, get_auth_path, get_models_path
 from ..core.package_manager import DefaultPackageManager
 from ..core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
@@ -309,17 +311,17 @@ async def create_command_settings_manager(
     use_saved_project_trust_only: bool = False,
     extension_factories: list[Any] | None = None,
 ) -> CommandSettings:
-    settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
     warnings: list[str] = []
     trust_store = ProjectTrustStore(agent_dir)
 
     if use_saved_project_trust_only:
-        saved = trust_store.get(cwd) is True
+        saved = await trust_store.get(cwd) is True
         settings_manager.set_project_trusted(project_trust_override if project_trust_override is not None else saved)
         return CommandSettings(settings_manager=settings_manager, project_trust_warnings=warnings)
 
     extensions_result = None
-    if project_trust_override is None and has_trust_requiring_project_resources(cwd):
+    if project_trust_override is None and await tonio.spawn_blocking(has_trust_requiring_project_resources, cwd):
         # lazy: core <-> modes import cycle (see modes/__init__.py)
         from ..core.resource_loader import DefaultResourceLoader
 
@@ -414,8 +416,8 @@ def _validate(options: PackageCommandOptions) -> bool:
     return False
 
 
-def _print_package_list(package_manager: DefaultPackageManager) -> None:
-    configured = package_manager.list_configured_packages()
+async def _print_package_list(package_manager: DefaultPackageManager) -> None:
+    configured = await tonio.spawn_blocking(package_manager.list_configured_packages)
     if not configured:
         print(dim("No packages installed."))
         return
@@ -440,7 +442,14 @@ def _print_package_list(package_manager: DefaultPackageManager) -> None:
 
 
 async def handle_package_command(args: list[str], *, extension_factories: list[Any] | None = None) -> bool | int:
-    """False when `args` is not a package command; otherwise the exit code."""
+    """False when `args` is not a package command; otherwise the exit code.
+
+    pidrei-only: settings writes are queued (see `SettingsManager._enqueue_write`),
+    so this awaits `flush()` before returning. pi needs no such call because its
+    write queue is a promise chain that drains on the microtask queue before the
+    process moves on; a tonio task carries no equivalent ordering guarantee
+    against a later read.
+    """
     options = parse_package_command(args)
     if options is None:
         return False
@@ -491,6 +500,7 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
         if options.command == "install":
             await package_manager.install_and_persist(options.source, local=options.local)
             print(green(f"Installed {options.source}"))
+            await settings_manager.flush()
             return 0
 
         if options.command == "remove":
@@ -498,10 +508,11 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
                 print(red(f"No matching package found for {options.source}"), file=sys.stderr)
                 return 1
             print(green(f"Removed {options.source}"))
+            await settings_manager.flush()
             return 0
 
         if options.command == "list":
-            _print_package_list(package_manager)
+            await _print_package_list(package_manager)
             return 0
 
         # update
@@ -509,6 +520,7 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
         print(green(f"Updated {options.update_source}" if options.update_source else "Updated packages"))
         if options.update_target == "all":
             await _refresh_model_catalogs(agent_dir)
+        await settings_manager.flush()
         return 0
     except Exception as error:
         print(red(f"Error: {error or 'Unknown package command error'}"), file=sys.stderr)
@@ -558,7 +570,7 @@ async def handle_config_command(args: list[str], *, extension_factories: list[An
         return 1
     _report_settings_errors(settings_manager, "config command")
 
-    global_settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    global_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
     global_paths = await DefaultPackageManager(
         cwd=cwd, agent_dir=agent_dir, settings_manager=global_settings_manager
     ).resolve()

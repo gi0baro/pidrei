@@ -20,7 +20,7 @@ GIT_EMPTY = ExecResult(stdout="", stderr="", code=0, killed=False)
 GIT_FAIL = ExecResult(stdout="", stderr="not a git repo", code=128, killed=False)
 
 
-def setup(exec_result: ExecResult):
+async def setup(exec_result: ExecResult):
     handler: dict = {}
     calls: list[tuple] = []
 
@@ -49,7 +49,7 @@ def setup(exec_result: ExecResult):
 
 @pytest.mark.tonio
 async def test_skips_exec_during_steering():
-    emit, calls = setup(GIT_SUCCESS)
+    emit, calls = await setup(GIT_SUCCESS)
 
     result = await emit("what changes did I make?", "steer")
 
@@ -59,7 +59,7 @@ async def test_skips_exec_during_steering():
 
 @pytest.mark.tonio
 async def test_transforms_when_idle_and_the_text_matches_the_trigger():
-    emit, calls = setup(GIT_SUCCESS)
+    emit, calls = await setup(GIT_SUCCESS)
 
     result = await emit("review my changes")
 
@@ -71,7 +71,7 @@ async def test_transforms_when_idle_and_the_text_matches_the_trigger():
 
 @pytest.mark.tonio
 async def test_transforms_when_queued_as_a_follow_up():
-    emit, calls = setup(GIT_SUCCESS)
+    emit, calls = await setup(GIT_SUCCESS)
 
     result = await emit("show me the diff", "followUp")
 
@@ -81,7 +81,7 @@ async def test_transforms_when_queued_as_a_follow_up():
 
 @pytest.mark.tonio
 async def test_continues_when_the_text_does_not_match_the_trigger():
-    emit, calls = setup(GIT_SUCCESS)
+    emit, calls = await setup(GIT_SUCCESS)
 
     result = await emit("explain this function")
 
@@ -91,13 +91,13 @@ async def test_continues_when_the_text_does_not_match_the_trigger():
 
 @pytest.mark.tonio
 async def test_continues_when_git_diff_is_empty():
-    emit, _calls = setup(GIT_EMPTY)
+    emit, _calls = await setup(GIT_EMPTY)
 
     assert await emit("any changes?") == {"action": "continue"}
 
 
 @pytest.mark.tonio
 async def test_continues_when_git_fails():
-    emit, _calls = setup(GIT_FAIL)
+    emit, _calls = await setup(GIT_FAIL)
 
     assert await emit("show modified files") == {"action": "continue"}

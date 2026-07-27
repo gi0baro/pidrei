@@ -21,11 +21,12 @@ Three deliberate divergences, all following from whose changelog this reads:
   URL that does not exist.
 """
 
-import os
 import posixpath
 import re
 import sys
 import urllib.parse
+
+from tonio.colored import fs
 
 
 GITHUB_REPO = "gi0baro/pidrei"
@@ -122,17 +123,16 @@ def normalize_changelog_links(markdown: str, version) -> str:
     return _INLINE_MARKDOWN_LINK_RE.sub(replace, markdown)
 
 
-def parse_changelog(changelog_path: str) -> list:
+async def parse_changelog(changelog_path: str) -> list:
     """Parse changelog entries from CHANGELOG.md.
 
     Scans for ## lines and collects content until the next ## or EOF.
     """
-    if not os.path.exists(changelog_path):
+    if not await fs.Path(changelog_path).exists():
         return []
 
     try:
-        with open(changelog_path, encoding="utf-8") as f:
-            content = f.read()
+        content = await fs.Path(changelog_path).read_text(encoding="utf-8")
         entries: list = []
 
         current_lines: list = []

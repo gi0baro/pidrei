@@ -37,7 +37,7 @@ class FocusableOverlay:
         """Override the input behavior (pi tests reassign handleInput)."""
         self._on_input = handler
 
-    def handle_input(self, data):
+    async def handle_input(self, data):
         if self._on_input is not None:
             self._on_input(data)
         else:
@@ -230,7 +230,7 @@ async def test_sub_overlay_cleanup_then_hide_overlay_restores_focus_and_input_to
         assert editor.focused is True
         assert controller.focused is False
         assert timer.focused is False
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"]
         assert controller.inputs == []
@@ -256,7 +256,7 @@ async def test_removed_focused_child_overlay_does_not_become_parent_overlay_fall
 
         child_handle.hide()
         parent_handle.hide()
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
 
         assert editor.inputs == ["x"]
@@ -301,7 +301,7 @@ async def test_deferred_sub_overlay_pattern_restores_focus():
         assert controller.focused is False
         assert timer.focused is False
 
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"], "editor should receive input after close"
         assert controller.inputs == []
@@ -326,7 +326,7 @@ async def test_handle_input_redirection_skips_non_capturing_overlays_when_focuse
         tui.show_overlay(primary, {"visible": lambda w, h: state["visible"]})
         assert primary.focused is True
         state["visible"] = False
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert primary.inputs == []
         assert non_capturing.inputs == []
@@ -361,17 +361,17 @@ async def test_active_base_focus_replacement_receives_close_input_before_overlay
     try:
         tui.show_overlay(overlay)
         assert overlay.focused is True
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
         assert replacement.focused is True
 
-        terminal.send_input("\r")
+        await terminal.send_input("\r")
         await render_and_flush(tui, terminal)
         assert replacement.inputs == ["\r"]
         assert overlay.inputs == ["b"]
         assert overlay.focused is True
 
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == ["b", "x"]
     finally:
@@ -406,12 +406,12 @@ async def test_active_replacement_still_receives_input_when_it_is_another_overla
         tui.show_overlay(passive, {"nonCapturing": True})
         tui.set_focus(editor)
         tui.show_overlay(overlay)
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
         assert replacement.focused is True
 
-        terminal.send_input("1")
-        terminal.send_input("\r")
+        await terminal.send_input("1")
+        await terminal.send_input("\r")
         await render_and_flush(tui, terminal)
         assert replacement.inputs == ["1", "\r"]
         assert overlay.inputs == ["b"]
@@ -457,12 +457,12 @@ async def test_blocked_replacement_can_move_focus_internally_before_overlay_rest
     await tui.start()
     try:
         tui.show_overlay(overlay)
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
-        terminal.send_input("n")
+        await terminal.send_input("n")
         await render_and_flush(tui, terminal)
-        terminal.send_input("2")
-        terminal.send_input("\r")
+        await terminal.send_input("2")
+        await terminal.send_input("\r")
         await render_and_flush(tui, terminal)
 
         assert overlay.inputs == ["b"]
@@ -504,10 +504,10 @@ async def test_removed_replacement_restores_overlay_even_when_overlay_pre_focus_
     await tui.start()
     try:
         tui.show_overlay(overlay)
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
-        terminal.send_input("\r")
-        terminal.send_input("x")
+        await terminal.send_input("\r")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
 
         assert overlay.inputs == ["b", "x"]
@@ -545,11 +545,11 @@ async def test_unfocus_target_releases_a_blocked_overlay_while_replacement_remai
 
         overlay.set_input_handler(overlay_input)
 
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
         assert replacement.focused is True
-        terminal.send_input("\r")
-        terminal.send_input("x")
+        await terminal.send_input("\r")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
 
         assert overlay.inputs == ["b"]
@@ -574,7 +574,7 @@ async def test_handle_input_restores_focus_to_a_visible_focused_overlay_after_ba
         assert overlay.focused is True
         tui.set_focus(replacement)
         tui.set_focus(editor)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == ["x"]
         assert editor.inputs == []
@@ -597,7 +597,7 @@ async def test_handle_input_restores_focus_to_explicitly_focused_raw_sub_overlay
         sub_handle = tui.show_overlay(sub_overlay, {"nonCapturing": True})
         sub_handle.focus()
         tui.set_focus(editor)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert sub_overlay.inputs == ["x"]
         assert controller.inputs == []
@@ -616,7 +616,7 @@ async def test_passive_non_capturing_overlay_does_not_regain_input_after_base_fo
     await tui.start()
     try:
         tui.show_overlay(passive, {"nonCapturing": True})
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"]
         assert passive.inputs == []
@@ -637,7 +637,7 @@ async def test_explicitly_focused_non_capturing_overlay_regains_input_after_base
         handle = tui.show_overlay(overlay, {"nonCapturing": True})
         handle.focus()
         tui.set_focus(editor)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == ["x"]
         assert editor.inputs == []
@@ -656,7 +656,7 @@ async def test_unfocus_prevents_visible_overlay_from_regaining_input():
     try:
         handle = tui.show_overlay(overlay)
         handle.unfocus()
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"]
         assert overlay.inputs == []
@@ -674,7 +674,7 @@ async def test_set_focus_none_explicitly_clears_visible_overlay_restore():
     try:
         tui.show_overlay(overlay)
         tui.set_focus(None)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == []
         assert overlay.focused is False
@@ -704,10 +704,10 @@ async def test_blocked_replacement_set_focus_none_resumes_the_visible_overlay():
     await tui.start()
     try:
         tui.show_overlay(overlay)
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
-        terminal.send_input("\r")
-        terminal.send_input("x")
+        await terminal.send_input("\r")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert replacement.inputs == ["\r"]
         assert overlay.inputs == ["b", "x"]
@@ -729,12 +729,12 @@ async def test_temporarily_invisible_focused_overlay_falls_back_without_losing_r
         tui.show_overlay(overlay, {"visible": lambda w, h: state["visible"]})
         tui.set_focus(editor)
         state["visible"] = False
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"]
         assert overlay.inputs == []
         state["visible"] = True
-        terminal.send_input("y")
+        await terminal.send_input("y")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"]
         assert overlay.inputs == ["y"]
@@ -752,11 +752,11 @@ async def test_temporarily_invisible_focused_overlay_with_none_pre_focus_restore
     try:
         tui.show_overlay(overlay, {"visible": lambda w, h: state["visible"]})
         state["visible"] = False
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == []
         state["visible"] = True
-        terminal.send_input("y")
+        await terminal.send_input("y")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == ["y"]
     finally:
@@ -775,7 +775,7 @@ async def test_cyclic_overlay_pre_focus_ancestry_does_not_hang_focus_changes():
         handle = tui.show_overlay(overlay, {"nonCapturing": True})
         handle.focus()
         tui.set_focus(editor)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert editor.inputs == ["x"]
         assert overlay.inputs == []
@@ -797,7 +797,7 @@ async def test_handle_input_restores_the_focus_order_top_overlay_after_base_focu
         tui.show_overlay(upper)
         lower_handle.focus()
         tui.set_focus(editor)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert lower.inputs == ["x"]
         assert upper.inputs == []
@@ -942,7 +942,7 @@ async def test_unfocus_with_none_pre_focus_clears_focus_and_does_not_route_input
         assert overlay.focused is True
         handle.unfocus()
         assert overlay.focused is False
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == []
         assert handle.is_focused() is False
@@ -993,22 +993,22 @@ async def test_explicit_unfocus_target_supports_cycling_between_three_overlays_a
         c_handle = tui.show_overlay(c)
 
         a_handle.focus()
-        terminal.send_input("a")
+        await terminal.send_input("a")
         await render_and_flush(tui, terminal)
         b_handle.focus()
-        terminal.send_input("b")
+        await terminal.send_input("b")
         await render_and_flush(tui, terminal)
         c_handle.focus()
-        terminal.send_input("c")
+        await terminal.send_input("c")
         await render_and_flush(tui, terminal)
         c_handle.unfocus({"target": editor})
-        terminal.send_input("e")
+        await terminal.send_input("e")
         await render_and_flush(tui, terminal)
         a_handle.focus()
-        terminal.send_input("A")
+        await terminal.send_input("A")
         await render_and_flush(tui, terminal)
         a_handle.unfocus({"target": editor})
-        terminal.send_input("E")
+        await terminal.send_input("E")
         await render_and_flush(tui, terminal)
 
         assert a.inputs == ["a", "A"]
@@ -1029,7 +1029,7 @@ async def test_explicit_none_unfocus_target_clears_focus_without_restoring_overl
     try:
         handle = tui.show_overlay(overlay)
         handle.unfocus({"target": None})
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert overlay.inputs == []
         assert handle.is_focused() is False
@@ -1054,7 +1054,7 @@ async def test_hiding_focused_overlay_falls_back_to_next_visual_frontmost_overla
         a_handle.focus()
         b_handle.focus()
         b_handle.set_hidden(True)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await render_and_flush(tui, terminal)
         assert a.inputs == ["x"]
         assert c.inputs == []

@@ -6,6 +6,9 @@ This intentionally never invokes a shell.
 import subprocess
 import sys
 
+import tonio.colored as tonio
+from tonio.exceptions import RuntimeNotInitializedError
+
 
 def open_browser(target: str) -> None:
     """Open a URL or file in the platform browser/default handler.
@@ -15,13 +18,22 @@ def open_browser(target: str) -> None:
     """
     cmd = ["open", target] if sys.platform == "darwin" else ["xdg-open", target]
 
+    def launch() -> None:
+        try:
+            subprocess.Popen(  # noqa: S603
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            pass
+
+    # Reached from a sync OAuth callback that runs on a runtime worker, and the
+    # fork/exec blocks it. Nothing awaits the launch and failures are already
+    # swallowed, so hand it to the pool and return.
     try:
-        subprocess.Popen(  # noqa: S603
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except OSError:
-        pass
+        tonio.spawn.without_tracking(tonio.spawn_blocking(launch))
+    except RuntimeNotInitializedError:
+        launch()  # no runtime, so no worker to protect

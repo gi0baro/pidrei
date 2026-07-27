@@ -5,14 +5,14 @@ import pytest
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.trust_manager import ProjectTrustStoreEntry, ProjectTrustUpdate
 from pidrei.modes.interactive.components import TrustSelectorComponent
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 
 @pytest.fixture(autouse=True)
 def _setup():
-    init_theme("dark")
+    init_theme_sync("dark")
     set_keybindings(KeybindingsManager())
 
 
@@ -35,7 +35,8 @@ class TestTrustSelectorComponent:
         assert "Trust ✓" in output
         assert "Do not trust ✓" not in output
 
-    def test_selects_a_trust_decision(self):
+    @pytest.mark.tonio
+    async def test_selects_a_trust_decision(self):
         selections = []
         selector = TrustSelectorComponent(
             {
@@ -47,7 +48,7 @@ class TestTrustSelectorComponent:
             }
         )
 
-        selector.handle_input("\n")
+        await selector.handle_input("\n")
 
         assert selections == [{"trusted": True, "updates": [ProjectTrustUpdate(path="/project", decision=True)]}]
 
@@ -66,7 +67,8 @@ class TestTrustSelectorComponent:
 
         assert "Saved decision: trusted (inherited from /parent)" in output
 
-    def test_adds_a_trust_parent_option(self):
+    @pytest.mark.tonio
+    async def test_adds_a_trust_parent_option(self):
         selections = []
         selector = TrustSelectorComponent(
             {
@@ -82,7 +84,7 @@ class TestTrustSelectorComponent:
         assert "Saved decision: trusted (inherited from /parent)" in output
         assert "Trust parent folder (/parent) ✓" in output
 
-        selector.handle_input("\n")
+        await selector.handle_input("\n")
 
         assert selections == [
             {

@@ -27,7 +27,7 @@ from .edit_diff import (
     restore_line_endings,
     strip_bom,
 )
-from .file_mutation_queue import with_file_mutation_queue
+from .file_mutation_queue import resolve_mutation_queue_key, with_file_mutation_queue
 from .path_utils import resolve_to_cwd
 from .render_utils import render_tool_path, str_or_none
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
@@ -324,7 +324,8 @@ def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
                 details=EditToolDetails(diff=diff, patch=patch, first_changed_line=first_changed_line),
             )
 
-        return await with_file_mutation_queue(absolute_path, run)
+        queue_key = await resolve_mutation_queue_key(absolute_path)
+        return await with_file_mutation_queue(absolute_path, run, queue_key=queue_key)
 
     def render_call(args, theme, context):
         component = _get_edit_call_render_component(context["state"], context.get("lastComponent"))

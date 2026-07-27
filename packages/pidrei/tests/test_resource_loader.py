@@ -196,7 +196,7 @@ class TestReload:
         write(cwd / "AGENTS.md", "Project instructions")
         write(cwd / ".pidrei" / "skills" / "project-skill" / "SKILL.md", skill_md("project-skill", "Project skill"))
         write(cwd / ".pidrei" / "prompts" / "project.md", "Project prompt")
-        settings_manager = SettingsManager.create(str(cwd), str(agent_dir), project_trusted=False)
+        settings_manager = await SettingsManager.create(str(cwd), str(agent_dir), project_trusted=False)
 
         loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
         with fake_home(home):
@@ -264,7 +264,7 @@ class TestExtendResources:
         with fake_home(home):
             await loader.reload()
 
-            loader.extend_resources(
+            await loader.extend_resources(
                 skill_paths=[
                     SourcedPath(
                         path=str(extra_skill_dir),
@@ -310,7 +310,7 @@ class TestExtendResources:
         with fake_home(home):
             await loader.reload()
 
-            loader.extend_resources(
+            await loader.extend_resources(
                 skill_paths=[
                     SourcedPath(
                         path=Path(extra_skill_dir).as_uri(),

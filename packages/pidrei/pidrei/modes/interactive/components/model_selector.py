@@ -280,7 +280,7 @@ class ModelSelectorComponent(Container):
                 )
             )
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.input.tab"):
             if self._scoped_model_items:
@@ -315,7 +315,7 @@ class ModelSelectorComponent(Container):
             self._on_cancel_callback()
         # Pass everything else to search input
         else:
-            self._search_input.handle_input(key_data)
+            await self._search_input.handle_input(key_data)
             self._filter_models(self._search_input.get_value())
 
     def _handle_select(self, model) -> None:

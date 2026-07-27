@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tonio.colored import fs
+
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.types import ProviderEnv
 from pidrei_ai.utils.provider_env import get_provider_env_value
@@ -59,17 +61,17 @@ def reset_google_adc_token_cache() -> None:
         _token_cache.clear()
 
 
-def _credentials_path(env: ProviderEnv | None) -> Path | None:
+async def _credentials_path(env: ProviderEnv | None) -> Path | None:
     explicit = get_provider_env_value("GOOGLE_APPLICATION_CREDENTIALS", env)
     if explicit:
         return Path(explicit).expanduser()
     well_known = Path(os.path.expanduser("~")) / WELL_KNOWN_ADC_PATH
-    return well_known if well_known.exists() else None
+    return well_known if await fs.Path(well_known).exists() else None
 
 
-def _load_credentials(path: Path) -> dict[str, Any]:
+async def _load_credentials(path: Path) -> dict[str, Any]:
     try:
-        parsed = json.loads(path.read_text("utf-8"))
+        parsed = json.loads(await fs.Path(path).read_text("utf-8"))
     except OSError as error:
         raise GoogleAdcError(f"Could not read Google credentials file {path}: {error}") from error
     except ValueError as error:
@@ -180,9 +182,9 @@ async def _fetch_metadata_token() -> tuple[str, float]:
 
 async def _fetch_token(env: ProviderEnv | None, scope: str) -> tuple[str, str, float]:
     """Return `(cache key, access token, expiry)` for the resolved credentials."""
-    path = _credentials_path(env)
+    path = await _credentials_path(env)
     if path is not None:
-        credentials = _load_credentials(path)
+        credentials = await _load_credentials(path)
         credential_type = credentials.get("type")
         if credential_type == "service_account":
             token, expiry = await _fetch_service_account_token(credentials, scope)
@@ -208,7 +210,7 @@ async def _fetch_token(env: ProviderEnv | None, scope: str) -> tuple[str, str, f
 
 async def get_access_token(env: ProviderEnv | None = None, scope: str = CLOUD_PLATFORM_SCOPE) -> str:
     """An OAuth access token for `scope` from Application Default Credentials."""
-    cached = _cached_token(env, scope)
+    cached = await _cached_token(env, scope)
     if cached is not None:
         return cached
 
@@ -218,19 +220,20 @@ async def get_access_token(env: ProviderEnv | None = None, scope: str = CLOUD_PL
     return token
 
 
-def _cached_token(env: ProviderEnv | None, scope: str) -> str | None:
+async def _cached_token(env: ProviderEnv | None, scope: str) -> str | None:
     """A live cached token for these credentials, without performing a fetch.
 
     The cache key carries the credential's identity, which is only known after
-    reading the credentials file — cheap and local, and it keeps a rotated key
-    from being served the previous key's token.
+    reading the credentials file, and it keeps a rotated key from being served
+    the previous key's token. The read goes through `fs` like every other one:
+    "cheap and local" is not a reason to block a runtime worker.
     """
-    path = _credentials_path(env)
+    path = await _credentials_path(env)
     if path is None:
         cache_key = f"metadata:{scope}"
     else:
         try:
-            credentials = _load_credentials(path)
+            credentials = await _load_credentials(path)
         except GoogleAdcError:
             return None
         credential_type = credentials.get("type")

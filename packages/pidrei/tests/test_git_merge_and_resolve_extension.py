@@ -46,7 +46,7 @@ def write(path: str, content: str) -> None:
         handle.write(content)
 
 
-def setup(cwd: str, exec_results: dict[str, ExecResult]):
+async def setup(cwd: str, exec_results: dict[str, ExecResult]):
     handlers: dict = {}
     exec_calls: list[tuple[str, list[str]]] = []
     messages: list[tuple] = []
@@ -72,7 +72,7 @@ def setup(cwd: str, exec_results: dict[str, ExecResult]):
 
 @pytest.mark.tonio
 async def test_skips_when_not_a_git_repository(temp_dir):
-    trigger, exec_calls, messages = setup(temp_dir, {"git rev-parse --git-dir": FAIL})
+    trigger, exec_calls, messages = await setup(temp_dir, {"git rev-parse --git-dir": FAIL})
 
     await trigger()
 
@@ -82,7 +82,7 @@ async def test_skips_when_not_a_git_repository(temp_dir):
 
 @pytest.mark.tonio
 async def test_skips_when_no_upstream_is_configured(temp_dir):
-    trigger, _exec_calls, messages = setup(
+    trigger, _exec_calls, messages = await setup(
         temp_dir,
         {
             "git rev-parse --git-dir": OK,
@@ -101,7 +101,7 @@ async def test_resends_conflicts_when_in_an_unfinished_merge(temp_dir):
         os.path.join(temp_dir, "file.py"),
         "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/main",
     )
-    trigger, exec_calls, messages = setup(
+    trigger, exec_calls, messages = await setup(
         temp_dir,
         {
             "git rev-parse --git-dir": OK,
@@ -120,7 +120,7 @@ async def test_resends_conflicts_when_in_an_unfinished_merge(temp_dir):
 
 @pytest.mark.tonio
 async def test_skips_when_the_working_tree_is_dirty_and_not_in_a_merge(temp_dir):
-    trigger, exec_calls, messages = setup(
+    trigger, exec_calls, messages = await setup(
         temp_dir,
         {
             "git rev-parse --git-dir": OK,
@@ -137,7 +137,7 @@ async def test_skips_when_the_working_tree_is_dirty_and_not_in_a_merge(temp_dir)
 
 @pytest.mark.tonio
 async def test_skips_when_fetch_fails(temp_dir):
-    trigger, _exec_calls, messages = setup(temp_dir, with_upstream({"git fetch origin": FAIL}))
+    trigger, _exec_calls, messages = await setup(temp_dir, with_upstream({"git fetch origin": FAIL}))
 
     await trigger()
 
@@ -146,7 +146,7 @@ async def test_skips_when_fetch_fails(temp_dir):
 
 @pytest.mark.tonio
 async def test_skips_when_the_merge_is_clean(temp_dir):
-    trigger, _exec_calls, messages = setup(temp_dir, with_upstream({"git merge --no-ff origin/main": OK}))
+    trigger, _exec_calls, messages = await setup(temp_dir, with_upstream({"git merge --no-ff origin/main": OK}))
 
     await trigger()
 
@@ -172,7 +172,7 @@ async def test_sends_the_conflict_report_as_a_follow_up(temp_dir):
             ">>>>>>> origin/main"
         ),
     )
-    trigger, _exec_calls, messages = setup(
+    trigger, _exec_calls, messages = await setup(
         temp_dir,
         with_upstream(
             {
@@ -199,7 +199,7 @@ async def test_handles_empty_ours_or_theirs_sections(temp_dir):
         os.path.join(temp_dir, "empty-ours.py"),
         "<<<<<<< HEAD\n=======\nonly theirs\n>>>>>>> origin/main",
     )
-    trigger, _exec_calls, messages = setup(
+    trigger, _exec_calls, messages = await setup(
         temp_dir,
         with_upstream(
             {
@@ -219,7 +219,7 @@ async def test_handles_empty_ours_or_theirs_sections(temp_dir):
 
 @pytest.mark.tonio
 async def test_sends_nothing_when_the_merge_fails_but_no_markers_are_found(temp_dir):
-    trigger, _exec_calls, messages = setup(
+    trigger, _exec_calls, messages = await setup(
         temp_dir,
         with_upstream(
             {

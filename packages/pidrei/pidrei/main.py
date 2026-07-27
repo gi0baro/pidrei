@@ -223,19 +223,19 @@ def _validate_session_id_flags(parsed: Args) -> None:
         raise SystemExit(1) from None
 
 
-def _open_session_or_exit(path: str, session_dir: str | None) -> SessionManager:
+async def _open_session_or_exit(path: str, session_dir: str | None) -> SessionManager:
     try:
-        return SessionManager.open(path, session_dir)
+        return await SessionManager.open(path, session_dir)
     except Exception as error:
         print(red(f"Error: {error}"), file=sys.stderr)
         raise SystemExit(1) from None
 
 
-def _fork_session_or_exit(
+async def _fork_session_or_exit(
     source_path: str, cwd: str, session_dir: str | None, session_id: str | None = None
 ) -> SessionManager:
     try:
-        return SessionManager.fork_from(source_path, cwd, session_dir, {"id": session_id})
+        return await SessionManager.fork_from(source_path, cwd, session_dir, {"id": session_id})
     except Exception as error:
         print(red(f"Error: {error}"), file=sys.stderr)
         raise SystemExit(1) from None
@@ -257,7 +257,7 @@ async def _create_session_manager(
         resolved = await _resolve_session_path(parsed.fork, cwd, session_dir)
 
         if resolved["type"] in ("path", "local", "global"):
-            return _fork_session_or_exit(resolved["path"], cwd, session_dir, parsed.session_id)
+            return await _fork_session_or_exit(resolved["path"], cwd, session_dir, parsed.session_id)
 
         print(red(f"No session found matching '{resolved['arg']}'"), file=sys.stderr)
         raise SystemExit(1)
@@ -266,7 +266,7 @@ async def _create_session_manager(
         resolved = await _resolve_session_path(parsed.session, cwd, session_dir)
 
         if resolved["type"] in ("path", "local"):
-            return _open_session_or_exit(resolved["path"], session_dir)
+            return await _open_session_or_exit(resolved["path"], session_dir)
 
         if resolved["type"] == "global":
             print(yellow(f"Session found in different project: {resolved['cwd']}"))
@@ -274,7 +274,7 @@ async def _create_session_manager(
             if not should_fork:
                 print(dim("Aborted."))
                 raise SystemExit(0)
-            return _fork_session_or_exit(resolved["path"], cwd, session_dir)
+            return await _fork_session_or_exit(resolved["path"], cwd, session_dir)
 
         print(red(f"No session found matching '{resolved['arg']}'"), file=sys.stderr)
         raise SystemExit(1)
@@ -288,15 +288,15 @@ async def _create_session_manager(
         if not selected_path:
             print(dim("No session selected"))
             raise SystemExit(0)
-        return SessionManager.open(selected_path, session_dir)
+        return await SessionManager.open(selected_path, session_dir)
 
     if parsed.continue_:
-        return SessionManager.continue_recent(cwd, session_dir)
+        return await SessionManager.continue_recent(cwd, session_dir)
 
     if parsed.session_id:
         existing_session = await _find_local_session_by_exact_id(parsed.session_id, cwd, session_dir)
         if existing_session:
-            return SessionManager.open(existing_session["path"], session_dir)
+            return await SessionManager.open(existing_session["path"], session_dir)
         print(
             yellow(
                 f"Warning: No project session found with id '{parsed.session_id}'; creating a new session with that id."
@@ -304,7 +304,7 @@ async def _create_session_manager(
             file=sys.stderr,
         )
 
-    return SessionManager.create(cwd, session_dir, {"id": parsed.session_id})
+    return await SessionManager.create(cwd, session_dir, {"id": parsed.session_id})
 
 
 @dataclass(slots=True)
@@ -443,7 +443,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     cwd = os.getcwd()
     agent_dir = get_agent_dir()
-    bootstrap_settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    bootstrap_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
 
     # The package subcommands run and exit here, before the normal argument
@@ -497,7 +497,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     # ~/.pidrei/ cannot contain the pi-version-legacy state they clean up).
     time("runMigrations")
 
-    startup_settings_manager = SettingsManager.create(cwd, agent_dir)
+    startup_settings_manager = await SettingsManager.create(cwd, agent_dir)
     _report_diagnostics(_collect_settings_diagnostics(startup_settings_manager, "startup session lookup"))
 
     # Experimental first-time setup: theme choice and analytics opt-in.
@@ -525,7 +525,9 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
             selected_cwd = await _prompt_for_missing_session_cwd(missing_session_cwd_issue, startup_settings_manager)
             if not selected_cwd:
                 raise SystemExit(0)
-            session_manager = SessionManager.open(missing_session_cwd_issue.session_file, session_dir, selected_cwd)
+            session_manager = await SessionManager.open(
+                missing_session_cwd_issue.session_file, session_dir, selected_cwd
+            )
         else:
             print(red(str(MissingSessionCwdError(missing_session_cwd_issue))), file=sys.stderr)
             raise SystemExit(1)
@@ -534,15 +536,14 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         if not name:
             print(red("Error: --name requires a non-empty value"), file=sys.stderr)
             raise SystemExit(1)
-        session_manager.append_session_info(name)
+        await session_manager.append_session_info(name)
     time("createSessionManager")
 
     trust_store = ProjectTrustStore(agent_dir)
     session_cwd = session_manager.get_cwd()
+    session_cwd_has_trust_resources = await tonio.spawn_blocking(has_trust_requiring_project_resources, session_cwd)
     auto_trust_on_reload_cwd = (
-        session_cwd
-        if parsed.project_trust_override is None and not has_trust_requiring_project_resources(session_cwd)
-        else None
+        session_cwd if parsed.project_trust_override is None and not session_cwd_has_trust_resources else None
     )
     trust_prompt_mode = "print" if parsed.help or parsed.list_models is not None else app_mode
     project_trust_by_cwd: dict[str, bool] = {}
@@ -563,7 +564,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         is_initial_runtime = session_start_event is None
         project_trust_diagnostics: list[AgentSessionRuntimeDiagnostic] = []
         cached_project_trust = project_trust_by_cwd.get(cwd)
-        has_trust_requiring_resources = has_trust_requiring_project_resources(cwd)
+        has_trust_requiring_resources = await tonio.spawn_blocking(has_trust_requiring_project_resources, cwd)
         should_resolve_project_trust = (
             parsed.project_trust_override is None and cached_project_trust is None and has_trust_requiring_resources
         )
@@ -574,8 +575,8 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         elif parsed.project_trust_override is not None:
             project_trusted = parsed.project_trust_override
         else:
-            project_trusted = not has_trust_requiring_resources or trust_store.get(cwd) is True
-        runtime_settings_manager = SettingsManager.create(cwd, agent_dir, project_trusted=project_trusted)
+            project_trusted = not has_trust_requiring_resources or await trust_store.get(cwd) is True
+        runtime_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=project_trusted)
 
         async def resolve_trust(extensions_result=None) -> bool:
             trusted = await resolve_project_trusted(
@@ -686,7 +687,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         )
         cli_thinking_override = parsed.thinking is not None or session_options_result.cli_thinking_from_model
         if created.session.model is not None and cli_thinking_override:
-            created.session.set_thinking_level(created.session.thinking_level)
+            await created.session.set_thinking_level(created.session.thinking_level)
 
         return CreateAgentSessionRuntimeResult(
             session=created.session,
@@ -733,7 +734,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     initial = await _prepare_initial_message(parsed, settings_manager.get_image_auto_resize(), stdin_content)
     time("prepareInitialMessage")
-    init_theme(settings_manager.get_theme(), app_mode == "interactive")
+    await init_theme(settings_manager.get_theme(), app_mode == "interactive")
     time("initTheme")
 
     # pi shows deprecation warnings from runMigrations here in interactive

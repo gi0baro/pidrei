@@ -83,7 +83,7 @@ class ExtensionEditorComponent(Container):
         self._focused = value
         self._editor.focused = value
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Escape or Ctrl+C to cancel
         if kb.matches(key_data, "tui.select.cancel"):
@@ -96,7 +96,7 @@ class ExtensionEditorComponent(Container):
             return
 
         # Forward to editor
-        self._editor.handle_input(key_data)
+        await self._editor.handle_input(key_data)
 
     async def _handle_open_external_editor(self) -> None:
         content = self._editor.get_text()

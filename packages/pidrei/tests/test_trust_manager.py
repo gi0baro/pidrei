@@ -1,38 +1,41 @@
 """Mirror of pi coding-agent test/trust-manager.test.ts."""
 
+import pytest
+
 from pidrei.core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
 
 
-def test_stores_decisions_and_inherits_from_parent_directories(tmp_path):
-    agent_dir = tmp_path / "agent"
+@pytest.mark.tonio
+async def test_stores_decisions_and_inherits_from_parent_directories(tmp_dir):
+    agent_dir = tmp_dir / "agent"
     agent_dir.mkdir()
     store = ProjectTrustStore(str(agent_dir))
-    parent_dir = tmp_path / "trusted-parent"
+    parent_dir = tmp_dir / "trusted-parent"
     child_dir = parent_dir / "project"
     child_dir.mkdir(parents=True)
 
-    assert store.get(str(child_dir)) is None
-    store.set(str(parent_dir), True)
-    assert store.get(str(child_dir)) is True
-    store.set(str(child_dir), False)
-    assert store.get(str(child_dir)) is False
-    store.set(str(child_dir), None)
-    assert store.get(str(child_dir)) is True
+    assert await store.get(str(child_dir)) is None
+    await store.set(str(parent_dir), True)
+    assert await store.get(str(child_dir)) is True
+    await store.set(str(child_dir), False)
+    assert await store.get(str(child_dir)) is False
+    await store.set(str(child_dir), None)
+    assert await store.get(str(child_dir)) is True
 
 
-def test_detects_trust_requiring_project_resources(tmp_path, monkeypatch):
-    cwd = tmp_path / "project"
+def test_detects_trust_requiring_project_resources(tmp_dir, monkeypatch):
+    cwd = tmp_dir / "project"
     cwd.mkdir()
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_dir))
 
-    (tmp_path / ".pidrei" / "agent").mkdir(parents=True)
-    (tmp_path / ".agents" / "skills").mkdir(parents=True)
-    assert has_trust_requiring_project_resources(str(tmp_path)) is False
+    (tmp_dir / ".pidrei" / "agent").mkdir(parents=True)
+    (tmp_dir / ".agents" / "skills").mkdir(parents=True)
+    assert has_trust_requiring_project_resources(str(tmp_dir)) is False
     assert has_trust_requiring_project_resources(str(cwd)) is False
 
-    (tmp_path / ".pidrei" / "settings.json").write_text("{}", encoding="utf-8")
-    assert has_trust_requiring_project_resources(str(tmp_path)) is True
-    (tmp_path / ".pidrei" / "settings.json").unlink()
+    (tmp_dir / ".pidrei" / "settings.json").write_text("{}", encoding="utf-8")
+    assert has_trust_requiring_project_resources(str(tmp_dir)) is True
+    (tmp_dir / ".pidrei" / "settings.json").unlink()
 
     (cwd / ".pidrei").mkdir()
     (cwd / ".pidrei" / "settings.json").write_text("{}", encoding="utf-8")

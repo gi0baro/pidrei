@@ -10,7 +10,7 @@ CLI entry (a crashed background task is reported by the runtime).
 import os
 import signal as signal_module
 
-from tonio.colored import signals as tonio_signals
+from tonio.colored import fs, signals as tonio_signals
 
 from .config import get_socket_path
 from .handler import handle_ipc_request, open_rpc_stream
@@ -20,7 +20,7 @@ from .supervisor import supervisor
 
 async def serve() -> int:
     socket_path = get_socket_path()
-    os.makedirs(os.path.dirname(socket_path), exist_ok=True)
+    await fs.Path(os.path.dirname(socket_path)).mkdir(parents=True, exist_ok=True)
     server = await start_ipc_server(
         IpcRequestHandler(
             handle_request=handle_ipc_request,
@@ -34,8 +34,8 @@ async def serve() -> int:
         await supervisor.recover_after_restart()
     except BaseException:
         server.close()
-        if os.path.exists(socket_path):
-            os.unlink(socket_path)
+        if await fs.Path(socket_path).exists():
+            await fs.Path(socket_path).unlink()
         raise
 
     print(f"server listening on {socket_path}", flush=True)
@@ -47,6 +47,6 @@ async def serve() -> int:
 
     server.close()
     await supervisor.shutdown()
-    if os.path.exists(socket_path):
-        os.unlink(socket_path)
+    if await fs.Path(socket_path).exists():
+        await fs.Path(socket_path).unlink()
     return 0

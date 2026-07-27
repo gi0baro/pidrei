@@ -26,16 +26,17 @@ def _write_session_file(path: str, cwd: str) -> None:
         )
 
 
-def test_detects_missing_session_cwd_from_persisted_sessions(tmp_path):
-    fallback_cwd = str(tmp_path / "fallback")
+@pytest.mark.tonio
+async def test_detects_missing_session_cwd_from_persisted_sessions(tmp_dir):
+    fallback_cwd = str(tmp_dir / "fallback")
     os.makedirs(fallback_cwd)
     missing_cwd = os.path.join(fallback_cwd, "does-not-exist")
-    session_dir = str(tmp_path / "session-dir")
+    session_dir = str(tmp_dir / "session-dir")
     os.makedirs(session_dir)
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
 
-    session_manager = SessionManager.open(session_file)
+    session_manager = await SessionManager.open(session_file)
     issue = get_missing_session_cwd_issue(session_manager, fallback_cwd)
     assert issue == SessionCwdIssue(
         session_file=session_manager.get_session_file(),
@@ -44,16 +45,17 @@ def test_detects_missing_session_cwd_from_persisted_sessions(tmp_path):
     )
 
 
-def test_supports_overriding_effective_cwd_when_opening_session(tmp_path):
-    fallback_cwd = str(tmp_path / "override")
+@pytest.mark.tonio
+async def test_supports_overriding_effective_cwd_when_opening_session(tmp_dir):
+    fallback_cwd = str(tmp_dir / "override")
     os.makedirs(fallback_cwd)
     missing_cwd = os.path.join(fallback_cwd, "does-not-exist")
-    session_dir = str(tmp_path / "override-session-dir")
+    session_dir = str(tmp_dir / "override-session-dir")
     os.makedirs(session_dir)
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
 
-    session_manager = SessionManager.open(session_file, None, fallback_cwd)
+    session_manager = await SessionManager.open(session_file, None, fallback_cwd)
     assert session_manager.get_cwd() == fallback_cwd
     assert get_missing_session_cwd_issue(session_manager, fallback_cwd) is None
 
@@ -68,7 +70,7 @@ async def test_throws_controlled_error_before_runtime_creation_when_stored_cwd_m
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
 
-    session_manager = SessionManager.open(session_file)
+    session_manager = await SessionManager.open(session_file)
     create_runtime_called = False
 
     async def create_runtime(**_kwargs):

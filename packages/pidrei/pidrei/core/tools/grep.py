@@ -116,9 +116,9 @@ class GrepToolDetails:
 
 class LocalGrepOperations:
     async def is_directory(self, absolute_path: str) -> bool:
-        if not os.path.exists(absolute_path):
+        if not await fs.Path(absolute_path).exists():
             raise Exception(f"Path not found: {absolute_path}")
-        return os.path.isdir(absolute_path)
+        return await fs.Path(absolute_path).is_dir()
 
     async def read_file(self, absolute_path: str) -> str:
         return await fs.Path(absolute_path).read_text(encoding="utf-8", errors="replace", newline="")

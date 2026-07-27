@@ -217,7 +217,7 @@ class ScopedModelsSelectorComponent(Container):
             self._list_container.add_child(Spacer(1))
             self._list_container.add_child(Text(theme.fg("muted", f"  Model Name: {selected['model'].name}"), 0, 0))
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         kb = get_keybindings()
 
         # Navigation
@@ -326,7 +326,7 @@ class ScopedModelsSelectorComponent(Container):
             return
 
         # Pass everything else to search input
-        self._search_input.handle_input(data)
+        await self._search_input.handle_input(data)
         self._refresh()
 
     def get_search_input(self) -> Input:

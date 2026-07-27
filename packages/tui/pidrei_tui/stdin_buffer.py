@@ -34,6 +34,7 @@ Port deviations (pi is single-threaded JS):
 
 import re
 import threading
+from collections.abc import Awaitable
 
 from ._timers import Timeout
 
@@ -263,11 +264,31 @@ class StdinBuffer:
 
         return unsubscribe
 
-    def process(self, data: str | bytes | bytearray) -> None:
-        with self._lock:
-            self._process(data)
+    async def process(self, data: str | bytes | bytearray) -> None:
+        """Parse `data` and deliver whatever it completes to the listeners.
 
-    def _process(self, data: str | bytes | bytearray) -> None:
+        The parse runs under `_lock`; the delivery does not. Listeners are the
+        head of the input chain and are now async (they end up persisting things
+        like label edits), so awaiting them under a threading lock would be the
+        very hazard this codebase forbids. `_process` therefore *collects*
+        emissions instead of firing them, and the lock is released before any of
+        them is delivered. Ordering across the recursive paste path is preserved
+        because every branch appends to the same list.
+        """
+        with self._lock:
+            emissions: list[tuple[str, str]] = []
+            self._process(data, emissions)
+        await self._dispatch(emissions)
+
+    async def _dispatch(self, emissions: list[tuple[str, str]]) -> None:
+        for kind, payload in emissions:
+            listeners = self._data_listeners if kind == "data" else self._paste_listeners
+            for listener in list(listeners):
+                result = listener(payload)
+                if isinstance(result, Awaitable):
+                    await result
+
+    def _process(self, data: str | bytes | bytearray, out: list[tuple[str, str]]) -> None:
         # Clear any pending timeout
         if self._timeout is not None:
             self._timeout.cancel()
@@ -284,7 +305,7 @@ class StdinBuffer:
             string = data
 
         if len(string) == 0 and len(self._buffer) == 0:
-            self._emit_data_sequence("")
+            self._emit_data_sequence("", out)
             return
 
         self._buffer += string
@@ -302,10 +323,10 @@ class StdinBuffer:
                 self._paste_buffer = ""
                 self._pending_kitty_printable_codepoint = None
 
-                self._emit_paste(pasted_content)
+                out.append(("paste", pasted_content))
 
                 if len(remaining) > 0:
-                    self._process(remaining)
+                    self._process(remaining, out)
             return
 
         start_index = self._buffer.find(BRACKETED_PASTE_START)
@@ -315,7 +336,7 @@ class StdinBuffer:
                 # pi drops any incomplete remainder before the paste marker
                 sequences, _remainder = _extract_complete_sequences(before_paste)
                 for sequence in sequences:
-                    self._emit_data_sequence(sequence)
+                    self._emit_data_sequence(sequence, out)
 
             self._pending_kitty_printable_codepoint = None
             self._buffer = self._buffer[start_index + len(BRACKETED_PASTE_START) :]
@@ -332,17 +353,17 @@ class StdinBuffer:
                 self._paste_buffer = ""
                 self._pending_kitty_printable_codepoint = None
 
-                self._emit_paste(pasted_content)
+                out.append(("paste", pasted_content))
 
                 if len(remaining) > 0:
-                    self._process(remaining)
+                    self._process(remaining, out)
             return
 
         sequences, remainder = _extract_complete_sequences(self._buffer)
         self._buffer = remainder
 
         for sequence in sequences:
-            self._emit_data_sequence(sequence)
+            self._emit_data_sequence(sequence, out)
 
         if len(self._buffer) > 0:
             self._schedule_flush_timer()
@@ -350,7 +371,7 @@ class StdinBuffer:
     def _schedule_flush_timer(self) -> None:
         timer: Timeout | None = None
 
-        def fire() -> None:
+        async def fire() -> None:
             with self._lock:
                 # A process()/flush()/clear() call may have raced the firing
                 # callback past its cancellation check; only the current timer
@@ -358,25 +379,25 @@ class StdinBuffer:
                 if self._timeout is not timer:
                     return
                 self._timeout = None
+                emissions: list[tuple[str, str]] = []
                 for sequence in self._flush():
-                    self._emit_data_sequence(sequence)
+                    self._emit_data_sequence(sequence, emissions)
+            # Same rule as `process`: collected under the lock, delivered after.
+            await self._dispatch(emissions)
 
         timer = Timeout(self._timeout_ms, fire)
         self._timeout = timer
 
-    def _emit_data_sequence(self, sequence: str) -> None:
+    def _emit_data_sequence(self, sequence: str, out: list[tuple[str, str]]) -> None:
+        """Under `_lock`: apply the Kitty codepoint de-duplication and queue the
+        sequence for delivery. Does not touch listeners."""
         raw_codepoint = ord(sequence) if len(sequence) == 1 else None
         if raw_codepoint is not None and raw_codepoint == self._pending_kitty_printable_codepoint:
             self._pending_kitty_printable_codepoint = None
             return
 
         self._pending_kitty_printable_codepoint = _parse_unmodified_kitty_printable_codepoint(sequence)
-        for listener in list(self._data_listeners):
-            listener(sequence)
-
-    def _emit_paste(self, content: str) -> None:
-        for listener in list(self._paste_listeners):
-            listener(content)
+        out.append(("data", sequence))
 
     def flush(self) -> list[str]:
         with self._lock:

@@ -132,13 +132,13 @@ class SettingsList:
 
         return lines
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         # If submenu is active, delegate all input to it
         # The submenu's onCancel (triggered by escape) will call done() which closes it
         if self._submenu_component is not None:
             handle_input = getattr(self._submenu_component, "handle_input", None)
             if handle_input is not None:
-                handle_input(data)
+                await handle_input(data)
             return
 
         # Main list input handling
@@ -160,7 +160,7 @@ class SettingsList:
             sanitized = data.replace(" ", "")
             if not sanitized:
                 return
-            self._search_input.handle_input(sanitized)
+            await self._search_input.handle_input(sanitized)
             self._apply_filter(self._search_input.get_value())
 
     def _activate_item(self) -> None:

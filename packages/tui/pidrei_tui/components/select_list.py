@@ -10,6 +10,7 @@ the latter receiving a ``{"text", "maxWidth", "columnWidth", "item",
 
 import math
 import re
+from collections.abc import Awaitable
 
 from ..keybindings import get_keybindings
 from ..utils import truncate_to_width, visible_width
@@ -94,7 +95,7 @@ class SelectList:
 
         return lines
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Up arrow - wrap to bottom when at top
         if kb.matches(key_data, "tui.select.up"):
@@ -116,7 +117,11 @@ class SelectList:
                 else None
             )
             if selected_item is not None and self.on_select is not None:
-                self.on_select(selected_item)
+                # `on_select` may be sync or coroutine-returning: input
+                # handling is async now, and some selections persist.
+                result = self.on_select(selected_item)
+                if isinstance(result, Awaitable):
+                    await result
         # Escape or Ctrl+C
         elif kb.matches(key_data, "tui.select.cancel"):
             if self.on_cancel is not None:

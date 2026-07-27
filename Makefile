@@ -19,6 +19,13 @@ audit:
 test:
 	uv run pytest -v
 
+# Runs the suite with the blocking-fs detector installed: reports every
+# filesystem call that happened on a tonio runtime worker. Opt-in because
+# audit hooks cannot be uninstalled once added.
+.PHONY: test-fs-detect
+test-fs-detect:
+	PIDREI_FS_DETECT=1 uv run pytest -q
+
 .PHONY: release-check
 release-check:
 	uv run python scripts/release_check.py

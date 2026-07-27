@@ -160,7 +160,7 @@ class OAuthSelectorComponent(Container):
         display_source = f"env: {source}" if _ENV_SOURCE_RE.match(source) else source
         return theme.fg("success", f" ✓ {display_source}")
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Up arrow
         if kb.matches(key_data, "tui.select.up"):
@@ -184,5 +184,5 @@ class OAuthSelectorComponent(Container):
             self._on_cancel_callback()
         # Pass everything else to search input
         else:
-            self._search_input.handle_input(key_data)
+            await self._search_input.handle_input(key_data)
             self._filter_providers(self._search_input.get_value())

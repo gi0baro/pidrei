@@ -11,6 +11,8 @@ import os
 import subprocess
 import sys
 
+import tonio.colored as tonio
+
 from .clipboard_image import is_wayland_session
 
 
@@ -18,6 +20,8 @@ _MAX_OSC52_ENCODED_LENGTH = 100_000
 _EXEC_TIMEOUT_S = 5.0
 
 
+# Sync by design: only ever runs inside `_copy_to_clipboard_sync`, which the
+# async entry point hands to `spawn_blocking`.
 def _run_with_input(command: list, text: str) -> bool:
     try:
         subprocess.run(  # noqa: S603
@@ -33,6 +37,8 @@ def _run_with_input(command: list, text: str) -> bool:
         return False
 
 
+# Sync by design: only ever runs inside `_read_clipboard_text_sync`, which the
+# async entry point hands to `spawn_blocking`.
 def _read_output(command: list) -> str | None:
     try:
         result = subprocess.run(  # noqa: S603
@@ -69,7 +75,15 @@ def _emit_osc52(text: str) -> bool:
 
 
 async def read_clipboard_text() -> str | None:
-    """Read plain text from the system clipboard, if a reader is available."""
+    """Read plain text from the system clipboard, if a reader is available.
+
+    Picking a platform tool and running it is one blocking unit, so it goes to
+    the pool whole rather than a hop per candidate command.
+    """
+    return await tonio.spawn_blocking(_read_clipboard_text_sync)
+
+
+def _read_clipboard_text_sync() -> str | None:
     if sys.platform == "darwin":
         text = _read_output(["pbpaste"])
     elif os.environ.get("TERMUX_VERSION"):
@@ -87,6 +101,11 @@ async def read_clipboard_text() -> str | None:
 
 
 async def copy_to_clipboard(text: str) -> None:
+    """Offloaded whole, like `read_clipboard_text`."""
+    await tonio.spawn_blocking(_copy_to_clipboard_sync, text)
+
+
+def _copy_to_clipboard_sync(text: str) -> None:
     copied = False
 
     remote = _is_remote_session()

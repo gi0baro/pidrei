@@ -76,7 +76,7 @@ async def _create_runtime_host(temp_dir: str, extensions: list[Extension]):
             cwd=cwd,
             agent_dir=agent_dir,
             model_runtime=model_runtime,
-            settings_manager=__import__(
+            settings_manager=await __import__(
                 "pidrei.core.settings_manager", fromlist=["SettingsManager"]
             ).SettingsManager.create(cwd, agent_dir),
             resource_loader=create_test_resource_loader(extensions_result),
@@ -103,7 +103,7 @@ async def _create_runtime_host(temp_dir: str, extensions: list[Extension]):
         create_runtime,
         cwd=temp_dir,
         agent_dir=temp_dir,
-        session_manager=SessionManager.create(temp_dir, temp_dir),
+        session_manager=await SessionManager.create(temp_dir, temp_dir),
     )
     await runtime_host.session.bind_extensions(
         __import__("pidrei.core.agent_session", fromlist=["ExtensionBindings"]).ExtensionBindings()
@@ -320,7 +320,7 @@ class TestForkingSuite:
                 cwd=cwd,
                 agent_dir=agent_dir,
                 model_runtime=model_runtime,
-                settings_manager=SettingsManager.create(cwd, agent_dir),
+                settings_manager=await SettingsManager.create(cwd, agent_dir),
                 resource_loader=create_test_resource_loader(extensions_result),
             )
             result = await create_agent_session_from_services(
@@ -512,15 +512,15 @@ async def test_session_info_modified_uses_last_message_timestamp(tmp_dir):
 
     # SessionManager only persists once it has seen at least one assistant
     # message; add one so subsequent appends are persisted.
-    mgr = SessionManager.open(file_path)
-    mgr.append_message(assistant_msg("hi", api="openai-completions", provider="openai"))
+    mgr = await SessionManager.open(file_path)
+    await mgr.append_message(assistant_msg("hi", api="openai-completions", provider="openai"))
 
     before_mtime = os.stat(file_path).st_mtime
     await tonio.time.sleep(0.01)
 
-    mgr = SessionManager.open(file_path)
+    mgr = await SessionManager.open(file_path)
     msg_time = now_ms()
-    mgr.append_message(assistant_msg("later", api="openai-completions", provider="openai", timestamp=msg_time))
+    await mgr.append_message(assistant_msg("later", api="openai-completions", provider="openai", timestamp=msg_time))
 
     sessions = await SessionManager.list("/tmp", os.path.dirname(file_path))
     session_info = next((s for s in sessions if s.path == file_path), None)

@@ -73,7 +73,7 @@ class UserMessageList:
 
         return lines
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Up arrow - go to previous (older) message, wrap to bottom when at top
         if kb.matches(key_data, "tui.select.up"):

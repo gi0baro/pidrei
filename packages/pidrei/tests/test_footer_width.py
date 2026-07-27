@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from pidrei.modes.interactive.components import FooterComponent, format_cwd_for_footer
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import Usage, UsageCost
 from pidrei_tui import visible_width
@@ -85,7 +85,7 @@ class TestFormatCwdForFooter:
 class TestFooterComponentWidthHandling:
     @pytest.fixture(autouse=True)
     def _theme(self):
-        init_theme(None, False)
+        init_theme_sync(None, False)
 
     def test_keeps_all_lines_within_width_for_wide_session_names(self):
         width = 93

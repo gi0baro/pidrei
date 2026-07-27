@@ -16,6 +16,8 @@ attempt that never happens.
 import os
 import shutil
 
+import tonio.colored as tonio
+
 from ..config import get_bin_dir
 
 
@@ -25,6 +27,8 @@ _SYSTEM_BINARY_NAMES = {
 }
 
 
+# Sync by design: `ensure_tool` hands this to `spawn_blocking`, so the PATH
+# walk never runs on a runtime worker.
 def get_tool_path(tool: str) -> str | None:
     names = _SYSTEM_BINARY_NAMES.get(tool)
     if names is None:
@@ -57,4 +61,4 @@ def missing_tool_message(tool: str) -> str:
 
 async def ensure_tool(tool: str, silent: bool = False) -> str | None:
     """Resolve a tool path. Never downloads — see the module docstring."""
-    return get_tool_path(tool)
+    return await tonio.spawn_blocking(get_tool_path, tool)

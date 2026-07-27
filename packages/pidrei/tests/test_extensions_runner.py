@@ -18,7 +18,7 @@ import tempfile
 
 import pytest
 
-from pidrei.core.auth_storage import AuthStorage
+from pidrei.core.auth_storage import AuthStorage, FileAuthStorageBackend
 from pidrei.core.extensions.loader import (
     create_extension_runtime,
     discover_and_load_extensions,
@@ -110,7 +110,9 @@ class _Fixture:
         self.extensions = os.path.join(self.root, "extensions")
         os.makedirs(self.extensions)
         self.session_manager = SessionManager.in_memory()
-        self.auth_storage = AuthStorage.create(os.path.join(self.root, "auth.json"))
+        # Constructor: cannot await. The temp root is fresh, so there is no
+        # auth.json to load and the loaded state would be empty regardless.
+        self.auth_storage = AuthStorage.from_storage(FileAuthStorageBackend(os.path.join(self.root, "auth.json")))
         self.model_registry = None
 
     def write(self, name: str, content: str) -> str:

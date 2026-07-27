@@ -47,7 +47,7 @@ class Input:
         self._value = value
         self._cursor = min(self._cursor, len(value))
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         # Handle bracketed paste mode
         # Start of paste: \x1b[200~
         # End of paste: \x1b[201~
@@ -78,7 +78,7 @@ class Input:
                 remaining = self._paste_buffer[end_index + 6 :]  # 6 = length of \x1b[201~
                 self._paste_buffer = ""
                 if remaining:
-                    self.handle_input(remaining)
+                    await self.handle_input(remaining)
             return
 
         kb = get_keybindings()

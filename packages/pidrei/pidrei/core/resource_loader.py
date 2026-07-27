@@ -10,6 +10,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
+import tonio.colored as tonio
+from tonio.colored import fs
+
 from ..config import CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
 from .diagnostics import ResourceCollision, ResourceDiagnostic
@@ -51,7 +54,13 @@ def _warn(message: str) -> None:
     print(f"\x1b[33mWarning: {message}\x1b[0m", file=sys.stderr)
 
 
-def _resolve_prompt_input(input: str | None, description: str) -> str | None:
+def _resolve_prompt_input(input: str | None, description: str) -> Awaitable[str | None]:
+    """The value is either a literal prompt or a path to read — deciding which
+    means touching the filesystem, so the whole check goes to the pool."""
+    return tonio.spawn_blocking(_resolve_prompt_input_sync, input, description)
+
+
+def _resolve_prompt_input_sync(input: str | None, description: str) -> str | None:
     if not input:
         return None
 
@@ -78,7 +87,13 @@ def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
     return None
 
 
-def load_project_context_files(*, cwd: str, agent_dir: str) -> list[AgentsFile]:
+def load_project_context_files(*, cwd: str, agent_dir: str) -> Awaitable[list[AgentsFile]]:
+    """Walking cwd's ancestors for AGENTS.md is one blocking unit, so it goes
+    to the pool whole rather than as a probe-and-read per directory."""
+    return tonio.spawn_blocking(_load_project_context_files_sync, cwd=cwd, agent_dir=agent_dir)
+
+
+def _load_project_context_files_sync(*, cwd: str, agent_dir: str) -> list[AgentsFile]:
     resolved_cwd = resolve_path(cwd)
     resolved_agent_dir = resolve_path(agent_dir)
 
@@ -139,7 +154,12 @@ class DefaultResourceLoader:
         self._cwd = resolve_path(cwd)
         self._agent_dir = resolve_path(agent_dir)
         self._settings_manager = (
-            settings_manager if settings_manager is not None else SettingsManager.create(self._cwd, self._agent_dir)
+            settings_manager
+            if settings_manager is not None
+            # A constructor cannot await. Every production caller passes one in
+            # (`agent_session_services`, `package_commands`, `sdk`); this
+            # fallback exists for tests and direct SDK use.
+            else SettingsManager.create_sync(self._cwd, self._agent_dir)
         )
         self._package_manager = DefaultPackageManager(
             cwd=self._cwd, agent_dir=self._agent_dir, settings_manager=self._settings_manager
@@ -206,7 +226,7 @@ class DefaultResourceLoader:
 
     # -- extension-provided resources -------------------------------------------
 
-    def extend_resources(
+    async def extend_resources(
         self,
         *,
         skill_paths: list[SourcedPath] | None = None,
@@ -224,13 +244,13 @@ class DefaultResourceLoader:
             self._last_skill_paths = self._merge_paths(
                 self._last_skill_paths, [entry.path for entry in normalized_skills]
             )
-            self._update_skills_from_paths(self._last_skill_paths)
+            await self._update_skills_from_paths(self._last_skill_paths)
 
         if normalized_prompts:
             self._last_prompt_paths = self._merge_paths(
                 self._last_prompt_paths, [entry.path for entry in normalized_prompts]
             )
-            self._update_prompts_from_paths(self._last_prompt_paths)
+            await self._update_prompts_from_paths(self._last_prompt_paths)
 
     # -- reload ------------------------------------------------------------------
 
@@ -238,7 +258,7 @@ class DefaultResourceLoader:
         # Force untrusted project settings for the bootstrap pass. This keeps project-local
         # extensions/packages out while still loading user/global and temporary CLI extensions.
         self._settings_manager.set_project_trusted(False)
-        self._settings_manager.reload()
+        await self._settings_manager.reload()
         return await self._load_current_extension_set(include_inline_factories=True)
 
     async def reload(
@@ -258,7 +278,7 @@ class DefaultResourceLoader:
             self._settings_manager.set_project_trusted(project_trusted)
 
         # reload() preserves SettingsManager.project_trusted and reloads settings for that trust state.
-        self._settings_manager.reload()
+        await self._settings_manager.reload()
         resolved_paths = await self._package_manager.resolve()
         cli_extension_paths = await self._package_manager.resolve_extension_sources(
             self._additional_extension_paths, temporary=True
@@ -300,7 +320,7 @@ class DefaultResourceLoader:
         for path in self._additional_extension_paths:
             if is_local_path(path):
                 resolved = self._resolve_resource_path(path)
-                if not os.path.exists(resolved):
+                if not await fs.Path(resolved).exists():
                     extensions_result.errors.append(
                         ExtensionLoadError(path=resolved, error=f"Extension path does not exist: {resolved}")
                     )
@@ -315,11 +335,13 @@ class DefaultResourceLoader:
             skill_paths = self._merge_paths([*cli_enabled_skills, *enabled_skills], self._additional_skill_paths)
 
         self._last_skill_paths = skill_paths
-        self._update_skills_from_paths(skill_paths, metadata_by_path)
+        await self._update_skills_from_paths(skill_paths, metadata_by_path)
         for path in self._additional_skill_paths:
             if is_local_path(path):
                 resolved = self._resolve_resource_path(path)
-                if not os.path.exists(resolved) and not any(d.path == resolved for d in self._skill_diagnostics):
+                if not await fs.Path(resolved).exists() and not any(
+                    d.path == resolved for d in self._skill_diagnostics
+                ):
                     self._skill_diagnostics.append(
                         ResourceDiagnostic(type="error", message="Skill path does not exist", path=resolved)
                     )
@@ -332,11 +354,13 @@ class DefaultResourceLoader:
             )
 
         self._last_prompt_paths = prompt_paths
-        self._update_prompts_from_paths(prompt_paths, metadata_by_path)
+        await self._update_prompts_from_paths(prompt_paths, metadata_by_path)
         for path in self._additional_prompt_template_paths:
             if is_local_path(path):
                 resolved = self._resolve_resource_path(path)
-                if not os.path.exists(resolved) and not any(d.path == resolved for d in self._prompt_diagnostics):
+                if not await fs.Path(resolved).exists() and not any(
+                    d.path == resolved for d in self._prompt_diagnostics
+                ):
                     self._prompt_diagnostics.append(
                         ResourceDiagnostic(type="error", message="Prompt template path does not exist", path=resolved)
                     )
@@ -350,13 +374,13 @@ class DefaultResourceLoader:
         self._update_themes_from_paths(theme_paths, metadata_by_path)
 
         agents_files = (
-            [] if self._no_context_files else load_project_context_files(cwd=self._cwd, agent_dir=self._agent_dir)
+            [] if self._no_context_files else await load_project_context_files(cwd=self._cwd, agent_dir=self._agent_dir)
         )
         self._agents_files = (
             self._agents_files_override(agents_files) if self._agents_files_override is not None else agents_files
         )
 
-        base_system_prompt = _resolve_prompt_input(
+        base_system_prompt = await _resolve_prompt_input(
             self._system_prompt_source
             if self._system_prompt_source is not None
             else self._discover_system_prompt_file(),
@@ -376,7 +400,7 @@ class DefaultResourceLoader:
         base_append = [
             resolved
             for source in append_sources
-            if (resolved := _resolve_prompt_input(source, "append system prompt")) is not None
+            if (resolved := await _resolve_prompt_input(source, "append system prompt")) is not None
         ]
         self._append_system_prompt = (
             self._append_system_prompt_override(base_append)
@@ -546,13 +570,13 @@ class DefaultResourceLoader:
             normalized.append(SourcedPath(path=self._resolve_resource_path(entry.path), metadata=metadata))
         return normalized
 
-    def _update_skills_from_paths(
+    async def _update_skills_from_paths(
         self, skill_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
     ) -> None:
         if self._no_skills and not skill_paths:
             skills_result = LoadSkillsResult(skills=[], diagnostics=[])
         else:
-            skills_result = load_skills(
+            skills_result = await load_skills(
                 cwd=self._cwd,
                 agent_dir=self._agent_dir,
                 skill_paths=skill_paths,
@@ -574,13 +598,13 @@ class DefaultResourceLoader:
         ]
         self._skill_diagnostics = resolved_skills.diagnostics
 
-    def _update_prompts_from_paths(
+    async def _update_prompts_from_paths(
         self, prompt_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
     ) -> None:
         if self._no_prompt_templates and not prompt_paths:
             prompts_result = LoadPromptsResult(prompts=[], diagnostics=[])
         else:
-            all_prompts = load_prompt_templates(
+            all_prompts = await load_prompt_templates(
                 cwd=self._cwd,
                 agent_dir=self._agent_dir,
                 prompt_paths=prompt_paths,
@@ -609,7 +633,9 @@ class DefaultResourceLoader:
         self, theme_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
     ) -> None:
         # lazy: core <-> modes import cycle (see modes/__init__.py)
-        from ..modes.interactive.theme import load_theme_from_path
+        # This whole method runs pool-side, so it uses the blocking loader
+        # directly rather than the awaitable one.
+        from ..modes.interactive.theme import _load_theme_from_path_sync as load_theme_from_path
 
         if self._no_themes and not theme_paths:
             themes: list = []

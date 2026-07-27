@@ -25,19 +25,22 @@ def test_find_env_keys_uses_provider_env_overrides():
     assert find_env_keys("unknown-provider", {"WHATEVER": "x"}) is None
 
 
-def test_anthropic_oauth_token_takes_precedence():
+@pytest.mark.tonio
+async def test_anthropic_oauth_token_takes_precedence():
     env = {"ANTHROPIC_API_KEY": "api-key", "ANTHROPIC_OAUTH_TOKEN": "oauth-token"}
-    assert get_env_api_key("anthropic", env) == "oauth-token"
-    assert get_env_api_key("anthropic", {"ANTHROPIC_API_KEY": "api-key"}) == "api-key"
+    assert await get_env_api_key("anthropic", env) == "oauth-token"
+    assert await get_env_api_key("anthropic", {"ANTHROPIC_API_KEY": "api-key"}) == "api-key"
 
 
-def test_bedrock_ambient_credentials_marker():
+@pytest.mark.tonio
+async def test_bedrock_ambient_credentials_marker():
     env = {"AWS_ACCESS_KEY_ID": "id", "AWS_SECRET_ACCESS_KEY": "secret"}
-    assert get_env_api_key("amazon-bedrock", env) == AMBIENT_AUTH_MARKER
-    assert get_env_api_key("amazon-bedrock", {"AWS_ACCESS_KEY_ID": "id"}) is None
+    assert await get_env_api_key("amazon-bedrock", env) == AMBIENT_AUTH_MARKER
+    assert await get_env_api_key("amazon-bedrock", {"AWS_ACCESS_KEY_ID": "id"}) is None
 
 
-def test_builtin_catalog_reads():
+@pytest.mark.tonio
+async def test_builtin_catalog_reads():
     assert "anthropic" in get_builtin_providers()
     model = get_builtin_model("anthropic", "claude-haiku-4-5")
     assert model is not None
@@ -45,7 +48,7 @@ def test_builtin_catalog_reads():
     assert get_builtin_model("anthropic", "nope") is None
     assert get_builtin_models("anthropic")
     assert get_builtin_models("unknown") == []
-    assert get_builtin_model_data_generated_at() is not None
+    assert await get_builtin_model_data_generated_at() is not None
 
 
 def test_builtin_models_collection_wires_anthropic():

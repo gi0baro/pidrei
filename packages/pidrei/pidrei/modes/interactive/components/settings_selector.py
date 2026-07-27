@@ -4,6 +4,8 @@
 SettingsConfig/SettingsCallbacks interfaces.
 """
 
+from collections.abc import Awaitable
+
 from pidrei_tui import Container, SelectList, SettingsList, Spacer, Text, get_capabilities
 
 from ....core.http_config import HTTP_IDLE_TIMEOUT_CHOICES, format_http_idle_timeout_ms
@@ -69,8 +71,8 @@ class WarningSettingsSubmenu(Container):
 
         self.add_child(self._settings_list)
 
-    def handle_input(self, data: str) -> None:
-        self._settings_list.handle_input(data)
+    async def handle_input(self, data: str) -> None:
+        await self._settings_list.handle_input(data)
 
 
 class SelectSubmenu(Container):
@@ -122,8 +124,8 @@ class SelectSubmenu(Container):
         self.add_child(Spacer(1))
         self.add_child(Text(theme.fg("dim", "  Enter to select · Esc to go back"), 0, 0))
 
-    def handle_input(self, data: str) -> None:
-        self._select_list.handle_input(data)
+    async def handle_input(self, data: str) -> None:
+        await self._select_list.handle_input(data)
 
 
 def _theme_items(available_themes: list) -> list:
@@ -195,16 +197,20 @@ class ThemeSubmenu(Container):
         else:
             self._show_single_menu()
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         if self._input_component is not None:
             handle = getattr(self._input_component, "handle_input", None)
             if handle is not None:
-                handle(data)
+                await handle(data)
 
-    def _preview(self, value: str) -> None:
+    async def _preview(self, value: str) -> None:
         on_theme_preview = self._callbacks.get("onThemePreview")
         if on_theme_preview is not None:
-            on_theme_preview(value)
+            # Applying a preview loads the theme from disk, so the callback
+            # may be coroutine-returning.
+            result = on_theme_preview(value)
+            if isinstance(result, Awaitable):
+                await result
 
     def _set_content(self, render_component, input_component=None) -> None:
         self.clear()
@@ -214,18 +220,18 @@ class ThemeSubmenu(Container):
     def _show_single_menu(self) -> None:
         self._mode = "single"
 
-        def on_select(value: str) -> None:
+        async def on_select(value: str) -> None:
             if value == AUTOMATIC_THEME_VALUE:
                 self._mode = "automatic"
-                self._preview(self._get_theme_setting())
+                await self._preview(self._get_theme_setting())
                 self._show_automatic_menu()
                 return
 
             self._single_theme = value
             self._apply(value)
 
-        def on_selection_change(value: str) -> None:
-            self._preview(self._get_automatic_theme_setting() if value == AUTOMATIC_THEME_VALUE else value)
+        async def on_selection_change(value: str) -> None:
+            await self._preview(self._get_automatic_theme_setting() if value == AUTOMATIC_THEME_VALUE else value)
 
         menu = SelectSubmenu(
             "Theme",
@@ -248,9 +254,9 @@ class ThemeSubmenu(Container):
         content.add_child(Spacer(1))
 
         def light_submenu(current_value, done):
-            def on_select(value: str) -> None:
+            async def on_select(value: str) -> None:
                 self._light_theme = value
-                self._preview(self._get_theme_setting())
+                await self._preview(self._get_theme_setting())
                 done(value)
 
             return self._create_theme_select(
@@ -262,9 +268,9 @@ class ThemeSubmenu(Container):
             )
 
         def dark_submenu(current_value, done):
-            def on_select(value: str) -> None:
+            async def on_select(value: str) -> None:
                 self._dark_theme = value
-                self._preview(self._get_theme_setting())
+                await self._preview(self._get_theme_setting())
                 done(value)
 
             return self._create_theme_select(
@@ -306,11 +312,11 @@ class ThemeSubmenu(Container):
             },
         ]
 
-        def handle_change(item_id: str, _new_value: str) -> None:
+        async def handle_change(item_id: str, _new_value: str) -> None:
             if item_id == "single-mode":
                 self._mode = "single"
                 self._single_theme = self._get_active_automatic_theme()
-                self._preview(self._single_theme)
+                await self._preview(self._single_theme)
                 self._show_single_menu()
             elif item_id == "apply":
                 self._apply(self._get_automatic_theme_setting())
@@ -326,8 +332,8 @@ class ThemeSubmenu(Container):
         self._set_content(content, settings_list)
 
     def _create_theme_select(self, title: str, description: str, current_value: str, done, on_select) -> SelectSubmenu:
-        def on_cancel() -> None:
-            self._preview(self._get_theme_setting())
+        async def on_cancel() -> None:
+            await self._preview(self._get_theme_setting())
             done()
 
         return SelectSubmenu(
@@ -352,8 +358,8 @@ class ThemeSubmenu(Container):
     def _apply(self, theme_setting: str) -> None:
         self._on_done(theme_setting)
 
-    def _cancel(self) -> None:
-        self._preview(self._original_theme_setting)
+    async def _cancel(self) -> None:
+        await self._preview(self._original_theme_setting)
         self._on_done()
 
 
@@ -376,8 +382,8 @@ class SettingsSelectorComponent(Container):
             return WarningSettingsSubmenu(current_warnings, on_change, lambda: done())
 
         def thinking_submenu(current_value, done):
-            def on_select(value: str) -> None:
-                callbacks["onThinkingLevelChange"](value)
+            async def on_select(value: str) -> None:
+                await callbacks["onThinkingLevelChange"](value)
                 done(value)
 
             return SelectSubmenu(

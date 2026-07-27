@@ -17,7 +17,7 @@ import tonio.colored as tonio
 
 from pidrei.core.source_info import SourceInfo
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import init_theme, init_theme_sync
 from pidrei_tui import TUI, CombinedAutocompleteProvider, Container
 
 
@@ -28,7 +28,7 @@ from virtual_terminal import VirtualTerminal
 @pytest.fixture(autouse=True)
 def _theme():
     # showStatus and showLoadedResources use the global theme instance
-    init_theme("dark")
+    init_theme_sync("dark")
 
 
 class _BareInteractiveMode(InteractiveMode):
@@ -66,7 +66,7 @@ class FakeFocusableComponent:
         self._label = label
         self._text = ""
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         self.inputs.append(data)
 
     def get_text(self) -> str:
@@ -160,7 +160,8 @@ class TestSetToolsExpanded:
 
 
 class TestCreateExtensionUIContextSetTheme:
-    def test_persists_theme_changes_to_settings_manager(self):
+    @pytest.mark.tonio
+    async def test_persists_theme_changes_to_settings_manager(self):
         state = {"theme": "dark"}
         set_theme_calls: list = []
         settings_manager = SimpleNamespace(
@@ -175,7 +176,8 @@ class TestCreateExtensionUIContextSetTheme:
         )
         fake.ui = SimpleNamespace(request_render=lambda force=False: request_render_calls.append(force))
 
-        def set_theme_name(name):
+        async def set_theme_name(name):
+            # Async: the production controller method is awaited by setTheme.
             set_theme_name_calls.append(name)
             fake.ui.request_render()
             return {"success": True}
@@ -186,7 +188,7 @@ class TestCreateExtensionUIContextSetTheme:
         )
 
         ui_context = InteractiveMode._create_extension_ui_context(fake)
-        result = ui_context["setTheme"]("light")
+        result = await ui_context["setTheme"]("light")
 
         assert result["success"] is True
         assert set_theme_name_calls == ["light"]
@@ -194,7 +196,8 @@ class TestCreateExtensionUIContextSetTheme:
         assert state["theme"] == "light"
         assert len(request_render_calls) == 1
 
-    def test_does_not_persist_invalid_theme_names(self):
+    @pytest.mark.tonio
+    async def test_does_not_persist_invalid_theme_names(self):
         set_theme_calls: list = []
         settings_manager = SimpleNamespace(
             get_theme=lambda: "dark",
@@ -208,7 +211,7 @@ class TestCreateExtensionUIContextSetTheme:
             ui=SimpleNamespace(request_render=lambda force=False: request_render_calls.append(force)),
         )
 
-        def set_theme_name(name):
+        async def set_theme_name(name):
             set_theme_name_calls.append(name)
             return {"success": False, "error": "Theme not found"}
 
@@ -218,7 +221,7 @@ class TestCreateExtensionUIContextSetTheme:
         )
 
         ui_context = InteractiveMode._create_extension_ui_context(fake)
-        result = ui_context["setTheme"]("__missing_theme__")
+        result = await ui_context["setTheme"]("__missing_theme__")
 
         assert result["success"] is False
         assert set_theme_name_calls == ["__missing_theme__"]
@@ -228,7 +231,7 @@ class TestCreateExtensionUIContextSetTheme:
 
 @pytest.mark.tonio
 async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_closes():
-    init_theme("dark")
+    await init_theme("dark")
     terminal = VirtualTerminal(80, 24)
     ui = TUI(terminal)
     editor_container = Container()
@@ -245,7 +248,7 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         ui=ui,
     )
 
-    def show_extension_custom(key, factory, options=None):
+    async def show_extension_custom(key, factory, options=None):
         done = tonio.Event()
 
         async def run() -> None:
@@ -266,7 +269,7 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
             closers["overlay"] = done
             return overlay
 
-        overlay_done = show_extension_custom("overlay", overlay_factory, {"overlay": True})
+        overlay_done = await show_extension_custom("overlay", overlay_factory, {"overlay": True})
         await flush_tui(ui, terminal)
         assert overlay.focused is True
 
@@ -274,14 +277,14 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
             closers["replacement"] = done
             return replacement
 
-        replacement_done = show_extension_custom("replacement", replacement_factory)
+        replacement_done = await show_extension_custom("replacement", replacement_factory)
         await flush_tui(ui, terminal)
         assert replacement.focused is True
 
         closers["replacement"]("done")
         await replacement_done.wait(None)
         await flush_tui(ui, terminal)
-        terminal.send_input("x")
+        await terminal.send_input("x")
         await flush_tui(ui, terminal)
 
         assert overlay.inputs == ["x"]
@@ -312,7 +315,8 @@ class TestCreateExtensionUIContextAddAutocompleteProvider:
 
 
 class TestSetupAutocompleteProvider:
-    def test_stacks_wrapper_factories_over_a_fresh_base_provider(self):
+    @pytest.mark.tonio
+    async def test_stacks_wrapper_factories_over_a_fresh_base_provider(self):
         default_editor_providers: list = []
         custom_editor_providers: list = []
         calls: list = []

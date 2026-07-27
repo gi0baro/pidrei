@@ -5,8 +5,8 @@ import os
 import secrets
 import tempfile
 from dataclasses import replace
-from typing import BinaryIO
 
+from ...utils.temp_file_writer import TempFileWriter
 from .truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, truncate_tail
 
 
@@ -48,7 +48,7 @@ class OutputAccumulator:
         self._finished = False
 
         self._temp_file_path: str | None = None
-        self._temp_file: BinaryIO | None = None
+        self._temp_file: TempFileWriter | None = None
 
     @property
     def full_output_path(self) -> str | None:
@@ -100,11 +100,12 @@ class OutputAccumulator:
         return _OutputSnapshot(content=truncation.content, truncation=truncation, full_output_path=self._temp_file_path)
 
     async def close_temp_file(self) -> None:
+        """Drains before returning, matching pi's awaited `finish` event."""
         if self._temp_file is None:
             return
         temp_file = self._temp_file
         self._temp_file = None
-        temp_file.close()
+        await temp_file.close()
 
     def get_last_line_bytes(self) -> int:
         return self._current_line_bytes
@@ -165,7 +166,9 @@ class OutputAccumulator:
         if self._temp_file_path is not None:
             return
         self._temp_file_path = _default_temp_file_path(self._temp_file_prefix)
-        self._temp_file = open(self._temp_file_path, "wb")  # noqa: SIM115
+        # `TempFileWriter.write` is a channel send, so this stays callable from
+        # the sync streaming path — pi's `createWriteStream` behaves the same.
+        self._temp_file = TempFileWriter(self._temp_file_path)
         for chunk in self._raw_chunks:
             self._temp_file.write(chunk)
         self._raw_chunks = []

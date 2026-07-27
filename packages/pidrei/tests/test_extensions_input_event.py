@@ -67,7 +67,7 @@ async def create_runner(fx, *extensions: str) -> ExtensionRunner:
     result = await discover_and_load_extensions([], fx.root, fx.root)
     assert result.errors == []
     session_manager = SessionManager.in_memory()
-    model_registry = await create_in_memory_model_registry(AuthStorage.create(os.path.join(fx.root, "auth.json")))
+    model_registry = await create_in_memory_model_registry(await AuthStorage.create(os.path.join(fx.root, "auth.json")))
     return ExtensionRunner(result.extensions, result.runtime, fx.root, session_manager, model_registry)
 
 

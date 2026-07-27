@@ -102,6 +102,7 @@ class TestComparison:
 
 @pytest.mark.tonio
 class TestApi:
+    @pytest.mark.tonio
     async def test_returns_only_newer_versions(self, stub_http):
         stub_http({"tag_name": "1.2.3", "html_url": "https://example.test/r/1.2.3"})
         assert await check_for_new_version("1.2.3") is None
@@ -112,6 +113,7 @@ class TestApi:
             "url": "https://example.test/r/1.2.3",
         }
 
+    @pytest.mark.tonio
     async def test_uses_the_github_releases_api_with_a_pidrei_user_agent(self, stub_http):
         client = stub_http({"tag_name": "1.2.4"})
 
@@ -123,6 +125,7 @@ class TestApi:
         assert headers["accept"] == "application/vnd.github+json"
         assert headers["x-github-api-version"] == "2022-11-28"
 
+    @pytest.mark.tonio
     async def test_returns_release_notes_and_url(self, stub_http):
         stub_http(
             {
@@ -137,23 +140,28 @@ class TestApi:
             "note": "**Read this**",
         }
 
+    @pytest.mark.tonio
     async def test_tolerates_a_v_prefixed_tag(self, stub_http):
         stub_http({"tag_name": "v1.2.4"})
         assert await get_latest_version("1.2.3") == "1.2.4"
 
+    @pytest.mark.tonio
     async def test_falls_back_to_the_releases_page_without_an_html_url(self, stub_http):
         stub_http({"tag_name": "1.2.4"})
         release = await get_latest_release("1.2.3")
         assert release == {"version": "1.2.4", "url": "https://github.com/gi0baro/pidrei/releases"}
 
+    @pytest.mark.tonio
     async def test_returns_none_without_a_tag(self, stub_http):
         stub_http({"html_url": "https://example.test/r"})
         assert await get_latest_release("1.2.3") is None
 
+    @pytest.mark.tonio
     async def test_returns_none_on_an_error_response(self, stub_http):
         stub_http({"message": "Not Found"}, status_code=404)
         assert await get_latest_release("1.2.3") is None
 
+    @pytest.mark.tonio
     async def test_skips_automatic_api_calls_when_version_checks_are_disabled(self, stub_http):
         client = stub_http({"tag_name": "1.2.4"})
         os.environ["PIDREI_SKIP_VERSION_CHECK"] = "1"
@@ -161,6 +169,7 @@ class TestApi:
         assert await check_for_new_version("1.2.3") is None
         assert client.calls == []
 
+    @pytest.mark.tonio
     async def test_allows_direct_api_calls_when_automatic_checks_are_disabled(self, stub_http):
         client = stub_http({"tag_name": "1.2.4"})
         os.environ["PIDREI_SKIP_VERSION_CHECK"] = "1"
@@ -168,6 +177,7 @@ class TestApi:
         assert await get_latest_version("1.2.3") == "1.2.4"
         assert len(client.calls) == 1
 
+    @pytest.mark.tonio
     async def test_makes_no_request_when_offline(self, stub_http):
         client = stub_http({"tag_name": "1.2.4"})
         os.environ["PIDREI_OFFLINE"] = "1"

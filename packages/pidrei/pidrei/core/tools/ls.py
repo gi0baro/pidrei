@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -82,7 +83,7 @@ class LocalLsOperations:
         return path_exists(absolute_path)
 
     async def is_directory(self, absolute_path: str) -> bool:
-        return os.path.isdir(absolute_path)
+        return await fs.Path(absolute_path).is_dir()
 
     async def readdir(self, absolute_path: str) -> list[str]:
         return await tonio.spawn_blocking(os.listdir, absolute_path)
@@ -134,7 +135,7 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
             full_path = os.path.join(dir_path, entry)
             try:
                 suffix = "/" if await _maybe_await(ops.is_directory(full_path)) else ""
-                if not os.path.exists(full_path):
+                if not await fs.Path(full_path).exists():
                     continue  # Skip entries we cannot stat (broken symlinks).
             except Exception:  # noqa: S112
                 continue  # Skip entries we cannot stat.

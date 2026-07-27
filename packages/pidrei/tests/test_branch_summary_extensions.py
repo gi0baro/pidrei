@@ -60,10 +60,10 @@ async def test_persists_extension_provided_summary_usage_in_session_totals(temp_
     )
     await session.bind_extensions(ExtensionBindings())
 
-    target_id = session.session_manager.append_message(user_msg("first branch"))
-    session.session_manager.append_message(assistant_msg("first reply"))
-    session.session_manager.append_message(user_msg("abandoned branch work"))
-    session.session_manager.append_message(assistant_msg("abandoned reply"))
+    target_id = await session.session_manager.append_message(user_msg("first branch"))
+    await session.session_manager.append_message(assistant_msg("first reply"))
+    await session.session_manager.append_message(user_msg("abandoned branch work"))
+    await session.session_manager.append_message(assistant_msg("abandoned reply"))
 
     result = await session.navigate_tree(target_id, {"summarize": True})
     summary_entry = result.summary_entry

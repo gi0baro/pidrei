@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent test/user-message.test.ts."""
 
+import pytest
+
 from pidrei.modes.interactive.components import UserMessageComponent
 from pidrei.modes.interactive.theme import init_theme
 
@@ -11,8 +13,9 @@ BG_RESET = "\x1b[49m"
 
 
 class TestUserMessageComponent:
-    def test_keeps_user_message_height_stable_while_moving_closing_osc_markers_off_line_end(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_keeps_user_message_height_stable_while_moving_closing_osc_markers_off_line_end(self):
+        await init_theme("dark")
 
         component = UserMessageComponent("hello")
         lines = component.render(20)

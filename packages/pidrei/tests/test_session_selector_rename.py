@@ -8,7 +8,7 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionInfo
 from pidrei.modes.interactive.components import SessionSelectorComponent
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei_tui import set_keybindings
 
 
@@ -44,7 +44,7 @@ def _make_loader(sessions):
 
 @pytest.fixture(autouse=True)
 def _setup():
-    init_theme("dark")
+    init_theme_sync("dark")
     # Ensure test isolation: keybindings are a global singleton
     set_keybindings(KeybindingsManager())
 
@@ -108,7 +108,7 @@ class TestSessionSelectorRename:
         )
         await flush_promises()
 
-        selector.get_session_list().handle_input(CTRL_R)
+        await selector.get_session_list().handle_input(CTRL_R)
         await flush_promises()
 
         # Rename mode layout
@@ -117,8 +117,8 @@ class TestSessionSelectorRename:
         assert "Resume Session" not in output
 
         # Type and submit
-        selector.handle_input("X")
-        selector.handle_input("\r")
+        await selector.handle_input("X")
+        await selector.handle_input("\r")
         await flush_promises()
 
         assert rename_calls == [(sessions[0].path, "XOld")]

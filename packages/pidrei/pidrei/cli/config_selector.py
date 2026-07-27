@@ -26,19 +26,23 @@ async def select_config(
     project_mode_available: bool = True,
 ) -> None:
     """Run the config TUI until the user closes it."""
-    init_theme(settings_manager.get_theme(), True)
+    await init_theme(settings_manager.get_theme(), True)
 
     ui = TUI(ProcessTerminal(), None, agent_dir)
     closed = tonio.Event()
 
+    # `TUI.start`/`stop` are async; these callbacks are sync (the component
+    # invokes them directly), so the stop is spawned. Pre-existing bug found
+    # while auditing the render path: both coroutines used to be dropped
+    # outright, so the config TUI never started and never restored the terminal.
     def finish() -> None:
         if not closed.is_set():
-            ui.stop()
+            tonio.spawn.without_tracking(ui.stop())
             stop_theme_watcher()
             closed.set()
 
     def exit_now() -> None:
-        ui.stop()
+        tonio.spawn.without_tracking(ui.stop())
         stop_theme_watcher()
         sys.exit(0)
 
@@ -57,5 +61,5 @@ async def select_config(
 
     ui.add_child(selector)
     ui.set_focus(selector.get_resource_list())
-    ui.start()
+    await ui.start()
     await closed.wait()

@@ -3,6 +3,8 @@
 import re
 import time
 
+import pytest
+
 from pidrei.modes.interactive.components import AssistantMessageComponent, UserMessageComponent
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
@@ -27,8 +29,9 @@ def create_assistant_message(content, stop_reason: str = "stop") -> AssistantMes
 
 
 class TestAssistantMessageComponent:
-    def test_adds_osc_133_zone_markers_to_assistant_messages_without_tool_calls(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_adds_osc_133_zone_markers_to_assistant_messages_without_tool_calls(self):
+        await init_theme("dark")
 
         component = AssistantMessageComponent(create_assistant_message([TextContent(text="hello")]))
         lines = component.render(40)
@@ -37,8 +40,9 @@ class TestAssistantMessageComponent:
         assert OSC133_ZONE_START in lines[0]
         assert lines[-1].startswith(OSC133_ZONE_END + OSC133_ZONE_FINAL)
 
-    def test_does_not_add_osc_133_zone_markers_when_assistant_message_contains_tool_calls(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_does_not_add_osc_133_zone_markers_when_assistant_message_contains_tool_calls(self):
+        await init_theme("dark")
 
         component = AssistantMessageComponent(
             create_assistant_message(
@@ -54,8 +58,9 @@ class TestAssistantMessageComponent:
         assert OSC133_ZONE_END not in rendered
         assert OSC133_ZONE_FINAL not in rendered
 
-    def test_renders_length_stops_as_visible_errors(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_renders_length_stops_as_visible_errors(self):
+        await init_theme("dark")
 
         component = AssistantMessageComponent(
             create_assistant_message([ThinkingContent(thinking="private reasoning")], stop_reason="length"),
@@ -67,8 +72,9 @@ class TestAssistantMessageComponent:
         assert "maximum output token limit" in rendered
         assert "response may be incomplete" in rendered
 
-    def test_coalesces_adjacent_thinking_blocks_into_one_hidden_thinking_label(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_coalesces_adjacent_thinking_blocks_into_one_hidden_thinking_label(self):
+        await init_theme("dark")
 
         component = AssistantMessageComponent(
             create_assistant_message(
@@ -86,8 +92,9 @@ class TestAssistantMessageComponent:
         assert len(re.findall(r"Thinking\.\.\.", rendered)) == 1
         assert "answer" in rendered
 
-    def test_uses_configured_output_padding_for_text_and_thinking(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_uses_configured_output_padding_for_text_and_thinking(self):
+        await init_theme("dark")
 
         component = AssistantMessageComponent(
             create_assistant_message(
@@ -111,8 +118,9 @@ class TestAssistantMessageComponent:
         assert any(line.startswith("hello") for line in updated_lines)
         assert any(line.startswith("reasoning") for line in updated_lines)
 
-    def test_uses_configured_output_padding_for_user_messages(self):
-        init_theme("dark")
+    @pytest.mark.tonio
+    async def test_uses_configured_output_padding_for_user_messages(self):
+        await init_theme("dark")
 
         padded_component = UserMessageComponent("hello", None, 1)
         padded_lines = [strip_ansi(line) for line in padded_component.render(40)]

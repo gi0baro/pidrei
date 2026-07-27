@@ -11,13 +11,12 @@ callbacks stay synchronous and write ordering is preserved.
 """
 
 import json
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
-from tonio.colored import net
+from tonio.colored import fs, net
 from tonio.colored.sync.channel import unbounded
 
 from ..config import get_socket_path
@@ -168,13 +167,13 @@ async def start_ipc_server(handler: IpcRequestHandler) -> IpcServer:
 
 
 async def _remove_stale_socket_if_needed(socket_path: str) -> None:
-    if not os.path.exists(socket_path):
+    if not await fs.Path(socket_path).exists():
         return
 
     if await _is_socket_live(socket_path):
         raise Exception(f"server is already running: {socket_path}")
 
-    os.unlink(socket_path)
+    await fs.Path(socket_path).unlink()
 
 
 async def _is_socket_live(socket_path: str) -> bool:

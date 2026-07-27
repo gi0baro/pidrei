@@ -49,8 +49,9 @@ async def _wait_for(predicate, timeout: float = 5.0) -> None:
         waited += 0.01
 
 
-def _delayed_stream_fn(delay_s: float):
-    def stream_fn(_model, _context, _options=None):
+@pytest.mark.tonio
+async def _delayed_stream_fn(delay_s: float):
+    async def stream_fn(_model, _context, _options=None):
         stream = AssistantMessageEventStream()
         stream.push(StartEvent(partial=create_assistant_message("")))
 
@@ -194,7 +195,7 @@ async def _create_runtime_host(
         return CreateAgentSessionRuntimeResult(session=session, services=services)
 
     initial_session_manager = (
-        SessionManager.create(temp_dir, session_dir) if persisted else SessionManager.in_memory(temp_dir)
+        await SessionManager.create(temp_dir, session_dir) if persisted else SessionManager.in_memory(temp_dir)
     )
     result = await create_runtime(
         cwd=temp_dir, agent_dir=temp_dir, session_manager=initial_session_manager, session_start_event=None
@@ -212,7 +213,7 @@ class TestRpcPromptResponseSemantics:
     async def test_emits_one_failure_response_when_prompt_preflight_rejects(self, tmp_dir):
         harness = _RpcHarness()
         host = await _create_runtime_host(
-            tmp_dir, stream_fn=_delayed_stream_fn(0), with_auth=False, model=_fake_model()
+            tmp_dir, stream_fn=await _delayed_stream_fn(0), with_auth=False, model=_fake_model()
         )
         await harness.start(host)
         try:
@@ -231,7 +232,7 @@ class TestRpcPromptResponseSemantics:
     @pytest.mark.tonio
     async def test_emits_one_success_response_when_prompt_preflight_succeeds(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             harness.send({"id": "b2", "type": "prompt", "message": "Hello"})
@@ -246,7 +247,7 @@ class TestRpcPromptResponseSemantics:
     @pytest.mark.tonio
     async def test_emits_one_success_response_when_prompt_is_queued_during_streaming(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0.1))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0.1))
         await harness.start(host)
         try:
             harness.send({"id": "b3-start", "type": "prompt", "message": "Start"})
@@ -269,7 +270,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_state(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             response = await harness.request({"id": "r1", "type": "get_state"})
@@ -284,7 +285,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_save_messages_to_session_file(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just the word 'hello'"})
@@ -339,7 +340,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_execute_bash_command(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             response = await harness.request({"id": "b1", "type": "bash", "command": "echo hello"})
@@ -353,7 +354,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_add_bash_output_to_context(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Say hi"})
@@ -376,7 +377,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_set_and_get_thinking_level(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             response = await harness.request({"id": "t1", "type": "set_thinking_level", "level": "high"})
@@ -390,7 +391,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_cycle_thinking_level(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             initial_state = (await harness.request({"id": "t1", "type": "get_state"}))["data"]
@@ -407,7 +408,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_available_thinking_levels(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             levels = (await harness.request({"id": "t1", "type": "get_available_thinking_levels"}))["data"]["levels"]
@@ -428,7 +429,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_available_models(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0))
         await harness.start(host)
         try:
             models = (await harness.request({"id": "m1", "type": "get_available_models"}))["data"]["models"]
@@ -445,7 +446,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_session_stats(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Hello"})
@@ -462,7 +463,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_create_new_session(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Hello"})
@@ -482,7 +483,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_export_html_exports_the_session(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "hello"})
@@ -500,7 +501,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_last_assistant_text(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             text = (await harness.request({"id": "l1", "type": "get_last_assistant_text"}))["data"]["text"]
@@ -517,7 +518,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_session_entries_with_since_cursor(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just 'ok'"})
@@ -544,7 +545,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_session_tree(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just 'ok'"})
@@ -596,7 +597,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_set_and_get_session_name(self, tmp_dir):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_dir, stream_fn=_delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_dir, stream_fn=await _delayed_stream_fn(0), persisted=True)
         await harness.start(host)
         try:
             state = (await harness.request({"id": "s1", "type": "get_state"}))["data"]

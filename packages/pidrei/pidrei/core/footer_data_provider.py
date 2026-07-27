@@ -13,6 +13,8 @@ import subprocess
 import sys
 import threading
 
+import tonio.colored as tonio
+
 from ..utils import fs_watch
 from ..utils.fs_watch import close_watcher, unwatch_file, watch_file, watch_with_error_handler
 
@@ -61,6 +63,11 @@ def _find_git_paths(cwd: str) -> dict | None:
         directory = parent
 
 
+# Sync by design, but only safe because of priming: `prime()` resolves the
+# branch through `spawn_blocking` before the first render, so the render
+# path reads the cache. The other caller is the daemon refresh thread,
+# which is not a runtime worker. An *unprimed* provider would still hit
+# the lazy fallback in `get_git_branch()` on a worker — prime it.
 def _resolve_branch_with_git_sync(repo_dir: str) -> str | None:
     """Ask git for the current branch. None on detached HEAD or git failure."""
     try:
@@ -127,7 +134,36 @@ class FooterDataProvider:
         self._refresh_in_flight = False
         self._refresh_pending = False
         self._disposed = False
-        self._git_paths = _find_git_paths(cwd)
+        # No I/O here: `_find_git_paths` reads git metadata and the watcher
+        # touches the filesystem, and a constructor cannot await. `prime()`
+        # does both from an async caller; until then `get_git_branch()` falls
+        # back to resolving lazily, which is the pre-prime behaviour.
+        self._git_paths: dict | None = None
+        self._primed = False
+
+    async def prime(self) -> None:
+        """Resolve git paths and the branch off the runtime, then start the
+        watcher. Call once from an async caller before the first render:
+        afterwards `get_git_branch()` is a pure cache read, and the daemon
+        refresh thread keeps it current."""
+        if self._primed:
+            return
+        self._primed = True
+        self._git_paths = await tonio.spawn_blocking(_find_git_paths, self._cwd)
+        branch = await tonio.spawn_blocking(self._resolve_git_branch_sync)
+        with self._lock:
+            self._cached_branch = branch
+        self._setup_git_watcher()
+
+    def prime_sync(self) -> None:
+        """Priming for callers with no runtime running — no worker exists to
+        block, the same boundary condition that exempts import-time code."""
+        if self._primed:
+            return
+        self._primed = True
+        self._git_paths = _find_git_paths(self._cwd)
+        with self._lock:
+            self._cached_branch = self._resolve_git_branch_sync()
         self._setup_git_watcher()
 
     def get_git_branch(self) -> str | None:

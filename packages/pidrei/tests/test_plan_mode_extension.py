@@ -33,6 +33,11 @@ class _Setup:
             self.active_tools = list(tool_names)
             self.set_active_tools_calls.append(list(tool_names))
 
+        async def append_entry(custom_type, data=None):
+            # Async to match the real extension API: entries are persisted
+            # through SessionManager.append_custom_entry, which is awaited.
+            self.entries.append((custom_type, data))
+
         api = SimpleNamespace(
             register_flag=lambda *_args, **_kwargs: None,
             register_command=lambda name, *, handler, **_kwargs: self._commands.__setitem__(name, handler),
@@ -43,7 +48,7 @@ class _Setup:
             set_active_tools=set_active_tools,
             send_message=lambda message, options=None: self.messages.append((message, options)),
             send_user_message=lambda content, options=None: self.user_messages.append((content, options)),
-            append_entry=lambda custom_type, data=None: self.entries.append((custom_type, data)),
+            append_entry=append_entry,
         )
         load_example("plan_mode").extension(api)
 

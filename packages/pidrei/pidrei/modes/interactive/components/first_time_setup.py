@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/first-time-setup.ts."""
 
+from collections.abc import Awaitable
+
 from pidrei_tui import Container, Spacer, Text, get_keybindings
 
 from ....config import APP_NAME
@@ -97,22 +99,24 @@ class FirstTimeSetupComponent(Container):
             label = theme.fg("accent", raw_label) if is_selected else theme.fg("text", raw_label)
             self.add_child(Text(f"{prefix}{label}", 1, 0))
 
-    def _move_selection(self, delta: int) -> None:
+    async def _move_selection(self, delta: int) -> None:
         if self._step == "theme":
             next_index = max(0, min(len(THEME_OPTIONS) - 1, self._theme_index + delta))
             if next_index != self._theme_index:
                 self._theme_index = next_index
-                self._options["onThemePreview"](THEME_OPTIONS[self._theme_index]["value"])
+                result = self._options["onThemePreview"](THEME_OPTIONS[self._theme_index]["value"])
+                if isinstance(result, Awaitable):
+                    await result
         else:
             self._analytics_index = max(0, min(len(ANALYTICS_OPTIONS) - 1, self._analytics_index + delta))
         self._update()
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.up") or key_data == "k":
-            self._move_selection(-1)
+            await self._move_selection(-1)
         elif kb.matches(key_data, "tui.select.down") or key_data == "j":
-            self._move_selection(1)
+            await self._move_selection(1)
         elif kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
             if self._step == "theme":
                 self._step = "analytics"

@@ -90,7 +90,7 @@ def push_error(stream: AssistantMessageEventStream, message: AssistantMessage, r
     stream.push(ErrorEvent(reason=reason, error=message))
 
 
-def abortable_stream_fn(_model, _context, options=None) -> AssistantMessageEventStream:
+async def abortable_stream_fn(_model, _context, options=None) -> AssistantMessageEventStream:
     """Mock stream that responds only to abort (pi's MockAssistantStream + checkAbort)."""
     cancel = getattr(options, "cancel", None)
     stream = AssistantMessageEventStream()
@@ -130,11 +130,13 @@ async def create_agent_session(
     )
 
     if session_manager is None:
-        session_manager = SessionManager.in_memory() if in_memory_session else SessionManager.create(temp_dir, temp_dir)
-    settings_manager = SettingsManager.create(temp_dir, temp_dir)
+        session_manager = (
+            SessionManager.in_memory() if in_memory_session else await SessionManager.create(temp_dir, temp_dir)
+        )
+    settings_manager = await SettingsManager.create(temp_dir, temp_dir)
     if settings_overrides:
         settings_manager.apply_overrides(settings_overrides)
-    auth_storage = AuthStorage.create(os.path.join(temp_dir, "auth.json"))
+    auth_storage = await AuthStorage.create(os.path.join(temp_dir, "auth.json"))
 
     from pidrei_ai.auth.types import ApiKeyCredential
 

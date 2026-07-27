@@ -2,7 +2,10 @@
 
 import os
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass
+
+import tonio.colored as tonio
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.frontmatter import parse_frontmatter
@@ -175,8 +178,32 @@ def load_prompt_templates(
     agent_dir: str,
     prompt_paths: list[str],
     include_defaults: bool,
+) -> Awaitable[list[PromptTemplate]]:
+    """Load all prompt templates from the global/project prompt dirs and explicit paths.
+
+    A directory scan plus one read per template is a single blocking unit, so
+    it goes to the pool whole rather than as a dozen separate `fs` hops. The
+    helpers below stay sync because they only ever run there.
+
+    Sync, returning the awaitable rather than `async def ...: return await ...`:
+    the caller awaits it either way, and the extra coroutine frame buys nothing.
+    """
+    return tonio.spawn_blocking(
+        _load_prompt_templates_sync,
+        cwd=cwd,
+        agent_dir=agent_dir,
+        prompt_paths=prompt_paths,
+        include_defaults=include_defaults,
+    )
+
+
+def _load_prompt_templates_sync(
+    *,
+    cwd: str,
+    agent_dir: str,
+    prompt_paths: list[str],
+    include_defaults: bool,
 ) -> list[PromptTemplate]:
-    """Load all prompt templates from the global/project prompt dirs and explicit paths."""
     resolved_cwd = resolve_path(cwd)
     resolved_agent_dir = resolve_path(agent_dir)
 

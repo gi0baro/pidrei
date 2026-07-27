@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
@@ -701,7 +702,7 @@ class DefaultPackageManager:
 
     async def _install_git(self, source: GitSource, scope: str) -> None:
         target_dir = self._get_git_install_path(source, scope)
-        if os.path.exists(target_dir):
+        if await fs.Path(target_dir).exists():
             # Reconcile an existing checkout rather than re-cloning.
             if source.ref:
                 await self._ensure_git_ref(target_dir, ["fetch", "origin", source.ref], "FETCH_HEAD")
@@ -712,8 +713,8 @@ class DefaultPackageManager:
 
         git_root = self._get_git_install_root(scope)
         if git_root:
-            self._ensure_git_ignore(git_root)
-        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+            await tonio.spawn_blocking(self._ensure_git_ignore, git_root)
+        await fs.Path(os.path.dirname(target_dir)).mkdir(parents=True, exist_ok=True)
 
         await self._run_command("git", ["clone", source.repo, target_dir])
         if source.ref:
@@ -721,7 +722,7 @@ class DefaultPackageManager:
 
     async def _update_git(self, source: GitSource, scope: str) -> None:
         target_dir = self._get_git_install_path(source, scope)
-        if not os.path.exists(target_dir):
+        if not await fs.Path(target_dir).exists():
             await self._install_git(source, scope)
             return
         if source.ref:
@@ -746,10 +747,10 @@ class DefaultPackageManager:
 
     async def _remove_git(self, source: GitSource, scope: str) -> None:
         target_dir = self._get_git_install_path(source, scope)
-        if not os.path.exists(target_dir):
+        if not await fs.Path(target_dir).exists():
             return
-        shutil.rmtree(target_dir, ignore_errors=True)
-        self._prune_empty_git_parents(target_dir, self._get_git_install_root(scope))
+        await tonio.spawn_blocking(shutil.rmtree, target_dir, ignore_errors=True)
+        await tonio.spawn_blocking(self._prune_empty_git_parents, target_dir, self._get_git_install_root(scope))
 
     @staticmethod
     def _prune_empty_git_parents(target_dir: str, install_root: str | None) -> None:
@@ -781,7 +782,7 @@ class DefaultPackageManager:
                 await self._install_git(parsed, scope)
                 return
             resolved = self._resolve_resource_path(parsed.path)
-            if not os.path.exists(resolved):
+            if not await fs.Path(resolved).exists():
                 raise Exception(f"Path does not exist: {resolved}")
 
         await self._with_progress("install", source, f"Installing {source}...", run)
@@ -854,7 +855,7 @@ class DefaultPackageManager:
             return []
 
         candidates: list[tuple[GitSource, str, str]] = []
-        for package in self.list_configured_packages():
+        for package in await tonio.spawn_blocking(self.list_configured_packages):
             if package.scope == "temporary":
                 continue
             parsed = self.parse_source(package.source)
@@ -862,7 +863,7 @@ class DefaultPackageManager:
             if not isinstance(parsed, GitSource) or parsed.pinned:
                 continue
             installed_path = self._get_git_install_path(parsed, package.scope)
-            if not os.path.exists(installed_path):
+            if not await fs.Path(installed_path).exists():
                 continue
             candidates.append((parsed, package.scope, package.source))
 
@@ -888,7 +889,7 @@ class DefaultPackageManager:
         """Update configured git packages. Sources with a pinned ref are
         checkout targets, so they are re-reconciled rather than skipped."""
         targets: list[tuple[GitSource, str, str]] = []
-        for package in self.list_configured_packages():
+        for package in await tonio.spawn_blocking(self.list_configured_packages):
             if source is not None and self._source_match_key_for_input(
                 package.source
             ) != self._source_match_key_for_input(source):
@@ -1417,7 +1418,9 @@ class DefaultPackageManager:
 
             if isinstance(parsed, LocalSource):
                 base_dir = self._get_base_dir_for_scope(resolved_scope)
-                self._resolve_local_extension_source(parsed, accumulator, filter, metadata, base_dir)
+                await tonio.spawn_blocking(
+                    self._resolve_local_extension_source, parsed, accumulator, filter, metadata, base_dir
+                )
                 continue
 
             async def install_missing(parsed=parsed, resolved_source=resolved_source, scope=resolved_scope) -> bool:
@@ -1435,13 +1438,13 @@ class DefaultPackageManager:
                 return True
 
             installed_path = self._get_git_install_path(parsed, resolved_scope)
-            if not os.path.exists(installed_path):
+            if not await fs.Path(installed_path).exists():
                 if not await install_missing():
                     continue
             elif resolved_scope == "temporary" and not parsed.pinned and not is_offline_mode_enabled():
                 await self._refresh_temporary_git_source(parsed, resolved_source)
             metadata.base_dir = installed_path
-            self._collect_package_resources(installed_path, accumulator, filter, metadata)
+            await tonio.spawn_blocking(self._collect_package_resources, installed_path, accumulator, filter, metadata)
 
     async def resolve(self, on_missing=None) -> ResolvedPaths:
         accumulator = self._create_accumulator()
@@ -1462,14 +1465,16 @@ class DefaultPackageManager:
             target = accumulator[resource_type]
             global_entries = list(global_settings.get(resource_type) or [])
             project_entries = list(project_settings.get(resource_type) or [])
-            self._resolve_local_entries(
+            await tonio.spawn_blocking(
+                self._resolve_local_entries,
                 project_entries,
                 resource_type,
                 target,
                 PathMetadata(source="local", scope="project", origin="top-level"),
                 project_base_dir,
             )
-            self._resolve_local_entries(
+            await tonio.spawn_blocking(
+                self._resolve_local_entries,
                 global_entries,
                 resource_type,
                 target,
@@ -1477,11 +1482,18 @@ class DefaultPackageManager:
                 global_base_dir,
             )
 
-        self._add_auto_discovered_resources(
-            accumulator, global_settings, project_settings, global_base_dir, project_base_dir
+        await tonio.spawn_blocking(
+            self._add_auto_discovered_resources,
+            accumulator,
+            global_settings,
+            project_settings,
+            global_base_dir,
+            project_base_dir,
         )
 
-        return self._to_resolved_paths(accumulator)
+        # Dedupes by canonical path, so it is a `resolve()` per entry — one
+        # blocking unit for the pool rather than a syscall storm on a worker.
+        return await tonio.spawn_blocking(self._to_resolved_paths, accumulator)
 
     async def resolve_extension_sources(
         self, sources: list[str], *, local: bool = False, temporary: bool = False
@@ -1492,4 +1504,4 @@ class DefaultPackageManager:
         accumulator = self._create_accumulator()
         scope = "temporary" if temporary else ("project" if local else "user")
         await self._resolve_package_sources([(source, scope) for source in sources], accumulator)
-        return self._to_resolved_paths(accumulator)
+        return await tonio.spawn_blocking(self._to_resolved_paths, accumulator)

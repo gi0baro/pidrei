@@ -14,17 +14,32 @@ from pidrei.modes.interactive.theme import (
 
 
 @pytest.fixture
-def agent_dir(tmp_path, monkeypatch, request):
-    agent_dir = tmp_path / "agent"
-    monkeypatch.setenv(ENV_AGENT_DIR, str(agent_dir))
+def agent_dir(tmp_dir, request):
+    """Plain-return, no yield: the theme lookups are async now, so this test
+    runs under `@pytest.mark.tonio`, which cannot wrap yield fixtures. That
+    rules out `tmp_path`/`monkeypatch`, so the env var is restored by a
+    finalizer instead."""
+    agent_dir = tmp_dir / "agent"
     (agent_dir / "themes").mkdir(parents=True)
+
+    previous = os.environ.get(ENV_AGENT_DIR)
+    os.environ[ENV_AGENT_DIR] = str(agent_dir)
+
+    def restore() -> None:
+        if previous is None:
+            os.environ.pop(ENV_AGENT_DIR, None)
+        else:
+            os.environ[ENV_AGENT_DIR] = previous
+        set_registered_themes([])
+
     set_registered_themes([])
-    request.addfinalizer(lambda: set_registered_themes([]))
+    request.addfinalizer(restore)
     return agent_dir
 
 
 class TestThemePicker:
-    def test_uses_custom_theme_content_names_instead_of_file_names(self, agent_dir):
+    @pytest.mark.tonio
+    async def test_uses_custom_theme_content_names_instead_of_file_names(self, agent_dir):
         with open(os.path.join(get_themes_dir(), "dark.json"), encoding="utf-8") as f:
             dark_theme = json.load(f)
         custom_theme = {**dark_theme, "name": "bar"}
@@ -32,7 +47,10 @@ class TestThemePicker:
         theme_path = agent_dir / "themes" / "foo.json"
         theme_path.write_text(json.dumps(custom_theme, indent=2))
 
-        assert "bar" in get_available_themes()
-        assert "foo" not in get_available_themes()
-        assert {"name": "bar", "path": str(theme_path)} in get_available_themes_with_paths()
-        assert not any(theme["name"] == "foo" for theme in get_available_themes_with_paths())
+        names = await get_available_themes()
+        with_paths = await get_available_themes_with_paths()
+
+        assert "bar" in names
+        assert "foo" not in names
+        assert {"name": "bar", "path": str(theme_path)} in with_paths
+        assert not any(theme["name"] == "foo" for theme in with_paths)

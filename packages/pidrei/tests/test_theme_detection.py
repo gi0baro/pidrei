@@ -86,15 +86,16 @@ class TestDetectTerminalBackgroundTheme:
 
 
 class TestThemeColorMode:
-    def test_uses_terminal_capabilities(self):
+    @pytest.mark.tonio
+    async def test_uses_terminal_capabilities(self):
         set_capabilities({"images": None, "trueColor": False, "hyperlinks": False})
-        ansi256_theme = get_theme_by_name("dark")
+        ansi256_theme = await get_theme_by_name("dark")
         assert ansi256_theme is not None
         assert ansi256_theme.get_color_mode() == "256color"
         assert re.fullmatch(r"\x1b\[38;5;\d+m", ansi256_theme.get_fg_ansi("accent"))
 
         set_capabilities({"images": None, "trueColor": True, "hyperlinks": False})
-        truecolor_theme = get_theme_by_name("dark")
+        truecolor_theme = await get_theme_by_name("dark")
         assert truecolor_theme is not None
         assert truecolor_theme.get_color_mode() == "truecolor"
         assert re.fullmatch(r"\x1b\[38;2;\d+;\d+;\d+m", truecolor_theme.get_fg_ansi("accent"))

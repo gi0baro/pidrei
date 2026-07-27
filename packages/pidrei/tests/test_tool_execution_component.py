@@ -12,7 +12,7 @@ from pidrei.core.tools.bash import BashExecResult, create_bash_tool_definition
 from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.components import ToolExecutionComponent
-from pidrei.modes.interactive.theme import init_theme, theme
+from pidrei.modes.interactive.theme import init_theme_sync, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import Text
 
@@ -36,7 +36,7 @@ def create_fake_tui():
 
 @pytest.fixture(autouse=True)
 def _theme():
-    init_theme("dark")
+    init_theme_sync("dark")
 
 
 CWD = os.getcwd()

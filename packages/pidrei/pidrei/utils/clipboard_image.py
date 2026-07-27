@@ -13,6 +13,8 @@ import sys
 import tempfile
 import uuid
 
+import tonio.colored as tonio
+
 from .image_process import convert_image_bytes_to_png
 
 
@@ -61,6 +63,8 @@ def _is_supported_image_mime_type(mime_type: str) -> bool:
     return _base_mime_type(mime_type) in SUPPORTED_IMAGE_MIME_TYPES
 
 
+# Sync by design: reached only from `_read_clipboard_image_sync`, which the
+# async entry point hands to `spawn_blocking`.
 def _run_command(command: list, *, timeout_s: float = _DEFAULT_READ_TIMEOUT_S, env=None) -> dict:
     try:
         result = subprocess.run(  # noqa: S603
@@ -198,6 +202,14 @@ def _read_clipboard_image_via_pngpaste() -> dict | None:
 
 
 async def read_clipboard_image(options: dict | None = None) -> dict | None:
+    """Probing the clipboard is one blocking unit — a `/proc` read plus a
+    platform tool — so it goes to the pool whole. Replaces an earlier partial
+    fix that offloaded only `_is_wsl` and left its subprocess siblings inline.
+    """
+    return await tonio.spawn_blocking(_read_clipboard_image_sync, options)
+
+
+def _read_clipboard_image_sync(options: dict | None = None) -> dict | None:
     options = options or {}
     env = options.get("env") if options.get("env") is not None else os.environ
     platform = options.get("platform") if options.get("platform") is not None else sys.platform

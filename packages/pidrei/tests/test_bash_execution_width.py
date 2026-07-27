@@ -20,7 +20,7 @@ def create_tui_stub():
 
 @pytest.mark.tonio
 async def test_collapsed_preview_lines_respect_render_time_width_not_construction_time_width():
-    init_theme(None, False)
+    await init_theme(None, False)
     narrow_width = 80
 
     component = BashExecutionComponent("pwd", create_tui_stub())
@@ -43,7 +43,7 @@ async def test_collapsed_preview_lines_respect_render_time_width_not_constructio
 
 @pytest.mark.tonio
 async def test_re_computes_lines_when_width_changes_between_renders():
-    init_theme(None, False)
+    await init_theme(None, False)
     component = BashExecutionComponent("echo hello", create_tui_stub())
 
     long_line = "abcdefghij" * 20  # 200 chars

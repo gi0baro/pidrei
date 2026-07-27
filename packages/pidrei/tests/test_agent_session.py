@@ -563,8 +563,8 @@ class TestGetSessionStats:
     async def test_exposes_current_context_usage_alongside_token_totals(self):
         session, session_manager = await _create_stats_session()
         try:
-            session_manager.append_message(UserMessage(content="hello", timestamp=1))
-            session_manager.append_message(_stats_assistant("hi", 200, 2))
+            await session_manager.append_message(UserMessage(content="hello", timestamp=1))
+            await session_manager.append_message(_stats_assistant("hi", 200, 2))
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -579,12 +579,12 @@ class TestGetSessionStats:
     async def test_reports_unknown_context_usage_immediately_after_compaction(self):
         session, session_manager = await _create_stats_session()
         try:
-            session_manager.append_message(UserMessage(content="first", timestamp=1))
-            session_manager.append_message(_stats_assistant("response1", 180_000, 2))
-            kept_user_id = session_manager.append_message(UserMessage(content="second", timestamp=3))
-            session_manager.append_message(_stats_assistant("response2", 195_000, 4))
-            session_manager.append_compaction("summary", kept_user_id, 195_000)
-            session_manager.append_message(UserMessage(content="third", timestamp=5))
+            await session_manager.append_message(UserMessage(content="first", timestamp=1))
+            await session_manager.append_message(_stats_assistant("response1", 180_000, 2))
+            kept_user_id = await session_manager.append_message(UserMessage(content="second", timestamp=3))
+            await session_manager.append_message(_stats_assistant("response2", 195_000, 4))
+            await session_manager.append_compaction("summary", kept_user_id, 195_000)
+            await session_manager.append_message(UserMessage(content="third", timestamp=5))
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -600,13 +600,13 @@ class TestGetSessionStats:
     async def test_uses_post_compaction_usage_instead_of_stale_kept_usage(self):
         session, session_manager = await _create_stats_session()
         try:
-            session_manager.append_message(UserMessage(content="first", timestamp=1))
-            session_manager.append_message(_stats_assistant("response1", 180_000, 2))
-            kept_user_id = session_manager.append_message(UserMessage(content="second", timestamp=3))
-            session_manager.append_message(_stats_assistant("response2", 195_000, 4))
-            session_manager.append_compaction("summary", kept_user_id, 195_000)
-            session_manager.append_message(UserMessage(content="third", timestamp=5))
-            session_manager.append_message(_stats_assistant("response3", 25_000, 6))
+            await session_manager.append_message(UserMessage(content="first", timestamp=1))
+            await session_manager.append_message(_stats_assistant("response1", 180_000, 2))
+            kept_user_id = await session_manager.append_message(UserMessage(content="second", timestamp=3))
+            await session_manager.append_message(_stats_assistant("response2", 195_000, 4))
+            await session_manager.append_compaction("summary", kept_user_id, 195_000)
+            await session_manager.append_message(UserMessage(content="third", timestamp=5))
+            await session_manager.append_message(_stats_assistant("response3", 25_000, 6))
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -621,7 +621,7 @@ class TestGetSessionStats:
     async def test_includes_branch_summary_usage_in_session_totals(self):
         session, session_manager = await _create_stats_session()
         try:
-            session_manager.branch_with_summary(None, "summary", None, False, _rich_usage())
+            await session_manager.branch_with_summary(None, "summary", None, False, _rich_usage())
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -640,8 +640,8 @@ class TestGetSessionStats:
     async def test_includes_compaction_usage_in_session_totals(self):
         session, session_manager = await _create_stats_session()
         try:
-            first_kept_entry_id = session_manager.append_message(UserMessage(content="hello", timestamp=1))
-            session_manager.append_compaction("summary", first_kept_entry_id, 100, None, False, _rich_usage())
+            first_kept_entry_id = await session_manager.append_message(UserMessage(content="hello", timestamp=1))
+            await session_manager.append_compaction("summary", first_kept_entry_id, 100, None, False, _rich_usage())
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -654,7 +654,7 @@ class TestGetSessionStats:
     async def test_includes_tool_result_usage_in_session_totals(self):
         session, session_manager = await _create_stats_session()
         try:
-            session_manager.append_message(_stats_tool_result(_rich_usage()))
+            await session_manager.append_message(_stats_tool_result(_rich_usage()))
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -663,19 +663,20 @@ class TestGetSessionStats:
         finally:
             session.dispose()
 
-    def test_groups_tool_and_summary_usage_separately_from_model_usage(self):
+    @pytest.mark.tonio
+    async def test_groups_tool_and_summary_usage_separately_from_model_usage(self):
         from dataclasses import replace
 
         session_manager = SessionManager.in_memory()
-        root_id = session_manager.append_message(UserMessage(content="hello", timestamp=1))
+        root_id = await session_manager.append_message(UserMessage(content="hello", timestamp=1))
         assistant = _stats_assistant("response", 100, 2)
         assistant.usage = replace(_stats_usage(100), cost=UsageCost(total=0.5))
-        session_manager.append_message(assistant)
-        session_manager.append_message(_stats_tool_result(replace(_stats_usage(100), cost=UsageCost(total=1))))
-        session_manager.append_compaction(
+        await session_manager.append_message(assistant)
+        await session_manager.append_message(_stats_tool_result(replace(_stats_usage(100), cost=UsageCost(total=1))))
+        await session_manager.append_compaction(
             "summary", root_id, 100, None, False, replace(_stats_usage(100), cost=UsageCost(total=2))
         )
-        session_manager.branch_with_summary(
+        await session_manager.branch_with_summary(
             None, "branch summary", None, False, replace(_stats_usage(100), cost=UsageCost(total=3))
         )
 
@@ -689,15 +690,15 @@ class TestGetSessionStats:
     async def test_ignores_zero_usage_messages_when_checking_post_compaction_usage(self):
         session, session_manager = await _create_stats_session()
         try:
-            session_manager.append_message(UserMessage(content="first", timestamp=1))
-            session_manager.append_message(_stats_assistant("response1", 180_000, 2))
-            kept_user_id = session_manager.append_message(UserMessage(content="second", timestamp=3))
-            session_manager.append_message(_stats_assistant("response2", 195_000, 4))
-            session_manager.append_compaction("summary", kept_user_id, 195_000)
-            session_manager.append_message(UserMessage(content="third", timestamp=5))
-            session_manager.append_message(_stats_assistant("response3", 25_000, 6))
-            session_manager.append_message(UserMessage(content="continue", timestamp=7))
-            session_manager.append_message(_stats_assistant("partial", 0, 8))
+            await session_manager.append_message(UserMessage(content="first", timestamp=1))
+            await session_manager.append_message(_stats_assistant("response1", 180_000, 2))
+            kept_user_id = await session_manager.append_message(UserMessage(content="second", timestamp=3))
+            await session_manager.append_message(_stats_assistant("response2", 195_000, 4))
+            await session_manager.append_compaction("summary", kept_user_id, 195_000)
+            await session_manager.append_message(UserMessage(content="third", timestamp=5))
+            await session_manager.append_message(_stats_assistant("response3", 25_000, 6))
+            await session_manager.append_message(UserMessage(content="continue", timestamp=7))
+            await session_manager.append_message(_stats_assistant("partial", 0, 8))
             _sync_agent_messages(session, session_manager)
 
             stats = session.get_session_stats()
@@ -722,10 +723,10 @@ class TestAutoCompactionQueue:
         settings_manager.apply_overrides({"compaction": {"keepRecentTokens": 1}})
         model = session.model
         now = now_ms()
-        session_manager.append_message(
+        await session_manager.append_message(
             UserMessage(content=[TextContent(text="message to compact")], timestamp=now - 1000)
         )
-        session_manager.append_message(
+        await session_manager.append_message(
             AssistantMessage(
                 content=[TextContent(text="assistant response to compact")],
                 api=model.api,
@@ -838,17 +839,17 @@ class TestAutoCompactionQueue:
             timestamp=stale_assistant_timestamp,
         )
 
-        session_manager.append_message(
+        await session_manager.append_message(
             UserMessage(content=[TextContent(text="before compaction")], timestamp=stale_assistant_timestamp - 1000)
         )
-        session_manager.append_message(stale_assistant)
+        await session_manager.append_message(stale_assistant)
 
         first_kept_entry_id = session_manager.get_entries()[0]["id"]
-        session_manager.append_compaction(
+        await session_manager.append_compaction(
             "summary", first_kept_entry_id, stale_assistant.usage.total_tokens, None, False
         )
 
-        session_manager.append_message(
+        await session_manager.append_message(
             UserMessage(content=[TextContent(text="session recovery payload")], timestamp=now_ms())
         )
 
@@ -964,12 +965,12 @@ class TestAutoCompactionQueue:
             timestamp=pre_compaction_timestamp,
         )
 
-        session_manager.append_message(
+        await session_manager.append_message(
             UserMessage(content=[TextContent(text="before compaction")], timestamp=pre_compaction_timestamp - 1000)
         )
-        session_manager.append_message(kept_assistant)
+        await session_manager.append_message(kept_assistant)
         first_kept_entry_id = session_manager.get_entries()[0]["id"]
-        session_manager.append_compaction(
+        await session_manager.append_compaction(
             "summary", first_kept_entry_id, kept_assistant.usage.total_tokens, None, False
         )
 

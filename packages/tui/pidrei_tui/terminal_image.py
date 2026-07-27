@@ -34,6 +34,9 @@ def set_cell_dimensions(dims: dict) -> None:
     _cell_dimensions = dims
 
 
+# Runs `tmux`, but only ever once: `get_capabilities()` caches, and
+# `startup_ui.create_startup_tui` primes that cache through `spawn_blocking`
+# before any render path asks. Keep it that way.
 def _probe_tmux_hyperlinks() -> bool:
     """Check whether the attached tmux client forwards OSC 8 hyperlinks.
 

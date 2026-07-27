@@ -111,7 +111,7 @@ class Terminal(Protocol):
         leaking to the parent shell over slow SSH connections."""
         ...
 
-    def write(self, data: str) -> None:
+    async def write(self, data: str) -> None:
         """Write output to terminal."""
         ...
 
@@ -153,6 +153,14 @@ class Terminal(Protocol):
     def set_progress(self, active: bool) -> None:
         """Progress indicator (OSC 9;4)."""
         ...
+
+
+def _append_write_log(path: str, data: str) -> None:
+    try:
+        with open(path, "a", encoding="utf-8") as log:
+            log.write(data)
+    except OSError:
+        pass  # Ignore logging errors, like pi
 
 
 def _resolve_write_log_path() -> str:
@@ -238,23 +246,30 @@ class ProcessTerminal:
         self._stdin_buffer = StdinBuffer(timeout=10)
 
         # Forward individual sequences to the input handler
-        def on_data(sequence: str) -> None:
+        async def on_data(sequence: str) -> None:
+            # `deferred` carries a buffered sequence that turned out not to be a
+            # negotiation response; it must be forwarded before the current one,
+            # but only after `_lock` is released.
+            deferred: list[str] = []
             with self._lock:
-                negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence)
+                negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
                 if negotiation_sequence == "pending":
                     self._schedule_negotiation_buffer_flush()
-                    return  # Wait briefly for the rest of a split Kitty response.
-                if self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence):
-                    return
+                    consumed = True  # Wait briefly for the rest of a split Kitty response.
+                else:
+                    consumed = self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence)
 
-            self._forward_input_sequence(sequence)
+            for buffered in deferred:
+                await self._forward_input_sequence(buffered)
+            if not consumed:
+                await self._forward_input_sequence(sequence)
 
         self._stdin_buffer.on_data(on_data)
 
         # Re-wrap paste content with bracketed paste markers for existing editor handling
-        def on_paste(content: str) -> None:
+        async def on_paste(content: str) -> None:
             if self._input_handler is not None:
-                self._input_handler(f"\x1b[200~{content}\x1b[201~")
+                await self._input_handler(f"\x1b[200~{content}\x1b[201~")
 
         self._stdin_buffer.on_paste(on_paste)
 
@@ -301,8 +316,12 @@ class ProcessTerminal:
         return True
 
     def _read_keyboard_protocol_negotiation_sequence(
-        self, sequence: str
+        self, sequence: str, deferred: list[str]
     ) -> KeyboardProtocolNegotiationSequence | str | None:
+        """Runs under `_lock`. A buffered sequence that turns out not to be a
+        negotiation response is appended to `deferred` for the caller to forward
+        once the lock is released, rather than forwarded from here — forwarding
+        is async now, and this runs inside the lock."""
         if self._negotiation_buffer:
             buffered_sequence = self._negotiation_buffer + sequence
             negotiation_sequence = parse_keyboard_protocol_negotiation_sequence(buffered_sequence)
@@ -312,7 +331,9 @@ class ProcessTerminal:
             if _is_keyboard_protocol_negotiation_sequence_prefix(buffered_sequence):
                 self._set_negotiation_buffer(buffered_sequence)
                 return "pending"
-            self._flush_negotiation_buffer_as_input()
+            buffered = self._take_negotiation_buffer()
+            if buffered is not None:
+                deferred.append(buffered)
 
         negotiation_sequence = parse_keyboard_protocol_negotiation_sequence(sequence)
         if negotiation_sequence:
@@ -331,26 +352,30 @@ class ProcessTerminal:
             self._clear_negotiation_buffer_flush_timer()
             self._negotiation_buffer = ""
 
-    def _flush_negotiation_buffer_as_input(self) -> None:
+    def _take_negotiation_buffer(self) -> str | None:
+        """Under `_lock`: claim the buffered sequence and reset the buffer."""
         if not self._negotiation_buffer:
-            return
+            return None
         sequence = self._negotiation_buffer
-        self._clear_negotiation_buffer()
-        self._forward_input_sequence(sequence)
+        self._clear_negotiation_buffer_flush_timer()
+        self._negotiation_buffer = ""
+        return sequence
 
     def _schedule_negotiation_buffer_flush(self) -> None:
         if not self._negotiation_buffer or self._negotiation_flush_timer is not None:
             return
         timer: Timeout | None = None
 
-        def fire() -> None:
+        async def fire() -> None:
             with self._lock:
                 # A clear/reschedule may have raced the firing callback past
                 # its cancellation check; only the current timer may flush.
                 if self._negotiation_flush_timer is not timer:
                     return
                 self._negotiation_flush_timer = None
-                self._flush_negotiation_buffer_as_input()
+                sequence = self._take_negotiation_buffer()
+            if sequence is not None:
+                await self._forward_input_sequence(sequence)
 
         timer = Timeout(KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS, fire)
         self._negotiation_flush_timer = timer
@@ -361,7 +386,7 @@ class ProcessTerminal:
         self._negotiation_flush_timer.cancel()
         self._negotiation_flush_timer = None
 
-    def _forward_input_sequence(self, sequence: str) -> None:
+    async def _forward_input_sequence(self, sequence: str) -> None:
         if self._input_handler is None:
             return
         is_apple_terminal = sequence == "\r" and is_apple_terminal_session()
@@ -370,7 +395,7 @@ class ProcessTerminal:
             is_apple_terminal,
             is_apple_terminal and _is_native_modifier_pressed("shift"),
         )
-        self._input_handler(input_)
+        await self._input_handler(input_)
 
     def _enable_modify_other_keys(self) -> None:
         if self._kitty_protocol_active or self._modify_other_keys_active:
@@ -406,7 +431,7 @@ class ProcessTerminal:
             self._last_read_time = _time.monotonic()
             data = decoder.decode(chunk)
             if data and (handler := self._stdin_data_handler) is not None:
-                handler(data)
+                await handler(data)
 
     async def _resize_watcher(self) -> None:
         with tonio_signals.signal_receiver(signal_module.SIGWINCH) as receiver:
@@ -501,14 +526,13 @@ class ProcessTerminal:
         # Restore raw mode state
         self._restore_raw_mode()
 
-    def write(self, data: str) -> None:
+    async def write(self, data: str) -> None:
+        # The TTY write itself stays inline (it is not a filesystem call and pi
+        # writes it synchronously); only the opt-in debug trace log, which is a
+        # real file append, is handed to the pool.
         self._write_stdout(data)
         if self._write_log_path:
-            try:
-                with open(self._write_log_path, "a", encoding="utf-8") as log:
-                    log.write(data)
-            except OSError:
-                pass  # Ignore logging errors
+            await tonio.spawn_blocking(_append_write_log, self._write_log_path, data)
 
     @property
     def columns(self) -> int:

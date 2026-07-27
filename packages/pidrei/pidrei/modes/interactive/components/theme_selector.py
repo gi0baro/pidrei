@@ -2,7 +2,7 @@
 
 from pidrei_tui import Container, SelectList
 
-from ..theme import get_available_themes, get_select_list_theme
+from ..theme import get_select_list_theme
 from .dynamic_border import DynamicBorder
 
 
@@ -12,12 +12,12 @@ THEME_SELECT_LIST_LAYOUT = {"minPrimaryColumnWidth": 12, "maxPrimaryColumnWidth"
 class ThemeSelectorComponent(Container):
     """Component that renders a theme selector."""
 
-    def __init__(self, current_theme: str, on_select, on_cancel, on_preview) -> None:
+    def __init__(self, current_theme: str, themes: list, on_select, on_cancel, on_preview) -> None:
         super().__init__()
         self._on_preview = on_preview
 
-        # Get available themes and create select items
-        themes = get_available_themes()
+        # `themes` is passed in: listing them reads the custom-theme
+        # directory, which a constructor must not do on a runtime worker.
         theme_items = [
             {
                 "value": name,

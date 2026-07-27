@@ -14,7 +14,7 @@ import os
 
 import pytest
 
-from pidrei.core.auth_storage import AuthStorage
+from pidrei.core.auth_storage import AuthStorage, FileAuthStorageBackend
 from pidrei.core.model_registry import ResolvedRequestAuth, clear_api_key_cache
 from pidrei.core.provider_composer import AuthStatus, ExtensionOAuthConfig
 from pidrei_ai.auth.types import ApiKeyCredential
@@ -31,7 +31,9 @@ OPENAI_IDS = [model.id for model in MODELS["openai"]]
 def registry_env(tmp_dir, request):
     request.addfinalizer(clear_api_key_cache)
     models_json_path = str(tmp_dir / "models.json")
-    auth_storage = AuthStorage.create(str(tmp_dir / "auth.json"))
+    # `from_storage`, not `create`: the fixture is sync and cannot await, and
+    # tmp_dir is fresh so there is no auth.json to load — same empty state.
+    auth_storage = AuthStorage.from_storage(FileAuthStorageBackend(str(tmp_dir / "auth.json")))
     return tmp_dir, models_json_path, auth_storage
 
 

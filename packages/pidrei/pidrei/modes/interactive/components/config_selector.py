@@ -364,7 +364,7 @@ class ResourceList:
 
         return lines
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         kb = get_keybindings()
 
         if kb.matches(data, "tui.select.up"):
@@ -415,7 +415,7 @@ class ResourceList:
             return
 
         # Pass to search input
-        self._search_input.handle_input(data)
+        await self._search_input.handle_input(data)
         self._filter_items(self._search_input.get_value())
 
     def _toggle_resource(self, item: dict) -> bool | None:

@@ -5,6 +5,9 @@ import json
 import os
 import re
 
+import tonio.colored as tonio
+from tonio.colored import fs
+
 from ...config import APP_NAME, get_export_template_dir
 from ...modes.interactive.theme import get_resolved_theme_colors, get_theme_export_colors
 from ...utils.paths import normalize_path, resolve_path
@@ -89,14 +92,14 @@ def _derive_export_colors(base_color: str) -> dict:
     }
 
 
-def _generate_theme_vars(theme_name: str | None = None) -> str:
+async def _generate_theme_vars(theme_name: str | None = None) -> str:
     """Generate CSS custom property declarations from theme colors."""
-    colors = get_resolved_theme_colors(theme_name)
+    colors = await get_resolved_theme_colors(theme_name)
     lines = [f"--{key}: {value};" for key, value in colors.items()]
 
     # Use explicit theme export colors if available, otherwise derive from
     # userMessageBg
-    theme_export = get_theme_export_colors(theme_name)
+    theme_export = await get_theme_export_colors(theme_name)
     user_message_bg = colors.get("userMessageBg") or "#343541"
     derived_colors = _derive_export_colors(user_message_bg)
 
@@ -116,17 +119,29 @@ def _read_template_file(*parts: str) -> str:
         return f.read()
 
 
-def _generate_html(session_data: dict, theme_name: str | None = None) -> str:
-    """Core HTML generation logic shared by both export functions."""
-    template = _read_template_file("template.html")
-    template_css = _read_template_file("template.css")
-    template_js = _read_template_file("template.js")
-    marked_js = _read_template_file("vendor", "marked.min.js")
-    hljs_js = _read_template_file("vendor", "highlight.min.js")
+def _read_all_templates() -> dict[str, str]:
+    """All five template files in one pool hop, rather than five."""
+    return {
+        "template": _read_template_file("template.html"),
+        "css": _read_template_file("template.css"),
+        "js": _read_template_file("template.js"),
+        "marked": _read_template_file("vendor", "marked.min.js"),
+        "hljs": _read_template_file("vendor", "highlight.min.js"),
+    }
 
-    theme_vars = _generate_theme_vars(theme_name)
-    colors = get_resolved_theme_colors(theme_name)
-    theme_export = get_theme_export_colors(theme_name)
+
+async def _generate_html(session_data: dict, theme_name: str | None = None) -> str:
+    """Core HTML generation logic shared by both export functions."""
+    templates = await tonio.spawn_blocking(_read_all_templates)
+    template = templates["template"]
+    template_css = templates["css"]
+    template_js = templates["js"]
+    marked_js = templates["marked"]
+    hljs_js = templates["hljs"]
+
+    theme_vars = await _generate_theme_vars(theme_name)
+    colors = await get_resolved_theme_colors(theme_name)
+    theme_export = await get_theme_export_colors(theme_name)
     derived_export_colors = _derive_export_colors(colors.get("userMessageBg") or "#343541")
 
     def pick(key: str) -> str:
@@ -232,7 +247,7 @@ async def export_session_to_html(sm: SessionManager, state=None, options=None) -
     session_file = sm.get_session_file()
     if not session_file:
         raise Exception("Cannot export in-memory session to HTML")
-    if not os.path.exists(session_file):
+    if not await fs.Path(session_file).exists():
         raise Exception("Nothing to export yet - start a conversation first")
 
     entries = sm.get_entries()
@@ -258,7 +273,7 @@ async def export_session_to_html(sm: SessionManager, state=None, options=None) -
         "renderedTools": rendered_tools,
     }
 
-    html = _generate_html(session_data, opts.get("themeName"))
+    html = await _generate_html(session_data, opts.get("themeName"))
 
     output_path = normalize_path(opts["outputPath"]) if opts.get("outputPath") else None
     if not output_path:
@@ -266,9 +281,9 @@ async def export_session_to_html(sm: SessionManager, state=None, options=None) -
         session_basename = session_basename.removesuffix(".jsonl")
         output_path = f"{APP_NAME}-session-{session_basename}.html"
 
-    # One-shot write of the finished document, like pi's sync writeFileSync
-    with open(output_path, "w", encoding="utf-8") as f:  # noqa: ASYNC230
-        f.write(html)
+    # One-shot write of the finished document; pi uses writeFileSync, we go
+    # through `fs` so the runtime worker is never blocked.
+    await fs.Path(output_path).write_text(html, encoding="utf-8")
     return output_path
 
 
@@ -280,10 +295,10 @@ async def export_from_file(input_path: str, options=None) -> str:
     opts = _normalize_export_options(options)
     resolved_input_path = resolve_path(input_path)
 
-    if not os.path.exists(resolved_input_path):
+    if not await fs.Path(resolved_input_path).exists():
         raise Exception(f"File not found: {resolved_input_path}")
 
-    sm = SessionManager.open(resolved_input_path)
+    sm = await SessionManager.open(resolved_input_path)
 
     session_data = {
         "header": sm.get_header(),
@@ -293,14 +308,14 @@ async def export_from_file(input_path: str, options=None) -> str:
         "tools": None,
     }
 
-    html = _generate_html(session_data, opts.get("themeName"))
+    html = await _generate_html(session_data, opts.get("themeName"))
 
     output_path = normalize_path(opts["outputPath"]) if opts.get("outputPath") else None
     if not output_path:
         input_basename = os.path.basename(resolved_input_path).removesuffix(".jsonl")
         output_path = f"{APP_NAME}-session-{input_basename}.html"
 
-    # One-shot write of the finished document, like pi's sync writeFileSync
-    with open(output_path, "w", encoding="utf-8") as f:  # noqa: ASYNC230
-        f.write(html)
+    # One-shot write of the finished document; pi uses writeFileSync, we go
+    # through `fs` so the runtime worker is never blocked.
+    await fs.Path(output_path).write_text(html, encoding="utf-8")
     return output_path

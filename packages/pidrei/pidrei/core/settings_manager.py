@@ -16,8 +16,12 @@ import math
 import os
 import threading
 import uuid
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+
+import tonio.colored as tonio
+from tonio.exceptions import RuntimeNotInitializedError
 
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.lockfile import acquire_lock_sync_with_retry
@@ -139,14 +143,30 @@ class SettingsManager:
         self._global_settings_load_error = global_load_error
         self._project_settings_load_error = project_load_error
         self._write_lock = threading.RLock()
+        # Tail of the write chain, mirroring pi's `writeQueue` promise.
+        # `None` means nothing is pending. Guarded by `_write_lock`, which
+        # is never held across an await.
+        self._write_tail: tonio.Event | None = None
         self._errors: list[SettingsError] = list(initial_errors or [])
         self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
     # -- constructors ---------------------------------------------------------
 
     @staticmethod
-    def create(cwd: str, agent_dir: str | None = None, *, project_trusted: bool = True) -> SettingsManager:
-        """Create a SettingsManager that loads from files."""
+    def create(cwd: str, agent_dir: str | None = None, *, project_trusted: bool = True) -> Awaitable[SettingsManager]:
+        """Create a SettingsManager that loads from files.
+
+        Construction reads both settings files under a lock, so it is one
+        blocking unit handed to the pool — the same treatment the `SessionManager`
+        factories get. Sync def returning the awaitable, per the standing rule.
+        """
+        return tonio.spawn_blocking(SettingsManager.create_sync, cwd, agent_dir, project_trusted=project_trusted)
+
+    @staticmethod
+    def create_sync(cwd: str, agent_dir: str | None = None, *, project_trusted: bool = True) -> SettingsManager:
+        """Blocking construction. Only for callers already off the runtime —
+        CLI code before `tonio.run`, and pool bodies. Everything on the runtime
+        awaits `create()`."""
         storage = FileSettingsStorage(cwd, agent_dir if agent_dir is not None else get_agent_dir())
         return SettingsManager.from_storage(storage, project_trusted=project_trusted)
 
@@ -286,7 +306,13 @@ class SettingsManager:
             self._record_error("project", project_error)
         self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
-    def reload(self) -> None:
+    async def reload(self) -> None:
+        """pi: `async reload()` opens with `await this.writeQueue`.
+
+        Draining first matters: a queued write that lands after the re-read
+        would be invisible to the reloaded state.
+        """
+        await self.flush()
         with self._write_lock:
             global_settings, global_error = SettingsManager._try_load_from_storage(self._storage, "global")
             if global_error is None:
@@ -346,14 +372,60 @@ class SettingsManager:
         self._modified_project_nested_fields.clear()
 
     def _enqueue_write(self, scope: SettingsScope, task: Any) -> None:
+        """Append to the write chain and return, mirroring pi's
+        `writeQueue = writeQueue.then(task).catch(recordError)`.
+
+        Stays sync so setters stay sync: pi's setters do not await either, and
+        the TUI invokes them from synchronous key handling. Errors are recorded
+        rather than raised, exactly as pi's `.catch` does — the caller has never
+        been able to observe a write failure, in pi or here.
+
+        In-memory storage runs inline: there is no filesystem to get off, and
+        spawning would demand a live runtime for what is a dict assignment.
+        """
+        if not isinstance(self._storage, FileSettingsStorage):
+            self._run_write(scope, task)
+            return
+
         with self._write_lock:
-            try:
-                if scope == "project":
-                    self._assert_project_trusted_for_write()
-                task()
-                self._clear_modified_scope(scope)
-            except Exception as error:
-                self._record_error(scope, error)
+            previous, mine = self._write_tail, tonio.Event()
+            self._write_tail = mine
+        queued = self._run_queued_write(previous, mine, scope, task)
+        try:
+            tonio.spawn.without_tracking(queued)
+        except RuntimeNotInitializedError:
+            # No runtime means no worker to block, so blocking here cannot
+            # violate the policy — the same boundary condition that puts
+            # import-time code outside it. Reached from sync CLI paths and
+            # from tests that drive the manager without `tonio.run`.
+            queued.close()
+            self._write_tail = previous
+            self._run_write(scope, task)
+            mine.set()
+
+    def _run_write(self, scope: SettingsScope, task: Any) -> None:
+        try:
+            if scope == "project":
+                self._assert_project_trusted_for_write()
+            task()
+            self._clear_modified_scope(scope)
+        except Exception as error:
+            self._record_error(scope, error)
+
+    async def _run_queued_write(
+        self, previous: tonio.Event | None, mine: tonio.Event, scope: SettingsScope, task: Any
+    ) -> None:
+        try:
+            if previous is not None:
+                await previous.wait()  # the `.then()`: writes stay ordered
+            if scope == "project":
+                self._assert_project_trusted_for_write()
+            await tonio.spawn_blocking(task)
+            self._clear_modified_scope(scope)
+        except Exception as error:
+            self._record_error(scope, error)
+        finally:
+            mine.set()
 
     def _persist_scoped_settings(
         self,
@@ -423,9 +495,11 @@ class SettingsManager:
         self._mark_project_modified(field)
         self._save_project_settings(project_settings)
 
-    def flush(self) -> None:
-        with self._write_lock:
-            pass
+    async def flush(self) -> None:
+        """Wait for queued writes, mirroring pi's `await this.writeQueue`."""
+        tail = self._write_tail
+        if tail is not None:
+            await tail.wait()
 
     def drain_errors(self) -> list[SettingsError]:
         drained = list(self._errors)

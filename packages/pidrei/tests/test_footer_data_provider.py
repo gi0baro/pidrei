@@ -81,6 +81,7 @@ class TestFooterDataProviderReftableBranchDetection:
         nested_dir.mkdir(parents=True)
 
         provider = FooterDataProvider(str(nested_dir))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "main"
             assert git_mock["sync_calls"] == []
@@ -91,6 +92,7 @@ class TestFooterDataProviderReftableBranchDetection:
         repo_dir = _create_plain_reftable_repo(tmp_path)
 
         provider = FooterDataProvider(str(repo_dir))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "main"
             assert git_mock["sync_calls"] == [str(repo_dir)]
@@ -101,6 +103,7 @@ class TestFooterDataProviderReftableBranchDetection:
         fixture = _create_reftable_worktree(tmp_path)
 
         provider = FooterDataProvider(str(fixture["worktreeDir"]))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "main"
         finally:
@@ -111,6 +114,7 @@ class TestFooterDataProviderReftableBranchDetection:
         git_mock["resolved_branch"] = ""
 
         provider = FooterDataProvider(str(repo_dir))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "detached"
         finally:
@@ -120,6 +124,7 @@ class TestFooterDataProviderReftableBranchDetection:
         fixture = _create_reftable_worktree(tmp_path)
 
         provider = FooterDataProvider(str(fixture["worktreeDir"]))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "main"
             git_mock["sync_calls"].clear()
@@ -140,6 +145,7 @@ class TestFooterDataProviderReftableBranchDetection:
         fixture = _create_reftable_worktree(tmp_path)
 
         provider = FooterDataProvider(str(fixture["worktreeDir"]))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "main"
             git_mock["async_calls"].clear()
@@ -158,6 +164,7 @@ class TestFooterDataProviderReftableBranchDetection:
         fixture = _create_reftable_worktree(tmp_path)
 
         provider = FooterDataProvider(str(fixture["worktreeDir"]))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             assert provider.get_git_branch() == "main"
             git_mock["resolved_branch"] = "foo"
@@ -181,6 +188,7 @@ class TestFooterDataProviderReftableBranchDetection:
         repo_dir = _create_plain_repo(tmp_path)
 
         provider = FooterDataProvider(str(repo_dir))
+        provider.prime_sync()  # sync test, no runtime running
         try:
             original_watcher = provider._head_watcher
             assert original_watcher is not None

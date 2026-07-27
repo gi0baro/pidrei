@@ -13,7 +13,17 @@ itself instead.
      — a coroutine created and dropped, so the work never happens.
   3. `tonio._*` imports in package source — private runtime API; anything
      needed goes through tonio's public surface (see TONIO_BUGS.md).
-  4. `self.x` reads with no matching definition on the class — the port's
+  4. pi is `async` where we are `def` — the shape with something to lose in
+     translation. `SettingsManager._enqueue_write` was flattened from pi's
+     promise chain to an inline write, which silently changed `reload()`
+     semantics and made an unrelated design problem look unsolvable for a
+     whole session. Needs a pi checkout (`PIDREI_UPSTREAM_CHECKOUT`) and is
+     skipped without one. Matching is class-qualified (`Class.method`):
+     matching bare names collides across unrelated classes and gave ~60 false
+     positives, which is a check nobody would trust. Known-and-justified pairs
+     live in `JUSTIFIED_SYNC_PORTS`, each with a reason — "it was ported that
+     way" is not one.
+  5. `self.x` reads with no matching definition on the class — the port's
      public/private name drift (`self._show_new_version_notification` vs the
      defined `show_new_version_notification`), which only bites on the code
      path that happens to run. Classes with a non-local base or dynamic
@@ -23,12 +33,23 @@ Run via `make audit`. Exit code 1 on any finding.
 """
 
 import ast
+import os
 import pathlib
+import re
 import sys
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGES = ["ai/pidrei_ai", "agent/pidrei_agent", "pidrei/pidrei", "tui/pidrei_tui", "server/pidrei_server"]
+
+# Our package -> the pi package it ports, for the async/sync drift check.
+PACKAGE_UPSTREAM = {
+    "ai/pidrei_ai": "ai",
+    "agent/pidrei_agent": "agent",
+    "pidrei/pidrei": "coding-agent",
+    "tui/pidrei_tui": "tui",
+    "server/pidrei_server": "server",
+}
 
 # Sync methods that deliberately return a coroutine: pi's async methods run
 # synchronously up to their first await, and these mirror that by splitting a
@@ -37,6 +58,26 @@ ALLOWED_SYNC_AWAITS = {
     "_load_scope",
     "_show_extension_selector",
     "_show_extension_editor",
+}
+
+# `Class.method` pairs where pi is `async` and we are deliberately not.
+# Each needs a reason; "it was ported that way" is not one. Entries that stop
+# matching pi are dead weight — prune them rather than leaving them to rot.
+JUSTIFIED_SYNC_PORTS = {
+    # pi's `execFile` variant. We run the subprocess synchronously on the
+    # debounce thread, which is not a runtime worker, so there is nothing to
+    # get off. Documented at both definitions.
+    "FooterDataProvider._refresh_git_branch_async",
+    "FooterDataProvider._resolve_git_branch_async",
+    # pi's run-until-first-await prologue: a sync def returning a coroutine.
+    "SessionSelectorComponent._load_scope",
+    # pi's is async only to `await this.init()` lazily; pidrei always
+    # subscribes after init, so there is nothing to await. Documented.
+    "InteractiveMode._handle_event",
+    # pi chains request promises; we chain spawned tasks on completion Events,
+    # because a Python coroutine cannot be awaited twice. Same shape as
+    # `SettingsManager._enqueue_write`. Documented at the definition.
+    "Editor._start_autocomplete_request",
 }
 
 
@@ -95,7 +136,11 @@ def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str
         methods: dict[str, str] = {}
         for item in cls.body:
             if isinstance(item, ast.FunctionDef):
-                methods[item.name] = "sync"
+                # A sync def annotated `-> Awaitable[...]` is deliberately
+                # awaitable: it returns the awaitable rather than adding a
+                # coroutine frame (PLAN: no single-`return await` wrappers).
+                returns = ast.unparse(item.returns) if item.returns is not None else ""
+                methods[item.name] = "async" if returns.startswith("Awaitable[") else "sync"
             elif isinstance(item, ast.AsyncFunctionDef):
                 methods[item.name] = "async"
 
@@ -192,13 +237,94 @@ def _check_self_attributes(cls: ast.ClassDef, rel: pathlib.Path, tree: ast.Modul
             findings.append(f"{rel}:{node.lineno}: `self.{node.attr}` is never defined on `{cls.name}`")
 
 
+def _camel_to_snake(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+_TS_CLASS_RE = re.compile(r"^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)")
+_TS_ASYNC_RE = re.compile(
+    r"^\s+(?:private |public |protected |static |readonly |override )*async\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("
+)
+
+
+def _pi_async_methods(pi_root: pathlib.Path, pi_package: str) -> set[str]:
+    """`Class.method` for every `async` method in one pi package.
+
+    Class-qualified on purpose: matching bare method names collides across
+    unrelated classes (`create`, `resolve`, `stop`) and buries the signal.
+    Class names are identical between pi and the port, so they compare
+    directly; only the method needs snake-casing.
+    """
+    methods: set[str] = set()
+    src = pi_root / "packages" / pi_package / "src"
+    if not src.is_dir():
+        return methods
+    for path in src.rglob("*.ts"):
+        current: str | None = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            class_match = _TS_CLASS_RE.match(line)
+            if class_match:
+                current = class_match.group(1)
+                continue
+            if line.startswith("}"):
+                current = None
+                continue
+            if current is None:
+                continue
+            async_match = _TS_ASYNC_RE.match(line)
+            if async_match:
+                methods.add(f"{current}.{_camel_to_snake(async_match.group(1))}")
+    return methods
+
+
+def _check_sync_ports_of_pi_async(findings: list[str], notes: list[str]) -> None:
+    pi_dir = os.environ.get("PIDREI_UPSTREAM_CHECKOUT")
+    if not pi_dir or not pathlib.Path(pi_dir).is_dir():
+        notes.append("pi async/sync drift: skipped (set PIDREI_UPSTREAM_CHECKOUT to enable)")
+        return
+    pi_root = pathlib.Path(pi_dir)
+    drift: list[str] = []
+
+    for ours, theirs in PACKAGE_UPSTREAM.items():
+        pi_async = _pi_async_methods(pi_root, theirs)
+        if not pi_async:
+            notes.append(f"pi async/sync drift: no sources for pi package {theirs!r}, skipped")
+            continue
+        for path in sorted((ROOT / "packages" / ours).rglob("*.py")):
+            rel = path.relative_to(ROOT)
+            for cls in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(cls, ast.ClassDef):
+                    continue
+                for item in cls.body:
+                    if not isinstance(item, ast.FunctionDef):
+                        continue  # an async def cannot have drifted
+                    # pi's names carry no underscore prefix, so the comparison
+                    # strips ours; the allowlist keys stay as written here.
+                    if f"{cls.name}.{item.name.lstrip('_')}" not in pi_async:
+                        continue
+                    if f"{cls.name}.{item.name}" in JUSTIFIED_SYNC_PORTS:
+                        continue
+                    returns = ast.unparse(item.returns) if item.returns is not None else ""
+                    if returns.startswith("Awaitable["):
+                        continue  # deliberately awaitable, just not a coroutine
+                    drift.append(f"{rel}:{item.lineno}: `{cls.name}.{item.name}` is sync but pi's is `async`")
+
+    findings.extend(drift)
+
+
 def main() -> int:
     findings: list[str] = []
+    notes: list[str] = []
     paths = [path for package in PACKAGES for path in sorted((ROOT / "packages" / package).rglob("*.py"))]
     async_names, _sync_names = _collect_module_functions(paths)
     for path in paths:
         _check_file(path, findings, async_names)
+    _check_sync_ports_of_pi_async(findings, notes)
 
+    for note in notes:
+        print(f"note: {note}")
+    if notes:
+        print()
     for finding in findings:
         print(finding)
     print(f"\n{len(findings)} finding(s)")

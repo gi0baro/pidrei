@@ -10,10 +10,23 @@ from pidrei.modes.interactive.theme import get_theme_export_colors
 
 
 @pytest.fixture
-def agent_dir(tmp_path, monkeypatch):
-    agent_dir = tmp_path / "agent"
-    monkeypatch.setenv(ENV_AGENT_DIR, str(agent_dir))
+def agent_dir(tmp_dir, request):
+    """Plain-return, no yield: `get_theme_export_colors` is async now, so
+    these tests run under `@pytest.mark.tonio`, which cannot wrap yield
+    fixtures — ruling out `tmp_path`/`monkeypatch`."""
+    agent_dir = tmp_dir / "agent"
     (agent_dir / "themes").mkdir(parents=True)
+
+    previous = os.environ.get(ENV_AGENT_DIR)
+    os.environ[ENV_AGENT_DIR] = str(agent_dir)
+
+    def restore() -> None:
+        if previous is None:
+            os.environ.pop(ENV_AGENT_DIR, None)
+        else:
+            os.environ[ENV_AGENT_DIR] = previous
+
+    request.addfinalizer(restore)
     return agent_dir
 
 
@@ -23,7 +36,8 @@ def _load_dark_theme() -> dict:
 
 
 class TestGetThemeExportColors:
-    def test_resolves_export_variable_references_using_the_same_syntax_as_colors(self, agent_dir):
+    @pytest.mark.tonio
+    async def test_resolves_export_variable_references_using_the_same_syntax_as_colors(self, agent_dir):
         dark_theme = _load_dark_theme()
 
         custom_theme = {
@@ -45,13 +59,14 @@ class TestGetThemeExportColors:
 
         (agent_dir / "themes" / "custom-export-vars.json").write_text(json.dumps(custom_theme, indent=2))
 
-        assert get_theme_export_colors("custom-export-vars") == {
+        assert await get_theme_export_colors("custom-export-vars") == {
             "pageBg": "#112233",
             "cardBg": "#223344",
             "infoBg": "#445566",
         }
 
-    def test_resolves_recursive_vars_and_converts_256_color_export_values_to_hex(self, agent_dir):
+    @pytest.mark.tonio
+    async def test_resolves_recursive_vars_and_converts_256_color_export_values_to_hex(self, agent_dir):
         dark_theme = _load_dark_theme()
 
         custom_theme = {
@@ -72,7 +87,7 @@ class TestGetThemeExportColors:
 
         (agent_dir / "themes" / "custom-export-recursive.json").write_text(json.dumps(custom_theme, indent=2))
 
-        assert get_theme_export_colors("custom-export-recursive") == {
+        assert await get_theme_export_colors("custom-export-recursive") == {
             "pageBg": "#abcdef",
             "cardBg": "#005f87",
             "infoBg": None,

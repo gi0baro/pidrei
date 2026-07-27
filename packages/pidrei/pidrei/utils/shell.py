@@ -21,6 +21,9 @@ def _get_bash_shell_config(shell: str) -> ShellConfig:
     return ShellConfig(shell=shell, args=["-c"])
 
 
+# Sync by design: `BashTool.exec` calls `get_shell_config` through
+# `spawn_blocking`, so the PATH walk never runs on a runtime worker. Any new
+# caller must do the same.
 def _find_bash_on_path() -> str | None:
     return shutil.which("bash")
 

@@ -151,12 +151,14 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         model_runtime = await ModelRuntime.create(auth_path=auth_path, models_path=models_path)
 
     settings_manager = (
-        options.settings_manager if options.settings_manager is not None else SettingsManager.create(cwd, agent_dir)
+        options.settings_manager
+        if options.settings_manager is not None
+        else await SettingsManager.create(cwd, agent_dir)
     )
     session_manager = (
         options.session_manager
         if options.session_manager is not None
-        else SessionManager.create(cwd, get_default_session_dir(cwd, agent_dir))
+        else await SessionManager.create(cwd, get_default_session_dir(cwd, agent_dir))
     )
 
     if resource_loader is None:
@@ -330,13 +332,13 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     if has_existing_session:
         agent.state.messages = existing_session.messages
         if not has_thinking_entry:
-            session_manager.append_thinking_level_change(thinking_level)
+            await session_manager.append_thinking_level_change(thinking_level)
     else:
         # Save initial model and thinking level for new sessions so they can be
         # restored on resume
         if model is not None:
-            session_manager.append_model_change(model.provider, model.id)
-        session_manager.append_thinking_level_change(thinking_level)
+            await session_manager.append_model_change(model.provider, model.id)
+        await session_manager.append_thinking_level_change(thinking_level)
 
     session = AgentSession(
         AgentSessionConfig(

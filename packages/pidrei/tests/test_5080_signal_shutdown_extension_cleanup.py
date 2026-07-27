@@ -77,6 +77,11 @@ def create_session_manager(session_file: str | None = None) -> SimpleNamespace:
     )
 
 
+async def _noop_async() -> None:
+    """`InteractiveThemeController.disable_auto_sync` is async (it toggles
+    terminal notifications, which is a terminal write)."""
+
+
 def create_context(order: list[str], session_manager=None) -> SimpleNamespace:
     async def dispose() -> None:
         order.append("dispose")
@@ -92,7 +97,7 @@ def create_context(order: list[str], session_manager=None) -> SimpleNamespace:
         _unregister_signal_handlers=lambda: None,
         runtime_host=SimpleNamespace(dispose=dispose),
         ui=SimpleNamespace(terminal=SimpleNamespace(drain_input=drain_input)),
-        _theme_controller=SimpleNamespace(disable_auto_sync=lambda: None),
+        _theme_controller=SimpleNamespace(disable_auto_sync=_noop_async),
         stop=stop,
         session_manager=session_manager if session_manager is not None else create_session_manager(),
         _emergency_terminal_exit=lambda: None,

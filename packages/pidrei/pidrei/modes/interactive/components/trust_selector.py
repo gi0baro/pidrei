@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/trust-selector.ts."""
 
+from collections.abc import Awaitable
+
 from pidrei_tui import Container, Spacer, Text, get_keybindings
 
 from ....core.trust_manager import get_project_trust_options
@@ -94,7 +96,7 @@ class TrustSelectorComponent(Container):
             label = theme.fg("accent", option.label) if is_selected else theme.fg("text", option.label)
             self._list_container.add_child(Text(f"{prefix}{label}{checkmark}", 1, 0))
 
-    def handle_input(self, key_data: str) -> None:
+    async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.up") or key_data == "k":
             self._selected_index = max(0, self._selected_index - 1)
@@ -105,6 +107,9 @@ class TrustSelectorComponent(Container):
         elif kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
             if 0 <= self._selected_index < len(self._trust_options):
                 selected = self._trust_options[self._selected_index]
-                self._on_select_callback({"trusted": selected.trusted, "updates": selected.updates})
+                # Sync or coroutine-returning, like the other selector callbacks.
+                result = self._on_select_callback({"trusted": selected.trusted, "updates": selected.updates})
+                if isinstance(result, Awaitable):
+                    await result
         elif kb.matches(key_data, "tui.select.cancel"):
             self._on_cancel_callback()

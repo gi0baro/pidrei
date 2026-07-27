@@ -7,10 +7,27 @@ branch_summary entries) is decoded into pidrei dataclasses in memory and
 serialized back through the pidrei_agent wire codec on write, so files stay
 pi-shaped byte for byte.
 
-The manager itself uses synchronous file I/O like pi (Node *Sync calls);
-mutating operations are guarded by an RLock because tonio listeners run on
-real threads. The async discovery helpers (`list`, `list_all`) run their
-blocking scans via `tonio.spawn_blocking` with pi's 10-way concurrency bound.
+Locking is two-level, and the split matters:
+
+* `_io_lock` (`tonio.sync.Lock`, async, FIFO) is held across the whole
+  append unit — allocate the entry, mutate the index, write the file. pi's
+  `appendFileSync` means "durable before the next statement runs", and that
+  behaviour is preserved: appends are `await`ed, never queued, so the entry is
+  on disk when the call returns and a write error reaches the caller exactly as
+  pi's un-caught `_persist` does. FIFO ordering is what keeps `parentId`/
+  `_leaf_id` — the transcript's structure — in caller order.
+* `_lock` (`threading.RLock`) guards in-memory state only and is **never held
+  across an await**. Every getter uses it and stays synchronous; putting them
+  behind `_io_lock` would make a read wait on someone else's disk write. It
+  stays an *R*Lock because several getters legitimately nest
+  (`get_session_name` -> `get_entries`), which `tonio.sync.Lock` cannot do —
+  re-acquiring it parks the task on its own event forever.
+
+Construction (`__init__`, `_set_session_file`, `new_session`) runs pool-side
+inside the static factories' `spawn_blocking`, holds the only reference to the
+object, and therefore keeps plain synchronous I/O. The async discovery helpers
+(`list`, `list_all`) run their blocking scans via `tonio.spawn_blocking` with
+pi's 10-way concurrency bound.
 """
 
 import codecs
@@ -21,12 +38,13 @@ import os
 import re
 import threading
 import uuid as uuid_module
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import fs, sync as tonio_sync
 
 from pidrei_agent.harness.session.serde import parse_message, parse_usage, serialize_message, serialize_usage
 from pidrei_ai.utils.uuid import uuidv7
@@ -429,6 +447,17 @@ def load_entries_from_file(file_path: str) -> list[dict[str, Any]]:
     return [_decode_entry(entry) for entry in entries]
 
 
+def _write_session_bytes(path: str, mode: str, payload: str) -> None:
+    """One open+write, run on the blocking pool.
+
+    `mode` carries pi's exclusive-create semantics: `"x"` for the first flush
+    (EEXIST must surface, it means two writers raced for the same session file),
+    `"a"` to append, `"w"` to rewrite.
+    """
+    with open(path, mode, encoding="utf-8", newline="") as handle:
+        handle.write(payload)
+
+
 def _load_wire_entries_from_file(file_path: str) -> list[dict[str, Any]]:
     resolved_file_path = normalize_path(file_path)
     if not os.path.exists(resolved_file_path):
@@ -714,7 +743,7 @@ async def _list_sessions_from_dir(
     progress_total: int | None = None,
 ) -> list[SessionInfo]:
     sessions: list[SessionInfo] = []
-    if not os.path.exists(directory):
+    if not await fs.Path(directory).exists():
         return sessions
 
     try:
@@ -776,6 +805,7 @@ class SessionManager:
         if not _internal:
             raise Exception("Use SessionManager.create/open/continue_recent/in_memory/fork_from")
         self._lock = threading.RLock()
+        self._io_lock = tonio_sync.Lock()
         self._session_id: str = ""
         self._session_file: str | None = None
         self._cwd = resolve_path(cwd)
@@ -889,6 +919,12 @@ class SessionManager:
                     self._label_timestamps_by_id.pop(entry["targetId"], None)
 
     def _rewrite_file(self) -> None:
+        """Synchronous whole-file rewrite, for construction paths only.
+
+        Its one caller, `_set_session_file`, runs pool-side inside the static
+        factories, so this blocks nothing. The runtime-side rewrite lives in
+        `_create_branched_session_locked`, which awaits its write.
+        """
         if not self._persist or not self._session_file:
             return
         with open(self._session_file, "w", encoding="utf-8", newline="") as handle:
@@ -912,36 +948,50 @@ class SessionManager:
     def get_session_file(self) -> str | None:
         return self._session_file
 
-    def _persist_entry(self, entry: dict[str, Any]) -> None:
-        if not self._persist or not self._session_file:
-            return
+    def _plan_persist(self, entry: dict[str, Any]) -> tuple[str, str, str] | None:
+        """Decide what bytes go where, reading in-memory state under `_lock`.
 
-        has_assistant = any(
-            e.get("type") == "message" and getattr(e.get("message"), "role", None) == "assistant"
-            for e in self._file_entries
-        )
-        if not has_assistant:
-            if self._flushed:
-                with open(self._session_file, "a", encoding="utf-8", newline="") as handle:
-                    handle.write(_dump_json(_entry_to_wire(entry)) + "\n")
-            else:
+        Returns `(path, mode, payload)`, or None when this entry writes nothing.
+        Serializing here rather than inside the pool call keeps the whole
+        `_file_entries` read on the caller's side of the await.
+        """
+        with self._lock:
+            if not self._persist or not self._session_file:
+                return None
+
+            has_assistant = any(
+                e.get("type") == "message" and getattr(e.get("message"), "role", None) == "assistant"
+                for e in self._file_entries
+            )
+            if not has_assistant:
+                if self._flushed:
+                    return self._session_file, "a", _dump_json(_entry_to_wire(entry)) + "\n"
                 # Mark as not flushed so when assistant arrives, all entries get written
                 self._flushed = False
+                return None
+
+            if not self._flushed:
+                payload = "".join(_dump_json(_entry_to_wire(e)) + "\n" for e in self._file_entries)
+                return self._session_file, "x", payload
+            return self._session_file, "a", _dump_json(_entry_to_wire(entry)) + "\n"
+
+    async def _persist_entry(self, entry: dict[str, Any]) -> None:
+        plan = self._plan_persist(entry)
+        if plan is None:
             return
+        path, mode, payload = plan
+        await tonio.spawn_blocking(_write_session_bytes, path, mode, payload)
+        if mode == "x":
+            # Only after the write lands, matching pi: `this.flushed = true`
+            # follows the writeFileSync loop, so a failure leaves it false.
+            with self._lock:
+                self._flushed = True
 
-        if not self._flushed:
-            with open(self._session_file, "x", encoding="utf-8", newline="") as handle:
-                handle.writelines(_dump_json(_entry_to_wire(e)) + "\n" for e in self._file_entries)
-            self._flushed = True
-        else:
-            with open(self._session_file, "a", encoding="utf-8", newline="") as handle:
-                handle.write(_dump_json(_entry_to_wire(entry)) + "\n")
-
-    def _append_entry(self, entry: dict[str, Any]) -> None:
+    def _append_entry_locked(self, entry: dict[str, Any]) -> None:
+        """In-memory half of an append. Caller holds `_lock` and `_io_lock`."""
         self._file_entries.append(entry)
         self._by_id[entry["id"]] = entry
         self._leaf_id = entry["id"]
-        self._persist_entry(entry)
 
     def _new_entry_base(self, entry_type: str) -> dict[str, Any]:
         return {
@@ -953,32 +1003,38 @@ class SessionManager:
 
     # -- appends -----------------------------------------------------------------
 
-    def append_message(self, message: Any) -> str:
+    async def append_message(self, message: Any) -> str:
         """Append a message as child of current leaf, then advance leaf. Returns entry id.
         Does not allow writing CompactionSummaryMessage and BranchSummaryMessage directly:
         those are top-level entries appended via append_compaction()/branch_with_summary()."""
-        with self._lock:
-            entry = self._new_entry_base("message")
-            entry["message"] = message
-            self._append_entry(entry)
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("message")
+                entry["message"] = message
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
-    def append_thinking_level_change(self, thinking_level: str) -> str:
-        with self._lock:
-            entry = self._new_entry_base("thinking_level_change")
-            entry["thinkingLevel"] = thinking_level
-            self._append_entry(entry)
+    async def append_thinking_level_change(self, thinking_level: str) -> str:
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("thinking_level_change")
+                entry["thinkingLevel"] = thinking_level
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
-    def append_model_change(self, provider: str, model_id: str) -> str:
-        with self._lock:
-            entry = self._new_entry_base("model_change")
-            entry["provider"] = provider
-            entry["modelId"] = model_id
-            self._append_entry(entry)
+    async def append_model_change(self, provider: str, model_id: str) -> str:
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("model_change")
+                entry["provider"] = provider
+                entry["modelId"] = model_id
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
-    def append_compaction(
+    async def append_compaction(
         self,
         summary: str,
         first_kept_entry_id: str,
@@ -987,38 +1043,43 @@ class SessionManager:
         from_hook: bool | None = None,
         usage: Any = None,
     ) -> str:
-        with self._lock:
-            entry = self._new_entry_base("compaction")
-            entry["summary"] = summary
-            entry["firstKeptEntryId"] = first_kept_entry_id
-            entry["tokensBefore"] = tokens_before
-            if details is not None:
-                entry["details"] = details
-            if usage is not None:
-                entry["usage"] = usage
-            if from_hook is not None:
-                entry["fromHook"] = from_hook
-            self._append_entry(entry)
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("compaction")
+                entry["summary"] = summary
+                entry["firstKeptEntryId"] = first_kept_entry_id
+                entry["tokensBefore"] = tokens_before
+                if details is not None:
+                    entry["details"] = details
+                if usage is not None:
+                    entry["usage"] = usage
+                if from_hook is not None:
+                    entry["fromHook"] = from_hook
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
-    def append_custom_entry(self, custom_type: str, data: Any = None) -> str:
+    async def append_custom_entry(self, custom_type: str, data: Any = None) -> str:
         """Append a custom entry (for extensions) as child of current leaf."""
-        with self._lock:
-            entry = self._new_entry_base("custom")
-            entry["customType"] = custom_type
-            if data is not None:
-                entry["data"] = data
-            self._append_entry(entry)
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("custom")
+                entry["customType"] = custom_type
+                if data is not None:
+                    entry["data"] = data
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
-    def append_session_info(self, name: str) -> str:
+    async def append_session_info(self, name: str) -> str:
         """Append a session info entry (e.g., display name). Returns entry id."""
-
-        with self._lock:
-            sanitized_name = re.sub(r"[\r\n]+", " ", name).strip()
-            entry = self._new_entry_base("session_info")
-            entry["name"] = sanitized_name
-            self._append_entry(entry)
+        async with self._io_lock:
+            with self._lock:
+                sanitized_name = re.sub(r"[\r\n]+", " ", name).strip()
+                entry = self._new_entry_base("session_info")
+                entry["name"] = sanitized_name
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
     def get_session_name(self) -> str | None:
@@ -1032,16 +1093,20 @@ class SessionManager:
                     return (raw_name.strip() if isinstance(raw_name, str) else "") or None
             return None
 
-    def append_custom_message_entry(self, custom_type: str, content: Any, display: bool, details: Any = None) -> str:
+    async def append_custom_message_entry(
+        self, custom_type: str, content: Any, display: bool, details: Any = None
+    ) -> str:
         """Append a custom message entry (for extensions) that participates in LLM context."""
-        with self._lock:
-            entry = self._new_entry_base("custom_message")
-            entry["customType"] = custom_type
-            entry["content"] = content
-            entry["display"] = display
-            if details is not None:
-                entry["details"] = details
-            self._append_entry(entry)
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("custom_message")
+                entry["customType"] = custom_type
+                entry["content"] = content
+                entry["display"] = display
+                if details is not None:
+                    entry["details"] = details
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
     # -- tree traversal ----------------------------------------------------------
@@ -1067,23 +1132,25 @@ class SessionManager:
         with self._lock:
             return self._labels_by_id.get(entry_id)
 
-    def append_label_change(self, target_id: str, label: str | None) -> str:
+    async def append_label_change(self, target_id: str, label: str | None) -> str:
         """Set or clear a label on an entry. Labels are user-defined markers for
         bookmarking/navigation. Pass None or empty string to clear the label."""
-        with self._lock:
-            if target_id not in self._by_id:
-                raise Exception(f"Entry {target_id} not found")
-            entry = self._new_entry_base("label")
-            entry["targetId"] = target_id
-            if label is not None:
-                entry["label"] = label
-            self._append_entry(entry)
-            if label:
-                self._labels_by_id[target_id] = label
-                self._label_timestamps_by_id[target_id] = entry["timestamp"]
-            else:
-                self._labels_by_id.pop(target_id, None)
-                self._label_timestamps_by_id.pop(target_id, None)
+        async with self._io_lock:
+            with self._lock:
+                if target_id not in self._by_id:
+                    raise Exception(f"Entry {target_id} not found")
+                entry = self._new_entry_base("label")
+                entry["targetId"] = target_id
+                if label is not None:
+                    entry["label"] = label
+                self._append_entry_locked(entry)
+                if label:
+                    self._labels_by_id[target_id] = label
+                    self._label_timestamps_by_id[target_id] = entry["timestamp"]
+                else:
+                    self._labels_by_id.pop(target_id, None)
+                    self._label_timestamps_by_id.pop(target_id, None)
+            await self._persist_entry(entry)
             return entry["id"]
 
     def get_branch(self, from_id: str | None = None) -> list[dict[str, Any]]:
@@ -1172,7 +1239,7 @@ class SessionManager:
         with self._lock:
             self._leaf_id = None
 
-    def branch_with_summary(
+    async def branch_with_summary(
         self,
         branch_from_id: str | None,
         summary: str,
@@ -1181,30 +1248,38 @@ class SessionManager:
         usage: Any = None,
     ) -> str:
         """Start a new branch with a summary of the abandoned path."""
-        with self._lock:
-            if branch_from_id is not None and branch_from_id not in self._by_id:
-                raise Exception(f"Entry {branch_from_id} not found")
-            self._leaf_id = branch_from_id
-            entry: dict[str, Any] = {
-                "type": "branch_summary",
-                "id": _generate_id(self._by_id),
-                "parentId": branch_from_id,
-                "timestamp": _iso_now(),
-                "fromId": branch_from_id if branch_from_id is not None else "root",
-                "summary": summary,
-            }
-            if details is not None:
-                entry["details"] = details
-            if usage is not None:
-                entry["usage"] = usage
-            if from_hook is not None:
-                entry["fromHook"] = from_hook
-            self._append_entry(entry)
+        async with self._io_lock:
+            with self._lock:
+                if branch_from_id is not None and branch_from_id not in self._by_id:
+                    raise Exception(f"Entry {branch_from_id} not found")
+                self._leaf_id = branch_from_id
+                entry: dict[str, Any] = {
+                    "type": "branch_summary",
+                    "id": _generate_id(self._by_id),
+                    "parentId": branch_from_id,
+                    "timestamp": _iso_now(),
+                    "fromId": branch_from_id if branch_from_id is not None else "root",
+                    "summary": summary,
+                }
+                if details is not None:
+                    entry["details"] = details
+                if usage is not None:
+                    entry["usage"] = usage
+                if from_hook is not None:
+                    entry["fromHook"] = from_hook
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
             return entry["id"]
 
-    def create_branched_session(self, leaf_id: str) -> str | None:
+    async def create_branched_session(self, leaf_id: str) -> str | None:
         """Create a new session file containing only the path from root to the given
         leaf. Returns the new session file path, or None if not persisting."""
+        async with self._io_lock:
+            return await self._create_branched_session_locked(leaf_id)
+
+    async def _create_branched_session_locked(self, leaf_id: str) -> str | None:
+        """Caller holds `_io_lock`. Splits at the write: everything up to the
+        rewrite happens under `_lock`, which is released before the await."""
         with self._lock:
             previous_session_file = self._session_file
             path = self.get_branch(leaf_id)
@@ -1268,36 +1343,72 @@ class SessionManager:
                 self._session_file = new_session_file
             self._build_index()
 
-            if self._persist:
-                # Only write the file now if it contains an assistant message.
-                # Otherwise defer to _persist_entry(), which creates the file on the
-                # first assistant response, matching the new_session() contract and
-                # avoiding the duplicate-header bug when the no-assistant guard later
-                # resets flushed to False.
-                has_assistant = any(
-                    e.get("type") == "message" and getattr(e.get("message"), "role", None) == "assistant"
-                    for e in self._file_entries
-                )
-                if has_assistant:
-                    self._rewrite_file()
-                    self._flushed = True
-                else:
-                    self._flushed = False
-                return new_session_file
+            if not self._persist:
+                # In-memory mode: replace current session with the path + labels
+                return None
 
-            # In-memory mode: replace current session with the path + labels
-            return None
+            # Only write the file now if it contains an assistant message.
+            # Otherwise defer to _persist_entry(), which creates the file on the
+            # first assistant response, matching the new_session() contract and
+            # avoiding the duplicate-header bug when the no-assistant guard later
+            # resets flushed to False.
+            has_assistant = any(
+                e.get("type") == "message" and getattr(e.get("message"), "role", None) == "assistant"
+                for e in self._file_entries
+            )
+            self._flushed = False
+            if not has_assistant:
+                return new_session_file
+            payload = "".join(_dump_json(_entry_to_wire(entry)) + "\n" for entry in self._file_entries)
+
+        # `_lock` released: the write is awaited outside it, and `_flushed` only
+        # goes true once the bytes land.
+        await tonio.spawn_blocking(_write_session_bytes, new_session_file, "w", payload)
+        with self._lock:
+            self._flushed = True
+        return new_session_file
 
     # -- constructors ------------------------------------------------------------
 
+    # Each factory is a pure blocking construction — read the file, build the
+    # object — so it goes to the pool whole and its body stays sync. Sync defs
+    # returning the awaitable, not `async def ...: return await ...`.
+
     @staticmethod
-    def create(cwd: str, session_dir: str | None = None, options: dict[str, Any] | None = None) -> SessionManager:
+    def create(
+        cwd: str, session_dir: str | None = None, options: dict[str, Any] | None = None
+    ) -> Awaitable[SessionManager]:
+        """Create a new session."""
+        return tonio.spawn_blocking(SessionManager._create_sync, cwd, session_dir, options)
+
+    @staticmethod
+    def open(path: str, session_dir: str | None = None, cwd_override: str | None = None) -> Awaitable[SessionManager]:
+        """Open a specific session file."""
+        return tonio.spawn_blocking(SessionManager._open_sync, path, session_dir, cwd_override)
+
+    @staticmethod
+    def continue_recent(cwd: str, session_dir: str | None = None) -> Awaitable[SessionManager]:
+        """Resume the most recent session for a directory."""
+        return tonio.spawn_blocking(SessionManager._continue_recent_sync, cwd, session_dir)
+
+    @staticmethod
+    def fork_from(
+        source_path: str,
+        target_cwd: str,
+        session_dir: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> Awaitable[SessionManager]:
+        """Fork a session from another project directory into the current project."""
+        return tonio.spawn_blocking(SessionManager._fork_from_sync, source_path, target_cwd, session_dir, options)
+
+    @staticmethod
+    def _create_sync(cwd: str, session_dir: str | None = None, options: dict[str, Any] | None = None) -> SessionManager:
         """Create a new session."""
         directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
         return SessionManager(cwd, directory, None, True, options, _internal=True)
 
     @staticmethod
-    def open(path: str, session_dir: str | None = None, cwd_override: str | None = None) -> SessionManager:
+    def _open_sync(path: str, session_dir: str | None = None, cwd_override: str | None = None) -> SessionManager:
         """Open a specific session file."""
         resolved_path = resolve_path(path)
         header: dict[str, Any] | None = None
@@ -1321,7 +1432,7 @@ class SessionManager:
         return SessionManager(cwd, directory, resolved_path, True, None, preloaded_file_entries, _internal=True)
 
     @staticmethod
-    def continue_recent(cwd: str, session_dir: str | None = None) -> SessionManager:
+    def _continue_recent_sync(cwd: str, session_dir: str | None = None) -> SessionManager:
         """Continue the most recent session, or create new if none."""
         directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
         filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
@@ -1336,7 +1447,7 @@ class SessionManager:
         return SessionManager(cwd if cwd is not None else os.getcwd(), "", None, False, options, _internal=True)
 
     @staticmethod
-    def fork_from(
+    def _fork_from_sync(
         source_path: str,
         target_cwd: str,
         session_dir: str | None = None,
@@ -1418,14 +1529,19 @@ class SessionManager:
         sessions_dir = get_sessions_dir()
 
         try:
-            if not os.path.exists(sessions_dir):
+            if not await fs.Path(sessions_dir).exists():
                 return []
-            dir_names = await tonio.spawn_blocking(os.listdir, sessions_dir)
-            dirs = [
-                os.path.join(sessions_dir, name)
-                for name in dir_names
-                if os.path.isdir(os.path.join(sessions_dir, name))
-            ]
+
+            # One pool hop for the listing plus the per-entry isdir checks:
+            # a directory scan is one blocking unit.
+            def _project_dirs() -> list[str]:
+                return [
+                    os.path.join(sessions_dir, name)
+                    for name in os.listdir(sessions_dir)
+                    if os.path.isdir(os.path.join(sessions_dir, name))
+                ]
+
+            dirs = await tonio.spawn_blocking(_project_dirs)
 
             # Count total files first for accurate progress. Listed concurrently:
             # one thread per project directory, which is the cold-cache cost here.

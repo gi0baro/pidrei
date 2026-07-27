@@ -2,8 +2,11 @@
 
 import json
 import os
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
+
+import tonio.colored as tonio
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.lockfile import acquire_lock_sync_with_retry
@@ -161,24 +164,40 @@ def has_trust_requiring_project_resources(cwd: str) -> bool:
 
 
 class ProjectTrustStore:
+    """pi's store is fully synchronous (`get`/`set`/`setMany` all block) —
+    `trust-manager.ts` has no write queue and no promises at all.
+
+    So do we, behaviourally: every operation completes before it returns, and a
+    write error reaches the caller. What changes is only how the waiting is
+    spelled — each lock-read-modify-write cycle is one blocking unit handed to
+    the pool and `await`ed, rather than run on a runtime worker.
+
+    An earlier port queued writes through the same `Event` chain as
+    `SettingsManager`. That was a mis-applied analogy: pi genuinely defers in
+    settings (`settings-manager.ts:286`) and genuinely does not here. The queue
+    made `set()` return before the decision was durable and made write failures
+    unreachable — including by `_maybe_save_implicit_project_trust_after_reload`,
+    whose `except` clause was dead code as a result.
+    """
+
     def __init__(self, agent_dir: str):
         self._trust_path = os.path.join(resolve_path(agent_dir), "trust.json")
 
-    def get(self, cwd: str) -> ProjectTrustDecision:
-        entry = self.get_entry(cwd)
+    async def get(self, cwd: str) -> ProjectTrustDecision:
+        entry = await self.get_entry(cwd)
         return entry.decision if entry is not None else None
 
-    def get_entry(self, cwd: str) -> ProjectTrustStoreEntry | None:
+    def get_entry(self, cwd: str) -> Awaitable[ProjectTrustStoreEntry | None]:
         def read() -> ProjectTrustStoreEntry | None:
             data = _read_trust_file(self._trust_path)
             return _find_nearest_trust_entry(data, cwd)
 
-        return _with_trust_file_lock(self._trust_path, read)
+        return tonio.spawn_blocking(_with_trust_file_lock, self._trust_path, read)
 
-    def set(self, cwd: str, decision: ProjectTrustDecision) -> None:
-        self.set_many([ProjectTrustUpdate(cwd, decision)])
+    def set(self, cwd: str, decision: ProjectTrustDecision) -> Awaitable[None]:
+        return self.set_many([ProjectTrustUpdate(cwd, decision)])
 
-    def set_many(self, decisions: list[ProjectTrustUpdate]) -> None:
+    def set_many(self, decisions: list[ProjectTrustUpdate]) -> Awaitable[None]:
         def write() -> None:
             data = _read_trust_file(self._trust_path)
             for update in decisions:
@@ -189,4 +208,4 @@ class ProjectTrustStore:
                     data[key] = update.decision
             _write_trust_file(self._trust_path, data)
 
-        _with_trust_file_lock(self._trust_path, write)
+        return tonio.spawn_blocking(_with_trust_file_lock, self._trust_path, write)

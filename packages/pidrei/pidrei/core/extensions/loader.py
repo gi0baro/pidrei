@@ -29,10 +29,13 @@ import itertools
 import os
 import re
 import sys
+import threading
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+import tonio.colored as tonio
 
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.event_bus import EventBus
@@ -67,6 +70,10 @@ MANIFEST_TABLE = ("tool", "pidrei")
 _extension_cache: dict[str, Any] = {}
 _extension_cache_cwd: str | None = None
 _extension_cache_generation = 0
+
+# Guards module execution in `_load_extension_module`. Held only on a blocking
+# pool thread, never across an await.
+_import_lock = threading.RLock()
 
 _module_counter = itertools.count()
 
@@ -204,21 +211,21 @@ class ExtensionAPI:
         self._runtime.assert_active()
         self._action("send_user_message")(content, options)
 
-    def append_entry(self, custom_type: str, data: Any = None) -> None:
+    async def append_entry(self, custom_type: str, data: Any = None) -> None:
         self._runtime.assert_active()
-        self._action("append_entry")(custom_type, data)
+        await self._action("append_entry")(custom_type, data)
 
-    def set_session_name(self, name: str) -> None:
+    async def set_session_name(self, name: str) -> None:
         self._runtime.assert_active()
-        self._action("set_session_name")(name)
+        await self._action("set_session_name")(name)
 
     def get_session_name(self) -> Any:
         self._runtime.assert_active()
         return self._action("get_session_name")()
 
-    def set_label(self, entry_id: str, label: str | None) -> None:
+    async def set_label(self, entry_id: str, label: str | None) -> None:
         self._runtime.assert_active()
-        self._action("set_label")(entry_id, label)
+        await self._action("set_label")(entry_id, label)
 
     def exec(self, command: str, args: list[str], *, cwd: str | None = None, **options: Any) -> Any:
         """Returns the coroutine, as pi returns the promise: no await here, so
@@ -250,9 +257,9 @@ class ExtensionAPI:
         self._runtime.assert_active()
         return self._action("get_thinking_level")()
 
-    def set_thinking_level(self, level: Any) -> None:
+    async def set_thinking_level(self, level: Any) -> None:
         self._runtime.assert_active()
-        self._action("set_thinking_level")(level)
+        await self._action("set_thinking_level")(level)
 
     # -- providers ---------------------------------------------------------------
 
@@ -319,18 +326,32 @@ def _import_module(resolved_path: str) -> Any:
 
 
 def _load_extension_module(resolved_path: str, cache_token: ExtensionCacheToken | None = None) -> Any:
-    if _is_current_cache_token(cache_token):
-        cached = _extension_cache.get(resolved_path)
-        if cached is not None:
-            return cached
+    """Import an extension module and return its factory.
 
-    module = _import_module(resolved_path)
-    factory = getattr(module, FACTORY_ATTRIBUTE, None)
-    if not callable(factory):
-        return None
-    if _is_current_cache_token(cache_token):
-        _extension_cache[resolved_path] = factory
-    return factory
+    Blocking: reads the source and lets CPython write `__pycache__`, so callers
+    hand this to the blocking pool (see `_load_extension`).
+
+    Serialised deliberately. Extension modules are arbitrary user code executed
+    at import, and two of them may pull in the same dependency at once. Rather
+    than reason about how the free-threaded interpreter locks imports — which is
+    an implementation detail that can change between Python releases — only one
+    module is executed at a time. Extension loading is a startup/reload step, so
+    the lost concurrency costs nothing. Re-entrant because an extension could,
+    in principle, trigger another extension import on the same thread.
+    """
+    with _import_lock:
+        if _is_current_cache_token(cache_token):
+            cached = _extension_cache.get(resolved_path)
+            if cached is not None:
+                return cached
+
+        module = _import_module(resolved_path)
+        factory = getattr(module, FACTORY_ATTRIBUTE, None)
+        if not callable(factory):
+            return None
+        if _is_current_cache_token(cache_token):
+            _extension_cache[resolved_path] = factory
+        return factory
 
 
 def _create_extension(extension_path: str, resolved_path: str) -> Extension:
@@ -363,7 +384,7 @@ async def _load_extension(
     resolved_path = resolve_path(extension_path, cwd, normalize_unicode_spaces=True)
 
     try:
-        factory = _load_extension_module(resolved_path, cache_token)
+        factory = await tonio.spawn_blocking(_load_extension_module, resolved_path, cache_token)
         record_time(f"{extension_path} module import", "extensions")
         if factory is None:
             return None, (f"Extension does not define a valid {FACTORY_ATTRIBUTE}() factory function: {extension_path}")
@@ -541,22 +562,26 @@ async def discover_and_load_extensions(
                 seen.add(resolved)
                 all_paths.append(path)
 
-    # 1. Project-local extensions: cwd/<CONFIG_DIR_NAME>/extensions/
-    add_paths(discover_extensions_in_dir(os.path.join(resolved_cwd, CONFIG_DIR_NAME, "extensions")))
-
-    # 2. Global extensions: agent_dir/extensions/
-    add_paths(discover_extensions_in_dir(os.path.join(resolved_agent_dir, "extensions")))
-
-    # 3. Explicitly configured paths
-    for path in configured_paths:
-        resolved = resolve_path(path, resolved_cwd, normalize_unicode_spaces=True)
-        if os.path.isdir(resolved):
-            entries = resolve_extension_entries(resolved)
-            if entries:
-                add_paths(entries)
+    # Discovery is a directory scan plus a manifest read per candidate — one
+    # blocking unit, so it goes to the pool whole rather than a hop per probe.
+    def _discover() -> list[list[str]]:
+        found: list[list[str]] = [
+            # 1. Project-local extensions: cwd/<CONFIG_DIR_NAME>/extensions/
+            discover_extensions_in_dir(os.path.join(resolved_cwd, CONFIG_DIR_NAME, "extensions")),
+            # 2. Global extensions: agent_dir/extensions/
+            discover_extensions_in_dir(os.path.join(resolved_agent_dir, "extensions")),
+        ]
+        # 3. Explicitly configured paths
+        for path in configured_paths:
+            resolved = resolve_path(path, resolved_cwd, normalize_unicode_spaces=True)
+            if os.path.isdir(resolved):
+                entries = resolve_extension_entries(resolved)
+                found.append(entries if entries else discover_extensions_in_dir(resolved))
                 continue
-            add_paths(discover_extensions_in_dir(resolved))
-            continue
-        add_paths([resolved])
+            found.append([resolved])
+        return found
+
+    for group in await tonio.spawn_blocking(_discover):
+        add_paths(group)
 
     return await load_extensions(all_paths, resolved_cwd, event_bus)

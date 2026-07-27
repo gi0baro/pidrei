@@ -60,7 +60,7 @@ class VirtualTerminal:
             data = _APC_RE.sub("", data)
         self._stream.feed(data)
 
-    def write(self, data: str) -> None:
+    async def write(self, data: str) -> None:
         self._feed(data)
         # Frame counter for wait_for_render(); see its docstring.
         self._frames += 1
@@ -112,10 +112,10 @@ class VirtualTerminal:
 
     # Test-specific methods not in the Terminal protocol
 
-    def send_input(self, data: str) -> None:
+    async def send_input(self, data: str) -> None:
         """Simulate keyboard input."""
         if self._input_handler is not None:
-            self._input_handler(data)
+            await self._input_handler(data)
 
     def resize(self, columns: int, rows: int) -> None:
         """Resize the terminal (xterm-like: content stays bottom-anchored)."""
@@ -194,9 +194,9 @@ class LoggingVirtualTerminal(VirtualTerminal):
         super().__init__(columns, rows)
         self._writes: list[str] = []
 
-    def write(self, data: str) -> None:
+    async def write(self, data: str) -> None:
         self._writes.append(data)
-        super().write(data)
+        await super().write(data)
 
     def get_writes(self) -> str:
         return "".join(self._writes)

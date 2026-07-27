@@ -40,7 +40,7 @@ def dirs(request):
 
 
 async def create_session(dirs, *, no_tools=None, tools=None):
-    settings_manager = SettingsManager.create(dirs.root, dirs.agent_dir)
+    settings_manager = await SettingsManager.create(dirs.root, dirs.agent_dir)
     session_manager = SessionManager.in_memory(dirs.root)
     resource_loader = DefaultResourceLoader(
         cwd=dirs.root,
@@ -99,7 +99,7 @@ async def test_still_disables_all_tools_when_no_tools_is_all(dirs):
 
 @pytest.mark.tonio
 async def test_propagates_no_tools_through_service_based_session_creation(dirs):
-    settings_manager = SettingsManager.create(dirs.root, dirs.agent_dir)
+    settings_manager = await SettingsManager.create(dirs.root, dirs.agent_dir)
     session_manager = SessionManager.in_memory(dirs.root)
     services = await create_agent_session_services(
         CreateAgentSessionServicesOptions(cwd=dirs.root, agent_dir=dirs.agent_dir, settings_manager=settings_manager)

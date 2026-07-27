@@ -536,11 +536,11 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             # =================================================================
 
             case "set_thinking_level":
-                session.set_thinking_level(command.get("level"))
+                await session.set_thinking_level(command.get("level"))
                 return success(id, "set_thinking_level")
 
             case "cycle_thinking_level":
-                level = session.cycle_thinking_level()
+                level = await session.cycle_thinking_level()
                 if level is None:
                     return success(id, "cycle_thinking_level", None)
                 return success(id, "cycle_thinking_level", {"level": level})
@@ -663,7 +663,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 name = (command.get("name") or "").strip()
                 if not name:
                     return error(id, "set_session_name", "Session name cannot be empty")
-                session.set_session_name(name)
+                await session.set_session_name(name)
                 return success(id, "set_session_name")
 
             # =================================================================

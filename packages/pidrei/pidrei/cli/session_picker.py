@@ -23,7 +23,7 @@ async def select_session(
 ) -> str | None:
     """Show TUI session selector; returns the selected session path or None if cancelled."""
     ui = await create_startup_tui(settings_manager)
-    keybindings = KeybindingsManager.create()
+    keybindings = await KeybindingsManager.create()
     set_keybindings(keybindings)
 
     done = tonio.Event()

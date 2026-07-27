@@ -160,6 +160,10 @@ def resolve_config_value(config: str, env: dict[str, str] | None = None) -> str 
     return _resolve_template(_parse_config_value_template(config), env)
 
 
+# Sync by design: every runtime-reachable caller offloads this —
+# `AuthStorage.read`, `provider_composer`'s two header resolutions, and
+# `ModelRuntime.get_auth` all go through `spawn_blocking`. A new caller
+# must do the same: this runs an arbitrary shell command (`!cmd`).
 def _execute_with_default_shell(command: str) -> str | None:
     try:
         result = subprocess.run(  # noqa: S602

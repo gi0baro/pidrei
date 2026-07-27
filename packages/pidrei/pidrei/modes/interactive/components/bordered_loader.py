@@ -58,9 +58,9 @@ class BorderedLoader(Container):
         if self._cancellable:
             self._loader.on_abort = fn
 
-    def handle_input(self, data: str) -> None:
+    async def handle_input(self, data: str) -> None:
         if self._cancellable:
-            self._loader.handle_input(data)
+            await self._loader.handle_input(data)
 
     def dispose(self) -> None:
         dispose = getattr(self._loader, "dispose", None)

@@ -8,6 +8,10 @@ pi's node process is single-threaded, so each sync storage call is
 effectively atomic against every other one. tonio tasks run on parallel
 worker threads, so the equivalent atomicity (in particular read-modify-write
 upserts vs concurrent loads) needs the module lock below.
+
+These functions stay sync deliberately: `supervisor` calls them through
+`spawn_blocking`, so both the file I/O and the lock are held pool-side and
+never on a runtime worker. Any new caller must do the same.
 """
 
 import json
