@@ -1,5 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/theme/theme-controller.ts."""
 
+from collections.abc import Awaitable
+
 from .theme import (
     detect_terminal_background_from_env,
     detect_terminal_background_theme,
@@ -25,13 +27,13 @@ class InteractiveThemeController:
         )
         self._ui.on_terminal_color_scheme_change(self._apply_terminal_theme)
 
-    async def prime(self) -> None:
+    def prime(self) -> Awaitable[None]:
         """Load the initial theme off the runtime.
 
         `init_theme` reads theme files, so it cannot run in `__init__`;
         `InteractiveMode.run` calls this before the first render.
         """
-        await init_theme(self._active_theme_name, True)
+        return init_theme(self._active_theme_name, True)
 
     async def apply_from_settings(self) -> None:
         theme_setting = self._settings_manager.get_theme_setting()
@@ -78,8 +80,8 @@ class InteractiveThemeController:
             self._ui.invalidate()
             self._ui.request_render()
 
-    async def disable_auto_sync(self) -> None:
-        await self._set_auto_sync(False)
+    def disable_auto_sync(self) -> Awaitable[None]:
+        return self._set_auto_sync(False)
 
     def get_terminal_theme(self) -> str:
         return self._terminal_theme

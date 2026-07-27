@@ -10,6 +10,7 @@ import base64
 import os
 import subprocess
 import sys
+from collections.abc import Awaitable
 
 import tonio.colored as tonio
 
@@ -74,13 +75,13 @@ def _emit_osc52(text: str) -> bool:
     return True
 
 
-async def read_clipboard_text() -> str | None:
+def read_clipboard_text() -> Awaitable[str | None]:
     """Read plain text from the system clipboard, if a reader is available.
 
     Picking a platform tool and running it is one blocking unit, so it goes to
     the pool whole rather than a hop per candidate command.
     """
-    return await tonio.spawn_blocking(_read_clipboard_text_sync)
+    return tonio.spawn_blocking(_read_clipboard_text_sync)
 
 
 def _read_clipboard_text_sync() -> str | None:
@@ -100,9 +101,9 @@ def _read_clipboard_text_sync() -> str | None:
     return text or None
 
 
-async def copy_to_clipboard(text: str) -> None:
+def copy_to_clipboard(text: str) -> Awaitable[None]:
     """Offloaded whole, like `read_clipboard_text`."""
-    await tonio.spawn_blocking(_copy_to_clipboard_sync, text)
+    return tonio.spawn_blocking(_copy_to_clipboard_sync, text)
 
 
 def _copy_to_clipboard_sync(text: str) -> None:

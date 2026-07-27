@@ -15,6 +15,7 @@ attempt that never happens.
 
 import os
 import shutil
+from collections.abc import Awaitable
 
 import tonio.colored as tonio
 
@@ -59,6 +60,6 @@ def missing_tool_message(tool: str) -> str:
     return f"{name} is not installed. Install it and make sure it is on PATH, or use the bash tool instead."
 
 
-async def ensure_tool(tool: str, silent: bool = False) -> str | None:
+def ensure_tool(tool: str, silent: bool = False) -> Awaitable[str | None]:
     """Resolve a tool path. Never downloads — see the module docstring."""
-    return await tonio.spawn_blocking(get_tool_path, tool)
+    return tonio.spawn_blocking(get_tool_path, tool)

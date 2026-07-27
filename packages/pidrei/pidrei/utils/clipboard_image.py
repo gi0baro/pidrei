@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from collections.abc import Awaitable
 
 import tonio.colored as tonio
 
@@ -201,12 +202,12 @@ def _read_clipboard_image_via_pngpaste() -> dict | None:
     return None
 
 
-async def read_clipboard_image(options: dict | None = None) -> dict | None:
+def read_clipboard_image(options: dict | None = None) -> Awaitable[dict | None]:
     """Probing the clipboard is one blocking unit — a `/proc` read plus a
     platform tool — so it goes to the pool whole. Replaces an earlier partial
     fix that offloaded only `_is_wsl` and left its subprocess siblings inline.
     """
-    return await tonio.spawn_blocking(_read_clipboard_image_sync, options)
+    return tonio.spawn_blocking(_read_clipboard_image_sync, options)
 
 
 def _read_clipboard_image_sync(options: dict | None = None) -> dict | None:

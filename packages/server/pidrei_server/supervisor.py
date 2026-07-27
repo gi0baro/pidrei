@@ -11,6 +11,7 @@ integration was dropped in Phase 7 step 1, so none of that is here.
 
 import threading
 import uuid
+from collections.abc import Awaitable
 from typing import Any
 
 import tonio.colored as tonio
@@ -134,8 +135,8 @@ class ServerSupervisor:
             live.resources.session_id = updates["sessionId"]
         return live.record
 
-    async def _persist(self, record: InstanceRecord) -> None:
-        await tonio.spawn_blocking(upsert_instance, record)
+    def _persist(self, record: InstanceRecord) -> Awaitable[None]:
+        return tonio.spawn_blocking(upsert_instance, record)
 
     def _clear_bindings(self, live: _LiveInstance) -> None:
         if live.unsubscribe_events is not None:
