@@ -30,8 +30,17 @@ from pidrei.cli.package_commands import (
 
 @pytest.fixture
 def workspace(request, tmp_dir):
-    """agent dir + project dir + a local package, with cwd and env restored."""
-    root = str(tmp_dir)
+    """agent dir + project dir + a local package, with cwd and env restored.
+
+    `realpath`, not the raw temp dir: on macOS `/var` is a symlink to
+    `/private/var`, so `os.chdir()` + `os.getcwd()` hands back the resolved path
+    while an env-provided agent dir keeps the symlinked one. A relative package
+    path stored against that mismatch needs `..` hops across the symlink, and
+    `os.path.realpath` resolves symlinks *before* collapsing `..` — which
+    doubled the prefix into `/private/private/var/...` and failed only on macOS
+    CI. Same precedent as `test_serve_e2e.py`.
+    """
+    root = os.path.realpath(str(tmp_dir))
     agent_dir = os.path.join(root, "agent")
     project_dir = os.path.join(root, "project")
     package_dir = os.path.join(root, "package")
