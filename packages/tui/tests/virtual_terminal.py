@@ -17,6 +17,7 @@ pi uses @xterm/headless; pyte differences the harness papers over:
 """
 
 import re
+import time
 
 import pyte
 import tonio.colored as tonio
@@ -37,6 +38,7 @@ class VirtualTerminal:
         self._resize_handler = None
         self._screen = pyte.HistoryScreen(columns, rows, history=_HISTORY)
         self._stream = pyte.Stream(self._screen)
+        self._frames = 0
 
     async def start(self, on_input, on_resize) -> None:
         self._input_handler = on_input
@@ -60,6 +62,13 @@ class VirtualTerminal:
 
     def write(self, data: str) -> None:
         self._feed(data)
+        # Frame counter for wait_for_render(); see its docstring.
+        self._frames += 1
+
+    @property
+    def frames(self) -> int:
+        """Number of writes the TUI has made — one or more per rendered frame."""
+        return self._frames
 
     @property
     def columns(self) -> int:
@@ -148,9 +157,34 @@ class VirtualTerminal:
         char = self._screen.buffer[row][col]
         return 1 if char.underscore else 0
 
-    async def wait_for_render(self) -> None:
-        """Wait for TUI's throttled render pipeline to settle."""
-        await tonio.sleep(0.05)
+    async def wait_for_render(self, since: int | None = None, timeout: float = 5.0) -> None:
+        """Wait until the TUI has actually written a frame.
+
+        This used to be `await tonio.sleep(0.05)` — a hope, not a wait. The
+        render loop is throttled to 16ms but runs as a separate task, so under
+        load (the full suite, a busy CI runner) the frame could land after the
+        sleep and the assertion would read a stale viewport. That produced a
+        long-standing flake across the overlay/focus suites: different test
+        names each time, never reproducible when the file ran alone, and
+        originally misdiagnosed as order-dependent.
+
+        Pass `since` — the frame count captured *before* requesting the render
+        — to actually wait for that frame. Without it this keeps the original
+        settle-sleep, because most callers do not request a render at all and
+        waiting for a frame that never comes would cost the timeout each time
+        (measured: 152 tests went from ~3s to 41s).
+
+        `timeout` bounds the wait so a render that never lands fails the
+        assertion it was blocking, rather than hanging the suite.
+        """
+        if since is None:
+            await tonio.sleep(0.05)
+            return
+        deadline = time.monotonic() + timeout
+        while self._frames <= since:
+            if time.monotonic() >= deadline:
+                return
+            await tonio.sleep(0.001)
 
 
 class LoggingVirtualTerminal(VirtualTerminal):
