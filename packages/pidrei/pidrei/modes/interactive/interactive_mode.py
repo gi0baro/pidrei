@@ -621,7 +621,7 @@ class InteractiveMode:
             self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(DynamicBorder())
         if self.settings_manager.get_collapse_changelog():
-            version_match = re.search(r"##\s+\[?(\d+\.\d+\.\d+)\]?", self._changelog_markdown)
+            version_match = re.search(r"##\s+\[?(\d+\.\d+\.\d+(?:\.\d+)?)\]?", self._changelog_markdown)
             latest_version = version_match.group(1) if version_match else self._version
             condensed_text = f"Updated to v{latest_version}. Use {theme.bold('/changelog')} to view full changelog."
             self._chat_container.add_child(Text(condensed_text, 1, 0))

@@ -19,7 +19,7 @@ The main reasons behind PiDrei existence are:
 
 Alpha, and the honest kind. PiDrei is a port in progress, validated the only way
 a port sensibly can be: by porting Pi's own test suites module by module and
-keeping them green (2,958 mirrored cases so far).
+keeping them green (2,970 mirrored cases so far).
 
 Working today: the agent loop and its tools, the TUI and interactive mode, the
 headless CLI and RPC server, all 37 of Pi's providers, image generation, OAuth

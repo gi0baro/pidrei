@@ -1,6 +1,24 @@
 """Mirror of pi coding-agent src/utils/changelog.ts.
 
-Entries are ``{"major", "minor", "patch", "content"}`` records.
+Entries are ``{"major", "minor", "patch", "build", "content"}`` records.
+
+Three deliberate divergences, all following from whose changelog this reads:
+
+- **The repo and base path are ours.** These constants turn a package-relative
+  link in the changelog into a tag-pinned source link, so they have to name the
+  repository and directory the changelog itself lives in. The doubled segment
+  in ``packages/pidrei/pidrei`` is not a typo: the outer directory is the
+  distribution, the inner one the Python package, and CHANGELOG.md ships inside
+  the package next to README.md and docs/.
+- **Versions carry a fourth segment.** pidrei versions are ``<pi version>.<our
+  build>``, and the build number is the one that moves between pi releases —
+  parsing three segments would make every pidrei-only release compare equal to
+  the last one and silently skip the "What's New" panel. A header with only
+  three segments still parses, as build ``0``.
+- **pi's legacy-repository rewrite is gone.** It canonicalized
+  ``badlogic|earendil-works/pi-mono`` URLs into pi's current repo — history we
+  do not have. Left in place it would rewrite a genuine pi link into a pidrei
+  URL that does not exist.
 """
 
 import os
@@ -10,16 +28,15 @@ import sys
 import urllib.parse
 
 
-GITHUB_REPO = "earendil-works/pi"
-_CHANGELOG_LINK_BASE_PATH = "packages/coding-agent"
-_LEGACY_REPO_RE = re.compile(r"^https://github\.com/(?:badlogic|earendil-works)/pi-mono(?=/|$)")
+GITHUB_REPO = "gi0baro/pidrei"
+_CHANGELOG_LINK_BASE_PATH = "packages/pidrei/pidrei"
 _URL_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*:", re.IGNORECASE)
 _INLINE_MARKDOWN_LINK_RE = re.compile(r"(!?\[[^\]\n]+\]\()([^\s)]+)((?:\s+[^)]*)?\))")
-_VERSION_HEADER_RE = re.compile(r"##\s+\[?(\d+)\.(\d+)\.(\d+)\]?")
+_VERSION_HEADER_RE = re.compile(r"##\s+\[?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?\]?")
 
 
 def _entry_version(entry: dict) -> str:
-    return f"{entry['major']}.{entry['minor']}.{entry['patch']}"
+    return f"{entry['major']}.{entry['minor']}.{entry['patch']}.{entry['build']}"
 
 
 def _normalize_tag(version) -> str:
@@ -53,6 +70,12 @@ def _resolve_repository_path(target_path: str) -> str | None:
     if joined == "." or joined.startswith("../") or joined == "..":
         return None
 
+    # Node's path.posix.normalize keeps a trailing separator, posixpath.normpath
+    # drops it, and the slash reaches the emitted URL — pi's own test pins
+    # `examples/extensions/` with it. Restore it.
+    if normalized_target.endswith("/") and not joined.endswith("/"):
+        joined += "/"
+
     return joined
 
 
@@ -65,7 +88,7 @@ def _is_directory_target(original_path: str, repository_path: str) -> bool:
 
 
 def _normalize_changelog_link_target(target: str, tag: str) -> str:
-    canonical_target = _LEGACY_REPO_RE.sub(f"https://github.com/{GITHUB_REPO}", target)
+    canonical_target = target
     repo_url = f"https://github.com/{GITHUB_REPO}"
 
     for route in ("blob", "tree"):
@@ -129,6 +152,7 @@ def parse_changelog(changelog_path: str) -> list:
                         "major": int(version_match.group(1)),
                         "minor": int(version_match.group(2)),
                         "patch": int(version_match.group(3)),
+                        "build": int(version_match.group(4) or 0),
                     }
                     current_lines = [line]
                 else:
@@ -155,7 +179,9 @@ def compare_versions(v1: dict, v2: dict) -> int:
         return v1["major"] - v2["major"]
     if v1["minor"] != v2["minor"]:
         return v1["minor"] - v2["minor"]
-    return v1["patch"] - v2["patch"]
+    if v1["patch"] != v2["patch"]:
+        return v1["patch"] - v2["patch"]
+    return v1["build"] - v2["build"]
 
 
 def get_new_entries(entries: list, last_version: str) -> list:
@@ -168,6 +194,6 @@ def get_new_entries(entries: list, last_version: str) -> list:
         except IndexError, ValueError:
             return 0
 
-    last = {"major": part(0), "minor": part(1), "patch": part(2), "content": ""}
+    last = {"major": part(0), "minor": part(1), "patch": part(2), "build": part(3), "content": ""}
 
     return [entry for entry in entries if compare_versions(entry, last) > 0]

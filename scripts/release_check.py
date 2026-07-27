@@ -12,6 +12,9 @@ Each check here exists because something already went wrong, or would have:
   nothing but this keeps them honest.
 - **no stale `.dev`/`.post` marker** — a pre-release version reaching a tag
   means the tag and the artifact names disagree.
+- **the changelog documents the version** — without a `## [<version>]` header
+  the release ships, installs and runs, and the only symptom is that nobody
+  ever sees a "What's New" panel for it. Silent, so it gets a gate.
 
 The gates that need a built artifact (install outside the workspace, all five
 wheels present) run in `release.yml` after the build, not here.
@@ -80,6 +83,22 @@ def check_license_copies() -> None:
             fail(f"packages/{name}/LICENSE differs from the root LICENSE")
 
 
+def check_changelog_documents_version(version: str) -> None:
+    """The version being released must have its own changelog entry.
+
+    Matched the way `utils/changelog.py` parses it, so passing here means the
+    running agent will actually find the entry.
+    """
+    path = os.path.join(ROOT, "packages", "pidrei", "pidrei", "CHANGELOG.md")
+    if not os.path.exists(path):
+        fail("packages/pidrei/pidrei/CHANGELOG.md is missing")
+        return
+    # The lookahead stops `0.82.0` from matching a `## [0.82.0.0]` header.
+    header = re.compile(rf"^##\s+\[?{re.escape(version)}\]?(?![\d.])", re.MULTILINE)
+    if not header.search(read(path)):
+        fail(f"CHANGELOG.md has no '## [{version}]' entry for the version being released")
+
+
 def check_tag_matches(version: str, tag: str | None) -> None:
     """Tags are `vX.Y.Z.N`; compare against the tree version without the `v`."""
     if not tag:
@@ -122,6 +141,7 @@ def main() -> int:
     check_intra_repo_pins(version)
     check_license_copies()
     check_upstream_ref_agrees()
+    check_changelog_documents_version(version)
     check_tag_matches(version, tag)
 
     print(f"version {version}, tag {tag or '(none — not checked)'}")
