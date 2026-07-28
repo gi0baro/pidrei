@@ -33,6 +33,7 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 from .agent_session_helpers import create_assistant_message, create_test_resource_loader
 from .coding_session_helpers import now_ms
+from .test_tools import SKIP_ON_MACOS_CI
 
 
 def _canned_stream_simple(_model, _context, _options=None):
@@ -469,6 +470,7 @@ class TestSdkSessionManagerDefaults:
 
         session.dispose()
 
+    @SKIP_ON_MACOS_CI  # reaches `await process.wait()` through the real bash tool
     @pytest.mark.tonio
     async def test_exposes_current_session_state_to_built_in_bash_tool(self, tmp_dir):
         cwd = os.path.join(str(tmp_dir), "project")

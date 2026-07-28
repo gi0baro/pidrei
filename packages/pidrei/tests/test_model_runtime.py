@@ -492,13 +492,16 @@ class TestExtensionProviderModelLifecycle:
 
     @pytest.mark.tonio
     async def test_refresh_is_serialized_against_register_provider_spawned_refreshes(self):
-        """Regression (macOS CI, 2026-07-28): `register_provider` fires an
-        untracked `refresh()`, and a caller's awaited `refresh()` runs in
-        parallel with it. Each refresh rebuilds the composed provider objects,
-        so the loser's credential projection landed on instances the winner
-        had already replaced — the legacy-OAuth model vanished from the
-        snapshot. pi's single thread interleaves the same shape harmlessly;
-        `refresh()` is serialized now, and this loop hammers the window."""
+        """Regression (macOS CI, 2026-07-28, twice): `register_provider` used
+        to fire an untracked `refresh()` racing the caller's awaited one, and
+        each refresh rebuilds the composed provider objects — the loser's
+        credential projection landed on replaced instances. Serializing
+        `refresh()` was not enough: a spawned run acquiring the lock *after*
+        the awaited one returned still rebuilt the live registry under the
+        reader (pi's microtask FIFO finishes the fire-and-forget first, so it
+        never sees this). Triggers now only *request* a refresh, and any run
+        satisfies every request made before it started; this loop hammers
+        both windows."""
         runtime = await ModelRuntime.create(
             credentials=AuthStorage.in_memory(
                 {"extension-oauth": OAuthCredential(access="access", refresh="refresh", expires=now_ms() + 60_000)}

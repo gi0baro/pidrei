@@ -124,6 +124,16 @@ class ModelRuntime:
         # objects the other is mid-way through populating (the legacy-OAuth
         # credential landed on stale objects; seen as a macOS-CI failure).
         self._refresh_serial = sync.Lock()
+        # Serialization alone is not enough: a spawned trigger that acquires
+        # the lock *after* an awaited refresh returned would rebuild the
+        # providers again and readers of the live registry (`get_model`) see
+        # the de-projected window. pi never hits this because its microtask
+        # FIFO finishes the fire-and-forget refresh before the awaited one
+        # resolves. Triggers therefore only *request* a refresh; any run
+        # clears the flag at its start, satisfying every request made before
+        # it — so no run happens after an awaited refresh unless state
+        # actually changed since that refresh began.
+        self._refresh_requested = False
         self._models = create_models(credentials=credentials, models_store=models_store)
         self._rebuild_providers()
 
@@ -527,11 +537,25 @@ class ModelRuntime:
         self._recompose_provider(provider_id)
         await self.refresh(ModelsRefreshOptions(allow_network=self._model_network_enabled))
 
+    def _request_refresh(self) -> None:
+        """Ask for a refresh without racing awaited ones (see __init__ notes)."""
+        self._refresh_requested = True
+        tonio.spawn.without_tracking(self._drain_refresh_requests())
+
+    async def _drain_refresh_requests(self) -> None:
+        if not self._refresh_requested:
+            return  # A refresh that started after the request already ran.
+        await self.refresh(ModelsRefreshOptions(allow_network=False))
+
     async def refresh(self, options: ModelsRefreshOptions | None = None) -> ModelsRefreshResult:
         options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
         # One refresh at a time: rebuild, registry refresh and snapshot must
         # see one provider generation (see `_refresh_serial` in __init__).
         async with self._refresh_serial:
+            # Requests made before this run starts are satisfied by it; a
+            # request landing mid-run sets the flag again and spawns its own
+            # drain, which will run after this one releases the lock.
+            self._refresh_requested = False
             config = await ModelConfig.load(self._models_path)
             with self._composition_guard:
                 self._config = config
@@ -553,7 +577,7 @@ class ModelRuntime:
             self._native_extension_providers[provider.id] = provider
             self._recompose_provider(provider.id)
             self._update_model_snapshot()
-        tonio.spawn.without_tracking(self.refresh(ModelsRefreshOptions(allow_network=False)))
+        self._request_refresh()
 
     def register_provider(self, provider_id: str, config: ProviderConfigInput) -> None:
         with self._composition_guard:
@@ -586,7 +610,7 @@ class ModelRuntime:
                     configured_providers=configured_providers,
                     available=[model for model in self._snapshot.all if model.provider in configured_providers],
                 )
-        tonio.spawn.without_tracking(self.refresh(ModelsRefreshOptions(allow_network=False)))
+        self._request_refresh()
 
     def unregister_provider(self, provider_id: str) -> None:
         with self._composition_guard:
@@ -594,4 +618,4 @@ class ModelRuntime:
             self._native_extension_providers.pop(provider_id, None)
             self._recompose_provider(provider_id)
             self._update_model_snapshot()
-        tonio.spawn.without_tracking(self.refresh(ModelsRefreshOptions(allow_network=False)))
+        self._request_refresh()
