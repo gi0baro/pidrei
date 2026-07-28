@@ -863,6 +863,38 @@
       "contextWindow": 262144,
       "maxTokens": 262144
     },
+    "moonshotai/Kimi-K3": {
+      "id": "moonshotai/Kimi-K3",
+      "name": "Kimi K3",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 3,
+        "output": 15,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
+    },
     "openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
       "name": "GPT OSS 120B",

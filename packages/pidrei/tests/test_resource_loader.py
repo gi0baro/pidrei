@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from pidrei.core import resource_loader
 from pidrei.core.resource_loader import DefaultResourceLoader, SourcedPath
 from pidrei.core.settings_manager import SettingsManager
 from pidrei.core.skills import LoadSkillsResult, Skill
@@ -163,6 +164,28 @@ class TestReload:
             await loader.reload()
 
         assert any("AGENTS.md" in file.path for file in loader.get_agents_files())
+
+    @pytest.mark.tonio
+    async def test_ignores_context_file_candidates_that_are_directories(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        (cwd / "AGENTS.md").mkdir()
+        write(cwd / "CLAUDE.md", "Fallback instructions")
+        # No monkeypatch fixture under the tonio mark (yield fixture); swap by hand.
+        warnings = []
+        original_warn = resource_loader._warn
+        resource_loader._warn = warnings.append
+        try:
+            loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+            with fake_home(home):
+                await loader.reload()
+        finally:
+            resource_loader._warn = original_warn
+
+        assert any(
+            file.path == str(cwd / "CLAUDE.md") and file.content == "Fallback instructions"
+            for file in loader.get_agents_files()
+        )
+        assert not any(str(cwd / "AGENTS.md") in warning for warning in warnings)
 
     @pytest.mark.tonio
     async def test_skips_context_file_discovery_when_no_context_files_is_true(self, dirs):

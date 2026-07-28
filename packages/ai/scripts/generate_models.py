@@ -184,6 +184,7 @@ ANT_LING_RING_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "xhigh": "xhigh",
 }
 
+BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS = {"anthropic.claude-opus-5"}
 MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS = {"gpt-5.6"}
 OPENAI_TOOL_SEARCH_MODEL_IDS = {
     "gpt-5.4",
@@ -348,6 +349,8 @@ def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
             "opus-4.7",
             "opus-4-8",
             "opus-4.8",
+            "opus-5",
+            "opus.5",
             "sonnet-4-6",
             "sonnet-4.6",
             "sonnet-5",
@@ -359,7 +362,7 @@ def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
 
 def is_anthropic_temperature_unsupported_model(model_id: str) -> bool:
     lowered = model_id.lower()
-    return any(marker in lowered for marker in ("opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8"))
+    return any(marker in lowered for marker in ("opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8", "opus-5", "opus.5"))
 
 
 def supports_openai_xhigh(model_id: str) -> bool:
@@ -559,10 +562,13 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
         merge_thinking_level_map(model, {"off": None, "minimal": None, "low": None})
     # Anthropic adaptive-thinking effort support:
     # - "max" is available on all adaptive-thinking Claude models.
-    # - "xhigh" is only available on Opus 4.7/4.8, Sonnet 5, and Fable 5.
+    # - "xhigh" is only available on Opus 4.7/4.8/5, Sonnet 5, and Fable 5.
     if any(marker in model_id for marker in ("opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6")):
         merge_thinking_level_map(model, {"max": "max"})
-    if any(marker in model_id for marker in ("opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8", "sonnet-5", "sonnet.5")):
+    if any(
+        marker in model_id
+        for marker in ("opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8", "opus-5", "opus.5", "sonnet-5", "sonnet.5")
+    ):
         merge_thinking_level_map(model, {"xhigh": "xhigh", "max": "max"})
     if "fable-5" in model_id:
         merge_thinking_level_map(model, {"off": None, "xhigh": "xhigh", "max": "max"})
@@ -892,6 +898,8 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
         # ai21.jamba does not support tool use in streaming mode;
         # mistral-7b-instruct-v0 does not support system messages.
         if model_id.startswith(("ai21.jamba", "mistral.mistral-7b-instruct-v0")):
+            continue
+        if model_id in BEDROCK_INFERENCE_PROFILE_ONLY_MODEL_IDS:
             continue
         model: dict[str, Any] = {
             "id": model_id,

@@ -12,6 +12,8 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei.core.compaction import SUMMARIZATION_SYSTEM_PROMPT
+from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.registry import create_provider
 from pidrei_ai.types import DoneEvent, ErrorEvent, StartEvent, Usage, UsageCost
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
@@ -84,6 +86,56 @@ class TestCompaction:
 
         # First message should be the summary
         assert messages[0].role == "compactionSummary"
+        session.dispose()
+
+    @pytest.mark.tonio
+    async def test_manually_compacts_with_provider_resolved_bearer_auth(self, tmp_dir):
+        # pi asserts inside its faux responder; here the canned summarizer
+        # records the summarization (context, options) and the asserts run
+        # after — same observable request auth. Auto-compaction is off because
+        # the session is seeded through real prompts (pi seeds entries
+        # directly), and keepRecentTokens=1 would auto-compact mid-seed.
+        stream_fn, state = _make_llm_stream_fn(summary_text="summary with bearer auth")
+        session = await create_agent_session(
+            str(tmp_dir),
+            stream_fn=stream_fn,
+            settings_overrides={"compaction": {"enabled": False, "keepRecentTokens": 1}},
+            system_prompt="You are a helpful assistant. Be concise.",
+            provider_auth=None,
+        )
+
+        async def resolve(_ctx, _credential):
+            return AuthResult(
+                auth=ModelAuth(headers={"Authorization": "Bearer ambient-token"}),
+                source="ambient bearer token",
+            )
+
+        session.model_runtime.register_native_provider(
+            create_provider(
+                id=session.model.provider,
+                name="Faux bearer provider",
+                auth=ProviderAuth(api_key=ApiKeyAuth(name="Faux bearer token", resolve=resolve)),
+                models=[session.model],
+                api={},
+            )
+        )
+
+        await session.prompt("What is 2+2? Reply with just the number.")
+        await session.agent.wait_for_idle()
+        await session.prompt("What is 3+3? Reply with just the number.")
+        await session.agent.wait_for_idle()
+
+        result = await session.compact()
+
+        assert "summary with bearer auth" in result.summary
+        # pi's seeded session compacts in one call; prompting with
+        # keepRecentTokens=1 produces a split turn, which legitimately
+        # summarizes twice (history + turn prefix). Every request must carry
+        # the provider-resolved bearer auth and no API key.
+        assert state["summarization_requests"]
+        for _summary_context, options in state["summarization_requests"]:
+            assert options.api_key is None
+            assert options.headers == {"Authorization": "Bearer ambient-token"}
         session.dispose()
 
     @pytest.mark.tonio

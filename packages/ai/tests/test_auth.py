@@ -258,6 +258,21 @@ async def test_failed_oauth_refresh_raises_models_error_and_preserves_credential
 
 
 @pytest.mark.tonio
+async def test_keeps_the_underlying_reason_in_wrapped_oauth_refresh_errors():
+    calls = OAuthCalls()
+    provider = FakeProvider("p1", ProviderAuth(oauth=make_oauth(calls, fail_refresh=True)))
+    store = InMemoryCredentialStore()
+
+    async def write(_current):
+        return OAuthCredential(refresh="r", access="old", expires=0)
+
+    await store.modify("p1", write)
+
+    with pytest.raises(ModelsError, match="OAuth refresh failed for p1: invalid_grant"):
+        await resolve_provider_auth(provider, store, FakeAuthContext())
+
+
+@pytest.mark.tonio
 async def test_stored_api_key_with_env_override_merge():
     provider = FakeProvider("p", ProviderAuth(api_key=env_api_key_auth("TEST_KEY")))
     store = InMemoryCredentialStore()

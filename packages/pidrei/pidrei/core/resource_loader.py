@@ -80,6 +80,8 @@ def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
         file_path = os.path.join(dir, filename)
         if os.path.exists(file_path):
             try:
+                if not os.path.isfile(file_path):
+                    continue
                 with open(file_path, encoding="utf-8") as f:
                     return AgentsFile(path=file_path, content=f.read())
             except OSError as error:

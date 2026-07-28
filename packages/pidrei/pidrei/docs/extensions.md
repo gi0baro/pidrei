@@ -418,7 +418,10 @@ agent directory. For state shared between extensions, use `pi.events`.
 `ctx.ui.set_widget(...)` places a persistent component; `ctx.ui.set_status(...)`
 sets a one-line status; renderers registered with
 `register_message_renderer` / `register_entry_renderer` control how custom
-messages and entries appear in the transcript.
+messages and entries appear in the transcript. Message renderers receive an
+`options` dict carrying `expanded` and `outputPad` (the horizontal padding
+configured by the outputPad setting — use it as your component's left pad so
+custom messages line up with the rest of the transcript).
 
 Components come from `pidrei_tui` — `Container`, `Text`, `Spacer`,
 `SelectList`, `SettingsList` and friends. See [tui.md](tui.md).

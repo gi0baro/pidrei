@@ -121,6 +121,29 @@ async def test_uses_adaptive_thinking_for_claude_sonnet_5_when_reasoning_is_enab
 
 
 @pytest.mark.tonio
+async def test_uses_adaptive_thinking_for_claude_opus_5_when_reasoning_is_enabled():
+    payload = await capture_payload(get_builtin_model("amazon-bedrock", "global.anthropic.claude-opus-5"))
+
+    fields = payload["additionalModelRequestFields"]
+    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["output_config"] == {"effort": "high"}
+    assert fields.get("anthropic_beta") is None
+
+
+@pytest.mark.tonio
+async def test_maps_xhigh_reasoning_to_effort_xhigh_for_claude_opus_5():
+    payload = await capture_payload(
+        get_builtin_model("amazon-bedrock", "global.anthropic.claude-opus-5"),
+        BedrockOptions(reasoning="xhigh"),
+    )
+
+    fields = payload["additionalModelRequestFields"]
+    assert fields["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert fields["output_config"] == {"effort": "xhigh"}
+    assert fields.get("anthropic_beta") is None
+
+
+@pytest.mark.tonio
 async def test_maps_xhigh_reasoning_to_effort_xhigh_for_claude_fable_5():
     payload = await capture_payload(
         get_builtin_model("amazon-bedrock", "global.anthropic.claude-fable-5"),

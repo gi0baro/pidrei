@@ -14,6 +14,9 @@ class ModelsStoreEntry:
     last_modified: int | None = None
     # Unix timestamp of the last completed remote check.
     checked_at: int | None = None
+    # Opaque validator from the remote catalog's ETag header, stored verbatim
+    # (quotes included) and echoed back as If-None-Match.
+    etag: str | None = None
 
 
 class ModelsStore(Protocol):

@@ -800,7 +800,15 @@
         "cacheWrite": 6.25
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      }
     },
     "anthropic/claude-opus-5-fast": {
       "id": "anthropic/claude-opus-5-fast",
@@ -820,7 +828,15 @@
         "cacheWrite": 12.5
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      }
     },
     "anthropic/claude-sonnet-4": {
       "id": "anthropic/claude-sonnet-4",
@@ -1243,26 +1259,6 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 65000
-    },
-    "google/gemini-3-pro-preview": {
-      "id": "google/gemini-3-pro-preview",
-      "name": "Gemini 3 Pro Preview",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 2.0,
-        "output": 12.0,
-        "cacheRead": 0.2,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 1000000,
-      "maxTokens": 64000
     },
     "google/gemini-3.1-flash-lite": {
       "id": "google/gemini-3.1-flash-lite",
@@ -2235,6 +2231,26 @@
         "input": 3.0,
         "output": 15.0,
         "cacheRead": 0.3,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072
+    },
+    "moonshotai/kimi-k3-fast": {
+      "id": "moonshotai/kimi-k3-fast",
+      "name": "Kimi K3 Fast",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 4.5,
+        "output": 22.5,
+        "cacheRead": 0.45,
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,

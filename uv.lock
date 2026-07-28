@@ -326,7 +326,7 @@ wheels = [
 
 [[package]]
 name = "pidrei"
-version = "0.82.0.0"
+version = "0.82.1.0"
 source = { editable = "packages/pidrei" }
 dependencies = [
     { name = "jsonschema" },
@@ -355,7 +355,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-agent"
-version = "0.82.0.0"
+version = "0.82.1.0"
 source = { editable = "packages/agent" }
 dependencies = [
     { name = "pathspec" },
@@ -374,7 +374,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-ai"
-version = "0.82.0.0"
+version = "0.82.1.0"
 source = { editable = "packages/ai" }
 dependencies = [
     { name = "botocore" },
@@ -401,7 +401,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-server"
-version = "0.82.0.0"
+version = "0.82.1.0"
 source = { editable = "packages/server" }
 dependencies = [
     { name = "pidrei" },
@@ -418,7 +418,7 @@ requires-dist = [
 
 [[package]]
 name = "pidrei-tui"
-version = "0.82.0.0"
+version = "0.82.1.0"
 source = { editable = "packages/tui" }
 dependencies = [
     { name = "grapheme" },

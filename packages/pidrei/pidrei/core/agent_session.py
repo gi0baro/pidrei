@@ -504,7 +504,7 @@ class AgentSession:
             if str(error) == "authHeader requires a resolved API key":
                 raise Exception(format_no_api_key_found_message(model.provider))
             raise
-        if result is not None and result.auth.api_key:
+        if result is not None and (result.auth.api_key or result.auth.headers):
             return {
                 "api_key": result.auth.api_key,
                 "headers": _without_deleted_headers(result.auth.headers),
@@ -1860,14 +1860,7 @@ class AgentSession:
                 return False
 
             if self._uses_default_stream_simple():
-                auth_result = await self._model_runtime.get_auth(self.model)
-                if auth_result is None or not auth_result.auth.api_key:
-                    return False
-                auth = {
-                    "api_key": auth_result.auth.api_key,
-                    "headers": _without_deleted_headers(auth_result.auth.headers),
-                    "env": dict(auth_result.env) if auth_result.env is not None else None,
-                }
+                auth = await self._get_required_request_auth(self.model)
             else:
                 auth = await self._get_summarization_request_auth(self.model)
 

@@ -236,6 +236,7 @@ def parse_model_pattern(
 @dataclass(slots=True)
 class ModelScopeDiagnostic:
     type: str
+    code: str  # "no-match" | "invalid-thinking-level"
     message: str
     pattern: str
 
@@ -285,7 +286,7 @@ async def resolve_model_scope_with_diagnostics(
             if not matching_models:
                 diagnostics.append(
                     ModelScopeDiagnostic(
-                        type="warning", message=f'No models match pattern "{pattern}"', pattern=pattern
+                        type="warning", code="no-match", message=f'No models match pattern "{pattern}"', pattern=pattern
                     )
                 )
                 continue
@@ -298,11 +299,17 @@ async def resolve_model_scope_with_diagnostics(
         parsed = parse_model_pattern(pattern, available_models)
 
         if parsed.warning:
-            diagnostics.append(ModelScopeDiagnostic(type="warning", message=parsed.warning, pattern=pattern))
+            diagnostics.append(
+                ModelScopeDiagnostic(
+                    type="warning", code="invalid-thinking-level", message=parsed.warning, pattern=pattern
+                )
+            )
 
         if parsed.model is None:
             diagnostics.append(
-                ModelScopeDiagnostic(type="warning", message=f'No models match pattern "{pattern}"', pattern=pattern)
+                ModelScopeDiagnostic(
+                    type="warning", code="no-match", message=f'No models match pattern "{pattern}"', pattern=pattern
+                )
             )
             continue
 

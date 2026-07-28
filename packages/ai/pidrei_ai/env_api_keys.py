@@ -15,6 +15,11 @@ from pidrei_ai.utils.provider_env import get_provider_env_value
 
 AMBIENT_AUTH_MARKER = "<authenticated>"
 
+# The values are env var *names*; S105 pattern-matches them as secrets.
+ANTHROPIC_AUTH_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"  # noqa: S105
+ANTHROPIC_OAUTH_TOKEN_ENV = "ANTHROPIC_OAUTH_TOKEN"  # noqa: S105
+ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY"
+
 _ENV_MAP: dict[str, str] = {
     "ant-ling": "ANT_LING_API_KEY",
     "qwen-token-plan": "QWEN_TOKEN_PLAN_API_KEY",
@@ -75,9 +80,11 @@ def _get_api_key_env_vars(provider: str) -> list[str] | None:
     if provider == "github-copilot":
         return ["COPILOT_GITHUB_TOKEN"]
 
-    # ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY
+    # ANTHROPIC_AUTH_TOKEN participates in env discovery/status, but
+    # get_env_api_key() skips it because requests must pass it as
+    # Authorization: Bearer.
     if provider == "anthropic":
-        return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        return [ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOKEN_ENV, ANTHROPIC_API_KEY_ENV]
 
     env_var = _ENV_MAP.get(provider)
     return [env_var] if env_var else None
@@ -103,7 +110,12 @@ async def get_env_api_key(provider: str, env: ProviderEnv | None = None) -> str 
     """
     env_keys = find_env_keys(provider, env)
     if env_keys:
-        return get_provider_env_value(env_keys[0], env)
+        if provider == "anthropic":
+            api_key_env = next((key for key in env_keys if key != ANTHROPIC_AUTH_TOKEN_ENV), None)
+        else:
+            api_key_env = env_keys[0]
+        if api_key_env:
+            return get_provider_env_value(api_key_env, env)
 
     # Vertex AI supports either an explicit API key or Application Default
     # Credentials (configured via `gcloud auth application-default login`).

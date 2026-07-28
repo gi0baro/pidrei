@@ -517,13 +517,13 @@ def _supports_adaptive_thinking(model_id: str, model_name: str | None = None) ->
     return any(
         marker in s
         for s in candidates
-        for marker in ("opus-4-6", "opus-4-7", "opus-4-8", "sonnet-4-6", "sonnet-5", "fable-5")
+        for marker in ("opus-4-6", "opus-4-7", "opus-4-8", "opus-5", "sonnet-4-6", "sonnet-5", "fable-5")
     )
 
 
 def _supports_native_xhigh_effort(model: Model) -> bool:
     candidates = _get_model_match_candidates(model.id, model.name)
-    return any(marker in s for s in candidates for marker in ("opus-4-7", "opus-4-8", "sonnet-5", "fable-5"))
+    return any(marker in s for s in candidates for marker in ("opus-4-7", "opus-4-8", "opus-5", "sonnet-5", "fable-5"))
 
 
 def _map_thinking_level_to_effort(model: Model, level: ThinkingLevel | None) -> str:
@@ -572,7 +572,7 @@ def _supports_prompt_caching(model: Model, env: ProviderEnv | None = None) -> bo
     if not has_claude_ref:
         # Application inference profiles don't carry the model name in the ARN.
         return get_provider_env_value("AWS_BEDROCK_FORCE_CACHE", env) == "1"
-    if any("fable-5" in s or "sonnet-5" in s for s in candidates):
+    if any("fable-5" in s or "opus-5" in s or "sonnet-5" in s for s in candidates):
         return True
     if any("-4-" in s for s in candidates):
         return True

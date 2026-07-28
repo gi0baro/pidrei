@@ -11,13 +11,14 @@ class CustomMessageComponent(Container):
     Uses distinct styling to differentiate from user messages.
     """
 
-    def __init__(self, message, custom_renderer=None, markdown_theme: dict | None = None) -> None:
+    def __init__(self, message, custom_renderer=None, markdown_theme: dict | None = None, output_pad: int = 1) -> None:
         super().__init__()
         self._message = message
         self._custom_renderer = custom_renderer
         self._markdown_theme = markdown_theme if markdown_theme is not None else get_markdown_theme()
         self._custom_component = None
         self._expanded = False
+        self._output_pad = output_pad
 
         self.add_child(Spacer(1))
 
@@ -29,6 +30,11 @@ class CustomMessageComponent(Container):
     def set_expanded(self, expanded: bool) -> None:
         if self._expanded != expanded:
             self._expanded = expanded
+            self._rebuild()
+
+    def set_output_pad(self, output_pad: int) -> None:
+        if self._output_pad != output_pad:
+            self._output_pad = output_pad
             self._rebuild()
 
     def invalidate(self) -> None:
@@ -45,7 +51,9 @@ class CustomMessageComponent(Container):
         # Try custom renderer first - it handles its own styling
         if self._custom_renderer is not None:
             try:
-                component = self._custom_renderer(self._message, {"expanded": self._expanded}, theme)
+                component = self._custom_renderer(
+                    self._message, {"expanded": self._expanded, "outputPad": self._output_pad}, theme
+                )
                 if component is not None:
                     # Custom renderer provides its own styled component
                     self._custom_component = component

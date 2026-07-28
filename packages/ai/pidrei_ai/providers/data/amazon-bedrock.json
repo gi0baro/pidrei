@@ -244,26 +244,6 @@
         "max": "max"
       }
     },
-    "anthropic.claude-opus-5": {
-      "id": "anthropic.claude-opus-5",
-      "name": "Claude Opus 5",
-      "api": "bedrock-converse-stream",
-      "provider": "amazon-bedrock",
-      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 5,
-        "output": 25,
-        "cacheRead": 0.5,
-        "cacheWrite": 6.25
-      },
-      "contextWindow": 1000000,
-      "maxTokens": 128000
-    },
     "anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
       "name": "Claude Sonnet 4.5",
@@ -431,7 +411,11 @@
         "cacheWrite": 6.25
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "au.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "id": "au.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -735,7 +719,11 @@
         "cacheWrite": 6.875
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "eu.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "id": "eu.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -976,7 +964,11 @@
         "cacheWrite": 6.25
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -1186,7 +1178,11 @@
         "cacheWrite": 6.25
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "jp.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "id": "jp.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -2351,7 +2347,11 @@
         "cacheWrite": 6.25
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      }
     },
     "us.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",

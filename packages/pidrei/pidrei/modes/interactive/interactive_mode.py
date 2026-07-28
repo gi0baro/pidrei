@@ -78,6 +78,7 @@ from ...core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,
     find_exact_model_reference_match,
     resolve_model_scope,
+    resolve_model_scope_with_diagnostics,
 )
 from ...core.package_manager import DefaultPackageManager
 from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
@@ -3056,7 +3057,9 @@ class InteractiveMode:
         elif role == "custom":
             if message.display:
                 renderer = self.session.extension_runner.get_message_renderer(message.custom_type)
-                component = CustomMessageComponent(message, renderer, self._get_markdown_theme_with_settings())
+                component = CustomMessageComponent(
+                    message, renderer, self._get_markdown_theme_with_settings(), self._output_pad
+                )
                 component.set_expanded(self._tool_output_expanded)
                 self._chat_container.add_child(component)
         elif role == "compactionSummary":
@@ -3921,7 +3924,7 @@ class InteractiveMode:
                 self._output_pad = padding
                 if self._streaming_component is not None or self.session.is_streaming:
                     for child in self._chat_container.children:
-                        if isinstance(child, (AssistantMessageComponent, UserMessageComponent)):
+                        if isinstance(child, (AssistantMessageComponent, CustomMessageComponent, UserMessageComponent)):
                             child.set_output_pad(padding)
                     if self._streaming_component is not None:
                         self._streaming_component.set_output_pad(padding)
@@ -4182,14 +4185,22 @@ class InteractiveMode:
         # Get all available models
         await self.session.model_runtime.refresh()
         all_models = list(await self.session.model_runtime.get_available())
+        all_model_ids = {f"{model.provider}/{model.id}" for model in all_models}
+        configured_patterns = self.settings_manager.get_enabled_models()
+        session_scoped_models = self.session.scoped_models
 
-        if not all_models:
+        if not all_models and not configured_patterns and not session_scoped_models:
             self.show_status("No models available")
             return
 
+        configured_scope = (
+            await resolve_model_scope_with_diagnostics(configured_patterns, self.session.model_runtime)
+            if configured_patterns
+            else None
+        )
+
         # Check if session has scoped models (from previous session-only
         # changes or CLI --models)
-        session_scoped_models = self.session.scoped_models
         has_session_scope = len(session_scoped_models) > 0
 
         # Build enabled model IDs from session state or settings
@@ -4198,19 +4209,31 @@ class InteractiveMode:
         if has_session_scope:
             # Use current session's scoped models
             current_enabled_ids = [f"{scoped.model.provider}/{scoped.model.id}" for scoped in session_scoped_models]
-        else:
-            # Fall back to settings
-            patterns = self.settings_manager.get_enabled_models()
-            if patterns:
-                scoped_models = await resolve_model_scope(patterns, self.session.model_runtime)
-                current_enabled_ids = [f"{scoped.model.provider}/{scoped.model.id}" for scoped in scoped_models]
+        elif configured_scope is not None:
+            current_enabled_ids = [
+                f"{scoped.model.provider}/{scoped.model.id}" for scoped in configured_scope.scoped_models
+            ]
+
+        # Configured patterns that matched nothing stay listed (and editable)
+        # as unavailable entries.
+        for diagnostic in configured_scope.diagnostics if configured_scope is not None else []:
+            if diagnostic.code != "no-match":
+                continue
+            if current_enabled_ids is None:
+                current_enabled_ids = []
+            if diagnostic.pattern not in current_enabled_ids:
+                current_enabled_ids.append(diagnostic.pattern)
 
         state = {"enabledIds": current_enabled_ids}
 
         # Helper to update session's scoped models (session-only, no persist)
         async def update_session_models(enabled_ids) -> None:
             state["enabledIds"] = None if enabled_ids is None else list(enabled_ids)
-            if enabled_ids and len(enabled_ids) < len(all_models):
+            has_enabled_available_model = any(model_id in all_model_ids for model_id in enabled_ids or [])
+            all_available_models_enabled = enabled_ids is not None and all(
+                model_id in enabled_ids for model_id in all_model_ids
+            )
+            if enabled_ids and has_enabled_available_model and not all_available_models_enabled:
                 new_scoped_models = await resolve_model_scope(enabled_ids, self.session.model_runtime)
                 self.session.set_scoped_models(
                     [ScopedModel(model=sm.model, thinking_level=sm.thinking_level) for sm in new_scoped_models]
@@ -4224,11 +4247,12 @@ class InteractiveMode:
         def create(done):
             def on_persist(enabled_ids) -> None:
                 # Persist to settings
-                new_patterns = (
-                    None  # All enabled = clear filter
-                    if enabled_ids is None or len(enabled_ids) == len(all_models)
-                    else enabled_ids
+                all_enabled = (
+                    enabled_ids is not None
+                    and len(enabled_ids) == len(all_models)
+                    and all(model_id in all_model_ids for model_id in enabled_ids)
                 )
+                new_patterns = None if enabled_ids is None or all_enabled else enabled_ids
                 self.settings_manager.set_enabled_models(list(new_patterns) if new_patterns else None)
                 self.show_status("Model selection saved to settings")
 

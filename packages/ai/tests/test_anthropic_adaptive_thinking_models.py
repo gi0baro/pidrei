@@ -13,10 +13,11 @@ from pidrei_ai.types import AnthropicMessagesCompat
 EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
     "anthropic/claude-fable-5",
     "anthropic/claude-opus-4-8",
+    "anthropic/claude-opus-5",
     "anthropic/claude-sonnet-5",
 ]
 
-_ADAPTIVE_ID_PATTERN = re.compile(r"(opus[-.]4[-.][678]|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding/)")
+_ADAPTIVE_ID_PATTERN = re.compile(r"(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding/)")
 
 
 def get_all_models():

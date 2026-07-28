@@ -33,6 +33,8 @@ def _entry_to_dict(entry: ModelsStoreEntry) -> dict[str, Any]:
         raw["lastModified"] = entry.last_modified
     if entry.checked_at is not None:
         raw["checkedAt"] = entry.checked_at
+    if entry.etag is not None:
+        raw["etag"] = entry.etag
     return raw
 
 
@@ -41,6 +43,7 @@ def _entry_from_dict(raw: dict[str, Any]) -> ModelsStoreEntry:
         models=[parse_model_dict(model) for model in raw.get("models", [])],
         last_modified=raw.get("lastModified"),
         checked_at=raw.get("checkedAt"),
+        etag=raw.get("etag"),
     )
 
 

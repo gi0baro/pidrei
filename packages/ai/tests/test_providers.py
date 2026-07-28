@@ -7,6 +7,7 @@ Partial mirror of pi's providers.test.ts: its `envApiKeyAuth` and
 
 import pytest
 
+from pidrei_ai.auth.types import AuthResult, ModelAuth
 from pidrei_ai.env_api_keys import AMBIENT_AUTH_MARKER, find_env_keys, get_env_api_key
 from pidrei_ai.providers.all import (
     builtin_models,
@@ -16,6 +17,8 @@ from pidrei_ai.providers.all import (
     get_builtin_models,
     get_builtin_providers,
 )
+from pidrei_ai.providers.anthropic import anthropic_provider
+from pidrei_ai.registry import create_models
 from pidrei_ai.types import ModelCost
 
 
@@ -26,9 +29,32 @@ def test_find_env_keys_uses_provider_env_overrides():
 
 
 @pytest.mark.tonio
-async def test_anthropic_oauth_token_takes_precedence():
-    env = {"ANTHROPIC_API_KEY": "api-key", "ANTHROPIC_OAUTH_TOKEN": "oauth-token"}
+async def test_reports_anthropic_auth_token_but_preserves_oauth_token_api_key_lookup():
+    env = {
+        "ANTHROPIC_AUTH_TOKEN": "auth-token",
+        "ANTHROPIC_OAUTH_TOKEN": "oauth-token",
+        "ANTHROPIC_API_KEY": "api-key",
+    }
+    assert find_env_keys("anthropic", env) == ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
     assert await get_env_api_key("anthropic", env) == "oauth-token"
+
+
+@pytest.mark.tonio
+async def test_does_not_return_anthropic_auth_token_as_an_api_key():
+    env = {"ANTHROPIC_AUTH_TOKEN": "auth-token"}
+    assert find_env_keys("anthropic", env) == ["ANTHROPIC_AUTH_TOKEN"]
+    assert await get_env_api_key("anthropic", env) is None
+
+
+@pytest.mark.tonio
+async def test_preserves_anthropic_oauth_token_as_an_api_key():
+    env = {"ANTHROPIC_OAUTH_TOKEN": "oauth-token"}
+    assert find_env_keys("anthropic", env) == ["ANTHROPIC_OAUTH_TOKEN"]
+    assert await get_env_api_key("anthropic", env) == "oauth-token"
+
+
+@pytest.mark.tonio
+async def test_falls_back_to_anthropic_api_key_for_api_key_lookup():
     assert await get_env_api_key("anthropic", {"ANTHROPIC_API_KEY": "api-key"}) == "api-key"
 
 
@@ -109,14 +135,44 @@ def test_uses_api_equivalent_implied_pricing_for_kimi_coding_subscription_models
     assert model.cost == cost
 
 
-@pytest.mark.tonio
-async def test_anthropic_env_auth_resolution():
-    models = builtin_models()
-    result = await models.get_auth("anthropic")
-    # Depending on the host env this may or may not resolve; force it via overrides.
-    from pidrei_ai.auth.resolve import AuthResolutionOverrides
+class _FakeAuthContext:
+    def __init__(self, env: dict[str, str]):
+        self._env = env
 
-    forced = await models.get_auth("anthropic", AuthResolutionOverrides(api_key="sk-test"))
-    assert forced is not None
-    assert forced.auth.api_key == "sk-test"
-    assert result is None or result.auth.api_key
+    async def env(self, name: str) -> str | None:
+        return self._env.get(name)
+
+    async def file_exists(self, path: str) -> bool:
+        return False
+
+
+@pytest.mark.tonio
+async def test_resolves_anthropic_bearer_auth_from_env_with_auth_token_precedence():
+    models = create_models(
+        auth_context=_FakeAuthContext(
+            {
+                "ANTHROPIC_AUTH_TOKEN": "auth-token",
+                "ANTHROPIC_OAUTH_TOKEN": "oauth-token",
+                "ANTHROPIC_API_KEY": "api-key",
+            }
+        )
+    )
+    models.set_provider(anthropic_provider())
+
+    assert await models.get_auth("anthropic") == AuthResult(
+        auth=ModelAuth(headers={"Authorization": "Bearer auth-token"}),
+        source="ANTHROPIC_AUTH_TOKEN",
+    )
+
+
+@pytest.mark.tonio
+async def test_preserves_anthropic_oauth_token_precedence_over_the_api_key():
+    models = create_models(
+        auth_context=_FakeAuthContext({"ANTHROPIC_API_KEY": "key", "ANTHROPIC_OAUTH_TOKEN": "oauth-token"})
+    )
+    models.set_provider(anthropic_provider())
+
+    result = await models.get_auth("anthropic")
+    assert result is not None
+    assert result.auth.api_key == "oauth-token"
+    assert result.source == "ANTHROPIC_OAUTH_TOKEN"

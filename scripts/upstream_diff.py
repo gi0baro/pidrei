@@ -103,8 +103,7 @@ TEST_HOMES = {
     "packages/ai/test/env-api-keys.test.ts": "covered by packages/ai/tests/test_providers.py (+ test_registry.py; see its docstring)",
     "packages/ai/test/supports-xhigh.test.ts": "covered by packages/ai/tests/test_registry.py + test_models_generated.py (get_supported_thinking_levels)",
     "packages/ai/test/models-runtime.test.ts": "covered by packages/ai/tests/test_registry.py (models.ts ported as registry.py)",
-    "packages/ai/test/error-body.test.ts": "PARITY GAP: error_body.py ported, its 12 cases never mirrored — backfill here",
-    "packages/ai/test/provider-error-body-regression.test.ts": "PARITY GAP: 4 cases never mirrored — backfill",
+    "packages/ai/test/provider-error-body-regression.test.ts": "PARITY GAP: per-adapter 403-body passthrough (4 cases) unmirrored — needs punkreq fault injection per adapter",
 }
 
 NOISE_BASENAMES = {

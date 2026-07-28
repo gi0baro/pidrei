@@ -350,6 +350,7 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
   {APP_NAME} --export session.jsonl output.html
 
 {bold("Environment Variables:")}
+  ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
   ANT_LING_API_KEY                 - Ant Ling API key

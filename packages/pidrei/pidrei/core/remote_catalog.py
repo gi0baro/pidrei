@@ -170,27 +170,45 @@ class RemoteCatalogProvider:
         ):
             return
 
+        # Only revalidate when a cached body backs the validator, so a 304 can
+        # never leave the overlay empty.
+        validator = stored.etag if stored is not None and stored.models else None
         url = urllib.parse.urljoin(
             self._catalog_base_url, f"/api/models/providers/{urllib.parse.quote(self._provider.id, safe='')}"
         )
-        response = await self._fetch(
-            url,
-            {"accept": "application/json", "User-Agent": get_pidrei_user_agent(VERSION)},
-            context.cancel,
-        )
+        headers = {"accept": "application/json", "User-Agent": get_pidrei_user_agent(VERSION)}
+        if validator is not None:
+            headers["if-none-match"] = validator
+        response = await self._fetch(url, headers, context.cancel)
         if context.cancel is not None and context.cancel.cancelled:
             return
         checked_at = _now_ms()
         stored_models = list(stored.models) if stored is not None else []
+        # Unchanged: dynamic_models already holds the stored overlay, so only
+        # the freshness window moves.
+        if response.status == 304 and stored is not None:
+            await context.store.write(
+                ModelsStoreEntry(
+                    models=stored_models,
+                    checked_at=checked_at,
+                    last_modified=stored.last_modified,
+                    etag=stored.etag,
+                )
+            )
+            return
         if response.status in (404, 501):
             await context.store.write(ModelsStoreEntry(models=stored_models, checked_at=checked_at, last_modified=0))
             return
         if not (200 <= response.status < 300):
+            # Transient failure: the cached body and its validator stay valid,
+            # so keep the etag and let the next refresh revalidate instead of
+            # downloading the catalog.
             await context.store.write(
                 ModelsStoreEntry(
                     models=stored_models,
                     checked_at=checked_at,
                     last_modified=stored.last_modified if stored is not None else None,
+                    etag=stored.etag if stored is not None else None,
                 )
             )
             raise Exception(f"Model catalog request failed for {self._provider.id}: {response.status}")
@@ -198,7 +216,12 @@ class RemoteCatalogProvider:
         last_modified = _parse_last_modified(response.headers.get("last-modified"))
         if context.cancel is not None and context.cancel.cancelled:
             return
-        entry = ModelsStoreEntry(models=refreshed, checked_at=checked_at, last_modified=last_modified)
+        entry = ModelsStoreEntry(
+            models=refreshed,
+            checked_at=checked_at,
+            last_modified=last_modified,
+            etag=response.headers.get("etag"),
+        )
         self._dynamic_models = _remote_models(entry, self._local_generated_at)
         await context.store.write(entry)
 

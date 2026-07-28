@@ -38,6 +38,22 @@ def test_adaptive_thinking_model_metadata_round_trips():
     assert get_supported_thinking_levels(fable) == ["minimal", "low", "medium", "high", "xhigh", "max"]
 
 
+def test_includes_xhigh_and_max_for_anthropic_opus_5_on_anthropic_messages_api():
+    opus = next(model for model in MODELS["anthropic"] if model.id == "claude-opus-5")
+
+    levels = get_supported_thinking_levels(opus)
+    assert "xhigh" in levels
+    assert "max" in levels
+
+
+def test_includes_xhigh_and_max_for_bedrock_claude_opus_5():
+    opus = next(model for model in MODELS["amazon-bedrock"] if model.id == "global.anthropic.claude-opus-5")
+
+    levels = get_supported_thinking_levels(opus)
+    assert "xhigh" in levels
+    assert "max" in levels
+
+
 def test_openai_models_have_typed_compat():
     openai_models = MODELS["openai"]
     assert openai_models

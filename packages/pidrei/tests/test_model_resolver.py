@@ -211,10 +211,13 @@ class TestResolveModelScopeWithDiagnostics:
         assert result.diagnostics == [
             ModelScopeDiagnostic(
                 type="warning",
+                code="invalid-thinking-level",
                 message='Invalid thinking level "invalid" in pattern "gpt-4o:invalid". Using default instead.',
                 pattern="gpt-4o:invalid",
             ),
-            ModelScopeDiagnostic(type="warning", message='No models match pattern "missing"', pattern="missing"),
+            ModelScopeDiagnostic(
+                type="warning", code="no-match", message='No models match pattern "missing"', pattern="missing"
+            ),
         ]
 
     @pytest.mark.tonio

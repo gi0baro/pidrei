@@ -31,7 +31,7 @@ def _enable_all(enabled_ids, all_ids: list, target_ids: list | None = None):
     for model_id in targets:
         if model_id not in result:
             result.append(model_id)
-    return None if len(result) == len(all_ids) else result
+    return None if len(result) == len(all_ids) and all(model_id in all_ids for model_id in result) else result
 
 
 def _clear_all(enabled_ids, all_ids: list, target_ids: list | None = None):
@@ -129,22 +129,30 @@ class ScopedModelsSelectorComponent(Container):
         self._search_input.focused = value
 
     def _build_items(self) -> list:
-        # Filter out IDs that no longer have a corresponding model (e.g.,
-        # after logout)
+        # IDs with no corresponding model (e.g. after logout, or a configured
+        # pattern that matches nothing) stay listed with model None.
         return [
             {
                 "fullId": model_id,
-                "model": self._models_by_id[model_id],
+                "model": self._models_by_id.get(model_id),
                 "enabled": _is_enabled(self._enabled_ids, model_id),
             }
             for model_id in _get_sorted_ids(self._enabled_ids, self._all_ids)
-            if model_id in self._models_by_id
         ]
 
     def _get_footer_text(self) -> str:
-        enabled_count = len(self._enabled_ids) if self._enabled_ids is not None else len(self._all_ids)
+        if self._enabled_ids is not None:
+            enabled_count = sum(1 for model_id in self._enabled_ids if model_id in self._models_by_id)
+            unavailable_count = sum(1 for model_id in self._enabled_ids if model_id not in self._models_by_id)
+        else:
+            enabled_count = len(self._all_ids)
+            unavailable_count = 0
         all_enabled = self._enabled_ids is None
-        count_text = "all enabled" if all_enabled else f"{enabled_count}/{len(self._all_ids)} enabled"
+        if all_enabled:
+            count_text = "all enabled"
+        else:
+            unavailable_text = f" · {unavailable_count} unavailable" if unavailable_count else ""
+            count_text = f"{enabled_count}/{len(self._all_ids)} enabled{unavailable_text}"
         parts = [
             f"{key_text('tui.select.confirm')} toggle",
             f"{key_text('app.models.enableAll')} all",
@@ -165,8 +173,12 @@ class ScopedModelsSelectorComponent(Container):
             self._filtered_items = fuzzy_filter(
                 items,
                 query,
-                lambda i: get_model_search_text(
-                    {"id": i["model"].id, "provider": i["model"].provider, "name": i["model"].name}
+                lambda item: (
+                    get_model_search_text(
+                        {"id": item["model"].id, "provider": item["model"].provider, "name": item["model"].name}
+                    )
+                    if item["model"] is not None
+                    else item["fullId"]
                 ),
             )
         else:
@@ -196,9 +208,14 @@ class ScopedModelsSelectorComponent(Container):
             item = self._filtered_items[i]
             is_selected = i == self._selected_index
             prefix = theme.fg("accent", "→ ") if is_selected else "  "
-            model_text = theme.fg("accent", item["model"].id) if is_selected else item["model"].id
-            provider_badge = theme.fg("muted", f" [{item['model'].provider}]")
-            if all_enabled:
+            model_id = item["model"].id if item["model"] is not None else item["fullId"]
+            model_text = theme.fg("accent", model_id) if is_selected else model_id
+            provider_badge = theme.fg(
+                "muted", f" [{item['model'].provider}]" if item["model"] is not None else " [unavailable]"
+            )
+            if item["model"] is None:
+                status = theme.fg("dim", " ✗")
+            elif all_enabled:
                 status = ""
             elif item["enabled"]:
                 status = theme.fg("success", " ✓")
@@ -214,8 +231,9 @@ class ScopedModelsSelectorComponent(Container):
 
         if self._filtered_items:
             selected = self._filtered_items[self._selected_index]
+            detail = f"Model Name: {selected['model'].name}" if selected["model"] is not None else "Model unavailable"
             self._list_container.add_child(Spacer(1))
-            self._list_container.add_child(Text(theme.fg("muted", f"  Model Name: {selected['model'].name}"), 0, 0))
+            self._list_container.add_child(Text(theme.fg("muted", f"  {detail}"), 0, 0))
 
     async def handle_input(self, data: str) -> None:
         kb = get_keybindings()
@@ -288,7 +306,7 @@ class ScopedModelsSelectorComponent(Container):
 
         # Toggle provider of current item
         if kb.matches(data, "app.models.toggleProvider"):
-            if self._filtered_items:
+            if self._filtered_items and self._filtered_items[self._selected_index]["model"] is not None:
                 item = self._filtered_items[self._selected_index]
                 provider = item["model"].provider
                 provider_ids = [

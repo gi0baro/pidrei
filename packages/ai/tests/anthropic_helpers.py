@@ -37,13 +37,16 @@ async def capture_payload(
     model: Model,
     options: SimpleStreamOptions | AnthropicOptions | None = None,
     context: Context | None = None,
+    *,
+    default_api_key: str | None = "fake-key",
 ) -> dict:
     """The payload the adapter would send.
 
     `AnthropicOptions` goes through `stream`, everything else through
     `stream_simple` — the same split pi's suites make. A caller-supplied
     `api_key` is kept (the OAuth and Copilot header branches depend on its
-    shape); otherwise a placeholder stands in.
+    shape); otherwise `default_api_key` stands in — pass `None` to exercise
+    header-owned auth with no key at all.
     """
     captured: list[dict] = []
 
@@ -53,7 +56,7 @@ async def capture_payload(
 
     payload_capture_model = replace(model, base_url="http://127.0.0.1:9")
     given = options if options is not None else SimpleStreamOptions()
-    opts = replace(given, api_key=given.api_key or "fake-key", on_payload=on_payload)
+    opts = replace(given, api_key=given.api_key or default_api_key, on_payload=on_payload)
     run = stream if isinstance(opts, AnthropicOptions) else stream_simple
 
     await run(payload_capture_model, context if context is not None else make_context(), opts).result()
@@ -85,10 +88,12 @@ async def capture_request(
     model: Model,
     options: SimpleStreamOptions | AnthropicOptions | None = None,
     context: Context | None = None,
+    *,
+    default_api_key: str | None = "fake-key",
 ) -> tuple[dict[str, str], dict]:
     """The (headers, payload) the adapter would put on the wire."""
     with _recording_transport() as recorded:
-        payload = await capture_payload(model, options, context)
+        payload = await capture_payload(model, options, context, default_api_key=default_api_key)
     if not recorded:
         raise AssertionError("Expected the adapter to build a transport")
     return recorded[0], payload
