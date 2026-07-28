@@ -489,3 +489,50 @@ class TestExtensionProviderModelLifecycle:
 
         await runtime.logout("extension-oauth")
         assert runtime.get_model("extension-oauth", "credential-model") is None
+
+    @pytest.mark.tonio
+    async def test_refresh_is_serialized_against_register_provider_spawned_refreshes(self):
+        """Regression (macOS CI, 2026-07-28): `register_provider` fires an
+        untracked `refresh()`, and a caller's awaited `refresh()` runs in
+        parallel with it. Each refresh rebuilds the composed provider objects,
+        so the loser's credential projection landed on instances the winner
+        had already replaced — the legacy-OAuth model vanished from the
+        snapshot. pi's single thread interleaves the same shape harmlessly;
+        `refresh()` is serialized now, and this loop hammers the window."""
+        runtime = await ModelRuntime.create(
+            credentials=AuthStorage.in_memory(
+                {"extension-oauth": OAuthCredential(access="access", refresh="refresh", expires=now_ms() + 60_000)}
+            ),
+            models_store=InMemoryModelsStore(),
+            models_path=None,
+            allow_model_network=False,
+        )
+
+        async def login(_callbacks):
+            raise Exception("not used")
+
+        async def refresh_token(credential):
+            return credential
+
+        def modify_models(models, credential):
+            if credential.access == "access":
+                return [*models, make_model("extension-oauth", "credential-model", base_url="https://example.test/v1")]
+            return models
+
+        config = {
+            "baseUrl": "https://example.test/v1",
+            "api": "openai-completions",
+            "models": [model_entry("base")],
+            "oauth": ExtensionOAuthConfig(
+                name="Extension OAuth",
+                login=login,
+                refresh_token=refresh_token,
+                get_api_key=lambda credential: credential.access,
+                modify_models=modify_models,
+            ),
+        }
+
+        for attempt in range(10):
+            runtime.register_provider("extension-oauth", config)  # spawns its own refresh
+            await runtime.refresh(ModelsRefreshOptions(allow_network=False))
+            assert runtime.get_model("extension-oauth", "credential-model") is not None, f"lost on attempt {attempt}"

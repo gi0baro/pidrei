@@ -17,6 +17,7 @@ import threading
 from dataclasses import dataclass, field, replace
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_ai.api.lazy import lazy_stream
 from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError
@@ -116,6 +117,13 @@ class ModelRuntime:
         # enough to lose an unregister. Every mutation of the composition
         # inputs and every publish of a composed provider holds this.
         self._composition_guard = threading.RLock()
+        # Serializes whole `refresh()` runs. pi's `void this.refresh(...)` from
+        # registerProvider overlaps the caller's awaited refresh only at await
+        # points on one thread; here two refreshes genuinely run in parallel,
+        # and one's `_rebuild_providers()` replaces the composed provider
+        # objects the other is mid-way through populating (the legacy-OAuth
+        # credential landed on stale objects; seen as a macOS-CI failure).
+        self._refresh_serial = sync.Lock()
         self._models = create_models(credentials=credentials, models_store=models_store)
         self._rebuild_providers()
 
@@ -521,13 +529,16 @@ class ModelRuntime:
 
     async def refresh(self, options: ModelsRefreshOptions | None = None) -> ModelsRefreshResult:
         options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
-        config = await ModelConfig.load(self._models_path)
-        with self._composition_guard:
-            self._config = config
-            self._rebuild_providers()
-        result = await self._models.refresh(options)
-        with self._composition_guard:
-            self._update_model_snapshot()
+        # One refresh at a time: rebuild, registry refresh and snapshot must
+        # see one provider generation (see `_refresh_serial` in __init__).
+        async with self._refresh_serial:
+            config = await ModelConfig.load(self._models_path)
+            with self._composition_guard:
+                self._config = config
+                self._rebuild_providers()
+            result = await self._models.refresh(options)
+            with self._composition_guard:
+                self._update_model_snapshot()
         try:
             await self._await_run(self._force_refresh_availability())
         except Exception:
