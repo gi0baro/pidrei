@@ -46,7 +46,14 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
 
-from pidrei_agent.harness.session.serde import parse_message, parse_usage, serialize_message, serialize_usage
+from pidrei_agent.harness.session.serde import (
+    parse_message,
+    parse_usage,
+    serialize_content,
+    serialize_message,
+    serialize_usage,
+    to_wire_value,
+)
 from pidrei_ai.utils.uuid import uuidv7
 
 from ..config import get_agent_dir as get_default_agent_dir, get_sessions_dir
@@ -134,8 +141,19 @@ def _iso_to_epoch_ms(timestamp: Any) -> float:
         return float("nan")
 
 
+def _json_fallback(value: Any) -> Any:
+    # pi's JSON.stringify serializes any object's own fields; a port-side
+    # dataclass that slipped past the wire converters gets the same treatment
+    # instead of interrupting the session mid-write. Anything else still
+    # raises like plain json.dumps.
+    converted = to_wire_value(value)
+    if converted is value:
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    return converted
+
+
 def _dump_json(data: Any) -> str:
-    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=_json_fallback)
 
 
 def _create_session_id() -> str:
@@ -175,13 +193,35 @@ def _decode_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def _entry_to_wire(entry: dict[str, Any]) -> dict[str, Any]:
-    if entry.get("type") == "message" and entry.get("message") is not None and not isinstance(entry["message"], dict):
+    """Wire conversion for the live-append entry dicts.
+
+    Extension-provided fields (`data`, `details`, custom-message `content`)
+    are `Any` and may arrive as port-side dataclasses; pi's equivalents are
+    plain JS objects that JSON.stringify serializes field-by-field, so they
+    get the same treatment here instead of crashing `json.dumps`.
+    """
+    entry_type = entry.get("type")
+    if entry_type == "message" and entry.get("message") is not None and not isinstance(entry["message"], dict):
         wire = dict(entry)
         wire["message"] = serialize_message(entry["message"])
         return wire
-    if entry.get("type") in ("compaction", "branch_summary") and entry.get("usage") is not None:
+    if entry_type in ("compaction", "branch_summary"):
         wire = dict(entry)
-        wire["usage"] = serialize_usage(entry["usage"])
+        if entry.get("usage") is not None:
+            wire["usage"] = serialize_usage(entry["usage"])
+        if entry.get("details") is not None:
+            wire["details"] = to_wire_value(entry["details"])
+        return wire
+    if entry_type == "custom" and entry.get("data") is not None:
+        wire = dict(entry)
+        wire["data"] = to_wire_value(entry["data"])
+        return wire
+    if entry_type == "custom_message":
+        wire = dict(entry)
+        if entry.get("content") is not None:
+            wire["content"] = serialize_content(entry["content"])
+        if entry.get("details") is not None:
+            wire["details"] = to_wire_value(entry["details"])
         return wire
     return entry
 

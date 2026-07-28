@@ -4,13 +4,18 @@ pi persists raw JS objects with `JSON.stringify`, so session files carry
 camelCase keys and omit `undefined` fields. This module maps the port's
 snake_case dataclasses to and from that exact shape with explicit per-type
 field maps — mechanical key conversion would corrupt user-owned dicts
-(`arguments`, `details`, `data`, `metadata`), which pass through untouched.
+(`arguments`, `details`, `data`, `metadata`), which pass through with their
+keys untouched. `details` values that are port-side *dataclasses* (pi's are
+plain JSON objects) are converted to camelCase dicts on the way out, or
+`json.dumps` would refuse them; they parse back as dicts, which every
+consumer already accepts (renderers probe dict-or-attribute).
 
 Unknown entry types and message roles round-trip as their raw parsed dicts
 (unknown entries keep the base fields on an `UnknownEntry` so tree walks can
 skip them, exactly like pi's blind cast).
 """
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -159,7 +164,7 @@ def parse_content_block(data: Any) -> Any:
     return data
 
 
-def _serialize_content(content: Any) -> Any:
+def serialize_content(content: Any) -> Any:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -183,11 +188,11 @@ def serialize_message(message: Any) -> Any:
         return message
     role = getattr(message, "role", None)
     if role == "user":
-        return {"role": "user", "content": _serialize_content(message.content), "timestamp": message.timestamp}
+        return {"role": "user", "content": serialize_content(message.content), "timestamp": message.timestamp}
     if role == "assistant":
         data: dict[str, Any] = {
             "role": "assistant",
-            "content": _serialize_content(message.content),
+            "content": serialize_content(message.content),
             "api": message.api,
             "provider": message.provider,
             "model": message.model,
@@ -206,9 +211,9 @@ def serialize_message(message: Any) -> Any:
             "role": "toolResult",
             "toolCallId": message.tool_call_id,
             "toolName": message.tool_name,
-            "content": _serialize_content(message.content),
+            "content": serialize_content(message.content),
         }
-        _put(data, "details", message.details)
+        _put(data, "details", to_wire_value(message.details))
         _put(data, "usage", serialize_usage(message.usage))
         if message.added_tool_names:
             data["addedToolNames"] = message.added_tool_names
@@ -216,9 +221,9 @@ def serialize_message(message: Any) -> Any:
         data["timestamp"] = message.timestamp
         return data
     if role == "custom":
-        data = {"role": "custom", "customType": message.custom_type, "content": _serialize_content(message.content)}
+        data = {"role": "custom", "customType": message.custom_type, "content": serialize_content(message.content)}
         data["display"] = message.display
-        _put(data, "details", message.details)
+        _put(data, "details", to_wire_value(message.details))
         data["timestamp"] = message.timestamp
         return data
     if role == "bashExecution":
@@ -352,12 +357,37 @@ def _parse_diagnostic(data: Any) -> Any:
 # --- details --------------------------------------------------------------------
 
 
+def _camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+
+def to_wire_value(value: Any) -> Any:
+    """pi's `details` are plain JSON objects; the port's tools produce
+    dataclasses. Convert those to pi's wire shape (camelCase keys, None
+    dropped, like JSON.stringify over a JS object). Dicts keep their keys —
+    they are user- or wire-owned already."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        wire: dict[str, Any] = {}
+        for field in dataclasses.fields(value):
+            item = getattr(value, field.name)
+            if item is None:
+                continue
+            wire[_camel(field.name)] = to_wire_value(item)
+        return wire
+    if isinstance(value, dict):
+        return {key: to_wire_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_wire_value(item) for item in value]
+    return value
+
+
 def _serialize_details(details: Any) -> Any:
     read_files = getattr(details, "read_files", None)
     modified_files = getattr(details, "modified_files", None)
     if isinstance(read_files, list) and isinstance(modified_files, list):
         return {"readFiles": read_files, "modifiedFiles": modified_files}
-    return details
+    return to_wire_value(details)
 
 
 # --- entries --------------------------------------------------------------------
@@ -401,8 +431,8 @@ def serialize_entry(entry: SessionTreeEntry | UnknownEntry) -> dict[str, Any]:
         _put(base, "data", entry.data)
     elif entry.type == "custom_message":
         base["customType"] = entry.custom_type
-        base["content"] = _serialize_content(entry.content)
-        _put(base, "details", entry.details)
+        base["content"] = serialize_content(entry.content)
+        _put(base, "details", to_wire_value(entry.details))
         base["display"] = entry.display
     elif entry.type == "label":
         base["targetId"] = entry.target_id

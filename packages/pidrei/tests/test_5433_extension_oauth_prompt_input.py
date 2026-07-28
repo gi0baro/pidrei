@@ -4,12 +4,16 @@ The login dialog an extension's OAuth flow drives must keep every earlier
 prompt's rendered value stable once a later prompt is active — a second prompt
 must not re-render the first one's answer, or echo its own twice.
 
-pi mocks `openBrowser`; nothing here reaches `show_auth`'s browser path, so
-there is nothing to mock.
+pi mocks `openBrowser`; `show_auth` calls it here too, so the auth case swaps
+the login dialog's binding for a recorder — without it the suite launches a
+real browser tab at the fake URL on every run.
 """
+
+import contextlib
 
 import pytest
 
+from pidrei.modes.interactive.components import login_dialog as login_dialog_module
 from pidrei.modes.interactive.components.login_dialog import LoginDialogComponent
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
@@ -18,6 +22,19 @@ from pidrei.utils.ansi import strip_ansi
 class _FakeTui:
     def request_render(self) -> None:
         pass
+
+
+@contextlib.contextmanager
+def mock_open_browser():
+    """pi's `vi.mock(openBrowser)`: record instead of launching. Manual swap —
+    no monkeypatch fixture under the tonio mark (yield fixture)."""
+    opened: list[str] = []
+    original = login_dialog_module.open_browser
+    login_dialog_module.open_browser = opened.append
+    try:
+        yield opened
+    finally:
+        login_dialog_module.open_browser = original
 
 
 @pytest.mark.tonio
@@ -61,9 +78,11 @@ async def test_keeps_previous_prompt_input_stable_when_a_later_prompt_is_active(
 async def test_preserves_auth_instructions_when_showing_a_prompt():
     dialog = await create_dialog()
 
-    dialog.show_auth("https://example.invalid/login", "Authorize the extension")
-    dialog.show_prompt("First prompt:").close()
+    with mock_open_browser() as opened:
+        dialog.show_auth("https://example.invalid/login", "Authorize the extension")
+        dialog.show_prompt("First prompt:").close()
 
+    assert opened == ["https://example.invalid/login"]
     output = "\n".join(render_dialog(dialog))
     assert "https://example.invalid/login" in output
     assert "Authorize the extension" in output

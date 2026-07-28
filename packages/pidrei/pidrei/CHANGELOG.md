@@ -35,6 +35,9 @@ Tracks [Pi 0.82.1](https://github.com/earendil-works/pi/releases/tag/v0.82.1)
   now says why).
 - A directory named `AGENTS.md` (or `CLAUDE.md`) no longer breaks context-file
   discovery; it is skipped and the next candidate loads.
+- Interactive sessions no longer error with "Object of type EditToolDetails is
+  not JSON serializable" after the edit tool runs: tool details now persist to
+  the session file as plain camelCase objects, like Pi's.
 
 ## [0.82.0.0] - 2026-07-27
 

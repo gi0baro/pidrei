@@ -18,6 +18,7 @@ from pidrei.core.session_manager import (
     load_entries_from_file,
     migrate_session_entries,
 )
+from pidrei.core.tools import EditToolDetails
 from pidrei_ai.types import UserMessage
 
 from .coding_session_helpers import assistant_msg, make_usage, tool_result_msg, user_msg
@@ -776,6 +777,76 @@ class TestCreateBranchedSession:
             e for e in entries if e["type"] == "message" and getattr(e["message"], "role", None) == "toolResult"
         )
         assert tool_entry["message"].usage == usage
+
+    @pytest.mark.tonio
+    async def test_persists_dataclass_tool_details_to_file_backed_sessions(self, tmp_dir):
+        # Regression: the interactive edit tool returns an `EditToolDetails`
+        # dataclass; file-backed persistence used to hand it to `json.dumps`
+        # raw ("Object of type EditToolDetails is not JSON serializable"),
+        # which only surfaced outside the in-memory sessions tests use. It
+        # must land as pi's plain camelCase object and reload as a dict.
+        temp_dir = str(tmp_dir)
+        session = await SessionManager.create(temp_dir, temp_dir)
+        await session.append_message(user_msg("edit this file"))
+        await session.append_message(assistant_msg("editing"))
+        message = tool_result_msg("done")
+        message.details = EditToolDetails(diff="- old\n+ new", patch="@@ -1 +1 @@", first_changed_line=1)
+        await session.append_message(message)
+
+        file = session.get_session_file()
+        assert file is not None
+        with open(file, encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle.read().strip().split("\n") if line]
+        wire = next(
+            r["message"] for r in records if r.get("type") == "message" and r["message"]["role"] == "toolResult"
+        )
+        assert wire["details"] == {"diff": "- old\n+ new", "patch": "@@ -1 +1 @@", "firstChangedLine": 1}
+
+        reopened = await SessionManager.open(file, temp_dir)
+        tool_entry = next(
+            e
+            for e in reopened.get_entries()
+            if e["type"] == "message" and getattr(e["message"], "role", None) == "toolResult"
+        )
+        assert tool_entry["message"].details == {"diff": "- old\n+ new", "patch": "@@ -1 +1 @@", "firstChangedLine": 1}
+
+    @pytest.mark.tonio
+    async def test_persists_dataclass_extension_payloads_to_file_backed_sessions(self, tmp_dir):
+        # Same family as the EditToolDetails regression: extension-provided
+        # custom-entry `data`, custom-message `details` and content blocks are
+        # `Any` and may arrive as dataclasses; they must land as pi's plain
+        # camelCase objects instead of crashing `json.dumps`.
+        from dataclasses import dataclass
+
+        from pidrei_ai.types import TextContent
+
+        @dataclass
+        class ExtensionState:
+            plan_name: str
+            step_count: int
+
+        temp_dir = str(tmp_dir)
+        session = await SessionManager.create(temp_dir, temp_dir)
+        await session.append_message(user_msg("go"))
+        await session.append_message(assistant_msg("ok"))
+        await session.append_custom_entry("preset-state", ExtensionState(plan_name="plan", step_count=2))
+        await session.append_custom_message_entry(
+            "status-update",
+            [TextContent(text="step done")],
+            True,
+            ExtensionState(plan_name="plan", step_count=3),
+        )
+
+        file = session.get_session_file()
+        assert file is not None
+        with open(file, encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle.read().strip().split("\n") if line]
+
+        custom = next(r for r in records if r.get("type") == "custom")
+        assert custom["data"] == {"planName": "plan", "stepCount": 2}
+        custom_message = next(r for r in records if r.get("type") == "custom_message")
+        assert custom_message["content"] == [{"type": "text", "text": "step done"}]
+        assert custom_message["details"] == {"planName": "plan", "stepCount": 3}
 
     @pytest.mark.tonio
     async def test_writes_file_immediately_when_forking_from_point_with_assistant(self, tmp_dir):
