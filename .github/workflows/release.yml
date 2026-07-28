@@ -78,9 +78,12 @@ jobs:
           "
 
       - name: Generate the Homebrew formula
-        # sha256s of the artifacts just built. The third-party resources are
-        # filled in with `brew update-python-resources` inside the tap; this
-        # only covers the five distributions that exist on no index.
+        # Complete and final: the five no-index distributions from the
+        # artifacts just built, the third-party resources from uv.lock (the
+        # exact set this run's test suite ran against). Deliberately not
+        # `brew update-python-resources`: brew resolves latest-from-PyPI —
+        # it cannot see pidrei's pins, since pidrei is on no index — and
+        # rewrites the GitHub-asset resources it does not understand.
         run: |
           uv run python scripts/brew_formula.py "${GITHUB_REF_NAME}" dist > pidrei.rb
 
@@ -95,8 +98,8 @@ jobs:
 
       - name: Upload the formula
         # Attached rather than pushed: the tap is a separate repo, and pushing
-        # to it needs a cross-repo token. Copy it in, run
-        # `brew update-python-resources`, commit.
+        # to it needs a cross-repo token. The formula is final — copy it into
+        # the tap and commit.
         uses: actions/upload-artifact@v4
         with:
           name: homebrew-formula
