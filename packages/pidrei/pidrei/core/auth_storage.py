@@ -218,7 +218,7 @@ class AuthStorage(CredentialStore):
             return credential
         # `resolve_config_value` may run a shell command (`!cmd` syntax), so it
         # goes to the pool rather than blocking a runtime worker.
-        resolved = await tonio.spawn_blocking(resolve_config_value, credential.key, credential.env)
+        resolved = await resolve_config_value(credential.key, credential.env)
         return ApiKeyCredential(key=resolved, env=credential.env)
 
     async def modify(

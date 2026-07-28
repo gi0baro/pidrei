@@ -59,7 +59,7 @@ class ModelRegistry:
         try:
             resolution = await self._runtime.get_auth(model)
             if resolution is None:
-                compatibility = self._runtime.get_compatibility_request_config(model)
+                compatibility = await self._runtime.get_compatibility_request_config(model)
                 if compatibility.auth_header:
                     return ResolvedRequestAuth(ok=False, error=f'No API key found for "{model.provider}"')
                 return ResolvedRequestAuth(ok=True, headers=_filter_null_headers(compatibility.headers))

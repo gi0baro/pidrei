@@ -9,6 +9,9 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import net
 
+from pidrei.modes.rpc.jsonl import JsonlLineDecoder
+from pidrei.utils.fd_io import FdReader
+
 from .config import VERSION, get_socket_path
 from .ipc.client import send_ipc_request
 from .ipc.protocol import encode_message
@@ -53,18 +56,27 @@ async def _rpc_stream(instance_id: str) -> int:
     )
 
     async def pump_stdin() -> None:
+        # Same shape as `rpc_mode._pump_stdin_commands`: readiness-driven for a
+        # pipe or socket, `fs.wrap_file` for a redirected file, and the same
+        # JSONL splitter rather than a second line-buffering scheme.
+        decoder = JsonlLineDecoder()
+        reader = FdReader(sys.stdin.fileno())
         try:
             while True:
-                line = await tonio.spawn_blocking(sys.stdin.readline)
-                if not line:
+                chunk = await reader.read()
+                lines = decoder.feed(chunk) if chunk else decoder.end()
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    parsed = json.loads(stripped)
+                    await stream.send_all(encode_message(parsed).encode("utf-8"))
+                if not chunk:
                     return
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                parsed = json.loads(stripped)
-                await stream.send_all(encode_message(parsed).encode("utf-8"))
         except Exception:
             pass
+        finally:
+            reader.close()
 
     tonio.spawn.without_tracking(pump_stdin())
 

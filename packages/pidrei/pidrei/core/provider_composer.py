@@ -12,8 +12,6 @@ dispatch maps known api names onto pidrei-ai adapter modules directly.
 from dataclasses import dataclass, replace
 from typing import Any
 
-import tonio.colored as tonio
-
 from pidrei_ai.api.lazy import lazy_stream
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
@@ -414,7 +412,7 @@ def compose_api_key_auth(
                 result = None
         elif raw_key is not None:
             env = await _config_context_env([raw_key], ctx)
-            key = resolve_config_value_or_throw(raw_key, f'API key for provider "{provider_id}"', env)
+            key = await resolve_config_value_or_throw(raw_key, f'API key for provider "{provider_id}"', env)
             if inherited is not None:
                 result = await inherited.resolve(ctx, ApiKeyCredential(key=key))
             else:
@@ -428,10 +426,7 @@ def compose_api_key_auth(
             **(dict(result.env) if result.env else {}),
         }
         header_env = await _config_context_env(list((raw_headers or {}).values()), ctx, explicit_env)
-        # `resolve_config_value` can run a shell command via the `!cmd` syntax.
-        headers = await tonio.spawn_blocking(
-            resolve_headers_or_throw, raw_headers, f'provider "{provider_id}"', header_env
-        )
+        headers = await resolve_headers_or_throw(raw_headers, f'provider "{provider_id}"', header_env)
         return replace(result, auth=_with_configured_auth(result.auth, headers, auth_header))
 
     return ApiKeyAuth(
@@ -463,8 +458,7 @@ def compose_oauth_auth(
     async def to_auth(credential: OAuthCredential) -> ModelAuth:
         auth = await inner_to_auth(credential)
         env = credential.extra.get("env")
-        headers = await tonio.spawn_blocking(
-            resolve_headers_or_throw,
+        headers = await resolve_headers_or_throw(
             raw_headers,
             f'provider "{provider_id}"',
             env if isinstance(env, dict) else None,
@@ -647,24 +641,24 @@ def compose_model_provider(
     return provider
 
 
-def resolve_configured_model_headers(
+async def resolve_configured_model_headers(
     model: Model,
     config: dict[str, Any] | None,
     extension: ProviderConfigInput | None,
     env: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
-    return resolve_headers_or_throw(
+    return await resolve_headers_or_throw(
         _raw_model_headers(model, config, extension), f'model "{model.provider}/{model.id}"', env
     )
 
 
-def resolve_compatibility_request_config(
+async def resolve_compatibility_request_config(
     model: Model,
     config: dict[str, Any] | None,
     extension: ProviderConfigInput | None,
 ) -> CompatibilityRequestConfig:
     raw = {**(_configured_headers(config, extension) or {}), **(_raw_model_headers(model, config, extension) or {})}
-    configured = resolve_headers_or_throw(raw if raw else None, f'model "{model.provider}/{model.id}"')
+    configured = await resolve_headers_or_throw(raw if raw else None, f'model "{model.provider}/{model.id}"')
     headers = {**(model.headers or {}), **(configured or {})} if model.headers or configured else None
     return CompatibilityRequestConfig(
         headers=headers,

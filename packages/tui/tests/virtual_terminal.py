@@ -17,6 +17,7 @@ pi uses @xterm/headless; pyte differences the harness papers over:
 """
 
 import re
+import threading
 import time
 
 import pyte
@@ -39,6 +40,11 @@ class VirtualTerminal:
         self._screen = pyte.HistoryScreen(columns, rows, history=_HISTORY)
         self._stream = pyte.Stream(self._screen)
         self._frames = 0
+        # pyte's parser is a single generator: the render loop (terminal.write)
+        # and a test task (hide_cursor via show/hide_overlay) feed it from two
+        # worker threads, which raises "generator already executing" — or
+        # silently corrupts the screen. pi never has this: one JS thread.
+        self._feed_lock = threading.Lock()
 
     async def start(self, on_input, on_resize) -> None:
         self._input_handler = on_input
@@ -58,7 +64,8 @@ class VirtualTerminal:
     def _feed(self, data: str) -> None:
         if "\x1b_" in data:
             data = _APC_RE.sub("", data)
-        self._stream.feed(data)
+        with self._feed_lock:
+            self._stream.feed(data)
 
     async def write(self, data: str) -> None:
         self._feed(data)
@@ -119,17 +126,22 @@ class VirtualTerminal:
 
     def resize(self, columns: int, rows: int) -> None:
         """Resize the terminal (xterm-like: content stays bottom-anchored)."""
-        buffer_lines = self.get_scroll_buffer()
-        # Drop trailing blank rows like xterm's shrink does before scrolling.
-        while buffer_lines and not buffer_lines[-1]:
-            buffer_lines.pop()
+        # The whole swap happens under the feed lock so a concurrent render
+        # write cannot land in the half-rebuilt screen; the re-feed calls the
+        # stream directly because the lock is not reentrant (the content is
+        # plain text from the buffer, never APC).
+        with self._feed_lock:
+            buffer_lines = self.get_scroll_buffer()
+            # Drop trailing blank rows like xterm's shrink does before scrolling.
+            while buffer_lines and not buffer_lines[-1]:
+                buffer_lines.pop()
 
-        self._columns = columns
-        self._rows = rows
-        self._screen = pyte.HistoryScreen(columns, rows, history=_HISTORY)
-        self._stream = pyte.Stream(self._screen)
-        if buffer_lines:
-            self._feed("\r\n".join(buffer_lines))
+            self._columns = columns
+            self._rows = rows
+            self._screen = pyte.HistoryScreen(columns, rows, history=_HISTORY)
+            self._stream = pyte.Stream(self._screen)
+            if buffer_lines:
+                self._stream.feed("\r\n".join(buffer_lines))
         if self._resize_handler is not None:
             self._resize_handler()
 

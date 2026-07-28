@@ -30,6 +30,7 @@ jobs:
         uv venv .venv
         uv sync --group test
     - name: Test
+      timeout-minutes: 3
       run: |
         make test
 
@@ -53,5 +54,6 @@ jobs:
         uv venv .venv
         uv sync --group test
     - name: Test
+      timeout-minutes: 3
       run: |
         make test

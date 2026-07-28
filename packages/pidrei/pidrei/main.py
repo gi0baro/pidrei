@@ -59,6 +59,7 @@ from .modes import run_print_mode, run_rpc_mode
 from .modes.interactive.theme import init_theme, stop_theme_watcher
 from .modes.print_mode import PrintModeOptions
 from .utils.colors import dim, red, yellow
+from .utils.fd_io import FdReader
 from .utils.paths import is_local_path, normalize_path, resolve_path
 
 
@@ -70,12 +71,24 @@ from pidrei_ai.registry import ModelsRefreshOptions, models_are_equal
 async def _read_piped_stdin() -> str | None:
     """Read all content from piped stdin.
 
-    Returns None if stdin is a TTY (interactive terminal)."""
+    Returns None if stdin is a TTY (interactive terminal).
+
+    `readiness=False`: a redirected file still gets `fs.wrap_file`, but a pipe
+    stays on the blocking pool rather than having `O_NONBLOCK` set on it. The
+    parent here is the user's own shell, and this is a one-shot startup read, so
+    there is nothing to win against the risk of a missed restore.
+    """
     if sys.stdin.isatty():
         return None
 
-    data = await tonio.spawn_blocking(sys.stdin.read)
-    return data.strip() or None
+    reader = FdReader(sys.stdin.fileno(), readiness=False)
+    chunks: list[bytes] = []
+    try:
+        while chunk := await reader.read():
+            chunks.append(chunk)
+    finally:
+        reader.close()
+    return b"".join(chunks).decode("utf-8", "replace").strip() or None
 
 
 def _collect_settings_diagnostics(

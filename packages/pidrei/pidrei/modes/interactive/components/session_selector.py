@@ -2,10 +2,10 @@
 
 import os
 import re
-import subprocess
 import time
 from collections.abc import Awaitable
 from datetime import datetime
+from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import fs
@@ -14,6 +14,7 @@ from pidrei_tui import Container, Input, Spacer, Text, get_keybindings, truncate
 from pidrei_tui._timers import Timeout
 
 from ....utils.paths import canonicalize_path as _canonicalize_path
+from ....utils.process import run_command
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, key_text
@@ -618,25 +619,20 @@ async def delete_session_file(session_path: str) -> dict:
     # Try `trash` first (if installed)
     trash_args = ["--", session_path] if session_path.startswith("-") else [session_path]
 
-    def run_trash():
-        try:
-            return subprocess.run(  # noqa: S603
-                ["trash", *trash_args],  # noqa: S607 - PATH lookup like pi's spawnSync
-                capture_output=True,
-                encoding="utf-8",
-                check=False,
-            )
-        except OSError as error:
-            return error
-
-    trash_result = await tonio.spawn_blocking(run_trash)
+    try:
+        trash_result: Any = await run_command(
+            ["trash", *trash_args],  # PATH lookup, like pi's spawnSync
+            capture_output=True,
+        )
+    except OSError as error:
+        trash_result = error
 
     def get_trash_error_hint() -> str | None:
         parts: list = []
         if isinstance(trash_result, OSError):
             parts.append(str(trash_result))
         else:
-            stderr = (trash_result.stderr or "").strip()
+            stderr = (trash_result.stderr or b"").decode("utf-8", "replace").strip()
             if stderr:
                 parts.append(stderr.split("\n")[0])
         if not parts:

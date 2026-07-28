@@ -364,9 +364,9 @@ class ModelRuntime:
     def get_registered_native_provider(self, provider_id: str) -> Provider | None:
         return self._native_extension_providers.get(provider_id)
 
-    def get_compatibility_request_config(self, model: Model) -> CompatibilityRequestConfig:
+    async def get_compatibility_request_config(self, model: Model) -> CompatibilityRequestConfig:
         """Compatibility fallback for ModelRegistry when provider auth is unconfigured."""
-        return resolve_compatibility_request_config(
+        return await resolve_compatibility_request_config(
             model,
             self._config.get_provider(model.provider),
             self._extension_providers.get(model.provider),
@@ -393,9 +393,7 @@ class ModelRuntime:
         resolution = await self._models.get_auth(provider_or_model, resolution_overrides)
         if resolution is None:
             return None
-        # `resolve_config_value` can run a shell command via the `!cmd` syntax.
-        configured_headers = await tonio.spawn_blocking(
-            resolve_configured_model_headers,
+        configured_headers = await resolve_configured_model_headers(
             provider_or_model,
             self._config.get_provider(provider_or_model.provider),
             self._extension_providers.get(provider_or_model.provider),

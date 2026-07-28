@@ -14,10 +14,16 @@ import subprocess
 import threading
 from dataclasses import dataclass
 
+from tonio.colored import sync as tonio_sync
+
+from ..utils.process import run_command
+
 
 # Cache for shell command results (persists for process lifetime)
 _command_result_cache: dict[str, str | None] = {}
 _command_result_cache_lock = threading.Lock()
+#: Serialises `!cmd` execution; see `_execute_command`.
+_command_execution_lock = tonio_sync.Lock()
 
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ENV_VAR_NAME_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*")
@@ -147,7 +153,7 @@ def is_config_value_configured(config: str, env: dict[str, str] | None = None) -
     return len(get_missing_config_value_env_var_names(config, env)) == 0
 
 
-def resolve_config_value(config: str, env: dict[str, str] | None = None) -> str | None:
+async def resolve_config_value(config: str, env: dict[str, str] | None = None) -> str | None:
     """Resolve a config value (API key, header value, etc.) to an actual value.
 
     - If starts with "!", executes the rest as a shell command and uses stdout (cached)
@@ -156,56 +162,59 @@ def resolve_config_value(config: str, env: dict[str, str] | None = None) -> str 
     - Otherwise treats the value as a literal
     """
     if _is_command_reference(config):
-        return _execute_command(config)
+        return await _execute_command(config)
     return _resolve_template(_parse_config_value_template(config), env)
 
 
-# Sync by design: every runtime-reachable caller offloads this —
-# `AuthStorage.read`, `provider_composer`'s two header resolutions, and
-# `ModelRuntime.get_auth` all go through `spawn_blocking`. A new caller
-# must do the same: this runs an arbitrary shell command (`!cmd`).
-def _execute_with_default_shell(command: str) -> str | None:
+async def _execute_with_default_shell(command: str) -> str | None:
     try:
-        result = subprocess.run(  # noqa: S602
+        result = await run_command(  # noqa: S604 - the `!cmd` syntax is a documented shell escape
             command,
             shell=True,
-            check=False,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=10,
-            text=True,
         )
     except OSError, subprocess.SubprocessError:
         return None
     if result.returncode != 0:
         return None
-    return result.stdout.strip() or None
+    return result.stdout.decode("utf-8", "replace").strip() or None
 
 
-def _execute_command_uncached(command_config: str) -> str | None:
-    return _execute_with_default_shell(command_config[1:])
+async def _execute_command_uncached(command_config: str) -> str | None:
+    return await _execute_with_default_shell(command_config[1:])
 
 
-def _execute_command(command_config: str) -> str | None:
+async def _execute_command(command_config: str) -> str | None:
     with _command_result_cache_lock:
         if command_config in _command_result_cache:
             return _command_result_cache[command_config]
 
-    result = _execute_command_uncached(command_config)
-    with _command_result_cache_lock:
-        _command_result_cache[command_config] = result
-    return result
+    # One `!cmd` at a time. pi gets this for free from `spawnSync` on a single
+    # thread; here two providers resolving at once could otherwise both miss the
+    # cache and run the same credential helper twice — two password prompts for
+    # one lookup. Holding the lock also makes the re-check below atomic.
+    async with _command_execution_lock:
+        with _command_result_cache_lock:
+            if command_config in _command_result_cache:
+                return _command_result_cache[command_config]
+
+        result = await _execute_command_uncached(command_config)
+        with _command_result_cache_lock:
+            _command_result_cache[command_config] = result
+        return result
 
 
-def resolve_config_value_uncached(config: str, env: dict[str, str] | None = None) -> str | None:
+async def resolve_config_value_uncached(config: str, env: dict[str, str] | None = None) -> str | None:
     if _is_command_reference(config):
-        return _execute_command_uncached(config)
+        return await _execute_command_uncached(config)
     return _resolve_template(_parse_config_value_template(config), env)
 
 
-def resolve_config_value_or_throw(config: str, description: str, env: dict[str, str] | None = None) -> str:
-    resolved_value = resolve_config_value_uncached(config, env)
+async def resolve_config_value_or_throw(config: str, description: str, env: dict[str, str] | None = None) -> str:
+    resolved_value = await resolve_config_value_uncached(config, env)
     if resolved_value is not None:
         return resolved_value
 
@@ -221,26 +230,26 @@ def resolve_config_value_or_throw(config: str, description: str, env: dict[str, 
     raise Exception(f"Failed to resolve {description}")
 
 
-def resolve_headers(headers: dict[str, str] | None, env: dict[str, str] | None = None) -> dict[str, str] | None:
+async def resolve_headers(headers: dict[str, str] | None, env: dict[str, str] | None = None) -> dict[str, str] | None:
     """Resolve all header values using the same resolution logic as API keys."""
     if headers is None:
         return None
     resolved: dict[str, str] = {}
     for key, value in headers.items():
-        resolved_value = resolve_config_value(value, env)
+        resolved_value = await resolve_config_value(value, env)
         if resolved_value:
             resolved[key] = resolved_value
     return resolved if resolved else None
 
 
-def resolve_headers_or_throw(
+async def resolve_headers_or_throw(
     headers: dict[str, str] | None, description: str, env: dict[str, str] | None = None
 ) -> dict[str, str] | None:
     if headers is None:
         return None
     resolved: dict[str, str] = {}
     for key, value in headers.items():
-        resolved[key] = resolve_config_value_or_throw(value, f'{description} header "{key}"', env)
+        resolved[key] = await resolve_config_value_or_throw(value, f'{description} header "{key}"', env)
     return resolved if resolved else None
 
 

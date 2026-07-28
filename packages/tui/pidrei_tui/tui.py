@@ -262,6 +262,7 @@ class TUI(Container):
 
         self._render_signal = tonio.Event()
         self._render_force = False
+        self._render_force_lock = threading.Lock()
         self._last_render_at = 0.0
         self._render_scope = None
         self._cursor_row = 0  # Logical cursor row (end of rendered content)
@@ -667,15 +668,15 @@ class TUI(Container):
         await self.terminal.stop()
 
     def request_render(self, force: bool = False) -> None:
+        # pi resets the previous-frame state right here. That is safe on one
+        # thread and a data race on this runtime: `_do_render`'s tail writes
+        # `_previous_lines`/`_previous_width` after the frame goes out, so a
+        # force landing in that window had its resets clobbered and the next
+        # render diffed identical lines and wrote nothing. Only the render
+        # loop mutates that state now; a force is just a flag it consumes.
         if force:
-            self._previous_lines = []
-            self._previous_width = -1  # -1 triggers width_changed, forcing a full clear
-            self._previous_height = -1  # -1 triggers height_changed, forcing a full clear
-            self._cursor_row = 0
-            self._hardware_cursor_row = 0
-            self._max_lines_rendered = 0
-            self._previous_viewport_top = 0
-            self._render_force = True
+            with self._render_force_lock:
+                self._render_force = True
         self._render_signal.set()
 
     async def _render_loop(self) -> None:
@@ -683,8 +684,9 @@ class TUI(Container):
             await self._render_signal.wait(None)
             if self._stopped:
                 return
-            force = self._render_force
-            self._render_force = False
+            with self._render_force_lock:
+                force = self._render_force
+                self._render_force = False
             if not force:
                 elapsed = _time.monotonic() - self._last_render_at
                 delay = _MIN_RENDER_INTERVAL_S - elapsed
@@ -701,8 +703,22 @@ class TUI(Container):
             # stop() stuck awaiting this task. Re-check after clearing.
             if self._stopped:
                 return
+            if force:
+                self._previous_lines = []
+                self._previous_width = -1  # -1 triggers width_changed, forcing a full clear
+                self._previous_height = -1  # -1 triggers height_changed, forcing a full clear
+                self._cursor_row = 0
+                self._hardware_cursor_row = 0
+                self._max_lines_rendered = 0
+                self._previous_viewport_top = 0
             self._last_render_at = _time.monotonic()
             await self._do_render()
+            # A force that arrived after the consume above lost its signal to
+            # the clear(); without this it would sit unserved until the next
+            # unrelated request. Re-arming guarantees every force ends in a
+            # full_render, which always writes a frame.
+            if self._render_force:
+                self._render_signal.set()
 
     # ------------------------------------------------------------------
     # Input handling

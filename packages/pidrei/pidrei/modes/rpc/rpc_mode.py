@@ -34,6 +34,7 @@ from ...core.output_guard import (
     write_raw_stdout,
 )
 from ...core.session_manager import SessionManager
+from ...utils.fd_io import FdReader
 from ...utils.shell import kill_tracked_detached_children
 from .jsonl import JsonlLineDecoder, serialize_json_line
 from .rpc_types import RpcSessionState, RpcSlashCommand
@@ -777,16 +778,23 @@ async def _pump_stdin_commands(on_line, on_end) -> None:
     Module-level so tests can substitute it and drive lines directly (pi's
     tests mock attachJsonlLineReader the same way)."""
     decoder = JsonlLineDecoder()
-    stdin_fd = sys.stdin.fileno()
-    while True:
-        chunk = await tonio.spawn_blocking(os.read, stdin_fd, _STDIN_READ_SIZE)
-        if not chunk:
-            for line in decoder.end():
+    # Readiness-driven when stdin is a pipe or socket — the usual case here,
+    # where the peer is a supervising program rather than a shell — and
+    # `fs.wrap_file` when it is a redirected file. Either way no pool thread
+    # sits parked between records.
+    reader = FdReader(sys.stdin.fileno(), size=_STDIN_READ_SIZE)
+    try:
+        while True:
+            chunk = await reader.read()
+            if not chunk:
+                for line in decoder.end():
+                    on_line(line)
+                await on_end()
+                return
+            for line in decoder.feed(chunk):
                 on_line(line)
-            await on_end()
-            return
-        for line in decoder.feed(chunk):
-            on_line(line)
+    finally:
+        reader.close()
 
 
 def _parse_images(images: Any) -> list[Any] | None:

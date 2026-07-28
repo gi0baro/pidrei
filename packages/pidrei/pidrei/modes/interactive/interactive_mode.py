@@ -92,6 +92,7 @@ from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboa
 from ...utils.colors import dim
 from ...utils.git import parse_git_url
 from ...utils.paths import get_cwd_relative_path
+from ...utils.process import run_command
 from ...utils.shell import kill_tracked_detached_children
 from ...utils.tools_manager import ensure_tool
 from ...utils.version_check import RELEASES_URL, check_for_new_version
@@ -902,22 +903,27 @@ class InteractiveMode:
         if not os.environ.get("TMUX"):
             return None
 
-        def run_tmux_show(option: str) -> str | None:
+        async def run_tmux_show(option: str) -> str | None:
             try:
-                result = subprocess.run(  # noqa: S603
-                    ["tmux", "show", "-gv", option],  # noqa: S607 - PATH lookup like pi's spawn
+                result = await run_command(
+                    ["tmux", "show", "-gv", option],  # PATH lookup, like pi's spawn
                     stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    encoding="utf-8",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     timeout=2,
-                    check=False,
                 )
             except OSError, subprocess.TimeoutExpired:
                 return None
-            return result.stdout.strip() if result.returncode == 0 else None
+            if result.returncode != 0:
+                return None
+            return result.stdout.decode("utf-8", "replace").strip()
 
-        extended_keys = await tonio.spawn_blocking(run_tmux_show, "extended-keys")
-        extended_keys_format = await tonio.spawn_blocking(run_tmux_show, "extended-keys-format")
+        # Both options at once, under one 2s budget each, as pi does with
+        # `Promise.all` — sequential awaits doubled the worst case.
+        extended_keys, extended_keys_format = await tonio.spawn(
+            run_tmux_show("extended-keys"),
+            run_tmux_show("extended-keys-format"),
+        )
 
         # If we couldn't query tmux (timeout, sandbox, etc.), don't warn
         if extended_keys is None:
@@ -5095,16 +5101,12 @@ class InteractiveMode:
     async def _handle_share_command(self) -> None:
 
         # Check if gh is available and logged in
-        def run_gh_auth_status():
-            return subprocess.run(
-                ["gh", "auth", "status"],  # noqa: S607 - PATH lookup like pi's spawnSync
+        try:
+            auth_result = await run_command(
+                ["gh", "auth", "status"],  # PATH lookup, like pi's spawnSync
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                check=False,
             )
-
-        try:
-            auth_result = await tonio.spawn_blocking(run_gh_auth_status)
         except OSError:
             self.show_error("GitHub CLI (gh) is not installed. Install it from https://cli.github.com/")
             return

@@ -12,11 +12,12 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from collections.abc import Awaitable
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from .image_process import convert_image_bytes_to_png
+from .process import run_command
 
 
 SUPPORTED_IMAGE_MIME_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
@@ -64,17 +65,9 @@ def _is_supported_image_mime_type(mime_type: str) -> bool:
     return _base_mime_type(mime_type) in SUPPORTED_IMAGE_MIME_TYPES
 
 
-# Sync by design: reached only from `_read_clipboard_image_sync`, which the
-# async entry point hands to `spawn_blocking`.
-def _run_command(command: list, *, timeout_s: float = _DEFAULT_READ_TIMEOUT_S, env=None) -> dict:
+async def _run_command(command: list, *, timeout_s: float = _DEFAULT_READ_TIMEOUT_S, env=None) -> dict:
     try:
-        result = subprocess.run(  # noqa: S603
-            command,
-            capture_output=True,
-            timeout=timeout_s,
-            env=env,
-            check=False,
-        )
+        result = await run_command(command, capture_output=True, timeout=timeout_s, env=env)
     except OSError, subprocess.TimeoutExpired:
         return {"ok": False, "stdout": b""}
 
@@ -84,8 +77,8 @@ def _run_command(command: list, *, timeout_s: float = _DEFAULT_READ_TIMEOUT_S, e
     return {"ok": True, "stdout": result.stdout}
 
 
-def _read_clipboard_image_via_wl_paste() -> dict | None:
-    listed = _run_command(["wl-paste", "--list-types"], timeout_s=_DEFAULT_LIST_TIMEOUT_S)
+async def _read_clipboard_image_via_wl_paste() -> dict | None:
+    listed = await _run_command(["wl-paste", "--list-types"], timeout_s=_DEFAULT_LIST_TIMEOUT_S)
     if not listed["ok"]:
         return None
 
@@ -95,7 +88,7 @@ def _read_clipboard_image_via_wl_paste() -> dict | None:
     if not selected_type:
         return None
 
-    data = _run_command(["wl-paste", "--type", selected_type, "--no-newline"])
+    data = await _run_command(["wl-paste", "--type", selected_type, "--no-newline"])
     if not data["ok"] or len(data["stdout"]) == 0:
         return None
 
@@ -115,7 +108,7 @@ def _is_wsl(env=None) -> bool:
         return False
 
 
-def _read_clipboard_image_via_powershell() -> dict | None:
+async def _read_clipboard_image_via_powershell() -> dict | None:
     """WSL fallback: PowerShell can access the Windows clipboard directly.
 
     On WSL, the Linux clipboard (Wayland/X11) does not receive image data
@@ -124,7 +117,7 @@ def _read_clipboard_image_via_powershell() -> dict | None:
     tmp_file = os.path.join(tempfile.gettempdir(), f"pidrei-wsl-clip-{uuid.uuid4()}.png")
 
     try:
-        win_path_result = _run_command(["wslpath", "-w", tmp_file], timeout_s=_DEFAULT_LIST_TIMEOUT_S)
+        win_path_result = await _run_command(["wslpath", "-w", tmp_file], timeout_s=_DEFAULT_LIST_TIMEOUT_S)
         if not win_path_result["ok"]:
             return None
 
@@ -146,7 +139,7 @@ def _read_clipboard_image_via_powershell() -> dict | None:
             ]
         )
 
-        result = _run_command(
+        result = await _run_command(
             ["powershell.exe", "-NoProfile", "-Command", ps_script],
             timeout_s=_DEFAULT_POWERSHELL_TIMEOUT_S,
         )
@@ -157,8 +150,7 @@ def _read_clipboard_image_via_powershell() -> dict | None:
         if output != "ok":
             return None
 
-        with open(tmp_file, "rb") as f:
-            data = f.read()
+        data = await fs.Path(tmp_file).read_bytes()
         if len(data) == 0:
             return None
 
@@ -167,13 +159,13 @@ def _read_clipboard_image_via_powershell() -> dict | None:
         return None
     finally:
         try:
-            os.unlink(tmp_file)
+            await fs.Path(tmp_file).unlink()
         except OSError:
             pass
 
 
-def _read_clipboard_image_via_xclip() -> dict | None:
-    targets = _run_command(
+async def _read_clipboard_image_via_xclip() -> dict | None:
+    targets = await _run_command(
         ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"], timeout_s=_DEFAULT_LIST_TIMEOUT_S
     )
 
@@ -187,30 +179,30 @@ def _read_clipboard_image_via_xclip() -> dict | None:
     try_types = [preferred, *SUPPORTED_IMAGE_MIME_TYPES] if preferred else list(SUPPORTED_IMAGE_MIME_TYPES)
 
     for mime_type in try_types:
-        data = _run_command(["xclip", "-selection", "clipboard", "-t", mime_type, "-o"])
+        data = await _run_command(["xclip", "-selection", "clipboard", "-t", mime_type, "-o"])
         if data["ok"] and len(data["stdout"]) > 0:
             return {"bytes": data["stdout"], "mimeType": _base_mime_type(mime_type)}
 
     return None
 
 
-def _read_clipboard_image_via_pngpaste() -> dict | None:
+async def _read_clipboard_image_via_pngpaste() -> dict | None:
     """macOS: pngpaste if installed (stand-in for pi's native addon)."""
-    data = _run_command(["pngpaste", "-"])
+    data = await _run_command(["pngpaste", "-"])
     if data["ok"] and len(data["stdout"]) > 0:
         return {"bytes": data["stdout"], "mimeType": "image/png"}
     return None
 
 
-def read_clipboard_image(options: dict | None = None) -> Awaitable[dict | None]:
-    """Probing the clipboard is one blocking unit — a `/proc` read plus a
-    platform tool — so it goes to the pool whole. Replaces an earlier partial
-    fix that offloaded only `_is_wsl` and left its subprocess siblings inline.
+async def read_clipboard_image(options: dict | None = None) -> dict | None:
+    """Probe the clipboard for an image.
+
+    Every branch here is a subprocess, so the chain runs async through
+    `run_command` rather than going to the pool whole. The two things in it that
+    are *not* subprocesses keep their offload, which is the trap an earlier
+    partial fix fell into from the other side: `_is_wsl` reads `/proc/version`,
+    and `convert_image_bytes_to_png` is CPU-bound.
     """
-    return tonio.spawn_blocking(_read_clipboard_image_sync, options)
-
-
-def _read_clipboard_image_sync(options: dict | None = None) -> dict | None:
     options = options or {}
     env = options.get("env") if options.get("env") is not None else os.environ
     platform = options.get("platform") if options.get("platform") is not None else sys.platform
@@ -221,26 +213,26 @@ def _read_clipboard_image_sync(options: dict | None = None) -> dict | None:
     image: dict | None = None
 
     if platform == "linux":
-        wsl = _is_wsl(env)
+        wsl = await tonio.spawn_blocking(_is_wsl, env)
         wayland = is_wayland_session(env)
 
         if wayland or wsl:
-            image = _read_clipboard_image_via_wl_paste() or _read_clipboard_image_via_xclip()
+            image = await _read_clipboard_image_via_wl_paste() or await _read_clipboard_image_via_xclip()
 
         if image is None and wsl:
-            image = _read_clipboard_image_via_powershell()
+            image = await _read_clipboard_image_via_powershell()
 
         if image is None and not wayland:
-            image = _read_clipboard_image_via_xclip()
+            image = await _read_clipboard_image_via_xclip()
     else:
-        image = _read_clipboard_image_via_pngpaste()
+        image = await _read_clipboard_image_via_pngpaste()
 
     if image is None:
         return None
 
     # Convert unsupported formats (e.g., BMP from WSLg) to PNG
     if not _is_supported_image_mime_type(image["mimeType"]):
-        png_bytes = convert_image_bytes_to_png(image["bytes"])
+        png_bytes = await tonio.spawn_blocking(convert_image_bytes_to_png, image["bytes"])
         if png_bytes is None:
             return None
         return {"bytes": png_bytes, "mimeType": "image/png"}
