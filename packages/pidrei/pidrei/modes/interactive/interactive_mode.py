@@ -280,6 +280,122 @@ def _format_login_provider_completion_description(provider: dict) -> str:
     return auth_types if provider["name"] == provider["id"] else f"{provider['name']} · {auth_types}"
 
 
+class ExtensionUIContext:
+    """`ctx.ui` surface for extensions in the TUI (decided 2026-07-28).
+
+    A snake_case object, matching `docs/extensions.md`, the shipped examples
+    and `_NoOpUIContext` — pi's counterpart is a camelCase JS object; the
+    dict-of-callbacks it was ported as matched neither. Awaitability is part
+    of the contract and identical across the real, no-op and RPC contexts:
+    dialog/editor methods (`select`, `confirm`, `input`, `custom`, `editor`),
+    `paste_to_editor` and the theme accessors return awaitables; the
+    in-memory UI setters are sync.
+    """
+
+    def __init__(self, mode: InteractiveMode) -> None:
+        self._mode = mode
+
+    def select(self, title, options, opts=None):
+        return self._mode._show_extension_selector(title, options, opts)
+
+    def confirm(self, title, message, opts=None):
+        return self._mode._show_extension_confirm(title, message, opts)
+
+    def input(self, title, placeholder=None, opts=None):
+        return self._mode._show_extension_input(title, placeholder, opts)
+
+    def notify(self, message, type=None) -> None:
+        self._mode._show_extension_notify(message, type)
+
+    def on_terminal_input(self, handler):
+        return self._mode._add_extension_terminal_input_listener(handler)
+
+    def set_status(self, key, text) -> None:
+        self._mode._set_extension_status(key, text)
+
+    def set_working_message(self, message=None) -> None:
+        mode = self._mode
+        mode._working_message = message
+        if mode._active_status_indicator is not None and mode._active_status_indicator.kind == "working":
+            mode._active_status_indicator.set_message(message if message is not None else mode._default_working_message)
+
+    def set_working_visible(self, visible) -> None:
+        self._mode._set_working_visible(visible)
+
+    def set_working_indicator(self, options=None) -> None:
+        self._mode._set_working_indicator(options)
+
+    def set_hidden_thinking_label(self, label=None) -> None:
+        self._mode._set_hidden_thinking_label(label)
+
+    def set_widget(self, key, content, options=None) -> None:
+        self._mode._set_extension_widget(key, content, options)
+
+    def set_footer(self, factory) -> None:
+        self._mode._set_extension_footer(factory)
+
+    def set_header(self, factory) -> None:
+        self._mode._set_extension_header(factory)
+
+    def set_title(self, title) -> None:
+        self._mode.ui.terminal.set_title(title)
+
+    def custom(self, factory, options=None):
+        return self._mode._show_extension_custom(factory, options)
+
+    async def paste_to_editor(self, text: str) -> None:
+        await self._mode.editor.handle_input(f"\x1b[200~{text}\x1b[201~")
+
+    def set_editor_text(self, text: str) -> None:
+        self._mode.editor.set_text(text)
+
+    def get_editor_text(self) -> str:
+        editor = self._mode.editor
+        get_expanded = getattr(editor, "get_expanded_text", None)
+        return get_expanded() if get_expanded is not None else editor.get_text()
+
+    def editor(self, title, prefill=None):
+        return self._mode._show_extension_editor(title, prefill)
+
+    def add_autocomplete_provider(self, factory) -> None:
+        self._mode._autocomplete_provider_wrappers.append(factory)
+        self._mode._setup_autocomplete_provider()
+
+    def set_editor_component(self, factory) -> None:
+        self._mode._set_custom_editor_component(factory)
+
+    def get_editor_component(self):
+        return self._mode._editor_component_factory
+
+    @property
+    def theme(self):
+        return theme
+
+    def get_all_themes(self):
+        return get_available_themes_with_paths()
+
+    def get_theme(self, name):
+        return get_theme_by_name(name)
+
+    async def set_theme(self, theme_or_name):
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
+        from .theme import Theme as ThemeClass
+
+        mode = self._mode
+        if isinstance(theme_or_name, ThemeClass):
+            return mode._theme_controller.set_theme_instance(theme_or_name)
+        result = await mode._theme_controller.set_theme_name(theme_or_name)
+        if result["success"] and mode.settings_manager.get_theme() != theme_or_name:
+            mode.settings_manager.set_theme(theme_or_name)
+        return result
+
+    def get_tools_expanded(self) -> bool:
+        return self._mode._tool_output_expanded
+
+    def set_tools_expanded(self, expanded) -> None:
+        self._mode.set_tools_expanded(expanded)
+
+
 class InteractiveMode:
     """Options: ``{"migratedProviders"?, "modelFallbackMessage"?,
     "autoTrustOnReloadCwd"?, "initialMessage"?, "initialImages"?,
@@ -1953,77 +2069,16 @@ class InteractiveMode:
             "mode": "tui",
             "hasUI": True,
             "ui": {
-                "select": ui["select"],
-                "confirm": ui["confirm"],
-                "input": ui["input"],
-                "notify": ui["notify"],
+                "select": ui.select,
+                "confirm": ui.confirm,
+                "input": ui.input,
+                "notify": ui.notify,
             },
         }
 
-    def _create_extension_ui_context(self) -> dict:
-        """Create the ExtensionUIContext record for extensions."""
-
-        async def paste_to_editor(text: str) -> None:
-            # `handle_input` is async now, so this cannot stay a lambda. The
-            # extension API already awaits awaitable results from these bindings.
-            await self.editor.handle_input(f"\x1b[200~{text}\x1b[201~")
-
-        def set_working_message(message=None) -> None:
-            self._working_message = message
-            if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
-                self._active_status_indicator.set_message(
-                    message if message is not None else self._default_working_message
-                )
-
-        def add_autocomplete_provider(factory) -> None:
-            self._autocomplete_provider_wrappers.append(factory)
-            self._setup_autocomplete_provider()
-
-        def get_editor_text() -> str:
-            get_expanded = getattr(self.editor, "get_expanded_text", None)
-            return get_expanded() if get_expanded is not None else self.editor.get_text()
-
-        async def set_theme_from_extension(theme_or_name):
-            # lazy: core <-> modes import cycle (see modes/__init__.py)
-            from .theme import Theme as ThemeClass
-
-            if isinstance(theme_or_name, ThemeClass):
-                return self._theme_controller.set_theme_instance(theme_or_name)
-            result = await self._theme_controller.set_theme_name(theme_or_name)
-            if result["success"] and self.settings_manager.get_theme() != theme_or_name:
-                self.settings_manager.set_theme(theme_or_name)
-            return result
-
-        return {
-            "select": lambda title, options, opts=None: self._show_extension_selector(title, options, opts),
-            "confirm": lambda title, message, opts=None: self._show_extension_confirm(title, message, opts),
-            "input": lambda title, placeholder=None, opts=None: self._show_extension_input(title, placeholder, opts),
-            "notify": lambda message, type=None: self._show_extension_notify(message, type),
-            "onTerminalInput": lambda handler: self._add_extension_terminal_input_listener(handler),
-            "setStatus": lambda key, text: self._set_extension_status(key, text),
-            "setWorkingMessage": set_working_message,
-            "setWorkingVisible": lambda visible: self._set_working_visible(visible),
-            "setWorkingIndicator": lambda options=None: self._set_working_indicator(options),
-            "setHiddenThinkingLabel": lambda label=None: self._set_hidden_thinking_label(label),
-            "setWidget": lambda key, content, options=None: self._set_extension_widget(key, content, options),
-            "setFooter": lambda factory: self._set_extension_footer(factory),
-            "setHeader": lambda factory: self._set_extension_header(factory),
-            "setTitle": lambda title: self.ui.terminal.set_title(title),
-            "custom": lambda factory, options=None: self._show_extension_custom(factory, options),
-            "pasteToEditor": paste_to_editor,
-            "setEditorText": lambda text: self.editor.set_text(text),
-            "getEditorText": get_editor_text,
-            "editor": lambda title, prefill=None: self._show_extension_editor(title, prefill),
-            "addAutocompleteProvider": add_autocomplete_provider,
-            "setEditorComponent": lambda factory: self._set_custom_editor_component(factory),
-            "getEditorComponent": lambda: self._editor_component_factory,
-            "theme": theme,
-            "getAllThemes": lambda: get_available_themes_with_paths(),
-            "getTheme": lambda name: get_theme_by_name(name),
-            "setTheme": set_theme_from_extension,
-            "getToolsExpanded": lambda: self._tool_output_expanded,
-            "setToolsExpanded": lambda expanded: self.set_tools_expanded(expanded),
-        }
+    def _create_extension_ui_context(self) -> ExtensionUIContext:
+        """Create the ExtensionUIContext object for extensions."""
+        return ExtensionUIContext(self)
 
     def _show_extension_selector(self, title: str, options: list, opts: dict | None = None):
         """Show a selector for extensions; returns an awaitable."""

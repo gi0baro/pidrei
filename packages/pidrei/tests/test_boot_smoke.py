@@ -238,3 +238,93 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_dir):
             process.wait(timeout=5)
         os.close(master)
         listener.close()
+
+
+_UI_PROBE_EXTENSION = """
+def extension(pi):
+    async def on_session_start(_event, ctx):
+        # Exercise the documented `ctx.ui` surface against the real TUI:
+        # awaitable theme accessors, the theme object, and the sync setters.
+        themes = await ctx.ui.get_all_themes()
+        ctx.ui.get_editor_text()
+        marker = "EXT-STATUS-OK" if themes else "EXT-STATUS-NO-THEMES"
+        ctx.ui.set_status("ui-probe", ctx.ui.theme.fg("accent", marker))
+        ctx.ui.set_widget("ui-probe", ["EXT-WIDGET-OK"])
+        ctx.ui.notify("EXT-NOTIFY-OK", "info")
+
+    pi.on("session_start", on_session_start)
+"""
+
+
+@pytest.mark.tonio
+async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_dir):
+    """A real extension's `ctx.ui` calls against a real InteractiveMode.
+
+    Guards the ctx.ui contract (task #86): production used to hand extensions
+    a camelCase dict while docs/examples/no-op used snake_case attributes, and
+    every unit test faked `ctx` with a SimpleNamespace — so the mismatch was
+    invisible until an extension ran against the real TUI.
+    """
+    agent_dir = tmp_dir / "agent"
+    project_dir = tmp_dir / "project"
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    listener = (await net.open_tcp_listeners(0, host="127.0.0.1"))[0]
+    port = listener.socket.getsockname()[1]
+    tonio.spawn.without_tracking(_accept_loop(listener))
+    _write_agent_dir(agent_dir, port)
+    extensions_dir = agent_dir / "extensions"
+    extensions_dir.mkdir(parents=True, exist_ok=True)
+    (extensions_dir / "ui_probe.py").write_text(_UI_PROBE_EXTENSION)
+
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
+    os.set_blocking(master, False)
+
+    process = subprocess.Popen(  # noqa: ASYNC220 (same pty note as above)
+        [sys.executable, "-m", "pidrei", "--model", "smoke/demo-model"],
+        cwd=str(project_dir),
+        env={
+            **os.environ,
+            ENV_AGENT_DIR: str(agent_dir),
+            "HOME": str(tmp_dir),
+            "PIDREI_OFFLINE": "1",
+            "TERM": "xterm-256color",
+            "COLUMNS": str(COLS),
+            "LINES": str(ROWS),
+        },
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+    os.close(slave)
+    screen = _Screen(master)
+
+    try:
+        await _wait_for(screen, "pidrei v", BOOT_TIMEOUT)
+        # The probe ran: awaited theme accessors returned themes, the sync
+        # setters landed in the footer status and the widget area.
+        await _wait_for(screen, "EXT-STATUS-OK", BOOT_TIMEOUT)
+        await _wait_for(screen, "EXT-WIDGET-OK", BOOT_TIMEOUT)
+
+        os.write(master, b"\x03")
+        await tonio.sleep(0.3)
+        os.write(master, b"\x03")
+
+        waited = 0.0
+        while process.poll() is None and waited < EXIT_TIMEOUT:
+            screen.pump()
+            await tonio.sleep(0.1)
+            waited += 0.1
+        screen.pump()
+
+        assert process.poll() == 0, f"exit code {process.poll()}; screen was:\n{screen.text}"
+        _assert_no_child_error(screen.raw, "Traceback")
+        _assert_no_child_error(screen.raw, "RuntimeWarning")
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+        os.close(master)
+        listener.close()

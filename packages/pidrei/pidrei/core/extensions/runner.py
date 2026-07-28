@@ -133,7 +133,7 @@ class _NoOpUIContext:
     async def custom(self, *args: Any, **kwargs: Any) -> None:
         return None
 
-    def paste_to_editor(self, *args: Any, **kwargs: Any) -> None:
+    async def paste_to_editor(self, *args: Any, **kwargs: Any) -> None:
         pass
 
     def set_editor_text(self, *args: Any, **kwargs: Any) -> None:
@@ -158,13 +158,13 @@ class _NoOpUIContext:
     def theme(self) -> None:
         return None
 
-    def get_all_themes(self) -> list[Any]:
+    async def get_all_themes(self) -> list[Any]:
         return []
 
-    def get_theme(self) -> None:
+    async def get_theme(self, name: Any = None) -> None:
         return None
 
-    def set_theme(self, _theme: Any) -> dict[str, Any]:
+    async def set_theme(self, _theme: Any) -> dict[str, Any]:
         return {"success": False, "error": "UI not available"}
 
     def get_tools_expanded(self) -> bool:

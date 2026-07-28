@@ -248,9 +248,12 @@ The second handler argument. The useful members:
 | `ctx.has_pending_messages()` | Whether queued messages are waiting |
 
 `ctx.ui` offers `notify(text, level)`, `set_status(...)`, `set_widget(...)`,
-`select(title, options)`, `editor(title, prefill)`, `prompt(...)` and `theme`.
-The `select`/`editor`/`prompt` calls are awaitable and return the user's
-choice, or `None` if dismissed.
+`select(title, options)`, `confirm(title, message)`,
+`input(title, placeholder)`, `editor(title, prefill)` and `theme`.
+The `select`/`confirm`/`input`/`editor`/`custom` calls are awaitable and
+return the user's choice, or `None` if dismissed. `paste_to_editor` and the
+theme accessors (`get_all_themes`, `get_theme`, `set_theme`) are awaitable
+too; the remaining setters are plain sync calls.
 
 In print and RPC modes `ctx.has_ui` is False and `ctx.ui` is a no-op object, so
 handlers stay safe to call unconditionally — but a handler that *waits* on user

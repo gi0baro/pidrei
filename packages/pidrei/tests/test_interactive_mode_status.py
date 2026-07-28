@@ -188,7 +188,7 @@ class TestCreateExtensionUIContextSetTheme:
         )
 
         ui_context = InteractiveMode._create_extension_ui_context(fake)
-        result = await ui_context["setTheme"]("light")
+        result = await ui_context.set_theme("light")
 
         assert result["success"] is True
         assert set_theme_name_calls == ["light"]
@@ -221,7 +221,7 @@ class TestCreateExtensionUIContextSetTheme:
         )
 
         ui_context = InteractiveMode._create_extension_ui_context(fake)
-        result = await ui_context["setTheme"]("__missing_theme__")
+        result = await ui_context.set_theme("__missing_theme__")
 
         assert result["success"] is False
         assert set_theme_name_calls == ["__missing_theme__"]
@@ -308,7 +308,7 @@ class TestCreateExtensionUIContextAddAutocompleteProvider:
         fake._setup_autocomplete_provider = lambda: setup_calls.append(True)
 
         ui_context = InteractiveMode._create_extension_ui_context(fake)
-        ui_context["addAutocompleteProvider"](wrapper)
+        ui_context.add_autocomplete_provider(wrapper)
 
         assert fake._autocomplete_provider_wrappers == [wrapper]
         assert setup_calls == [True]

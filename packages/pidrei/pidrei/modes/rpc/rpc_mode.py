@@ -168,7 +168,7 @@ class _RpcExtensionUIContext:
         # Custom UI not supported in RPC mode
         return None
 
-    def paste_to_editor(self, text: str) -> None:
+    async def paste_to_editor(self, text: str) -> None:
         # Paste handling not supported in RPC mode - falls back to set_editor_text
         self.set_editor_text(text)
 
@@ -225,13 +225,13 @@ class _RpcExtensionUIContext:
         # The theme system lands with the Phase 4 TUI slice.
         return None
 
-    def get_all_themes(self) -> list[Any]:
+    async def get_all_themes(self) -> list[Any]:
         return []
 
-    def get_theme(self, name: str) -> Any:
+    async def get_theme(self, name: str) -> Any:
         return None
 
-    def set_theme(self, theme: Any) -> dict[str, Any]:
+    async def set_theme(self, theme: Any) -> dict[str, Any]:
         # Theme switching not supported in RPC mode
         return {"success": False, "error": "Theme switching not supported in RPC mode"}
 
