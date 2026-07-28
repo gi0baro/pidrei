@@ -7,19 +7,19 @@ built on top of the [TonIO runtime](https://github.com/gi0baro/tonio).
 
 ## Rationale
 
-The main reasons behind PiDrei existence are:
+The main reasons behind PiDrei's existence are:
 
 - *for fun* :)
 - the desire to dig into and understand Pi internals
 - exercising TonIO against a large project
-- stress-test free-threaded CPython
-- give [me](https://github.com/gi0baro) a chance to join the *Austrian AI mafia*
+- stress-testing free-threaded CPython
+- giving [me](https://github.com/gi0baro) a chance to join the *Austrian AI mafia*
 
 ## Status
 
 Alpha, and the honest kind. PiDrei is a port in progress, validated the only way
 a port sensibly can be: by porting Pi's own test suites module by module and
-keeping them green (2,970 mirrored cases so far).
+keeping them green (3,000 cases so far, the bulk of them direct mirrors).
 
 Working today: the agent loop and its tools, the TUI and interactive mode, the
 headless CLI and RPC server, all 37 of Pi's providers, image generation, OAuth
@@ -32,8 +32,8 @@ command to re-run for PiDrei.
 
 ## Installation
 
-If you're brave enough to actually use this, despite the alpha state and all the
-premises above, you will need a free-threaded CPython 3.14. `uv` fetches one for
+If you're brave enough to actually use this, despite the alpha state and all of
+the above, you will need a free-threaded CPython 3.14. `uv` fetches one for
 you, so this is the whole procedure:
 
 ```
@@ -44,16 +44,18 @@ uv tool install -p 3.14t \
 Yes, the `#subdirectory` is ugly. PiDrei mirrors Pi's monorepo, five packages and
 all, and the CLI is only one of them.
 
-Or, if you would rather Homebrew did the honours:
+Or you can have Homebrew do the honours:
 
 ```
 brew install gi0baro/tap/pidrei
 ```
 
 Wheels and source tarballs are attached to every
-[GitHub release](https://github.com/gi0baro/pidrei/releases), if you prefer to
-install from those — all five, since they reference each other by exact
-version.
+[GitHub release](https://github.com/gi0baro/pidrei/releases), if that's your
+thing — install all five, since they reference each other by exact version.
+
+In any case, you should end up with a `pidrei` command — and if you love
+shortcuts, `pi3`.
 
 ## Differences with Pi
 
@@ -65,7 +67,8 @@ Deliberate, and not going away:
   workload on it was half the point.
 - **Extensions are Python**, loaded through `importlib`, rather than TypeScript
   modules loaded through jiti. The hook bus semantics mirror Pi's 1:1; the
-  extension artifacts themselves obviously cannot.
+  extension artifacts themselves obviously cannot. One rule Pi does not have:
+  handlers are `async def` — the runtime's contract, not a style preference.
 - **Its own config**: `~/.pidrei/` and `PIDREI_*` environment variables. Session
   files keep Pi's JSONL format, so transcripts stay interchangeable.
 - **Syntax highlighting is Pygments**, not highlight.js — close enough to look
@@ -83,8 +86,8 @@ model sees. Where it isn't, that's a bug, not a design decision.
 ## Versioning
 
 PiDrei mirrors Pi releases, by expanding the original version with an additional
-group: the first 3 groups of the versioning scheme reflect the upstream Pi
-version, while the latter is for PiDrei specific patches.
+group: the first three groups reflect the upstream Pi version, the fourth is for
+PiDrei-specific patches.
 
 So `0.82.0.3` is the fourth PiDrei release tracking Pi 0.82.0 — the first being
 `0.82.0.0`, because we are programmers. A bump in the first three groups means
