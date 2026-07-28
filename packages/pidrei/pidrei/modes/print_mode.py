@@ -8,7 +8,6 @@ Used for:
 """
 
 import json
-import os
 import signal
 import sys
 from dataclasses import dataclass, field
@@ -17,6 +16,7 @@ from typing import Any
 from ..core.agent_session import ExtensionBindings
 from ..core.json_wire import to_wire
 from ..core.output_guard import flush_raw_stdout, write_raw_stdout
+from ..utils.fd_io import hard_exit
 from ..utils.shell import kill_tracked_detached_children
 
 
@@ -64,7 +64,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
         def make_handler(exit_status: int):
             def handler(_signum, _frame) -> None:
                 kill_tracked_detached_children()
-                os._exit(exit_status)
+                hard_exit(exit_status)
 
             return handler
 

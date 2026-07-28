@@ -3,7 +3,6 @@
 TUI session selector for the --resume flag.
 """
 
-import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,6 +12,7 @@ from pidrei_tui import set_keybindings
 
 from ..core.keybindings import KeybindingsManager
 from ..modes.interactive.components.session_selector import SessionSelectorComponent
+from ..utils.fd_io import hard_exit
 from .startup_ui import create_startup_tui, start_startup_tui
 
 
@@ -48,7 +48,7 @@ async def select_session(
     def on_exit() -> None:
         async def stop_and_exit() -> None:
             await ui.stop()
-            os._exit(0)
+            hard_exit(0)
 
         tonio.spawn.without_tracking(stop_and_exit())
 

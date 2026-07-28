@@ -90,6 +90,7 @@ from ...utils.changelog import get_new_entries, normalize_changelog_links, parse
 from ...utils.clipboard import copy_to_clipboard, read_clipboard_text
 from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboard_image
 from ...utils.colors import dim
+from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
 from ...utils.paths import get_cwd_relative_path
 from ...utils.process import run_command
@@ -1752,7 +1753,7 @@ class InteractiveMode:
         self.show_error(f"{prefix}: {error}")
         stop_theme_watcher()
         await self.stop()
-        os._exit(1)
+        hard_exit(1)
 
     def render_current_session_state(self) -> None:
         self._loaded_resources_container.clear()
@@ -3332,7 +3333,7 @@ class InteractiveMode:
                 if is_dead_terminal_error(error):
                     self._emergency_terminal_exit()
                 raise
-            os._exit(0)
+            hard_exit(0)
 
         # Interactive quit (Ctrl+D, Ctrl+C, /quit, extension shutdown()).
         # Stop the TUI before emitting shutdown events so extension UI cleanup
@@ -3355,7 +3356,7 @@ class InteractiveMode:
             sys.stdout.write(f"{dim('To resume this session:')} {resume_command}\n")
             sys.stdout.flush()
 
-        os._exit(0)
+        hard_exit(0)
 
     def _emergency_terminal_exit(self) -> None:
         self._is_shutting_down = True
@@ -3363,7 +3364,7 @@ class InteractiveMode:
         kill_tracked_detached_children()
         # The terminal is gone. Do not run normal shutdown because TUI and
         # extension cleanup can write restore sequences and re-trigger EIO.
-        os._exit(129)
+        hard_exit(129)
 
     async def _uncaught_crash(self, error: BaseException) -> None:
         """Last-resort handler for uncaught exceptions. The TUI puts stdin into
@@ -3380,7 +3381,7 @@ class InteractiveMode:
         the interactive run loop calls it from its own crash guard instead.
         """
         if self._is_shutting_down:
-            os._exit(1)
+            hard_exit(1)
         self._is_shutting_down = True
         with contextlib.suppress(Exception):
             self._unregister_signal_handlers()
@@ -3390,7 +3391,7 @@ class InteractiveMode:
             await self.ui.stop()
         print(f"{APP_NAME} exiting due to uncaught exception:", file=sys.stderr)
         traceback.print_exception(error, file=sys.stderr)
-        os._exit(1)
+        hard_exit(1)
 
     async def _check_shutdown_requested(self) -> None:
         """Check if shutdown was requested and perform shutdown if so."""

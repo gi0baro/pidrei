@@ -73,15 +73,15 @@ async def _read_piped_stdin() -> str | None:
 
     Returns None if stdin is a TTY (interactive terminal).
 
-    `readiness=False`: a redirected file still gets `fs.wrap_file`, but a pipe
-    stays on the blocking pool rather than having `O_NONBLOCK` set on it. The
-    parent here is the user's own shell, and this is a one-shot startup read, so
-    there is nothing to win against the risk of a missed restore.
+    A redirected file gets `fs.wrap_file`; a pipe is driven by readiness.
+    Setting `O_NONBLOCK` on the shell's descriptor is safe now that the stdio
+    teardown policy (`snapshot_std_blocking` at entry + `hard_exit`
+    everywhere) restores it on every exit path we control (task #92).
     """
     if sys.stdin.isatty():
         return None
 
-    reader = FdReader(sys.stdin.fileno(), readiness=False)
+    reader = FdReader(sys.stdin.fileno())
     chunks: list[bytes] = []
     try:
         while chunk := await reader.read():
@@ -185,9 +185,27 @@ async def _resolve_session_path(session_arg: str, cwd: str, session_dir: str | N
 
 
 async def _prompt_confirm(message: str) -> bool:
-    """Prompt user for yes/no confirmation."""
+    """Prompt user for yes/no confirmation.
+
+    Reads the reply through `FdReader` readiness rather than parking a pool
+    thread in `sys.stdin.readline` for as long as the user takes to answer
+    (task #92; the stdio teardown policy restores the blocking flag). A TTY
+    in canonical mode delivers the whole line on Enter, so one chunk is
+    normally one answer; the loop covers pipes and partial delivery.
+    """
     print(f"{message} [y/N] ", end="", flush=True)
-    answer = (await tonio.spawn_blocking(sys.stdin.readline)).strip().lower()
+    reader = FdReader(sys.stdin.fileno())
+    buffer = b""
+    try:
+        while b"\n" not in buffer:
+            chunk = await reader.read()
+            if not chunk:
+                break
+            buffer += chunk
+    finally:
+        reader.close()
+    lines = buffer.decode("utf-8", "replace").splitlines()
+    answer = lines[0].strip().lower() if lines else ""
     return answer in ("y", "yes")
 
 

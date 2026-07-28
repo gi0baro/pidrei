@@ -32,7 +32,7 @@ import tonio.colored as tonio
 from tonio.colored.sync import channel
 from tonio.exceptions import RuntimeNotInitializedError
 
-from ..utils.fd_io import FdWriter, is_pollable
+from ..utils.fd_io import FdWriter, hard_exit, is_pollable
 
 
 RAW_STDOUT_RETRY_DELAY_S = 0.010
@@ -94,7 +94,7 @@ def _write_chunk_sync(text: str) -> None:
         except BlockingIOError:
             time.sleep(RAW_STDOUT_RETRY_DELAY_S)
         except Exception:
-            os._exit(1)
+            hard_exit(1)
 
 
 def _shares_description(fd: int, other_fd: int) -> bool:
@@ -151,7 +151,7 @@ async def _deliver(text: str) -> None:
         data = text.encode(getattr(stream, "encoding", None) or "utf-8", getattr(stream, "errors", None) or "strict")
         await _fd_writer.write_all(data)
     except Exception:
-        os._exit(1)
+        hard_exit(1)
 
 
 async def _writer_loop() -> None:
@@ -240,6 +240,6 @@ async def flush_raw_stdout() -> None:
         try:
             _get_raw_stream().flush()
         except Exception:
-            os._exit(1)
+            hard_exit(1)
 
     await tonio.spawn_blocking(_flush)

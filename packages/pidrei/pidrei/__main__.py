@@ -9,10 +9,15 @@ import sys
 import tonio.colored as tonio
 
 from .main import main
+from .utils.fd_io import snapshot_std_blocking
 
 
 def run() -> None:
     os.environ["PIDREI_CODING_AGENT"] = "true"
+    # Before any fd registration flips O_NONBLOCK on the shell's descriptors:
+    # the atexit restore this registers is half of the stdio teardown policy
+    # (`hard_exit` is the other half).
+    snapshot_std_blocking()
     sys.exit(tonio.run(main(sys.argv[1:])))
 
 

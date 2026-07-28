@@ -15,7 +15,6 @@ Protocol:
 """
 
 import json
-import os
 import signal
 import sys
 import uuid
@@ -34,7 +33,7 @@ from ...core.output_guard import (
     write_raw_stdout,
 )
 from ...core.session_manager import SessionManager
-from ...utils.fd_io import FdReader
+from ...utils.fd_io import FdReader, hard_exit
 from ...utils.shell import kill_tracked_detached_children
 from .jsonl import JsonlLineDecoder, serialize_json_line
 from .rpc_types import RpcSessionState, RpcSlashCommand
@@ -408,7 +407,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
         def make_handler(exit_status: int):
             def handler(_signum, _frame) -> None:
                 kill_tracked_detached_children()
-                os._exit(exit_status)
+                hard_exit(exit_status)
 
             return handler
 
@@ -720,7 +719,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     async def shutdown(exit_code: int = 0, signal_name: str | None = None) -> None:
         nonlocal shutting_down
         if shutting_down:
-            os._exit(exit_code)
+            hard_exit(exit_code)
         shutting_down = True
         for cleanup in signal_cleanup_handlers:
             cleanup()
@@ -731,7 +730,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
         await runtime_host.dispose()
         if signal_name != "SIGTERM":
             await flush_raw_stdout()
-        os._exit(exit_code)
+        hard_exit(exit_code)
 
     async def check_shutdown_requested() -> None:
         if not shutdown_requested:

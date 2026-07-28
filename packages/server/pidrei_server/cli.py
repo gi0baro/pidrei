@@ -10,7 +10,7 @@ import tonio.colored as tonio
 from tonio.colored import net
 
 from pidrei.modes.rpc.jsonl import JsonlLineDecoder
-from pidrei.utils.fd_io import FdReader
+from pidrei.utils.fd_io import FdReader, snapshot_std_blocking
 
 from .config import VERSION, get_socket_path
 from .ipc.client import send_ipc_request
@@ -158,6 +158,7 @@ async def main(argv: list[str]) -> int:
 
 
 def run() -> None:
+    snapshot_std_blocking()
 
     argv = sys.argv[1:]
     # serve() waits on a tonio signal receiver, which requires the runtime to

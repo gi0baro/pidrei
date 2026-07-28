@@ -190,3 +190,52 @@ async def test_writer_close_restores_the_blocking_flag_and_leaves_the_fd_open():
     finally:
         os.close(read_fd)
         os.close(write_fd)
+
+
+# --- stdio teardown policy (task #92) -----------------------------------------
+#
+# `O_NONBLOCK` lives on the open file description, which parent and child
+# share — so the parent observes on its own pipe end whether the child's exit
+# path restored the flag. Sync tests: they drive a child process, not the
+# runtime.
+
+
+def _run_child(code: str, *, expect_blocking_after: bool) -> None:
+    import subprocess
+    import sys
+
+    read_fd, write_fd = os.pipe()
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed interpreter, test-authored code
+            [sys.executable, "-c", code],
+            stdin=read_fd,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+        assert os.get_blocking(read_fd) is expect_blocking_after
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+def test_hard_exit_restores_the_inherited_blocking_flag():
+    _run_child(
+        "import os\n"
+        "from pidrei.utils.fd_io import snapshot_std_blocking, hard_exit\n"
+        "snapshot_std_blocking()\n"
+        "os.set_blocking(0, False)\n"
+        "hard_exit(0)\n",
+        expect_blocking_after=True,
+    )
+
+
+def test_plain_os_exit_leaks_the_flag_which_is_why_hard_exit_exists():
+    # Negative control: without the policy, the parent's descriptor stays
+    # non-blocking after the child dies. If this ever starts passing with a
+    # restored flag, the OS semantics changed and the policy can be retired.
+    _run_child(
+        "import os\nos.set_blocking(0, False)\nos._exit(0)\n",
+        expect_blocking_after=False,
+    )
