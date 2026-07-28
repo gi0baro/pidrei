@@ -440,10 +440,12 @@ async def test_renders_correctly_when_multiple_non_adjacent_lines_change():
     await tui.start()
     await terminal.wait_for_render()
 
-    # Change lines 1 and 3, keep 0, 2, 4 the same
+    # Change lines 1 and 3, keep 0, 2, 4 the same. Frame-counted wait: the
+    # settle-sleep default lost this race on a loaded macOS runner.
+    frame = terminal.frames
     component.lines = ["Line 0", "CHANGED 1", "Line 2", "CHANGED 3", "Line 4"]
     tui.request_render()
-    await terminal.wait_for_render()
+    await terminal.wait_for_render(frame)
 
     viewport = terminal.get_viewport()
     assert "Line 0" in viewport[0], f"Line 0 preserved: {viewport[0]}"

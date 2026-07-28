@@ -73,8 +73,12 @@ async def test_preserves_truncated_output_when_a_command_times_out():
         await create_bash_tool().execute(
             "bash-timeout-output",
             {
+                # The timeout must expire inside `sleep 2`, after the loop
+                # finished printing: 0.05s was not enough headroom on a loaded
+                # macOS CI runner, where the kill landed mid-loop and the
+                # "full" output legitimately stopped short of line-3000.
                 "command": "i=1; while [ $i -le 3000 ]; do echo line-$i; i=$((i + 1)); done; sleep 2",
-                "timeout": 0.05,
+                "timeout": 0.5,
             },
             None,
             None,
@@ -85,7 +89,7 @@ async def test_preserves_truncated_output_when_a_command_times_out():
 
     assert isinstance(error, Exception)
     message = str(error)
-    assert "Command timed out after 0.05 seconds" in message
+    assert "Command timed out after 0.5 seconds" in message
     match = re.search(r"Full output: ([^\]\n]+)", message)
     assert match is not None
     full_output = get_or_throw(await context.env.read_text_file(match.group(1)))

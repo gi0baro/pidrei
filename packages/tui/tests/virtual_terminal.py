@@ -131,7 +131,7 @@ class VirtualTerminal:
         # stream directly because the lock is not reentrant (the content is
         # plain text from the buffer, never APC).
         with self._feed_lock:
-            buffer_lines = self.get_scroll_buffer()
+            buffer_lines = self._read_scroll_buffer_locked()
             # Drop trailing blank rows like xterm's shrink does before scrolling.
             while buffer_lines and not buffer_lines[-1]:
                 buffer_lines.pop()
@@ -145,29 +145,43 @@ class VirtualTerminal:
         if self._resize_handler is not None:
             self._resize_handler()
 
+    # Screen readers take the feed lock: the render loop feeds from another
+    # worker thread, and an unlocked read mid-feed returns a half-applied
+    # frame (seen on macOS CI as one changed line updated, another not).
+
     def get_viewport(self) -> list[str]:
         """Get the visible viewport (what's currently on screen), right-stripped."""
-        return [line.rstrip() for line in self._screen.display]
+        with self._feed_lock:
+            return [line.rstrip() for line in self._screen.display]
 
-    def get_scroll_buffer(self) -> list[str]:
-        """Get the entire scroll buffer (history + viewport), right-stripped."""
+    def _read_scroll_buffer_locked(self) -> list[str]:
+        """History + viewport, right-stripped. Caller holds `_feed_lock`
+        (which is not reentrant — `resize()` reads under its own hold)."""
         lines: list[str] = []
         columns = self._columns
         for row in self._screen.history.top:
             lines.append("".join(row[x].data for x in range(columns)).rstrip())
-        lines.extend(self.get_viewport())
+        lines.extend(line.rstrip() for line in self._screen.display)
         return lines
 
+    def get_scroll_buffer(self) -> list[str]:
+        """Get the entire scroll buffer (history + viewport), right-stripped."""
+        with self._feed_lock:
+            return self._read_scroll_buffer_locked()
+
     def get_cursor_position(self) -> dict:
-        return {"x": self._screen.cursor.x, "y": self._screen.cursor.y}
+        with self._feed_lock:
+            return {"x": self._screen.cursor.x, "y": self._screen.cursor.y}
 
     def get_cell_italic(self, row: int, col: int) -> int:
-        char = self._screen.buffer[row][col]
-        return 1 if char.italics else 0
+        with self._feed_lock:
+            char = self._screen.buffer[row][col]
+            return 1 if char.italics else 0
 
     def get_cell_underline(self, row: int, col: int) -> int:
-        char = self._screen.buffer[row][col]
-        return 1 if char.underscore else 0
+        with self._feed_lock:
+            char = self._screen.buffer[row][col]
+            return 1 if char.underscore else 0
 
     async def wait_for_render(self, since: int | None = None, timeout: float = 5.0) -> None:
         """Wait until the TUI has actually written a frame.

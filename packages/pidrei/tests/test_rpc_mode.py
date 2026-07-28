@@ -364,11 +364,21 @@ class TestRpcMode:
             await harness.request({"id": "b1", "type": "bash", "command": f"echo {unique_value}"})
 
             session_file = host.session.session_file
-            await _wait_for(lambda: os.path.exists(session_file))
-            entries = _read_session_entries(session_file)
-            bash_messages = [
-                e for e in entries if e["type"] == "message" and e.get("message", {}).get("role") == "bashExecution"
-            ]
+
+            def bash_entries() -> list[dict[str, Any]]:
+                if not os.path.exists(session_file):
+                    return []
+                return [
+                    e
+                    for e in _read_session_entries(session_file)
+                    if e["type"] == "message" and e.get("message", {}).get("role") == "bashExecution"
+                ]
+
+            # Poll rather than read instantly: unlike pi's synchronous session
+            # writes, persistence here is async — the response only proves the
+            # execution finished, not that the entry hit the disk yet.
+            await _wait_for(lambda: len(bash_entries()) > 0)
+            bash_messages = bash_entries()
             assert len(bash_messages) == 1
             assert unique_value in bash_messages[0]["message"]["output"]
         finally:

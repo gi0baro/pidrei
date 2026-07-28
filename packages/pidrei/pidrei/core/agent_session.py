@@ -664,7 +664,8 @@ class AgentSession:
         event.set()
 
     async def _emit_agent_settled(self) -> None:
-        self._is_agent_run_active = False
+        # `_is_agent_run_active` is cleared by the caller, before the pending
+        # bash flush (see `_run_agent_prompt`).
         try:
             await self._extension_runner.emit({"type": "agent_settled"})
             self._emit(AgentSettledEvent())
@@ -1043,6 +1044,15 @@ class AgentSession:
                 await self.agent.continue_()
         finally:
             self._system_prompt_override = None
+            # The flag flips before the flush, under the guard that
+            # `record_bash_result` takes for its pending-vs-direct decision:
+            # a bash result recorded in the settle window then persists
+            # directly instead of landing in `_pending_bash_messages` after
+            # this flush already ran — such a message was stranded until a
+            # future run settled (surfaced on CI as a bashExecution entry
+            # missing from the session file).
+            with self._state_guard:
+                self._is_agent_run_active = False
             await self._flush_pending_bash_messages()
             await self._emit_agent_settled()
 
@@ -2561,14 +2571,17 @@ class AgentSession:
         )
 
         # If agent is streaming, defer adding to avoid breaking tool_use/tool_result
-        # ordering; flushed on agent settle.
-        if self.is_streaming:
-            self._pending_bash_messages.append(bash_message)
-        else:
-            # Add to agent state immediately
-            self.agent.state.messages.append(bash_message)
-            # Save to session
-            await self.session_manager.append_message(bash_message)
+        # ordering; flushed on agent settle. Decision and append happen under
+        # the guard the settle path clears the flag under, so a recording that
+        # saw the run as active is guaranteed visible to the settle flush.
+        with self._state_guard:
+            if self._is_agent_run_active:
+                self._pending_bash_messages.append(bash_message)
+                return
+        # Add to agent state immediately
+        self.agent.state.messages.append(bash_message)
+        # Save to session
+        await self.session_manager.append_message(bash_message)
 
     def abort_bash(self) -> None:
         """Cancel running bash command."""
@@ -2585,15 +2598,17 @@ class AgentSession:
 
     async def _flush_pending_bash_messages(self) -> None:
         """Flush pending bash messages to agent state and session. Called after the
-        agent turn completes to maintain proper message ordering."""
-        if not self._pending_bash_messages:
-            return
-
-        for bash_message in self._pending_bash_messages:
-            self.agent.state.messages.append(bash_message)
-            await self.session_manager.append_message(bash_message)
-
-        self._pending_bash_messages = []
+        agent turn completes to maintain proper message ordering. Drains with a
+        swap-under-guard loop so a concurrent `record_bash_result` append can
+        never be dropped by the list reset."""
+        while True:
+            with self._state_guard:
+                pending, self._pending_bash_messages = self._pending_bash_messages, []
+            if not pending:
+                return
+            for bash_message in pending:
+                self.agent.state.messages.append(bash_message)
+                await self.session_manager.append_message(bash_message)
 
     # =========================================================================
     # Session Management
