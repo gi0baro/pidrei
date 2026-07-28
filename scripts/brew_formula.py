@@ -43,12 +43,25 @@ class Pidrei < Formula
   depends_on "fd"
   depends_on "ripgrep"
   # Resources build from sdists: tonio and cryptography are Rust extensions,
-  # cryptography links OpenSSL, and pillow compiles its image codecs only when
-  # the headers are present (jpeg/webp are load-bearing for image paste).
+  # and cryptography links OpenSSL.
   depends_on "rust" => :build
-  depends_on "jpeg-turbo"
   depends_on "openssl@3"
+  # pillow compiles codecs against whatever its setup *detects*, and detection
+  # reads the host's pkg-config while the sandboxed compile cannot see host
+  # headers — a feature found-but-unreachable fails the whole build (seen with
+  # the host's freetype/openjpeg on Linux). Declaring the full codec set makes
+  # detection deterministic; jpeg/webp are also load-bearing for image paste.
+  depends_on "freetype"
+  depends_on "jpeg-turbo"
+  depends_on "libtiff"
+  depends_on "little-cms2"
+  depends_on "openjpeg"
   depends_on "webp"
+  uses_from_macos "zlib"
+
+  on_linux do
+    depends_on "libxcb"
+  end
 
 {pidrei_resources}{third_party_resources}  def install
     virtualenv_install_with_resources(using: "python3.14t")
@@ -56,7 +69,8 @@ class Pidrei < Formula
 
   test do
     assert_equal "{version}", shell_output("#{{bin}}/pidrei --version").strip
-    assert_match "pidrei", shell_output("#{{bin}}/pi3 --version")
+    # `--version` prints the bare version, no program name — on both binaries.
+    assert_equal "{version}", shell_output("#{{bin}}/pi3 --version").strip
   end
 end
 """
