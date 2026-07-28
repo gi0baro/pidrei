@@ -17,6 +17,7 @@ Port notes (Phase 3):
 
 import os
 import sys
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -804,6 +805,23 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         print_timings()
         await run_rpc_mode(runtime)
     elif app_mode == "interactive":
+        # tonio abandons coroutines by design in several places — `select`
+        # never starts the losing competitors' wrappers, `Scope` teardown and
+        # `time.timeout` drop what they cancel — and CPython's finalizer then
+        # prints `RuntimeWarning: coroutine '<any name>' was never awaited` to
+        # stderr, which lands inside the TUI frame. The names are arbitrary
+        # (they include the abandoned user coroutine), so the filter covers
+        # the whole message family. Only here: print/rpc keep warning, the
+        # unit suite never enters this branch, and the boot-smoke tests set
+        # PIDREI_KEEP_UNAWAITED_WARNINGS so their no-RuntimeWarning-on-screen
+        # gate still catches genuinely dropped coroutines in interactive code.
+        if not _is_truthy_env_flag(os.environ.get("PIDREI_KEEP_UNAWAITED_WARNINGS")):
+            warnings.filterwarnings(
+                "ignore",
+                message=r"coroutine '.*' was never awaited",
+                category=RuntimeWarning,
+            )
+
         # lazy: core <-> modes import cycle (see modes/__init__.py)
         from .modes import InteractiveMode
 

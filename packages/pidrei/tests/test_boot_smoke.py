@@ -196,6 +196,10 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_dir):
             ENV_AGENT_DIR: str(agent_dir),
             "HOME": str(tmp_dir),
             "PIDREI_OFFLINE": "1",
+            # Interactive mode suppresses never-awaited coroutine warnings for
+            # users; keep them here so the no-RuntimeWarning gate below still
+            # catches genuinely dropped coroutines in interactive code.
+            "PIDREI_KEEP_UNAWAITED_WARNINGS": "1",
             "TERM": "xterm-256color",
             "COLUMNS": str(COLS),
             "LINES": str(ROWS),
@@ -289,6 +293,10 @@ async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_dir):
             ENV_AGENT_DIR: str(agent_dir),
             "HOME": str(tmp_dir),
             "PIDREI_OFFLINE": "1",
+            # Interactive mode suppresses never-awaited coroutine warnings for
+            # users; keep them here so the no-RuntimeWarning gate below still
+            # catches genuinely dropped coroutines in interactive code.
+            "PIDREI_KEEP_UNAWAITED_WARNINGS": "1",
             "TERM": "xterm-256color",
             "COLUMNS": str(COLS),
             "LINES": str(ROWS),
