@@ -72,7 +72,7 @@ class Loader(Text):
         if len(self._frames) <= 1:
             return
 
-        def advance() -> None:
+        async def advance() -> None:
             self._current_frame = (self._current_frame + 1) % len(self._frames)
             self._update_display()
 

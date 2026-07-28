@@ -115,6 +115,13 @@ def _extension(handlers: dict) -> Extension:
     return Extension(path="<inline:1>", handlers={key: [value] for key, value in handlers.items()})
 
 
+def _recorder(events: list):
+    async def record(event, _ctx):
+        events.append(event)
+
+    return record
+
+
 class TestRuntimeSessionLifecycleEvents:
     @pytest.mark.tonio
     async def test_emits_before_switch_and_session_start_for_new_and_resume(self, tmp_dir):
@@ -124,9 +131,9 @@ class TestRuntimeSessionLifecycleEvents:
             [
                 _extension(
                     {
-                        "session_before_switch": lambda event, _ctx: events.append(event),
-                        "session_shutdown": lambda event, _ctx: events.append(event),
-                        "session_start": lambda event, _ctx: events.append(event),
+                        "session_before_switch": _recorder(events),
+                        "session_shutdown": _recorder(events),
+                        "session_start": _recorder(events),
                     }
                 )
             ],
@@ -168,7 +175,7 @@ class TestRuntimeSessionLifecycleEvents:
     async def test_honors_session_before_switch_cancellation(self, tmp_dir):
         events = []
 
-        def before_switch(event, _ctx):
+        async def before_switch(event, _ctx):
             events.append(event)
             return {"cancel": True}
 
@@ -178,7 +185,7 @@ class TestRuntimeSessionLifecycleEvents:
                 _extension(
                     {
                         "session_before_switch": before_switch,
-                        "session_start": lambda event, _ctx: events.append(event),
+                        "session_start": _recorder(events),
                     }
                 )
             ],
@@ -199,9 +206,13 @@ class TestRuntimeSessionLifecycleEvents:
     @pytest.mark.tonio
     async def test_runs_before_session_invalidate_after_shutdown_and_before_rebind(self, tmp_dir):
         phases = []
+
+        async def on_shutdown(_event, _ctx):
+            phases.append("session_shutdown")
+
         runtime_host = await _create_runtime_host(
             tmp_dir,
-            [_extension({"session_shutdown": lambda _event, _ctx: phases.append("session_shutdown")})],
+            [_extension({"session_shutdown": on_shutdown})],
         )
         old_session = runtime_host.session
 
@@ -229,7 +240,7 @@ class TestRuntimeSessionLifecycleEvents:
         events = []
         cancel_next_fork = {"value": False}
 
-        def before_fork(event, _ctx):
+        async def before_fork(event, _ctx):
             events.append(event)
             if cancel_next_fork["value"]:
                 cancel_next_fork["value"] = False
@@ -242,8 +253,8 @@ class TestRuntimeSessionLifecycleEvents:
                 _extension(
                     {
                         "session_before_fork": before_fork,
-                        "session_shutdown": lambda event, _ctx: events.append(event),
-                        "session_start": lambda event, _ctx: events.append(event),
+                        "session_shutdown": _recorder(events),
+                        "session_start": _recorder(events),
                     }
                 )
             ],

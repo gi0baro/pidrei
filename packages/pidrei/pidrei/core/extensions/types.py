@@ -135,10 +135,11 @@ class RegisteredCommand:
     """Slash command registered by an extension (pi's RegisteredCommand)."""
 
     name: str
-    handler: Any  # async (args: str, ctx) -> None
+    # (args: str, ctx) -> awaitable of None (async-only callback policy).
+    handler: Any
     description: str | None = None
     source_info: Any = None
-    # (argument_prefix) -> list[AutocompleteItem] | None, optionally awaitable.
+    # (argument_prefix) -> awaitable of list[AutocompleteItem] | None.
     get_argument_completions: Any = None
 
 

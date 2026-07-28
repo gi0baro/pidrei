@@ -126,7 +126,11 @@ class UserMessageSelectorComponent(Container):
 
         # Auto-cancel if no messages
         if not messages:
-            Timeout(100, lambda: on_cancel())
+
+            async def auto_cancel() -> None:
+                on_cancel()
+
+            Timeout(100, auto_cancel)
 
     def get_message_list(self) -> UserMessageList:
         return self._message_list

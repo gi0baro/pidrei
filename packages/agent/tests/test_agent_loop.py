@@ -91,7 +91,7 @@ def create_user_message(text: str) -> UserMessage:
     return UserMessage(content=text, timestamp=int(time.time() * 1000))
 
 
-def identity_converter(messages):
+async def identity_converter(messages):
     """Simple identity converter for tests - passes through standard messages."""
     return [m for m in messages if getattr(m, "role", None) in ("user", "assistant", "toolResult")]
 
@@ -106,7 +106,7 @@ def done_stream(message: AssistantMessage, reason: str = "stop") -> AssistantMes
 async def test_uses_the_configured_default_when_a_legacy_caller_omits_stream_fn():
     calls = 0
 
-    def default_fn(_model, _context, _options):
+    async def default_fn(_model, _context, _options):
         nonlocal calls
         calls += 1
         return done_stream(create_assistant_message([TextContent(text="fallback")]))
@@ -129,7 +129,7 @@ async def test_should_emit_events_with_agent_message_types():
     user_prompt = create_user_message("Hello")
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(create_assistant_message([TextContent(text="Hi there!")]))
 
     events = []
@@ -162,7 +162,7 @@ async def test_should_handle_custom_message_types_via_convert_to_llm():
 
     converted_messages = []
 
-    def convert(messages):
+    async def convert(messages):
         nonlocal converted_messages
         converted_messages = [
             m
@@ -174,7 +174,7 @@ async def test_should_handle_custom_message_types_via_convert_to_llm():
 
     config = AgentLoopConfig(model=create_model(), convert_to_llm=convert)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(create_assistant_message([TextContent(text="Response")]))
 
     stream = agent_loop([user_prompt], context, config, None, stream_fn)
@@ -208,14 +208,14 @@ async def test_should_apply_transform_context_before_convert_to_llm():
         transformed_messages = messages[-2:]
         return transformed_messages
 
-    def convert(messages):
+    async def convert(messages):
         nonlocal converted_messages
         converted_messages = [m for m in messages if getattr(m, "role", None) in ("user", "assistant", "toolResult")]
         return converted_messages
 
     config = AgentLoopConfig(model=create_model(), convert_to_llm=convert, transform_context=transform_context)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(create_assistant_message([TextContent(text="Response")]))
 
     stream = agent_loop([user_prompt], context, config, None, stream_fn)
@@ -268,7 +268,7 @@ async def test_should_handle_tool_calls_and_results():
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -315,7 +315,7 @@ async def test_should_not_execute_tool_calls_from_a_length_truncated_assistant_m
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             # Output hit the token limit mid tool call: nothing in this message may execute.
@@ -370,7 +370,7 @@ async def test_should_execute_mutated_before_tool_call_args_without_revalidation
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -426,7 +426,7 @@ async def test_should_prepare_tool_arguments_for_validation():
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -473,7 +473,7 @@ async def test_should_emit_tool_execution_end_in_completion_order_but_persist_re
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -543,7 +543,7 @@ async def test_should_inject_queued_messages_after_all_tool_calls_complete():
         get_steering_messages=get_steering_messages,
     )
 
-    def stream_fn(_model, ctx, _options):
+    async def stream_fn(_model, ctx, _options):
         nonlocal call_index, saw_interrupt_in_context
         # Check if interrupt message is in context on second call.
         if call_index == 1:
@@ -623,7 +623,7 @@ async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_defa
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -686,7 +686,7 @@ async def test_should_force_sequential_when_one_of_multiple_tools_has_sequential
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -739,7 +739,7 @@ async def test_should_allow_parallel_execution_when_all_tools_have_parallel_mode
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -795,7 +795,7 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
 
     llm_calls = 0
 
-    def stream_fn(_model, ctx, _options):
+    async def stream_fn(_model, ctx, _options):
         nonlocal llm_calls, converted_second_turn_system_prompt
         llm_calls += 1
         if llm_calls == 2:
@@ -860,7 +860,7 @@ async def test_should_stop_after_the_current_turn_when_should_stop_after_turn_re
 
     llm_calls = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal llm_calls
         llm_calls += 1
         if llm_calls == 1:
@@ -914,7 +914,7 @@ async def test_should_stop_after_a_tool_batch_when_every_tool_result_sets_termin
 
     llm_calls = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal llm_calls
         llm_calls += 1
         return done_stream(
@@ -948,7 +948,7 @@ async def test_should_continue_after_parallel_tool_calls_when_not_all_tool_resul
 
     call_index = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal call_index
         if call_index == 0:
             message = create_assistant_message(
@@ -996,7 +996,7 @@ async def test_should_allow_after_tool_call_to_mark_a_tool_batch_as_terminating(
 
     llm_calls = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal llm_calls
         llm_calls += 1
         return done_stream(
@@ -1016,7 +1016,7 @@ async def test_continue_should_throw_when_context_has_no_messages():
     context = AgentContext(system_prompt="You are helpful.", messages=[], tools=[])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         raise Exception("Unexpected stream call")
 
     with pytest.raises(Exception, match="Cannot continue: no messages in context"):
@@ -1029,7 +1029,7 @@ async def test_continue_from_existing_context_without_emitting_user_message_even
     context = AgentContext(system_prompt="You are helpful.", messages=[user_message], tools=[])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(create_assistant_message([TextContent(text="Response")]))
 
     events = []
@@ -1061,7 +1061,7 @@ async def test_continue_should_allow_custom_message_types_as_last_message():
     custom_message = CustomMessage(role="custom", text="Hook content", timestamp=int(time.time()))
     context = AgentContext(system_prompt="You are helpful.", messages=[custom_message], tools=[])
 
-    def convert(messages):
+    async def convert(messages):
         out = []
         for m in messages:
             if getattr(m, "role", None) == "custom":
@@ -1072,7 +1072,7 @@ async def test_continue_should_allow_custom_message_types_as_last_message():
 
     config = AgentLoopConfig(model=create_model(), convert_to_llm=convert)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(create_assistant_message([TextContent(text="Response to custom message")]))
 
     # Should not raise - the custom message will be converted to a user message.

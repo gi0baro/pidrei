@@ -47,7 +47,7 @@ async def capture_payload(
     """
     captured: list[dict] = []
 
-    def on_payload(payload, _model):
+    async def on_payload(payload, _model):
         captured.append(payload)
         raise PayloadCaptured()
 

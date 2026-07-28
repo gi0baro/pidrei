@@ -6,7 +6,6 @@ punkreq seam. Everything else — the streaming state machine, the thinking-leve
 and budget tables, the disabled-thinking configs — mirrors pi.
 """
 
-import inspect
 import itertools
 import json
 import re
@@ -55,6 +54,7 @@ from pidrei_ai.types import (
     Usage,
     UsageCost,
 )
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -94,13 +94,6 @@ def _google_options(options: StreamOptions | None) -> GoogleOptions:
     return GoogleOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _google_options(options)
     out_stream = AssistantMessageEventStream()
@@ -122,7 +115,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 raise RuntimeError(f"No API key for provider: {model.provider}")
             client = create_client(model, api_key, opts.headers)
             params = build_params(model, context, opts)
-            next_params = await _maybe_call(opts.on_payload, params, model)
+            next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
             google_stream = client.generate_content_stream(params, env=opts.env, cancel=opts.cancel)

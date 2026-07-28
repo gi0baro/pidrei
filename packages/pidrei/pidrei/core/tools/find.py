@@ -1,6 +1,5 @@
 """Mirror of pi coding-agent src/core/tools/find.ts."""
 
-import inspect
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -119,6 +118,10 @@ def _build_details_result(relativized: list[str], effective_limit: int) -> Agent
 
 
 def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefinition:
+    # `operations` members (`exists`/`glob`) are async-only. pi types them
+    # `Promise<T> | T` because its sync default blocks the event loop
+    # (`existsSync`); a sync impl doing real fs work would block this runtime,
+    # so the union is deliberately not ported.
     custom_ops = operations
 
     async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
@@ -133,13 +136,11 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
 
         # If custom operations provide glob(), use that instead of fd.
         if custom_ops is not None and getattr(custom_ops, "glob", None) is not None:
-            if not await _maybe_await(custom_ops.exists(search_path)):
+            if not await custom_ops.exists(search_path):
                 raise Exception(f"Path not found: {search_path}")
             _throw_if_aborted(cancel)
-            results = await _maybe_await(
-                custom_ops.glob(
-                    pattern, search_path, ignore=["**/node_modules/**", "**/.git/**"], limit=effective_limit
-                )
+            results = await custom_ops.glob(
+                pattern, search_path, ignore=["**/node_modules/**", "**/.git/**"], limit=effective_limit
             )
             _throw_if_aborted(cancel)
             if not results:
@@ -240,11 +241,6 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         render_call=render_call,
         render_result=render_result,
     )
-
-
-async def _maybe_await(value: Any) -> Any:
-
-    return await value if inspect.isawaitable(value) else value
 
 
 def create_find_tool(cwd: str, **options) -> WrappedDefinitionTool:

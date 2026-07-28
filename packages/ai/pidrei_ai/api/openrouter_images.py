@@ -6,7 +6,6 @@ seam directly — there is no streaming and no SDK surface worth mirroring beyon
 the request itself.
 """
 
-import inspect
 import json
 import re
 import time
@@ -27,6 +26,7 @@ from pidrei_ai.types import (
     UsageCost,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -87,13 +87,6 @@ class _OpenRouterImagesClient:
         return json.loads(body), ProviderResponse(status=response.status_code, headers=dict(response.headers))
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 async def generate_images(
     model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None
 ) -> AssistantImages:
@@ -112,7 +105,7 @@ async def generate_images(
             raise RuntimeError(f"No API key for provider: {model.provider}")
         client = create_client(model, api_key, options.headers if options else None, options.env if options else None)
         params = build_params(model, context)
-        next_params = await _maybe_call(options.on_payload if options else None, params, model)
+        next_params = await maybe_call(options.on_payload if options else None, params, model)
         if next_params is not None:
             params = next_params
 
@@ -129,7 +122,7 @@ async def generate_images(
             max_retry_delay_ms=options.max_retry_delay_ms if options else None,
             cancel=options.cancel if options else None,
         )
-        await _maybe_call(options.on_response if options else None, raw_response, model)
+        await maybe_call(options.on_response if options else None, raw_response, model)
 
         output.response_id = response.get("id")
         if response.get("usage"):

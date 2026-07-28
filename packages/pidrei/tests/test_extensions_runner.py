@@ -192,11 +192,17 @@ def diagnostic_messages(runner: ExtensionRunner) -> list[str]:
 async def test_continues_past_undecided_handlers_and_returns_the_first_decision(fx):
     undecided = fx.write(
         "undecided.py",
-        '\ndef extension(pi):\n    pi.on("project_trust", lambda event, ctx: {"trusted": "undecided", "remember": True})\n',
+        "\nasync def handler(event, ctx):\n"
+        '    return {"trusted": "undecided", "remember": True}\n'
+        "\n\ndef extension(pi):\n"
+        '    pi.on("project_trust", handler)\n',
     )
     decided = fx.write(
         "decided.py",
-        '\ndef extension(pi):\n    pi.on("project_trust", lambda event, ctx: {"trusted": "no", "remember": True})\n',
+        "\nasync def handler(event, ctx):\n"
+        '    return {"trusted": "no", "remember": True}\n'
+        "\n\ndef extension(pi):\n"
+        '    pi.on("project_trust", handler)\n',
     )
 
     extensions_result = await load_extensions([undecided, decided], fx.root)
@@ -839,7 +845,7 @@ async def test_lets_a_handler_mutate_headers_in_place_and_preserves_existing_hea
     fx.write(
         "headers.py",
         """
-def handler(event, ctx):
+async def handler(event, ctx):
     event["headers"]["X-Turn-Index"] = "3"
 
 
@@ -861,7 +867,7 @@ async def test_isolates_a_throwing_handler_and_still_applies_the_others(fx):
     fx.write(
         "a-throwing.py",
         """
-def handler(event, ctx):
+async def handler(event, ctx):
     raise RuntimeError("header handler boom")
 
 
@@ -872,7 +878,7 @@ def extension(pi):
     fx.write(
         "b-good.py",
         """
-def handler(event, ctx):
+async def handler(event, ctx):
     event["headers"]["X-Good"] = "yes"
 
 

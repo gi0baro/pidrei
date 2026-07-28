@@ -14,7 +14,6 @@ boundary, with an explicit key table rather than a blanket recursive rename:
 touched.
 """
 
-import inspect
 import json
 import time
 from dataclasses import dataclass, fields
@@ -53,6 +52,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
@@ -172,13 +172,6 @@ def _mistral_options(options: StreamOptions | None) -> MistralOptions:
     return MistralOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _mistral_options(options)
     out_stream = AssistantMessageEventStream()
@@ -200,7 +193,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             )
 
             payload = build_chat_payload(model, context, transformed_messages, opts)
-            next_payload = await _maybe_call(opts.on_payload, payload, model)
+            next_payload = await maybe_call(opts.on_payload, payload, model)
             if next_payload is not None:
                 payload = next_payload
             mistral_stream = await mistral.chat_stream(

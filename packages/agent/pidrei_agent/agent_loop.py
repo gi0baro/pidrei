@@ -4,18 +4,20 @@ Works with `AgentMessage` throughout; transforms to `Message[]` only at the
 LLM call boundary.
 
 Concurrency notes (vs pi's single JS thread):
-- The event sink may be a sync callable (e.g. `EventStream.push`) or an async
-  one; the loop awaits awaitable sink results. Tool `on_update` callbacks
-  invoke the sink directly (real-time for sync sinks) and buffer awaitable
-  results, which are awaited before the tool call finalizes — mirroring pi's
-  update-promise batch.
+- The event sink is awaitable-returning (async-only callback policy);
+  `agent_loop`/`agent_loop_continue` adapt `EventStream.push` through a thin
+  async wrapper. Tool `on_update` callbacks are sync (tool contract), so they
+  buffer the sink's coroutines, which are awaited in order before the tool
+  call finalizes — mirroring pi's update-promise batch. Unlike pi's
+  `Promise.resolve(emit(...))`, no part of the sink runs during `on_update`
+  itself: a JS async function executes up to its first `await` synchronously,
+  a Python coroutine does not start until awaited.
 - Parallel tool execution is true parallelism: prepared calls run as tonio
   tasks. `tool_execution_end` is emitted in completion order; tool-result
   messages are persisted and emitted in assistant source order (pi's ordering
   contract, enforced by construction).
 """
 
-import inspect
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -24,6 +26,7 @@ from typing import Any
 import tonio.colored as tonio
 
 from pidrei_ai.types import AssistantMessage, Context, TextContent, ToolResultMessage
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import EventStream
 from pidrei_ai.utils.validation import validate_tool_arguments
@@ -55,26 +58,10 @@ from .types import (
 )
 
 
-# Event sink: sync callable or coroutine function; awaitable results are awaited.
-type AgentEventSink = Callable[[AgentEvent], Awaitable[None] | None]
-
-
-async def _emit(sink: AgentEventSink, event: AgentEvent) -> None:
-    result = sink(event)
-    if inspect.isawaitable(result):
-        await result
-
-
-async def _maybe_await(value: Any) -> Any:
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
-async def _call_optional(fn: Callable[..., Any] | None, *args: Any) -> Any:
-    if fn is None:
-        return None
-    return await _maybe_await(fn(*args))
+# Event sink; must return an awaitable (async-only callback policy — pi types
+# this `Promise<void> | void`, but two shapes per slot is what let dropped
+# coroutines hide).
+type AgentEventSink = Callable[[AgentEvent], Awaitable[None]]
 
 
 def agent_loop(
@@ -90,8 +77,11 @@ def agent_loop(
     """
     stream = _create_agent_stream()
 
+    async def push_event(event: AgentEvent) -> None:
+        stream.push(event)
+
     async def run() -> None:
-        messages = await run_agent_loop(prompts, context, config, stream.push, cancel, stream_fn)
+        messages = await run_agent_loop(prompts, context, config, push_event, cancel, stream_fn)
         stream.end(messages)
 
     tonio.spawn.without_tracking(run())
@@ -118,8 +108,11 @@ def agent_loop_continue(
 
     stream = _create_agent_stream()
 
+    async def push_event(event: AgentEvent) -> None:
+        stream.push(event)
+
     async def run() -> None:
-        messages = await run_agent_loop_continue(context, config, stream.push, cancel, stream_fn)
+        messages = await run_agent_loop_continue(context, config, push_event, cancel, stream_fn)
         stream.end(messages)
 
     tonio.spawn.without_tracking(run())
@@ -137,11 +130,11 @@ async def run_agent_loop(
     new_messages: list[AgentMessage] = [*prompts]
     current_context = replace(context, messages=[*context.messages, *prompts])
 
-    await _emit(emit, AgentStartEvent())
-    await _emit(emit, TurnStartEvent())
+    await emit(AgentStartEvent())
+    await emit(TurnStartEvent())
     for prompt in prompts:
-        await _emit(emit, MessageStartEvent(message=prompt))
-        await _emit(emit, MessageEndEvent(message=prompt))
+        await emit(MessageStartEvent(message=prompt))
+        await emit(MessageEndEvent(message=prompt))
 
     await _run_loop(
         current_context,
@@ -170,8 +163,8 @@ async def run_agent_loop_continue(
     new_messages: list[AgentMessage] = []
     current_context = replace(context)
 
-    await _emit(emit, AgentStartEvent())
-    await _emit(emit, TurnStartEvent())
+    await emit(AgentStartEvent())
+    await emit(TurnStartEvent())
 
     await _run_loop(
         current_context,
@@ -204,7 +197,9 @@ async def _run_loop(
     config = initial_config
     first_turn = True
     # Check for steering messages at start (user may have typed while waiting).
-    pending_messages: list[AgentMessage] = (await _call_optional(config.get_steering_messages)) or []
+    pending_messages: list[AgentMessage] = []
+    if config.get_steering_messages is not None:
+        pending_messages = (await config.get_steering_messages()) or []
 
     # Outer loop: continues when queued follow-up messages arrive after the agent would stop.
     while True:
@@ -213,15 +208,15 @@ async def _run_loop(
         # Inner loop: process tool calls and steering messages.
         while has_more_tool_calls or pending_messages:
             if not first_turn:
-                await _emit(emit, TurnStartEvent())
+                await emit(TurnStartEvent())
             else:
                 first_turn = False
 
             # Process pending messages (inject before next assistant response).
             if pending_messages:
                 for message in pending_messages:
-                    await _emit(emit, MessageStartEvent(message=message))
-                    await _emit(emit, MessageEndEvent(message=message))
+                    await emit(MessageStartEvent(message=message))
+                    await emit(MessageEndEvent(message=message))
                     current_context.messages.append(message)
                     new_messages.append(message)
                 pending_messages = []
@@ -231,8 +226,8 @@ async def _run_loop(
             new_messages.append(message)
 
             if message.stop_reason in ("error", "aborted"):
-                await _emit(emit, TurnEndEvent(message=message, tool_results=[]))
-                await _emit(emit, AgentEndEvent(messages=new_messages))
+                await emit(TurnEndEvent(message=message, tool_results=[]))
+                await emit(AgentEndEvent(messages=new_messages))
                 return
 
             # Check for tool calls.
@@ -256,7 +251,7 @@ async def _run_loop(
                     current_context.messages.append(result)
                     new_messages.append(result)
 
-            await _emit(emit, TurnEndEvent(message=message, tool_results=tool_results))
+            await emit(TurnEndEvent(message=message, tool_results=tool_results))
 
             next_turn_context = PrepareNextTurnContext(
                 message=message,
@@ -264,7 +259,7 @@ async def _run_loop(
                 context=current_context,
                 new_messages=new_messages,
             )
-            next_turn_snapshot = await _call_optional(config.prepare_next_turn, next_turn_context)
+            next_turn_snapshot = await maybe_call(config.prepare_next_turn, next_turn_context)
             if next_turn_snapshot:
                 current_context = (
                     next_turn_snapshot.context if next_turn_snapshot.context is not None else current_context
@@ -279,7 +274,7 @@ async def _run_loop(
                     ),
                 )
 
-            if await _call_optional(
+            if await maybe_call(
                 config.should_stop_after_turn,
                 ShouldStopAfterTurnContext(
                     message=message,
@@ -288,13 +283,17 @@ async def _run_loop(
                     new_messages=new_messages,
                 ),
             ):
-                await _emit(emit, AgentEndEvent(messages=new_messages))
+                await emit(AgentEndEvent(messages=new_messages))
                 return
 
-            pending_messages = (await _call_optional(config.get_steering_messages)) or []
+            pending_messages = []
+            if config.get_steering_messages is not None:
+                pending_messages = (await config.get_steering_messages()) or []
 
         # Agent would stop here. Check for follow-up messages.
-        follow_up_messages = (await _call_optional(config.get_follow_up_messages)) or []
+        follow_up_messages = []
+        if config.get_follow_up_messages is not None:
+            follow_up_messages = (await config.get_follow_up_messages()) or []
         if follow_up_messages:
             # Set as pending so the inner loop processes them.
             pending_messages = follow_up_messages
@@ -303,7 +302,7 @@ async def _run_loop(
         # No more messages, exit.
         break
 
-    await _emit(emit, AgentEndEvent(messages=new_messages))
+    await emit(AgentEndEvent(messages=new_messages))
 
 
 async def _stream_assistant_response(
@@ -320,21 +319,21 @@ async def _stream_assistant_response(
     # Apply context transform if configured (AgentMessage[] → AgentMessage[]).
     messages = context.messages
     if config.transform_context is not None:
-        messages = await _maybe_await(config.transform_context(messages, cancel))
+        messages = await config.transform_context(messages, cancel)
 
     # Convert to LLM-compatible messages (AgentMessage[] → Message[]).
-    llm_messages = await _maybe_await(config.convert_to_llm(messages))
+    llm_messages = await config.convert_to_llm(messages)
 
     # Build LLM context.
     llm_context = Context(system_prompt=context.system_prompt, messages=llm_messages, tools=context.tools)
 
     # Resolve API key (important for expiring tokens).
-    resolved_api_key = (await _call_optional(config.get_api_key, config.model.provider)) or config.api_key
+    resolved_api_key = (await maybe_call(config.get_api_key, config.model.provider)) or config.api_key
 
     # pi spreads the whole config into the stream options; the dataclass copy
     # carries the same fields (config extends SimpleStreamOptions).
-    response = await _maybe_await(
-        stream_function(config.model, llm_context, replace(config, api_key=resolved_api_key, cancel=cancel))
+    response = await stream_function(
+        config.model, llm_context, replace(config, api_key=resolved_api_key, cancel=cancel)
     )
 
     partial_message: AssistantMessage | None = None
@@ -345,7 +344,7 @@ async def _stream_assistant_response(
             partial_message = event.partial
             context.messages.append(partial_message)
             added_partial = True
-            await _emit(emit, MessageStartEvent(message=replace(partial_message)))
+            await emit(MessageStartEvent(message=replace(partial_message)))
         elif event.type in (
             "text_start",
             "text_delta",
@@ -360,10 +359,7 @@ async def _stream_assistant_response(
             if partial_message is not None:
                 partial_message = event.partial
                 context.messages[-1] = partial_message
-                await _emit(
-                    emit,
-                    MessageUpdateEvent(message=replace(partial_message), assistant_message_event=event),
-                )
+                await emit(MessageUpdateEvent(message=replace(partial_message), assistant_message_event=event))
         elif event.type in ("done", "error"):
             final_message = await response.result()
             if added_partial:
@@ -371,8 +367,8 @@ async def _stream_assistant_response(
             else:
                 context.messages.append(final_message)
             if not added_partial:
-                await _emit(emit, MessageStartEvent(message=replace(final_message)))
-            await _emit(emit, MessageEndEvent(message=final_message))
+                await emit(MessageStartEvent(message=replace(final_message)))
+            await emit(MessageEndEvent(message=final_message))
             return final_message
 
     final_message = await response.result()
@@ -380,8 +376,8 @@ async def _stream_assistant_response(
         context.messages[-1] = final_message
     else:
         context.messages.append(final_message)
-        await _emit(emit, MessageStartEvent(message=replace(final_message)))
-    await _emit(emit, MessageEndEvent(message=final_message))
+        await emit(MessageStartEvent(message=replace(final_message)))
+    await emit(MessageEndEvent(message=final_message))
     return final_message
 
 
@@ -430,9 +426,8 @@ async def _fail_tool_calls_from_truncated_message(
     """
     messages: list[ToolResultMessage] = []
     for tool_call in tool_calls:
-        await _emit(
-            emit,
-            ToolExecutionStartEvent(tool_call_id=tool_call.id, tool_name=tool_call.name, args=tool_call.arguments),
+        await emit(
+            ToolExecutionStartEvent(tool_call_id=tool_call.id, tool_name=tool_call.name, args=tool_call.arguments)
         )
         finalized = _FinalizedToolCallOutcome(
             tool_call=tool_call,
@@ -481,9 +476,8 @@ async def _execute_tool_calls_sequential(
     messages: list[ToolResultMessage] = []
 
     for tool_call in tool_calls:
-        await _emit(
-            emit,
-            ToolExecutionStartEvent(tool_call_id=tool_call.id, tool_name=tool_call.name, args=tool_call.arguments),
+        await emit(
+            ToolExecutionStartEvent(tool_call_id=tool_call.id, tool_name=tool_call.name, args=tool_call.arguments)
         )
 
         preparation = await _prepare_tool_call(current_context, assistant_message, tool_call, config, cancel)
@@ -520,9 +514,8 @@ async def _execute_tool_calls_parallel(
     finalized_calls: list[_FinalizedToolCallOutcome | Callable[[], Awaitable[_FinalizedToolCallOutcome]]] = []
 
     for tool_call in tool_calls:
-        await _emit(
-            emit,
-            ToolExecutionStartEvent(tool_call_id=tool_call.id, tool_name=tool_call.name, args=tool_call.arguments),
+        await emit(
+            ToolExecutionStartEvent(tool_call_id=tool_call.id, tool_name=tool_call.name, args=tool_call.arguments)
         )
 
         preparation = await _prepare_tool_call(current_context, assistant_message, tool_call, config, cancel)
@@ -607,16 +600,14 @@ async def _prepare_tool_call(
         prepared_tool_call = _prepare_tool_call_arguments(tool, tool_call)
         validated_args = validate_tool_arguments(tool, prepared_tool_call)
         if config.before_tool_call is not None:
-            before_result = await _maybe_await(
-                config.before_tool_call(
-                    BeforeToolCallContext(
-                        assistant_message=assistant_message,
-                        tool_call=tool_call,
-                        args=validated_args,
-                        context=current_context,
-                    ),
-                    cancel,
-                )
+            before_result = await config.before_tool_call(
+                BeforeToolCallContext(
+                    assistant_message=assistant_message,
+                    tool_call=tool_call,
+                    args=validated_args,
+                    context=current_context,
+                ),
+                cancel,
             )
             if cancel is not None and cancel.cancelled:
                 return _ImmediateToolCallOutcome(result=_create_error_tool_result("Operation aborted"), is_error=True)
@@ -643,16 +634,19 @@ async def _execute_prepared_tool_call(
     def on_update(partial_result: AgentToolResult[Any]) -> None:
         if not accepting_updates:
             return
-        sink_result = emit(
-            ToolExecutionUpdateEvent(
-                tool_call_id=prepared.tool_call.id,
-                tool_name=prepared.tool_call.name,
-                args=prepared.tool_call.arguments,
-                partial_result=partial_result,
+        # `on_update` is sync (tool contract), so the sink's coroutine is
+        # buffered here and drained after execution, in order — the port of
+        # pi's `updateEvents.push(Promise.resolve(emit(...)))` + `Promise.all`.
+        update_results.append(
+            emit(
+                ToolExecutionUpdateEvent(
+                    tool_call_id=prepared.tool_call.id,
+                    tool_name=prepared.tool_call.name,
+                    args=prepared.tool_call.arguments,
+                    partial_result=partial_result,
+                )
             )
         )
-        if inspect.isawaitable(sink_result):
-            update_results.append(sink_result)
 
     try:
         result = await prepared.tool.execute(prepared.tool_call.id, prepared.args, cancel, on_update)
@@ -682,18 +676,16 @@ async def _finalize_executed_tool_call(
 
     if config.after_tool_call is not None:
         try:
-            after_result = await _maybe_await(
-                config.after_tool_call(
-                    AfterToolCallContext(
-                        assistant_message=assistant_message,
-                        tool_call=prepared.tool_call,
-                        args=prepared.args,
-                        result=result,
-                        is_error=is_error,
-                        context=current_context,
-                    ),
-                    cancel,
-                )
+            after_result = await config.after_tool_call(
+                AfterToolCallContext(
+                    assistant_message=assistant_message,
+                    tool_call=prepared.tool_call,
+                    args=prepared.args,
+                    result=result,
+                    is_error=is_error,
+                    context=current_context,
+                ),
+                cancel,
             )
             if after_result is not None:
                 result = replace(
@@ -716,14 +708,13 @@ def _create_error_tool_result(message: str) -> AgentToolResult[Any]:
 
 
 async def _emit_tool_execution_end(finalized: _FinalizedToolCallOutcome, emit: AgentEventSink) -> None:
-    await _emit(
-        emit,
+    await emit(
         ToolExecutionEndEvent(
             tool_call_id=finalized.tool_call.id,
             tool_name=finalized.tool_call.name,
             result=finalized.result,
             is_error=finalized.is_error,
-        ),
+        )
     )
 
 
@@ -743,5 +734,5 @@ def _create_tool_result_message(finalized: _FinalizedToolCallOutcome) -> ToolRes
 
 
 async def _emit_tool_result_message(tool_result_message: ToolResultMessage, emit: AgentEventSink) -> None:
-    await _emit(emit, MessageStartEvent(message=tool_result_message))
-    await _emit(emit, MessageEndEvent(message=tool_result_message))
+    await emit(MessageStartEvent(message=tool_result_message))
+    await emit(MessageEndEvent(message=tool_result_message))

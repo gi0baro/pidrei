@@ -11,7 +11,6 @@ connect, reconnect, reuse, keep or drop it is here, as in pi.
 """
 
 import base64
-import inspect
 import json
 import math
 import platform
@@ -50,6 +49,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils import clock, http, websocket
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.diagnostics import (
@@ -434,13 +434,6 @@ def _codex_options(options: StreamOptions | None) -> OpenAICodexResponsesOptions
     return OpenAICodexResponsesOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _codex_options(options)
     out_stream = AssistantMessageEventStream()
@@ -470,7 +463,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             cache_session_id = None if opts.cache_retention == "none" else opts.session_id
             codex_session_id = clamp_openai_prompt_cache_key(cache_session_id)
             body = build_request_body(model, context, opts, codex_session_id, grammar_tool_input_properties)
-            next_body = await _maybe_call(opts.on_payload, body, model)
+            next_body = await maybe_call(opts.on_payload, body, model)
             if next_body is not None:
                 body = next_body
             websocket_request_id = codex_session_id or uuidv7()
@@ -589,7 +582,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                                 f"Codex SSE response headers timed out after {_format_ms(http_timeout_ms)}ms"
                             ) from error
                         raise
-                    await _maybe_call(
+                    await maybe_call(
                         opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
                     )
 

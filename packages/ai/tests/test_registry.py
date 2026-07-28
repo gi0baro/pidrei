@@ -185,7 +185,7 @@ async def test_headers_merge_and_transform():
     models, api = make_models_with_echo()
     model = make_model(headers={"X-Model": "m", "X-Base": "model"})
 
-    def transform(headers):
+    async def transform(headers):
         return {**headers, "X-Transformed": "yes"}
 
     await models.complete(model, Context(), StreamOptions(headers={"x-base": "option"}, transform_headers=transform))

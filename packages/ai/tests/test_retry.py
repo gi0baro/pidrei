@@ -76,10 +76,19 @@ class Recorder:
         self.finished: list[tuple] = []
 
     def callbacks(self) -> RetryCallbacks:
+        async def on_scheduled(*args):
+            self.scheduled.append(args)
+
+        async def on_attempt_start():
+            self.attempt_starts += 1
+
+        async def on_finished(*args):
+            self.finished.append(args)
+
         return RetryCallbacks(
-            on_retry_scheduled=lambda *args: self.scheduled.append(args),
-            on_retry_attempt_start=lambda: setattr(self, "attempt_starts", self.attempt_starts + 1),
-            on_retry_finished=lambda *args: self.finished.append(args),
+            on_retry_scheduled=on_scheduled,
+            on_retry_attempt_start=on_attempt_start,
+            on_retry_finished=on_finished,
         )
 
 
@@ -213,9 +222,15 @@ async def test_emits_on_retry_attempt_start_after_backoff_before_each_retried_ca
             return error_message("terminated")
         return faux_assistant_message("recovered")
 
+    async def on_scheduled(attempt, *rest):
+        events.append(f"retry:{attempt}")
+
+    async def on_attempt_start():
+        events.append("attempt-start")
+
     callbacks = RetryCallbacks(
-        on_retry_scheduled=lambda attempt, *rest: events.append(f"retry:{attempt}"),
-        on_retry_attempt_start=lambda: events.append("attempt-start"),
+        on_retry_scheduled=on_scheduled,
+        on_retry_attempt_start=on_attempt_start,
     )
     result = await retry_assistant_call(produce, ENABLED, None, callbacks)
     assert result.content == [TextContent(text="recovered")]

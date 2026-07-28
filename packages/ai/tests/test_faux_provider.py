@@ -93,16 +93,11 @@ async def test_supports_multiple_models_with_model_aware_factories():
             FauxModelDefinition(id="faux-thinker", name="Faux Thinker", reasoning=True),
         ]
     )
-    faux.set_responses(
-        [
-            lambda _context, _options, _state, model: faux_assistant_message(
-                f"{model.id}:{'true' if model.reasoning else 'false'}"
-            ),
-            lambda _context, _options, _state, model: faux_assistant_message(
-                f"{model.id}:{'true' if model.reasoning else 'false'}"
-            ),
-        ]
-    )
+
+    async def factory(_context, _options, _state, model):
+        return faux_assistant_message(f"{model.id}:{'true' if model.reasoning else 'false'}")
+
+    faux.set_responses([factory, factory])
 
     assert [model.id for model in faux.models] == ["faux-fast", "faux-thinker"]
     assert faux.get_model() is faux.models[0]
@@ -183,7 +178,7 @@ async def test_supports_async_response_factories():
 async def test_emits_an_error_when_a_response_factory_throws():
     faux = faux_provider()
 
-    def factory(_context, _options, _state, _model):
+    async def factory(_context, _options, _state, _model):
         raise RuntimeError("boom")
 
     faux.set_responses([factory])

@@ -275,7 +275,7 @@ class ArminComponent:
     def _start_animation(self) -> None:
         fps = 60 if self._effect == "glitch" else 30
 
-        def on_tick() -> None:
+        async def on_tick() -> None:
             done = self._tick_effect()
             self._grid_version += 1
             self._ui.request_render()

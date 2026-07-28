@@ -21,13 +21,15 @@ from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
-# Stream function used by the agent loop. `Models.stream_simple` satisfies this
-# shape. Contract: must not raise for request/model/runtime failures — failures
-# must be encoded in the returned stream via protocol events and a final
-# AssistantMessage with stop_reason "error"/"aborted" and error_message.
+# Stream function used by the agent loop. Async-only (async-only callback
+# policy): `Models.stream_simple` returns the stream handle synchronously, so
+# wiring it here takes a thin `async def` adapter. Contract: must not raise
+# for request/model/runtime failures — failures must be encoded in the
+# returned stream via protocol events and a final AssistantMessage with
+# stop_reason "error"/"aborted" and error_message.
 type StreamFn = Callable[
     [Model, Context, SimpleStreamOptions | None],
-    AssistantMessageEventStream | Awaitable[AssistantMessageEventStream],
+    Awaitable[AssistantMessageEventStream],
 ]
 
 # How tool calls from a single assistant message are executed:
@@ -225,59 +227,63 @@ class AgentLoopTurnUpdate:
 class AgentLoopConfig(SimpleStreamOptions):
     """Agent loop configuration (extends the provider stream options like pi).
 
-    All hook contracts mirror pi: hooks must not raise — raising interrupts the
-    low-level loop without producing a normal event sequence. Callbacks may be
-    sync or async; the loop awaits coroutine results.
+    All hook contracts mirror pi's behavior: hooks must not raise — raising
+    interrupts the low-level loop without producing a normal event sequence.
+    Every hook must return an awaitable (async-only callback policy; pi types
+    several as `T | Promise<T>` unions, a JS-ism this port deliberately does
+    not carry). A sync `def` returning an awaitable satisfies the contract.
     """
 
     model: Model
 
     # Converts AgentMessage[] to LLM-compatible Message[] before each LLM call;
     # messages that cannot be converted must be filtered out.
-    convert_to_llm: Callable[[list[AgentMessage]], list[Message] | Awaitable[list[Message]]]
+    convert_to_llm: Callable[[list[AgentMessage]], Awaitable[list[Message]]]
 
     # Optional transform applied to the context before `convert_to_llm`
     # (context-window management, external injection, ...).
     transform_context: Callable[[list[AgentMessage], CancelToken | None], Awaitable[list[AgentMessage]]] | None = None
 
     # Resolves an API key dynamically for each LLM call (short-lived tokens).
-    get_api_key: Callable[[str], str | None | Awaitable[str | None]] | None = None
+    get_api_key: Callable[[str], Awaitable[str | None]] | None = None
 
     # Called after each turn fully completes; returning True exits the loop
     # before polling steering/follow-up queues.
-    should_stop_after_turn: Callable[[ShouldStopAfterTurnContext], bool | Awaitable[bool]] | None = None
+    should_stop_after_turn: Callable[[ShouldStopAfterTurnContext], Awaitable[bool]] | None = None
 
     # Called after `turn_end`, before the loop decides whether another provider
     # request should start. Return replacement state or None to keep current.
-    prepare_next_turn: (
-        Callable[[PrepareNextTurnContext], AgentLoopTurnUpdate | None | Awaitable[AgentLoopTurnUpdate | None]] | None
-    ) = None
+    prepare_next_turn: Callable[[PrepareNextTurnContext], Awaitable[AgentLoopTurnUpdate | None]] | None = None
 
     # Returns steering messages to inject into the conversation mid-run.
-    get_steering_messages: Callable[[], list[AgentMessage] | Awaitable[list[AgentMessage]]] | None = None
+    # Async-only, like pi's `() => Promise<AgentMessage[]>`.
+    get_steering_messages: Callable[[], Awaitable[list[AgentMessage]]] | None = None
 
     # Returns follow-up messages to process after the agent would otherwise stop.
-    get_follow_up_messages: Callable[[], list[AgentMessage] | Awaitable[list[AgentMessage]]] | None = None
+    # Async-only, like pi's `() => Promise<AgentMessage[]>`.
+    get_follow_up_messages: Callable[[], Awaitable[list[AgentMessage]]] | None = None
 
     # Tool execution mode. Default: "parallel".
     tool_execution: ToolExecutionMode | None = None
 
     # Called before a tool executes, after argument validation. Return
-    # `BeforeToolCallResult(block=True)` to prevent execution.
+    # `BeforeToolCallResult(block=True)` to prevent execution. Async-only,
+    # like pi's `=> Promise<BeforeToolCallResult | undefined>`.
     before_tool_call: (
         Callable[
             [BeforeToolCallContext, CancelToken | None],
-            BeforeToolCallResult | None | Awaitable[BeforeToolCallResult | None],
+            Awaitable[BeforeToolCallResult | None],
         ]
         | None
     ) = None
 
     # Called after a tool finishes executing, before `tool_execution_end` and
-    # tool-result message events are emitted.
+    # tool-result message events are emitted. Async-only, like pi's
+    # `=> Promise<AfterToolCallResult | undefined>`.
     after_tool_call: (
         Callable[
             [AfterToolCallContext, CancelToken | None],
-            AfterToolCallResult | None | Awaitable[AfterToolCallResult | None],
+            Awaitable[AfterToolCallResult | None],
         ]
         | None
     ) = None

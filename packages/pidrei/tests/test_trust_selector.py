@@ -10,6 +10,10 @@ from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 
+async def _ignore_selection(selection: dict) -> None:
+    pass
+
+
 @pytest.fixture(autouse=True)
 def _setup():
     init_theme_sync("dark")
@@ -23,7 +27,7 @@ class TestTrustSelectorComponent:
                 "cwd": "/project",
                 "savedDecision": ProjectTrustStoreEntry(path="/project", decision=True),
                 "projectTrusted": True,
-                "onSelect": lambda selection: None,
+                "onSelect": _ignore_selection,
                 "onCancel": lambda: None,
             }
         )
@@ -38,12 +42,16 @@ class TestTrustSelectorComponent:
     @pytest.mark.tonio
     async def test_selects_a_trust_decision(self):
         selections = []
+
+        async def on_select(selection: dict) -> None:
+            selections.append(selection)
+
         selector = TrustSelectorComponent(
             {
                 "cwd": "/project",
                 "savedDecision": None,
                 "projectTrusted": False,
-                "onSelect": lambda selection: selections.append(selection),
+                "onSelect": on_select,
                 "onCancel": lambda: None,
             }
         )
@@ -58,7 +66,7 @@ class TestTrustSelectorComponent:
                 "cwd": "/parent/project/nested",
                 "savedDecision": ProjectTrustStoreEntry(path="/parent", decision=True),
                 "projectTrusted": True,
-                "onSelect": lambda selection: None,
+                "onSelect": _ignore_selection,
                 "onCancel": lambda: None,
             }
         )
@@ -70,12 +78,16 @@ class TestTrustSelectorComponent:
     @pytest.mark.tonio
     async def test_adds_a_trust_parent_option(self):
         selections = []
+
+        async def on_select(selection: dict) -> None:
+            selections.append(selection)
+
         selector = TrustSelectorComponent(
             {
                 "cwd": "/parent/project",
                 "savedDecision": ProjectTrustStoreEntry(path="/parent", decision=True),
                 "projectTrusted": True,
-                "onSelect": lambda selection: selections.append(selection),
+                "onSelect": on_select,
                 "onCancel": lambda: None,
             }
         )

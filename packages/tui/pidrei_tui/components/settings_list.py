@@ -2,10 +2,15 @@
 
 Items are ``{"id", "label", "description"?, "currentValue", "values"?,
 "submenu"?}`` records (``submenu`` is a callable receiving the current value
-and a ``done(selected_value=None)`` callback and returning a component);
-``theme`` is a ``{"label", "value", "description", "cursor", "hint"}`` record
-(``label``/``value`` take ``(text, selected)``); ``options`` mirrors
-``SettingsListOptions`` (``{"enableSearch": bool}``).
+and an awaitable ``done(selected_value=None)`` callback and returning a
+component); ``theme`` is a ``{"label", "value", "description", "cursor",
+"hint"}`` record (``label``/``value`` take ``(text, selected)``); ``options``
+mirrors ``SettingsListOptions`` (``{"enableSearch": bool}``).
+
+``on_change``/``on_cancel`` must return an awaitable (async-only callback
+policy): pi types them ``=> void``, but the port made several consumers async
+(theme previews, settings persistence), and pi's bare call runs to completion
+before the next statement — awaiting inline is the matching order.
 """
 
 import math
@@ -153,9 +158,9 @@ class SettingsList:
                 return
             self._selected_index = 0 if self._selected_index == len(display_items) - 1 else self._selected_index + 1
         elif kb.matches(data, "tui.select.confirm") or data == " ":
-            self._activate_item()
+            await self._activate_item()
         elif kb.matches(data, "tui.select.cancel"):
-            self._on_cancel()
+            await self._on_cancel()
         elif self._search_enabled and self._search_input is not None:
             sanitized = data.replace(" ", "")
             if not sanitized:
@@ -163,7 +168,7 @@ class SettingsList:
             await self._search_input.handle_input(sanitized)
             self._apply_filter(self._search_input.get_value())
 
-    def _activate_item(self) -> None:
+    async def _activate_item(self) -> None:
         items = self._filtered_items if self._search_enabled else self._items
         item = items[self._selected_index] if 0 <= self._selected_index < len(items) else None
         if item is None:
@@ -173,10 +178,10 @@ class SettingsList:
             # Open submenu, passing current value so it can pre-select correctly
             self._submenu_item_index = self._selected_index
 
-            def done(selected_value: str | None = None) -> None:
+            async def done(selected_value: str | None = None) -> None:
                 if selected_value is not None:
                     item["currentValue"] = selected_value
-                    self._on_change(item["id"], selected_value)
+                    await self._on_change(item["id"], selected_value)
                 self._close_submenu()
 
             self._submenu_component = item["submenu"](item["currentValue"], done)
@@ -190,7 +195,7 @@ class SettingsList:
             next_index = (current_index + 1) % len(values)
             new_value = values[next_index]
             item["currentValue"] = new_value
-            self._on_change(item["id"], new_value)
+            await self._on_change(item["id"], new_value)
 
     def _close_submenu(self) -> None:
         self._submenu_component = None

@@ -9,7 +9,6 @@ carrier; pidrei uses punkreq through the seam instead. Tests inject a fake
 client via `AnthropicOptions.client` exactly like pi's suites do.
 """
 
-import inspect
 import json
 import re
 import time
@@ -58,6 +57,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -508,13 +508,6 @@ def _anthropic_options(options: StreamOptions | None) -> AnthropicOptions:
     return AnthropicOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _anthropic_options(options)
     out_stream = AssistantMessageEventStream()
@@ -560,7 +553,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 )
 
             params = _build_params(model, context, is_oauth, opts)
-            next_params = await _maybe_call(opts.on_payload, params, model)
+            next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
 
@@ -574,7 +567,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 cancel=opts.cancel,
             )
 
-            await _maybe_call(
+            await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
             )
             out_stream.push(StartEvent(partial=output))

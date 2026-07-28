@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from .example_extensions import load_example
 
 
@@ -30,7 +32,8 @@ def create_context(tokens: int | None, compact) -> SimpleNamespace:
     )
 
 
-def test_only_auto_compacts_when_context_usage_crosses_the_threshold():
+@pytest.mark.tonio
+async def test_only_auto_compacts_when_context_usage_crosses_the_threshold():
     handlers: dict = {}
     commands: list[str] = []
 
@@ -47,14 +50,14 @@ def test_only_auto_compacts_when_context_usage_crosses_the_threshold():
     compact = calls.append
     event = {"type": "turn_end"}
 
-    handlers["turn_end"](event, create_context(110_000, compact))
+    await handlers["turn_end"](event, create_context(110_000, compact))
     assert calls == []
 
-    handlers["turn_end"](event, create_context(120_000, compact))
+    await handlers["turn_end"](event, create_context(120_000, compact))
     assert calls == []
 
-    handlers["turn_end"](event, create_context(95_000, compact))
+    await handlers["turn_end"](event, create_context(95_000, compact))
     assert calls == []
 
-    handlers["turn_end"](event, create_context(105_000, compact))
+    await handlers["turn_end"](event, create_context(105_000, compact))
     assert len(calls) == 1

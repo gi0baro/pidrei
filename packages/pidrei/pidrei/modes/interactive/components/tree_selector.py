@@ -7,7 +7,6 @@ pidrei_ai/pidrei_agent message dataclasses.
 import json
 import os
 import re
-from collections.abc import Awaitable
 from datetime import datetime
 
 from pidrei_tui import (
@@ -1200,9 +1199,9 @@ class LabelInput:
         if kb.matches(key_data, "tui.select.confirm"):
             value = self._input.get_value().strip()
             if self.on_submit is not None:
-                result = self.on_submit(self._entry_id, value or None)
-                if isinstance(result, Awaitable):
-                    await result
+                # Coroutine-returning by contract: submitting persists the
+                # label change (never-block rule).
+                await self.on_submit(self._entry_id, value or None)
         elif kb.matches(key_data, "tui.select.cancel"):
             if self.on_cancel is not None:
                 self.on_cancel()
@@ -1261,7 +1260,11 @@ class TreeSelectorComponent(Container):
         self.add_child(DynamicBorder())
 
         if not tree:
-            Timeout(100, lambda: on_cancel())
+
+            async def auto_cancel() -> None:
+                on_cancel()
+
+            Timeout(100, auto_cancel)
 
     # Focusable implementation - propagate to label input when active for
     # IME cursor positioning

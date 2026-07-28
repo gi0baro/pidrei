@@ -508,7 +508,7 @@ async def test_omits_sse_cache_affinity_when_cache_retention_is_none():
 async def test_clamps_prompt_cache_key_to_64_characters():
     captured: dict = {}
 
-    def on_payload(payload, _model):
+    async def on_payload(payload, _model):
         captured.update(payload)
 
     await stream_codex(
@@ -600,7 +600,7 @@ async def test_forwards_required_tool_choice():
 async def test_sets_codex_strict_mode_explicitly_and_honors_constrained_sampling():
     captured: dict = {}
 
-    def on_payload(payload, _model):
+    async def on_payload(payload, _model):
         captured.update(payload)
 
     context = Context(

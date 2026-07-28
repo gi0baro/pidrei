@@ -1,15 +1,16 @@
 """Mirror of pi coding-agent src/core/event-bus.ts.
 
 pi wraps a Node EventEmitter whose handlers are fire-and-forget async
-functions with error logging. Here sync handler results are delivered
-inline and awaitable results are detached onto the runtime, preserving
-the fire-and-forget contract.
+functions with error logging. Handlers are async-only here (async-only
+callback policy); each emitted event detaches the handler's awaitable onto
+the runtime, preserving the fire-and-forget contract. Unlike pi, no part of
+a handler runs inline during `emit` — a JS async function executes its body
+up to the first `await` synchronously, a spawned coroutine does not.
 """
 
-import inspect
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import tonio.colored as tonio
@@ -17,7 +18,7 @@ import tonio.colored as tonio
 
 class EventBus:
     def __init__(self) -> None:
-        self._handlers: dict[str, list[Callable[[Any], Any]]] = {}
+        self._handlers: dict[str, list[Callable[[Any], Awaitable[Any]]]] = {}
         self._guard = threading.Lock()
 
     def emit(self, channel: str, data: Any) -> None:
@@ -25,12 +26,11 @@ class EventBus:
             handlers = list(self._handlers.get(channel, ()))
         for handler in handlers:
             try:
-                result = handler(data)
+                awaitable = handler(data)
             except Exception as error:
                 print(f"Event handler error ({channel}):", error, file=sys.stderr)
                 continue
-            if inspect.isawaitable(result):
-                tonio.spawn.without_tracking(self._await_handler(channel, result))
+            tonio.spawn.without_tracking(self._await_handler(channel, awaitable))
 
     async def _await_handler(self, channel: str, awaitable: Any) -> None:
         try:
@@ -38,7 +38,7 @@ class EventBus:
         except Exception as error:
             print(f"Event handler error ({channel}):", error, file=sys.stderr)
 
-    def on(self, channel: str, handler: Callable[[Any], Any]) -> Callable[[], None]:
+    def on(self, channel: str, handler: Callable[[Any], Awaitable[Any]]) -> Callable[[], None]:
         with self._guard:
             self._handlers.setdefault(channel, []).append(handler)
 

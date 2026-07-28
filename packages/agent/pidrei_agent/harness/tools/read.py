@@ -1,7 +1,6 @@
 """Read tool (port of pi `harness/tools/read.ts`)."""
 
-import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,8 +47,10 @@ class ReadImageProcessorResult:
     message: str | None = None
 
 
-# (bytes, mime_type, auto_resize_images) -> ReadImageProcessorResult (sync or async)
-type ReadImageProcessor = Callable[[bytes, str, bool], Any]
+# (bytes, mime_type, auto_resize_images) -> ReadImageProcessorResult.
+# Async-only, matching pi's `ReadImageProcessor` (strictly Promise-returning,
+# unlike `BashPrepare` next door which pi declares as a union).
+type ReadImageProcessor = Callable[[bytes, str, bool], Awaitable[Any]]
 
 
 @dataclass(slots=True)
@@ -94,9 +95,7 @@ class ReadTool(AgentHarnessTool[ExecutionToolContext, ReadToolDetails | None]):
         if mime_type:
             if options is not None and options.image_processor is not None:
                 auto_resize = options.auto_resize_images if options.auto_resize_images is not None else True
-                processed = options.image_processor(data, mime_type, auto_resize)
-                if inspect.isawaitable(processed):
-                    processed = await processed
+                processed = await options.image_processor(data, mime_type, auto_resize)
                 if not processed.ok:
                     return AgentToolResult(
                         content=[TextContent(text=f"Read image file [{mime_type}]\n{processed.message}")],

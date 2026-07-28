@@ -516,7 +516,12 @@ def create_bash_tool_definition(
     def render_result(result, options, _theme, context):
         state = context["state"]
         if state.get("startedAt") is not None and options.get("isPartial") and not state.get("interval"):
-            state["interval"] = Interval(1000, context["invalidate"])
+            invalidate = context["invalidate"]
+
+            async def tick() -> None:
+                invalidate()
+
+            state["interval"] = Interval(1000, tick)
         if not options.get("isPartial") or context["isError"]:
             if state.get("endedAt") is None:
                 state["endedAt"] = time.time() * 1000

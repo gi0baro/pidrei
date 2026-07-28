@@ -66,7 +66,7 @@ def create_assistant_tool_use_message(content: list[ToolCall]) -> AssistantMessa
     )
 
 
-def unused_stream_fn(_model, _context, _options):
+async def unused_stream_fn(_model, _context, _options):
     raise Exception("Unexpected stream call")
 
 
@@ -76,7 +76,14 @@ def done_stream(message: AssistantMessage, reason: str = "stop") -> AssistantMes
     return stream
 
 
-def abort_responsive_stream_fn(_model, _context, options):
+def const_stream_fn(text: str):
+    async def stream_fn(_model, _context, _options):
+        return done_stream(create_assistant_message(text))
+
+    return stream_fn
+
+
+async def abort_responsive_stream_fn(_model, _context, options):
     """Stream that starts a partial and errors once the run's cancel fires."""
     stream = AssistantMessageEventStream()
 
@@ -109,7 +116,7 @@ def custom_model(model_id: str) -> Model:
 async def test_uses_the_configured_default_when_a_legacy_caller_omits_stream_fn():
     calls = 0
 
-    def default_fn(_model, _context, _options):
+    async def default_fn(_model, _context, _options):
         nonlocal calls
         calls += 1
         return done_stream(create_assistant_message("fallback"))
@@ -163,7 +170,7 @@ async def test_should_subscribe_to_events():
 
     event_count = 0
 
-    def listener(_event, _signal):
+    async def listener(_event, _signal):
         nonlocal event_count
         event_count += 1
 
@@ -185,12 +192,16 @@ async def test_should_subscribe_to_events():
 
 @pytest.mark.tonio
 async def test_emits_full_lifecycle_events_for_thrown_run_failures():
-    def exploding_stream_fn(_model, _context, _options):
+    async def exploding_stream_fn(_model, _context, _options):
         raise Exception("provider exploded")
 
     agent = Agent(stream_fn=exploding_stream_fn)
     events = []
-    agent.subscribe(lambda event, _signal: events.append(event.type))
+
+    async def record_event(event, _signal):
+        events.append(event.type)
+
+    agent.subscribe(record_event)
 
     await agent.prompt("hello")
 
@@ -214,7 +225,7 @@ async def test_emits_full_lifecycle_events_for_thrown_run_failures():
 @pytest.mark.tonio
 async def test_should_await_async_subscribers_before_prompt_resolves():
     barrier = tonio.Event()
-    agent = Agent(stream_fn=lambda _model, _context, _options: done_stream(create_assistant_message("ok")))
+    agent = Agent(stream_fn=const_stream_fn("ok"))
 
     listener_finished = False
 
@@ -251,7 +262,7 @@ async def test_should_await_async_subscribers_before_prompt_resolves():
 @pytest.mark.tonio
 async def test_wait_for_idle_should_wait_for_async_subscribers():
     barrier = tonio.Event()
-    agent = Agent(stream_fn=lambda _model, _context, _options: done_stream(create_assistant_message("ok")))
+    agent = Agent(stream_fn=const_stream_fn("ok"))
 
     async def listener(event, _signal):
         if event.type == "message_end" and getattr(event.message, "role", None) == "assistant":
@@ -288,7 +299,7 @@ async def test_should_pass_the_active_abort_signal_to_subscribers():
     received_signal = None
     agent = Agent(stream_fn=abort_responsive_stream_fn)
 
-    def listener(event, signal):
+    async def listener(event, signal):
         nonlocal received_signal
         if event.type == "agent_start":
             received_signal = signal
@@ -320,14 +331,18 @@ async def test_should_ignore_tool_updates_after_the_tool_execution_settles():
 
     tool = FnTool("delayed_tool", "Delayed Tool", "Captures progress callbacks", EMPTY_SCHEMA, execute)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(
             create_assistant_tool_use_message([ToolCall(id="call-1", name="delayed_tool", arguments={})]),
             "toolUse",
         )
 
     agent = Agent(initial_state=AgentInitialState(tools=[tool]), stream_fn=stream_fn)
-    agent.subscribe(lambda event, _signal: events.append(event))
+
+    async def record_event(event, _signal):
+        events.append(event)
+
+    agent.subscribe(record_event)
 
     await agent.prompt("run tool")
     event_count_after_prompt = len(events)
@@ -360,7 +375,7 @@ async def test_should_ignore_a_settled_parallel_tool_update_while_another_tool_i
     settled_tool = FnTool("settled_tool", "Settled Tool", "Captures progress callbacks", EMPTY_SCHEMA, execute_settled)
     slow_tool = FnTool("slow_tool", "Slow Tool", "Keeps the agent run active", EMPTY_SCHEMA, execute_slow)
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         return done_stream(
             create_assistant_tool_use_message(
                 [
@@ -373,7 +388,7 @@ async def test_should_ignore_a_settled_parallel_tool_update_while_another_tool_i
 
     agent = Agent(initial_state=AgentInitialState(tools=[settled_tool, slow_tool]), stream_fn=stream_fn)
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         events.append(event)
         if event.type == "tool_execution_end" and event.tool_call_id == "call-1":
             settled_tool_ended.set()
@@ -489,7 +504,7 @@ async def test_should_throw_when_continue_called_while_streaming():
 
 @pytest.mark.tonio
 async def test_continue_should_process_queued_follow_up_messages_after_an_assistant_turn():
-    agent = Agent(stream_fn=lambda _model, _context, _options: done_stream(create_assistant_message("Processed")))
+    agent = Agent(stream_fn=const_stream_fn("Processed"))
 
     agent.state.messages = [
         UserMessage(content=[TextContent(text="Initial")], timestamp=int(time.time() * 1000) - 10),
@@ -515,7 +530,7 @@ async def test_continue_should_process_queued_follow_up_messages_after_an_assist
 async def test_continue_should_keep_one_at_a_time_steering_semantics_from_assistant_tail():
     response_count = 0
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal response_count
         response_count += 1
         return done_stream(create_assistant_message(f"Processed {response_count}"))
@@ -546,7 +561,7 @@ async def test_keeps_legacy_prepare_next_turn_signal_callback_behavior():
     request_count = 0
     saw_cancel_token = False
 
-    def stream_fn(_model, _context, _options):
+    async def stream_fn(_model, _context, _options):
         nonlocal request_count
         request_count += 1
         if request_count == 1:
@@ -575,7 +590,7 @@ async def test_keeps_legacy_prepare_next_turn_signal_callback_behavior():
 async def test_forwards_session_id_to_stream_function_options():
     received_session_id = None
 
-    def stream_fn(_model, _context, options):
+    async def stream_fn(_model, _context, options):
         nonlocal received_session_id
         received_session_id = options.session_id if options is not None else None
         return done_stream(create_assistant_message("ok"))

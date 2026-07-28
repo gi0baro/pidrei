@@ -1,7 +1,5 @@
 """Mirror of pi coding-agent src/modes/interactive/components/first-time-setup.ts."""
 
-from collections.abc import Awaitable
-
 from pidrei_tui import Container, Spacer, Text, get_keybindings
 
 from ....config import APP_NAME
@@ -104,9 +102,9 @@ class FirstTimeSetupComponent(Container):
             next_index = max(0, min(len(THEME_OPTIONS) - 1, self._theme_index + delta))
             if next_index != self._theme_index:
                 self._theme_index = next_index
-                result = self._options["onThemePreview"](THEME_OPTIONS[self._theme_index]["value"])
-                if isinstance(result, Awaitable):
-                    await result
+                # Coroutine-returning by contract: previewing loads the theme
+                # from disk (never-block rule).
+                await self._options["onThemePreview"](THEME_OPTIONS[self._theme_index]["value"])
         else:
             self._analytics_index = max(0, min(len(ANALYTICS_OPTIONS) - 1, self._analytics_index + delta))
         self._update()

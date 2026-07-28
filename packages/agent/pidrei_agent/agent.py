@@ -35,7 +35,7 @@ from pidrei_ai.types import (
 )
 from pidrei_ai.utils.cancel import CancelToken
 
-from .agent_loop import _maybe_await, run_agent_loop, run_agent_loop_continue
+from .agent_loop import run_agent_loop, run_agent_loop_continue
 from .stream_fn import get_default_stream_fn
 from .types import (
     AfterToolCallContext,
@@ -60,7 +60,7 @@ from .types import (
 )
 
 
-def default_convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
+async def default_convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
     return [m for m in messages if getattr(m, "role", None) in ("user", "assistant", "toolResult")]
 
 
@@ -187,29 +187,26 @@ class Agent:
         *,
         stream_fn: StreamFn | None = None,
         initial_state: AgentInitialState | None = None,
-        convert_to_llm: Callable[[list[AgentMessage]], list[Message] | Awaitable[list[Message]]] | None = None,
+        convert_to_llm: Callable[[list[AgentMessage]], Awaitable[list[Message]]] | None = None,
         transform_context: Callable[[list[AgentMessage], CancelToken | None], Awaitable[list[AgentMessage]]]
         | None = None,
-        get_api_key: Callable[[str], str | None | Awaitable[str | None]] | None = None,
+        get_api_key: Callable[[str], Awaitable[str | None]] | None = None,
         on_payload: Any = None,
         on_response: Any = None,
         before_tool_call: Callable[
             [BeforeToolCallContext, CancelToken | None],
-            BeforeToolCallResult | None | Awaitable[BeforeToolCallResult | None],
+            Awaitable[BeforeToolCallResult | None],
         ]
         | None = None,
         after_tool_call: Callable[
             [AfterToolCallContext, CancelToken | None],
-            AfterToolCallResult | None | Awaitable[AfterToolCallResult | None],
+            Awaitable[AfterToolCallResult | None],
         ]
         | None = None,
-        prepare_next_turn: Callable[
-            [CancelToken | None], AgentLoopTurnUpdate | None | Awaitable[AgentLoopTurnUpdate | None]
-        ]
-        | None = None,
+        prepare_next_turn: Callable[[CancelToken | None], Awaitable[AgentLoopTurnUpdate | None]] | None = None,
         prepare_next_turn_with_context: Callable[
             [PrepareNextTurnContext, CancelToken | None],
-            AgentLoopTurnUpdate | None | Awaitable[AgentLoopTurnUpdate | None],
+            Awaitable[AgentLoopTurnUpdate | None],
         ]
         | None = None,
         steering_mode: QueueMode | None = None,
@@ -229,7 +226,7 @@ class Agent:
             messages=initial.messages,
         )
         # Listener order matters: awaited in registration order.
-        self._listeners: list[Callable[[AgentEvent, CancelToken], Awaitable[None] | None]] = []
+        self._listeners: list[Callable[[AgentEvent, CancelToken], Awaitable[None]]] = []
         self._steering_queue = PendingMessageQueue(steering_mode if steering_mode is not None else "one-at-a-time")
         self._follow_up_queue = PendingMessageQueue(follow_up_mode if follow_up_mode is not None else "one-at-a-time")
         self._active_run: _ActiveRun | None = None
@@ -255,7 +252,7 @@ class Agent:
         # Tool execution strategy for assistant messages containing multiple tool calls.
         self.tool_execution: ToolExecutionMode = tool_execution if tool_execution is not None else "parallel"
 
-    def subscribe(self, listener: Callable[[AgentEvent, CancelToken], Awaitable[None] | None]) -> Callable[[], None]:
+    def subscribe(self, listener: Callable[[AgentEvent, CancelToken], Awaitable[None]]) -> Callable[[], None]:
         """Subscribe to agent lifecycle events.
 
         Listener results are awaited in subscription order and are included in
@@ -452,9 +449,9 @@ class Agent:
 
             async def prepare_next_turn(context: PrepareNextTurnContext) -> AgentLoopTurnUpdate | None:
                 if self.prepare_next_turn_with_context is not None:
-                    return await _maybe_await(self.prepare_next_turn_with_context(context, self.signal))
+                    return await self.prepare_next_turn_with_context(context, self.signal)
                 if self.prepare_next_turn is not None:
-                    return await _maybe_await(self.prepare_next_turn(self.signal))
+                    return await self.prepare_next_turn(self.signal)
                 return None
 
         async def get_steering_messages() -> list[AgentMessage]:
@@ -560,4 +557,4 @@ class Agent:
         if run is None:
             raise Exception("Agent listener invoked outside active run")
         for listener in list(self._listeners):
-            await _maybe_await(listener(event, run.cancel))
+            await listener(event, run.cancel)

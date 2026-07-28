@@ -3,7 +3,6 @@
 import os
 import re
 import time
-from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any
 
@@ -115,7 +114,7 @@ class SessionSelectorHeader:
         if not msg or not auto_hide_ms:
             return
 
-        def hide() -> None:
+        async def hide() -> None:
             self._status_message = None
             self._status_timeout = None
             self._request_render()
@@ -538,10 +537,9 @@ class SessionList:
 
         if kb.matches(key_data, "tui.input.tab"):
             if self.on_toggle_scope is not None:
-                # Sync or coroutine-returning, like the other selector callbacks.
-                result = self.on_toggle_scope()
-                if isinstance(result, Awaitable):
-                    await result
+                # Coroutine-returning by contract: toggling reloads sessions
+                # from disk (never-block rule).
+                await self.on_toggle_scope()
             return
 
         if kb.matches(key_data, "app.session.toggleSort"):

@@ -67,11 +67,11 @@ async def test_applies_set_active_tools_before_the_next_provider_request(harness
 
     provider_tool_names: list[list[str]] = []
 
-    def first(context, *_rest):
+    async def first(context, *_rest):
         provider_tool_names.append(sorted(tool.name for tool in (context.tools or [])))
         return faux_assistant_message(faux_tool_call("switch_tools", {}), stop_reason="toolUse")
 
-    def second(context, *_rest):
+    async def second(context, *_rest):
         provider_tool_names.append(sorted(tool.name for tool in (context.tools or [])))
         return faux_assistant_message("done")
 
@@ -104,10 +104,10 @@ async def test_records_additive_active_tool_changes_on_the_current_tool_result(h
 
     added_tool_names: list[list[str]] = []
 
-    def first(_context, *_rest):
+    async def first(_context, *_rest):
         return faux_assistant_message(faux_tool_call("load_more_tools", {}), stop_reason="toolUse")
 
-    def second(context, *_rest):
+    async def second(context, *_rest):
         added_tool_names.append(
             [
                 name
@@ -170,11 +170,11 @@ async def test_preserves_before_agent_start_system_prompt_overrides_when_tools_c
         provider_system_prompts.append(context.system_prompt or "")
         provider_tool_names.append(sorted(tool.name for tool in (context.tools or [])))
 
-    def first(context, *_rest):
+    async def first(context, *_rest):
         record(context)
         return faux_assistant_message(faux_tool_call("switch_tools", {}), stop_reason="toolUse")
 
-    def second(context, *_rest):
+    async def second(context, *_rest):
         record(context)
         return faux_assistant_message("done")
 

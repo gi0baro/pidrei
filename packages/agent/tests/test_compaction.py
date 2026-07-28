@@ -480,7 +480,7 @@ async def test_passes_reasoning_through_generate_summary_only_for_reasoning_mode
     messages = [create_user_message("Summarize this.")]
     seen_options = []
 
-    def responder(_context, options, _state, _model):
+    async def responder(_context, options, _state, _model):
         seen_options.append(options)
         return faux_assistant_message("## Goal\nTest summary")
 
@@ -505,7 +505,7 @@ async def test_includes_previous_summaries_and_custom_instructions_in_generate_s
     messages = [create_user_message("Summarize this.")]
     prompt_text = ""
 
-    def responder(context, _options, _state, _model):
+    async def responder(context, _options, _state, _model):
         nonlocal prompt_text
         message = context.messages[0] if context.messages else None
         content = message.content if message is not None and getattr(message, "role", None) == "user" else []
@@ -561,7 +561,7 @@ async def test_clamps_compaction_summary_max_tokens_to_the_model_output_cap():
     messages = [create_user_message("Summarize this.")]
     seen_options = []
 
-    def responder(_context, options, _state, _model):
+    async def responder(_context, options, _state, _model):
         seen_options.append(options)
         return faux_assistant_message("## Goal\nTest summary")
 
@@ -651,7 +651,7 @@ async def test_passes_reasoning_through_turn_prefix_summaries_when_enabled():
     messages = [create_user_message("Summarize this.")]
     seen_options = []
 
-    def responder(_context, options, _state, _model):
+    async def responder(_context, options, _state, _model):
         seen_options.append(options)
         return faux_assistant_message("## Original Request\nTest summary")
 

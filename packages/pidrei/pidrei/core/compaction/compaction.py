@@ -417,7 +417,8 @@ async def complete_summarization(
         raise Exception("complete_summarization requires a stream function (pi's compat registry is not ported)")
 
     async def produce():
-        return await stream_fn(model, context, request_options).result()
+        stream = await stream_fn(model, context, request_options)
+        return await stream.result()
 
     return await retry_assistant_call(produce, retry, request_options.cancel, callbacks)
 

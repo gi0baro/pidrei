@@ -13,7 +13,6 @@ The config keys stay the SDK's own camelCase (`apiKey`, `apiVersion`,
 azure-openai-base-url spec asserts on.
 """
 
-import inspect
 import time
 from dataclasses import dataclass, fields
 from typing import Any
@@ -50,6 +49,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -168,13 +168,6 @@ def _azure_options(options: StreamOptions | None) -> AzureOpenAIResponsesOptions
     return AzureOpenAIResponsesOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _azure_options(options)
     out_stream = AssistantMessageEventStream()
@@ -201,7 +194,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 context.tools, bool(getattr(model.compat, "supports_openai_grammar_tools", None))
             )
             params = build_params(model, context, opts, deployment_name, grammar_tool_input_properties)
-            next_params = await _maybe_call(opts.on_payload, params, model)
+            next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
 
@@ -214,7 +207,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 max_retry_delay_ms=opts.max_retry_delay_ms,
                 cancel=opts.cancel,
             )
-            await _maybe_call(
+            await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
             )
             out_stream.push(StartEvent(partial=output))

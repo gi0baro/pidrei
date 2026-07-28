@@ -24,7 +24,7 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from .agent_session_helpers import create_agent_session
 
 
-def _stream_fn(_model, _context, options=None) -> AssistantMessageEventStream:
+async def _stream_fn(_model, _context, options=None) -> AssistantMessageEventStream:
     return AssistantMessageEventStream()
 
 

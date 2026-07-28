@@ -17,7 +17,6 @@ Two runtime-forced differences:
 """
 
 import base64
-import inspect
 import re
 import time
 from dataclasses import dataclass, fields
@@ -85,6 +84,7 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     Usage,
 )
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -134,13 +134,6 @@ def _bedrock_options(options: StreamOptions | None) -> BedrockOptions:
         return BedrockOptions()
     values = {f.name: getattr(options, f.name) for f in fields(StreamOptions)}
     return BedrockOptions(**values)
-
-
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
 
 
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
@@ -240,7 +233,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 "additionalModelRequestFields": build_additional_model_request_fields(model, opts),
                 **({"requestMetadata": opts.request_metadata} if opts.request_metadata is not None else {}),
             }
-            next_command_input = await _maybe_call(opts.on_payload, command_input, model)
+            next_command_input = await maybe_call(opts.on_payload, command_input, model)
             if next_command_input is not None:
                 command_input = next_command_input
             command = ConverseStreamCommand(command_input)
@@ -250,7 +243,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 response_headers: dict[str, str] = {}
                 if response.metadata.request_id:
                     response_headers["x-amzn-requestid"] = response.metadata.request_id
-                await _maybe_call(
+                await maybe_call(
                     opts.on_response,
                     ProviderResponse(status=response.metadata.http_status_code, headers=response_headers),
                     model,

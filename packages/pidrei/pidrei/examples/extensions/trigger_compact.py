@@ -36,7 +36,7 @@ def extension(pi):
             }
         )
 
-    def on_turn_end(_event, ctx) -> None:
+    async def on_turn_end(_event, ctx) -> None:
         usage = ctx.get_context_usage()
         current_tokens = getattr(usage, "tokens", None) if usage is not None else None
         if current_tokens is None:

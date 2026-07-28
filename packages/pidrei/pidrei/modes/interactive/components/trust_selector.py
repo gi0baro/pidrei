@@ -1,7 +1,5 @@
 """Mirror of pi coding-agent src/modes/interactive/components/trust-selector.ts."""
 
-from collections.abc import Awaitable
-
 from pidrei_tui import Container, Spacer, Text, get_keybindings
 
 from ....core.trust_manager import get_project_trust_options
@@ -22,7 +20,10 @@ def _format_decision(trust_path: str | None, decision) -> str:
 class TrustSelectorComponent(Container):
     """Options: ``{"cwd", "savedDecision", "projectTrusted", "onSelect", "onCancel"}``.
 
-    on_select receives a ``{"trusted", "updates"}`` record.
+    ``onSelect`` receives a ``{"trusted", "updates"}`` record and must be
+    coroutine-returning (it persists trust decisions — pi's sync ``onSelect``
+    blocks its event loop on the store write, which the never-block rule
+    forbids here). ``onCancel`` is sync.
     """
 
     def __init__(self, options: dict) -> None:
@@ -107,9 +108,6 @@ class TrustSelectorComponent(Container):
         elif kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
             if 0 <= self._selected_index < len(self._trust_options):
                 selected = self._trust_options[self._selected_index]
-                # Sync or coroutine-returning, like the other selector callbacks.
-                result = self._on_select_callback({"trusted": selected.trusted, "updates": selected.updates})
-                if isinstance(result, Awaitable):
-                    await result
+                await self._on_select_callback({"trusted": selected.trusted, "updates": selected.updates})
         elif kb.matches(key_data, "tui.select.cancel"):
             self._on_cancel_callback()

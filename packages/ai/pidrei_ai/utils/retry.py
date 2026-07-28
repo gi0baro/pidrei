@@ -7,7 +7,6 @@ interruptible; aborts during backoff are normalized to an aborted
 `AssistantMessage` so callers never care when cancellation happened.
 """
 
-import inspect
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -17,6 +16,7 @@ import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
 from pidrei_ai.types import AssistantMessage
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 
 
@@ -109,27 +109,22 @@ class RetryPolicy:
 
 @dataclass(slots=True)
 class RetryCallbacks:
-    """Optional callbacks emitted by `retry_assistant_call` around each retry."""
+    """Optional callbacks emitted by `retry_assistant_call` around each retry.
+
+    Awaitable-returning by contract (async-only callback policy).
+    """
 
     # Before the backoff sleep of each retry attempt (1-indexed):
     # (attempt, max_attempts, delay_ms, error_message)
-    on_retry_scheduled: Callable[[int, int, float, str], Any] | None = None
+    on_retry_scheduled: Callable[[int, int, float, str], Awaitable[Any]] | None = None
     # After the backoff sleep, immediately before the retried call starts.
-    on_retry_attempt_start: Callable[[], Any] | None = None
+    on_retry_attempt_start: Callable[[], Awaitable[Any]] | None = None
     # Once when the loop ends: (success, attempt, final_error?)
-    on_retry_finished: Callable[..., Any] | None = None
+    on_retry_finished: Callable[..., Awaitable[Any]] | None = None
 
 
 class _RetrySleepAbort(Exception):
     pass
-
-
-async def _maybe_await(callback: Callable[..., Any] | None, *args: Any) -> None:
-    if callback is None:
-        return
-    result = callback(*args)
-    if inspect.isawaitable(result):
-        await result
 
 
 _SLEPT = object()
@@ -180,32 +175,32 @@ async def retry_assistant_call(
         # Abort: terminal but not successful. Never retry an aborted message.
         if response.stop_reason == "aborted":
             if last_retry is not None:
-                await _maybe_await(callbacks.on_retry_finished, False, last_retry[0])
+                await maybe_call(callbacks.on_retry_finished, False, last_retry[0])
             return response
 
         # Success: non-error, non-abort responses return as-is.
         if response.stop_reason != "error":
             if last_retry is not None:
-                await _maybe_await(callbacks.on_retry_finished, True, last_retry[0])
+                await maybe_call(callbacks.on_retry_finished, True, last_retry[0])
             return response
 
         # Non-retryable, or budget exhausted: return the final error message.
         if attempt >= max_attempts or not is_retryable_assistant_error(response):
             if last_retry is not None:
-                await _maybe_await(callbacks.on_retry_finished, False, last_retry[0], response.error_message)
+                await maybe_call(callbacks.on_retry_finished, False, last_retry[0], response.error_message)
             return response
 
         attempt += 1
         last_retry = (attempt, response.error_message or "Unknown error")
         delay_ms = policy.base_delay_ms * 2 ** (attempt - 1)  # type: ignore[union-attr]
-        await _maybe_await(callbacks.on_retry_scheduled, attempt, max_attempts, delay_ms, last_retry[1])
+        await maybe_call(callbacks.on_retry_scheduled, attempt, max_attempts, delay_ms, last_retry[1])
 
         try:
             await _sleep(delay_ms, cancel)
         except _RetrySleepAbort:
-            await _maybe_await(callbacks.on_retry_finished, False, attempt, last_retry[1])
+            await maybe_call(callbacks.on_retry_finished, False, attempt, last_retry[1])
             return replace(response, stop_reason="aborted", error_message=None)
-        await _maybe_await(callbacks.on_retry_attempt_start)
+        await maybe_call(callbacks.on_retry_attempt_start)
 
 
 def is_retryable_assistant_error(message: AssistantMessage) -> bool:

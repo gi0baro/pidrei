@@ -16,7 +16,7 @@ class CountdownTimer:
         self._on_tick(self._remaining_seconds)
         self._interval: Interval | None = Interval(1000, self._tick)
 
-    def _tick(self) -> None:
+    async def _tick(self) -> None:
         self._remaining_seconds -= 1
         self._on_tick(self._remaining_seconds)
         if self._tui is not None:

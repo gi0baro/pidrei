@@ -95,7 +95,7 @@ def _convert_to_llm_with_block_images(settings_manager: SettingsManager):
     (defense in depth). Checks the setting dynamically so mid-session changes
     take effect."""
 
-    def convert(messages: list[Any]) -> list[Any]:
+    async def convert(messages: list[Any]) -> list[Any]:
         converted = convert_to_llm(messages)
         if not settings_manager.get_block_images():
             return converted
@@ -234,7 +234,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
 
     extension_runner_ref = _ExtensionRunnerRef()
 
-    def stream_fn(request_model: Model, context: Any, stream_options: Any = None):
+    async def stream_fn(request_model: Model, context: Any, stream_options: Any = None):
         provider_retry_settings = settings_manager.get_provider_retry_settings()
         http_idle_timeout_ms = settings_manager.get_http_idle_timeout_ms()
         # SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".

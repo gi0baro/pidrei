@@ -73,7 +73,7 @@ class DaxnutsComponent:
         self._cached_width = 0
 
     def _start_animation(self) -> None:
-        def on_tick() -> None:
+        async def on_tick() -> None:
             self._tick += 1
             if self._tick >= self._max_ticks:
                 self._stop_animation()

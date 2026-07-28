@@ -13,7 +13,6 @@ optional ``trigger_characters`` and ``should_trigger_file_completion``.
 ``options["signal"]`` is a ``CancelToken`` (pi uses a DOM ``AbortSignal``).
 """
 
-import inspect
 import os
 import re
 import subprocess
@@ -266,9 +265,7 @@ class CombinedAutocompleteProvider:
             if command is None or not command.get("getArgumentCompletions"):
                 return None
 
-            argument_suggestions = command["getArgumentCompletions"](argument_text)
-            if inspect.isawaitable(argument_suggestions):
-                argument_suggestions = await argument_suggestions
+            argument_suggestions = await command["getArgumentCompletions"](argument_text)
             if not isinstance(argument_suggestions, list) or not argument_suggestions:
                 return None
 

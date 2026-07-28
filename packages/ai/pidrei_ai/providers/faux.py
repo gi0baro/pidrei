@@ -67,8 +67,9 @@ DEFAULT_MAX_TOKEN_SIZE = 5
 
 type FauxContentBlock = TextContent | ThinkingContent | ToolCall
 # A queued step: a ready message, or a factory (context, options, state, model)
-# returning an AssistantMessage (sync or async).
-type FauxResponseStep = AssistantMessage | Callable[..., Any]
+# returning an awaitable of AssistantMessage (async-only callback policy; pi's
+# `FauxResponseFactory` is a `T | Promise<T>` union).
+type FauxResponseStep = AssistantMessage | Callable[..., Awaitable[AssistantMessage]]
 
 
 class FauxState:
@@ -435,9 +436,7 @@ class FauxCore:
         async def _run() -> None:
             try:
                 if stream_options is not None and stream_options.on_response is not None:
-                    result = stream_options.on_response(ProviderResponse(status=200, headers={}), request_model)
-                    if isinstance(result, Awaitable):
-                        await result
+                    await stream_options.on_response(ProviderResponse(status=200, headers={}), request_model)
                 if step is None:
                     message = self._create_error_message("No more faux responses queued", request_model.id)
                     message = self._with_usage_estimate(message, context, stream_options)
@@ -446,9 +445,7 @@ class FauxCore:
                     return
 
                 if callable(step):
-                    resolved = step(context, stream_options, self.state, request_model)
-                    if isinstance(resolved, Awaitable):
-                        resolved = await resolved
+                    resolved = await step(context, stream_options, self.state, request_model)
                 else:
                     resolved = step
                 message = self._clone_message(resolved, request_model.id)

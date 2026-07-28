@@ -68,7 +68,7 @@ async def capture_payload(context: Context, model=None) -> dict:
     cancel = CancelToken()
     cancel.cancel()
 
-    def on_payload(payload, _model):
+    async def on_payload(payload, _model):
         captured.append(payload)
         return payload
 

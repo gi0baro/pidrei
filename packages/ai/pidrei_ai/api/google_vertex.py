@@ -11,7 +11,6 @@ this adapter has no Gemma branch in its thinking-level mapping, and no
 `2.5-flash-lite` row in its budget table.
 """
 
-import inspect
 import itertools
 import json
 import re
@@ -62,6 +61,7 @@ from pidrei_ai.types import (
     Usage,
     UsageCost,
 )
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -108,13 +108,6 @@ def _vertex_options(options: StreamOptions | None) -> GoogleVertexOptions:
     return GoogleVertexOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _vertex_options(options)
     out_stream = AssistantMessageEventStream()
@@ -140,7 +133,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 else create_client(model, resolve_project(opts), resolve_location(opts), opts.headers, opts.env)
             )
             params = build_params(model, context, opts)
-            next_params = await _maybe_call(opts.on_payload, params, model)
+            next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
             google_stream = client.generate_content_stream(params, env=opts.env, cancel=opts.cancel)

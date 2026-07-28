@@ -34,7 +34,6 @@ Port deviations (pi is single-threaded JS):
 
 import re
 import threading
-from collections.abc import Awaitable
 
 from ._timers import Timeout
 
@@ -284,9 +283,9 @@ class StdinBuffer:
         for kind, payload in emissions:
             listeners = self._data_listeners if kind == "data" else self._paste_listeners
             for listener in list(listeners):
-                result = listener(payload)
-                if isinstance(result, Awaitable):
-                    await result
+                # Listeners are awaitable-returning (async-only policy): they
+                # re-enter the async input chain.
+                await listener(payload)
 
     def _process(self, data: str | bytes | bytearray, out: list[tuple[str, str]]) -> None:
         # Clear any pending timeout

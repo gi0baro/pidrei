@@ -591,7 +591,7 @@ class ProcessTerminal:
                 if self._progress_interval is None:
                     interval: Interval | None = None
 
-                    def fire() -> None:
+                    async def fire() -> None:
                         with self._lock:
                             # set_progress(False) may have raced the firing
                             # callback past its cancellation check.

@@ -129,7 +129,7 @@ async def test_drains_one_queued_steering_message_at_a_time_and_emits_queue_upda
     user_counts: list[int] = []
 
     def responder(text):
-        def respond(context, _options, _state, _model):
+        async def respond(context, _options, _state, _model):
             user_counts.append(len([m for m in context.messages if getattr(m, "role", None) == "user"]))
             return faux_assistant_message(text)
 
@@ -169,17 +169,18 @@ async def test_appends_before_agent_start_messages_and_persists_them():
     registration = new_faux()
     request_text: list[str] = []
 
-    def respond(context, _options, _state, _model):
+    async def respond(context, _options, _state, _model):
         request_text.extend(text_from_user_messages(context.messages))
         return faux_assistant_message("ok")
 
     registration.set_responses([respond])
     session = Session(InMemorySessionStorage())
     harness = AgentHarness(AgentHarnessOptions(models=models, session=session, model=registration.get_model()))
-    harness.on(
-        "before_agent_start",
-        lambda _event: BeforeAgentStartResult(messages=[create_user_message("hook")]),
-    )
+
+    async def before_agent_start(_event):
+        return BeforeAgentStartResult(messages=[create_user_message("hook")])
+
+    harness.on("before_agent_start", before_agent_start)
 
     await harness.prompt("hello")
 
@@ -205,7 +206,7 @@ async def test_abort_clears_steer_and_follow_up_queues_but_preserves_next_turn_m
         await first_response_released.wait(None)
         return faux_assistant_message("aborted-ish")
 
-    def second_respond(context, _options, _state, _model):
+    async def second_respond(context, _options, _state, _model):
         second_request_text.extend(text_from_user_messages(context.messages))
         return faux_assistant_message("second")
 
@@ -215,7 +216,7 @@ async def test_abort_clears_steer_and_follow_up_queues_but_preserves_next_turn_m
     )
     queue_updates: list[tuple[int, int, int]] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type == "queue_update":
             queue_updates.append((len(event.steer), len(event.follow_up), len(event.next_turn)))
 
@@ -246,7 +247,7 @@ async def test_drains_follow_up_messages_one_at_a_time_after_the_agent_would_oth
     user_counts: list[int] = []
 
     def responder(text):
-        def respond(context, _options, _state, _model):
+        async def respond(context, _options, _state, _model):
             user_counts.append(len([m for m in context.messages if getattr(m, "role", None) == "user"]))
             return faux_assistant_message(text)
 
@@ -288,9 +289,13 @@ async def test_settles_thrown_hook_failures_with_persisted_assistant_error_messa
     session = Session(InMemorySessionStorage())
     harness = AgentHarness(AgentHarnessOptions(models=models, session=session, model=registration.get_model()))
     events: list[str] = []
-    harness.subscribe(lambda event, _signal: events.append(event.type))
 
-    def context_hook(_event):
+    async def record_event(event, _signal):
+        events.append(event.type)
+
+    harness.subscribe(record_event)
+
+    async def context_hook(_event):
         raise Exception("context exploded")
 
     harness.on("context", context_hook)
@@ -333,17 +338,21 @@ async def test_refreshes_model_thinking_level_resources_system_prompt_and_active
             )
         )
 
-    def first_respond(context, options, state, model):
+    async def first_respond(context, options, state, model):
         capture(context, options, state, model)
         return faux_assistant_message(
             faux_tool_call("calculate", {"expression": "1 + 1"}, id="call-1"), stop_reason="toolUse"
         )
 
-    def second_respond(context, options, state, model):
+    async def second_respond(context, options, state, model):
         capture(context, options, state, model)
         return faux_assistant_message("done")
 
     registration.set_responses([first_respond, second_respond])
+
+    async def system_prompt(ctx):
+        return (ctx.resources.skills or [Skill("", "", "missing prompt", "")])[0].content
+
     harness = AgentHarness(
         AgentHarnessOptions(
             models=models,
@@ -353,7 +362,7 @@ async def test_refreshes_model_thinking_level_resources_system_prompt_and_active
             resources=AgentHarnessResources(
                 skills=[Skill(name="prompt", description="prompt", content="first prompt", file_path="/skills/prompt")]
             ),
-            system_prompt=lambda ctx: (ctx.resources.skills or [Skill("", "", "missing prompt", "")])[0].content,
+            system_prompt=system_prompt,
             tools=[calculate_tool],
         )
     )
@@ -475,10 +484,10 @@ async def test_runs_tool_call_and_tool_result_hooks_through_the_direct_loop():
     seen_tool_calls: list[tuple[str, str, object]] = []
     seen_tool_usage = None
 
-    def on_tool_call(event):
+    async def on_tool_call(event):
         seen_tool_calls.append((event.tool_call_id, event.tool_name, event.input["expression"]))
 
-    def on_tool_result(event):
+    async def on_tool_result(event):
         nonlocal seen_tool_usage
         assert event.tool_call_id == "call-1"
         assert event.tool_name == "calculate"
@@ -611,17 +620,18 @@ async def test_persists_hook_provided_compaction_usage():
     await session.append_message(create_user_message("one"))
     await session.append_message(create_assistant_message("two"))
     harness = AgentHarness(AgentHarnessOptions(models=models, session=session, model=registration.get_model()))
-    harness.on(
-        "session_before_compact",
-        lambda event: SessionBeforeCompactResult(
+
+    async def session_before_compact(event):
+        return SessionBeforeCompactResult(
             compaction=CompactionResult(
                 summary="hook summary",
                 first_kept_entry_id=event.preparation.first_kept_entry_id,
                 tokens_before=event.preparation.tokens_before,
                 usage=usage,
             )
-        ),
-    )
+        )
+
+    harness.on("session_before_compact", session_before_compact)
 
     result = await harness.compact()
     compaction = next((entry for entry in await session.get_entries() if entry.type == "compaction"), None)
@@ -636,12 +646,12 @@ async def test_retries_transient_compaction_errors_and_emits_retry_events():
     registration = new_faux()
     calls = 0
 
-    def failing(_context, _options, _state, _model):
+    async def failing(_context, _options, _state, _model):
         nonlocal calls
         calls += 1
         return faux_assistant_message("", stop_reason="error", error_message="terminated")
 
-    def recovering(_context, _options, _state, _model):
+    async def recovering(_context, _options, _state, _model):
         nonlocal calls
         calls += 1
         return faux_assistant_message("## Goal\nRecovered summary")
@@ -660,7 +670,7 @@ async def test_retries_transient_compaction_errors_and_emits_retry_events():
     )
     retry_events: list[str] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type in ("retry_scheduled", "retry_attempt_start", "retry_finished"):
             retry_events.append(f"{event.type}:{event.operation}")
 
@@ -682,7 +692,7 @@ async def test_does_not_retry_non_retryable_compaction_errors():
     registration = new_faux()
     calls = 0
 
-    def failing(_context, _options, _state, _model):
+    async def failing(_context, _options, _state, _model):
         nonlocal calls
         calls += 1
         return faux_assistant_message("", stop_reason="error", error_message="insufficient_quota")
@@ -701,7 +711,7 @@ async def test_does_not_retry_non_retryable_compaction_errors():
     )
     retry_events: list[str] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type in ("retry_scheduled", "retry_attempt_start", "retry_finished"):
             retry_events.append(event.type)
 
@@ -719,7 +729,7 @@ async def test_exhausts_transient_compaction_retries_after_max_retries_failures(
     registration = new_faux()
     calls = 0
 
-    def failing(_context, _options, _state, _model):
+    async def failing(_context, _options, _state, _model):
         nonlocal calls
         calls += 1
         return faux_assistant_message("", stop_reason="error", error_message="terminated")
@@ -738,7 +748,7 @@ async def test_exhausts_transient_compaction_retries_after_max_retries_failures(
     )
     retry_events: list[str] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type in ("retry_scheduled", "retry_attempt_start", "retry_finished"):
             retry_events.append(f"{event.type}:{event.operation}")
 
@@ -764,12 +774,12 @@ async def test_retries_transient_branch_summary_errors_and_emits_retry_events():
     registration = new_faux()
     calls = 0
 
-    def failing(_context, _options, _state, _model):
+    async def failing(_context, _options, _state, _model):
         nonlocal calls
         calls += 1
         return faux_assistant_message("", stop_reason="error", error_message="terminated")
 
-    def recovering(_context, _options, _state, _model):
+    async def recovering(_context, _options, _state, _model):
         nonlocal calls
         calls += 1
         return faux_assistant_message("## Goal\nRecovered branch summary")
@@ -790,7 +800,7 @@ async def test_retries_transient_branch_summary_errors_and_emits_retry_events():
     )
     retry_events: list[str] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type in ("retry_scheduled", "retry_attempt_start", "retry_finished"):
             retry_events.append(f"{event.type}:{event.operation}")
 
@@ -836,12 +846,11 @@ async def test_persists_hook_provided_branch_summary_usage():
     await session.append_message(create_user_message("abandoned work"))
     await session.append_message(create_assistant_message("abandoned reply"))
     harness = AgentHarness(AgentHarnessOptions(models=models, session=session, model=registration.get_model()))
-    harness.on(
-        "session_before_tree",
-        lambda _event: SessionBeforeTreeResult(
-            summary=BranchSummaryOverride(summary="hook branch summary", usage=usage)
-        ),
-    )
+
+    async def session_before_tree(_event):
+        return SessionBeforeTreeResult(summary=BranchSummaryOverride(summary="hook branch summary", usage=usage))
+
+    harness.on("session_before_tree", session_before_tree)
 
     result = await harness.navigate_tree(target_id, summarize=True)
 
@@ -867,7 +876,7 @@ async def test_preserves_app_tool_types_for_getters_and_update_events():
     )
     updates: list[dict] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type == "tools_update":
             updates.append(
                 {
@@ -975,7 +984,7 @@ async def test_preserves_app_resource_types_for_getters_and_update_events():
     resources = AgentHarnessResources(skills=[skill], prompt_templates=[prompt_template])
     updates: list[tuple[object, object]] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type == "resources_update":
             updates.append(
                 (

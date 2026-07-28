@@ -9,7 +9,6 @@ whole request — a legitimately long SSE stream must not hit a total deadline.
 (a client) does not expose.
 """
 
-import inspect
 import threading
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping
 from typing import Any
@@ -161,13 +160,15 @@ async def _drain_body(body: AsyncIterable[bytes]) -> None:
 
 
 async def close_response(response: object) -> None:
-    """Abort a streaming response (punkreq's idempotent release)."""
+    """Abort a streaming response (punkreq's idempotent release).
+
+    ``close`` is async-only (punkreq's and every adapter's is); the guard is
+    for its *absence* on injected test clients, not for a sync variant.
+    """
     close = getattr(response, "close", None)
     if close is None:
         return
-    result = close()
-    if inspect.isawaitable(result):
-        await result
+    await close()
 
 
 def request_timeout(timeout_ms: float | None) -> Timeout:

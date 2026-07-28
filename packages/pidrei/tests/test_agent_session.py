@@ -141,7 +141,7 @@ class TestConcurrentPromptGuard:
 
     @pytest.mark.tonio
     async def test_allows_prompt_after_previous_completes(self, tmp_dir):
-        def stream_fn(_model, _context, _options=None):
+        async def stream_fn(_model, _context, _options=None):
             stream = AssistantMessageEventStream()
             stream.push(StartEvent(partial=create_assistant_message("")))
             stream.push(DoneEvent(reason="stop", message=create_assistant_message("Done")))
@@ -169,7 +169,7 @@ class TestConcurrentPromptGuard:
 
         tool = DummyTool()
 
-        def stream_fn(_model, context, _options=None):
+        async def stream_fn(_model, context, _options=None):
             stream = AssistantMessageEventStream()
             tool_result_count = sum(1 for m in context.messages if getattr(m, "role", None) == "toolResult")
             if tool_result_count > 0:
@@ -228,7 +228,7 @@ class TestConcurrentPromptGuard:
 
         tool = DummyTool()
 
-        def stream_fn(_model, context, _options=None):
+        async def stream_fn(_model, context, _options=None):
             stream = AssistantMessageEventStream()
             has_tool_result = any(getattr(m, "role", None) == "toolResult" for m in context.messages)
             if has_tool_result:
@@ -283,7 +283,7 @@ class TestRetry:
     async def _create_session(self, tmp_dir, *, fail_count=1, max_retries=3, delay_assistant_message_end_ms=0):
         call_count = {"value": 0}
 
-        def stream_fn(_model, _context, _options=None):
+        async def stream_fn(_model, _context, _options=None):
             call_count["value"] += 1
             stream = AssistantMessageEventStream()
             if call_count["value"] <= fail_count:
@@ -370,7 +370,7 @@ class TestRetry:
     async def test_retries_provider_network_error_failures(self, tmp_dir):
         call_count = {"value": 0}
 
-        def stream_fn(_model, _context, _options=None):
+        async def stream_fn(_model, _context, _options=None):
             call_count["value"] += 1
             stream = AssistantMessageEventStream()
             if call_count["value"] == 1:
@@ -428,7 +428,7 @@ class TestRetry:
 
         echo_tool = EchoTool()
 
-        def stream_fn(_model, _context, _options=None):
+        async def stream_fn(_model, _context, _options=None):
             call_count["value"] += 1
             stream = AssistantMessageEventStream()
             if call_count["value"] == 1:
@@ -529,14 +529,17 @@ async def _create_stats_session():
 
     model_runtime = await ModelRuntime.create(credentials=auth_storage, models_path=None, allow_model_network=False)
 
-    def stream_fn(*_args, **_kwargs):
+    async def stream_fn(*_args, **_kwargs):
         raise Exception("unused")
+
+    async def get_api_key(_provider):
+        return "test-key"
 
     session = AgentSession(
         AgentSessionConfig(
             agent=Agent(
                 stream_fn=stream_fn,
-                get_api_key=lambda _provider: "test-key",
+                get_api_key=get_api_key,
                 initial_state=AgentInitialState(
                     model=_STATS_MODEL,
                     system_prompt="You are a helpful assistant.",
@@ -711,7 +714,7 @@ class TestGetSessionStats:
 
 class TestAutoCompactionQueue:
     async def _create_session(self, tmp_dir):
-        def stream_fn(*_args, **_kwargs):
+        async def stream_fn(*_args, **_kwargs):
             raise Exception("unused")
 
         session = await create_agent_session(tmp_dir, stream_fn=stream_fn)
@@ -739,7 +742,7 @@ class TestAutoCompactionQueue:
         )
         session.agent.state.messages = session_manager.build_session_context().messages
 
-        def summary_stream_fn(summary_model, _context, _options=None):
+        async def summary_stream_fn(summary_model, _context, _options=None):
             stream = AssistantMessageEventStream()
             from pidrei_ai.providers.faux import faux_assistant_message
 

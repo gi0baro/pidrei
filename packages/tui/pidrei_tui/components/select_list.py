@@ -10,7 +10,6 @@ the latter receiving a ``{"text", "maxWidth", "columnWidth", "item",
 
 import math
 import re
-from collections.abc import Awaitable
 
 from ..keybindings import get_keybindings
 from ..utils import truncate_to_width, visible_width
@@ -102,13 +101,13 @@ class SelectList:
             self._selected_index = (
                 len(self._filtered_items) - 1 if self._selected_index == 0 else self._selected_index - 1
             )
-            self._notify_selection_change()
+            await self._notify_selection_change()
         # Down arrow - wrap to top when at bottom
         elif kb.matches(key_data, "tui.select.down"):
             self._selected_index = (
                 0 if self._selected_index == len(self._filtered_items) - 1 else self._selected_index + 1
             )
-            self._notify_selection_change()
+            await self._notify_selection_change()
         # Enter
         elif kb.matches(key_data, "tui.select.confirm"):
             selected_item = (
@@ -117,15 +116,13 @@ class SelectList:
                 else None
             )
             if selected_item is not None and self.on_select is not None:
-                # `on_select` may be sync or coroutine-returning: input
-                # handling is async now, and some selections persist.
-                result = self.on_select(selected_item)
-                if isinstance(result, Awaitable):
-                    await result
+                # Callbacks are awaitable-returning (async-only policy): input
+                # handling is async, and some selections persist.
+                await self.on_select(selected_item)
         # Escape or Ctrl+C
         elif kb.matches(key_data, "tui.select.cancel"):
             if self.on_cancel is not None:
-                self.on_cancel()
+                await self.on_cancel()
 
     def _render_item(
         self,
@@ -212,14 +209,17 @@ class SelectList:
     def _get_display_value(self, item: dict) -> str:
         return item.get("label") or item["value"]
 
-    def _notify_selection_change(self) -> None:
+    async def _notify_selection_change(self) -> None:
         selected_item = (
             self._filtered_items[self._selected_index]
             if 0 <= self._selected_index < len(self._filtered_items)
             else None
         )
         if selected_item is not None and self.on_selection_change is not None:
-            self.on_selection_change(selected_item)
+            # Awaitable-returning like `on_select`; pi runs the callback to
+            # completion before the next render, so awaiting inline (not
+            # detaching) is the matching order.
+            await self.on_selection_change(selected_item)
 
     def get_selected_item(self) -> dict | None:
         if 0 <= self._selected_index < len(self._filtered_items):

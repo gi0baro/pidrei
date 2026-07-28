@@ -23,7 +23,7 @@ from .agent_session_helpers import create_agent_session, create_test_resource_lo
 from .coding_session_helpers import assistant_msg, user_msg
 
 
-def _stream_fn(_model, _context, options=None) -> AssistantMessageEventStream:
+async def _stream_fn(_model, _context, options=None) -> AssistantMessageEventStream:
     return AssistantMessageEventStream()
 
 
@@ -46,10 +46,10 @@ async def test_persists_extension_provided_summary_usage_in_session_totals(temp_
     )
 
     def factory(pi) -> None:
-        pi.on(
-            "session_before_tree",
-            lambda _event, _ctx: {"summary": {"summary": "Summary provided by extension", "usage": usage}},
-        )
+        async def on_session_before_tree(_event, _ctx):
+            return {"summary": {"summary": "Summary provided by extension", "usage": usage}}
+
+        pi.on("session_before_tree", on_session_before_tree)
 
     runtime = create_extension_runtime()
     extension = await load_extension_from_factory(factory, temp_dir, EventBus(), runtime, "<inline:1>")

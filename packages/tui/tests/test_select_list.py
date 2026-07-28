@@ -1,5 +1,7 @@
 """Mirror of pi tui test/select-list.test.ts."""
 
+import pytest
+
 from pidrei_tui.components.select_list import SelectList
 from pidrei_tui.utils import visible_width
 
@@ -129,3 +131,27 @@ def test_allows_overriding_primary_truncation_while_preserving_description_align
 
     assert "…" in rendered[0]
     assert visible_index_of(rendered[0], "first") == visible_index_of(rendered[1], "second")
+
+
+@pytest.mark.tonio
+async def test_awaits_coroutine_returning_selection_change_and_cancel_callbacks():
+    """Not a pi mirror: pi types these callbacks `=> void` and calls them bare;
+    the port allows coroutine-returning callbacks and must await them inline
+    (dropping them silently skipped theme previews and Esc handling)."""
+    items = [{"value": "a", "label": "a"}, {"value": "b", "label": "b"}]
+    select_list = SelectList(items, 5, test_theme)
+    events = []
+
+    async def on_selection_change(item):
+        events.append(("change", item["value"]))
+
+    async def on_cancel():
+        events.append(("cancel", None))
+
+    select_list.on_selection_change = on_selection_change
+    select_list.on_cancel = on_cancel
+
+    await select_list.handle_input("\x1b[B")  # down
+    await select_list.handle_input("\x1b")  # escape
+
+    assert events == [("change", "b"), ("cancel", None)]

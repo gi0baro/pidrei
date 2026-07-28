@@ -152,8 +152,9 @@ Third-party packages work if they are installed in the same environment.
 
 ## Events
 
-Register with `pi.on(name, handler)`. Handlers may be sync or async; async
-handlers are awaited. Each receives `(event, ctx)` where `ctx` is an
+Register with `pi.on(name, handler)`. Handlers must be `async def` (or
+return an awaitable) and are awaited; a plain sync function is not accepted.
+Each receives `(event, ctx)` where `ctx` is an
 [ExtensionContext](#extensioncontext).
 
 ### Lifecycle

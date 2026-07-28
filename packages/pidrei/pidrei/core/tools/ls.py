@@ -1,6 +1,5 @@
 """Mirror of pi coding-agent src/core/tools/ls.ts."""
 
-import inspect
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -89,12 +88,11 @@ class LocalLsOperations:
         return await tonio.spawn_blocking(os.listdir, absolute_path)
 
 
-async def _maybe_await(value: Any) -> Any:
-
-    return await value if inspect.isawaitable(value) else value
-
-
 def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefinition:
+    # `operations` members (`exists`/`is_directory`/`readdir`) are async-only.
+    # pi types them `Promise<T> | T` because its sync defaults block the event
+    # loop (`existsSync`); a sync impl doing real fs work would block this
+    # runtime, so the union is deliberately not ported.
     ops = operations if operations is not None else LocalLsOperations()
 
     async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
@@ -108,16 +106,16 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
         effective_limit = int(limit) if limit is not None else DEFAULT_LIMIT
 
         # Check if path exists.
-        if not await _maybe_await(ops.exists(dir_path)):
+        if not await ops.exists(dir_path):
             raise Exception(f"Path not found: {dir_path}")
 
         # Check if path is a directory.
-        if not await _maybe_await(ops.is_directory(dir_path)):
+        if not await ops.is_directory(dir_path):
             raise Exception(f"Not a directory: {dir_path}")
 
         # Read directory entries.
         try:
-            entries = list(await _maybe_await(ops.readdir(dir_path)))
+            entries = list(await ops.readdir(dir_path))
         except Exception as error:
             raise Exception(f"Cannot read directory: {error}")
 
@@ -134,7 +132,7 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
 
             full_path = os.path.join(dir_path, entry)
             try:
-                suffix = "/" if await _maybe_await(ops.is_directory(full_path)) else ""
+                suffix = "/" if await ops.is_directory(full_path) else ""
                 if not await fs.Path(full_path).exists():
                     continue  # Skip entries we cannot stat (broken symlinks).
             except Exception:  # noqa: S112

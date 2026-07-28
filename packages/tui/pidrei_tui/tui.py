@@ -32,7 +32,6 @@ import re
 import secrets
 import threading
 import time as _time
-from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -810,11 +809,9 @@ class TUI(Container):
             return False
 
         for listener in list(self._color_scheme_listeners):
-            # Listeners may be sync or coroutine-returning: reacting to a
-            # scheme change can mean loading a theme from disk.
-            result = listener(scheme)
-            if isinstance(result, Awaitable):
-                await result
+            # Listeners are awaitable-returning (async-only policy): reacting
+            # to a scheme change can mean loading a theme from disk.
+            await listener(scheme)
         return True
 
     def _consume_cell_size_response(self, data: str) -> bool:
@@ -1561,7 +1558,7 @@ class TUI(Container):
         result: dict[str, Any] = {"scheme": None}
         event = tonio.Event()
 
-        def settle(scheme) -> None:
+        async def settle(scheme) -> None:
             with self._query_lock:
                 if event.is_set():
                     return

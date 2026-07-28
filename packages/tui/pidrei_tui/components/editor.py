@@ -17,7 +17,6 @@ purely synchronous editing (no provider set) works without one.
 """
 
 import copy
-import inspect
 import math
 import re
 
@@ -1945,7 +1944,7 @@ class Editor:
         debounce_ms = self._get_autocomplete_debounce_ms(explicit_tab=explicit_tab, force=force)
         if debounce_ms > 0:
 
-            def _fire() -> None:
+            async def _fire() -> None:
                 self._autocomplete_debounce_timer = None
                 self._start_autocomplete_request(start_token, force=force, explicit_tab=explicit_tab)
 
@@ -2024,14 +2023,15 @@ class Editor:
         if self._autocomplete_provider is None:
             return
 
-        suggestions = self._autocomplete_provider.get_suggestions(
+        # Async-only, matching pi's `getSuggestions` (strictly
+        # Promise-returning, in deliberate contrast to the Awaitable union pi
+        # uses for `getArgumentCompletions` in the same interface).
+        suggestions = await self._autocomplete_provider.get_suggestions(
             self._state["lines"],
             self._state["cursorLine"],
             self._state["cursorCol"],
             {"signal": controller, "force": force},
         )
-        if inspect.isawaitable(suggestions):
-            suggestions = await suggestions
 
         if not self._is_autocomplete_request_current(
             request_id, controller, snapshot_text, snapshot_line, snapshot_col

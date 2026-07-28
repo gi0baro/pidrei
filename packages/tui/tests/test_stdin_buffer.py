@@ -20,7 +20,11 @@ FLUSH_WAIT = 0.05  # pi waits 15ms for the 10ms timer; leave real-time margin
 def _make_buffer():
     buffer = StdinBuffer(timeout=10)
     emitted_sequences = []
-    buffer.on_data(emitted_sequences.append)
+
+    async def record(sequence):
+        emitted_sequences.append(sequence)
+
+    buffer.on_data(record)
     return buffer, emitted_sequences
 
 
@@ -458,7 +462,11 @@ async def test_clears_buffered_content_without_emitting():
 def _make_paste_buffer():
     buffer, emitted = _make_buffer()
     emitted_paste = []
-    buffer.on_paste(emitted_paste.append)
+
+    async def record(content):
+        emitted_paste.append(content)
+
+    buffer.on_paste(record)
     return buffer, emitted, emitted_paste
 
 

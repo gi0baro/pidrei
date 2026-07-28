@@ -146,7 +146,7 @@ class ModelSelectorComponent(Container):
         timeout_ms = 15_000
         timed_out = False
 
-        def on_timeout() -> None:
+        async def on_timeout() -> None:
             nonlocal timed_out
             timed_out = True
             self._refresh_abort_controller.cancel()

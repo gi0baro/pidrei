@@ -63,9 +63,13 @@ def get_text_content(message) -> str:
     return "\n".join(block.text for block in message.content if getattr(block, "type", None) == "text")
 
 
+async def stream_fn(model, context, options=None):
+    return models.stream_simple(model, context, options)
+
+
 def create_agent(model, system_prompt: str, tools=None, thinking_level="off") -> Agent:
     return Agent(
-        stream_fn=models.stream_simple,
+        stream_fn=stream_fn,
         initial_state=AgentInitialState(
             system_prompt=system_prompt,
             model=model,
@@ -111,7 +115,7 @@ async def test_executes_tools_and_tracks_pending_tool_calls():
 
     pending_during_events: list[tuple[str, list[str]]] = []
 
-    def listener(event, _signal):
+    async def listener(event, _signal):
         if event.type in ("tool_execution_start", "tool_execution_end"):
             pending_during_events.append((event.type, sorted(agent.state.pending_tool_calls)))
 
@@ -171,7 +175,11 @@ async def test_emits_lifecycle_updates_while_streaming():
     agent = create_agent(faux.get_model(), "You are a helpful assistant.")
 
     events: list[str] = []
-    agent.subscribe(lambda event, _signal: events.append(event.type))
+
+    async def record_event(event, _signal):
+        events.append(event.type)
+
+    agent.subscribe(record_event)
 
     await agent.prompt("Count from 1 to 5.")
 
@@ -197,7 +205,7 @@ async def test_emits_lifecycle_updates_while_streaming():
 async def test_maintains_context_across_multiple_turns():
     faux = new_faux()
 
-    def second_response(context, _options, _state, _model):
+    async def second_response(context, _options, _state, _model):
         has_alice = any(
             getattr(message, "role", None) == "user"
             and (

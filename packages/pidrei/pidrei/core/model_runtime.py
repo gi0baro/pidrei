@@ -12,7 +12,6 @@ Deviations from pi (documented):
 - `PI_OFFLINE` → `PIDREI_OFFLINE`.
 """
 
-import inspect
 import os
 import threading
 from dataclasses import dataclass, field, replace
@@ -471,8 +470,7 @@ class ModelRuntime:
         transform_headers = provider_options.transform_headers
         headers = merge_headers(resolution.auth.headers, provider_options.headers)
         if transform_headers is not None:
-            transformed = transform_headers(headers if headers is not None else {})
-            headers = await transformed if inspect.isawaitable(transformed) else transformed
+            headers = await transform_headers(headers if headers is not None else {})
         env = (
             {**(dict(resolution.env) if resolution.env else {}), **(provider_options.env or {})}
             if resolution.env or provider_options.env

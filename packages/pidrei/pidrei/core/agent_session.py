@@ -13,13 +13,12 @@ export_to_html landed with the Phase 4 export-html slice; export_to_jsonl
 is here.
 """
 
-import inspect
 import json
 import os
 import re
 import threading
 import time as time_module
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -610,19 +609,14 @@ class AgentSession:
             previous_plain = self.agent.prepare_next_turn
 
             async def adapted(_turn: PrepareNextTurnContext, cancel=None):
-                result = previous_plain(cancel)
-
-                return await result if inspect.isawaitable(result) else result
+                return await previous_plain(cancel)
 
             previous_with_context = adapted
 
         async def prepare_next_turn_with_context(turn: PrepareNextTurnContext, cancel=None):
-
             previous_snapshot = None
             if previous_with_context is not None:
-                previous_snapshot = previous_with_context(turn, cancel)
-                if inspect.isawaitable(previous_snapshot):
-                    previous_snapshot = await previous_snapshot
+                previous_snapshot = await previous_with_context(turn, cancel)
             previous_context = (
                 previous_snapshot.context
                 if previous_snapshot is not None and previous_snapshot.context
@@ -1227,10 +1221,7 @@ class AgentSession:
         ctx = self._extension_runner.create_command_context()
 
         try:
-            result = command.handler(args, ctx)
-
-            if inspect.isawaitable(result):
-                await result
+            await command.handler(args, ctx)
             return True
         except Exception as err:
             # lazy: import cycle within core
@@ -2387,7 +2378,7 @@ class AgentSession:
             include_all_extension_tools=include_all_extension_tools,
         )
 
-    async def reload(self, before_session_start: Callable[[], Any] | None = None) -> None:
+    async def reload(self, before_session_start: Callable[[], Awaitable[None]] | None = None) -> None:
 
         previous_flag_values = self._extension_runner.get_flag_values()
         await emit_session_shutdown_event(self._extension_runner, {"type": "session_shutdown", "reason": "reload"})
@@ -2411,9 +2402,7 @@ class AgentSession:
         )
         if has_bindings:
             if before_session_start is not None:
-                result = before_session_start()
-                if inspect.isawaitable(result):
-                    await result
+                await before_session_start()
             await self._extension_runner.emit({"type": "session_start", "reason": "reload"})
             await self._extend_resources_from_extensions("reload")
 
@@ -2433,7 +2422,7 @@ class AgentSession:
         """Retry callbacks shared by compaction and branch-summary summarization
         calls. `source` carries the context the TUI needs to render the retry."""
 
-        def on_retry_scheduled(attempt: int, max_attempts: int, delay_ms: float, error_message: str) -> None:
+        async def on_retry_scheduled(attempt: int, max_attempts: int, delay_ms: float, error_message: str) -> None:
             self._emit(
                 SummarizationRetryScheduledEvent(
                     attempt=attempt,
@@ -2443,10 +2432,10 @@ class AgentSession:
                 )
             )
 
-        def on_retry_attempt_start() -> None:
+        async def on_retry_attempt_start() -> None:
             self._emit(SummarizationRetryAttemptStartEvent(source=source["source"], reason=source.get("reason")))
 
-        def on_retry_finished(*_args: Any) -> None:
+        async def on_retry_finished(*_args: Any) -> None:
             self._emit(SummarizationRetryFinishedEvent())
 
         return RetryCallbacks(

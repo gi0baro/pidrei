@@ -25,7 +25,7 @@ from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy
 from pidrei_ai.utils.text import content_text
 
-from ..agent_loop import _maybe_await, run_agent_loop
+from ..agent_loop import run_agent_loop
 from ..types import (
     AfterToolCallResult,
     AgentContext,
@@ -294,7 +294,7 @@ class AgentHarness:
     async def _emit_own(self, event: Any, signal: CancelToken | None = None) -> None:
         for listener in list(self._get_handlers(_SUBSCRIBER_EVENT_TYPE)):
             try:
-                await _maybe_await(listener(event, signal))
+                await listener(event, signal)
             except Exception as error:
                 raise _normalize_hook_error(error) from error
 
@@ -308,7 +308,7 @@ class AgentHarness:
         last_result: Any = None
         for handler in list(handlers):
             try:
-                result = await _maybe_await(handler(event))
+                result = await handler(event)
                 if result is not None:
                     last_result = result
             except Exception as error:
@@ -339,11 +339,9 @@ class AgentHarness:
             return current
         for handler in list(handlers):
             try:
-                result = await _maybe_await(
-                    handler(
-                        BeforeProviderRequestEvent(
-                            model=model, session_id=session_id, stream_options=clone_stream_options(current)
-                        )
+                result = await handler(
+                    BeforeProviderRequestEvent(
+                        model=model, session_id=session_id, stream_options=clone_stream_options(current)
                     )
                 )
                 if result is not None and result.stream_options is not None:
@@ -359,7 +357,7 @@ class AgentHarness:
             return current
         for handler in list(handlers):
             try:
-                result = await _maybe_await(handler(BeforeProviderPayloadEvent(model=model, payload=current)))
+                result = await handler(BeforeProviderPayloadEvent(model=model, payload=current))
                 if result is not None:
                     current = result.payload
             except Exception as error:
@@ -388,8 +386,9 @@ class AgentHarness:
     # --- turn state -------------------------------------------------------------
 
     async def _resolve_tool_context(self) -> Any:
+        # Value-or-callable; the callable branch is async-only.
         if callable(self._tool_context):
-            return await _maybe_await(self._tool_context())
+            return await self._tool_context()
         return self._tool_context
 
     async def _create_turn_state(self) -> _TurnState:
@@ -403,15 +402,14 @@ class AgentHarness:
         if isinstance(self._system_prompt, str):
             system_prompt = self._system_prompt
         elif self._system_prompt is not None:
-            system_prompt = await _maybe_await(
-                self._system_prompt(
-                    _SystemPromptContext(
-                        session=self._session,
-                        model=self._model,
-                        thinking_level=self._thinking_level,
-                        active_tools=active_tools,
-                        resources=resources,
-                    )
+            # String-or-callable; the callable branch is async-only.
+            system_prompt = await self._system_prompt(
+                _SystemPromptContext(
+                    session=self._session,
+                    model=self._model,
+                    thinking_level=self._thinking_level,
+                    active_tools=active_tools,
+                    resources=resources,
                 )
             )
         return _TurnState(
@@ -544,10 +542,13 @@ class AgentHarness:
         async def get_follow_up_messages():
             return await self._drain_queued_messages(self._follow_up_queue, self._follow_up_queue_mode)
 
+        async def convert_context_to_llm(messages):
+            return convert_to_llm(messages)
+
         return AgentLoopConfig(
             model=turn_state.model,
             reasoning=None if turn_state.thinking_level == "off" else turn_state.thinking_level,
-            convert_to_llm=convert_to_llm,
+            convert_to_llm=convert_context_to_llm,
             transform_context=transform_context,
             before_tool_call=before_tool_call,
             after_tool_call=after_tool_call,

@@ -137,6 +137,7 @@ from .components import (
     key_hint,
     key_text,
     raw_key_hint,
+    sync_action,
 )
 from .external_editor import edit_in_external_editor
 from .model_search import get_model_search_text
@@ -534,7 +535,7 @@ class InteractiveMode:
         login_command = next((command for command in slash_commands if command["name"] == "login"), None)
         if login_command is not None:
 
-            def get_login_completions(prefix: str):
+            async def get_login_completions(prefix: str):
                 providers = _get_login_provider_completion_options(self.get_login_provider_options())
                 return _create_fuzzy_autocomplete_items(
                     providers,
@@ -2228,13 +2229,19 @@ class InteractiveMode:
             # If extending CustomEditor, copy app-level handlers (duck typed)
             if isinstance(getattr(new_editor, "action_handlers", None), dict):
                 if not getattr(new_editor, "on_escape", None):
-                    new_editor.on_escape = lambda: (
-                        self._default_editor.on_escape() if self._default_editor.on_escape else None
-                    )
+
+                    async def forward_escape():
+                        if self._default_editor.on_escape:
+                            await self._default_editor.on_escape()
+
+                    new_editor.on_escape = forward_escape
                 if not getattr(new_editor, "on_ctrl_d", None):
-                    new_editor.on_ctrl_d = lambda: (
-                        self._default_editor.on_ctrl_d() if self._default_editor.on_ctrl_d else None
-                    )
+
+                    async def forward_ctrl_d():
+                        if self._default_editor.on_ctrl_d:
+                            await self._default_editor.on_ctrl_d()
+
+                    new_editor.on_ctrl_d = forward_ctrl_d
                 if not getattr(new_editor, "on_paste_image", None):
                     new_editor.on_paste_image = lambda: (
                         self._default_editor.on_paste_image() if self._default_editor.on_paste_image else None
@@ -2359,7 +2366,7 @@ class InteractiveMode:
     def _setup_key_handlers(self) -> None:
         # Set up handlers on the default editor - they use self.editor for
         # text access so they work correctly regardless of active editor
-        def on_escape() -> None:
+        async def on_escape() -> None:
             if self.session.is_streaming:
                 self._restore_queued_messages_to_editor({"abort": True})
             elif self.session.is_bash_running:
@@ -2385,39 +2392,43 @@ class InteractiveMode:
 
         self._default_editor.on_escape = on_escape
 
-        # Register app action handlers
-        self._default_editor.on_action("app.clear", lambda: self._handle_ctrl_c())
-        self._default_editor.on_ctrl_d = lambda: self._handle_ctrl_d()
-        self._default_editor.on_action("app.suspend", lambda: tonio.spawn.without_tracking(self._handle_ctrl_z()))
+        # Register app action handlers (awaitable-returning; sync ones adapt
+        # through `sync_action`, coroutine-returning lambdas qualify as-is)
+        self._default_editor.on_action("app.clear", sync_action(self._handle_ctrl_c))
+        self._default_editor.on_ctrl_d = sync_action(self._handle_ctrl_d)
+        self._default_editor.on_action(
+            "app.suspend", sync_action(lambda: tonio.spawn.without_tracking(self._handle_ctrl_z()))
+        )
         self._default_editor.on_action("app.thinking.cycle", lambda: self._cycle_thinking_level())
         self._default_editor.on_action(
-            "app.model.cycleForward", lambda: tonio.spawn.without_tracking(self._cycle_model("forward"))
+            "app.model.cycleForward", sync_action(lambda: tonio.spawn.without_tracking(self._cycle_model("forward")))
         )
         self._default_editor.on_action(
-            "app.model.cycleBackward", lambda: tonio.spawn.without_tracking(self._cycle_model("backward"))
+            "app.model.cycleBackward", sync_action(lambda: tonio.spawn.without_tracking(self._cycle_model("backward")))
         )
 
         # Global debug handler on TUI (works regardless of focus)
         self.ui.on_debug = lambda: self._handle_debug_command()
-        self._default_editor.on_action("app.model.select", lambda: self._show_model_selector())
-        self._default_editor.on_action("app.tools.expand", lambda: self._toggle_tool_output_expansion())
-        self._default_editor.on_action("app.thinking.toggle", lambda: self._toggle_thinking_block_visibility())
+        self._default_editor.on_action("app.model.select", sync_action(self._show_model_selector))
+        self._default_editor.on_action("app.tools.expand", sync_action(self._toggle_tool_output_expansion))
+        self._default_editor.on_action("app.thinking.toggle", sync_action(self._toggle_thinking_block_visibility))
         self._default_editor.on_action(
-            "app.editor.external", lambda: tonio.spawn.without_tracking(self._handle_open_external_editor())
+            "app.editor.external",
+            sync_action(lambda: tonio.spawn.without_tracking(self._handle_open_external_editor())),
         )
         self._default_editor.on_action(
-            "app.message.copy", lambda: tonio.spawn.without_tracking(self._handle_copy_command())
+            "app.message.copy", sync_action(lambda: tonio.spawn.without_tracking(self._handle_copy_command()))
         )
         self._default_editor.on_action(
-            "app.message.followUp", lambda: tonio.spawn.without_tracking(self._handle_follow_up())
+            "app.message.followUp", sync_action(lambda: tonio.spawn.without_tracking(self._handle_follow_up()))
         )
-        self._default_editor.on_action("app.message.dequeue", lambda: self._handle_dequeue())
+        self._default_editor.on_action("app.message.dequeue", sync_action(self._handle_dequeue))
         self._default_editor.on_action(
-            "app.session.new", lambda: tonio.spawn.without_tracking(self._handle_clear_command())
+            "app.session.new", sync_action(lambda: tonio.spawn.without_tracking(self._handle_clear_command()))
         )
-        self._default_editor.on_action("app.session.tree", lambda: self._show_tree_selector())
-        self._default_editor.on_action("app.session.fork", lambda: self._show_user_message_selector())
-        self._default_editor.on_action("app.session.resume", lambda: self._show_session_selector())
+        self._default_editor.on_action("app.session.tree", sync_action(self._show_tree_selector))
+        self._default_editor.on_action("app.session.fork", sync_action(self._show_user_message_selector))
+        self._default_editor.on_action("app.session.resume", sync_action(self._show_session_selector))
 
         def on_change(text: str) -> None:
             was_bash_mode = self._is_bash_mode
@@ -2835,7 +2846,7 @@ class InteractiveMode:
                 self.ui.terminal.set_progress(True)
             # Keep editor active; submissions are queued during compaction.
             self._auto_compaction_escape_handler = self._default_editor.on_escape
-            self._default_editor.on_escape = lambda: self.session.abort_compaction()
+            self._default_editor.on_escape = sync_action(self.session.abort_compaction)
             self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
             self.ui.request_render()
 
@@ -2874,7 +2885,7 @@ class InteractiveMode:
         elif event_type == "auto_retry_start":
             # Set up escape to abort retry
             self._retry_escape_handler = self._default_editor.on_escape
-            self._default_editor.on_escape = lambda: self.session.abort_retry()
+            self._default_editor.on_escape = sync_action(self.session.abort_retry)
             self._show_status_indicator(
                 RetryStatusIndicator(self.ui, event.attempt, event.max_attempts, event.delay_ms)
             )
@@ -3876,7 +3887,7 @@ class InteractiveMode:
                 if not enabled and self._active_status_indicator is None:
                     self._status_container.clear()
 
-            def on_cancel() -> None:
+            async def on_cancel() -> None:
                 done()
                 self.ui.request_render()
 
@@ -4293,7 +4304,7 @@ class InteractiveMode:
                 original_on_escape = self._default_editor.on_escape
 
                 if wants_summary:
-                    self._default_editor.on_escape = lambda: self.session.abort_branch_summary()
+                    self._default_editor.on_escape = sync_action(self.session.abort_branch_summary)
                     self._chat_container.add_child(Spacer(1))
                     self._show_status_indicator(BranchSummaryStatusIndicator(self.ui))
                     showing_summary_indicator = True
@@ -4974,7 +4985,7 @@ class InteractiveMode:
         chat_restored_before_session_start = False
         reload_box_dismissed = False
 
-        def restore_chat_before_session_start() -> None:
+        async def restore_chat_before_session_start() -> None:
             nonlocal chat_restored_before_session_start
             if chat_restored_before_session_start:
                 return
@@ -4985,7 +4996,7 @@ class InteractiveMode:
 
         try:
             await self.session.reload(restore_chat_before_session_start)
-            restore_chat_before_session_start()
+            await restore_chat_before_session_start()
             # pi reconfigures the undici HTTP dispatcher here; punkreq owns
             # HTTP transport in pidrei (see core/http_config.py).
             await self._keybindings.reload()

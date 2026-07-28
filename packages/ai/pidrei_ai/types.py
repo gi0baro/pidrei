@@ -454,9 +454,11 @@ class ProviderResponse:
     headers: dict[str, str]
 
 
-# Optional callbacks may be sync or async; adapters await coroutine results.
-type OnPayload = Callable[[Any, Model], Any | Awaitable[Any]]
-type OnResponse = Callable[[ProviderResponse, Model], Any | Awaitable[Any]]
+# Optional callbacks; awaitable-returning by contract (pi declares
+# `T | Promise<T>` unions here, but two shapes per slot is what let dropped
+# coroutines hide — decided 2026-07-28: callback contracts are async-only).
+type OnPayload = Callable[[Any, Model], Awaitable[Any]]
+type OnResponse = Callable[[ProviderResponse, Model], Awaitable[Any]]
 
 
 @dataclass(slots=True)
@@ -491,9 +493,9 @@ class StreamOptions:
     # pi's ProviderStreamOptions allows arbitrary extra provider options.
     extra: dict[str, Any] | None = None
     # Models-only (pi: ModelsStreamTransforms.transformHeaders): transform fully
-    # assembled model/auth/request headers before provider dispatch. Sync or
-    # async; stripped before options reach the provider.
-    transform_headers: Callable[[ProviderHeaders], ProviderHeaders | Awaitable[ProviderHeaders]] | None = None
+    # assembled model/auth/request headers before provider dispatch.
+    # Awaitable-returning; stripped before options reach the provider.
+    transform_headers: Callable[[ProviderHeaders], Awaitable[ProviderHeaders]] | None = None
 
 
 @dataclass(slots=True)

@@ -123,9 +123,13 @@ async def create_agent_session(
     temp_dir = str(temp_dir)
     if model is None:
         model = get_builtin_model("anthropic", "claude-sonnet-4-5")
+
+    async def get_api_key(_provider):
+        return "test-key"
+
     agent = Agent(
         stream_fn=stream_fn,
-        get_api_key=lambda _provider: "test-key",
+        get_api_key=get_api_key,
         initial_state=AgentInitialState(model=model, system_prompt=system_prompt, tools=tools or []),
     )
 

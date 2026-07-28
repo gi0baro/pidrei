@@ -59,7 +59,7 @@ async def capture_payload(model, options: BedrockOptions | None = None) -> dict[
     if opts.reasoning is None:
         opts.reasoning = "high"
 
-    def on_payload(payload, _model):
+    async def on_payload(payload, _model):
         captured.append(payload)
         raise PayloadCaptured
 

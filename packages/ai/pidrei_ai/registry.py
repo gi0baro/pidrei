@@ -5,7 +5,6 @@ stream convenience; providers own stream behavior, `Models` resolves auth and
 delegates each request to the provider that owns the model.
 """
 
-import inspect
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -518,8 +517,7 @@ class Models:
         api_key = options.api_key if options is not None and options.api_key is not None else auth.api_key
         headers = merge_headers(auth.headers, options.headers if options is not None else None)
         if options is not None and options.transform_headers is not None:
-            transformed = options.transform_headers(headers if headers is not None else {})
-            headers = await transformed if inspect.isawaitable(transformed) else transformed
+            headers = await options.transform_headers(headers if headers is not None else {})
         options_env = options.env if options is not None else None
         env = {**(resolution.env or {}), **(options_env or {})} if resolution.env or options_env else None
 

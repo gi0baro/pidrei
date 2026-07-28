@@ -2640,12 +2640,16 @@ async def test_awaits_async_slash_command_argument_completions(tmp_dir):
 @pytest.mark.tonio
 async def test_ignores_invalid_slash_command_argument_completion_results(tmp_dir):
     editor = Editor(create_test_tui(), default_editor_theme)
+
+    async def get_argument_completions(prefix):
+        return "not-an-array"
+
     provider = CombinedAutocompleteProvider(
         [
             {
                 "name": "load-skills",
                 "description": "Load skills",
-                "getArgumentCompletions": lambda prefix: "not-an-array",
+                "getArgumentCompletions": get_argument_completions,
             }
         ],
         str(tmp_dir),
@@ -2662,13 +2666,17 @@ async def test_ignores_invalid_slash_command_argument_completion_results(tmp_dir
 @pytest.mark.tonio
 async def test_does_not_show_argument_completions_when_command_has_no_argument_completer(tmp_dir):
     editor = Editor(create_test_tui(), default_editor_theme)
+
+    async def get_model_completions(prefix):
+        return [{"value": "claude-opus", "label": "claude-opus"}]
+
     provider = CombinedAutocompleteProvider(
         [
             {"name": "help", "description": "Show help"},
             {
                 "name": "model",
                 "description": "Switch model",
-                "getArgumentCompletions": lambda prefix: [{"value": "claude-opus", "label": "claude-opus"}],
+                "getArgumentCompletions": get_model_completions,
             },
         ],
         str(tmp_dir),

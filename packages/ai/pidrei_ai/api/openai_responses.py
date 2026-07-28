@@ -1,6 +1,5 @@
 """Port of pi's openai-responses adapter (packages/ai/src/api/openai-responses.ts)."""
 
-import inspect
 import json
 import time
 from collections.abc import AsyncGenerator, AsyncIterable
@@ -36,6 +35,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
@@ -235,13 +235,6 @@ def _responses_options(options: StreamOptions | None) -> OpenAIResponsesOptions:
     return OpenAIResponsesOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 # --- client / params ----------------------------------------------------------
 
 
@@ -403,7 +396,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 else _create_client(model, context, api_key, opts.headers, cache_session_id, opts.env)
             )
             params = build_params(model, context, opts, compat, grammar_tool_input_properties)
-            next_params = await _maybe_call(opts.on_payload, params, model)
+            next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
 
@@ -416,7 +409,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 max_retry_delay_ms=opts.max_retry_delay_ms,
                 cancel=opts.cancel,
             )
-            await _maybe_call(
+            await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
             )
             out_stream.push(StartEvent(partial=output))

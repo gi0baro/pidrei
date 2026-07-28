@@ -11,7 +11,7 @@ from .branch_summary_message import BranchSummaryMessageComponent
 from .compaction_summary_message import CompactionSummaryMessageComponent
 from .config_selector import ConfigSelectorComponent
 from .countdown_timer import CountdownTimer
-from .custom_editor import CustomEditor
+from .custom_editor import CustomEditor, sync_action
 from .custom_entry import CustomEntryComponent
 from .custom_message import CustomMessageComponent
 from .daxnuts import DaxnutsComponent
@@ -100,5 +100,6 @@ __all__ = [
     "key_text",
     "raw_key_hint",
     "render_diff",
+    "sync_action",
     "truncate_to_visual_lines",
 ]

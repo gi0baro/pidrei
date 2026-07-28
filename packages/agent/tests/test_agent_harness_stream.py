@@ -44,7 +44,7 @@ async def test_snapshots_stream_options_before_provider_request_hooks():
     captured_options = None
     registration = new_faux()
 
-    def respond(_context, options, _state, _model):
+    async def respond(_context, options, _state, _model):
         nonlocal captured_options
         captured_options = options
         return faux_assistant_message("ok")
@@ -68,7 +68,7 @@ async def test_snapshots_stream_options_before_provider_request_hooks():
         )
     )
 
-    def hook(event):
+    async def hook(event):
         assert event.session_id == "session-1"
         assert event.stream_options.headers == {"x-base": "base"}
         return BeforeProviderRequestResult(stream_options={"headers": {"x-hook": "hook"}, "metadata": {"hook": True}})
@@ -92,7 +92,7 @@ async def test_chains_provider_request_patches_and_supports_deletion_semantics()
     captured_options = None
     registration = new_faux()
 
-    def respond(_context, options, _state, _model):
+    async def respond(_context, options, _state, _model):
         nonlocal captured_options
         captured_options = options
         return faux_assistant_message("ok")
@@ -113,7 +113,7 @@ async def test_chains_provider_request_patches_and_supports_deletion_semantics()
         )
     )
 
-    def first_hook(event):
+    async def first_hook(event):
         assert event.stream_options.headers == {"keep": "base", "remove": "base"}
         return BeforeProviderRequestResult(
             stream_options={
@@ -122,7 +122,7 @@ async def test_chains_provider_request_patches_and_supports_deletion_semantics()
             }
         )
 
-    def second_hook(event):
+    async def second_hook(event):
         assert event.stream_options.headers == {"keep": "base", "first": "1"}
         assert event.stream_options.metadata == {"keep": "base", "first": 1}
         return BeforeProviderRequestResult(
@@ -146,13 +146,13 @@ async def test_uses_updated_stream_options_for_save_point_snapshots_without_muta
     captured_options = []
     registration = new_faux()
 
-    def first_respond(_context, options, _state, _model):
+    async def first_respond(_context, options, _state, _model):
         captured_options.append(capture_options(options))
         return faux_assistant_message(
             faux_tool_call("calculate", {"expression": "1 + 1"}, id="call-1"), stop_reason="toolUse"
         )
 
-    def second_respond(_context, options, _state, _model):
+    async def second_respond(_context, options, _state, _model):
         captured_options.append(capture_options(options))
         return faux_assistant_message("done")
 
@@ -200,11 +200,11 @@ async def test_chains_provider_payload_hooks():
         AgentHarnessOptions(models=models, session=Session(InMemorySessionStorage()), model=registration.get_model())
     )
 
-    def first_hook(event):
+    async def first_hook(event):
         seen_payloads.append(event.payload)
         return BeforeProviderPayloadResult(payload={"steps": ["provider", "first"]})
 
-    def second_hook(event):
+    async def second_hook(event):
         seen_payloads.append(event.payload)
         return BeforeProviderPayloadResult(payload={"steps": ["provider", "first", "second"]})
 

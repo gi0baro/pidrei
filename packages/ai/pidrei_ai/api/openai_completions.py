@@ -12,7 +12,6 @@ through the punkreq seam and parses the SSE chunk stream itself (data events,
 `OpenAICompletionsOptions.client`.
 """
 
-import inspect
 import json
 import re
 import time
@@ -67,6 +66,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -1004,13 +1004,6 @@ def _openai_options(options: StreamOptions | None) -> OpenAICompletionsOptions:
     return OpenAICompletionsOptions(**values)
 
 
-async def _maybe_call(callback, *args):
-    if callback is None:
-        return None
-    result = callback(*args)
-    return await result if inspect.isawaitable(result) else result
-
-
 def stream(  # noqa: C901
     model: Model, context: Context, options: StreamOptions | None = None
 ) -> AssistantMessageEventStream:
@@ -1042,7 +1035,7 @@ def stream(  # noqa: C901
                 client = _create_client(model, context, api_key, opts.headers, cache_session_id, compat, opts.env)
 
             params = build_params(model, context, opts, compat, None, grammar_tool_input_properties)
-            next_params = await _maybe_call(opts.on_payload, params, model)
+            next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
 
@@ -1055,7 +1048,7 @@ def stream(  # noqa: C901
                 max_retry_delay_ms=opts.max_retry_delay_ms,
                 cancel=opts.cancel,
             )
-            await _maybe_call(
+            await maybe_call(
                 opts.on_response, ProviderResponse(status=response.status, headers=response.headers), model
             )
             out_stream.push(StartEvent(partial=output))

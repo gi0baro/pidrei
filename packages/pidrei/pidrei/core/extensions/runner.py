@@ -4,7 +4,6 @@ Executes extension handlers and owns the hook bus AgentSession emits into.
 """
 
 import copy
-import inspect
 import sys
 import traceback
 from collections.abc import Callable
@@ -80,13 +79,6 @@ _SESSION_BEFORE_EVENT_TYPES = (
     "session_before_compact",
     "session_before_tree",
 )
-
-
-async def _call_handler(handler: Any, *args: Any) -> Any:
-    result = handler(*args)
-    if inspect.isawaitable(result):
-        return await result
-    return result
 
 
 class _NoOpUIContext:
@@ -341,7 +333,7 @@ async def emit_project_trust_event(
             continue
         for handler in handlers:
             try:
-                handler_result = await _call_handler(handler, event, ctx)
+                handler_result = await handler(event, ctx)
                 if isinstance(handler_result, dict) and handler_result.get("trusted") == "undecided":
                     continue
                 return handler_result, errors
@@ -729,7 +721,7 @@ class ExtensionRunner:
 
             for handler in handlers:
                 try:
-                    handler_result = await _call_handler(handler, event, ctx)
+                    handler_result = await handler(event, ctx)
 
                     if is_session_before and handler_result:
                         result = handler_result
@@ -760,7 +752,7 @@ class ExtensionRunner:
             for handler in handlers:
                 try:
                     current_event = {**event, "message": current_message}
-                    handler_result = await _call_handler(handler, current_event, ctx)
+                    handler_result = await handler(current_event, ctx)
                     replacement = handler_result.get("message") if isinstance(handler_result, dict) else None
                     if replacement is None:
                         continue
@@ -801,7 +793,7 @@ class ExtensionRunner:
 
             for handler in handlers:
                 try:
-                    handler_result = await _call_handler(handler, current_event, ctx)
+                    handler_result = await handler(current_event, ctx)
                     if not isinstance(handler_result, dict):
                         continue
 
@@ -841,7 +833,7 @@ class ExtensionRunner:
             for handler in handlers:
                 # Intentionally no try/except: tool_call handler errors block execution
                 # (AgentSession wraps them; mirrors pi).
-                handler_result = await _call_handler(handler, event, ctx)
+                handler_result = await handler(event, ctx)
 
                 if handler_result:
                     result = handler_result
@@ -860,7 +852,7 @@ class ExtensionRunner:
 
             for handler in handlers:
                 try:
-                    handler_result = await _call_handler(handler, event, ctx)
+                    handler_result = await handler(event, ctx)
                     if handler_result:
                         return handler_result
                 except Exception as error:
@@ -891,7 +883,7 @@ class ExtensionRunner:
             for handler in handlers:
                 try:
                     event = {"type": "context", "messages": current_messages}
-                    handler_result = await _call_handler(handler, event, ctx)
+                    handler_result = await handler(event, ctx)
                     if isinstance(handler_result, dict) and handler_result.get("messages"):
                         current_messages = handler_result["messages"]
                 except Exception as error:
@@ -918,7 +910,7 @@ class ExtensionRunner:
             for handler in handlers:
                 try:
                     event = {"type": "before_provider_request", "payload": current_payload}
-                    handler_result = await _call_handler(handler, event, ctx)
+                    handler_result = await handler(event, ctx)
                     if handler_result is not None:
                         current_payload = handler_result
                 except Exception as error:
@@ -945,7 +937,7 @@ class ExtensionRunner:
                 try:
                     # Handlers mutate `headers` in place; the return value is ignored.
                     event = {"type": "before_provider_headers", "headers": headers}
-                    await _call_handler(handler, event, ctx)
+                    await handler(event, ctx)
                 except Exception as error:
                     self.emit_error(
                         ExtensionError(
@@ -985,7 +977,7 @@ class ExtensionRunner:
                         "systemPrompt": current_system_prompt,
                         "systemPromptOptions": system_prompt_options,
                     }
-                    handler_result = await _call_handler(handler, event, ctx)
+                    handler_result = await handler(event, ctx)
 
                     if isinstance(handler_result, dict):
                         if handler_result.get("message") is not None:
@@ -1025,7 +1017,7 @@ class ExtensionRunner:
             for handler in handlers:
                 try:
                     event = {"type": "resources_discover", "cwd": cwd, "reason": reason}
-                    handler_result = await _call_handler(handler, event, ctx)
+                    handler_result = await handler(event, ctx)
                     if not isinstance(handler_result, dict):
                         continue
                     for key, bucket in (
@@ -1070,7 +1062,7 @@ class ExtensionRunner:
                         "source": source,
                         "streamingBehavior": streaming_behavior,
                     }
-                    result = await _call_handler(handler, event, ctx)
+                    result = await handler(event, ctx)
                     if isinstance(result, dict):
                         if result.get("action") == "handled":
                             return InputEventResult(action="handled")

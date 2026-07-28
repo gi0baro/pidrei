@@ -9,11 +9,10 @@ spawns a tonio timer task instead, and guards the throttle state with a lock
 because output chunks arrive from the env's reader tasks.
 """
 
-import inspect
 import math
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -56,8 +55,9 @@ class BashExecution:
     inherit_env: bool
 
 
-# Prepare hook: receives (execution, context, cancel); may be sync or async.
-type BashPrepare = Callable[[BashExecution, Any, CancelToken | None], Any]
+# Prepare hook: receives (execution, context, cancel); awaitable-returning
+# (async-only callback policy; pi types this `void | Promise<void>`).
+type BashPrepare = Callable[[BashExecution, Any, CancelToken | None], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -105,9 +105,7 @@ class BashTool(AgentHarnessTool[ExecutionToolContext, BashToolDetails | None]):
         prefixed = f"{options.command_prefix}\n{command}" if options is not None and options.command_prefix else command
         execution = BashExecution(command=prefixed, cwd=env.cwd, env={}, inherit_env=True)
         if options is not None and options.prepare is not None:
-            prepared = options.prepare(execution, context, cancel)
-            if inspect.isawaitable(prepared):
-                await prepared
+            await options.prepare(execution, context, cancel)
 
         throttle_lock = threading.RLock()
         get_latest_progress: Callable[[], ShellCaptureProgress] | None = None

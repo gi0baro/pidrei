@@ -118,13 +118,22 @@ async def create_harness(
             }
         )
 
-    agent = Agent(
+    async def stream_fn(request_model, context, stream_options=None):
         # pi passes pi-ai's global `streamSimple`; pidrei routes through the
         # model runtime, which resolves auth and dispatches to the provider.
-        stream_fn=model_runtime.stream_simple,
-        get_api_key=lambda _provider: "faux-key" if with_configured_auth else None,
+        return model_runtime.stream_simple(request_model, context, stream_options)
+
+    async def get_api_key(_provider):
+        return "faux-key" if with_configured_auth else None
+
+    async def convert_context_to_llm(messages):
+        return convert_to_llm(messages)
+
+    agent = Agent(
+        stream_fn=stream_fn,
+        get_api_key=get_api_key,
         initial_state=AgentInitialState(model=model, system_prompt=system_prompt, tools=[]),
-        convert_to_llm=convert_to_llm,
+        convert_to_llm=convert_context_to_llm,
         transform_context=transform_context,
         on_payload=on_payload,
         on_response=on_response,

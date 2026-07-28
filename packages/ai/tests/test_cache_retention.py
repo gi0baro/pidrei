@@ -67,7 +67,7 @@ def make_context() -> Context:
 async def capture_anthropic_payload(model, options: AnthropicOptions | None = None) -> dict:
     captured: list[dict] = []
 
-    def on_payload(payload, _model):
+    async def on_payload(payload, _model):
         captured.append(payload)
         raise PayloadCaptured()
 

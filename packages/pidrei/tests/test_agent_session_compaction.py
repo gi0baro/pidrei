@@ -22,7 +22,7 @@ def _make_llm_stream_fn(*, summary_text="## Goal\nSummarized work.", answer_pref
     """Canned turn/summarization responder; records summarization requests."""
     state = {"turns": 0, "summarization_requests": []}
 
-    def stream_fn(_model, context, options=None):
+    async def stream_fn(_model, context, options=None):
         stream = AssistantMessageEventStream()
         if (context.system_prompt or "").startswith(SUMMARIZATION_SYSTEM_PROMPT[:40]):
             state["summarization_requests"].append((context, options))
@@ -309,7 +309,7 @@ class TestTreeNavigation:
     async def test_handles_abort_during_summarization(self, tmp_dir):
         base_stream_fn, state = _make_llm_stream_fn()
 
-        def stream_fn(model, context, options=None):
+        async def stream_fn(model, context, options=None):
             if (context.system_prompt or "").startswith(SUMMARIZATION_SYSTEM_PROMPT[:40]):
                 # Summarization hangs until aborted, then reports an aborted result.
                 cancel = getattr(options, "cancel", None)
@@ -327,7 +327,7 @@ class TestTreeNavigation:
 
                 tonio.spawn.without_tracking(watch_abort())
                 return stream
-            return base_stream_fn(model, context, options)
+            return await base_stream_fn(model, context, options)
 
         session, session_manager, _events, _state = await _create_session(tmp_dir, stream_fn=stream_fn, state=state)
 
