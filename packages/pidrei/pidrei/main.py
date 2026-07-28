@@ -810,17 +810,18 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         # `time.timeout` drop what they cancel — and CPython's finalizer then
         # prints `RuntimeWarning: coroutine '<any name>' was never awaited` to
         # stderr, which lands inside the TUI frame. The names are arbitrary
-        # (they include the abandoned user coroutine), so the filter covers
-        # the whole message family. Only here: print/rpc keep warning, the
-        # unit suite never enters this branch, and the boot-smoke tests set
-        # PIDREI_KEEP_UNAWAITED_WARNINGS so their no-RuntimeWarning-on-screen
-        # gate still catches genuinely dropped coroutines in interactive code.
-        if not _is_truthy_env_flag(os.environ.get("PIDREI_KEEP_UNAWAITED_WARNINGS")):
-            warnings.filterwarnings(
-                "ignore",
-                message=r"coroutine '.*' was never awaited",
-                category=RuntimeWarning,
-            )
+        # (they include the abandoned user coroutine and tonio internals like
+        # `cancellable_bytes.<locals>._aborted`), so the filter covers the
+        # whole message family, unconditionally: an escape hatch for the
+        # boot-smoke tests was tried and reverted — the by-design noise fired
+        # during Ctrl-C teardown on a slow runner and flaked the suite. Only
+        # here: print/rpc keep warning, and the unit suite never enters this
+        # branch.
+        warnings.filterwarnings(
+            "ignore",
+            message=r"coroutine '.*' was never awaited",
+            category=RuntimeWarning,
+        )
 
         # lazy: core <-> modes import cycle (see modes/__init__.py)
         from .modes import InteractiveMode
