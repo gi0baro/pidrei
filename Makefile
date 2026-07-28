@@ -34,5 +34,16 @@ release-check:
 models-data:
 	uv run python packages/ai/scripts/generate_models.py
 
+# Where the pi checkout lives; override with `make upstream-diff PI_ROOT=...`.
+PI_ROOT ?= $(HOME)/Downloads/code/pi
+
+.PHONY: upstream-diff
+upstream-diff:
+	uv run python scripts/upstream_diff.py --pi-root "$(PI_ROOT)"
+
+.PHONY: upstream-bump
+upstream-bump:
+	uv run python scripts/upstream_diff.py --pi-root "$(PI_ROOT)" --bump "$(REF)"
+
 .PHONY: all
 all: format lint audit test
