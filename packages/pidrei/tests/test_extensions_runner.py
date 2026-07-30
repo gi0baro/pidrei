@@ -15,6 +15,7 @@ equals `[]` holds vacuously and pidrei has no such accessor.
 import os
 import shutil
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,6 +93,7 @@ async def _false(*_args) -> bool:
 def extension_context_actions() -> dict:
     return {
         "get_model": lambda: None,
+        "get_scoped_models": list,
         "is_idle": lambda: True,
         "is_project_trusted": lambda: True,
         "get_signal": lambda: None,
@@ -405,6 +407,20 @@ async def test_suffixes_duplicate_extension_commands_in_insertion_order(fx):
 
 
 # -- context creation ------------------------------------------------------------
+
+
+@pytest.mark.tonio
+async def test_reflects_the_get_scoped_models_context_action_on_ctx_scoped_models(fx):
+    runner = await make_runner(fx)
+
+    # Before bind_core the default is an empty list (never None).
+    assert runner.create_context().scoped_models == []
+
+    # After bind_core wires a get_scoped_models action, ctx.scoped_models
+    # returns it live (same reference, lazy getter).
+    scoped = [SimpleNamespace(model=SimpleNamespace(id="scoped-test"), thinking_level="high")]
+    runner.bind_core(extension_actions(), {**extension_context_actions(), "get_scoped_models": lambda: scoped})
+    assert runner.create_context().scoped_models is scoped
 
 
 @pytest.mark.tonio

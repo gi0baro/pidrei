@@ -239,6 +239,38 @@ async def test_expired_oauth_refreshes_once_under_lock_and_persists():
 
 
 @pytest.mark.tonio
+async def test_refreshes_oauth_credentials_with_less_than_five_minutes_remaining():
+    calls = OAuthCalls()
+    provider = FakeProvider("p1", ProviderAuth(oauth=make_oauth(calls, rotate_to="new-token")))
+    store = InMemoryCredentialStore()
+
+    async def write(_current):
+        return OAuthCredential(refresh="r", access="old-token", expires=now_ms() + 60_000)
+
+    await store.modify("p1", write)
+    result = await resolve_provider_auth(provider, store, FakeAuthContext())
+    assert result is not None and result.auth.api_key == "new-token"
+    assert calls.refreshes == 1
+
+
+@pytest.mark.tonio
+async def test_honors_a_callers_longer_oauth_minimum_validity():
+    calls = OAuthCalls()
+    provider = FakeProvider("p1", ProviderAuth(oauth=make_oauth(calls, rotate_to="new-token")))
+    store = InMemoryCredentialStore()
+
+    async def write(_current):
+        return OAuthCredential(refresh="r", access="old-token", expires=now_ms() + 10 * 60_000)
+
+    await store.modify("p1", write)
+    result = await resolve_provider_auth(
+        provider, store, FakeAuthContext(), AuthResolutionOverrides(min_oauth_validity_ms=30 * 60_000)
+    )
+    assert result is not None and result.auth.api_key == "new-token"
+    assert calls.refreshes == 1
+
+
+@pytest.mark.tonio
 async def test_failed_oauth_refresh_raises_models_error_and_preserves_credential():
     calls = OAuthCalls()
     provider = FakeProvider("p", ProviderAuth(oauth=make_oauth(calls, fail_refresh=True)))

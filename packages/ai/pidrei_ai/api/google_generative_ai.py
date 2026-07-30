@@ -105,7 +105,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             provider=model.provider,
             model=model.id,
             usage=Usage(),
-            stop_reason="stop",
+            stop_reason="pending",
             timestamp=int(time.time() * 1000),
         )
 
@@ -239,6 +239,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
 
                 finish_reason = (candidate or {}).get("finishReason")
                 if finish_reason:
+                    output.raw_stop_reason = finish_reason
                     output.stop_reason = map_stop_reason(finish_reason)
                     if any(b.type == "toolCall" for b in output.content):
                         output.stop_reason = "toolUse"
@@ -261,8 +262,14 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
 
+            if output.stop_reason == "pending":
+                raise RuntimeError("Google stream ended without a finish reason")
             if output.stop_reason in ("aborted", "error"):
-                raise RuntimeError("An unknown error occurred")
+                raise RuntimeError(
+                    f"Provider stopped with: {output.raw_stop_reason}"
+                    if output.raw_stop_reason
+                    else "An unknown error occurred"
+                )
 
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()

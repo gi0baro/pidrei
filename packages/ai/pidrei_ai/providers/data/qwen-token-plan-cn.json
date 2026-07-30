@@ -9,7 +9,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -33,7 +34,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -55,10 +57,10 @@
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
-        "thinkingFormat": "deepseek",
+        "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
-        "requiresReasoningContentOnAssistantMessages": true
+        "supportsReasoningEffort": true
       },
       "reasoning": true,
       "input": [
@@ -77,6 +79,7 @@
         "low": null,
         "medium": null,
         "high": "high",
+        "xhigh": null,
         "max": "max"
       }
     },
@@ -87,10 +90,10 @@
       "provider": "qwen-token-plan-cn",
       "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
-        "thinkingFormat": "deepseek",
+        "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
-        "requiresReasoningContentOnAssistantMessages": true
+        "supportsReasoningEffort": true
       },
       "reasoning": true,
       "input": [
@@ -109,6 +112,7 @@
         "low": null,
         "medium": null,
         "high": "high",
+        "xhigh": null,
         "max": "max"
       }
     },
@@ -121,7 +125,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": true
       },
       "reasoning": true,
       "input": [
@@ -134,7 +139,15 @@
         "cacheWrite": 0
       },
       "contextWindow": 202752,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.1": {
       "id": "glm-5.1",
@@ -145,7 +158,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": true
       },
       "reasoning": true,
       "input": [
@@ -158,7 +172,15 @@
         "cacheWrite": 0
       },
       "contextWindow": 202752,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "glm-5.2": {
       "id": "glm-5.2",
@@ -169,7 +191,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": true
       },
       "reasoning": true,
       "input": [
@@ -182,7 +205,15 @@
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     },
     "kimi-k2.5": {
       "id": "kimi-k2.5",
@@ -193,7 +224,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -218,7 +250,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -243,7 +276,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -268,7 +302,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -293,7 +328,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -318,7 +354,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -342,7 +379,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": false
       },
       "reasoning": true,
       "input": [
@@ -367,7 +405,8 @@
       "compat": {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
-        "supportsStore": false
+        "supportsStore": false,
+        "supportsReasoningEffort": true
       },
       "reasoning": true,
       "input": [
@@ -381,7 +420,15 @@
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      }
     }
   }
 }

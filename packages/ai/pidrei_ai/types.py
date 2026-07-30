@@ -91,7 +91,7 @@ type ProviderEnv = Mapping[str, str]
 # A None value suppresses a provider/API default header with the same name.
 type ProviderHeaders = Mapping[str, str | None]
 
-type StopReason = Literal["stop", "length", "toolUse", "error", "aborted"]
+type StopReason = Literal["pending", "stop", "length", "toolUse", "error", "aborted"]
 
 
 class TextSignatureV1(TypedDict, total=False):
@@ -224,6 +224,7 @@ class AssistantMessage:
     response_id: str | None = None  # Provider-specific response/message identifier
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
+    raw_stop_reason: str | None = None
     role: Literal["assistant"] = "assistant"
 
 

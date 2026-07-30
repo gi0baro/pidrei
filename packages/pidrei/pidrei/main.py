@@ -24,6 +24,14 @@ from typing import Any
 import tonio.colored as tonio
 
 from .cli.args import Args, parse_args, print_help
+from .cli.credential_print import (
+    CredentialPrintError,
+    is_credential_print_help,
+    parse_credential_print_command,
+    print_credential_print_help,
+    resolve_credential_for_print,
+    validate_credential_print_args,
+)
 from .cli.file_processor import process_file_arguments
 from .cli.initial_message import InitialMessageResult, build_initial_message
 from .cli.list_models import list_models
@@ -43,6 +51,7 @@ from .core.agent_session_services import (
 from .core.auth_guidance import format_no_models_available_message
 from .core.http_config import apply_http_proxy_settings
 from .core.model_resolver import resolve_cli_model, resolve_model_scope
+from .core.model_runtime import ModelRuntime
 from .core.output_guard import restore_stdout, take_over_stdout
 from .core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
 from .core.sdk import CreateAgentSessionOptions
@@ -133,6 +142,41 @@ def _to_print_output_mode(app_mode: str) -> str:
 
 def _is_plain_runtime_metadata_command(parsed: Args) -> bool:
     return not parsed.print and parsed.mode is None and (parsed.help is True or parsed.list_models is not None)
+
+
+async def _run_credential_print_command(args: list[str]) -> bool:
+    """pi's runCredentialPrintCommand: handle `auth <command>` before normal
+    startup. Returns False when the args are not an auth command; error paths
+    raise SystemExit(1)."""
+    if is_credential_print_help(args):
+        print_credential_print_help()
+        return True
+
+    try:
+        command = parse_credential_print_command(args)
+    except Exception as error:
+        message = str(error) if isinstance(error, CredentialPrintError) else "Failed to parse auth command"
+        print(red(f"Error: {message}"), file=sys.stderr)
+        raise SystemExit(1) from None
+    if command is None:
+        return False
+
+    parsed = parse_args(command.args)
+    if parsed.diagnostics:
+        for diagnostic in parsed.diagnostics:
+            print(red(f"Error: {diagnostic['message']}"), file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        validate_credential_print_args(parsed)
+        model_runtime = await ModelRuntime.create(allow_model_network=False)
+        credential = await resolve_credential_for_print(parsed, model_runtime, command.kind, command.min_expiry_ms)
+        sys.stdout.write(f"{credential}\n")
+    except Exception as error:
+        message = str(error) if isinstance(error, CredentialPrintError) else "Failed to resolve credential"
+        print(red(f"Error: {message}"), file=sys.stderr)
+        raise SystemExit(1) from None
+    return True
 
 
 async def _prepare_initial_message(
@@ -485,6 +529,9 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         handled = await handle_config_command(args, extension_factories=extension_factories)
     if handled is not False:
         raise SystemExit(handled)
+
+    if await _run_credential_print_command(args):
+        raise SystemExit(0)
 
     parsed = parse_args(args)
     if parsed.diagnostics:

@@ -154,8 +154,9 @@ async def test_resolves_stored_anthropic_oauth_credentials_via_the_lazy_flow_imp
     credentials = InMemoryCredentialStore()
     await credentials.modify(
         "anthropic",
+        # Keep this beyond get_auth()'s refresh window.
         lambda _current: _stored(
-            OAuthCredential(access="oauth-access-token", refresh="r", expires=int(time.time() * 1000) + 60_000)
+            OAuthCredential(access="oauth-access-token", refresh="r", expires=int(time.time() * 1000) + 10 * 60_000)
         ),
     )
     models = create_models(credentials=credentials)
@@ -175,7 +176,10 @@ async def test_resolves_stored_github_copilot_oauth_credentials_including_per_cr
     credentials = InMemoryCredentialStore()
     await credentials.modify(
         "github-copilot",
-        lambda _current: _stored(OAuthCredential(access=access, refresh="r", expires=int(time.time() * 1000) + 60_000)),
+        # Keep this beyond get_auth()'s refresh window.
+        lambda _current: _stored(
+            OAuthCredential(access=access, refresh="r", expires=int(time.time() * 1000) + 10 * 60_000)
+        ),
     )
     models = create_models(credentials=credentials)
     models.set_provider(github_copilot_provider())

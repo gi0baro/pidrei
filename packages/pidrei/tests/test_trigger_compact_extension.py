@@ -16,6 +16,7 @@ def create_context(tokens: int | None, compact) -> SimpleNamespace:
         session_manager=SimpleNamespace(),
         model_registry=SimpleNamespace(),
         model=None,
+        scoped_models=[],
         is_idle=lambda: True,
         is_project_trusted=lambda: True,
         signal=None,

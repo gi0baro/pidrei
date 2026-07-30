@@ -260,6 +260,40 @@ async def test_reasoning_content_becomes_thinking_block_with_signature():
 
 
 @pytest.mark.tonio
+async def test_ignores_empty_custom_objects_on_function_tool_call_deltas():
+    chunks = [
+        {
+            "id": "chatcmpl-empty-custom",
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "read", "arguments": '{"path":"README.md"}'},
+                                "custom": {},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+    ]
+    result = await consume(FakeClient(chunk_body(chunks)))
+
+    assert len(result.content) == 1
+    block = result.content[0]
+    assert block.type == "toolCall"
+    assert block.id == "call_1"
+    assert block.name == "read"
+    assert block.arguments == {"path": "README.md"}
+    assert result.stop_reason == "toolUse"
+
+
+@pytest.mark.tonio
 async def test_missing_finish_reason_is_an_error():
     chunks = [{"id": "c", "choices": [{"index": 0, "delta": {"content": "ok"}}]}]
     result = await consume(FakeClient(chunk_body(chunks)))
@@ -371,6 +405,23 @@ def test_build_params_max_tokens_field_for_moonshot():
     model = make_model(provider="moonshotai", base_url="https://api.moonshot.ai/v1")
     params = build_params(model, user_context(), opts(max_tokens=42))
     assert params["max_tokens"] == 42
+    assert "max_completion_tokens" not in params
+
+
+def test_sends_max_tokens_for_zai_completions_models():
+    from pidrei_ai.providers.all import get_builtin_model
+
+    # Regenerated Z.AI catalog entries carry the compat directly.
+    for model_id in ("glm-5.1", "glm-5.2"):
+        catalog_model = get_builtin_model("zai", model_id)
+        assert catalog_model is not None
+        assert catalog_model.compat is not None and catalog_model.compat.max_tokens_field == "max_tokens"
+
+    # detect_compat stays as the fallback for custom/self-hosted Z.AI base URLs.
+    model = make_model(provider="zai", base_url="https://api.z.ai/api/paas/v4")
+    assert detect_compat(model).max_tokens_field == "max_tokens"
+    params = build_params(model, user_context(), opts(max_tokens=123))
+    assert params["max_tokens"] == 123
     assert "max_completion_tokens" not in params
 
 

@@ -86,6 +86,8 @@ class _AvailabilityRun:
 class ModelRuntimeAuthOverrides:
     api_key: str | None = None
     env: dict[str, str] | None = None
+    #: Require this much remaining OAuth-token validity; defaults to five minutes.
+    min_oauth_validity_ms: int | None = None
 
 
 class ModelRuntime:
@@ -404,7 +406,9 @@ class ModelRuntime:
         overrides: ModelRuntimeAuthOverrides | None = None,
     ) -> AuthResult | None:
         overrides = overrides if overrides is not None else ModelRuntimeAuthOverrides()
-        resolution_overrides = AuthResolutionOverrides(api_key=overrides.api_key, env=overrides.env)
+        resolution_overrides = AuthResolutionOverrides(
+            api_key=overrides.api_key, env=overrides.env, min_oauth_validity_ms=overrides.min_oauth_validity_ms
+        )
         if isinstance(provider_or_model, str):
             return await self._models.get_auth(provider_or_model, resolution_overrides)
         resolution = await self._models.get_auth(provider_or_model, resolution_overrides)

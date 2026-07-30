@@ -76,7 +76,7 @@ def make_output(model: Model) -> AssistantMessage:
         provider=model.provider,
         model=model.id,
         usage=Usage(),
-        stop_reason="stop",
+        stop_reason="pending",
         timestamp=now_ms(),
     )
 
@@ -203,6 +203,22 @@ class RecordingStream(AssistantMessageEventStream):
         super().push(event)
 
 
+class StopReasonRecordingStream(RecordingStream):
+    """Partials share the mutated output object, so the stop reason must be
+    sampled at push time — pi's spy reads `event.partial.stopReason` the same
+    way."""
+
+    def __init__(self):
+        super().__init__()
+        self.observed_stop_reasons = []
+
+    def push(self, event):
+        partial = getattr(event, "partial", None)
+        if partial is not None:
+            self.observed_stop_reasons.append(partial.stop_reason)
+        super().push(event)
+
+
 def function_call_events(arguments_json: str) -> list[dict]:
     return [
         {
@@ -259,17 +275,95 @@ async def test_stream_without_terminal_event_raises():
         )
 
 
+def phased_message_events(phases: tuple[str, str], terminal_status: str = "completed") -> list[dict]:
+    events = [
+        {
+            "type": "response.output_item.added",
+            "sequence_number": 0,
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": "msg_phase",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": [],
+                "phase": phases[0],
+            },
+        },
+        {
+            "type": "response.output_item.done",
+            "sequence_number": 1,
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": "msg_phase",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "answer", "annotations": []}],
+                "phase": phases[1],
+            },
+        },
+        {
+            "type": f"response.{terminal_status}",
+            "sequence_number": 2,
+            "response": {"id": "resp_phase", "status": terminal_status},
+        },
+    ]
+    return events
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("phases", "expected"),
+    [
+        (("commentary", "commentary"), ["pending", "pending"]),
+        (("final_answer", "final_answer"), ["stop", "stop"]),
+        (("commentary", "final_answer"), ["pending", "stop"]),
+    ],
+)
+async def test_tracks_message_phases(phases, expected):
+    model = make_model()
+    output = make_output(model)
+    stream = StopReasonRecordingStream()
+
+    await process_responses_stream(events_from(phased_message_events(phases)), output, stream, model)
+
+    assert stream.observed_stop_reasons == expected
+    assert output.stop_reason == "stop"
+    assert output.raw_stop_reason == "completed"
+
+
+@pytest.mark.tonio
+async def test_replaces_a_provisional_final_answer_stop_with_an_incomplete_terminal_reason():
+    model = make_model()
+    output = make_output(model)
+    stream = StopReasonRecordingStream()
+
+    await process_responses_stream(
+        events_from(phased_message_events(("final_answer", "final_answer"), "incomplete")), output, stream, model
+    )
+
+    assert stream.observed_stop_reasons == ["stop", "stop"]
+    assert output.stop_reason == "length"
+    assert output.raw_stop_reason == "incomplete"
+
+
 @pytest.mark.tonio
 async def test_response_failed_raises_with_error_details():
     model = make_model()
     output = make_output(model)
     stream = AssistantMessageEventStream()
     events = [
-        {"type": "response.failed", "response": {"error": {"code": "server_error", "message": "exploded"}}},
+        {
+            "type": "response.failed",
+            "response": {"status": "failed", "error": {"code": "server_error", "message": "exploded"}},
+        },
     ]
 
     with pytest.raises(RuntimeError, match="server_error: exploded"):
         await process_responses_stream(events_from(events), output, stream, model)
+
+    assert output.raw_stop_reason == "failed"
 
 
 @pytest.mark.tonio
@@ -364,10 +458,11 @@ class FakeClient:
     def __init__(self, events: list[dict]):
         self._body = "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
         self.requests: list[dict] = []
+        self._response_factory = FakeResponse
 
     async def create(self, params, *, timeout_ms, cancel):
         self.requests.append(params)
-        return FakeResponse(self._body)
+        return self._response_factory(self._body)
 
 
 @pytest.mark.tonio
@@ -393,6 +488,44 @@ async def test_stream_end_to_end_with_fake_client():
     assert result.stop_reason == "stop"
     assert result.content[0].text == "hi"
     assert len(client.requests) == 1
+
+
+@pytest.mark.tonio
+async def test_rejects_streams_that_end_before_a_terminal_response_event():
+    # pi reads `partial.stopReason` off the start event mid-iteration and relies
+    # on JS microtask interleaving to observe it before the adapter mutates the
+    # shared output; here the body is gated so the start event is deterministically
+    # observed while the stream is still open.
+    import tonio.colored as tonio
+
+    start_seen = tonio.Event()
+
+    class GatedResponse(FakeResponse):
+        async def aiter_bytes(self):
+            yield self._body
+            await start_seen.wait()
+
+    client = FakeClient([{"type": "response.created", "response": {"id": "resp_1"}}])
+    client._response_factory = GatedResponse
+    stream = stream_responses(
+        make_model(),
+        Context(messages=[UserMessage(content="q", timestamp=1)]),
+        OpenAIResponsesOptions(api_key="k", client=client),
+    )
+
+    initial_stop_reason = None
+    events = []
+    async for event in stream:
+        if event.type == "start":
+            initial_stop_reason = event.partial.stop_reason
+            start_seen.set()
+        events.append(event)
+
+    result = await stream.result()
+    assert initial_stop_reason == "pending"
+    assert events[-1].type == "error"
+    assert result.stop_reason == "error"
+    assert result.error_message == "OpenAI Responses stream ended before a terminal response event"
 
 
 def test_build_params_defaults_and_reasoning():

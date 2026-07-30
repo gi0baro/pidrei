@@ -81,6 +81,22 @@ DROPPED_PREFIXES = (
         "packages/ai/test/openai-responses-reasoning-replay-e2e.test.ts",
         "live-API test, not ported (offline mirror: test_azure_openai_responses_reasoning_replay.py)",
     ),
+    (
+        "packages/ai/src/api/pi-messages.ts",
+        "pi-messages adapter not ported (radius wire protocol; types.py keeps the api literal only)",
+    ),
+    (
+        "packages/ai/test/pi-messages.test.ts",
+        "pi-messages adapter not ported (radius wire protocol; types.py keeps the api literal only)",
+    ),
+    (
+        "packages/agent/src/proxy.ts",
+        "server-proxied stream fn: public pi-agent API with no pidrei consumer, not ported",
+    ),
+    (
+        "packages/coding-agent/test/sdk-codex-cache-probe-tool-loop.ts",
+        "manual SDK probe script, not ported",
+    ),
 )
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
@@ -92,6 +108,7 @@ DROPPED_BASENAME_REASON = "radius provider dropped (pi-specific gateway; FEASIBI
 #: mechanical target is missing.
 RENAMES = {
     "packages/coding-agent/src/core/remote-catalog-provider.ts": "packages/pidrei/pidrei/core/remote_catalog.py",
+    "packages/coding-agent/test/package-command-paths.test.ts": "packages/pidrei/tests/test_package_commands.py",
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -104,6 +121,20 @@ TEST_HOMES = {
     "packages/ai/test/supports-xhigh.test.ts": "covered by packages/ai/tests/test_registry.py + test_models_generated.py (get_supported_thinking_levels)",
     "packages/ai/test/models-runtime.test.ts": "covered by packages/ai/tests/test_registry.py (models.ts ported as registry.py)",
     "packages/ai/test/provider-error-body-regression.test.ts": "PARITY GAP: per-adapter 403-body passthrough (4 cases) unmirrored — needs punkreq fault injection per adapter",
+    "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
+    "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
+    "packages/ai/test/constrained-sampling.test.ts": "PARITY GAP: api/constrained_sampling.py ported, dedicated test file unmirrored (partial coverage in adapter tests)",
+    "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
+    "packages/coding-agent/test/git-update.test.ts": "PARITY GAP: package_manager.py git update (force-push handling) unmirrored",
+    "packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts": "partial mirror: test_agent_session_bash_persistence.py holds the 0.83.0 concurrency cases; the rest of the characterization suite is a PARITY GAP",
+    "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": "PARITY GAP: compaction transient-retry regression unmirrored",
+    "packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts": "PARITY GAP: session_start transient-UI regression unmirrored",
+    "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
+    "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
+    "packages/coding-agent/test/utilities.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
+    "packages/coding-agent/test/test-network-env.ts": "pi test infra (PI_OFFLINE stub); pidrei conftest.py is hermetic via the PIDREI_OFFLINE equivalent",
+    "packages/coding-agent/test/test-harness.test.ts": "pi test-infra self-tests, not mirrored",
+    "packages/ai/test/fetch-option.test.ts": "DEVIATION: per-request fetch injection (0.83.0) not ported — JS-specific SDK surface with no coding-agent consumer; pidrei adapters expose per-request client injection instead",
 }
 
 NOISE_BASENAMES = {
@@ -111,9 +142,12 @@ NOISE_BASENAMES = {
     "package-lock.json",
     "npm-shrinkwrap.json",
     "CHANGELOG.md",
+    "README.md",
     "tsconfig.json",
     "vitest.config.ts",
     "vitest.base.ts",
+    "biome.json",
+    "test.sh",
     ".npmignore",
 }
 NOISE_PREFIXES = (
@@ -121,6 +155,8 @@ NOISE_PREFIXES = (
     "scripts/",
     "packages/coding-agent/examples/",
     "packages/coding-agent/install-lock/",
+    # pi-internal design docs, not user documentation
+    "packages/agent/docs/",
 )
 
 #: Top-level manifests of ported packages: still noise for porting purposes,
@@ -200,9 +236,21 @@ def classify(pi_path: str) -> tuple[str, object]:
     return "unmapped", None
 
 
+def is_merge(pi_root: str, sha: str) -> bool:
+    return len(git(pi_root, "rev-list", "--parents", "-n", "1", sha).split()) > 2
+
+
 def commit_files(pi_root: str, sha: str) -> list[tuple[str, str]]:
-    """[(status, path)] for a commit; renames/copies report the new path."""
-    out = git(pi_root, "diff-tree", "-r", "-m", "--first-parent", "--no-commit-id", "--name-status", sha)
+    """[(status, path)] for a non-merge commit; renames/copies report the new path.
+
+    Merges are never diffed: `diff-tree -m` emits one block per parent (even
+    with --first-parent), and the block against the branch parent lists every
+    mainline change since the fork point — hundreds of already-ported files.
+    Every commit a merge brings to the mainline is either reachable from the
+    ported ref (already ported) or inside ported_ref..HEAD (listed on its own
+    line), so the merge itself carries nothing to port.
+    """
+    out = git(pi_root, "diff-tree", "-r", "--no-commit-id", "--name-status", sha)
     files = []
     for line in out.splitlines():
         fields = line.split("\t")
@@ -211,7 +259,7 @@ def commit_files(pi_root: str, sha: str) -> list[tuple[str, str]]:
     return files
 
 
-def marker(status: str, target: str) -> str:
+def marker(status: str, kind: str, target: str) -> str:
     exists = os.path.exists(os.path.join(ROOT, target))
     if status == "D":
         return "  [DELETE]" if exists else "  [already absent]"
@@ -219,6 +267,10 @@ def marker(status: str, target: str) -> str:
         return ""
     if status == "A":
         return "  [NEW]"
+    if kind == "doc":
+        # pidrei ports a curated subset of pi's docs; a modified doc outside
+        # the subset stays unported unless it became relevant.
+        return "  [not in curated docs subset]"
     return "  [MISSING — pidrei rename? verify and extend RENAMES]"
 
 
@@ -241,6 +293,9 @@ def report(pi_root: str) -> int:
     deps_review: dict[str, list[str]] = {}
 
     for index, (sha, subject) in enumerate(commits, start=1):
+        if is_merge(pi_root, sha):
+            print(f"[{index:>2}/{len(commits)}] {sha[:8]}  {subject} — merge (constituent commits listed individually)")
+            continue
         portable: list[tuple[str, str, str, str]] = []
         dropped_reasons: list[str] = []
         noise = 0
@@ -274,7 +329,7 @@ def report(pi_root: str) -> int:
             if note is not None:
                 print(f"             → {note}")
                 continue
-            mark = marker(status, target)
+            mark = marker(status, kind, target)
             print(f"             → {target}{mark}")
             if mark == "  [NEW]":
                 new_files += 1

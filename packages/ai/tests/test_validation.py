@@ -75,6 +75,14 @@ def test_rejects_invalid_coercions_for_serialized_plain_json_schemas(schema, inp
         validate_tool_arguments(tool, tool_call)
 
 
+def test_accepts_null_for_nullable_array_schemas_with_items():
+    # pi additionally exercises TypeBox's generated validator here; that half
+    # is a TypeBox-only concern (see module docstring).
+    tool, tool_call = create_tool_call_with_plain_schema({"type": ["array", "null"], "items": {"type": "string"}}, None)
+
+    assert validate_tool_arguments(tool, tool_call) == {"value": None}
+
+
 def test_validate_tool_call_finds_tool_by_name():
     tool, tool_call = create_tool_call_with_plain_schema({"type": "string"}, "hello")
     assert validate_tool_call([tool], tool_call) == {"value": "hello"}

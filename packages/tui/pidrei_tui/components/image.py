@@ -14,6 +14,7 @@ from ..terminal_image import (
     image_fallback,
     render_image,
 )
+from ..utils import truncate_to_width
 
 
 __all__ = ["Image"]
@@ -97,10 +98,10 @@ class Image:
                     lines.append(move_up + result["sequence"])
             else:
                 fallback = image_fallback(self._mime_type, self._dimensions, self._options.get("filename"))
-                lines = [self._theme["fallbackColor"](fallback)]
+                lines = [truncate_to_width(self._theme["fallbackColor"](fallback), width)]
         else:
             fallback = image_fallback(self._mime_type, self._dimensions, self._options.get("filename"))
-            lines = [self._theme["fallbackColor"](fallback)]
+            lines = [truncate_to_width(self._theme["fallbackColor"](fallback), width)]
 
         self._cached_lines = lines
         self._cached_width = width

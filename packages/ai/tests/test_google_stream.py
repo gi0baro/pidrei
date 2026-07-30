@@ -266,7 +266,7 @@ async def test_a_safety_finish_reason_ends_the_stream_in_an_error(adapter):
 
     assert _types(events)[-1] == "error"
     assert result.stop_reason == "error"
-    assert result.error_message == "An unknown error occurred"
+    assert result.error_message == "Provider stopped with: SAFETY"
 
 
 @pytest.mark.tonio

@@ -494,7 +494,7 @@ def _map_stop_reason(reason: str, stop_details: dict | None) -> tuple[StopReason
     if reason == "stop_sequence":  # We don't supply stop sequences
         return "stop", None
     if reason == "sensitive":  # Content flagged by safety filters
-        return "error", None
+        return "error", "Provider stopped with: sensitive"
     # Handle unknown stop reasons loudly (the API may add new values).
     raise RuntimeError(f"Unhandled stop reason: {reason}")
 
@@ -519,7 +519,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             provider=model.provider,
             model=model.id,
             usage=Usage(),
-            stop_reason="stop",
+            stop_reason="pending",
             timestamp=int(time.time() * 1000),
         )
         # Streaming scratch (pi keeps these on the blocks and strips them later;
@@ -679,6 +679,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 elif event_type == "message_delta":
                     delta = event.get("delta") or {}
                     if delta.get("stop_reason"):
+                        output.raw_stop_reason = delta["stop_reason"]
                         stop_reason, error_message = _map_stop_reason(delta["stop_reason"], delta.get("stop_details"))
                         output.stop_reason = stop_reason
                         if error_message:
@@ -708,6 +709,8 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
 
+            if output.stop_reason == "pending":
+                raise RuntimeError("Anthropic stream ended without a stop reason")
             if output.stop_reason in ("aborted", "error"):
                 raise RuntimeError(output.error_message or "An unknown error occurred")
 

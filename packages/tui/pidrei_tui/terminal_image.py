@@ -17,6 +17,7 @@ import math
 import os
 import random
 import subprocess
+from pathlib import Path
 
 
 # Default cell dimensions - updated by TUI when terminal responds to query
@@ -427,10 +428,27 @@ def hyperlink(text: str, url: str) -> str:
     return f"\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\"
 
 
+def _shorten_image_path(filename: str) -> str:
+    """Shorten home-prefixed absolute paths to ~/... for compact display."""
+    home = os.path.expanduser("~")
+    if home and home != "~" and (filename == home or filename.startswith((f"{home}/", f"{home}\\"))):
+        return f"~{filename[len(home) :]}"
+    return filename
+
+
 def image_fallback(mime_type: str, dimensions: dict | None = None, filename: str | None = None) -> str:
+    """Text fallback when the terminal cannot render inline images.
+
+    Absolute paths are shown shortened (~/...) and, when OSC 8 hyperlinks are
+    available, linked to file:// so the full path remains openable.
+    """
     parts: list[str] = []
     if filename:
-        parts.append(filename)
+        display = _shorten_image_path(filename)
+        if get_capabilities().get("hyperlinks") and os.path.isabs(filename):
+            parts.append(hyperlink(display, Path(filename).as_uri()))
+        else:
+            parts.append(display)
     parts.append(f"[{mime_type}]")
     if dimensions:
         parts.append(f"{dimensions['widthPx']}x{dimensions['heightPx']}")

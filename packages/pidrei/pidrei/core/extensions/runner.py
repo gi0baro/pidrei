@@ -234,6 +234,11 @@ class _RunnerContext:
         return self._runner._get_model()
 
     @property
+    def scoped_models(self) -> Any:
+        self._runner._assert_active()
+        return self._runner._get_scoped_models_fn()
+
+    @property
     def thinking_level(self) -> Any:
         self._runner._assert_active()
         return self._runner._runtime.get_thinking_level()
@@ -372,6 +377,7 @@ class ExtensionRunner:
         self._stale_message: str | None = None
 
         self._get_model: Callable[[], Any] = lambda: None
+        self._get_scoped_models_fn: Callable[[], list] = list
         self._is_idle_fn: Callable[[], bool] = lambda: True
         self._is_project_trusted_fn: Callable[[], bool] = lambda: True
         self._get_signal_fn: Callable[[], Any] = lambda: None
@@ -414,6 +420,7 @@ class ExtensionRunner:
 
         # Context actions (required)
         self._get_model = context_actions["get_model"]
+        self._get_scoped_models_fn = context_actions["get_scoped_models"]
         self._is_idle_fn = context_actions["is_idle"]
         self._is_project_trusted_fn = context_actions["is_project_trusted"]
         self._get_signal_fn = context_actions["get_signal"]

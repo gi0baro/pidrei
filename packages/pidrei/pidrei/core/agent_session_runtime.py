@@ -126,6 +126,9 @@ class AgentSessionRuntime:
         return {"cancelled": bool(isinstance(result, dict) and result.get("cancel") is True)}
 
     async def _teardown_current(self, reason: str, target_session_file: str | None = None) -> None:
+        # Settle any active response first so the aborted turn (including tool
+        # results) is persisted to the outgoing session before it is replaced.
+        await self.session.abort()
         await emit_session_shutdown_event(
             self.session.extension_runner,
             {"type": "session_shutdown", "reason": reason, "targetSessionFile": target_session_file},

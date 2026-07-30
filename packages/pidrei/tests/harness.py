@@ -23,7 +23,7 @@ from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
 from pidrei_agent.agent import Agent, AgentInitialState
 from pidrei_ai.auth.types import ApiKeyCredential
-from pidrei_ai.providers.faux import faux_provider
+from pidrei_ai.providers.faux import FauxModelDefinition, faux_provider
 
 from .agent_session_helpers import create_test_resource_loader
 
@@ -69,9 +69,10 @@ async def create_harness(
     resource_loader: Any = None,
     extension_factories: list | None = None,
     with_configured_auth: bool = True,
+    models: list[dict] | None = None,
 ) -> Harness:
     temp_dir = tempfile.mkdtemp(prefix="pidrei-suite-")
-    faux = faux_provider()
+    faux = faux_provider(models=[FauxModelDefinition(**model) for model in models]) if models else faux_provider()
     faux.set_responses([])
     model = faux.get_model()
 

@@ -249,7 +249,8 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   {APP_NAME} update --models           Refresh model catalogs
   {APP_NAME} list                      List installed extensions from settings
   {APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  {APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config
+  {APP_NAME} auth <command>            Print credentials for external clients
+  {APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 {bold("Options:")}
   --provider <name>              Provider name (default: google)
@@ -297,6 +298,12 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
 Extensions can register additional flags (e.g., --plan from plan-mode extension).{extension_flags_text}
 
 {bold("Examples:")}
+  # Print a provider API key for an external client
+  {APP_NAME} auth print-api-key --provider openai --model gpt-5.5
+
+  # Print an OAuth bearer token for an external client (refreshes if expired)
+  {APP_NAME} auth print-bearer-token --provider openai-codex --model gpt-5.5
+
   # Interactive mode
   {APP_NAME}
 

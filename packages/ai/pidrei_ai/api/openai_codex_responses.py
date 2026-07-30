@@ -434,6 +434,14 @@ def _codex_options(options: StreamOptions | None) -> OpenAICodexResponsesOptions
     return OpenAICodexResponsesOptions(**values)
 
 
+def _assert_successful_output(output: AssistantMessage) -> None:
+    """pi's `assertSuccessfulOutput`: a done event may only carry stop/length/toolUse."""
+    if output.stop_reason == "pending":
+        raise RuntimeError("Codex stream ended without a stop reason")
+    if output.stop_reason in ("error", "aborted"):
+        raise RuntimeError(output.error_message or "An unknown error occurred")
+
+
 def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
     opts = _codex_options(options)
     out_stream = AssistantMessageEventStream()
@@ -445,7 +453,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             provider=model.provider,
             model=model.id,
             usage=Usage(),
-            stop_reason="stop",
+            stop_reason="pending",
             timestamp=int(time.time() * 1000),
         )
         state = _StartState()
@@ -509,6 +517,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
 
                         if opts.cancel is not None and opts.cancel.cancelled:
                             raise RuntimeError("Request was aborted")
+                        _assert_successful_output(output)
                         out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
                         out_stream.end()
                         return
@@ -627,6 +636,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
 
+            _assert_successful_output(output)
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()
         except Exception as error:

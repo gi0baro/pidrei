@@ -6,6 +6,67 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.83.0.0] - 2026-07-30
+
+Tracks [Pi 0.83.0](https://github.com/earendil-works/pi/releases/tag/v0.83.0).
+
+### Added
+
+- `pidrei auth print-api-key` / `pidrei auth print-bearer-token`: print a
+  configured credential alone on stdout for external clients. Bearer tokens
+  refresh through the normal request-auth path and honor `--min-expiry`
+  (30 minutes by default).
+- OpenRouter sign-in works over SSH: the PKCE flow races the loopback
+  callback against a manual prompt, so pasting the final redirect URL (or the
+  bare authorization code) completes login on remote/headless machines.
+- Extensions can read `ctx.scoped_models` — the models scoped to the session
+  (the `/scoped-models` set) — instead of enumerating the whole catalogue.
+- Assistant messages carry `rawStopReason`, the provider's untranslated stop
+  reason, alongside the mapped one; unmapped provider stops now surface as
+  "Provider stopped with: ..." errors instead of silent stops or generic
+  messages.
+- Streaming partials expose a `pending` stop reason until the provider sends a
+  real one, and a stream that ends without a stop reason is an error instead
+  of a fake success.
+- GitHub Copilot gains Claude Opus 5 (Anthropic Messages API, adaptive
+  thinking, 1M context, `minimal` thinking-level override). Qwen Token Plan
+  reasoning models expose `reasoning_effort` thinking levels. Model catalog
+  refreshed from models.dev.
+
+### Fixed
+
+- OAuth credentials with less than five minutes of validity refresh before a
+  request instead of at expiry, so tokens no longer die mid-request.
+- Aborting via session switch, resume, or tree navigation settles the active
+  response first: the aborted turn and its tool results persist instead of
+  leaving a dangling tool call. Navigating the session tree during a response
+  is rejected with a clear message.
+- Concurrent `!` bash commands can each be cancelled; aborting cancels all of
+  them and finishing one no longer marks the rest as done.
+- RPC-mode `bash` commands now emit the `user_bash` extension event instead of
+  bypassing extension interception.
+- Switching sessions during startup no longer duplicates messages (the stale
+  startup rebind is dropped when a replacement session takes over).
+- The `/model` selector highlights the top (best) match when typing a query
+  instead of leaving the highlight where it was.
+- Failed git installs clean up their partial checkout instead of leaving a
+  broken package behind.
+- Z.AI providers receive `max_tokens` (they ignore `max_completion_tokens`),
+  so the configured output cap applies again.
+- Explicitly configured Bedrock profiles win over ambient
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`.
+- Extension-provided skills and prompts no longer erase package metadata on
+  reload (autocomplete source tags stay correct).
+- AGENTS.md is no longer loaded twice when running from a linked git worktree
+  nested under its main repository.
+- File-backed SYSTEM.md and APPEND_SYSTEM.md show up in the startup
+  `[Context]` section.
+- Toggling tool-output expansion shows a status line.
+- Long image-fallback paths are home-shortened, hyperlinked (OSC 8) when
+  supported, and clamped to the terminal width instead of crashing the TUI.
+- Malformed OpenAI-compatible tool-call deltas that carry an empty `custom`
+  object no longer lose their parsed function arguments.
+
 ## [0.82.1.0] - 2026-07-28
 
 Tracks [Pi 0.82.1](https://github.com/earendil-works/pi/releases/tag/v0.82.1)

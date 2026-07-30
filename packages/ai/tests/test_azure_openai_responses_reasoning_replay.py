@@ -41,7 +41,7 @@ def create_output(model: Model) -> AssistantMessage:
         provider=model.provider,
         model=model.id,
         usage=Usage(),
-        stop_reason="stop",
+        stop_reason="pending",
         timestamp=1,
     )
 

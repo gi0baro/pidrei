@@ -20,6 +20,7 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
         "thinkingFormat": "zai"
       },
       "contextWindow": 131072,
@@ -45,6 +46,7 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
         "thinkingFormat": "zai",
         "zaiToolStream": true
       },
@@ -71,6 +73,7 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
         "thinkingFormat": "zai",
         "zaiToolStream": true
       },
@@ -97,6 +100,7 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
         "thinkingFormat": "zai",
         "zaiToolStream": true
       },
@@ -130,6 +134,7 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
+        "maxTokensField": "max_tokens",
         "thinkingFormat": "zai",
         "zaiToolStream": true
       },
@@ -157,6 +162,7 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
         "thinkingFormat": "zai",
         "zaiToolStream": true
       },

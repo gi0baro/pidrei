@@ -236,7 +236,59 @@ async def test_preserves_refusal_stop_details_from_message_delta():
     ).result()
 
     assert result.stop_reason == "error"
+    assert result.raw_stop_reason == "refusal"
     assert result.error_message == explanation
+
+
+@pytest.mark.tonio
+async def test_preserves_sensitive_stop_reasons_with_a_descriptive_error_message():
+    model = get_builtin_model("anthropic", "claude-haiku-4-5")
+    assert model is not None
+    body = sse_body(
+        [
+            (
+                "message_start",
+                json.dumps(
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "id": "msg_sensitive",
+                            "usage": {
+                                "input_tokens": 12,
+                                "output_tokens": 0,
+                                "cache_read_input_tokens": 0,
+                                "cache_creation_input_tokens": 0,
+                            },
+                        },
+                    }
+                ),
+            ),
+            (
+                "message_delta",
+                json.dumps(
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": "sensitive"},
+                        "usage": {
+                            "input_tokens": 12,
+                            "output_tokens": 0,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                        },
+                    }
+                ),
+            ),
+            ("message_stop", json.dumps({"type": "message_stop"})),
+        ]
+    )
+
+    result = await stream_anthropic(
+        model, user_context("blocked request"), AnthropicOptions(client=FakeClient(body))
+    ).result()
+
+    assert result.stop_reason == "error"
+    assert result.raw_stop_reason == "sensitive"
+    assert result.error_message == "Provider stopped with: sensitive"
 
 
 @pytest.mark.tonio

@@ -716,9 +716,14 @@ class DefaultPackageManager:
             await tonio.spawn_blocking(self._ensure_git_ignore, git_root)
         await fs.Path(os.path.dirname(target_dir)).mkdir(parents=True, exist_ok=True)
 
-        await self._run_command("git", ["clone", source.repo, target_dir])
-        if source.ref:
-            await self._run_command("git", ["checkout", source.ref], cwd=target_dir)
+        try:
+            await self._run_command("git", ["clone", source.repo, target_dir])
+            if source.ref:
+                await self._run_command("git", ["checkout", source.ref], cwd=target_dir)
+        except Exception:
+            await tonio.spawn_blocking(shutil.rmtree, target_dir, ignore_errors=True)
+            await tonio.spawn_blocking(self._prune_empty_git_parents, target_dir, git_root)
+            raise
 
     async def _update_git(self, source: GitSource, scope: str) -> None:
         target_dir = self._get_git_install_path(source, scope)

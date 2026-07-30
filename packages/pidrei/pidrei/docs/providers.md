@@ -40,6 +40,9 @@ selector → the model → "Enable".
 
 `/login xai` and `/login openrouter` each offer both a subscription flow and an
 API-key path; `XAI_API_KEY` and `OPENROUTER_API_KEY` keep working either way.
+On remote/headless machines (e.g. over SSH) the browser cannot reach the
+loopback callback; paste the final redirect URL (or the authorization code)
+into the login prompt instead.
 
 ## API keys
 

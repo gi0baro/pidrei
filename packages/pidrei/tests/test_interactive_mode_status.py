@@ -140,14 +140,15 @@ class TestSetToolsExpanded:
         header_calls: list = []
         loaded_calls: list = []
         chat_calls: list = []
-        request_render_calls: list = []
+        status_calls: list = []
         fake = SimpleNamespace(
             _tool_output_expanded=False,
             _custom_header=None,
             _built_in_header=SimpleNamespace(set_expanded=header_calls.append),
             _loaded_resources_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=loaded_calls.append)]),
             _chat_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=chat_calls.append)]),
-            ui=SimpleNamespace(request_render=lambda force=False: request_render_calls.append(force)),
+            ui=SimpleNamespace(request_render=lambda force=False: None),
+            show_status=status_calls.append,
         )
 
         InteractiveMode.set_tools_expanded(fake, True)
@@ -156,7 +157,7 @@ class TestSetToolsExpanded:
         assert header_calls == [True]
         assert loaded_calls == [True]
         assert chat_calls == [True]
-        assert len(request_render_calls) == 1
+        assert status_calls == ["Tool output: expanded"]
 
 
 class TestCreateExtensionUIContextSetTheme:
@@ -459,6 +460,8 @@ def create_show_loaded_resources_fake(
     tool_output_expanded=False,
     cwd=None,
     context_files=None,
+    system_prompt_source=None,
+    append_system_prompt_sources=None,
     extensions=None,
     skills=None,
     skill_diagnostics=None,
@@ -479,6 +482,12 @@ def create_show_loaded_resources_fake(
         ),
         resource_loader=SimpleNamespace(
             get_agents_files=lambda: [SimpleNamespace(path=item["path"]) for item in (context_files or [])],
+            get_system_prompt_source=lambda: (
+                SimpleNamespace(path=system_prompt_source["path"]) if system_prompt_source is not None else None
+            ),
+            get_append_system_prompt_sources=lambda: [
+                SimpleNamespace(path=item["path"]) for item in (append_system_prompt_sources or [])
+            ],
             get_skills=lambda: SimpleNamespace(
                 skills=[
                     SimpleNamespace(file_path=skill["filePath"], name=skill["name"], source_info=None)
@@ -591,6 +600,22 @@ def create_extension_fixtures():
 
 
 class TestShowLoadedResources:
+    def test_shows_system_prompt_context_paths_before_project_context_files(self):
+        cwd = "/tmp/project"
+        fake = create_show_loaded_resources_fake(
+            quiet_startup=False,
+            cwd=cwd,
+            system_prompt_source={"path": f"{cwd}/.pidrei/SYSTEM.md"},
+            append_system_prompt_sources=[{"path": f"{cwd}/.pidrei/APPEND_SYSTEM.md"}],
+            context_files=[{"path": f"{cwd}/AGENTS.md"}],
+        )
+
+        InteractiveMode._show_loaded_resources(fake, {"force": False})
+
+        output = render_all(fake._loaded_resources_container)
+        assert "[Context]" in output
+        assert ".pidrei/SYSTEM.md, .pidrei/APPEND_SYSTEM.md, AGENTS.md" in output
+
     def test_shows_a_compact_resource_listing_by_default(self):
         fake = create_show_loaded_resources_fake(
             quiet_startup=False,

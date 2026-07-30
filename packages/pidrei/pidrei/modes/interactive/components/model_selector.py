@@ -222,7 +222,10 @@ class ModelSelectorComponent(Container):
             )
         else:
             self._filtered_models = self._active_models
-        self._selected_index = min(self._selected_index, max(0, len(self._filtered_models) - 1))
+        # When filtering by a query, move the selector to the top row so the best
+        # match is highlighted. When the query is cleared, keep the current position
+        # clamped to the (restored) list length.
+        self._selected_index = 0 if query else min(self._selected_index, max(0, len(self._filtered_models) - 1))
         self._update_list()
 
     def _update_list(self) -> None:

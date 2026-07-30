@@ -1484,7 +1484,12 @@ class InteractiveMode:
                 source_infos[loaded_theme.source_path] = loaded_theme.source_info
 
         if show_listing:
-            context_files = self.session.resource_loader.get_agents_files()
+            system_prompt_source = self.session.resource_loader.get_system_prompt_source()
+            context_files = [
+                *([system_prompt_source] if system_prompt_source is not None else []),
+                *self.session.resource_loader.get_append_system_prompt_sources(),
+                *self.session.resource_loader.get_agents_files(),
+            ]
             if context_files:
                 self._loaded_resources_container.add_child(Spacer(1))
                 context_list = "\n".join(
@@ -1735,17 +1740,25 @@ class InteractiveMode:
 
     async def _rebind_current_session(self, options: dict | None = None) -> None:
         options = options or {}
+        session = self.session
+
         if self._unsubscribe is not None:
             self._unsubscribe()
         self._unsubscribe = None
         self._apply_runtime_settings()
+
         if options.get("renderBeforeBind"):
             self.render_current_session_state()
             self._subscribe_to_agent()
-            await self._bind_current_session_extensions()
-        else:
-            await self._bind_current_session_extensions()
+
+        await self._bind_current_session_extensions()
+
+        if self.session is not session:
+            return
+
+        if not options.get("renderBeforeBind"):
             self._subscribe_to_agent()
+
         self._update_available_provider_count()
         self._update_editor_border_color()
         self._update_terminal_title()
@@ -1803,6 +1816,7 @@ class InteractiveMode:
                 "sessionManager": self.session_manager,
                 "modelRegistry": extension_runner.get_model_registry(),
                 "model": self.session.model,
+                "scopedModels": self.session.scoped_models,
                 "thinkingLevel": self.session.thinking_level,
                 "isIdle": lambda: self.session.is_idle,
                 "isProjectTrusted": lambda: self.settings_manager.is_project_trusted(),
@@ -3557,7 +3571,7 @@ class InteractiveMode:
             for child in container.children:
                 if is_expandable(child):
                     child.set_expanded(expanded)
-        self.ui.request_render()
+        self.show_status(f"Tool output: {'expanded' if expanded else 'collapsed'}")
 
     def _toggle_thinking_block_visibility(self) -> None:
         self._hide_thinking_block = not self._hide_thinking_block
@@ -4341,7 +4355,7 @@ class InteractiveMode:
         def create(done):
             async def select_entry(entry_id: str) -> None:
                 # Selecting the current leaf is a no-op (already there)
-                if entry_id == real_leaf_id:
+                if entry_id == self.session_manager.get_leaf_id():
                     done()
                     self.show_status("Already at this point")
                     return
@@ -4378,6 +4392,11 @@ class InteractiveMode:
 
                         # User made a complete choice
                         break
+
+                # The user committed to navigating: stop the active response first.
+                if self.session.is_streaming:
+                    self._restore_queued_messages_to_editor()
+                    await self.session.abort()
 
                 # Set up escape handler and status indicator if summarizing
                 showing_summary_indicator = False

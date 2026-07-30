@@ -163,6 +163,34 @@ DEEPSEEK_V4_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "max": "max",
 }
 
+QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP: dict[str, str | None] = {
+    "minimal": None,
+    "low": None,
+    "medium": None,
+    "high": "high",
+    "xhigh": None,
+    "max": "max",
+}
+QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP: dict[str, str | None] = {
+    "minimal": None,
+    "low": "low",
+    "medium": "medium",
+    "high": None,
+    "xhigh": "xhigh",
+    "max": None,
+}
+QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = {
+    "MiniMax-M2.5",
+    "deepseek-v3.2",
+    "kimi-k2.5",
+    "kimi-k2.6",
+    "kimi-k2.7-code",
+    "qwen3.6-flash",
+    "qwen3.6-plus",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+}
+
 KIMI_K3_MAX_TOKENS = 131072
 KIMI_K3_COST = {"input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 0}
 # Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
@@ -251,6 +279,7 @@ GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = {
     "claude-opus-4.6",
     "claude-opus-4.7",
     "claude-opus-4.8",
+    "claude-opus-5",
     "claude-sonnet-4.6",
     "claude-sonnet-5",
     "gpt-5.3-codex",
@@ -263,6 +292,7 @@ GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = {
 GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES: dict[str, dict[str, str | None]] = {
     "claude-opus-4.7": {"minimal": "low"},
     "claude-opus-4.8": {"minimal": "low"},
+    "claude-opus-5": {"minimal": "low"},
     "claude-sonnet-4.6": {"minimal": "low", "max": "max"},
 }
 
@@ -440,7 +470,13 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
     )
 
     use_max_tokens = (
-        "chutes.ai" in base_url or is_moonshot or is_cloudflare_ai_gateway or is_together or is_nvidia or is_ant_ling
+        "chutes.ai" in base_url
+        or is_moonshot
+        or is_cloudflare_ai_gateway
+        or is_together
+        or is_nvidia
+        or is_ant_ling
+        or is_zai
     )
 
     is_grok = provider == "xai" or "api.x.ai" in base_url
@@ -1641,6 +1677,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": False,
         "supportsStore": False,
+        "supportsReasoningEffort": True,
     }
     for source_key, provider, base_url in (
         (
@@ -1657,21 +1694,29 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
         for model_id, source in _models_of(catalog, source_key).items():
             if not _tool_capable(source):
                 continue
-            models.append(
-                {
-                    "id": model_id,
-                    "name": source.get("name") or model_id,
-                    "api": "openai-completions",
-                    "provider": provider,
-                    "baseUrl": base_url,
-                    "compat": dict(qwen_token_plan_compat),
-                    "reasoning": source.get("reasoning") is True,
-                    "input": _input(source),
-                    "cost": _cost(source),
-                    "contextWindow": _context(source),
-                    "maxTokens": _max_tokens(source),
-                }
-            )
+            supports_reasoning_effort = model_id not in QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS
+            entry: dict[str, Any] = {
+                "id": model_id,
+                "name": source.get("name") or model_id,
+                "api": "openai-completions",
+                "provider": provider,
+                "baseUrl": base_url,
+                "compat": dict(qwen_token_plan_compat)
+                if supports_reasoning_effort
+                else {**qwen_token_plan_compat, "supportsReasoningEffort": False},
+                "reasoning": source.get("reasoning") is True,
+                "input": _input(source),
+                "cost": _cost(source),
+                "contextWindow": _context(source),
+                "maxTokens": _max_tokens(source),
+            }
+            if supports_reasoning_effort:
+                entry["thinkingLevelMap"] = dict(
+                    QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
+                    if model_id == "qwen3.8-max-preview"
+                    else QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP
+                )
+            models.append(entry)
             record(provider, model_id, source)
 
     return models
@@ -1996,7 +2041,11 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
 
 def apply_deepseek_v4_compat(models: list[dict[str, Any]]) -> None:
     for candidate in models:
-        if candidate["api"] != "openai-completions" or "deepseek-v4" not in candidate["id"]:
+        if (
+            candidate["api"] != "openai-completions"
+            or "deepseek-v4" not in candidate["id"]
+            or candidate["provider"] in ("qwen-token-plan", "qwen-token-plan-cn")
+        ):
             continue
         preserves_native_reasoning_effort = candidate["provider"] in ("openrouter", "opencode")
         candidate["compat"] = {
@@ -2095,29 +2144,6 @@ async def main() -> None:
                 "cost": {"input": 1.5, "output": 7.5, "cacheRead": 0, "cacheWrite": 0},
                 "contextWindow": 262144,  # 256k tokens
                 "maxTokens": 262144,
-            }
-        )
-
-    # qwen3.8-max-preview on both Qwen Token Plan providers, until models.dev has it.
-    for qwen_provider, base_url in (
-        ("qwen-token-plan", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"),
-        ("qwen-token-plan-cn", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
-    ):
-        if any(m["provider"] == qwen_provider and m["id"] == "qwen3.8-max-preview" for m in all_models):
-            continue
-        all_models.append(
-            {
-                "id": "qwen3.8-max-preview",
-                "name": "Qwen3.8 Max Preview",
-                "api": "openai-completions",
-                "provider": qwen_provider,
-                "baseUrl": base_url,
-                "compat": {"thinkingFormat": "qwen", "supportsDeveloperRole": False, "supportsStore": False},
-                "reasoning": True,
-                "input": ["text", "image"],
-                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-                "contextWindow": 1000000,
-                "maxTokens": 65536,
             }
         )
 

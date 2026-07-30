@@ -24,6 +24,7 @@ from .extensions.loader import (
     load_extensions_cached,
 )
 from .extensions.types import Extension, ExtensionLoadError, ExtensionRuntime, LoadExtensionsResult
+from .footer_data_provider import _find_git_paths
 from .package_manager import DefaultPackageManager, ResolvedResource
 from .prompt_templates import PromptTemplate, load_prompt_templates
 from .settings_manager import SettingsManager
@@ -89,6 +90,38 @@ def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
     return None
 
 
+def _find_shadowed_context_file(cwd: str) -> str | None:
+    """The main repo's context file that a nested linked worktree's own copy
+    shadows: both are the same tracked AGENTS.md/CLAUDE.md, so loading both
+    loads it twice. Returns None when nothing is shadowed, leaving normal
+    ancestor inheritance alone.
+
+    Returned canonicalized (realpath), because `git worktree add` writes the
+    `.git` file's `gitdir:` target in realpath form while cwd may still be
+    symlinked (macOS `/tmp` -> `/private/tmp`).
+    """
+    git_paths = _find_git_paths(cwd)
+    if git_paths is None:
+        return None
+    common_git_dir = canonicalize_path(git_paths["commonGitDir"])
+    worktree_root = canonicalize_path(git_paths["repoDir"])
+    main_repo_root = os.path.dirname(common_git_dir)
+    # False for an ordinary repo, where the two are the same dir, and for a sibling
+    # worktree (`git worktree add ../feat`), whose main repo is not an ancestor.
+    if not worktree_root.startswith(f"{main_repo_root}{os.sep}"):
+        return None
+    # dirname of the common git dir is the main worktree root only when that dir is
+    # itself checked out from the same repo. In a bare layout (`proj/.bare` +
+    # `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
+    # submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
+    if canonicalize_path(os.path.join(main_repo_root, ".git")) != common_git_dir:
+        return None
+    worktree_context_file = _load_context_file_from_dir(worktree_root)
+    if worktree_context_file is None:
+        return None
+    return os.path.join(main_repo_root, os.path.basename(worktree_context_file.path))
+
+
 def load_project_context_files(*, cwd: str, agent_dir: str) -> Awaitable[list[AgentsFile]]:
     """Walking cwd's ancestors for AGENTS.md is one blocking unit, so it goes
     to the pool whole rather than as a probe-and-read per directory."""
@@ -109,10 +142,16 @@ def _load_project_context_files_sync(*, cwd: str, agent_dir: str) -> list[Agents
 
     ancestor_context_files: list[AgentsFile] = []
 
+    shadowed_context_file = _find_shadowed_context_file(resolved_cwd)
     current_dir = resolved_cwd
     while True:
         context_file = _load_context_file_from_dir(current_dir)
-        if context_file is not None and context_file.path not in seen_paths:
+        is_shadowed = (
+            shadowed_context_file is not None
+            and context_file is not None
+            and canonicalize_path(context_file.path) == shadowed_context_file
+        )
+        if context_file is not None and not is_shadowed and context_file.path not in seen_paths:
             ancestor_context_files.insert(0, context_file)
             seen_paths.add(context_file.path)
 
@@ -194,11 +233,14 @@ class DefaultResourceLoader:
         self._prompt_diagnostics: list[ResourceDiagnostic] = []
         self._agents_files: list[AgentsFile] = []
         self._system_prompt: str | None = None
+        self._system_prompt_source_path: str | None = None
         self._append_system_prompt: list[str] = []
+        self._append_system_prompt_source_paths: list[str] = []
         self._last_skill_paths: list[str] = []
         self._extension_skill_source_infos: dict[str, SourceInfo] = {}
         self._extension_prompt_source_infos: dict[str, SourceInfo] = {}
         self._last_prompt_paths: list[str] = []
+        self._resource_metadata_by_path: dict[str, PathMetadata] = {}
         self._themes: list = []
         self._theme_diagnostics: list[ResourceDiagnostic] = []
 
@@ -223,8 +265,18 @@ class DefaultResourceLoader:
     def get_system_prompt(self) -> str | None:
         return self._system_prompt
 
+    def get_system_prompt_source(self) -> AgentsFile | None:
+        """File-backed SYSTEM.md source, path-only (pi returns `{path}`)."""
+        if self._system_prompt_source_path is None:
+            return None
+        return AgentsFile(path=self._system_prompt_source_path, content="")
+
     def get_append_system_prompt(self) -> list[str]:
         return self._append_system_prompt
+
+    def get_append_system_prompt_sources(self) -> list[AgentsFile]:
+        """File-backed APPEND_SYSTEM.md sources, path-only (pi returns `{path}`)."""
+        return [AgentsFile(path=path, content="") for path in self._append_system_prompt_source_paths]
 
     # -- extension-provided resources -------------------------------------------
 
@@ -246,13 +298,13 @@ class DefaultResourceLoader:
             self._last_skill_paths = self._merge_paths(
                 self._last_skill_paths, [entry.path for entry in normalized_skills]
             )
-            await self._update_skills_from_paths(self._last_skill_paths)
+            await self._update_skills_from_paths(self._last_skill_paths, self._resource_metadata_by_path)
 
         if normalized_prompts:
             self._last_prompt_paths = self._merge_paths(
                 self._last_prompt_paths, [entry.path for entry in normalized_prompts]
             )
-            await self._update_prompts_from_paths(self._last_prompt_paths)
+            await self._update_prompts_from_paths(self._last_prompt_paths, self._resource_metadata_by_path)
 
     # -- reload ------------------------------------------------------------------
 
@@ -285,7 +337,10 @@ class DefaultResourceLoader:
         cli_extension_paths = await self._package_manager.resolve_extension_sources(
             self._additional_extension_paths, temporary=True
         )
-        metadata_by_path: dict[str, PathMetadata] = {}
+        # Kept on the instance so post-reload passes (extend_resources) can
+        # still resolve package metadata.
+        self._resource_metadata_by_path = {}
+        metadata_by_path = self._resource_metadata_by_path
 
         self._extension_skill_source_infos = {}
         self._extension_prompt_source_infos = {}
@@ -382,16 +437,21 @@ class DefaultResourceLoader:
             self._agents_files_override(agents_files) if self._agents_files_override is not None else agents_files
         )
 
-        base_system_prompt = await _resolve_prompt_input(
+        system_prompt_source = (
             self._system_prompt_source
             if self._system_prompt_source is not None
-            else self._discover_system_prompt_file(),
-            "system prompt",
+            else self._discover_system_prompt_file()
         )
+        base_system_prompt = await _resolve_prompt_input(system_prompt_source, "system prompt")
         self._system_prompt = (
             self._system_prompt_override(base_system_prompt)
             if self._system_prompt_override is not None
             else base_system_prompt
+        )
+        self._system_prompt_source_path = (
+            resolve_path(system_prompt_source)
+            if system_prompt_source is not None and await fs.Path(system_prompt_source).exists()
+            else None
         )
 
         if self._append_system_prompt_source is not None:
@@ -409,6 +469,9 @@ class DefaultResourceLoader:
             if self._append_system_prompt_override is not None
             else base_append
         )
+        self._append_system_prompt_source_paths = [
+            resolve_path(source) for source in append_sources if await fs.Path(source).exists()
+        ]
         self._loaded = True
 
     # -- extension loading -------------------------------------------------------

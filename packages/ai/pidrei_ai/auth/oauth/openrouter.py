@@ -2,13 +2,15 @@
 
 OpenRouter exchanges an authorization code for a permanent, user-controlled API
 key rather than an expiring access/refresh token pair. The callback is handled by
-a one-shot loopback server on an ephemeral port.
+a one-shot loopback server on an ephemeral port, raced against a manual prompt so
+remote/headless sessions can paste the redirect URL when the browser cannot reach
+the loopback server.
 """
 
 import uuid
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import tonio.colored as tonio
 
@@ -21,7 +23,7 @@ from pidrei_ai.auth.oauth.callback_server import (
 )
 from pidrei_ai.auth.oauth.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.auth.oauth.pkce import generate_pkce
-from pidrei_ai.auth.types import AuthEvent, AuthInteraction, ModelAuth, OAuthAuth, OAuthCredential
+from pidrei_ai.auth.types import AuthEvent, AuthInteraction, AuthPrompt, ModelAuth, OAuthAuth, OAuthCredential
 from pidrei_ai.utils import http
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
@@ -37,6 +39,26 @@ MAX_SAFE_INTEGER = 9007199254740991
 
 def _get_callback_host() -> str:
     return get_provider_env_value("PIDREI_OAUTH_CALLBACK_HOST") or "127.0.0.1"
+
+
+def _parse_authorization_input(input_value: str) -> str | None:
+    """pi's `parseAuthorizationInput`: a redirect URL, a query string carrying
+    `code=`, or the bare authorization code."""
+    value = input_value.strip()
+    if not value:
+        return None
+
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        codes = parse_qs(parsed.query).get("code")
+        return codes[0] if codes else None
+
+    if "code=" in value:
+        # URLSearchParams tolerates one leading "?".
+        codes = parse_qs(value.removeprefix("?")).get("code")
+        return codes[0] if codes else None
+
+    return value
 
 
 def _error_detail(body: dict[str, Any]) -> str | None:
@@ -89,24 +111,32 @@ async def _exchange_authorization_code(code: str, verifier: str, cancel: CancelT
 
 
 class _OpenRouterCallbackServer:
-    """pi's `OpenRouterCallbackServer`: the callback URL, the pending credential,
-    and a `close` that settles the pending credential as cancelled."""
+    """pi's `OpenRouterCallbackServer`, following the codex `OAuthServerInfo`
+    shape: `wait_for_credential` resolves None once `cancel_wait` hands the
+    login over to manual entry, and `close` is pure cleanup that never settles
+    the wait."""
 
-    __slots__ = ("_finish", "_result", "callback_url")
+    __slots__ = ("_cancel_wait", "_close", "_result", "callback_url")
 
-    def __init__(self, callback_url: str, result: OneShotValue, finish: Callable[[], None]):
+    def __init__(
+        self, callback_url: str, result: OneShotValue, close: Callable[[], None], cancel_wait: Callable[[], None]
+    ):
         self.callback_url = callback_url
         self._result = result
-        self._finish = finish
+        self._close = close
+        self._cancel_wait = cancel_wait
 
-    async def credential(self) -> OAuthCredential:
+    async def wait_for_credential(self) -> OAuthCredential | None:
         outcome, value = await self._result.wait()
         if outcome == "error":
             raise value
         return value
 
+    def cancel_wait(self) -> None:
+        self._cancel_wait()
+
     def close(self) -> None:
-        self._finish()
+        self._close()
 
 
 async def _start_callback_server(
@@ -117,15 +147,28 @@ async def _start_callback_server(
     callback_host = _get_callback_host()
     result = OneShotValue()
     claimed = False
+    closed = False
     unsubscribe: Any = None
+
+    def close() -> None:
+        nonlocal closed
+        if closed:
+            return
+        closed = True
+        if unsubscribe is not None:
+            unsubscribe()
+        server.close()
 
     def finish(outcome: str, value: Any) -> None:
         if result.settled:
             return
+        close()
         result.settle((outcome, value))
-        if unsubscribe is not None:
-            unsubscribe()
-        server.close()
+
+    def cancel_wait() -> None:
+        # A claimed callback is already exchanging its code; let that exchange settle the login.
+        if not claimed:
+            finish("ok", None)
 
     async def handle(request: CallbackRequest) -> CallbackResponse:
         nonlocal claimed
@@ -170,7 +213,8 @@ async def _start_callback_server(
     return _OpenRouterCallbackServer(
         callback_url=f"http://{callback_host}:{server.port}{callback_path}",
         result=result,
-        finish=lambda: finish("error", RuntimeError("Login cancelled")),
+        close=close,
+        cancel_wait=cancel_wait,
     )
 
 
@@ -178,25 +222,69 @@ async def _login_openrouter(interaction: AuthInteraction) -> OAuthCredential:
     pkce = generate_pkce()
     callback_path = f"/oauth/callback/{uuid.uuid4()}"
     callback = await _start_callback_server(callback_path, pkce.verifier, interaction.cancel)
-    authorize_url = f"{AUTHORIZE_URL}?" + urlencode(
-        {
-            "callback_url": callback.callback_url,
-            "code_challenge": pkce.challenge,
-            "code_challenge_method": "S256",
-        }
-    )
+    manual_abort = CancelToken()
+    manual: dict[str, Any] = {}
+    prompt_done = tonio.Event()
 
-    interaction.notify(
-        AuthEvent(
-            type="progress",
-            message=f"Listening for OpenRouter OAuth callback on {callback.callback_url}",
-        )
-    )
-    interaction.notify(AuthEvent(type="auth_url", url=authorize_url, instructions="Complete sign-in in your browser."))
+    async def run_manual_prompt() -> None:
+        try:
+            manual["input"] = await interaction.prompt(
+                AuthPrompt(
+                    type="manual_code",
+                    message="Complete sign-in in your browser, or paste the authorization code / redirect URL here:",
+                    placeholder=callback.callback_url,
+                    cancel=manual_abort,
+                )
+            )
+        except Exception as error:
+            manual["error"] = error
+        prompt_done.set()
+        callback.cancel_wait()
 
     try:
-        return await callback.credential()
+        authorize_url = f"{AUTHORIZE_URL}?" + urlencode(
+            {
+                "callback_url": callback.callback_url,
+                "code_challenge": pkce.challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+
+        interaction.notify(
+            AuthEvent(
+                type="progress",
+                message=f"Listening for OpenRouter OAuth callback on {callback.callback_url}",
+            )
+        )
+        interaction.notify(
+            AuthEvent(
+                type="auth_url",
+                url=authorize_url,
+                instructions=(
+                    "Complete sign-in in your browser. "
+                    "If the browser is on another machine, paste the final redirect URL here."
+                ),
+            )
+        )
+
+        tonio.spawn.without_tracking(run_manual_prompt())
+
+        credential = await callback.wait_for_credential()
+        if manual.get("error") is not None:
+            raise manual["error"]
+        if credential is not None:
+            return credential
+
+        await prompt_done.wait()
+        if manual.get("error") is not None:
+            raise manual["error"]
+        code = _parse_authorization_input(manual["input"]) if manual.get("input") else None
+        if not code:
+            raise RuntimeError("Missing authorization code")
+        interaction.notify(AuthEvent(type="progress", message="Exchanging authorization code for an API key..."))
+        return await _exchange_authorization_code(code, pkce.verifier, interaction.cancel)
     finally:
+        manual_abort.cancel()
         callback.close()
 
 

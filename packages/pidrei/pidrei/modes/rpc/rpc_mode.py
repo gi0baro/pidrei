@@ -25,6 +25,7 @@ import tonio.colored as tonio
 from pidrei_ai.types import ImageContent
 
 from ...core.agent_session import ExtensionBindings, PromptOptions
+from ...core.bash_executor import BashResult
 from ...core.json_wire import to_wire
 from ...core.output_guard import (
     flush_raw_stdout,
@@ -590,10 +591,39 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             # =================================================================
 
             case "bash":
+                event_result = await session.extension_runner.emit_user_bash(
+                    {
+                        "type": "user_bash",
+                        "command": command.get("command"),
+                        "excludeFromContext": command.get("excludeFromContext") or False,
+                        "cwd": session.session_manager.get_cwd(),
+                    }
+                )
+
+                if event_result and event_result.get("result"):
+                    extension_result = event_result["result"]
+                    bash_result = BashResult(
+                        output=extension_result.get("output") or "",
+                        exit_code=extension_result.get("exitCode"),
+                        cancelled=bool(extension_result.get("cancelled")),
+                        truncated=bool(extension_result.get("truncated")),
+                        full_output_path=extension_result.get("fullOutputPath"),
+                    )
+                    await session.record_bash_result(
+                        command.get("command"),
+                        bash_result,
+                        {"excludeFromContext": command.get("excludeFromContext")},
+                    )
+                    return success(id, "bash", bash_result)
+
                 result = await session.execute_bash(
                     command.get("command"),
                     None,
-                    {"exclude_from_context": command.get("excludeFromContext"), "id": id},
+                    {
+                        "exclude_from_context": command.get("excludeFromContext"),
+                        "id": id,
+                        "operations": event_result.get("operations") if event_result else None,
+                    },
                 )
                 return success(id, "bash", result)
 

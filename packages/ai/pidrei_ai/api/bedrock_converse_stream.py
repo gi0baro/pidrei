@@ -147,7 +147,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             provider=model.provider,
             model=model.id,
             usage=Usage(),
-            stop_reason="stop",
+            stop_reason="pending",
             timestamp=int(time.time() * 1000),
         )
         blocks = output.content
@@ -157,8 +157,14 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
         block_indices: dict[int, int] = {}
         partial_json: dict[int, str] = {}
 
+        # A profile explicitly configured through pi's auth flow (the `profile`
+        # option or scoped `AWS_PROFILE` on the stored credential's env) must win
+        # over ambient AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. The SDK default
+        # chain already prefers a configured profile over env keys, but only when
+        # `credentials` is not set on the client config. See #6957.
+        options_profile = opts.profile or (opts.env or {}).get("AWS_PROFILE")
         config: dict[str, Any] = {
-            "profile": opts.profile or get_provider_env_value("AWS_PROFILE", opts.env),
+            "profile": options_profile or get_provider_env_value("AWS_PROFILE", opts.env),
         }
         configured_region = _get_configured_bedrock_region(opts)
         has_ambient_configured_profile = bool(get_provider_env_value("AWS_PROFILE"))
@@ -199,7 +205,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             }
 
         credentials = _get_configured_bedrock_credentials(opts.env)
-        if not skip_auth and credentials:
+        if not skip_auth and credentials and not options_profile:
             config["credentials"] = credentials
 
         if use_bearer_token:
@@ -267,6 +273,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                         item["contentBlockStop"], blocks, block_indices, partial_json, output, out_stream
                     )
                 elif "messageStop" in item:
+                    output.raw_stop_reason = item["messageStop"].get("stopReason")
                     stop_reason, error_message = map_stop_reason(item["messageStop"].get("stopReason"))
                     output.stop_reason = stop_reason
                     if error_message:
@@ -277,6 +284,8 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
 
+            if output.stop_reason == "pending":
+                raise RuntimeError("Bedrock stream ended without a stop reason")
             if output.stop_reason in ("error", "aborted"):
                 raise RuntimeError(output.error_message or "An unknown error occurred")
 
@@ -790,7 +799,7 @@ def map_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:
         case s if s == STOP_REASON_TOOL_USE:
             return "toolUse", None
         case _:
-            return ("error", reason) if reason else ("error", None)
+            return ("error", f"Provider stopped with: {reason}") if reason else ("error", None)
 
 
 def _get_configured_bedrock_region(options: BedrockOptions) -> str | None:

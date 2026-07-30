@@ -205,6 +205,7 @@ def serialize_message(message: Any) -> Any:
         if message.diagnostics is not None:
             data["diagnostics"] = [_serialize_diagnostic(diagnostic) for diagnostic in message.diagnostics]
         _put(data, "errorMessage", message.error_message)
+        _put(data, "rawStopReason", message.raw_stop_reason)
         return data
     if role == "toolResult":
         data = {
@@ -275,6 +276,7 @@ def parse_message(data: Any) -> Any:
                 else None
             ),
             error_message=data.get("errorMessage"),
+            raw_stop_reason=data.get("rawStopReason"),
         )
     if role == "toolResult":
         return ToolResultMessage(

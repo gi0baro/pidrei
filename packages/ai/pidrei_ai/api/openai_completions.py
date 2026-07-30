@@ -235,7 +235,13 @@ def detect_compat(model: Model) -> _ResolvedCompat:
     )
 
     use_max_tokens = (
-        "chutes.ai" in base_url or is_moonshot or is_cloudflare_ai_gateway or is_together or is_nvidia or is_ant_ling
+        "chutes.ai" in base_url
+        or is_moonshot
+        or is_cloudflare_ai_gateway
+        or is_together
+        or is_nvidia
+        or is_ant_ling
+        or is_zai
     )
 
     is_grok = provider == "xai" or "api.x.ai" in base_url
@@ -853,7 +859,7 @@ def convert_messages(
     return params
 
 
-def build_params(
+def build_params(  # noqa: C901 (mirrors pi's compat ladder)
     model: Model,
     context: Context,
     options: OpenAICompletionsOptions,
@@ -926,6 +932,11 @@ def build_params(
                 params["reasoning_effort"] = resolved
     elif compat.thinking_format == "qwen" and model.reasoning:
         params["enable_thinking"] = bool(effort)
+        if effort and compat.supports_reasoning_effort:
+            mapped_effort = mapping.get(effort, "__missing__")
+            resolved = effort if mapped_effort == "__missing__" else mapped_effort
+            if isinstance(resolved, str):
+                params["reasoning_effort"] = resolved
     elif compat.thinking_format == "qwen-chat-template" and model.reasoning:
         params["chat_template_kwargs"] = {"enable_thinking": bool(effort), "preserve_thinking": True}
     elif compat.thinking_format == "chat-template" and model.reasoning:
@@ -1017,7 +1028,7 @@ def stream(  # noqa: C901
             provider=model.provider,
             model=model.id,
             usage=Usage(),
-            stop_reason="stop",
+            stop_reason="pending",
             timestamp=int(time.time() * 1000),
         )
 
@@ -1143,7 +1154,9 @@ def stream(  # noqa: C901
                     # The "input" fallback must not normally be taken: it exists so a
                     # made-up tool name still has somewhere to stash its input.
                     custom_input_property = (
-                        grammar_tool_input_properties.get(name, "input") if custom is not None else None
+                        grammar_tool_input_properties.get(name, "input")
+                        if custom is not None and not tool_call.get("function")
+                        else None
                     )
                     has_custom = custom_input_property is not None
                     block = ToolCall(
@@ -1171,7 +1184,7 @@ def stream(  # noqa: C901
                     tool_blocks_by_id[tool_call["id"]] = block
                 if not block.name and name:
                     block.name = name
-                if custom is not None and entry.custom_property is None:
+                if custom is not None and not tool_call.get("function") and entry.custom_property is None:
                     custom_input_property = grammar_tool_input_properties.get(block.name, "input")
                     block.arguments = {custom_input_property: ""}
                     entry.custom_property = custom_input_property
@@ -1208,6 +1221,7 @@ def stream(  # noqa: C901
                     output.usage = _parse_chunk_usage(choice["usage"], model)
 
                 if choice.get("finish_reason"):
+                    output.raw_stop_reason = choice["finish_reason"]
                     stop_reason, error_message = _map_stop_reason(choice["finish_reason"])
                     output.stop_reason = stop_reason
                     if error_message:
@@ -1296,7 +1310,7 @@ def stream(  # noqa: C901
                 raise RuntimeError("Request was aborted")
             if output.stop_reason == "error":
                 raise RuntimeError(output.error_message or "Provider returned an error stop reason")
-            if not has_finish_reason:
+            if not has_finish_reason or output.stop_reason == "pending":
                 raise RuntimeError("Stream ended without finish_reason")
 
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))

@@ -259,6 +259,26 @@ async def test_emits_start_and_error_progress_events_when_a_clone_fails(dirs):
 
 
 @pytest.mark.tonio
+async def test_removes_a_newly_created_checkout_when_git_clone_fails(dirs):
+    # pi's second cleanup case (dependency-install failure) is npm-only and
+    # not mirrored; package sources here are git and local only.
+    target_dir = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
+
+    async def run_command(command: str, args: list[str], *, cwd: str | None = None) -> str:
+        if command == "git" and args and args[0] == "clone":
+            os.makedirs(target_dir, exist_ok=True)
+            raise Exception("simulated git clone failure")
+        return ""
+
+    dirs.manager._run_command = run_command
+
+    with pytest.raises(Exception, match="simulated git clone failure"):
+        await dirs.manager.install("git:github.com/user/repo")
+
+    assert not os.path.exists(target_dir)
+
+
+@pytest.mark.tonio
 async def test_a_local_source_install_only_checks_that_the_path_exists(dirs):
     dirs.stub_run_command()
     package_dir = os.path.join(dirs.root, "local-pkg")

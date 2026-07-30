@@ -434,7 +434,7 @@ class AgentSession:
         self._retry_attempt = 0
 
         # Bash execution state
-        self._bash_cancel: CancelToken | None = None
+        self._bash_cancels: set[CancelToken] = set()
         self._pending_bash_messages: list[BashExecutionMessage] = []
 
         # Extension system
@@ -2209,6 +2209,7 @@ class AgentSession:
             },
             {
                 "get_model": lambda: self.model,
+                "get_scoped_models": lambda: self._scoped_models,
                 "is_idle": lambda: self.is_idle,
                 "is_project_trusted": lambda: self.settings_manager.is_project_trusted(),
                 "get_signal": lambda: self.agent.signal,
@@ -2521,7 +2522,8 @@ class AgentSession:
     ) -> BashResult:
         """Execute a bash command. Adds result to agent context and session."""
         options = options or {}
-        self._bash_cancel = CancelToken()
+        bash_cancel = CancelToken()
+        self._bash_cancels.add(bash_cancel)
 
         # Apply command prefix if configured (e.g. "shopt -s expand_aliases")
         prefix = self.settings_manager.get_shell_command_prefix()
@@ -2540,13 +2542,13 @@ class AgentSession:
                 self.session_manager.get_cwd(),
                 operations if operations is not None else create_local_bash_operations(shell_path=shell_path),
                 on_chunk=chunk_callback,
-                cancel=self._bash_cancel,
+                cancel=bash_cancel,
             )
 
             await self.record_bash_result(command, result, options)
             return result
         finally:
-            self._bash_cancel = None
+            self._bash_cancels.discard(bash_cancel)
 
     async def record_bash_result(self, command: str, result: BashResult, options: dict[str, Any] | None = None) -> None:
         """Record a bash execution result in session history. Used by execute_bash
@@ -2577,13 +2579,13 @@ class AgentSession:
         await self.session_manager.append_message(bash_message)
 
     def abort_bash(self) -> None:
-        """Cancel running bash command."""
-        if self._bash_cancel is not None:
-            self._bash_cancel.cancel()
+        """Cancel running bash commands."""
+        for bash_cancel in list(self._bash_cancels):
+            bash_cancel.cancel()
 
     @property
     def is_bash_running(self) -> bool:
-        return self._bash_cancel is not None
+        return len(self._bash_cancels) > 0
 
     @property
     def has_pending_bash_messages(self) -> bool:
@@ -2622,6 +2624,9 @@ class AgentSession:
         """Navigate to a different node in the session tree. Unlike fork() this
         stays in the same file."""
         options = options or {}
+        if self.is_streaming:
+            raise RuntimeError("Wait for the current response to finish before navigating the session tree.")
+
         old_leaf_id = self.session_manager.get_leaf_id()
 
         # No-op if already at target

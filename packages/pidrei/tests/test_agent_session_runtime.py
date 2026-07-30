@@ -31,7 +31,7 @@ from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import DoneEvent, StartEvent, Usage, UsageCost
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
-from .agent_session_helpers import create_assistant_message, create_test_resource_loader
+from .agent_session_helpers import create_assistant_message, create_test_resource_loader, push_done
 from .coding_session_helpers import now_ms
 from .test_tools import SKIP_ON_MACOS_CI
 
@@ -49,7 +49,7 @@ def _canned_stream_simple(_model, _context, _options=None):
     return stream
 
 
-async def _create_model_runtime(temp_dir: str) -> ModelRuntime:
+async def _create_model_runtime(temp_dir: str, stream_simple=None) -> ModelRuntime:
     auth_storage = AuthStorage.in_memory()
 
     async def set_key(_credential):
@@ -61,15 +61,15 @@ async def _create_model_runtime(temp_dir: str) -> ModelRuntime:
         models_path=os.path.join(temp_dir, "models.json"),
         allow_model_network=False,
     )
-    model_runtime.stream_simple = _canned_stream_simple
+    model_runtime.stream_simple = stream_simple if stream_simple is not None else _canned_stream_simple
     return model_runtime
 
 
-async def _create_runtime_host(temp_dir: str, extensions: list[Extension]):
+async def _create_runtime_host(temp_dir: str, extensions: list[Extension], stream_simple=None):
     """pi's createRuntimeHost with inline extensions and a faux provider."""
     temp_dir = str(temp_dir)
     model = get_builtin_model("anthropic", "claude-sonnet-4-5")
-    model_runtime = await _create_model_runtime(temp_dir)
+    model_runtime = await _create_model_runtime(temp_dir, stream_simple)
     extensions_result = LoadExtensionsResult(extensions=extensions, runtime=ExtensionRuntime())
 
     async def create_runtime(*, cwd, agent_dir, session_manager, session_start_event=None, **_kwargs):
@@ -169,6 +169,80 @@ class TestRuntimeSessionLifecycleEvents:
             {"type": "session_before_switch", "reason": "resume", "targetSessionFile": original_session_file},
             {"type": "session_shutdown", "reason": "resume", "targetSessionFile": original_session_file},
             {"type": "session_start", "reason": "resume", "previousSessionFile": second_session_file},
+        ]
+        await runtime_host.dispose()
+
+    @pytest.mark.tonio
+    async def test_settles_the_active_response_before_session_replacement(self, tmp_dir):
+        from pidrei.core.agent_session import ExtensionBindings
+        from pidrei.core.extensions import RegisteredTool, ToolDefinition
+        from pidrei_ai.types import ToolCall
+
+        tool_started = tonio.Event()
+
+        async def block_execute(_tool_call_id, _params, cancel=None, _on_update=None, _ctx=None):
+            from pidrei_agent.types import AgentToolResult
+            from pidrei_ai.types import TextContent
+
+            tool_started.set()
+            done = tonio.Event()
+            if cancel is not None:
+                cancel.on_cancel(lambda _reason: done.set())
+            await done.wait()
+            return AgentToolResult(content=[TextContent(text="tool aborted")], details={})
+
+        block_tool = ToolDefinition(
+            name="block",
+            label="Block",
+            description="Blocks until aborted",
+            parameters={"type": "object", "properties": {}},
+            execute=block_execute,
+        )
+
+        calls = {"count": 0}
+
+        def stream_simple(_model, _context, _options=None):
+            calls["count"] += 1
+            stream = AssistantMessageEventStream()
+            if calls["count"] == 2:
+                message = create_assistant_message(
+                    "", content=[ToolCall(id="tool-1", name="block", arguments={})], stop_reason="toolUse"
+                )
+                push_done(stream, message, "toolUse")
+            else:
+                push_done(stream, create_assistant_message("canned"))
+            return stream
+
+        runtime_host = await _create_runtime_host(
+            tmp_dir,
+            [Extension(path="<inline:1>", tools={"block": RegisteredTool(definition=block_tool)})],
+            stream_simple,
+        )
+
+        await runtime_host.session.prompt("hello")
+        first_session_file = runtime_host.session.session_file
+        assert first_session_file
+        await runtime_host.new_session()
+        await runtime_host.session.bind_extensions(ExtensionBindings())
+
+        outgoing_session = runtime_host.session
+        prompt_task = tonio.spawn(outgoing_session.prompt("start blocking tool"))
+        await tool_started.wait()
+
+        switch_result = await runtime_host.switch_session(first_session_file)
+        await prompt_task
+
+        assert switch_result["cancelled"] is False
+        assert runtime_host.session.session_file == first_session_file
+        # The outgoing session settled before replacement: the interrupted tool
+        # call has a persisted tool result instead of dangling forever.
+        outgoing_manager = await SessionManager.open(outgoing_session.session_file)
+        outgoing_entries = [entry for entry in outgoing_manager.get_entries() if entry["type"] == "message"]
+        assert [entry["message"].role for entry in outgoing_entries] == [
+            "user",
+            "assistant",
+            "toolResult",
+            "assistant",
         ]
         await runtime_host.dispose()
 

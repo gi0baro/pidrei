@@ -233,7 +233,7 @@ async def _stream_with_deltas(
     tokens_per_second: float | None,
     cancel,
 ) -> None:
-    partial = replace(message, content=[])
+    partial = replace(message, content=[], stop_reason="pending")
 
     def aborted_now() -> bool:
         return cancel is not None and cancel.cancelled
@@ -292,6 +292,8 @@ async def _stream_with_deltas(
         partial.content[index].arguments = block.arguments
         stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=replace(partial)))
 
+    if message.stop_reason == "pending":
+        raise RuntimeError("Faux response ended without a stop reason")
     if message.stop_reason in ("error", "aborted"):
         stream.push(ErrorEvent(reason=message.stop_reason, error=message))
         stream.end(message)

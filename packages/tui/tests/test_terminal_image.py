@@ -7,6 +7,8 @@ components slice.
 """
 
 import contextlib
+import os
+import re
 
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
@@ -15,12 +17,14 @@ from pidrei_tui.terminal_image import (
     detect_capabilities,
     encode_kitty,
     hyperlink,
+    image_fallback,
     is_image_line,
     render_image,
     reset_capabilities_cache,
     set_capabilities,
     set_cell_dimensions,
 )
+from pidrei_tui.utils import visible_width
 
 from .tui_helpers import env_var
 
@@ -501,3 +505,73 @@ def test_works_with_file_uris():
     result = hyperlink("README.md", "file:///home/user/README.md")
     assert "file:///home/user/README.md" in result
     assert "README.md" in result
+
+
+# --- image fallback (0.83.0: shorten paths, hyperlink, clamp width) -----------
+
+
+def test_truncates_long_image_fallback_lines_to_render_width():
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": False})
+    try:
+        long_path = os.path.join(
+            os.path.expanduser("~"),
+            "images",
+            "generated-image-with-a-very-long-absolute-path" * 4 + ".png",
+        )
+        width = 40
+        image = Image(
+            "AAAA",
+            "image/png",
+            {"fallbackColor": lambda value: f"\x1b[33m{value}\x1b[0m"},
+            {"filename": long_path},
+            {"widthPx": 1280, "heightPx": 720},
+        )
+        lines = image.render(width)
+        assert len(lines) == 1
+        assert visible_width(lines[0]) <= width
+        assert "..." in lines[0]
+        assert "~" in lines[0]
+    finally:
+        reset_capabilities_cache()
+
+
+def test_shortens_home_prefixed_absolute_paths_without_hyperlinks():
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": False})
+    try:
+        abs_path = os.path.join(os.path.expanduser("~"), ".pi", "agent", "shot.png")
+        result = image_fallback("image/png", {"widthPx": 1280, "heightPx": 720}, abs_path)
+        assert result == "[Image: ~/.pi/agent/shot.png [image/png] 1280x720]"
+    finally:
+        reset_capabilities_cache()
+
+
+def test_wraps_shortened_absolute_paths_in_osc8_file_links_when_hyperlinks_are_enabled():
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    try:
+        abs_path = os.path.join(os.path.expanduser("~"), ".pi", "agent", "shot.png")
+        result = image_fallback("image/png", {"widthPx": 10, "heightPx": 10}, abs_path)
+        assert "\x1b]8;;file://" in result
+        assert abs_path.replace("\\", "/") in result or abs_path in result
+        # Visible text must use ~/... not the expanded home path.
+        visible = re.sub(r"\x1b\]8;;.*?\x1b\\", "", result)
+        assert visible == "[Image: ~/.pi/agent/shot.png [image/png] 10x10]"
+    finally:
+        reset_capabilities_cache()
+
+
+def test_leaves_bare_basenames_unchanged_and_does_not_hyperlink_them():
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": True})
+    try:
+        result = image_fallback("image/png", {"widthPx": 1, "heightPx": 1}, "clankolas.png")
+        assert result == "[Image: clankolas.png [image/png] 1x1]"
+        assert "\x1b]8;" not in result
+    finally:
+        reset_capabilities_cache()
+
+
+def test_omits_filename_segment_when_not_provided():
+    set_capabilities({"images": None, "trueColor": False, "hyperlinks": False})
+    try:
+        assert image_fallback("image/png", {"widthPx": 8, "heightPx": 6}) == "[Image: [image/png] 8x6]"
+    finally:
+        reset_capabilities_cache()

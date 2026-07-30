@@ -376,7 +376,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             provider=model.provider,
             model=model.id,
             usage=Usage(),
-            stop_reason="stop",
+            stop_reason="pending",
             timestamp=int(time.time() * 1000),
         )
 
@@ -427,6 +427,8 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
 
+            if output.stop_reason == "pending":
+                raise RuntimeError("OpenAI Responses stream ended without a stop reason")
             if output.stop_reason in ("aborted", "error"):
                 raise RuntimeError("An unknown error occurred")
 

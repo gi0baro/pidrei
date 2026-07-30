@@ -408,6 +408,10 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
         slot.block.arguments = {slot.custom_property: next_input}
         return delta
 
+    def apply_message_phase_stop_reason(item: dict) -> None:
+        if item.get("type") == "message" and item.get("phase") == "final_answer":
+            output.stop_reason = "stop"
+
     def create_slot(output_index: int, item: dict) -> _Slot | None:
         item_type = item.get("type")
         if item_type == "reasoning":
@@ -418,6 +422,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             stream.push(ThinkingStartEvent(content_index=slot.content_index, partial=output))
             return slot
         if item_type == "message":
+            apply_message_phase_stop_reason(item)
             block = TextContent(text="")
             output.content.append(block)
             slot = _Slot(kind="text", block=block, content_index=len(output.content) - 1)
@@ -504,7 +509,9 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                     response.get("service_tier") if response.get("service_tier") is not None else service_tier
                 )
             apply_service_tier_pricing(output.usage, resolved_tier)
-        output.stop_reason = _map_stop_reason(response.get("status"))
+        status = response.get("status")
+        output.raw_stop_reason = status
+        output.stop_reason = _map_stop_reason(status)
         if any(block.type == "toolCall" for block in output.content) and output.stop_reason == "stop":
             output.stop_reason = "toolUse"
 
@@ -566,6 +573,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             push_tool_call_delta(slot, append_custom_input(slot, event.get("input", ""), True))
         elif event_type == "response.output_item.done":
             item = event.get("item") or {}
+            apply_message_phase_stop_reason(item)
             slot = get_or_create_slot(event.get("output_index"), item)
             item_type = item.get("type")
 
@@ -619,6 +627,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
         elif event_type == "response.failed":
             saw_terminal_response_event = True
             response = event.get("response") or {}
+            output.raw_stop_reason = response.get("status")
             error = response.get("error")
             details = response.get("incomplete_details")
             if error:

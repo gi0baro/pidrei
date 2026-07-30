@@ -192,6 +192,20 @@ async def test_emits_an_error_when_a_response_factory_throws():
 
 
 @pytest.mark.tonio
+async def test_rejects_a_queued_response_without_a_terminal_stop_reason():
+    faux = faux_provider()
+    faux.set_responses([faux_assistant_message("partial", stop_reason="pending")])
+
+    events = await collect_events(faux.provider.stream(faux.get_model(), user_context()))
+
+    assert all(event.type != "done" for event in events)
+    terminal = events[-1]
+    assert terminal.type == "error"
+    assert terminal.error.stop_reason == "error"
+    assert terminal.error.error_message == "Faux response ended without a stop reason"
+
+
+@pytest.mark.tonio
 async def test_estimates_prompt_and_output_tokens_from_serialized_context():
     faux = faux_provider()
     faux.set_responses([faux_assistant_message("done")])
@@ -361,6 +375,8 @@ async def test_streams_an_exact_event_order_for_fixed_size_chunks():
 
     events = await collect_events(faux.provider.stream(faux.get_model(), user_context()))
 
+    assert events[0].type == "start"
+    assert events[0].partial.stop_reason == "pending"
     assert [event.type for event in events] == [
         "start",
         "thinking_start",

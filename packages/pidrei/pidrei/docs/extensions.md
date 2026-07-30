@@ -244,6 +244,7 @@ The second handler argument. The useful members:
 | `ctx.has_ui` | False in print and RPC modes — check before touching `ctx.ui` |
 | `ctx.ui` | UI surface (below) |
 | `ctx.session_manager` | Session entries and metadata |
+| `ctx.scoped_models` | Read-only list of models scoped to the session (from `--models` / `enabledModels`, the set `/scoped-models` shows); empty when no scoping is configured |
 | `ctx.is_idle()` | Whether the agent is between runs |
 | `ctx.has_pending_messages()` | Whether queued messages are waiting |
 

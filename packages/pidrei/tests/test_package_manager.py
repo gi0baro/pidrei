@@ -699,6 +699,9 @@ async def test_resolves_autoload_disabled_project_entries_as_deltas_over_global_
 
 @pytest.mark.tonio
 async def test_resolves_autoload_disabled_entries_as_positive_only_without_a_global_package(dirs):
+    # resolve() also scans ~/.agents/skills; isolate from the real home so a
+    # populated machine cannot fail (or vacuously pass) the empty-skills assert.
+    dirs.set_home(dirs.root)
     package_dir = os.path.join(dirs.root, "positive-only-pkg")
     write(os.path.join(package_dir, "extensions", "foo.py"), EXTENSION_SOURCE)
     write(os.path.join(package_dir, "extensions", "bar.py"), EXTENSION_SOURCE)

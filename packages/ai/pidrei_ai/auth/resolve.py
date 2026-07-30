@@ -48,6 +48,8 @@ def _with_cause_detail(message: str, cause: BaseException | object | None) -> st
 class AuthResolutionOverrides:
     api_key: str | None = None
     env: ProviderEnv | None = None
+    #: Require this much remaining OAuth-token validity; defaults to five minutes.
+    min_oauth_validity_ms: int | None = None
 
 
 def _now_ms() -> int:
@@ -91,7 +93,13 @@ async def resolve_provider_auth(
     stored = await _read_credential(credentials, provider.id)
     if stored is not None:
         if stored.type == "oauth" and provider_auth.oauth is not None:
-            return await _resolve_stored_oauth(credentials, provider.id, provider_auth.oauth, stored)
+            return await _resolve_stored_oauth(
+                credentials,
+                provider.id,
+                provider_auth.oauth,
+                stored,
+                overrides.min_oauth_validity_ms if overrides is not None else None,
+            )
         if stored.type == "api_key" and provider_auth.api_key is not None:
             credential = stored
             if overrides is not None and overrides.env:
@@ -105,24 +113,33 @@ async def resolve_provider_auth(
     return None
 
 
+DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000
+
+
 async def _resolve_stored_oauth(
     credentials: CredentialStore,
     provider_id: str,
     oauth: OAuthAuth,
     stored: OAuthCredential,
+    min_oauth_validity_ms: int | None = None,
 ) -> AuthResult | None:
-    """OAuth resolution with double-checked locking: valid tokens cost zero
-    locks; expired tokens lock, re-check expiry under the lock, refresh once
+    """OAuth resolution with double-checked locking: tokens with less than five
+    minutes remaining lock, re-check expiry under the lock, refresh once
     globally, and persist the rotated credential before release.
     """
+    minimum_validity_ms = max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, min_oauth_validity_ms or 0)
+
+    def expires_soon(current: OAuthCredential) -> bool:
+        return _now_ms() + minimum_validity_ms >= current.expires
+
     credential = stored
 
-    if _now_ms() >= credential.expires:
+    if expires_soon(credential):
         # Optimistic check said expired; the authoritative check runs under the lock.
         async def _refresh_under_lock(current: Credential | None) -> Credential | None:
             if current is None or current.type != "oauth":
                 return None  # logged out meanwhile
-            if _now_ms() < current.expires:
+            if not expires_soon(current):
                 return None  # another process/request refreshed
             try:
                 return await oauth.refresh(current, None)
@@ -138,6 +155,11 @@ async def _resolve_stored_oauth(
         if post is None or post.type != "oauth":
             return None  # logged out meanwhile
         credential = post
+        # The normal five-minute window triggers a refresh but does not impose a
+        # provider contract. Explicit callers (such as bearer-token export) do
+        # require the requested minimum after the refresh.
+        if min_oauth_validity_ms is not None and expires_soon(credential):
+            raise ModelsError("oauth", f"OAuth refresh returned a token that expires too soon for {provider_id}")
 
     try:
         return AuthResult(auth=await oauth.to_auth(credential), source="OAuth")

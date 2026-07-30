@@ -35,6 +35,16 @@ def base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
 
+async def hanging_prompt(prompt) -> str:
+    """pi's `() => new Promise(() => {})`: a manual prompt that never resolves —
+    here it also honours its cancel token so the prompt task ends with the login."""
+    done = tonio.Event()
+    if prompt.cancel is not None:
+        prompt.cancel.on_cancel(lambda _reason: done.set())
+    await done.wait()
+    raise RuntimeError("Login cancelled")
+
+
 async def fetch_status(url: str) -> int:
     client = http.create_client(trust_env=False)
     try:
@@ -130,7 +140,13 @@ async def test_runs_pkce_on_a_one_shot_callback_and_exchanges_the_code_for_a_per
         return json_response({"key": "sk-or-test"})
 
     driver = _CallbackDriver()
-    interaction = RecordingInteraction()
+    manual_cancels = []
+
+    def capture_prompt(prompt):
+        manual_cancels.append(prompt.cancel)
+        return hanging_prompt(prompt)
+
+    interaction = RecordingInteraction(prompt=capture_prompt)
     interaction.notify = driver.notify  # type: ignore[method-assign]
 
     with stub_oauth_http(handler) as calls:
@@ -139,6 +155,7 @@ async def test_runs_pkce_on_a_one_shot_callback_and_exchanges_the_code_for_a_per
     assert credential == OAuthCredential(access="sk-or-test", refresh="", expires=MAX_SAFE_INTEGER)
     await driver.wait()
     assert driver.status == [200]
+    assert manual_cancels and manual_cancels[0] is not None and manual_cancels[0].cancelled
 
     params = authorize_params(driver.authorize_url or "")
     assert (driver.authorize_url or "").startswith("https://openrouter.ai/auth?")
@@ -163,7 +180,7 @@ async def test_reports_token_exchange_failures_through_both_the_callback_page_an
         return json_response({"error": {"message": "invalid code"}}, 403)
 
     driver = _CallbackDriver({"code": "bad-code"})
-    interaction = RecordingInteraction()
+    interaction = RecordingInteraction(prompt=hanging_prompt)
     interaction.notify = driver.notify  # type: ignore[method-assign]
 
     with (
@@ -187,7 +204,7 @@ async def test_allows_only_one_token_exchange_for_a_callback():
         return json_response({"key": "sk-or-test"})
 
     driver = _CallbackDriver()
-    interaction = RecordingInteraction()
+    interaction = RecordingInteraction(prompt=hanging_prompt)
     interaction.notify = driver.notify  # type: ignore[method-assign]
 
     second_status: list[int] = []
@@ -213,7 +230,7 @@ async def test_rejects_a_successful_response_that_does_not_contain_a_key():
         return json_response({"user_id": "user-1"})
 
     driver = _CallbackDriver({"code": "code-without-key"})
-    interaction = RecordingInteraction()
+    interaction = RecordingInteraction(prompt=hanging_prompt)
     interaction.notify = driver.notify  # type: ignore[method-assign]
 
     with (
@@ -227,6 +244,91 @@ async def test_rejects_a_successful_response_that_does_not_contain_a_key():
 
 
 @pytest.mark.tonio
+async def test_mints_a_key_from_a_pasted_redirect_url_when_the_loopback_callback_never_arrives():
+    exchange_bodies: list[Any] = []
+
+    def handler(request: OAuthRequest):
+        assert request.url == TOKEN_URL
+        exchange_bodies.append(request.json_body)
+        return json_response({"key": "sk-or-manual"})
+
+    callback_urls: list[str] = []
+
+    def notify(event: AuthEvent) -> None:
+        if event.type != "auth_url":
+            return
+        callback_urls.append(callback_url_of(event.url))
+
+    async def prompt(prompt):
+        assert prompt.type == "manual_code", f"Unexpected prompt: {prompt.type}"
+        return f"{callback_urls[0]}?code=manual-code"
+
+    interaction = RecordingInteraction(prompt=prompt)
+    interaction.notify = notify  # type: ignore[method-assign]
+
+    with stub_oauth_http(handler) as calls:
+        credential = await openrouter_oauth.login(interaction)
+
+    assert credential == OAuthCredential(access="sk-or-manual", refresh="", expires=MAX_SAFE_INTEGER)
+    body = exchange_bodies[0]
+    assert body["code"] == "manual-code"
+    assert body["code_challenge_method"] == "S256"
+    assert len(calls) == 1
+
+
+@pytest.mark.tonio
+async def test_accepts_a_bare_authorization_code_from_the_manual_prompt():
+    exchange_bodies: list[Any] = []
+
+    def handler(request: OAuthRequest):
+        exchange_bodies.append(request.json_body)
+        return json_response({"key": "sk-or-manual"})
+
+    async def prompt(_prompt):
+        return "  manual-code  "
+
+    interaction = RecordingInteraction(prompt=prompt)
+
+    with stub_oauth_http(handler):
+        credential = await openrouter_oauth.login(interaction)
+
+    assert credential.access == "sk-or-manual"
+    assert exchange_bodies[0]["code"] == "manual-code"
+
+
+@pytest.mark.tonio
+async def test_fails_login_when_the_manual_prompt_is_cancelled():
+    def handler(_request: OAuthRequest):
+        return json_response({"key": "sk-or-unexpected"})
+
+    async def prompt(_prompt):
+        raise RuntimeError("Login cancelled")
+
+    interaction = RecordingInteraction(prompt=prompt)
+
+    with stub_oauth_http(handler) as calls, pytest.raises(RuntimeError, match="Login cancelled"):
+        await openrouter_oauth.login(interaction)
+
+    assert len(calls) == 0
+
+
+@pytest.mark.tonio
+async def test_rejects_empty_manual_input_without_exchanging_a_code():
+    def handler(_request: OAuthRequest):
+        return json_response({"key": "sk-or-unexpected"})
+
+    async def prompt(_prompt):
+        return "   "
+
+    interaction = RecordingInteraction(prompt=prompt)
+
+    with stub_oauth_http(handler) as calls, pytest.raises(RuntimeError, match="Missing authorization code"):
+        await openrouter_oauth.login(interaction)
+
+    assert len(calls) == 0
+
+
+@pytest.mark.tonio
 async def test_closes_the_pending_callback_when_login_is_cancelled():
     cancel = CancelToken()
     seen: list[str] = []
@@ -237,7 +339,7 @@ async def test_closes_the_pending_callback_when_login_is_cancelled():
         seen.append(callback_url_of(event.url))
         cancel.cancel()
 
-    interaction = RecordingInteraction(cancel=cancel)
+    interaction = RecordingInteraction(prompt=hanging_prompt, cancel=cancel)
     interaction.notify = notify  # type: ignore[method-assign]
 
     def handler(_request: OAuthRequest):
@@ -278,7 +380,7 @@ async def test_uses_the_configured_oauth_callback_host():
         seen.append(callback_url_of(event.url))
         cancel.cancel()
 
-    interaction = RecordingInteraction(cancel=cancel)
+    interaction = RecordingInteraction(prompt=hanging_prompt, cancel=cancel)
     interaction.notify = notify  # type: ignore[method-assign]
 
     with (

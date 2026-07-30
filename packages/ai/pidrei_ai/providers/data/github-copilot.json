@@ -184,7 +184,8 @@
       },
       "thinkingLevelMap": {
         "xhigh": "xhigh",
-        "max": "max"
+        "max": "max",
+        "minimal": "low"
       },
       "compat": {
         "forceAdaptiveThinking": true,

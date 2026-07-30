@@ -208,8 +208,10 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
 
+            if output.stop_reason == "pending":
+                raise RuntimeError("Mistral stream ended without a finish reason")
             if output.stop_reason in ("aborted", "error"):
-                raise RuntimeError("An unknown error occurred")
+                raise RuntimeError(output.error_message or "An unknown error occurred")
 
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()
@@ -252,7 +254,7 @@ def create_output(model: Model) -> AssistantMessage:
         provider=model.provider,
         model=model.id,
         usage=Usage(),
-        stop_reason="stop",
+        stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
 
@@ -434,7 +436,11 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
 
         finish_reason = choice.get("finishReason") or choice.get("finish_reason")
         if finish_reason:
-            output.stop_reason = map_chat_stop_reason(finish_reason)
+            output.raw_stop_reason = finish_reason
+            stop_reason, error_message = map_chat_stop_reason(finish_reason)
+            output.stop_reason = stop_reason
+            if error_message:
+                output.error_message = error_message
 
         delta = choice.get("delta") or {}
         content = delta.get("content")
@@ -660,17 +666,17 @@ def map_tool_choice(choice: Any) -> Any:
     return {"type": "function", "function": {"name": choice["function"]["name"]}}
 
 
-def map_chat_stop_reason(reason: str | None) -> StopReason:
+def map_chat_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:
     if reason is None:
-        return "stop"
+        return "stop", None
     match reason:
         case "stop":
-            return "stop"
+            return "stop", None
         case "length" | "model_length":
-            return "length"
+            return "length", None
         case "tool_calls":
-            return "toolUse"
+            return "toolUse", None
         case "error":
-            return "error"
+            return "error", "Provider stopped with: error"
         case _:
-            return "stop"
+            return "error", f"Provider stopped with: {reason}"
