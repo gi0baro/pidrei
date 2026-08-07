@@ -15,6 +15,8 @@
 | `PIDREI_PROVIDER` / `PIDREI_MODEL` | Default provider and model |
 | `PIDREI_REASONING_LEVEL` | Default thinking level |
 | `PIDREI_OAUTH_CALLBACK_HOST` | Host the OAuth callback server binds |
+| `PIDREI_THREADS` | Runtime worker threads (default: CPU count clamped to 2–8) |
+| `PIDREI_BLOCKING_THREADS` | Blocking thread pool cap (default: 8 per worker) |
 
 Provider credentials are listed in [providers.md](providers.md); `pidrei --help`
 prints them all.

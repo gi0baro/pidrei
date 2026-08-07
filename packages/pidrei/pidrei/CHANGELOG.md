@@ -6,6 +6,22 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.83.0.1] - 2026-08-07
+
+PiDrei fixes on top of Pi 0.83.0.
+
+### Changed
+
+- tonio updated to 0.9.4: fixes a per-task memory leak in the blocking thread
+  pool and its thread-spawn accounting, so `spawn_blocking`-heavy sessions
+  (file I/O, settings, auth storage) no longer leak references.
+- The runtime is now sized for pidrei's I/O-bound workload instead of tonio's
+  generic defaults: worker threads are the CPU count clamped to 2–8 (was
+  uncapped, honoring affinity/cgroup limits), and the blocking pool caps at
+  8 threads per worker (16–64, was a fixed 128). `PIDREI_THREADS` and
+  `PIDREI_BLOCKING_THREADS` override either value, taken as-is without the
+  clamp.
+
 ## [0.83.0.0] - 2026-07-30
 
 Tracks [Pi 0.83.0](https://github.com/earendil-works/pi/releases/tag/v0.83.0).

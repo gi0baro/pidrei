@@ -10,6 +10,7 @@ import tonio.colored as tonio
 
 from .main import main
 from .utils.fd_io import snapshot_std_blocking
+from .utils.runtime_options import runtime_options
 
 
 def run() -> None:
@@ -18,7 +19,7 @@ def run() -> None:
     # the atexit restore this registers is half of the stdio teardown policy
     # (`hard_exit` is the other half).
     snapshot_std_blocking()
-    sys.exit(tonio.run(main(sys.argv[1:])))
+    sys.exit(tonio.run(main(sys.argv[1:]), **runtime_options()))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from tonio.colored import net
 
 from pidrei.modes.rpc.jsonl import JsonlLineDecoder
 from pidrei.utils.fd_io import FdReader, snapshot_std_blocking
+from pidrei.utils.runtime_options import runtime_options
 
 from .config import VERSION, get_socket_path
 from .ipc.client import send_ipc_request
@@ -165,4 +166,4 @@ def run() -> None:
     # be created listening for those signals; other commands keep the default
     # dispositions (Ctrl-C stays a KeyboardInterrupt).
     signals = [signal_module.SIGINT, signal_module.SIGTERM] if argv[:1] == ["serve"] else None
-    sys.exit(tonio.run(main(argv), signals=signals))
+    sys.exit(tonio.run(main(argv), signals=signals, **runtime_options()))
