@@ -25,7 +25,9 @@ async def test_polls_immediately_and_returns_the_completed_value():
         return OAuthDeviceCodePollResult(status="complete", value="token")
 
     with virtual_clock():
-        result = await poll_oauth_device_code_flow(poll=poll, interval_seconds=2, expires_in_seconds=30)
+        result = await poll_oauth_device_code_flow(
+            poll=poll, cancel=CancelToken(), interval_seconds=2, expires_in_seconds=30
+        )
 
     assert result == "token"
     assert poll_times == [DEFAULT_START_MS, DEFAULT_START_MS + 2000]
@@ -41,7 +43,7 @@ async def test_can_wait_before_the_first_poll():
 
     with virtual_clock():
         result = await poll_oauth_device_code_flow(
-            poll=poll, interval_seconds=2, expires_in_seconds=30, wait_before_first_poll=True
+            poll=poll, cancel=CancelToken(), interval_seconds=2, expires_in_seconds=30, wait_before_first_poll=True
         )
 
     assert result == "token"
@@ -63,7 +65,9 @@ async def test_increases_the_interval_by_five_seconds_after_slow_down_without_a_
         return results.pop(0)
 
     with virtual_clock():
-        result = await poll_oauth_device_code_flow(poll=poll, interval_seconds=2, expires_in_seconds=900)
+        result = await poll_oauth_device_code_flow(
+            poll=poll, cancel=CancelToken(), interval_seconds=2, expires_in_seconds=900
+        )
 
     assert result == "token"
     # 2 s interval + the RFC 8628 5 s increment.
@@ -85,7 +89,9 @@ async def test_honors_a_server_provided_slow_down_interval():
         return results.pop(0)
 
     with virtual_clock():
-        result = await poll_oauth_device_code_flow(poll=poll, interval_seconds=2, expires_in_seconds=900)
+        result = await poll_oauth_device_code_flow(
+            poll=poll, cancel=CancelToken(), interval_seconds=2, expires_in_seconds=900
+        )
 
     assert result == "token"
     assert poll_times == [DEFAULT_START_MS, DEFAULT_START_MS + 30000]
@@ -111,13 +117,15 @@ async def test_times_out_and_reports_slow_down_when_one_was_seen():
         return OAuthDeviceCodePollResult(status="pending")
 
     with virtual_clock(), pytest.raises(RuntimeError, match="^Device flow timed out$"):
-        await poll_oauth_device_code_flow(poll=pending, interval_seconds=5, expires_in_seconds=12)
+        await poll_oauth_device_code_flow(poll=pending, cancel=CancelToken(), interval_seconds=5, expires_in_seconds=12)
 
     async def slow_down() -> OAuthDeviceCodePollResult:
         return OAuthDeviceCodePollResult(status="slow_down")
 
     with virtual_clock(), pytest.raises(RuntimeError, match="one or more slow_down responses"):
-        await poll_oauth_device_code_flow(poll=slow_down, interval_seconds=5, expires_in_seconds=12)
+        await poll_oauth_device_code_flow(
+            poll=slow_down, cancel=CancelToken(), interval_seconds=5, expires_in_seconds=12
+        )
 
 
 @pytest.mark.tonio
@@ -126,4 +134,4 @@ async def test_a_failed_poll_raises_its_message():
         return OAuthDeviceCodePollResult(status="failed", message="denied")
 
     with virtual_clock(), pytest.raises(RuntimeError, match="^denied$"):
-        await poll_oauth_device_code_flow(poll=poll, interval_seconds=1, expires_in_seconds=30)
+        await poll_oauth_device_code_flow(poll=poll, cancel=CancelToken(), interval_seconds=1, expires_in_seconds=30)

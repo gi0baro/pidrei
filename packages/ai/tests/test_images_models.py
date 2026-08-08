@@ -52,7 +52,7 @@ class _FakeAuthContext:
 
 
 def env_key_auth(env_var: str) -> ApiKeyAuth:
-    async def resolve(ctx, _credential):
+    async def resolve(ctx, _credential, _cancel):
         key = await ctx.env(env_var)
         return AuthResult(auth=ModelAuth(api_key=key), source=env_var) if key else None
 
@@ -112,7 +112,7 @@ async def test_resolves_auth_through_the_provider_and_merges_it_explicit_options
 async def test_merges_provider_resolved_env_into_image_options():
     calls: list = []
 
-    async def resolve(_ctx, _credential):
+    async def resolve(_ctx, _credential, _cancel):
         return AuthResult(
             auth=ModelAuth(api_key="provider-key"),
             env={"PROVIDER_ONLY": "provider", "SHARED": "provider"},
@@ -179,7 +179,7 @@ async def test_supports_dynamic_providers_via_refresh_with_in_flight_dedupe():
 
     api = SimpleNamespace(generate_images=generate_images)
 
-    async def resolve(_ctx, _credential):
+    async def resolve(_ctx, _credential, _cancel):
         return AuthResult(auth=ModelAuth())
 
     models = create_images_models()

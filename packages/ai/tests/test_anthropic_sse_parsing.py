@@ -181,6 +181,110 @@ async def test_repairs_malformed_sse_json_and_malformed_streamed_tool_json():
 
 
 @pytest.mark.tonio
+async def test_preserves_content_from_content_block_start_events():
+    body = sse_body(
+        [
+            (
+                "message_start",
+                json.dumps(
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "id": "msg_initial_content",
+                            "usage": {
+                                "input_tokens": 12,
+                                "output_tokens": 0,
+                                "cache_read_input_tokens": 0,
+                                "cache_creation_input_tokens": 0,
+                            },
+                        },
+                    }
+                ),
+            ),
+            (
+                "content_block_start",
+                json.dumps(
+                    {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "text", "text": "Initial text"},
+                    }
+                ),
+            ),
+            (
+                "content_block_delta",
+                json.dumps(
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": " plus delta"}}
+                ),
+            ),
+            ("content_block_stop", json.dumps({"type": "content_block_stop", "index": 0})),
+            (
+                "content_block_start",
+                json.dumps(
+                    {
+                        "type": "content_block_start",
+                        "index": 1,
+                        "content_block": {
+                            "type": "thinking",
+                            "thinking": "Initial thinking",
+                            "signature": "initial signature",
+                        },
+                    }
+                ),
+            ),
+            (
+                "content_block_delta",
+                json.dumps(
+                    {
+                        "type": "content_block_delta",
+                        "index": 1,
+                        "delta": {"type": "thinking_delta", "thinking": " plus delta"},
+                    }
+                ),
+            ),
+            (
+                "content_block_delta",
+                json.dumps(
+                    {
+                        "type": "content_block_delta",
+                        "index": 1,
+                        "delta": {"type": "signature_delta", "signature": " plus delta"},
+                    }
+                ),
+            ),
+            ("content_block_stop", json.dumps({"type": "content_block_stop", "index": 1})),
+            (
+                "message_delta",
+                json.dumps(
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": "end_turn"},
+                        "usage": {
+                            "input_tokens": 12,
+                            "output_tokens": 5,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                        },
+                    }
+                ),
+            ),
+            ("message_stop", json.dumps({"type": "message_stop"})),
+        ]
+    )
+
+    result = await stream_anthropic(
+        haiku(), user_context("Say hello."), AnthropicOptions(client=FakeClient(body))
+    ).result()
+
+    assert len(result.content) == 2
+    assert result.content[0] == TextContent(text="Initial text plus delta")
+    thinking = result.content[1]
+    assert thinking.type == "thinking"
+    assert thinking.thinking == "Initial thinking plus delta"
+    assert thinking.thinking_signature == "initial signature plus delta"
+
+
+@pytest.mark.tonio
 async def test_preserves_refusal_stop_details_from_message_delta():
     model = get_builtin_model("anthropic", "claude-fable-5")
     assert model is not None

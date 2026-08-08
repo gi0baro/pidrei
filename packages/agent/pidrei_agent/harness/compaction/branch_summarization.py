@@ -9,14 +9,10 @@ from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy
 from pidrei_ai.utils.text import content_text
 
 from ...types import AgentMessage
-from ..messages import (
-    convert_to_llm,
-    create_branch_summary_message,
-    create_compaction_summary_message,
-    create_custom_message,
-)
+from ..messages import convert_to_llm, create_branch_summary_message, create_compaction_summary_message
 from ..session.session import Session
-from ..types import BranchSummaryError, Result, SessionError, SessionTreeEntry, err, ok
+from ..session.types import BranchQuery, Entry, SessionError
+from ..types import BranchSummaryError, Result, err, ok
 from .compaction import SUMMARIZATION_SYSTEM_PROMPT, complete_simple_with_retries, estimate_tokens
 from .utils import (
     FileOperations,
@@ -63,7 +59,7 @@ class CollectEntriesResult:
     """Entries selected for branch summarization."""
 
     # Entries to summarize in chronological order.
-    entries: list[SessionTreeEntry]
+    entries: list[Entry]
     # Deepest common ancestor between the previous leaf and target entry.
     common_ancestor_id: str | None
 
@@ -98,20 +94,20 @@ async def collect_entries_for_branch_summary(
     """Collect entries to summarize before navigating to a different session tree entry."""
     if not old_leaf_id:
         return CollectEntriesResult(entries=[], common_ancestor_id=None)
-    old_path = {entry.id for entry in await session.get_branch(old_leaf_id)}
-    target_path = await session.get_branch(target_id)
+    old_path = {entry.id for entry in await session.find_entries_on_branch(BranchQuery(start=old_leaf_id))}
+    target_path = await session.find_entries_on_branch(BranchQuery(start=target_id))
     common_ancestor_id: str | None = None
-    for entry in reversed(target_path):
+    for entry in target_path:
         if entry.id in old_path:
             common_ancestor_id = entry.id
             break
-    entries: list[SessionTreeEntry] = []
+    entries: list[Entry] = []
     current: str | None = old_leaf_id
 
     while current and current != common_ancestor_id:
         entry = await session.get_entry(current)
         if entry is None:
-            raise SessionError("invalid_session", f"Entry {current} not found")
+            raise SessionError("invalid_entry", f"Entry {current} not found")
         entries.append(entry)
         current = entry.parent_id
     entries.reverse()
@@ -119,13 +115,11 @@ async def collect_entries_for_branch_summary(
     return CollectEntriesResult(entries=entries, common_ancestor_id=common_ancestor_id)
 
 
-def _get_message_from_entry(entry: SessionTreeEntry) -> AgentMessage | None:
+def _get_message_from_entry(entry: Entry) -> AgentMessage | None:
     if entry.type == "message":
         if getattr(entry.message, "role", None) == "toolResult":
             return None
         return entry.message
-    if entry.type == "custom_message":
-        return create_custom_message(entry.custom_type, entry.content, entry.display, entry.details, entry.timestamp)
     if entry.type == "branch_summary":
         return create_branch_summary_message(entry.summary, entry.from_id, entry.timestamp)
     if entry.type == "compaction":
@@ -133,13 +127,13 @@ def _get_message_from_entry(entry: SessionTreeEntry) -> AgentMessage | None:
     return None
 
 
-def prepare_branch_entries(entries: list[SessionTreeEntry], token_budget: int = 0) -> BranchPreparation:
+def prepare_branch_entries(entries: list[Entry], token_budget: int = 0) -> BranchPreparation:
     """Prepare branch entries for summarization within an optional token budget."""
     messages: list[AgentMessage] = []
     file_ops = create_file_ops()
     total_tokens = 0
     for entry in entries:
-        if entry.type == "branch_summary" and not entry.from_hook and entry.details is not None:
+        if entry.type == "branch_summary" and entry.details is not None:
             details = entry.details
             if isinstance(details, dict):
                 read_files = details.get("readFiles", details.get("read_files"))
@@ -205,7 +199,7 @@ Keep each section concise. Preserve exact file paths, function names, and error 
 
 
 async def generate_branch_summary(
-    entries: list[SessionTreeEntry],
+    entries: list[Entry],
     options: GenerateBranchSummaryOptions,
 ) -> Result[BranchSummaryResult, BranchSummaryError]:
     """Generate a summary for abandoned branch entries."""

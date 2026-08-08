@@ -7,6 +7,8 @@ members = [
     "pidrei",
     "pidrei-agent",
     "pidrei-ai",
+    "pidrei-client",
+    "pidrei-protocol",
     "pidrei-server",
     "pidrei-tui",
 ]
@@ -333,6 +335,8 @@ dependencies = [
     { name = "pathspec" },
     { name = "pidrei-agent" },
     { name = "pidrei-ai" },
+    { name = "pidrei-client" },
+    { name = "pidrei-protocol" },
     { name = "pidrei-tui" },
     { name = "pillow" },
     { name = "pygments" },
@@ -346,6 +350,8 @@ requires-dist = [
     { name = "pathspec", specifier = "~=1.1" },
     { name = "pidrei-agent", editable = "packages/agent" },
     { name = "pidrei-ai", editable = "packages/ai" },
+    { name = "pidrei-client", editable = "packages/client" },
+    { name = "pidrei-protocol", editable = "packages/protocol" },
     { name = "pidrei-tui", editable = "packages/tui" },
     { name = "pillow", specifier = "~=12.3" },
     { name = "pygments", specifier = "~=2.20" },
@@ -400,19 +406,45 @@ requires-dist = [
 ]
 
 [[package]]
-name = "pidrei-server"
+name = "pidrei-client"
 version = "0.83.0.1"
-source = { editable = "packages/server" }
+source = { editable = "packages/client" }
 dependencies = [
-    { name = "pidrei" },
-    { name = "pidrei-ai" },
+    { name = "pidrei-protocol" },
     { name = "tonio" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "pidrei", editable = "packages/pidrei" },
+    { name = "pidrei-protocol", editable = "packages/protocol" },
+    { name = "tonio", specifier = "~=0.9.4" },
+]
+
+[[package]]
+name = "pidrei-protocol"
+version = "0.83.0.1"
+source = { editable = "packages/protocol" }
+dependencies = [
+    { name = "jsonschema" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "jsonschema", specifier = "~=4.26" }]
+
+[[package]]
+name = "pidrei-server"
+version = "0.83.0.1"
+source = { editable = "packages/server" }
+dependencies = [
+    { name = "pidrei-ai" },
+    { name = "pidrei-protocol" },
+    { name = "tonio" },
+]
+
+[package.metadata]
+requires-dist = [
     { name = "pidrei-ai", editable = "packages/ai" },
+    { name = "pidrei-protocol", editable = "packages/protocol" },
     { name = "tonio", specifier = "~=0.9.4" },
 ]
 

@@ -215,6 +215,25 @@ EDIT_SCHEMA = {
     "required": ["path", "edits"],
 }
 
+EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+    "guidelines": (
+        "Use edit for precise changes (edits[].oldText must match exactly)",
+        (
+            "When changing multiple separate locations in one file, use one edit call with multiple entries "
+            "in edits[] instead of multiple edit calls"
+        ),
+        (
+            "Each edits[].oldText is matched against the original file, not after earlier edits are applied. "
+            "Do not emit overlapping or nested edits. Merge nearby changes into one edit."
+        ),
+        (
+            "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with "
+            "large unchanged regions."
+        ),
+    ),
+}
+
 
 class LocalEditOperations:
     async def read_file(self, absolute_path: str) -> bytes:
@@ -411,24 +430,8 @@ def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             "lines, merge them into one edit instead of emitting overlapping edits. Do not include large "
             "unchanged regions just to connect distant changes."
         ),
-        prompt_snippet=(
-            "Make precise file edits with exact text replacement, including multiple disjoint edits in one call"
-        ),
-        prompt_guidelines=[
-            "Use edit for precise changes (edits[].oldText must match exactly)",
-            (
-                "When changing multiple separate locations in one file, use one edit call with multiple entries "
-                "in edits[] instead of multiple edit calls"
-            ),
-            (
-                "Each edits[].oldText is matched against the original file, not after earlier edits are applied. "
-                "Do not emit overlapping or nested edits. Merge nearby changes into one edit."
-            ),
-            (
-                "Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with "
-                "large unchanged regions."
-            ),
-        ],
+        prompt_snippet=EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
+        prompt_guidelines=list(EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=EDIT_SCHEMA,
         render_shell="self",
         render_call=render_call,

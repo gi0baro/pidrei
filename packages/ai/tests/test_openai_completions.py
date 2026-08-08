@@ -303,6 +303,24 @@ async def test_missing_finish_reason_is_an_error():
 
 
 @pytest.mark.tonio
+async def test_accepts_streams_without_finish_reason_when_compat_disables_it():
+    chunks = [
+        {
+            "id": "chatcmpl-no-finish-reason",
+            "choices": [{"index": 0, "delta": {"content": "complete answer"}, "finish_reason": None}],
+        }
+    ]
+    model = make_model(compat=OpenAICompletionsCompat(supports_finish_reason=False))
+    result = await consume(FakeClient(chunk_body(chunks)), model)
+
+    assert result.stop_reason == "stop"
+    assert result.error_message is None
+    assert len(result.content) == 1
+    assert result.content[0].type == "text"
+    assert result.content[0].text == "complete answer"
+
+
+@pytest.mark.tonio
 async def test_error_chunks_become_stream_errors():
     body = b'data: {"error": {"message": "upstream exploded"}}\n\n'
     result = await consume(FakeClient(body))

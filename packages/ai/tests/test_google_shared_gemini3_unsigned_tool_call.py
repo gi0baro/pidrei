@@ -7,7 +7,9 @@ testing this slice.
 
 from dataclasses import replace
 
-from pidrei_ai.api.google_shared import convert_messages
+import pytest
+
+from pidrei_ai.api.google_shared import convert_messages, requires_tool_call_id
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
@@ -16,6 +18,7 @@ from pidrei_ai.types import (
     TextContent,
     ThinkingContent,
     ToolCall,
+    ToolResultMessage,
     Usage,
     UserMessage,
 )
@@ -58,8 +61,51 @@ def make_context(model: Model, thought_signature: str | None = None) -> Context:
                 stop_reason="toolUse",
                 timestamp=now,
             ),
+            ToolResultMessage(
+                tool_call_id="call_1",
+                tool_name="bash",
+                content=[TextContent(text="hi")],
+                is_error=False,
+                timestamp=now,
+            ),
+            ToolResultMessage(
+                tool_call_id="call_2",
+                tool_name="bash",
+                content=[TextContent(text="files")],
+                is_error=False,
+                timestamp=now,
+            ),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        make_gemini3_model("google-generative-ai", "google"),
+        make_gemini3_model("google-generative-ai", "google", "gemini-3.6-flash"),
+        make_gemini3_model("google-vertex", "google-vertex"),
+    ],
+    ids=lambda model: f"{model.id}-{model.api}",
+)
+def test_preserves_tool_call_ids_via_history(model):
+    contents = convert_messages(model, make_context(model))
+
+    function_call_ids = [
+        part["functionCall"]["id"]
+        for content in contents
+        for part in content.get("parts", [])
+        if part.get("functionCall", {}).get("id")
+    ]
+    function_response_ids = [
+        part["functionResponse"]["id"]
+        for content in contents
+        for part in content.get("parts", [])
+        if part.get("functionResponse", {}).get("id")
+    ]
+
+    assert function_call_ids == ["call_1", "call_2"]
+    assert function_response_ids == ["call_1", "call_2"]
 
 
 def test_does_not_add_skip_thought_signature_validator_for_unsigned_google_gen_ai_tool_calls():
@@ -108,10 +154,29 @@ def test_does_not_add_a_thought_signature_for_non_gemini_3_models():
     model = make_gemini3_model("google-generative-ai", "google", "gemini-2.5-flash")
     contents = convert_messages(model, make_context(replace(model, id="other-model")))
     model_turn = next((c for c in contents if c["role"] == "model"), None)
-    fc_part = next((p for p in model_turn["parts"] if p.get("functionCall") is not None), None)
+    function_call_parts = [p for p in model_turn["parts"] if p.get("functionCall") is not None]
+    function_response_parts = [
+        part for content in contents for part in content.get("parts", []) if part.get("functionResponse") is not None
+    ]
 
-    assert fc_part
-    assert fc_part.get("thoughtSignature") is None
+    assert len(function_call_parts) == 2
+    assert all(part["functionCall"].get("id") is None for part in function_call_parts)
+    assert all(part.get("thoughtSignature") is None for part in function_call_parts)
+    assert len(function_response_parts) == 2
+    assert all(part["functionResponse"].get("id") is None for part in function_response_parts)
+
+
+@pytest.mark.parametrize(
+    ("expected", "model_id"),
+    [
+        (False, "gemini-2.5-flash"),
+        (True, "gemini-3.6-flash"),
+        (True, "claude-sonnet-4-5"),
+        (True, "gpt-oss-120b"),
+    ],
+)
+def test_requires_tool_call_id(expected, model_id):
+    assert requires_tool_call_id(model_id) is expected
 
 
 # --- pidrei-only ---------------------------------------------------------------

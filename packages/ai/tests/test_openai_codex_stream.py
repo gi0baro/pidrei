@@ -58,9 +58,9 @@ from pidrei_ai.utils.cancel import CancelToken
 # --- shared fixtures ----------------------------------------------------------
 
 
-def mock_token() -> str:
+def mock_token(account_id: str = "acc_test") -> str:
     payload = base64.b64encode(
-        json.dumps({"https://api.openai.com/auth": {"chatgpt_account_id": "acc_test"}}).encode()
+        json.dumps({"https://api.openai.com/auth": {"chatgpt_account_id": account_id}}).encode()
     ).decode()
     return f"aaa.{payload}.bbb"
 
@@ -839,6 +839,40 @@ async def test_forwards_auto_transport_from_simple_options_and_uses_cached_webso
     stats = get_openai_codex_websocket_debug_stats("session-auto")
     assert stats.cached_context_requests == 1
     assert stats.full_context_requests == 1
+
+
+@pytest.mark.tonio
+async def test_scopes_cached_websockets_to_the_authenticated_account():
+    # Regression for pi #7284: rotating accounts must not reuse a socket
+    # authenticated by another account.
+    connect, _sockets = responding_websocket(
+        lambda socket, _body: [completion_event(id=f"resp_{socket.connection_id}")]
+    )
+    sse = unexpected_sse_client()
+    context = Context(system_prompt="", messages=[])
+
+    def options(account_id: str) -> OpenAICodexResponsesOptions:
+        return OpenAICodexResponsesOptions(
+            api_key=mock_token(account_id),
+            session_id="shared-session",
+            transport="websocket-cached",
+            client=sse,
+        )
+
+    with stub_websocket(connect) as calls:
+        await stream_codex(make_model(), context, options("account-a")).result()
+        await stream_codex(make_model(), context, options("account-b")).result()
+        await stream_codex(make_model(), context, options("account-a")).result()
+
+    assert [call["headers"].get("chatgpt-account-id") for call in calls] == ["account-a", "account-b"]
+    assert [call["headers"].get("Authorization") for call in calls] == [
+        f"Bearer {mock_token('account-a')}",
+        f"Bearer {mock_token('account-b')}",
+    ]
+    assert sse.call_count == 0
+    stats = get_openai_codex_websocket_debug_stats("shared-session")
+    assert stats.connections_created == 2
+    assert stats.connections_reused == 1
 
 
 @pytest.mark.tonio

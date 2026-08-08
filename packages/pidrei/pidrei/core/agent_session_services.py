@@ -36,6 +36,7 @@ class CreateAgentSessionServicesOptions:
     agent_dir: str | None = None
     settings_manager: SettingsManager | None = None
     model_runtime: ModelRuntime | None = None
+    model_runtime_cancel: Any = None  # CancelToken | None
     extension_flag_values: dict[str, Any] | None = None
     resource_loader_options: dict[str, Any] | None = None
     resource_loader_reload_options: dict[str, Any] | None = None
@@ -119,6 +120,7 @@ async def create_agent_session_services(options: CreateAgentSessionServicesOptio
         model_runtime = await ModelRuntime.create(
             auth_path=os.path.join(agent_dir, "auth.json"),
             models_path=os.path.join(agent_dir, "models.json"),
+            cancel=options.model_runtime_cancel,
         )
     settings_manager = (
         options.settings_manager

@@ -66,12 +66,41 @@ class LazyApi:
 
     The module loads on first stream call; Python's import cache deduplicates
     loads. Load failures terminate the returned stream with an error event.
+
+    Deferred-response methods exist on the instance only when declared through
+    `capabilities` — mirroring pi's conditional `api.fetchDeferred =` assignment
+    — so `getattr(streams, "fetch_deferred", None)` probes work without loading
+    the module.
     """
 
-    __slots__ = ("_load",)
+    __slots__ = ("_load", "cancel_deferred", "fetch_deferred")
 
-    def __init__(self, load: Callable[[], Awaitable[Any]]):
+    def __init__(self, load: Callable[[], Awaitable[Any]], capabilities: dict[str, bool] | None = None):
         self._load = load
+        capabilities = capabilities or {}
+        if capabilities.get("fetch_deferred"):
+
+            def fetch_deferred(model: Model, handle: Any, options: Any = None) -> AssistantMessageEventStream:
+                async def _setup() -> AsyncIterable[AssistantMessageEvent]:
+                    module = await self._load()
+                    implementation = getattr(module, "fetch_deferred", None)
+                    if implementation is None:
+                        raise RuntimeError("API does not support deferred responses")
+                    return implementation(model, handle, options)
+
+                return lazy_stream(model, _setup)
+
+            self.fetch_deferred = fetch_deferred
+        if capabilities.get("cancel_deferred"):
+
+            async def cancel_deferred(model: Model, handle: Any, options: Any = None) -> None:
+                module = await self._load()
+                implementation = getattr(module, "cancel_deferred", None)
+                if implementation is None:
+                    raise RuntimeError("API cannot cancel deferred responses")
+                await implementation(model, handle, options)
+
+            self.cancel_deferred = cancel_deferred
 
     def stream(self, model: Model, context: Any, options: Any = None) -> AssistantMessageEventStream:
         return lazy_stream(model, self._make_setup("stream", model, context, options))
@@ -87,5 +116,5 @@ class LazyApi:
         return _setup
 
 
-def lazy_api(load: Callable[[], Awaitable[Any]]) -> LazyApi:
-    return LazyApi(load)
+def lazy_api(load: Callable[[], Awaitable[Any]], capabilities: dict[str, bool] | None = None) -> LazyApi:
+    return LazyApi(load, capabilities)

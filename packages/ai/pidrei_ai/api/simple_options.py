@@ -22,8 +22,15 @@ def build_base_options(
     api_key: str | None = None,
 ) -> StreamOptions:
     requested_max = options.max_tokens if options is not None and options.max_tokens is not None else model.max_tokens
+    options_sampling_params = options.sampling_params if options else None
+    sampling_params = (
+        {**(model.sampling_params or {}), **(options_sampling_params or {})}
+        if model.sampling_params or options_sampling_params
+        else None
+    )
     return StreamOptions(
         temperature=options.temperature if options else None,
+        sampling_params=sampling_params,
         max_tokens=clamp_max_tokens_to_context(model, context, requested_max),
         cancel=options.cancel if options else None,
         # pi: `apiKey: apiKey || options?.apiKey` — deliberately falsy `||`.
@@ -41,6 +48,10 @@ def build_base_options(
         metadata=options.metadata if options else None,
         env=options.env if options else None,
     )
+
+
+# Tokens always left for the answer when a thinking budget shares the response ceiling.
+MIN_ANSWER_TOKENS = 1024
 
 
 def clamp_reasoning(effort: ThinkingLevel | None) -> str | None:
@@ -62,7 +73,6 @@ def adjust_max_tokens_for_thinking(
             if custom is not None:
                 budgets[level] = custom
 
-    min_output_tokens = 1024
     level = clamp_reasoning(reasoning_level)
     thinking_budget = budgets[level]  # type: ignore[index]
     max_tokens = (
@@ -70,6 +80,6 @@ def adjust_max_tokens_for_thinking(
     )
 
     if max_tokens <= thinking_budget:
-        thinking_budget = max(0, max_tokens - min_output_tokens)
+        thinking_budget = max(0, max_tokens - MIN_ANSWER_TOKENS)
 
     return max_tokens, thinking_budget

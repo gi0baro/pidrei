@@ -15,6 +15,15 @@ _FILE_URL_RE = re.compile(r"^file://")
 _PERCENT_ESCAPE_RE = re.compile("[0-9A-Fa-f]{2}")
 
 
+def get_file_revision(path: str) -> str | None:
+    """stat-identity revision used to skip redundant locked reloads."""
+    try:
+        stats = os.stat(path)
+        return f"{stats.st_dev}:{stats.st_ino}:{stats.st_size}:{stats.st_mtime_ns}:{stats.st_ctime_ns}"
+    except OSError:
+        return None
+
+
 def canonicalize_path(path: str) -> str:
     """Resolve a path to its canonical (real) form, following symlinks.
 

@@ -104,7 +104,7 @@ class TestCompaction:
             provider_auth=None,
         )
 
-        async def resolve(_ctx, _credential):
+        async def resolve(_ctx, _credential, _cancel):
             return AuthResult(
                 auth=ModelAuth(headers={"Authorization": "Bearer ambient-token"}),
                 source="ambient bearer token",

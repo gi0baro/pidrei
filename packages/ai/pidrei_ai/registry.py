@@ -5,10 +5,12 @@ stream convenience; providers own stream behavior, `Models` resolves auth and
 delegates each request to the provider that owns the model.
 """
 
+import copy
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from types import EllipsisType
 from typing import Any
 
 import tonio.colored as tonio
@@ -21,25 +23,34 @@ from pidrei_ai.auth.types import (
     ApiKeyCredential,
     AuthCheck,
     AuthContext,
+    AuthEvent,
     AuthInteraction,
+    AuthOperationOptions,
+    AuthPrompt,
     AuthResult,
     AuthType,
     Credential,
     CredentialStore,
     ProviderAuth,
 )
-from pidrei_ai.models_store import InMemoryModelsStore, ModelsStore, ModelsStoreEntry, ProviderModelsStore
+from pidrei_ai.models_store import InMemoryModelsStore, ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions
 from pidrei_ai.types import (
+    AssistantMessage,
     Context,
+    DeferredCancelOptions,
+    DeferredFetchOptions,
+    DeferredHandle,
     Model,
     ModelThinkingLevel,
     ProviderHeaders,
+    ProviderRequestOptions,
     SimpleStreamOptions,
     StreamOptions,
     Usage,
     UsageCost,
 )
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
+from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
 
@@ -49,21 +60,37 @@ def _now_ms() -> int:
 
 
 @dataclass(slots=True)
+class ModelsPublication:
+    # Provider-selected persisted catalog. Leave as the `...` sentinel to keep
+    # storage unchanged; None deletes it (pi's `persist?: entry | null`).
+    persist: ModelsStoreEntry | None | EllipsisType = ...
+    # Optional synchronous update of provider-private in-memory catalog state.
+    update: Callable[[], None] | None = None
+
+
+@dataclass(slots=True)
 class RefreshModelsContext:
-    # Persistent model storage scoped to this provider ID.
-    store: ProviderModelsStore
+    # Generation-checked publication. Persistence policy remains provider-owned;
+    # the update runs synchronously only after the selected persistence mutation.
+    publish: Callable[[ModelsPublication], Awaitable[bool]]
     # False during offline/cache-only initialization.
     allow_network: bool
+    # Always present, including when the public refresh caller omits its optional cancel.
+    cancel: CancelToken
     # Effective configured credential. OAuth credentials are refreshed before network access.
     credential: Credential | None = None
+    # Immutable provider-scoped catalog snapshot captured before this refresh phase.
+    stored: ModelsStoreEntry | None = None
     # Bypass provider freshness checks and fetch immediately when network access is allowed.
-    force: bool = False
-    cancel: CancelToken | None = None
+    force: bool | None = None
 
 
 @dataclass(slots=True)
 class ModelsRefreshOptions:
     allow_network: bool = True
+    # Restrict refresh to these provider IDs. Unknown and static providers are ignored.
+    providers: list[str] | None = None
+    # Bypass provider freshness checks and fetch immediately when network access is allowed.
     force: bool = False
     cancel: CancelToken | None = None
 
@@ -72,23 +99,6 @@ class ModelsRefreshOptions:
 class ModelsRefreshResult:
     aborted: bool
     errors: dict[str, Exception]
-
-
-class _ScopedModelsStore:
-    __slots__ = ("_provider_id", "_store")
-
-    def __init__(self, store: ModelsStore, provider_id: str):
-        self._store = store
-        self._provider_id = provider_id
-
-    async def read(self) -> ModelsStoreEntry | None:
-        return await self._store.read(self._provider_id)
-
-    async def write(self, entry: ModelsStoreEntry) -> None:
-        await self._store.write(self._provider_id, entry)
-
-    async def delete(self) -> None:
-        await self._store.delete(self._provider_id)
 
 
 class Provider:
@@ -118,8 +128,6 @@ class Provider:
         self._baseline_models = models
         self._dynamic_models: list[Model] = []
         self._fetch_models = fetch_models
-        self._inflight_guard = threading.Lock()
-        self._inflight: tuple[Any, list[BaseException | None]] | None = None
 
         single = getattr(api, "stream", None)
         self._single = api if callable(single) else None
@@ -142,45 +150,35 @@ class Provider:
         return merged
 
     async def refresh_models(self, context: RefreshModelsContext) -> None:
-        """Restore the stored catalog and optionally fetch a newer list.
-
-        Concurrent callers share one in-flight refresh (pi dedupes through a
-        shared promise; errors propagate to every caller).
-        """
+        """Restore `context.stored` and optionally fetch a newer list using the
+        effective credential, publishing persistence and synchronous state
+        changes through the generation-checked `context.publish()`."""
         if self._fetch_models is None:
             return
 
-        with self._inflight_guard:
-            inflight = self._inflight
-            if inflight is None:
-                done = tonio.Event()
-                box: list[BaseException | None] = [None]
-                self._inflight = (done, box)
-        if inflight is not None:
-            done, box = inflight
-            await done.wait()
-            if box[0] is not None:
-                raise box[0]
+        if context.stored is not None:
+            restored = [model for model in context.stored.models if model.provider == self.id]
+
+            def _apply_restored(restored: list[Model] = restored) -> None:
+                self._dynamic_models = restored
+
+            if not await context.publish(ModelsPublication(update=_apply_restored)):
+                return
+        if not context.allow_network or context.cancel.cancelled:
+            return
+        refreshed = await self._fetch_models(context)
+        if context.cancel.cancelled:
             return
 
-        try:
-            stored = await context.store.read()
-            if stored is not None:
-                self._dynamic_models = [model for model in stored.models if model.provider == self.id]
-            if not context.allow_network or (context.cancel is not None and context.cancel.cancelled):
-                return
-            refreshed = await self._fetch_models(context)
-            if context.cancel is not None and context.cancel.cancelled:
-                return
+        def _apply_refreshed() -> None:
             self._dynamic_models = list(refreshed)
-            await context.store.write(ModelsStoreEntry(models=list(refreshed), checked_at=_now_ms()))
-        except BaseException as error:
-            box[0] = error
-            raise
-        finally:
-            with self._inflight_guard:
-                self._inflight = None
-            done.set()
+
+        await context.publish(
+            ModelsPublication(
+                persist=ModelsStoreEntry(models=list(refreshed), checked_at=_now_ms()),
+                update=_apply_refreshed,
+            )
+        )
 
     def _api_for(self, model: Model) -> Any | None:
         if self._single is not None:
@@ -202,6 +200,49 @@ class Provider:
 
     def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return self._dispatch(model, lambda streams: streams.stream_simple(model, context, options))
+
+    # -- deferred responses ----------------------------------------------------
+    # pi attaches `fetchDeferred`/`cancelDeferred` to the provider object only
+    # when some streams entry declares them; here presence maps to the
+    # `supports_*` flags and the methods themselves fail per-api like pi's
+    # conditional wrappers do.
+
+    def _stream_entries(self) -> list[Any]:
+        if self._single is not None:
+            return [self._single]
+        return [entry for entry in (self._by_api or {}).values() if entry is not None]
+
+    @property
+    def supports_fetch_deferred(self) -> bool:
+        return any(getattr(entry, "fetch_deferred", None) is not None for entry in self._stream_entries())
+
+    @property
+    def supports_cancel_deferred(self) -> bool:
+        return any(getattr(entry, "cancel_deferred", None) is not None for entry in self._stream_entries())
+
+    def fetch_deferred(
+        self, model: Model, handle: DeferredHandle, options: DeferredFetchOptions | None = None
+    ) -> AssistantMessageEventStream:
+        implementation = self._api_for(model)
+        fetch = getattr(implementation, "fetch_deferred", None) if implementation is not None else None
+        if fetch is None:
+
+            async def _fail() -> Any:
+                raise ModelsError(
+                    "provider", f'Provider {self.id} does not support deferred responses for "{model.api}"'
+                )
+
+            return lazy_stream(model, _fail)
+        return fetch(model, handle, options)
+
+    async def cancel_deferred(
+        self, model: Model, handle: DeferredHandle, options: DeferredCancelOptions | None = None
+    ) -> None:
+        implementation = self._api_for(model)
+        cancel = getattr(implementation, "cancel_deferred", None) if implementation is not None else None
+        if cancel is None:
+            raise ModelsError("provider", f'Provider {self.id} cannot cancel deferred responses for "{model.api}"')
+        await cancel(model, handle, options)
 
 
 def create_provider(
@@ -234,6 +275,23 @@ def create_provider(
     )
 
 
+class _NormalizedAuthInteraction:
+    """pi: `{ ...interaction, signal }` — the same interaction surface with a
+    guaranteed cancel token (`ProviderAuthInteraction`)."""
+
+    __slots__ = ("_base", "cancel")
+
+    def __init__(self, base: AuthInteraction, cancel: CancelToken):
+        self._base = base
+        self.cancel = cancel
+
+    async def prompt(self, prompt: AuthPrompt) -> str:
+        return await self._base.prompt(prompt)
+
+    def notify(self, event: AuthEvent) -> None:
+        self._base.notify(event)
+
+
 class Models:
     """Port of pi's `ModelsImpl` (mutable: `set_provider`/`delete_provider`)."""
 
@@ -249,18 +307,33 @@ class Models:
         self._credentials = credentials if credentials is not None else InMemoryCredentialStore()
         self._models_store = models_store if models_store is not None else InMemoryModelsStore()
         self._auth_context = auth_context if auth_context is not None else default_provider_auth_context()
+        self._refresh_state_guard = threading.Lock()
+        self._refresh_generations: dict[str, int] = {}
+        self._refresh_controllers: dict[str, CancelToken] = {}
+        self._publication_guard = threading.Lock()
+        # Per-provider publication chains (pi chains promises; here an Event
+        # marks each link settled).
+        self._publication_chains: dict[str, tuple[Any, ...]] = {}
 
     # -- provider collection ---------------------------------------------------
 
     def set_provider(self, provider: Provider) -> None:
+        self._supersede_provider_refresh(provider.id)
         with self._providers_guard:
             self._providers[provider.id] = provider
 
     def delete_provider(self, id: str) -> None:
+        self._supersede_provider_refresh(id)
         with self._providers_guard:
             self._providers.pop(id, None)
 
     def clear_providers(self) -> None:
+        with self._providers_guard:
+            provider_ids = set(self._providers.keys())
+        with self._refresh_state_guard:
+            provider_ids |= set(self._refresh_controllers.keys())
+        for provider_id in provider_ids:
+            self._supersede_provider_refresh(provider_id)
         with self._providers_guard:
             self._providers.clear()
 
@@ -300,73 +373,171 @@ class Models:
 
     # -- refresh ---------------------------------------------------------------
 
+    def _supersede_provider_refresh(self, provider_id: str) -> int:
+        with self._refresh_state_guard:
+            generation = self._refresh_generations.get(provider_id, 0) + 1
+            self._refresh_generations[provider_id] = generation
+            previous = self._refresh_controllers.pop(provider_id, None)
+        if previous is not None:
+            previous.cancel()
+        return generation
+
+    def _begin_provider_refresh(self, provider_id: str) -> tuple[int, CancelToken]:
+        generation = self._supersede_provider_refresh(provider_id)
+        controller = CancelToken()
+        with self._refresh_state_guard:
+            self._refresh_controllers[provider_id] = controller
+        return generation, controller
+
+    async def _publish_provider_models(
+        self,
+        provider_id: str,
+        generation: int,
+        cancel: CancelToken,
+        publication: ModelsPublication,
+    ) -> bool:
+        with self._publication_guard:
+            previous = self._publication_chains.get(provider_id)
+            done = tonio.Event()
+            entry = (done,)
+            self._publication_chains[provider_id] = entry
+
+        async def _task() -> bool:
+            if previous is not None:
+                await previous[0].wait()
+            try:
+                if cancel.cancelled or self._refresh_generations.get(provider_id) != generation:
+                    return False
+
+                if publication.persist is None:
+                    await self._models_store.delete(provider_id, ModelsStoreOperationOptions(cancel=cancel))
+                elif publication.persist is not ...:
+                    await self._models_store.write(
+                        provider_id, copy.deepcopy(publication.persist), ModelsStoreOperationOptions(cancel=cancel)
+                    )
+
+                if cancel.cancelled or self._refresh_generations.get(provider_id) != generation:
+                    return False
+                if publication.update is not None:
+                    publication.update()
+                return True
+            finally:
+                done.set()
+                with self._publication_guard:
+                    if self._publication_chains.get(provider_id) is entry:
+                        del self._publication_chains[provider_id]
+
+        return await race_with_cancel(_task(), cancel)
+
+    async def _run_provider_refresh_phase(
+        self,
+        provider: Provider,
+        credential: Credential | None,
+        allow_network: bool,
+        force: bool | None,
+        generation: int,
+        cancel: CancelToken,
+    ) -> None:
+        stored = await self._models_store.read(provider.id, ModelsStoreOperationOptions(cancel=cancel))
+
+        async def publish(publication: ModelsPublication) -> bool:
+            return await self._publish_provider_models(provider.id, generation, cancel, publication)
+
+        await provider.refresh_models(
+            RefreshModelsContext(
+                credential=credential,
+                stored=copy.deepcopy(stored) if stored is not None else None,
+                publish=publish,
+                allow_network=allow_network,
+                force=force if allow_network else None,
+                cancel=cancel,
+            )
+        )
+
     async def refresh(self, options: ModelsRefreshOptions | None = None) -> ModelsRefreshResult:
-        """Refresh every configured dynamic provider concurrently. Provider
-        errors and cancellation are returned without raising."""
+        """Refresh selected configured dynamic providers concurrently (all when
+        `providers` is omitted). Provider errors and cancellation are returned
+        without raising; static, unknown, and unconfigured providers are skipped."""
         options = options or ModelsRefreshOptions()
         allow_network = options.allow_network
-        cancel = options.cancel
-        refreshable = [provider for provider in self.get_providers() if provider.has_dynamic_models]
+        caller_cancel = operation_cancel(options.cancel)
+        errors: dict[str, Exception] = {}
+        if caller_cancel.cancelled:
+            return ModelsRefreshResult(aborted=True, errors=errors)
+        selected = set(options.providers) if options.providers is not None else None
+        refreshable = [
+            provider
+            for provider in self.get_providers()
+            if provider.has_dynamic_models and (selected is None or provider.id in selected)
+        ]
 
-        async def refresh_one(provider: Provider) -> tuple[str, Exception | None]:
-            if cancel is not None and cancel.cancelled:
-                return provider.id, None
-            store = _ScopedModelsStore(self._models_store, provider.id)
-            stored: Credential | None = None
-            try:
-                stored = await self._read_credential(provider.id)
-                credential = await self._resolve_refresh_credential(provider, stored, allow_network, cancel)
+        async def refresh_one(provider: Provider) -> None:
+            generation, controller = self._begin_provider_refresh(provider.id)
+            combined = combine_cancel_tokens(caller_cancel, controller)
+            cancel = combined.token
+            assert cancel is not None
+
+            async def operation() -> None:
+                stored_credential: Credential | None = None
+                credential_error: BaseException | None = None
+                try:
+                    stored_credential = await self._read_credential(provider.id, cancel)
+                except Exception as error:
+                    credential_error = error
+
+                # Restore cached provider state before auth resolution or network access.
+                await self._run_provider_refresh_phase(provider, stored_credential, False, None, generation, cancel)
+                if credential_error is not None:
+                    raise credential_error
+                if not allow_network or cancel.cancelled:
+                    return
+
+                credential = await self._resolve_refresh_credential(provider, stored_credential, cancel)
                 if credential is None:
-                    return provider.id, None
-                await provider.refresh_models(
-                    RefreshModelsContext(
-                        credential=credential,
-                        store=store,
-                        allow_network=allow_network,
-                        force=options.force,
-                        cancel=cancel,
-                    )
-                )
-                return provider.id, None
+                    return
+                await self._run_provider_refresh_phase(provider, credential, True, options.force, generation, cancel)
+
+            try:
+                await race_with_cancel(operation(), cancel)
             except Exception as error:
-                recorded: Exception | None = None
-                if cancel is None or not cancel.cancelled:
-                    recorded = (
+                if not cancel.cancelled:
+                    errors[provider.id] = (
                         error
                         if isinstance(error, Exception)
                         else ModelsError("model_source", f"Model refresh failed for {provider.id}", cause=error)
                     )
-                try:
-                    await provider.refresh_models(
-                        RefreshModelsContext(credential=stored, store=store, allow_network=False, cancel=cancel)
-                    )
-                except Exception:
-                    pass  # Preserve the original error; cache restoration is best-effort here.
-                return provider.id, recorded
+            finally:
+                with self._refresh_state_guard:
+                    if self._refresh_controllers.get(provider.id) is controller:
+                        del self._refresh_controllers[provider.id]
+                combined.cleanup()
 
-        errors: dict[str, Exception] = {}
         if refreshable:
-            results = await tonio.map(refresh_one, refreshable)
-            for provider_id, error in results:
-                if error is not None:
-                    errors[provider_id] = error
 
-        return ModelsRefreshResult(aborted=cancel.cancelled if cancel is not None else False, errors=errors)
+            async def refresh_all() -> None:
+                await tonio.map(refresh_one, refreshable)
+
+            try:
+                await race_with_cancel(refresh_all(), caller_cancel)
+            except Exception:
+                if not caller_cancel.cancelled:
+                    raise
+
+        return ModelsRefreshResult(aborted=caller_cancel.cancelled, errors=dict(errors))
 
     async def _resolve_refresh_credential(
         self,
         provider: Provider,
         stored: Credential | None,
-        allow_network: bool,
-        cancel: CancelToken | None,
+        cancel: CancelToken,
     ) -> Credential | None:
         if stored is not None and stored.type == "oauth":
             oauth = provider.auth.oauth
             if oauth is None:
                 return None
-            if not allow_network or _now_ms() < stored.expires:
+            if _now_ms() < stored.expires:
                 return stored
-            if cancel is not None and cancel.cancelled:
+            if cancel.cancelled:
                 return None
 
             async def _refresh(current: Credential | None) -> Credential | None:
@@ -374,27 +545,29 @@ class Models:
                     return None
                 return await oauth.refresh(current, cancel)
 
-            post = await self._credentials.modify(provider.id, _refresh)
+            post = await self._credentials.modify(provider.id, _refresh, AuthOperationOptions(cancel=cancel))
             return post if post is not None and post.type == "oauth" else None
 
         api_key = provider.auth.api_key
         if api_key is None:
             return None
         credential = stored if stored is not None and stored.type == "api_key" else None
-        result = await api_key.resolve(self._auth_context, credential)
+        result = await api_key.resolve(self._auth_context, credential, cancel)
         if result is None:
             return None
         return ApiKeyCredential(key=result.auth.api_key, env=result.env)
 
     # -- auth ------------------------------------------------------------------
 
-    async def _read_credential(self, provider_id: str) -> Credential | None:
+    async def _read_credential(self, provider_id: str, cancel: CancelToken) -> Credential | None:
         try:
-            return await self._credentials.read(provider_id)
+            return await self._credentials.read(provider_id, AuthOperationOptions(cancel=cancel))
         except Exception as error:
             raise ModelsError("auth", f"Credential store read failed for {provider_id}", cause=error)
 
-    async def _check_provider_auth(self, provider: Provider, credential: Credential | None) -> AuthCheck | None:
+    async def _check_provider_auth(
+        self, provider: Provider, credential: Credential | None, cancel: CancelToken
+    ) -> AuthCheck | None:
         if credential is not None and credential.type == "oauth":
             return AuthCheck(source="OAuth", type="oauth") if provider.auth.oauth is not None else None
         api_key = provider.auth.api_key
@@ -405,43 +578,60 @@ class Models:
                 return await api_key.check(
                     self._auth_context,
                     credential if credential is not None and credential.type == "api_key" else None,
+                    cancel,
                 )
             except Exception as error:
                 raise ModelsError("auth", f"API key auth check failed for provider {provider.id}", cause=error)
 
-        resolution = await resolve_provider_auth(provider, self._credentials, self._auth_context)
+        resolution = await resolve_provider_auth(
+            provider, self._credentials, self._auth_context, AuthResolutionOverrides(cancel=cancel)
+        )
         return AuthCheck(source=resolution.source, type="api_key") if resolution is not None else None
 
-    async def check_auth(self, provider_id: str) -> AuthCheck | None:
+    async def check_auth(self, provider_id: str, options: AuthOperationOptions | None = None) -> AuthCheck | None:
         """Check whether a provider has complete auth configuration without refreshing OAuth."""
-        provider = self.get_provider(provider_id)
-        if provider is None:
-            return None
-        return await self._check_provider_auth(provider, await self._read_credential(provider_id))
+        cancel = operation_cancel(options.cancel if options is not None else None)
 
-    async def get_available(self, provider_id: str | None = None) -> list[Model]:
+        async def _check() -> AuthCheck | None:
+            cancel.raise_if_cancelled()
+            provider = self.get_provider(provider_id)
+            if provider is None:
+                return None
+            return await self._check_provider_auth(provider, await self._read_credential(provider_id, cancel), cancel)
+
+        return await race_with_cancel(_check(), cancel)
+
+    async def get_available(
+        self, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[Model]:
         """Return models whose providers have complete auth configuration."""
-        providers = (
-            [entry for entry in [self.get_provider(provider_id)] if entry is not None]
-            if provider_id
-            else self.get_providers()
-        )
+        cancel = operation_cancel(options.cancel if options is not None else None)
 
-        async def check_one(provider: Provider) -> tuple[Provider, Credential | None, AuthCheck | None]:
-            credential = await self._read_credential(provider.id)
-            return provider, credential, await self._check_provider_auth(provider, credential)
+        async def _available() -> list[Model]:
+            cancel.raise_if_cancelled()
+            providers = (
+                [entry for entry in [self.get_provider(provider_id)] if entry is not None]
+                if provider_id
+                else self.get_providers()
+            )
 
-        if not providers:
-            return []
-        checks = await tonio.map(check_one, providers)
+            async def check_one(provider: Provider) -> tuple[Provider, Credential | None, AuthCheck | None]:
+                credential = await self._read_credential(provider.id, cancel)
+                return provider, credential, await self._check_provider_auth(provider, credential, cancel)
 
-        available: list[Model] = []
-        for provider, credential, auth in checks:
-            if auth is None:
-                continue
-            models = provider.get_models()
-            available.extend(provider.filter_models(models, credential) if provider.filter_models else models)
-        return available
+            if not providers:
+                return []
+            checks = await tonio.map(check_one, providers)
+
+            available: list[Model] = []
+            for provider, credential, auth in checks:
+                if auth is None:
+                    continue
+                models = provider.get_models()
+                available.extend(provider.filter_models(models, credential) if provider.filter_models else models)
+            return available
+
+        return await race_with_cancel(_available(), cancel)
 
     async def get_auth(
         self,
@@ -450,11 +640,15 @@ class Models:
     ) -> AuthResult | None:
         """Resolve provider-scoped auth by provider id, or provider auth plus
         static model headers when passed a model."""
+        cancel = operation_cancel(overrides.cancel if overrides is not None else None)
         provider_id = provider_or_model if isinstance(provider_or_model, str) else provider_or_model.provider
         provider = self.get_provider(provider_id)
         if provider is None:
             return None
-        result = await resolve_provider_auth(provider, self._credentials, self._auth_context, overrides)
+        merged_overrides = (
+            replace(overrides, cancel=cancel) if overrides is not None else AuthResolutionOverrides(cancel=cancel)
+        )
+        result = await resolve_provider_auth(provider, self._credentials, self._auth_context, merged_overrides)
         if result is None or isinstance(provider_or_model, str) or not provider_or_model.headers:
             return result
         return replace(
@@ -463,7 +657,14 @@ class Models:
         )
 
     async def login(self, provider_id: str, type: AuthType, interaction: AuthInteraction) -> Credential:
-        """Run a provider-owned login flow and persist its returned credential."""
+        """Run a provider-owned login flow and persist its returned credential.
+
+        A cancellation raised before the store mutation begins rejects with the
+        abort reason; once the mutation's callback has started, the write is
+        awaited to completion so the stored credential stays locally consistent.
+        """
+        cancel = operation_cancel(interaction.cancel)
+        cancel.raise_if_cancelled()
         provider = self.get_provider(provider_id)
         if provider is None:
             raise ModelsError("provider", f"Unknown provider: {provider_id}")
@@ -471,21 +672,63 @@ class Models:
         login = getattr(method, "login", None) if method is not None else None
         if login is None:
             raise ModelsError("auth", f"{provider.name} does not support {type} login")
-        credential = await login(interaction)
+        credential = await race_with_cancel(login(_NormalizedAuthInteraction(interaction, cancel)), cancel)
+
+        mutation_started = tonio.Event()
+        mutation_done = tonio.Event()
+        mutation_box: list[tuple[str, Any]] = []
 
         async def _persist(_current: Credential | None) -> Credential | None:
+            mutation_started.set()
             return credential
 
+        async def _mutation() -> None:
+            try:
+                mutation_box.append(
+                    (
+                        "value",
+                        await self._credentials.modify(provider_id, _persist, AuthOperationOptions(cancel=cancel)),
+                    )
+                )
+            except BaseException as error:
+                mutation_box.append(("error", error))
+            finally:
+                mutation_done.set()
+
+        tonio.spawn.without_tracking(_mutation())
+
+        async def _wait_started() -> str:
+            await mutation_started.wait()
+            return "started"
+
+        async def _wait_done() -> str:
+            await mutation_done.wait()
+            return "done"
+
+        async def _wait_aborted() -> str:
+            await cancel.wait()
+            return "aborted"
+
         try:
-            await self._credentials.modify(provider_id, _persist)
+            winner = await tonio.select(_wait_started(), _wait_done(), _wait_aborted())
+            if winner == "aborted" and not mutation_started.is_set() and not mutation_done.is_set():
+                raise cancel.reason  # type: ignore[misc]
+            await mutation_done.wait()
+            kind, payload = mutation_box[0]
+            if kind == "error":
+                raise payload
         except Exception as error:
+            cancel.raise_if_cancelled()
             raise ModelsError("auth", f"Credential store modify failed for {provider_id}", cause=error)
         return credential
 
-    async def logout(self, provider_id: str) -> None:
+    async def logout(self, provider_id: str, options: AuthOperationOptions | None = None) -> None:
+        cancel = operation_cancel(options.cancel if options is not None else None)
+        cancel.raise_if_cancelled()
         try:
-            await self._credentials.delete(provider_id)
+            await self._credentials.delete(provider_id, AuthOperationOptions(cancel=cancel))
         except Exception as error:
+            cancel.raise_if_cancelled()
             raise ModelsError("auth", f"Credential store delete failed for {provider_id}", cause=error)
 
     # -- streaming -------------------------------------------------------------
@@ -507,6 +750,7 @@ class Models:
             AuthResolutionOverrides(
                 api_key=options.api_key if options is not None else None,
                 env=options.env if options is not None else None,
+                cancel=options.cancel if options is not None else None,
             ),
         )
         if resolution is None:
@@ -566,6 +810,37 @@ class Models:
 
     async def complete_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return await self.stream_simple(model, context, options).result()
+
+    async def fetch_deferred(
+        self,
+        model: Model,
+        handle: DeferredHandle,
+        options: DeferredFetchOptions | None = None,
+    ) -> AssistantMessage:
+        async def _setup():
+            provider = self._require_provider(model)
+            if not provider.supports_fetch_deferred:
+                raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
+            request_model, request_options = await self._apply_auth(
+                model, options if options is not None else DeferredFetchOptions()
+            )
+            return provider.fetch_deferred(request_model, handle, request_options)
+
+        return await lazy_stream(model, _setup).result()
+
+    async def cancel_deferred(
+        self,
+        model: Model,
+        handle: DeferredHandle,
+        options: DeferredCancelOptions | None = None,
+    ) -> None:
+        provider = self._require_provider(model)
+        if not provider.supports_cancel_deferred:
+            raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
+        request_model, request_options = await self._apply_auth(
+            model, options if options is not None else ProviderRequestOptions()
+        )
+        await provider.cancel_deferred(request_model, handle, request_options)
 
 
 def create_models(

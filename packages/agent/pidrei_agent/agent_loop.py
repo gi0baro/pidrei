@@ -612,10 +612,10 @@ async def _prepare_tool_call(
             if cancel is not None and cancel.cancelled:
                 return _ImmediateToolCallOutcome(result=_create_error_tool_result("Operation aborted"), is_error=True)
             if before_result is not None and before_result.block:
-                return _ImmediateToolCallOutcome(
-                    result=_create_error_tool_result(before_result.reason or "Tool execution was blocked"),
-                    is_error=True,
-                )
+                result = _create_error_tool_result(before_result.reason or "Tool execution was blocked")
+                if before_result.terminate is True:
+                    result.terminate = True
+                return _ImmediateToolCallOutcome(result=result, is_error=True)
         if cancel is not None and cancel.cancelled:
             return _ImmediateToolCallOutcome(result=_create_error_tool_result("Operation aborted"), is_error=True)
         return _PreparedToolCall(tool_call=tool_call, tool=tool, args=validated_args)

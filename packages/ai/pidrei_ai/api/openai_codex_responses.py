@@ -341,7 +341,9 @@ class _PunkreqCodexClient:
 
 # --- module state -------------------------------------------------------------
 
-_websocket_session_cache: dict[str, _CachedWebSocketConnection] = {}
+# session id -> account id -> cached connection: one cached socket per account,
+# so switching ChatGPT accounts mid-session cannot reuse another account's socket.
+_websocket_session_cache: dict[str, dict[str, _CachedWebSocketConnection]] = {}
 _websocket_debug_stats: dict[str, OpenAICodexWebSocketDebugStats] = {}
 _websocket_sse_fallback_sessions: set[str] = set()
 # pi relies on JavaScript's single thread to keep this state consistent; tonio
@@ -384,9 +386,11 @@ def close_openai_codex_websocket_sessions(session_id: str | None = None) -> None
 
     with _websocket_state_guard:
         if session_id:
-            entries = [_websocket_session_cache.pop(session_id)] if session_id in _websocket_session_cache else []
+            entries = list(_websocket_session_cache.pop(session_id, {}).values())
         else:
-            entries = list(_websocket_session_cache.values())
+            entries = [
+                entry for account_entries in _websocket_session_cache.values() for entry in account_entries.values()
+            ]
             _websocket_session_cache.clear()
     for entry in entries:
         close_entry(entry)
@@ -511,6 +515,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                             http_timeout_ms,
                             websocket_connect_timeout_ms,
                             cache_session_id,
+                            account_id,
                             grammar_tool_input_properties,
                             opts,
                         )
@@ -960,9 +965,14 @@ def _is_websocket_reusable(socket: Any) -> bool:
     return ready_state is None or ready_state == websocket.READY_STATE_OPEN
 
 
-def _forget_entry_locked(session_id: str, entry: _CachedWebSocketConnection) -> None:
+def _forget_entry_locked(session_id: str, account_id: str, entry: _CachedWebSocketConnection) -> None:
     """Drop `entry` from the session cache if it is still the current one."""
-    if _websocket_session_cache.get(session_id) is entry:
+    account_entries = _websocket_session_cache.get(session_id)
+    if account_entries is None:
+        return
+    if account_entries.get(account_id) is entry:
+        del account_entries[account_id]
+    if len(account_entries) == 0:
         del _websocket_session_cache[session_id]
 
 
@@ -977,7 +987,7 @@ def _close_websocket_silently(socket: Any, code: int = 1000, reason: str = "done
         pass
 
 
-def _schedule_session_websocket_expiry(session_id: str, entry: _CachedWebSocketConnection) -> None:
+def _schedule_session_websocket_expiry(session_id: str, account_id: str, entry: _CachedWebSocketConnection) -> None:
     """pi's `setTimeout`: close an idle cached socket after the cache TTL."""
     if entry.idle_timer is not None:
         entry.idle_timer.cancel()
@@ -993,7 +1003,7 @@ def _schedule_session_websocket_expiry(session_id: str, entry: _CachedWebSocketC
             return
         _close_websocket_silently(entry.socket, 1000, "idle_timeout")
         with _websocket_state_guard:
-            _forget_entry_locked(session_id, entry)
+            _forget_entry_locked(session_id, account_id, entry)
 
     tonio.spawn.without_tracking(_expire())
 
@@ -1058,6 +1068,7 @@ async def _acquire_websocket(
     url: str,
     headers: dict[str, str],
     session_id: str | None,
+    account_id: str,
     cancel: CancelToken | None = None,
     connect_timeout_ms: float | None = None,
     env: ProviderEnv | None = None,
@@ -1081,19 +1092,19 @@ async def _acquire_websocket(
     timer: CancelToken | None = None
     was_busy = False
     with _websocket_state_guard:
-        cached = _websocket_session_cache.get(session_id)
+        cached = _websocket_session_cache.get(session_id, {}).get(account_id)
         if cached is not None:
             timer, cached.idle_timer = cached.idle_timer, None
             was_busy = cached.busy
             if not cached.busy and _is_websocket_session_expired(cached):
                 stale = (cached.socket, "connection_age_limit")
-                _forget_entry_locked(session_id, cached)
+                _forget_entry_locked(session_id, account_id, cached)
             elif not cached.busy and _is_websocket_reusable(cached.socket):
                 cached.busy = True
                 reuse = cached
             elif not cached.busy:
                 stale = (cached.socket, "done")
-                _forget_entry_locked(session_id, cached)
+                _forget_entry_locked(session_id, account_id, cached)
 
     if timer is not None:
         timer.cancel()
@@ -1106,10 +1117,10 @@ async def _acquire_websocket(
             if not keep or not _is_websocket_reusable(entry.socket):
                 _close_websocket_silently(entry.socket)
                 with _websocket_state_guard:
-                    _forget_entry_locked(session_id, entry)
+                    _forget_entry_locked(session_id, account_id, entry)
                 return
             entry.busy = False
-            _schedule_session_websocket_expiry(session_id, entry)
+            _schedule_session_websocket_expiry(session_id, account_id, entry)
 
         return _AcquiredWebSocket(socket=reuse.socket, entry=reuse, reused=True, release=release_cached)
 
@@ -1126,7 +1137,7 @@ async def _acquire_websocket(
     socket = await _connect_websocket(url, headers, cancel, connect_timeout_ms, env)
     entry = _CachedWebSocketConnection(socket=socket, busy=True, created_at=clock.now_ms())
     with _websocket_state_guard:
-        _websocket_session_cache[session_id] = entry
+        _websocket_session_cache.setdefault(session_id, {})[account_id] = entry
 
     def release_new(keep: bool = False) -> None:
         if not keep or not _is_websocket_reusable(entry.socket):
@@ -1134,10 +1145,10 @@ async def _acquire_websocket(
             if entry.idle_timer is not None:
                 entry.idle_timer.cancel()
             with _websocket_state_guard:
-                _forget_entry_locked(session_id, entry)
+                _forget_entry_locked(session_id, account_id, entry)
             return
         entry.busy = False
-        _schedule_session_websocket_expiry(session_id, entry)
+        _schedule_session_websocket_expiry(session_id, account_id, entry)
 
     return _AcquiredWebSocket(socket=socket, entry=entry, reused=False, release=release_new)
 
@@ -1319,6 +1330,7 @@ async def _process_websocket_stream(
     idle_timeout_ms: float | None,
     websocket_connect_timeout_ms: float | None,
     cache_session_id: str | None,
+    account_id: str,
     grammar_tool_input_properties: dict[str, str],
     options: OpenAICodexResponsesOptions | None = None,
 ) -> None:
@@ -1326,6 +1338,7 @@ async def _process_websocket_stream(
         url,
         headers,
         cache_session_id,
+        account_id,
         options.cancel if options else None,
         websocket_connect_timeout_ms,
         options.env if options else None,

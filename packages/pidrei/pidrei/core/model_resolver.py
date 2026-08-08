@@ -9,6 +9,7 @@ import re
 import sys
 from dataclasses import dataclass, replace
 
+from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import models_are_equal
 from pidrei_ai.types import Model
 
@@ -44,6 +45,7 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "huggingface": "moonshotai/Kimi-K2.6",
     "fireworks": "accounts/fireworks/models/kimi-k2p6",
     "together": "moonshotai/Kimi-K2.6",
+    "baseten": "zai-org/GLM-5.2",
     "opencode": "kimi-k2.6",
     "opencode-go": "kimi-k2.6",
     "kimi-coding": "kimi-for-coding",
@@ -51,6 +53,7 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
     "qwen-token-plan": "qwen3.7-max",
     "qwen-token-plan-cn": "qwen3.7-max",
+    "qwen-token-plan-individual": "qwen3.8-max",
     "xiaomi": "mimo-v2.5-pro",
     "xiaomi-token-plan-cn": "mimo-v2.5-pro",
     "xiaomi-token-plan-ams": "mimo-v2.5-pro",
@@ -247,11 +250,11 @@ class ResolveModelScopeResult:
     diagnostics: list[ModelScopeDiagnostic]
 
 
-async def resolve_model_scope_with_diagnostics(
+def resolve_model_scope_from_models(
     patterns: list[str],
-    model_runtime,
+    models: list[Model],
 ) -> ResolveModelScopeResult:
-    available_models = list(await model_runtime.get_available())
+    available_models = list(models)
     scoped_models: list[ScopedModel] = []
     diagnostics: list[ModelScopeDiagnostic] = []
 
@@ -319,12 +322,22 @@ async def resolve_model_scope_with_diagnostics(
     return ResolveModelScopeResult(scoped_models=scoped_models, diagnostics=diagnostics)
 
 
+async def resolve_model_scope_with_diagnostics(
+    patterns: list[str],
+    model_runtime,
+    options: AuthOperationOptions | None = None,
+) -> ResolveModelScopeResult:
+    return resolve_model_scope_from_models(patterns, list(await model_runtime.get_available(None, options)))
+
+
 def _warn(message: str) -> None:
     print(f"\x1b[33mWarning: {message}\x1b[0m", file=sys.stderr)
 
 
-async def resolve_model_scope(patterns: list[str], model_runtime) -> list[ScopedModel]:
-    result = await resolve_model_scope_with_diagnostics(patterns, model_runtime)
+async def resolve_model_scope(
+    patterns: list[str], model_runtime, options: AuthOperationOptions | None = None
+) -> list[ScopedModel]:
+    result = await resolve_model_scope_with_diagnostics(patterns, model_runtime, options)
     for diagnostic in result.diagnostics:
         _warn(diagnostic.message)
     return result.scoped_models
@@ -521,7 +534,7 @@ async def find_initial_model(
             return InitialModelResult(model=found, thinking_level=thinking)
 
     # 4. Try first available model with valid API key
-    available_models = list(await model_runtime.get_available())
+    available_models = list(model_runtime.get_available_snapshot())
 
     if available_models:
         for provider, default_id in DEFAULT_MODEL_PER_PROVIDER.items():
@@ -569,7 +582,7 @@ async def restore_model_from_session(
             f"Using {current_model.provider}/{current_model.id}."
         )
 
-    available_models = list(await model_runtime.get_available())
+    available_models = list(model_runtime.get_available_snapshot())
 
     if available_models:
         fallback_model: Model | None = None

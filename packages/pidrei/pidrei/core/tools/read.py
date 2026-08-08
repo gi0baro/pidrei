@@ -41,6 +41,11 @@ READ_SCHEMA = {
     "required": ["path"],
 }
 
+READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "Read file contents",
+    "guidelines": ("Use read to examine files instead of cat or sed.",),
+}
+
 
 @dataclass(slots=True)
 class ReadToolDetails:
@@ -348,8 +353,8 @@ def create_read_tool_definition(
             f"{DEFAULT_MAX_LINES} lines or {DEFAULT_MAX_BYTES // 1024}KB (whichever is hit first). "
             "Use offset/limit for large files. When you need the full file, continue with offset until complete."
         ),
-        prompt_snippet="Read file contents",
-        prompt_guidelines=["Use read to examine files instead of cat or sed."],
+        prompt_snippet=READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
+        prompt_guidelines=list(READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=READ_SCHEMA,
         execute=execute,
         render_call=render_call,

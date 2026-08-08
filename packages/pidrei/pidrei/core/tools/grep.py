@@ -104,6 +104,11 @@ GREP_SCHEMA = {
     "required": ["pattern"],
 }
 
+GREP_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "Search file contents for patterns (respects .gitignore)",
+    "guidelines": (),
+}
+
 DEFAULT_LIMIT = 100
 
 
@@ -340,7 +345,7 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             f"{DEFAULT_MAX_BYTES // 1024}KB (whichever is hit first). Long lines are truncated to "
             f"{GREP_MAX_LINE_LENGTH} chars."
         ),
-        prompt_snippet="Search file contents for patterns (respects .gitignore)",
+        prompt_snippet=GREP_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         parameters=GREP_SCHEMA,
         execute=execute,
         render_call=render_call,

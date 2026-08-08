@@ -10,7 +10,8 @@ import tonio.colored as tonio
 from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.tools.bash import BashExecution, BashToolOptions, create_bash_tool
 from pidrei_agent.harness.tools.tool_context import ExecutionToolContext
-from pidrei_agent.harness.types import ShellExecOptions, ShellExecResult, get_or_throw, ok
+from pidrei_agent.harness.types import ExecutionError, ShellExecOptions, ShellExecResult, err, get_or_throw, ok
+from pidrei_agent.harness.utils.truncate import DEFAULT_MAX_LINES
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -45,6 +46,19 @@ class LateOutputExecutionEnv(LocalExecutionEnv):
         return ok(ShellExecResult(stdout="before\n", stderr="", exit_code=0))
 
 
+TRUNCATED_OUTPUT_LINES = DEFAULT_MAX_LINES + 1
+
+
+class TimeoutOutputExecutionEnv(LocalExecutionEnv):
+    """Emits a fixed above-truncation output chunk, then reports a timeout."""
+
+    async def exec(self, _command: str, options: ShellExecOptions | None = None):
+        output = "".join(f"line-{index + 1}\n" for index in range(TRUNCATED_OUTPUT_LINES))
+        if options is not None and options.on_stdout is not None:
+            options.on_stdout(output)
+        return err(ExecutionError("timeout", f"timeout:{options.timeout if options is not None else None}"))
+
+
 @pytest.mark.tonio
 async def test_executes_commands_and_combines_stdout_and_stderr():
     context = create_context()
@@ -67,19 +81,12 @@ async def test_reports_nonzero_exits_and_timeouts():
 
 @pytest.mark.tonio
 async def test_preserves_truncated_output_when_a_command_times_out():
-    context = create_context()
+    context = ExecutionToolContext(env=TimeoutOutputExecutionEnv(cwd=create_temp_dir()))
     error: Exception | None = None
     try:
         await create_bash_tool().execute(
             "bash-timeout-output",
-            {
-                # The timeout must expire inside `sleep 2`, after the loop
-                # finished printing: 0.05s was not enough headroom on a loaded
-                # macOS CI runner, where the kill landed mid-loop and the
-                # "full" output legitimately stopped short of line-3000.
-                "command": "i=1; while [ $i -le 3000 ]; do echo line-$i; i=$((i + 1)); done; sleep 2",
-                "timeout": 0.5,
-            },
+            {"command": "emit-output-then-time-out", "timeout": 0.05},
             None,
             None,
             context,
@@ -89,12 +96,12 @@ async def test_preserves_truncated_output_when_a_command_times_out():
 
     assert isinstance(error, Exception)
     message = str(error)
-    assert "Command timed out after 0.5 seconds" in message
+    assert "Command timed out after 0.05 seconds" in message
     match = re.search(r"Full output: ([^\]\n]+)", message)
     assert match is not None
     full_output = get_or_throw(await context.env.read_text_file(match.group(1)))
     assert "line-1\nline-2" in full_output
-    assert "line-2999\nline-3000" in full_output
+    assert f"line-{DEFAULT_MAX_LINES}\nline-{TRUNCATED_OUTPUT_LINES}" in full_output
 
 
 @pytest.mark.tonio

@@ -12,14 +12,10 @@ from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.uuid import uuidv7
 
 from ...types import AgentMessage
-from ..messages import (
-    convert_to_llm,
-    create_branch_summary_message,
-    create_compaction_summary_message,
-    create_custom_message,
-)
-from ..session.session import build_session_context
-from ..types import CompactionEntry, CompactionError, Result, SessionTreeEntry, err, ok
+from ..messages import convert_to_llm, create_branch_summary_message, create_compaction_summary_message
+from ..session.context import build_session_context
+from ..session.types import CompactionEntry, Entry, MessageEntry
+from ..types import CompactionError, Result, err, ok
 from .utils import (
     FileOperations,
     compute_file_lists,
@@ -43,13 +39,13 @@ class CompactionDetails:
 
 def _extract_file_operations(
     messages: list[AgentMessage],
-    entries: list[SessionTreeEntry],
+    entries: list[Entry],
     prev_compaction_index: int,
 ) -> FileOperations:
     file_ops = create_file_ops()
     if prev_compaction_index >= 0:
         prev_compaction = entries[prev_compaction_index]
-        if not prev_compaction.from_hook and prev_compaction.details is not None:
+        if prev_compaction.details is not None:
             details = prev_compaction.details
             if isinstance(details, dict):
                 # JSONL-deserialized details keep pi's camelCase keys.
@@ -68,11 +64,9 @@ def _extract_file_operations(
     return file_ops
 
 
-def _get_message_from_entry(entry: SessionTreeEntry) -> AgentMessage | None:
+def _get_message_from_entry(entry: Entry) -> AgentMessage | None:
     if entry.type == "message":
         return entry.message
-    if entry.type == "custom_message":
-        return create_custom_message(entry.custom_type, entry.content, entry.display, entry.details, entry.timestamp)
     if entry.type == "branch_summary":
         return create_branch_summary_message(entry.summary, entry.from_id, entry.timestamp)
     if entry.type == "compaction":
@@ -80,26 +74,24 @@ def _get_message_from_entry(entry: SessionTreeEntry) -> AgentMessage | None:
     return None
 
 
-def _get_message_from_entry_for_compaction(entry: SessionTreeEntry) -> AgentMessage | None:
+def _get_message_from_entry_for_compaction(entry: Entry) -> AgentMessage | None:
     if entry.type == "compaction":
         return None
     return _get_message_from_entry(entry)
 
 
 @dataclass(slots=True)
-class CompactionResult:
+class CompactResult:
     """Generated compaction data ready to be persisted as a compaction entry."""
 
     # Summary text that replaces compacted history in future context.
     summary: str
     # Estimated context tokens before compaction.
     tokens_before: int
-    # Entry id where retained history starts.
-    first_kept_entry_id: str | None = None
+    # Retained recent messages stored directly on the compaction entry.
+    retained_tail: list[AgentMessage]
     # Usage from the LLM call(s) that generated this summary, if available.
     usage: Usage | None = None
-    # Retained recent messages stored directly on the compaction entry.
-    retained_tail: list[AgentMessage] | None = None
     # Optional implementation-specific details stored with the compaction entry.
     details: Any = None
 
@@ -182,7 +174,7 @@ def _get_assistant_usage(msg: AgentMessage) -> Usage | None:
     return None
 
 
-def get_last_assistant_usage(entries: list[SessionTreeEntry]) -> Usage | None:
+def get_last_assistant_usage(entries: list[Entry]) -> Usage | None:
     """Return usage from the last valid assistant message in session entries."""
     for entry in reversed(entries):
         if entry.type == "message":
@@ -288,7 +280,7 @@ def estimate_tokens(message: AgentMessage) -> int:
     return 0
 
 
-def _find_valid_cut_points(entries: list[SessionTreeEntry], start_index: int, end_index: int) -> list[int]:
+def _find_valid_cut_points(entries: list[Entry], start_index: int, end_index: int) -> list[int]:
     cut_points: list[int] = []
     for index in range(start_index, end_index):
         entry = entries[index]
@@ -296,16 +288,16 @@ def _find_valid_cut_points(entries: list[SessionTreeEntry], start_index: int, en
             role = getattr(entry.message, "role", None)
             if role in ("bashExecution", "custom", "branchSummary", "compactionSummary", "user", "assistant"):
                 cut_points.append(index)
-        if entry.type in ("branch_summary", "custom_message"):
+        if entry.type == "branch_summary":
             cut_points.append(index)
     return cut_points
 
 
-def find_turn_start_index(entries: list[SessionTreeEntry], entry_index: int, start_index: int) -> int:
+def find_turn_start_index(entries: list[Entry], entry_index: int, start_index: int) -> int:
     """Find the user-visible message that starts the turn containing an entry."""
     for index in range(entry_index, start_index - 1, -1):
         entry = entries[index]
-        if entry.type in ("branch_summary", "custom_message"):
+        if entry.type == "branch_summary":
             return index
         if entry.type == "message":
             role = getattr(entry.message, "role", None)
@@ -327,7 +319,7 @@ class CutPointResult:
 
 
 def find_cut_point(
-    entries: list[SessionTreeEntry],
+    entries: list[Entry],
     start_index: int,
     end_index: int,
     keep_recent_tokens: int,
@@ -531,8 +523,6 @@ async def generate_summary_with_usage(
 class CompactionPreparation:
     """Prepared inputs for a compaction run."""
 
-    # Entry id where retained history starts.
-    first_kept_entry_id: str
     # Messages summarized into the history summary.
     messages_to_summarize: list[AgentMessage]
     # Prefix messages summarized separately when compaction splits a turn.
@@ -552,7 +542,7 @@ class CompactionPreparation:
 
 
 def prepare_compaction(
-    path_entries: list[SessionTreeEntry],
+    path_entries: list[Entry],
     settings: CompactionSettings,
 ) -> Result[CompactionPreparation | None, CompactionError]:
     """Prepare session entries for compaction, or return Ok(None) when not applicable."""
@@ -566,44 +556,41 @@ def prepare_compaction(
             break
 
     previous_summary: str | None = None
-    boundary_start = 0
+    compactable_entries = path_entries
     if prev_compaction_index >= 0:
         prev_compaction: CompactionEntry = path_entries[prev_compaction_index]
         previous_summary = prev_compaction.summary
-        first_kept_entry_index = (
-            next(
-                (i for i, entry in enumerate(path_entries) if entry.id == prev_compaction.first_kept_entry_id),
-                -1,
+        virtual_retained_entries: list[Entry] = [
+            MessageEntry(
+                id=f"{prev_compaction.id}:retained:{index}",
+                parent_id=prev_compaction.id if index == 0 else f"{prev_compaction.id}:retained:{index - 1}",
+                seq=prev_compaction.seq,
+                timestamp=message.timestamp,
+                message=message,
             )
-            if prev_compaction.first_kept_entry_id
-            else -1
-        )
-        boundary_start = first_kept_entry_index if first_kept_entry_index >= 0 else prev_compaction_index + 1
-    boundary_end = len(path_entries)
+            for index, message in enumerate(prev_compaction.retained_tail)
+        ]
+        compactable_entries = [*virtual_retained_entries, *path_entries[prev_compaction_index + 1 :]]
+    boundary_end = len(compactable_entries)
 
     tokens_before = estimate_context_tokens(build_session_context(path_entries).messages).tokens
 
-    cut_point = find_cut_point(path_entries, boundary_start, boundary_end, settings.keep_recent_tokens)
-    first_kept_entry = path_entries[cut_point.first_kept_entry_index]
-    if not first_kept_entry.id:
-        return err(CompactionError("invalid_session", "First kept entry has no UUID - session may need migration"))
-    first_kept_entry_id = first_kept_entry.id
-
+    cut_point = find_cut_point(compactable_entries, 0, boundary_end, settings.keep_recent_tokens)
     history_end = cut_point.turn_start_index if cut_point.is_split_turn else cut_point.first_kept_entry_index
     messages_to_summarize: list[AgentMessage] = []
-    for index in range(boundary_start, history_end):
-        msg = _get_message_from_entry_for_compaction(path_entries[index])
+    for index in range(history_end):
+        msg = _get_message_from_entry_for_compaction(compactable_entries[index])
         if msg is not None:
             messages_to_summarize.append(msg)
     turn_prefix_messages: list[AgentMessage] = []
     if cut_point.is_split_turn:
         for index in range(cut_point.turn_start_index, cut_point.first_kept_entry_index):
-            msg = _get_message_from_entry_for_compaction(path_entries[index])
+            msg = _get_message_from_entry_for_compaction(compactable_entries[index])
             if msg is not None:
                 turn_prefix_messages.append(msg)
     retained_tail: list[AgentMessage] = []
     for index in range(cut_point.first_kept_entry_index, boundary_end):
-        msg = _get_message_from_entry_for_compaction(path_entries[index])
+        msg = _get_message_from_entry_for_compaction(compactable_entries[index])
         if msg is not None:
             retained_tail.append(msg)
     file_ops = _extract_file_operations(messages_to_summarize, path_entries, prev_compaction_index)
@@ -613,7 +600,6 @@ def prepare_compaction(
 
     return ok(
         CompactionPreparation(
-            first_kept_entry_id=first_kept_entry_id,
             messages_to_summarize=messages_to_summarize,
             turn_prefix_messages=turn_prefix_messages,
             retained_tail=retained_tail,
@@ -651,11 +637,8 @@ async def compact(
     thinking_level: str | None = None,
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
-) -> Result[CompactionResult, CompactionError]:
+) -> Result[CompactResult, CompactionError]:
     """Generate compaction summary data from prepared session history."""
-    if not preparation.first_kept_entry_id:
-        return err(CompactionError("invalid_session", "First kept entry has no UUID - session may need migration"))
-
     settings = preparation.settings
     if preparation.is_split_turn and preparation.turn_prefix_messages:
         history_text = "No prior history."
@@ -712,9 +695,8 @@ async def compact(
     summary += format_file_operations(read_files, modified_files)
 
     return ok(
-        CompactionResult(
+        CompactResult(
             summary=summary,
-            first_kept_entry_id=preparation.first_kept_entry_id,
             tokens_before=preparation.tokens_before,
             usage=summary_usage,
             retained_tail=preparation.retained_tail,

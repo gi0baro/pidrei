@@ -6,17 +6,14 @@ client (pidrei-ai's HTTP seam).
 """
 
 import json
-import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-import tonio.colored as tonio
-
 from pidrei_ai.models_store import ModelsStoreEntry
-from pidrei_ai.registry import Provider, RefreshModelsContext
+from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model
 
 from ..config import VERSION
@@ -105,8 +102,6 @@ class RemoteCatalogProvider:
         self._local_generated_at = local_generated_at
         self._fetch = fetch
         self._dynamic_models: list[Model] = []
-        self._inflight_guard = threading.Lock()
-        self._inflight: tuple[Any, list[BaseException | None]] | None = None
 
         self.id = provider.id
         self.name = provider.name
@@ -129,37 +124,17 @@ class RemoteCatalogProvider:
         return self._provider.stream_simple(model, context, options)
 
     async def refresh_models(self, context: RefreshModelsContext) -> None:
-        # Concurrent callers share one in-flight refresh (pi dedupes through a
-        # shared promise; errors propagate to every caller).
-        with self._inflight_guard:
-            inflight = self._inflight
-            if inflight is None:
-                done = tonio.Event()
-                box: list[BaseException | None] = [None]
-                self._inflight = (done, box)
-        if inflight is not None:
-            done, box = inflight
-            await done.wait()
-            if box[0] is not None:
-                raise box[0]
-            return
-
-        try:
-            await self._refresh(context)
-        except BaseException as error:
-            box[0] = error
-            raise
-        finally:
-            with self._inflight_guard:
-                self._inflight = None
-            done.set()
-
-    async def _refresh(self, context: RefreshModelsContext) -> None:
-        stored = await context.store.read()
-        self._dynamic_models = [
+        stored = context.stored
+        restored = [
             model for model in _remote_models(stored, self._local_generated_at) if model.provider == self._provider.id
         ]
-        if not context.allow_network or (context.cancel is not None and context.cancel.cancelled):
+
+        def _apply_restored() -> None:
+            self._dynamic_models = restored
+
+        if not await context.publish(ModelsPublication(update=_apply_restored)):
+            return
+        if not context.allow_network or context.cancel.cancelled:
             return
         if (
             not context.force
@@ -180,41 +155,49 @@ class RemoteCatalogProvider:
         if validator is not None:
             headers["if-none-match"] = validator
         response = await self._fetch(url, headers, context.cancel)
-        if context.cancel is not None and context.cancel.cancelled:
+        if context.cancel.cancelled:
             return
         checked_at = _now_ms()
         stored_models = list(stored.models) if stored is not None else []
         # Unchanged: dynamic_models already holds the stored overlay, so only
         # the freshness window moves.
         if response.status == 304 and stored is not None:
-            await context.store.write(
-                ModelsStoreEntry(
-                    models=stored_models,
-                    checked_at=checked_at,
-                    last_modified=stored.last_modified,
-                    etag=stored.etag,
+            await context.publish(
+                ModelsPublication(
+                    persist=ModelsStoreEntry(
+                        models=stored_models,
+                        checked_at=checked_at,
+                        last_modified=stored.last_modified,
+                        etag=stored.etag,
+                    )
                 )
             )
             return
         if response.status in (404, 501):
-            await context.store.write(ModelsStoreEntry(models=stored_models, checked_at=checked_at, last_modified=0))
+            await context.publish(
+                ModelsPublication(
+                    persist=ModelsStoreEntry(models=stored_models, checked_at=checked_at, last_modified=0)
+                )
+            )
             return
         if not (200 <= response.status < 300):
             # Transient failure: the cached body and its validator stay valid,
             # so keep the etag and let the next refresh revalidate instead of
             # downloading the catalog.
-            await context.store.write(
-                ModelsStoreEntry(
-                    models=stored_models,
-                    checked_at=checked_at,
-                    last_modified=stored.last_modified if stored is not None else None,
-                    etag=stored.etag if stored is not None else None,
+            await context.publish(
+                ModelsPublication(
+                    persist=ModelsStoreEntry(
+                        models=stored_models,
+                        checked_at=checked_at,
+                        last_modified=stored.last_modified if stored is not None else None,
+                        etag=stored.etag if stored is not None else None,
+                    )
                 )
             )
             raise Exception(f"Model catalog request failed for {self._provider.id}: {response.status}")
         refreshed = _parse_catalog(self._provider.id, json.loads(response.body))
         last_modified = _parse_last_modified(response.headers.get("last-modified"))
-        if context.cancel is not None and context.cancel.cancelled:
+        if context.cancel.cancelled:
             return
         entry = ModelsStoreEntry(
             models=refreshed,
@@ -222,8 +205,12 @@ class RemoteCatalogProvider:
             last_modified=last_modified,
             etag=response.headers.get("etag"),
         )
-        self._dynamic_models = _remote_models(entry, self._local_generated_at)
-        await context.store.write(entry)
+        published = _remote_models(entry, self._local_generated_at)
+
+        def _apply_refreshed() -> None:
+            self._dynamic_models = published
+
+        await context.publish(ModelsPublication(persist=entry, update=_apply_refreshed))
 
 
 def with_remote_catalog(

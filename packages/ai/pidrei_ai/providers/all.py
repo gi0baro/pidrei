@@ -18,6 +18,7 @@ from pidrei_ai.providers.amazon_bedrock import amazon_bedrock_provider
 from pidrei_ai.providers.ant_ling import ant_ling_provider
 from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.providers.azure_openai_responses import azure_openai_responses_provider
+from pidrei_ai.providers.baseten import baseten_provider
 from pidrei_ai.providers.cerebras import cerebras_provider
 from pidrei_ai.providers.cloudflare_ai_gateway import cloudflare_ai_gateway_provider
 from pidrei_ai.providers.cloudflare_workers_ai import cloudflare_workers_ai_provider
@@ -43,6 +44,7 @@ from pidrei_ai.providers.openrouter import openrouter_provider
 from pidrei_ai.providers.openrouter_images import openrouter_images_provider
 from pidrei_ai.providers.qwen_token_plan import qwen_token_plan_provider
 from pidrei_ai.providers.qwen_token_plan_cn import qwen_token_plan_cn_provider
+from pidrei_ai.providers.qwen_token_plan_individual import qwen_token_plan_individual_provider
 from pidrei_ai.providers.together import together_provider
 from pidrei_ai.providers.vercel_ai_gateway import vercel_ai_gateway_provider
 from pidrei_ai.providers.xai import xai_provider
@@ -105,6 +107,7 @@ def builtin_providers() -> list[Provider]:
         ant_ling_provider(),
         anthropic_provider(),
         azure_openai_responses_provider(),
+        baseten_provider(),
         cerebras_provider(),
         cloudflare_ai_gateway_provider(),
         cloudflare_workers_ai_provider(),
@@ -129,6 +132,7 @@ def builtin_providers() -> list[Provider]:
         openrouter_provider(),
         qwen_token_plan_provider(),
         qwen_token_plan_cn_provider(),
+        qwen_token_plan_individual_provider(),
         together_provider(),
         vercel_ai_gateway_provider(),
         xai_provider(),

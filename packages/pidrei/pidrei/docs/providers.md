@@ -68,6 +68,7 @@ pidrei
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
 | Fireworks | `FIREWORKS_API_KEY` | `fireworks` |
 | Together AI | `TOGETHER_API_KEY` | `together` |
+| Baseten | `BASETEN_API_KEY` | `baseten` |
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | Moonshot | `MOONSHOT_API_KEY` | `moonshot` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
@@ -81,6 +82,7 @@ pidrei
 | OpenCode Zen | `OPENCODE_API_KEY` | `opencode` |
 | OpenCode Go | `OPENCODE_API_KEY` | `opencode-go` |
 | Qwen Token Plan | `QWEN_TOKEN_PLAN_API_KEY` / `QWEN_TOKEN_PLAN_CN_API_KEY` | `qwen-token-plan` |
+| Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` | `qwen-token-plan-individual` |
 | Xiaomi MiMo | `XIAOMI_API_KEY` (and the regional Token Plan keys) | `xiaomi` |
 
 `pidrei --help` prints the authoritative list.

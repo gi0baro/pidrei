@@ -29,11 +29,11 @@ from pidrei_ai.auth.oauth.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
-    AuthInteraction,
     AuthPrompt,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
+    ProviderAuthInteraction,
 )
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
@@ -138,12 +138,15 @@ async def _start_callback_server(expected_state: str) -> _CallbackServerInfo:
     return _CallbackServerInfo(server=server, redirect_uri=REDIRECT_URI, code=code)
 
 
-async def _post_json(url: str, body: dict[str, Any]) -> str:
+async def _post_json(url: str, body: dict[str, Any], cancel: CancelToken) -> str:
+    # pi: `AbortSignal.any([signal, AbortSignal.timeout(30s)])` — the timeout
+    # half lives in the transport's timeout_ms.
     response = await oauth_http.request(
         url,
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         json_body=body,
         timeout_ms=TOKEN_TIMEOUT_MS,
+        cancel=cancel,
     )
     response_body = response.text
     if not response.ok:
@@ -151,7 +154,9 @@ async def _post_json(url: str, body: dict[str, Any]) -> str:
     return response_body
 
 
-async def _exchange_authorization_code(code: str, state: str, verifier: str, redirect_uri: str) -> OAuthCredential:
+async def _exchange_authorization_code(
+    code: str, state: str, verifier: str, redirect_uri: str, cancel: CancelToken
+) -> OAuthCredential:
     try:
         response_body = await _post_json(
             TOKEN_URL,
@@ -163,6 +168,7 @@ async def _exchange_authorization_code(code: str, state: str, verifier: str, red
                 "redirect_uri": redirect_uri,
                 "code_verifier": verifier,
             },
+            cancel,
         )
     except Exception as error:
         raise RuntimeError(
@@ -185,11 +191,12 @@ async def _exchange_authorization_code(code: str, state: str, verifier: str, red
     )
 
 
-async def _login_anthropic(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredential:
     pkce = generate_pkce()
     verifier, challenge = pkce.verifier, pkce.challenge
     server = await _start_callback_server(verifier)
     manual_abort = CancelToken()
+    unsubscribe_abort = interaction.cancel.on_cancel(lambda _reason: server.cancel_wait())
     manual: dict[str, Any] = {}
     prompt_done = tonio.Event()
 
@@ -262,17 +269,19 @@ async def _login_anthropic(interaction: AuthInteraction) -> OAuthCredential:
         if not state:
             raise RuntimeError("Missing OAuth state")
         interaction.notify(AuthEvent(type="progress", message="Exchanging authorization code for tokens..."))
-        return await _exchange_authorization_code(code, state, verifier, REDIRECT_URI)
+        return await _exchange_authorization_code(code, state, verifier, REDIRECT_URI, interaction.cancel)
     finally:
+        unsubscribe_abort()
         manual_abort.cancel()
         server.server.close()
 
 
-async def _refresh_anthropic_token(refresh_token: str) -> OAuthCredential:
+async def _refresh_anthropic_token(refresh_token: str, cancel: CancelToken) -> OAuthCredential:
     try:
         response_body = await _post_json(
             TOKEN_URL,
             {"grant_type": "refresh_token", "client_id": CLIENT_ID, "refresh_token": refresh_token},
+            cancel,
         )
     except Exception as error:
         raise RuntimeError(
@@ -294,8 +303,8 @@ async def _refresh_anthropic_token(refresh_token: str) -> OAuthCredential:
     )
 
 
-async def _refresh(credential: OAuthCredential, _cancel: CancelToken | None) -> OAuthCredential:
-    return await _refresh_anthropic_token(credential.refresh)
+async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
+    return await _refresh_anthropic_token(credential.refresh, cancel)
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:
@@ -304,6 +313,7 @@ async def _to_auth(credential: OAuthCredential) -> ModelAuth:
 
 anthropic_oauth = OAuthAuth(
     name="Anthropic (Claude Pro/Max)",
+    is_subscription=True,
     login=_login_anthropic,
     refresh=_refresh,
     to_auth=_to_auth,

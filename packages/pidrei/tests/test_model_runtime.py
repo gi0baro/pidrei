@@ -28,6 +28,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.registry import ModelsRefreshOptions, create_provider
+from pidrei_ai.utils.cancel import CancelToken
 from tests.model_runtime_helpers import make_model
 
 
@@ -78,20 +79,20 @@ class TestModelRuntimeAuthOptions:
         state = {"fail": False}
 
         class RecordingStore:
-            async def read(self, provider_id):
+            async def read(self, provider_id, options=None):
                 reads.append(provider_id)
                 if state["fail"]:
                     raise Exception(f"read failed for {provider_id}")
                 return await base.read(provider_id)
 
-            async def list(self):
-                return await base.list()
+            async def list(self, options=None):
+                return await base.list(options)
 
-            async def modify(self, provider_id, fn):
-                return await base.modify(provider_id, fn)
+            async def modify(self, provider_id, fn, options=None):
+                return await base.modify(provider_id, fn, options)
 
-            async def delete(self, provider_id):
-                await base.delete(provider_id)
+            async def delete(self, provider_id, options=None):
+                await base.delete(provider_id, options)
 
         runtime = await ModelRuntime.create(credentials=RecordingStore(), models_path=None)
 
@@ -156,6 +157,69 @@ class TestModelRuntimeAuthOptions:
         assert len(options) == 1
         check = await runtime.check_auth("extension-oauth")
         assert check.type == "oauth"
+
+    @pytest.mark.tonio
+    async def test_distinguishes_subscription_oauth_from_generic_oauth_sign_in(self):
+        """Adapted: pi also checks the radius builtin (not ported)."""
+        runtime = await ModelRuntime.create(
+            credentials=AuthStorage.in_memory(
+                {
+                    "anthropic": OAuthCredential(
+                        access="anthropic-access", refresh="anthropic-refresh", expires=now_ms() + 60 * 60_000
+                    ),
+                    "openrouter": OAuthCredential(access="openrouter-key", refresh="", expires=2**53 - 1),
+                }
+            ),
+            models_path=None,
+        )
+
+        assert runtime.is_using_oauth("anthropic") is True
+        assert runtime.is_using_subscription("anthropic") is True
+        assert runtime.is_using_oauth("openrouter") is True
+        assert runtime.is_using_subscription("openrouter") is False
+
+    @pytest.mark.tonio
+    async def test_forwards_cancellation_to_extension_oauth_refresh(self):
+        credentials = AuthStorage.in_memory(
+            {"extension-oauth": OAuthCredential(access="expired", refresh="refresh", expires=0)}
+        )
+        runtime = await ModelRuntime.create(credentials=credentials, models_path=None)
+        received: dict = {}
+
+        async def login(_callbacks):
+            return {"access": "access", "refresh": "refresh", "expires": now_ms() + 60_000}
+
+        async def refresh_token(credential, cancel):
+            received["cancel"] = cancel
+            return {
+                "access": credential.access,
+                "refresh": credential.refresh,
+                "expires": now_ms() + 60_000,
+            }
+
+        runtime.register_provider(
+            "extension-oauth",
+            {
+                "name": "Extension OAuth",
+                "baseUrl": "https://example.test/v1",
+                "api": "openai-completions",
+                "oauth": ExtensionOAuthConfig(
+                    name="Extension subscription",
+                    login=login,
+                    refresh_token=refresh_token,
+                    get_api_key=lambda credentials: credentials.access,
+                ),
+                "models": [model_entry("extension-model")],
+            },
+        )
+        controller = CancelToken()
+
+        await runtime.get_auth("extension-oauth", ModelRuntimeAuthOverrides(cancel=controller))
+        assert isinstance(received["cancel"], CancelToken)
+        reason = Exception("cancelled")
+        controller.cancel(reason)
+        assert received["cancel"].cancelled is True
+        assert received["cancel"].reason is reason
 
     @pytest.mark.tonio
     async def test_constructs_an_api_key_method_for_an_extension_api_key_provider(self):
@@ -304,6 +368,7 @@ class TestModelRuntimeAuthOptions:
                 "api": "openai-completions",
                 "oauth": ExtensionOAuthConfig(
                     name="Extension subscription",
+                    is_subscription=True,
                     login=login,
                     refresh_token=refresh_token,
                     get_api_key=lambda credentials: credentials.access,
@@ -318,6 +383,7 @@ class TestModelRuntimeAuthOptions:
         assert type_ == "oauth"
         assert provider.name == "Extension OAuth"
         assert method.name == "Extension subscription"
+        assert method.is_subscription is True
 
 
 class TestExtensionProviderModelLifecycle:
@@ -336,12 +402,12 @@ class TestExtensionProviderModelLifecycle:
 
             return ApiKeyCredential(key=await interaction.prompt(AuthPrompt(type="secret", message="API key")))
 
-        async def check(_ctx, credential):
+        async def check(_ctx, credential, _cancel):
             if credential is not None and credential.key:
                 return AuthCheck(type="api_key", source="stored native key")
             return None
 
-        async def resolve(_ctx, credential):
+        async def resolve(_ctx, credential, _cancel):
             if credential is not None and credential.key:
                 return AuthResult(
                     auth=ModelAuth(api_key=credential.key, base_url="https://resolved.test/v1"),
@@ -382,6 +448,105 @@ class TestExtensionProviderModelLifecycle:
         assert registry.get_provider("extension-native") is None
 
     @pytest.mark.tonio
+    async def test_preserves_native_deferred_methods_through_provider_overlays(self, tmp_dir):
+        import json
+
+        from pidrei_ai.types import DeferredHandle, DoneEvent, StartEvent, Usage
+        from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+        models_path = tmp_dir / "models.json"
+        models_path.write_text(
+            json.dumps({"providers": {"extension-native-deferred": {"baseUrl": "https://overlay.test/v1"}}}),
+            encoding="utf-8",
+        )
+        runtime = await ModelRuntime.create(
+            credentials=AuthStorage.in_memory(),
+            models_store=InMemoryModelsStore(),
+            models_path=str(models_path),
+            allow_model_network=False,
+        )
+        native_model = make_model("extension-native-deferred", "native-deferred", base_url="https://native.test/v1")
+        fetched: dict = {}
+
+        class DeferredApi:
+            def stream(self, model, context, options=None):
+                raise AssertionError("unused")
+
+            def stream_simple(self, model, context, options=None):
+                raise AssertionError("unused")
+
+            def fetch_deferred(self, request_model, handle, options=None):
+                from pidrei_ai.types import AssistantMessage
+
+                fetched["base_url"] = request_model.base_url
+                fetched["options"] = options
+                message = AssistantMessage(
+                    content=[],
+                    api=request_model.api,
+                    provider=request_model.provider,
+                    model=request_model.id,
+                    usage=Usage(),
+                    stop_reason="stop",
+                    timestamp=0,
+                )
+                stream = AssistantMessageEventStream()
+                stream.push(StartEvent(partial=message))
+                stream.push(DoneEvent(reason="stop", message=message))
+                stream.end(message)
+                return stream
+
+            async def cancel_deferred(self, _request_model, handle, options=None):
+                fetched["cancelled_id"] = handle.id
+                fetched["cancel_options"] = options
+
+        async def resolve(_ctx, _credential, _cancel):
+            return AuthResult(auth=ModelAuth(api_key="key"), source="native")
+
+        runtime.register_native_provider(
+            create_provider(
+                id="extension-native-deferred",
+                name="Extension Native Deferred",
+                auth=ProviderAuth(api_key=ApiKeyAuth(name="Native key", resolve=resolve)),
+                models=[native_model],
+                api=DeferredApi(),
+            )
+        )
+        composed_model = runtime.get_model("extension-native-deferred", "native-deferred")
+        assert composed_model is not None
+
+        from pidrei_ai.types import DeferredFetchOptions, ProviderRequestOptions
+
+        async def transform_fetch(headers):
+            return {**headers, "X-Transformed": "fetch"}
+
+        async def transform_cancel(headers):
+            return {**headers, "X-Transformed": "cancel"}
+
+        await runtime.fetch_deferred(
+            composed_model,
+            DeferredHandle(
+                provider="extension-native-deferred", model_id="native-deferred", api=native_model.api, id="fetch-id"
+            ),
+            DeferredFetchOptions(wait=25, headers={"X-Fetch": "fetch"}, transform_headers=transform_fetch),
+        )
+        await runtime.cancel_deferred(
+            composed_model,
+            DeferredHandle(
+                provider="extension-native-deferred", model_id="native-deferred", api=native_model.api, id="cancel-id"
+            ),
+            ProviderRequestOptions(timeout_ms=100, transform_headers=transform_cancel),
+        )
+
+        assert fetched["base_url"] == "https://overlay.test/v1"
+        assert fetched["options"].api_key == "key"
+        assert fetched["options"].wait == 25
+        assert fetched["options"].headers == {"X-Fetch": "fetch", "X-Transformed": "fetch"}
+        assert fetched["cancelled_id"] == "cancel-id"
+        assert fetched["cancel_options"].api_key == "key"
+        assert fetched["cancel_options"].timeout_ms == 100
+        assert fetched["cancel_options"].headers == {"X-Transformed": "cancel"}
+
+    @pytest.mark.tonio
     async def test_applies_models_json_overrides_above_native_providers(self, tmp_dir):
         import json
 
@@ -398,7 +563,7 @@ class TestExtensionProviderModelLifecycle:
         )
         native_model = make_model("extension-native", "native", base_url="https://native.test/v1")
 
-        async def resolve(_ctx, _credential):
+        async def resolve(_ctx, _credential, _cancel):
             return AuthResult(auth=ModelAuth(api_key="key"), source="native")
 
         runtime.register_native_provider(

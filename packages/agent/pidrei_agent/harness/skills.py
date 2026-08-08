@@ -79,16 +79,6 @@ def dirname_env_path(path: str) -> str:
     return "/" if slash_index <= 0 else normalized[:slash_index]
 
 
-def basename_env_path(path: str) -> str:
-    normalized = path.rstrip("/")
-    slash_index = normalized.rfind("/")
-    return normalized if slash_index == -1 else normalized[slash_index + 1 :]
-
-
-def _join_env_path(base: str, child: str) -> str:
-    return f"{base.rstrip('/')}/{child.lstrip('/')}"
-
-
 def _relative_env_path(root: str, path: str) -> str:
     normalized_root = root.rstrip("/")
     normalized_path = path.rstrip("/")
@@ -196,7 +186,7 @@ async def _load_skills_from_dir(
         if ignore_matcher.ignores(rel_path):
             continue
 
-        skill, file_diagnostics = await _load_skill_from_file(env, entry.path)
+        skill, file_diagnostics = await _load_skill_from_file(env, entry.path, dir_info_result.value.name)
         if skill is not None:
             skills.append(skill)
         diagnostics.extend(file_diagnostics)
@@ -222,7 +212,7 @@ async def _load_skills_from_dir(
 
         if kind != "file" or not include_root_files or not entry.name.endswith(".md"):
             continue
-        skill, file_diagnostics = await _load_skill_from_file(env, entry.path)
+        skill, file_diagnostics = await _load_skill_from_file(env, entry.path, dir_info_result.value.name)
         if skill is not None:
             skills.append(skill)
         diagnostics.extend(file_diagnostics)
@@ -235,7 +225,13 @@ async def _add_ignore_rules(env, matcher: _IgnoreMatcher, directory: str, root_d
     prefix = f"{relative_dir}/" if relative_dir else ""
 
     for filename in IGNORE_FILE_NAMES:
-        ignore_path = _join_env_path(directory, filename)
+        ignore_path_result = await env.join_path([directory, filename])
+        if not ignore_path_result.ok:
+            diagnostics.append(
+                SkillDiagnostic(code="file_info_failed", message=ignore_path_result.error.message, path=directory)
+            )
+            continue
+        ignore_path = ignore_path_result.value
         info = await env.file_info(ignore_path)
         if not info.ok:
             if info.error.code != "not_found":
@@ -277,7 +273,9 @@ def _prefix_ignore_pattern(line: str, prefix: str) -> str | None:
     return f"!{prefixed}" if negated else prefixed
 
 
-async def _load_skill_from_file(env, file_path: str) -> tuple[Skill | None, list[SkillDiagnostic]]:
+async def _load_skill_from_file(
+    env, file_path: str, parent_dir_name: str
+) -> tuple[Skill | None, list[SkillDiagnostic]]:
     diagnostics: list[SkillDiagnostic] = []
     raw_content = await env.read_text_file(file_path)
     if not raw_content.ok:
@@ -290,8 +288,6 @@ async def _load_skill_from_file(env, file_path: str) -> tuple[Skill | None, list
         diagnostics.append(SkillDiagnostic(code="parse_failed", message=str(to_error(error)), path=file_path))
         return None, diagnostics
 
-    skill_dir = dirname_env_path(file_path)
-    parent_dir_name = basename_env_path(skill_dir)
     description = frontmatter.get("description") if isinstance(frontmatter.get("description"), str) else None
 
     for error in _validate_description(description):

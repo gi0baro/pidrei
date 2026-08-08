@@ -40,13 +40,23 @@ import sys
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PACKAGES = ["ai/pidrei_ai", "agent/pidrei_agent", "pidrei/pidrei", "tui/pidrei_tui", "server/pidrei_server"]
+PACKAGES = [
+    "ai/pidrei_ai",
+    "agent/pidrei_agent",
+    "pidrei/pidrei",
+    "protocol/pidrei_protocol",
+    "client/pidrei_client",
+    "tui/pidrei_tui",
+    "server/pidrei_server",
+]
 
 # Our package -> the pi package it ports, for the async/sync drift check.
 PACKAGE_UPSTREAM = {
     "ai/pidrei_ai": "ai",
     "agent/pidrei_agent": "agent",
     "pidrei/pidrei": "coding-agent",
+    "protocol/pidrei_protocol": "protocol",
+    "client/pidrei_client": "client",
     "tui/pidrei_tui": "tui",
     "server/pidrei_server": "server",
 }
@@ -58,6 +68,16 @@ ALLOWED_SYNC_AWAITS = {
     "_load_scope",
     "_show_extension_selector",
     "_show_extension_editor",
+}
+
+# Sync-prologue methods whose returned awaitable is a runtime-driven Deferred:
+# the awaited remainder is already spawned before the method returns, so
+# dropping the return value is pi's `void this.foo()` and loses no work. A
+# dropped *coroutine* would silently lose its work — never list a method here
+# unless its remainder is spawned (`driven(...)`/settled Deferreds only).
+DROPPABLE_AWAITABLES = {
+    "_disconnect",
+    "_fail_protocol",
 }
 
 # `Class.method` pairs where pi is `async` and we are deliberately not.
@@ -140,7 +160,7 @@ def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str
                 # awaitable: it returns the awaitable rather than adding a
                 # coroutine frame (PLAN: no single-`return await` wrappers).
                 returns = ast.unparse(item.returns) if item.returns is not None else ""
-                methods[item.name] = "async" if returns.startswith("Awaitable[") else "sync"
+                methods[item.name] = "awaitable" if returns.startswith("Awaitable[") else "sync"
             elif isinstance(item, ast.AsyncFunctionDef):
                 methods[item.name] = "async"
 
@@ -153,7 +173,9 @@ def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str
                 name = _is_self_call(node.value)
                 if name is None:
                     continue
-                if methods.get(name) == "async" or (name not in methods and name in module_async):
+                if methods.get(name) == "awaitable" and name in DROPPABLE_AWAITABLES:
+                    continue
+                if methods.get(name) in ("async", "awaitable") or (name not in methods and name in module_async):
                     findings.append(f"{rel}:{node.lineno}: `{name}(...)` is async but its coroutine is dropped")
 
         _check_self_attributes(cls, rel, tree, findings)

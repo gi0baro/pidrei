@@ -111,11 +111,41 @@ class ScopedModelsSelectorComponent(Container):
 
         # Footer hint
         self.add_child(Spacer(1))
+        self._refresh_status_text: Text | None = None
+        refresh_status = config.get("refreshStatus")
+        if refresh_status:
+            self._refresh_status_text = Text(theme.fg("muted", f"  {refresh_status}"), 0, 0)
+            self.add_child(self._refresh_status_text)
         self._footer_text = Text(self._get_footer_text(), 0, 0)
         self.add_child(self._footer_text)
 
         self.add_child(DynamicBorder())
         self._update_list()
+
+    def update_models(self, models: list, enabled_model_ids=...) -> None:
+        selected = self._filtered_items[self._selected_index] if self._filtered_items else None
+        selected_id = selected["fullId"] if selected is not None else None
+        if enabled_model_ids is not ...:
+            self._enabled_ids = None if enabled_model_ids is None else list(enabled_model_ids)
+        self._models_by_id.clear()
+        self._all_ids = []
+        for model in models:
+            full_id = f"{model.provider}/{model.id}"
+            self._models_by_id[full_id] = model
+            self._all_ids.append(full_id)
+        self._refresh()
+        refreshed_index = (
+            next((i for i, item in enumerate(self._filtered_items) if item["fullId"] == selected_id), -1)
+            if selected_id is not None
+            else -1
+        )
+        if refreshed_index >= 0:
+            self._selected_index = refreshed_index
+            self._update_list()
+
+    def set_refresh_status(self, message: str, kind: str) -> None:
+        if self._refresh_status_text is not None:
+            self._refresh_status_text.set_text(theme.fg(kind, f"  {message}"))
 
     # Focusable implementation - propagate to search input for IME cursor
     # positioning

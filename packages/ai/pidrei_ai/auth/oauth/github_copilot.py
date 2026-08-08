@@ -18,7 +18,14 @@ import tonio.colored as tonio
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
 from pidrei_ai.auth.oauth.urls import http_or_https_url
-from pidrei_ai.auth.types import AuthEvent, AuthInteraction, AuthPrompt, ModelAuth, OAuthAuth, OAuthCredential
+from pidrei_ai.auth.types import (
+    AuthEvent,
+    AuthPrompt,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuthInteraction,
+)
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -104,29 +111,29 @@ def _as_record(value: Any) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _is_selectable_copilot_model(item: dict[str, Any]) -> bool:
-    policy = _as_record(item.get("policy"))
-    capabilities = _as_record(item.get("capabilities"))
-    supports = _as_record(capabilities.get("supports")) if capabilities else None
-    return (
-        item.get("model_picker_enabled") is True
-        and (policy or {}).get("state") != "disabled"
-        and (supports or {}).get("tool_calls") is not False
-    )
-
-
-def _parse_available_copilot_model_ids(raw: Any) -> list[str]:
+def _parse_available_copilot_model_ids(raw: Any, allow_policy_fallback: bool) -> list[str]:
     data = (_as_record(raw) or {}).get("data")
     if not isinstance(data, list):
         raise RuntimeError("Invalid Copilot models response")  # noqa: TRY004 - pi throws a plain Error
 
-    ids: list[str] = []
+    picker_ids: list[str] = []
+    policy_enabled_ids: list[str] = []
     for raw_item in data:
         item = _as_record(raw_item)
         model_id = item.get("id") if item else None
-        if isinstance(model_id, str) and item is not None and _is_selectable_copilot_model(item):
-            ids.append(model_id)
-    return ids
+        if item is None or not isinstance(model_id, str):
+            continue
+
+        capabilities = _as_record(item.get("capabilities"))
+        supports = _as_record(capabilities.get("supports")) if capabilities else None
+        if (supports or {}).get("tool_calls") is False:
+            continue
+        policy = _as_record(item.get("policy"))
+        if item.get("model_picker_enabled") is True and (policy or {}).get("state") != "disabled":
+            picker_ids.append(model_id)
+        if (policy or {}).get("state") == "enabled":
+            policy_enabled_ids.append(model_id)
+    return picker_ids if picker_ids or not allow_policy_fallback else policy_enabled_ids
 
 
 async def _fetch_json(
@@ -136,8 +143,11 @@ async def _fetch_json(
     headers: dict[str, str],
     form: dict[str, str] | None = None,
     timeout_ms: float | None = None,
+    cancel: CancelToken | None = None,
 ) -> Any:
-    response = await oauth_http.request(url, method=method, headers=headers, form=form, timeout_ms=timeout_ms)
+    response = await oauth_http.request(
+        url, method=method, headers=headers, form=form, timeout_ms=timeout_ms, cancel=cancel
+    )
     if not response.ok:
         try:
             status_text = HTTPStatus(response.status).phrase
@@ -147,8 +157,13 @@ async def _fetch_json(
     return response.json()
 
 
-async def _fetch_available_model_ids(copilot_token: str, enterprise_domain: str | None = None) -> list[str]:
+async def _fetch_available_model_ids(
+    copilot_token: str, enterprise_domain: str | None, cancel: CancelToken
+) -> list[str]:
     base_url = _get_base_url(copilot_token, enterprise_domain)
+    # Some Individual accounts return false for every picker flag despite explicit enabled policies.
+    # Limit the fallback to that endpoint so other account types keep strict picker semantics.
+    allow_policy_fallback = base_url == "https://api.individual.githubcopilot.com"
     raw = await _fetch_json(
         f"{base_url}/models",
         headers={
@@ -158,11 +173,12 @@ async def _fetch_available_model_ids(copilot_token: str, enterprise_domain: str 
             "X-GitHub-Api-Version": COPILOT_API_VERSION,
         },
         timeout_ms=MODELS_FETCH_TIMEOUT_MS,
+        cancel=cancel,
     )
-    return _parse_available_copilot_model_ids(raw)
+    return _parse_available_copilot_model_ids(raw, allow_policy_fallback)
 
 
-async def _start_device_flow(domain: str) -> _DeviceCodeResponse:
+async def _start_device_flow(domain: str, cancel: CancelToken) -> _DeviceCodeResponse:
     urls = _get_urls(domain)
     data = await _fetch_json(
         urls.device_code_url,
@@ -173,6 +189,7 @@ async def _start_device_flow(domain: str) -> _DeviceCodeResponse:
             "User-Agent": "GitHubCopilotChat/0.35.0",
         },
         form={"client_id": CLIENT_ID, "scope": "read:user"},
+        cancel=cancel,
     )
 
     if not isinstance(data, dict):
@@ -209,9 +226,7 @@ async def _start_device_flow(domain: str) -> _DeviceCodeResponse:
     )
 
 
-async def _poll_for_github_access_token(
-    domain: str, device: _DeviceCodeResponse, cancel: CancelToken | None = None
-) -> str:
+async def _poll_for_github_access_token(domain: str, device: _DeviceCodeResponse, cancel: CancelToken) -> str:
     urls = _get_urls(domain)
 
     async def poll() -> OAuthDeviceCodePollResult:
@@ -228,6 +243,7 @@ async def _poll_for_github_access_token(
                 "device_code": device.device_code,
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
             },
+            cancel=cancel,
         )
 
         if isinstance(raw, dict) and isinstance(raw.get("access_token"), str):
@@ -264,7 +280,9 @@ async def _poll_for_github_access_token(
     )
 
 
-async def _refresh_access_token(refresh_token: str, enterprise_domain: str | None = None) -> OAuthCredential:
+async def _refresh_access_token(
+    refresh_token: str, enterprise_domain: str | None, cancel: CancelToken
+) -> OAuthCredential:
     domain = enterprise_domain or "github.com"
     urls = _get_urls(domain)
 
@@ -275,6 +293,7 @@ async def _refresh_access_token(refresh_token: str, enterprise_domain: str | Non
             "Authorization": f"Bearer {refresh_token}",
             **COPILOT_HEADERS,
         },
+        cancel=cancel,
     )
 
     if not isinstance(raw, dict):
@@ -294,13 +313,17 @@ async def _refresh_access_token(refresh_token: str, enterprise_domain: str | Non
     )
 
 
-async def _refresh_copilot_token(refresh_token: str, enterprise_domain: str | None = None) -> OAuthCredential:
-    credential = await _refresh_access_token(refresh_token, enterprise_domain)
-    credential.extra["availableModelIds"] = await _fetch_available_model_ids(credential.access, enterprise_domain)
+async def _refresh_copilot_token(
+    refresh_token: str, enterprise_domain: str | None, cancel: CancelToken
+) -> OAuthCredential:
+    credential = await _refresh_access_token(refresh_token, enterprise_domain, cancel)
+    credential.extra["availableModelIds"] = await _fetch_available_model_ids(
+        credential.access, enterprise_domain, cancel
+    )
     return credential
 
 
-async def _enable_model(token: str, model_id: str, enterprise_domain: str | None = None) -> bool:
+async def _enable_model(token: str, model_id: str, enterprise_domain: str | None, cancel: CancelToken) -> bool:
     """Enable a model for the user's GitHub Copilot account.
 
     This is required for some models (like Claude, Grok) before they can be used.
@@ -319,22 +342,25 @@ async def _enable_model(token: str, model_id: str, enterprise_domain: str | None
                 "x-interaction-type": "chat-policy",
             },
             json_body={"state": "enabled"},
+            cancel=cancel,
         )
         return response.ok
     except Exception:
+        if cancel.cancelled:
+            raise
         return False
 
 
-async def _enable_all_models(token: str, enterprise_domain: str | None = None) -> None:
+async def _enable_all_models(token: str, enterprise_domain: str | None, cancel: CancelToken) -> None:
     """Enable every known Copilot model that may require policy acceptance, so the
     catalog is usable right after login."""
     models = list(MODELS.get("github-copilot", []))
     if not models:  # pragma: no cover - the vendored catalog always has models
         return
-    await tonio.spawn(*[_enable_model(token, model.id, enterprise_domain) for model in models])
+    await tonio.spawn(*[_enable_model(token, model.id, enterprise_domain, cancel) for model in models])
 
 
-async def _login_github_copilot(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_github_copilot(interaction: ProviderAuthInteraction) -> OAuthCredential:
     value = await interaction.prompt(
         AuthPrompt(
             type="text",
@@ -342,7 +368,7 @@ async def _login_github_copilot(interaction: AuthInteraction) -> OAuthCredential
             placeholder="company.ghe.com",
         )
     )
-    if interaction.cancel is not None and interaction.cancel.cancelled:
+    if interaction.cancel.cancelled:
         raise RuntimeError("Login cancelled")
 
     trimmed = value.strip()
@@ -351,7 +377,7 @@ async def _login_github_copilot(interaction: AuthInteraction) -> OAuthCredential
         raise RuntimeError("Invalid GitHub Enterprise URL/domain")
     domain = enterprise_domain or "github.com"
 
-    device = await _start_device_flow(domain)
+    device = await _start_device_flow(domain, interaction.cancel)
     interaction.notify(
         AuthEvent(
             type="device_code",
@@ -363,10 +389,12 @@ async def _login_github_copilot(interaction: AuthInteraction) -> OAuthCredential
     )
 
     github_access_token = await _poll_for_github_access_token(domain, device, interaction.cancel)
-    credential = await _refresh_access_token(github_access_token, enterprise_domain)
+    credential = await _refresh_access_token(github_access_token, enterprise_domain, interaction.cancel)
     interaction.notify(AuthEvent(type="progress", message="Enabling models..."))
-    await _enable_all_models(credential.access, enterprise_domain)
-    credential.extra["availableModelIds"] = await _fetch_available_model_ids(credential.access, enterprise_domain)
+    await _enable_all_models(credential.access, enterprise_domain, interaction.cancel)
+    credential.extra["availableModelIds"] = await _fetch_available_model_ids(
+        credential.access, enterprise_domain, interaction.cancel
+    )
     return credential
 
 
@@ -377,8 +405,8 @@ def _enterprise_domain(credential: OAuthCredential) -> str | None:
     return _normalize_domain(enterprise_url)
 
 
-async def _refresh(credential: OAuthCredential, _cancel: CancelToken | None) -> OAuthCredential:
-    return await _refresh_copilot_token(credential.refresh, _enterprise_domain(credential))
+async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
+    return await _refresh_copilot_token(credential.refresh, _enterprise_domain(credential), cancel)
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:
@@ -391,6 +419,7 @@ async def _to_auth(credential: OAuthCredential) -> ModelAuth:
 
 github_copilot_oauth = OAuthAuth(
     name="GitHub Copilot",
+    is_subscription=True,
     login=_login_github_copilot,
     refresh=_refresh,
     to_auth=_to_auth,

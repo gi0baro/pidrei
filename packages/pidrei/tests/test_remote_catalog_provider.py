@@ -16,6 +16,7 @@ from pidrei.core.remote_catalog import CatalogResponse, with_remote_catalog
 from pidrei_ai.auth.types import ApiKeyAuth, ApiKeyCredential, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.registry import RefreshModelsContext, create_provider
+from pidrei_ai.utils.cancel import CancelToken
 from tests.model_runtime_helpers import make_model
 
 
@@ -24,7 +25,7 @@ def model_dict(id: str) -> dict:
 
 
 def make_provider(local_generated_at=None, *, fetch):
-    async def resolve(_ctx, _credential):
+    async def resolve(_ctx, _credential, _cancel):
         return AuthResult(auth=ModelAuth())
 
     provider = create_provider(
@@ -36,28 +37,29 @@ def make_provider(local_generated_at=None, *, fetch):
     return with_remote_catalog(provider, "https://pi.dev", local_generated_at, fetch=fetch)
 
 
-class ScopedStore:
-    def __init__(self, store: InMemoryModelsStore):
-        self._store = store
+async def refresh_provider(provider, store: InMemoryModelsStore, **overrides) -> None:
+    """pi's `refreshProvider` helper: an always-current publication backed by
+    the store, with the stored snapshot read up-front."""
 
-    async def read(self):
-        return await self._store.read("test-provider")
+    async def publish(publication) -> bool:
+        if publication.persist is None:
+            await store.delete(provider.id)
+        elif publication.persist is not ...:
+            await store.write(provider.id, publication.persist)
+        if publication.update is not None:
+            publication.update()
+        return True
 
-    async def write(self, entry):
-        await self._store.write("test-provider", entry)
-
-    async def delete(self):
-        await self._store.delete("test-provider")
-
-
-def refresh_context(store, **overrides):
-    defaults = {
-        "credential": ApiKeyCredential(key="key"),
-        "store": ScopedStore(store),
-        "allow_network": True,
-    }
-    defaults.update(overrides)
-    return RefreshModelsContext(**defaults)
+    await provider.refresh_models(
+        RefreshModelsContext(
+            credential=ApiKeyCredential(key="key"),
+            stored=await store.read(provider.id),
+            publish=publish,
+            allow_network=overrides.get("allow_network", True),
+            force=overrides.get("force"),
+            cancel=overrides.get("cancel") or CancelToken(),
+        )
+    )
 
 
 @pytest.mark.tonio
@@ -70,9 +72,9 @@ async def test_parses_keyed_catalogs_sends_version_headers_observes_ttl_and_supp
 
     provider = make_provider(fetch=fetch)
     store = InMemoryModelsStore()
-    await provider.refresh_models(refresh_context(store))
-    await provider.refresh_models(refresh_context(store))
-    await provider.refresh_models(refresh_context(store, force=True))
+    await refresh_provider(provider, store)
+    await refresh_provider(provider, store)
+    await refresh_provider(provider, store, force=True)
 
     assert [entry.id for entry in provider.get_models()] == ["static", "dynamic"]
     stored = await store.read(provider.id)
@@ -101,10 +103,10 @@ async def test_prefers_the_newer_of_the_generated_and_remote_catalogs():
     provider = make_provider(local_generated_at, fetch=fetch)
     store = InMemoryModelsStore()
 
-    await provider.refresh_models(refresh_context(store))
+    await refresh_provider(provider, store)
     assert [entry.id for entry in provider.get_models()] == ["static"]
 
-    await provider.refresh_models(refresh_context(store, force=True))
+    await refresh_provider(provider, store, force=True)
     assert [entry.id for entry in provider.get_models()] == ["static", "newer"]
     stored = await store.read(provider.id)
     assert stored.last_modified == local_generated_at + 60_000
@@ -127,12 +129,12 @@ async def test_revalidates_a_stored_catalog_with_its_etag_and_keeps_the_overlay_
     provider = make_provider(fetch=fetch)
     store = InMemoryModelsStore()
 
-    await provider.refresh_models(refresh_context(store))
+    await refresh_provider(provider, store)
     assert "if-none-match" not in calls[0][1]
     assert (await store.read(provider.id)).etag == '"catalog-1"'
 
     checked_at = (await store.read(provider.id)).checked_at
-    await provider.refresh_models(refresh_context(store, force=True))
+    await refresh_provider(provider, store, force=True)
 
     assert calls[1][1]["if-none-match"] == '"catalog-1"'
     assert [entry.id for entry in provider.get_models()] == ["static", "dynamic"]
@@ -157,8 +159,8 @@ async def test_drops_a_stale_etag_when_the_overlay_becomes_unavailable():
     provider = make_provider(fetch=fetch)
     store = InMemoryModelsStore()
 
-    await provider.refresh_models(refresh_context(store))
-    await provider.refresh_models(refresh_context(store, force=True))
+    await refresh_provider(provider, store)
+    await refresh_provider(provider, store, force=True)
 
     assert (await store.read(provider.id)).etag is None
 
@@ -181,15 +183,15 @@ async def test_keeps_the_etag_and_overlay_after_a_transient_failure():
     provider = make_provider(fetch=fetch)
     store = InMemoryModelsStore()
 
-    await provider.refresh_models(refresh_context(store))
+    await refresh_provider(provider, store)
     with pytest.raises(Exception, match="429"):
-        await provider.refresh_models(refresh_context(store, force=True))
+        await refresh_provider(provider, store, force=True)
 
     stored = await store.read(provider.id)
     assert stored.etag == '"catalog-1"'
     assert [entry.id for entry in stored.models] == ["dynamic"]
 
-    await provider.refresh_models(refresh_context(store, force=True))
+    await refresh_provider(provider, store, force=True)
     assert calls[2][1]["if-none-match"] == '"catalog-1"'
     assert [entry.id for entry in provider.get_models()] == ["static", "dynamic"]
 
@@ -202,7 +204,7 @@ async def test_treats_unimplemented_catalog_routes_as_an_unavailable_overlay():
     provider = make_provider(fetch=fetch)
     store = InMemoryModelsStore()
 
-    await provider.refresh_models(refresh_context(store))
+    await refresh_provider(provider, store)
     assert [entry.id for entry in provider.get_models()] == ["static"]
     stored = await store.read(provider.id)
     assert stored.models == []

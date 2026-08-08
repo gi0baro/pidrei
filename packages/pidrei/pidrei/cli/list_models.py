@@ -21,13 +21,15 @@ def format_token_count(count: int) -> str:
     return str(count)
 
 
-async def list_models(model_runtime, search_pattern: str | None = None) -> None:
+async def list_models(model_runtime, search_pattern: str | None = None, cancel=None) -> None:
     """List available models, optionally filtered by search pattern."""
+    from pidrei_ai.auth.types import AuthOperationOptions
+
     load_error = model_runtime.get_error()
     if load_error:
         print(yellow(f"Warning: errors loading models.json:\n{load_error}"), file=sys.stderr)
 
-    models = list(await model_runtime.get_available())
+    models = list(await model_runtime.get_available(None, AuthOperationOptions(cancel=cancel)))
 
     if not models:
         print(format_no_models_available_message())

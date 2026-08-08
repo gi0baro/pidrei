@@ -85,7 +85,7 @@ async def load_prompt_templates(env, paths: str | list[str]) -> LoadedPromptTemp
             prompt_templates.extend(result.prompt_templates)
             diagnostics.extend(result.diagnostics)
         elif kind == "file" and info.name.endswith(".md"):
-            template, file_diagnostics = await _load_template_from_file(env, info.path)
+            template, file_diagnostics = await _load_template_from_file(env, info.path, info.name)
             if template is not None:
                 prompt_templates.append(template)
             diagnostics.extend(file_diagnostics)
@@ -132,14 +132,16 @@ async def _load_templates_from_dir(env, directory: str) -> LoadedPromptTemplates
         kind = await _resolve_kind(env, entry, diagnostics)
         if kind != "file" or not entry.name.endswith(".md"):
             continue
-        template, file_diagnostics = await _load_template_from_file(env, entry.path)
+        template, file_diagnostics = await _load_template_from_file(env, entry.path, entry.name)
         if template is not None:
             prompt_templates.append(template)
         diagnostics.extend(file_diagnostics)
     return LoadedPromptTemplates(prompt_templates=prompt_templates, diagnostics=diagnostics)
 
 
-async def _load_template_from_file(env, file_path: str) -> tuple[PromptTemplate | None, list[PromptTemplateDiagnostic]]:
+async def _load_template_from_file(
+    env, file_path: str, file_name: str
+) -> tuple[PromptTemplate | None, list[PromptTemplateDiagnostic]]:
     diagnostics: list[PromptTemplateDiagnostic] = []
     raw_content = await env.read_text_file(file_path)
     if not raw_content.ok:
@@ -162,7 +164,7 @@ async def _load_template_from_file(env, file_path: str) -> tuple[PromptTemplate 
             description += "..."
     return (
         PromptTemplate(
-            name=re.sub(r"\.md$", "", basename_env_path(file_path), flags=re.IGNORECASE),
+            name=re.sub(r"\.md$", "", file_name, flags=re.IGNORECASE),
             description=description,
             content=body,
         ),
@@ -202,12 +204,6 @@ def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     body = normalized[end_index + 4 :].strip()
     parsed = yaml.safe_load(yaml_string)
     return (parsed if parsed is not None else {}), body
-
-
-def basename_env_path(path: str) -> str:
-    normalized = path.rstrip("/")
-    slash_index = normalized.rfind("/")
-    return normalized if slash_index == -1 else normalized[slash_index + 1 :]
 
 
 def parse_command_args(args_string: str) -> list[str]:

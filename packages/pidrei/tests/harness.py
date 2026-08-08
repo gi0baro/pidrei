@@ -24,6 +24,7 @@ from pidrei.core.settings_manager import SettingsManager
 from pidrei_agent.agent import Agent, AgentInitialState
 from pidrei_ai.auth.types import ApiKeyCredential
 from pidrei_ai.providers.faux import FauxModelDefinition, faux_provider
+from pidrei_ai.registry import ModelsRefreshOptions
 
 from .agent_session_helpers import create_test_resource_loader
 
@@ -90,6 +91,10 @@ async def create_harness(
     model_runtime = await ModelRuntime.create(credentials=auth_storage, models_path=None, allow_model_network=False)
     if with_configured_auth:
         model_runtime.register_native_provider(faux.provider)
+        # pi registers the faux provider before runtime creation, so the
+        # availability snapshot already contains it; settle it here so
+        # snapshot-dependent tests see the same state deterministically.
+        await model_runtime.refresh(ModelsRefreshOptions(allow_network=False, providers=[faux.provider.id]))
 
     # AgentSession assigns `ref.current`, so this is an attribute holder.
     extension_runner_ref = SimpleNamespace(current=None)

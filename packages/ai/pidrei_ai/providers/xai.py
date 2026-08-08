@@ -20,7 +20,10 @@ def xai_provider() -> Provider:
         auth=ProviderAuth(
             api_key=env_api_key_auth("xAI API key", ["XAI_API_KEY"]),
             oauth=lazy_oauth(
-                name="xAI (Grok/X subscription)", load=load_xai_oauth, login_label="Sign in with SuperGrok or X Premium"
+                name="xAI (Grok/X subscription)",
+                is_subscription=True,
+                load=load_xai_oauth,
+                login_label="Sign in with SuperGrok or X Premium",
             ),
         ),
         models=list(MODELS.get("xai", [])),

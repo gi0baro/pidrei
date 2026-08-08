@@ -1,27 +1,27 @@
-"""Session JSONL (de)serialization to pi's camelCase wire shape.
+"""Message-level (de)serialization to pi's camelCase wire shape.
 
-pi persists raw JS objects with `JSON.stringify`, so session files carry
+pi persists raw JS objects with `JSON.stringify`, so wire payloads carry
 camelCase keys and omit `undefined` fields. This module maps the port's
-snake_case dataclasses to and from that exact shape with explicit per-type
-field maps — mechanical key conversion would corrupt user-owned dicts
-(`arguments`, `details`, `data`, `metadata`), which pass through with their
-keys untouched. `details` values that are port-side *dataclasses* (pi's are
-plain JSON objects) are converted to camelCase dicts on the way out, or
-`json.dumps` would refuse them; they parse back as dicts, which every
-consumer already accepts (renderers probe dict-or-attribute).
+snake_case message/usage dataclasses to and from that exact shape with
+explicit per-type field maps — mechanical key conversion would corrupt
+user-owned dicts (`arguments`, `details`, `data`, `metadata`), which pass
+through with their keys untouched. `details` values that are port-side
+*dataclasses* (pi's are plain JSON objects) are converted to camelCase dicts
+on the way out, or `json.dumps` would refuse them; they parse back as dicts,
+which every consumer already accepts (renderers probe dict-or-attribute).
 
-Unknown entry types and message roles round-trip as their raw parsed dicts
-(unknown entries keep the base fields on an `UnknownEntry` so tree walks can
-skip them, exactly like pi's blind cast).
+Unknown message roles round-trip as their raw parsed dicts, exactly like pi's
+blind cast. Both the v4 session codec (`session/jsonl/codec.py`) and the
+coding-agent's own session store build on these converters.
 """
 
 import dataclasses
-from dataclasses import dataclass
 from typing import Any
 
 from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
+    DeferredHandle,
     DiagnosticErrorInfo,
     ImageContent,
     TextContent,
@@ -34,31 +34,6 @@ from pidrei_ai.types import (
 )
 
 from ..messages import BashExecutionMessage, BranchSummaryMessage, CompactionSummaryMessage, CustomMessage
-from ..types import (
-    ActiveToolsChangeEntry,
-    BranchSummaryEntry,
-    CompactionEntry,
-    CustomEntry,
-    CustomMessageEntry,
-    LabelEntry,
-    LeafEntry,
-    MessageEntry,
-    ModelChangeEntry,
-    SessionInfoEntry,
-    SessionTreeEntry,
-    ThinkingLevelChangeEntry,
-)
-
-
-@dataclass(slots=True, kw_only=True)
-class UnknownEntry:
-    """Entry of an unrecognized type; kept for lossless round-trips."""
-
-    type: str
-    id: str
-    parent_id: str | None
-    timestamp: str
-    raw: dict[str, Any]
 
 
 def _put(target: dict[str, Any], key: str, value: Any) -> None:
@@ -206,6 +181,7 @@ def serialize_message(message: Any) -> Any:
             data["diagnostics"] = [_serialize_diagnostic(diagnostic) for diagnostic in message.diagnostics]
         _put(data, "errorMessage", message.error_message)
         _put(data, "rawStopReason", message.raw_stop_reason)
+        _put(data, "deferred", _serialize_deferred_handle(message.deferred))
         return data
     if role == "toolResult":
         data = {
@@ -277,6 +253,7 @@ def parse_message(data: Any) -> Any:
             ),
             error_message=data.get("errorMessage"),
             raw_stop_reason=data.get("rawStopReason"),
+            deferred=_parse_deferred_handle(data.get("deferred")),
         )
     if role == "toolResult":
         return ToolResultMessage(
@@ -319,6 +296,35 @@ def parse_message(data: Any) -> Any:
             timestamp=data.get("timestamp", 0),
         )
     return data
+
+
+def _serialize_deferred_handle(handle: Any) -> Any:
+    if handle is None or isinstance(handle, dict):
+        return handle
+    data: dict[str, Any] = {
+        "provider": handle.provider,
+        "modelId": handle.model_id,
+        "api": handle.api,
+        "id": handle.id,
+    }
+    _put(data, "expiresAt", handle.expires_at)
+    _put(data, "pollAfterMs", handle.poll_after_ms)
+    _put(data, "data", handle.data)
+    return data
+
+
+def _parse_deferred_handle(data: Any) -> DeferredHandle | None:
+    if not isinstance(data, dict):
+        return None
+    return DeferredHandle(
+        provider=data.get("provider", ""),
+        model_id=data.get("modelId", ""),
+        api=data.get("api", ""),
+        id=data.get("id", ""),
+        expires_at=data.get("expiresAt"),
+        poll_after_ms=data.get("pollAfterMs"),
+        data=data.get("data"),
+    )
 
 
 def _serialize_diagnostic(diagnostic: Any) -> Any:
@@ -390,142 +396,3 @@ def _serialize_details(details: Any) -> Any:
     if isinstance(read_files, list) and isinstance(modified_files, list):
         return {"readFiles": read_files, "modifiedFiles": modified_files}
     return to_wire_value(details)
-
-
-# --- entries --------------------------------------------------------------------
-
-
-def serialize_entry(entry: SessionTreeEntry | UnknownEntry) -> dict[str, Any]:
-    if isinstance(entry, UnknownEntry):
-        return entry.raw
-    base: dict[str, Any] = {
-        "type": entry.type,
-        "id": entry.id,
-        "parentId": entry.parent_id,
-        "timestamp": entry.timestamp,
-    }
-    if entry.type == "message":
-        base["message"] = serialize_message(entry.message)
-    elif entry.type == "thinking_level_change":
-        base["thinkingLevel"] = entry.thinking_level
-    elif entry.type == "model_change":
-        base["provider"] = entry.provider
-        base["modelId"] = entry.model_id
-    elif entry.type == "active_tools_change":
-        base["activeToolNames"] = entry.active_tool_names
-    elif entry.type == "compaction":
-        base["summary"] = entry.summary
-        _put(base, "firstKeptEntryId", entry.first_kept_entry_id)
-        base["tokensBefore"] = entry.tokens_before
-        if entry.retained_tail is not None:
-            base["retainedTail"] = [serialize_message(message) for message in entry.retained_tail]
-        _put(base, "details", _serialize_details(entry.details))
-        _put(base, "usage", serialize_usage(entry.usage))
-        _put(base, "fromHook", entry.from_hook)
-    elif entry.type == "branch_summary":
-        base["fromId"] = entry.from_id
-        base["summary"] = entry.summary
-        _put(base, "details", _serialize_details(entry.details))
-        _put(base, "usage", serialize_usage(entry.usage))
-        _put(base, "fromHook", entry.from_hook)
-    elif entry.type == "custom":
-        base["customType"] = entry.custom_type
-        _put(base, "data", entry.data)
-    elif entry.type == "custom_message":
-        base["customType"] = entry.custom_type
-        base["content"] = serialize_content(entry.content)
-        _put(base, "details", to_wire_value(entry.details))
-        base["display"] = entry.display
-    elif entry.type == "label":
-        base["targetId"] = entry.target_id
-        _put(base, "label", entry.label)
-    elif entry.type == "session_info":
-        _put(base, "name", entry.name)
-    elif entry.type == "leaf":
-        base["targetId"] = entry.target_id
-    return base
-
-
-def parse_entry(data: dict[str, Any]) -> SessionTreeEntry | UnknownEntry:
-    entry_type = data.get("type")
-    entry_id = data.get("id")
-    parent_id = data.get("parentId")
-    timestamp = data.get("timestamp")
-    if entry_type == "message":
-        return MessageEntry(
-            id=entry_id, parent_id=parent_id, timestamp=timestamp, message=parse_message(data.get("message"))
-        )
-    if entry_type == "thinking_level_change":
-        return ThinkingLevelChangeEntry(
-            id=entry_id, parent_id=parent_id, timestamp=timestamp, thinking_level=data.get("thinkingLevel", "")
-        )
-    if entry_type == "model_change":
-        return ModelChangeEntry(
-            id=entry_id,
-            parent_id=parent_id,
-            timestamp=timestamp,
-            provider=data.get("provider", ""),
-            model_id=data.get("modelId", ""),
-        )
-    if entry_type == "active_tools_change":
-        return ActiveToolsChangeEntry(
-            id=entry_id, parent_id=parent_id, timestamp=timestamp, active_tool_names=data.get("activeToolNames") or []
-        )
-    if entry_type == "compaction":
-        retained_tail = data.get("retainedTail")
-        return CompactionEntry(
-            id=entry_id,
-            parent_id=parent_id,
-            timestamp=timestamp,
-            summary=data.get("summary", ""),
-            first_kept_entry_id=data.get("firstKeptEntryId"),
-            tokens_before=data.get("tokensBefore", 0),
-            retained_tail=(
-                [parse_message(message) for message in retained_tail] if isinstance(retained_tail, list) else None
-            ),
-            details=data.get("details"),
-            usage=parse_usage(data.get("usage")),
-            from_hook=data.get("fromHook"),
-        )
-    if entry_type == "branch_summary":
-        return BranchSummaryEntry(
-            id=entry_id,
-            parent_id=parent_id,
-            timestamp=timestamp,
-            from_id=data.get("fromId", ""),
-            summary=data.get("summary", ""),
-            details=data.get("details"),
-            usage=parse_usage(data.get("usage")),
-            from_hook=data.get("fromHook"),
-        )
-    if entry_type == "custom":
-        return CustomEntry(
-            id=entry_id,
-            parent_id=parent_id,
-            timestamp=timestamp,
-            custom_type=data.get("customType", ""),
-            data=data.get("data"),
-        )
-    if entry_type == "custom_message":
-        return CustomMessageEntry(
-            id=entry_id,
-            parent_id=parent_id,
-            timestamp=timestamp,
-            custom_type=data.get("customType", ""),
-            content=_parse_content(data.get("content")),
-            details=data.get("details"),
-            display=bool(data.get("display", False)),
-        )
-    if entry_type == "label":
-        return LabelEntry(
-            id=entry_id,
-            parent_id=parent_id,
-            timestamp=timestamp,
-            target_id=data.get("targetId", ""),
-            label=data.get("label"),
-        )
-    if entry_type == "session_info":
-        return SessionInfoEntry(id=entry_id, parent_id=parent_id, timestamp=timestamp, name=data.get("name"))
-    if entry_type == "leaf":
-        return LeafEntry(id=entry_id, parent_id=parent_id, timestamp=timestamp, target_id=data.get("targetId"))
-    return UnknownEntry(type=str(entry_type), id=entry_id, parent_id=parent_id, timestamp=timestamp, raw=data)

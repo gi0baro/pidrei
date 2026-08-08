@@ -190,11 +190,39 @@ async def test_returns_aborted_results_for_pre_aborted_cancellable_file_operatio
         await env.read_text_lines("file.txt", cancel=token),
         await env.read_binary_file("file.txt", cancel=token),
         await env.write_file("other.txt", "hello", cancel=token),
+        await env.rename_file("file.txt", "renamed.txt", cancel=token),
         await env.list_dir(".", cancel=token),
     ]
     for result in results:
         assert result.ok is False
         assert result.error.code == "aborted"
+
+
+@pytest.mark.tonio
+async def test_atomically_renames_a_file_and_replaces_the_destination():
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    get_or_throw(await env.write_file("source.txt", "new"))
+    get_or_throw(await env.write_file("destination.txt", "old"))
+
+    get_or_throw(await env.rename_file("source.txt", "destination.txt"))
+
+    assert get_or_throw(await env.exists("source.txt")) is False
+    assert get_or_throw(await env.read_text_file("destination.txt")) == "new"
+
+
+@pytest.mark.tonio
+async def test_reports_the_source_path_when_rename_fails_because_the_source_is_missing():
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    get_or_throw(await env.write_file("destination.txt", "unchanged"))
+
+    result = await env.rename_file("missing-source.txt", "destination.txt")
+
+    assert result.ok is False
+    assert result.error.code == "not_found"
+    assert result.error.path == os.path.join(root, "missing-source.txt")
+    assert get_or_throw(await env.read_text_file("destination.txt")) == "unchanged"
 
 
 @pytest.mark.tonio
@@ -216,6 +244,42 @@ async def test_executes_commands_in_cwd_with_env_overrides():
         )
     )
     assert result == ShellExecResult(stdout=f"{os.path.realpath(root)}:ok", stderr="", exit_code=0)
+
+
+@SKIP_ON_MACOS_CI
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("description", "overrides", "expected_session_file"),
+    [
+        ("a missing override preserves the base value", None, "x:/stale/parent.jsonl"),
+        ("an empty override shadows the base value", {"PI_SESSION_FILE": ""}, "x:"),
+        (
+            "a string override replaces the base value",
+            {"PI_SESSION_FILE": "/sessions/current.jsonl"},
+            "x:/sessions/current.jsonl",
+        ),
+    ],
+    ids=["missing override", "empty override", "string override"],
+)
+async def test_applies_string_shell_environment_overrides(description, overrides, expected_session_file):
+    root = create_temp_dir()
+    env = LocalExecutionEnv(
+        cwd=root,
+        shell_env={
+            "PI_SESSION_FILE": "/stale/parent.jsonl",
+            "PI_CODING_AGENT": "true",
+            "PI_NODE_ENV_PRESERVED_TEST": "preserved",
+        },
+    )
+    result = get_or_throw(
+        await env.exec(
+            'printf \'%s:%s|%s|%s\' "${PI_SESSION_FILE+x}" "${PI_SESSION_FILE-}" "$PI_CODING_AGENT" '
+            '"$PI_NODE_ENV_PRESERVED_TEST"',
+            ShellExecOptions(env=overrides) if overrides is not None else None,
+        )
+    )
+
+    assert result.stdout == f"{expected_session_file}|true|preserved"
 
 
 @SKIP_ON_MACOS_CI

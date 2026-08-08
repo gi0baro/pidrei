@@ -45,7 +45,11 @@ def _capturing(adapter):
 
         async def generate_content_stream(self, params, *, env=None, cancel=None):
             captured.append(params)
-            yield _CHUNK
+
+            async def _chunks():
+                yield _CHUNK
+
+            return _chunks()
 
     original = adapter.GoogleGenAI
     adapter.GoogleGenAI = _Recorder

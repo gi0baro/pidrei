@@ -6,12 +6,12 @@ from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
     AuthContext,
-    AuthInteraction,
     AuthPrompt,
     AuthResult,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
+    ProviderAuthInteraction,
 )
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -22,15 +22,19 @@ def env_api_key_auth(name: str, env_vars: list[str]) -> ApiKeyAuth:
     Providers with non-standard resolution write their own `ApiKeyAuth`.
     """
 
-    async def login(interaction: AuthInteraction) -> ApiKeyCredential:
+    async def login(interaction: ProviderAuthInteraction) -> ApiKeyCredential:
+        interaction.cancel.raise_if_cancelled()
         key = await interaction.prompt(AuthPrompt(type="secret", message=f"Enter {name}"))
+        interaction.cancel.raise_if_cancelled()
         return ApiKeyCredential(key=key)
 
-    async def resolve(ctx: AuthContext, credential: ApiKeyCredential | None) -> AuthResult | None:
+    async def resolve(ctx: AuthContext, credential: ApiKeyCredential | None, cancel: CancelToken) -> AuthResult | None:
+        cancel.raise_if_cancelled()
         if credential is not None and credential.key:
             return AuthResult(auth=ModelAuth(api_key=credential.key), env=credential.env, source="stored credential")
         for env_var in env_vars:
             value = await ctx.env(env_var)
+            cancel.raise_if_cancelled()
             if value:
                 return AuthResult(auth=ModelAuth(api_key=value), source=env_var)
         return None
@@ -42,6 +46,7 @@ def lazy_oauth(
     *,
     name: str,
     load: Callable[[], Awaitable[OAuthAuth]],
+    is_subscription: bool | None = None,
     login_label: str | None = None,
 ) -> OAuthAuth:
     """Wraps a lazily imported `OAuthAuth` so provider definitions can advertise
@@ -55,13 +60,20 @@ def lazy_oauth(
             loaded[0] = await load()
         return loaded[0]
 
-    async def login(interaction: AuthInteraction) -> OAuthCredential:
+    async def login(interaction: ProviderAuthInteraction) -> OAuthCredential:
         return await (await _loaded()).login(interaction)
 
-    async def refresh(credential: OAuthCredential, cancel: CancelToken | None) -> OAuthCredential:
+    async def refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
         return await (await _loaded()).refresh(credential, cancel)
 
     async def to_auth(credential: OAuthCredential) -> ModelAuth:
         return await (await _loaded()).to_auth(credential)
 
-    return OAuthAuth(name=name, login=login, refresh=refresh, to_auth=to_auth, login_label=login_label)
+    return OAuthAuth(
+        name=name,
+        login=login,
+        refresh=refresh,
+        to_auth=to_auth,
+        is_subscription=is_subscription,
+        login_label=login_label,
+    )

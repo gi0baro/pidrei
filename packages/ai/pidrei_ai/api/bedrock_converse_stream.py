@@ -56,6 +56,7 @@ from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AssistantMessage,
+    AssistantMessageDiagnostic,
     CacheRetention,
     Context,
     DoneEvent,
@@ -85,6 +86,7 @@ from pidrei_ai.types import (
     Usage,
 )
 from pidrei_ai.utils.callbacks import maybe_call
+from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.error_body import normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
@@ -212,6 +214,11 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             config["token"] = {"token": bearer_token}
             config["authSchemePreference"] = ["httpBearerAuth"]
 
+        # Kept outside the try so the except can still correlate a mid-stream
+        # failure: exceptions raised as stream events carry no HTTP metadata of
+        # their own.
+        response_request_id: str | None = None
+
         try:
             client = BedrockRuntimeClient(config)
             custom_headers = provider_headers_to_record(opts.headers)
@@ -245,6 +252,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             command = ConverseStreamCommand(command_input)
 
             response = await client.send(command, cancel=opts.cancel)
+            response_request_id = _normalize_diagnostic_value(response.metadata.request_id)
             if response.metadata.http_status_code is not None:
                 response_headers: dict[str, str] = {}
                 if response.metadata.request_id:
@@ -294,6 +302,8 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
         except Exception as error:
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
             output.error_message = format_bedrock_error(error)
+            if output.stop_reason == "error":
+                _append_bedrock_failure_diagnostic(output, error, response_request_id)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
@@ -336,6 +346,67 @@ def format_bedrock_error(error: Any) -> str:
         prefix = BEDROCK_ERROR_PREFIXES.get(error.name, error.name)
         return f"{prefix}: {core}{data_retention_hint}"
     return f"{core}{data_retention_hint}"
+
+
+# Over-long header values are dropped rather than truncated: a truncated request
+# id is not a request id.
+MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS = 200
+
+
+def _normalize_diagnostic_value(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if len(trimmed) == 0 or len(trimmed) > MAX_BEDROCK_DIAGNOSTIC_VALUE_CHARS:
+        return None
+    return trimmed
+
+
+def _extract_bedrock_error_code(error: Any) -> str | None:
+    """Modeled Bedrock error codes all end in `Exception`, unlike transport
+    names such as `TimeoutError`; the SDK's `Unknown`/`UnknownError` fallbacks
+    are excluded the same way. pi additionally sees modeled mid-stream
+    exceptions as bare object literals (no code at all); pidrei's runtime raises
+    them as `BedrockRuntimeServiceException`, so their code is available here —
+    a deliberate, strictly-richer divergence of the hand-rolled runtime.
+    """
+    if not isinstance(error, Exception):
+        return None
+    name = getattr(error, "name", None)
+    if not isinstance(name, str) or not name.endswith("Exception"):
+        return None
+    return _normalize_diagnostic_value(name)
+
+
+def _append_bedrock_failure_diagnostic(output: AssistantMessage, error: Any, fallback_request_id: str | None) -> None:
+    """Structured metadata alongside `error_message`, which stays byte-identical
+    because `is_retryable_assistant_error` matches against it. Unknown fields
+    are omitted, never guessed. `details` only, as the raised value's shape is
+    not guaranteed.
+    """
+    details: dict[str, Any] = {}
+
+    status = getattr(error, "status", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        details["status"] = status
+
+    error_code = _extract_bedrock_error_code(error)
+    if error_code is not None:
+        details["errorCode"] = error_code
+
+    request_id = _normalize_diagnostic_value(getattr(error, "request_id", None))
+    if request_id is None:
+        request_id = fallback_request_id
+    if request_id is not None:
+        details["requestId"] = request_id
+
+    if not details:
+        return
+
+    append_assistant_message_diagnostic(
+        output,
+        AssistantMessageDiagnostic(type="bedrock_response_failure", timestamp=int(time.time() * 1000), details=details),
+    )
 
 
 # Header keys that must never be overwritten by caller-supplied headers.

@@ -10,6 +10,7 @@ which is what the SDK's values are.
 """
 
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from pidrei_ai.api.constrained_sampling import resolve_json_schema_strict_sampling
@@ -20,9 +21,11 @@ from pidrei_ai.types import (
     ImageContent,
     Model,
     StopReason,
+    StreamOptions,
     TextContent,
     Tool,
 )
+from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 
 
@@ -86,7 +89,10 @@ def _resolve_thought_signature(is_same_provider_and_model: bool, signature: str 
 
 def requires_tool_call_id(model_id: str) -> bool:
     """Models via Google APIs that require explicit tool call IDs in function calls/responses."""
-    return model_id.startswith(("claude-", "gpt-oss-"))
+    gemini_major_version = _get_gemini_major_version(model_id)
+    return model_id.startswith(("claude-", "gpt-oss-")) or (
+        gemini_major_version is not None and gemini_major_version >= 3
+    )
 
 
 _GEMINI_MAJOR_VERSION = re.compile(r"^gemini(?:-live)?-(\d+)")
@@ -141,10 +147,13 @@ def convert_messages(model: Model, context: Context) -> list[dict[str, Any]]:
 
             for block in msg.content:
                 if block.type == "text":
-                    # Skip empty text blocks
-                    if not block.text or block.text.strip() == "":
-                        continue
                     thought_signature = _resolve_thought_signature(is_same_provider_and_model, block.text_signature)
+                    # Skip empty text blocks — unless they carry a thought signature. Gemini can attach
+                    # the signature to a part whose visible text is empty and requires it echoed back;
+                    # dropping it breaks the reasoning chain and the model intermittently ends mid-task
+                    # turns with a thought-only STOP (empty completion, no tool call).
+                    if (not block.text or block.text.strip() == "") and not thought_signature:
+                        continue
                     parts.append(
                         {
                             "text": sanitize_surrogates(block.text),
@@ -152,15 +161,16 @@ def convert_messages(model: Model, context: Context) -> list[dict[str, Any]]:
                         }
                     )
                 elif block.type == "thinking":
-                    # Skip empty thinking blocks
-                    if not block.thinking or block.thinking.strip() == "":
-                        continue
                     # Only keep as thinking block if same provider AND same model
                     # Otherwise convert to plain text (no tags to avoid model mimicking them)
                     if is_same_provider_and_model:
                         thought_signature = _resolve_thought_signature(
                             is_same_provider_and_model, block.thinking_signature
                         )
+                        # Same rule as text blocks: an empty thinking block is dropped only when it
+                        # carries no signature (mirrors the anthropic converter's handling).
+                        if (not block.thinking or block.thinking.strip() == "") and not thought_signature:
+                            continue
                         parts.append(
                             {
                                 "thought": True,
@@ -169,6 +179,9 @@ def convert_messages(model: Model, context: Context) -> list[dict[str, Any]]:
                             }
                         )
                     else:
+                        # Cross-provider/model: the signature is unusable, empty blocks stay dropped.
+                        if not block.thinking or block.thinking.strip() == "":
+                            continue
                         parts.append({"text": sanitize_surrogates(block.thinking)})
                 elif block.type == "toolCall":
                     thought_signature = _resolve_thought_signature(is_same_provider_and_model, block.thought_signature)
@@ -370,3 +383,33 @@ def map_stop_reason_string(reason: str) -> StopReason:
             return "length"
         case _:
             return "error"
+
+
+async def retry_google_request[T](request: Callable[[], Awaitable[T]], options: StreamOptions | None = None) -> T:
+    """Run a Google GenAI request with the shared provider retry policy
+    (408/409/429/5xx with backoff, honoring retry-after), mirroring how the
+    Anthropic and OpenAI adapters wrap their initial request in
+    `retry_provider_request`. `GoogleApiError` has a `status` attribute but no
+    `headers` attribute, and `retry_provider_request` only retries errors that
+    carry both, so normalize the error by adding the missing `headers` before
+    re-raising.
+    """
+
+    async def _request() -> T:
+        try:
+            return await request()
+        except Exception as error:
+            if hasattr(error, "status") and not hasattr(error, "headers"):
+                try:
+                    error.headers = None
+                except AttributeError:
+                    pass  # slots-only exception: stays non-retryable, as pi's frozen errors would
+            raise
+
+    max_retries = options.max_retries if options is not None and options.max_retries is not None else 0
+    return await retry_provider_request(
+        _request,
+        max_retries=max_retries,
+        max_retry_delay_ms=options.max_retry_delay_ms if options is not None else None,
+        cancel=options.cancel if options is not None else None,
+    )

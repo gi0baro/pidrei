@@ -63,6 +63,13 @@ class CredentialInfo:
     type: Literal["api_key", "oauth"]
 
 
+@dataclass(slots=True)
+class AuthOperationOptions:
+    """Optional cancellation for public auth and credential operations."""
+
+    cancel: CancelToken | None = None
+
+
 class CredentialStore(Protocol):
     """App-owned credential storage, keyed by provider id, one credential per
     provider. `modify` is the only write path (serialized read-modify-write);
@@ -73,17 +80,18 @@ class CredentialStore(Protocol):
     failure (wrapped by Models in `ModelsError` code "auth").
     """
 
-    async def read(self, provider_id: str) -> Credential | None: ...
+    async def read(self, provider_id: str, options: AuthOperationOptions | None = None) -> Credential | None: ...
 
-    async def list(self) -> list[CredentialInfo]: ...
+    async def list(self, options: AuthOperationOptions | None = None) -> list[CredentialInfo]: ...
 
     async def modify(
         self,
         provider_id: str,
         fn: Callable[[Credential | None], Awaitable[Credential | None]],
+        options: AuthOperationOptions | None = None,
     ) -> Credential | None: ...
 
-    async def delete(self, provider_id: str) -> None: ...
+    async def delete(self, provider_id: str, options: AuthOperationOptions | None = None) -> None: ...
 
 
 class AuthContext(Protocol):
@@ -171,20 +179,31 @@ class AuthInteraction(Protocol):
     def notify(self, event: AuthEvent) -> None: ...
 
 
+class ProviderAuthInteraction(Protocol):
+    """Normalized interaction passed to provider login implementations:
+    `cancel` is always present (pi's `AuthInteraction & { signal: AbortSignal }`)."""
+
+    cancel: CancelToken
+
+    async def prompt(self, prompt: AuthPrompt) -> str: ...
+
+    def notify(self, event: AuthEvent) -> None: ...
+
+
 @dataclass(slots=True)
 class ApiKeyAuth:
     """Api-key auth: stored key/provider env plus ambient sources.
 
-    `resolve(ctx, credential)` merges per field and returns None when the
-    provider is not configured. Ambient-only providers omit `login`.
+    `resolve(ctx, credential, cancel)` merges per field and returns None when
+    the provider is not configured. Ambient-only providers omit `login`.
     `check` is an optional side-effect-free availability probe for providers
     whose `resolve` may execute commands.
     """
 
     name: str
-    resolve: Callable[[AuthContext, ApiKeyCredential | None], Awaitable[AuthResult | None]]
-    login: Callable[[AuthInteraction], Awaitable[ApiKeyCredential]] | None = None
-    check: Callable[[AuthContext, ApiKeyCredential | None], Awaitable[AuthCheck | None]] | None = None
+    resolve: Callable[[AuthContext, ApiKeyCredential | None, CancelToken], Awaitable[AuthResult | None]]
+    login: Callable[[ProviderAuthInteraction], Awaitable[ApiKeyCredential]] | None = None
+    check: Callable[[AuthContext, ApiKeyCredential | None, CancelToken], Awaitable[AuthCheck | None]] | None = None
 
 
 @dataclass(slots=True)
@@ -195,12 +214,14 @@ class OAuthAuth:
     """
 
     name: str
-    login: Callable[[AuthInteraction], Awaitable[OAuthCredential]]
+    login: Callable[[ProviderAuthInteraction], Awaitable[OAuthCredential]]
     # Exchange the refresh token; network call, raises on failure. Runs under the store lock.
-    refresh: Callable[[OAuthCredential, CancelToken | None], Awaitable[OAuthCredential]]
+    refresh: Callable[[OAuthCredential, CancelToken], Awaitable[OAuthCredential]]
     # Side-effect-free derivation of request auth from a valid credential.
     to_auth: Callable[[OAuthCredential], Awaitable[ModelAuth]]
-    # Selector label for the subscription login option.
+    # Whether access through this auth method is backed by a provider subscription.
+    is_subscription: bool | None = None
+    # Selector label for the OAuth login option.
     login_label: str | None = None
 
 

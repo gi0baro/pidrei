@@ -9,7 +9,9 @@ CLI first — but they are usable, and extensions import them freely.
 | `pidrei_ai` | Model types, the provider registry, wire adapters, auth |
 | `pidrei_agent` | The agent loop, tools, harness resources |
 | `pidrei_tui` | Terminal UI ([tui.md](tui.md)) |
-| `pidrei_server` | The instance supervisor behind `pidrei serve` |
+| `pidrei_protocol` | The remote-session wire protocol: CBOR, framing, schemas |
+| `pidrei_client` | The remote-session protocol client |
+| `pidrei_server` | The composable remote-session protocol server |
 | `pidrei` | CLI internals: sessions, modes, extensions, config |
 
 Every package is async and runs on [tonio](https://github.com/gi0baro/tonio),

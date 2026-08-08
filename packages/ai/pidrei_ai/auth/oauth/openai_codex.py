@@ -32,12 +32,12 @@ from pidrei_ai.auth.oauth.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
-    AuthInteraction,
     AuthPrompt,
     AuthPromptOption,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
+    ProviderAuthInteraction,
 )
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import AbortError, CancelToken
@@ -168,8 +168,8 @@ def _read_token_response(response: oauth_http.OAuthHttpResponse, operation: str)
 async def _exchange_authorization_code(
     code: str,
     verifier: str,
-    redirect_uri: str = REDIRECT_URI,
-    cancel: CancelToken | None = None,
+    redirect_uri: str,
+    cancel: CancelToken,
 ) -> _OAuthToken:
     response = await _request_with_login_cancellation(
         TOKEN_URL,
@@ -186,7 +186,7 @@ async def _exchange_authorization_code(
     return _read_token_response(response, "exchange")
 
 
-async def _refresh_access_token(refresh_token: str) -> _OAuthToken:
+async def _refresh_access_token(refresh_token: str, cancel: CancelToken) -> _OAuthToken:
     try:
         response = await oauth_http.request(
             TOKEN_URL,
@@ -196,6 +196,7 @@ async def _refresh_access_token(refresh_token: str) -> _OAuthToken:
                 "refresh_token": refresh_token,
                 "client_id": CLIENT_ID,
             },
+            cancel=cancel,
         )
     except Exception as error:
         raise RuntimeError(f"OpenAI Codex token refresh error: {error}") from error
@@ -203,7 +204,7 @@ async def _refresh_access_token(refresh_token: str) -> _OAuthToken:
     return _read_token_response(response, "refresh")
 
 
-async def _start_device_auth(cancel: CancelToken | None = None) -> _DeviceAuthInfo:
+async def _start_device_auth(cancel: CancelToken) -> _DeviceAuthInfo:
     response = await _request_with_login_cancellation(
         DEVICE_USER_CODE_URL,
         headers={"Content-Type": "application/json"},
@@ -249,7 +250,7 @@ def _number(value: str) -> float:
         return math.nan
 
 
-async def _poll_device_auth(device: _DeviceAuthInfo, cancel: CancelToken | None = None) -> _DeviceTokenSuccess:
+async def _poll_device_auth(device: _DeviceAuthInfo, cancel: CancelToken) -> _DeviceTokenSuccess:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _request_with_login_cancellation(
             DEVICE_TOKEN_URL,
@@ -399,12 +400,12 @@ def _credentials_from_token(token: _OAuthToken) -> OAuthCredential:
 
 
 async def _exchange_authorization_code_for_credentials(
-    code: str, verifier: str, redirect_uri: str, cancel: CancelToken | None = None
+    code: str, verifier: str, redirect_uri: str, cancel: CancelToken
 ) -> OAuthCredential:
     return _credentials_from_token(await _exchange_authorization_code(code, verifier, redirect_uri, cancel))
 
 
-async def _login_device_code(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_device_code(interaction: ProviderAuthInteraction) -> OAuthCredential:
     device = await _start_device_auth(interaction.cancel)
     interaction.notify(
         AuthEvent(
@@ -421,10 +422,11 @@ async def _login_device_code(interaction: AuthInteraction) -> OAuthCredential:
     )
 
 
-async def _login_browser(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_browser(interaction: ProviderAuthInteraction) -> OAuthCredential:
     flow = _create_authorization_flow()
     server = await _start_local_oauth_server(flow.state)
     manual_abort = CancelToken()
+    unsubscribe_abort = interaction.cancel.on_cancel(lambda _reason: server.cancel_wait())
     manual: dict[str, Any] = {}
     prompt_done = tonio.Event()
 
@@ -480,11 +482,12 @@ async def _login_browser(interaction: AuthInteraction) -> OAuthCredential:
             raise RuntimeError("Missing authorization code")
         return await _exchange_authorization_code_for_credentials(code, flow.verifier, REDIRECT_URI, interaction.cancel)
     finally:
+        unsubscribe_abort()
         manual_abort.cancel()
         server.close()
 
 
-async def _login(interaction: AuthInteraction) -> OAuthCredential:
+async def _login(interaction: ProviderAuthInteraction) -> OAuthCredential:
     method = await interaction.prompt(
         AuthPrompt(
             type="select",
@@ -504,8 +507,8 @@ async def _login(interaction: AuthInteraction) -> OAuthCredential:
     return await _login_browser(interaction)
 
 
-async def _refresh(credential: OAuthCredential, _cancel: CancelToken | None) -> OAuthCredential:
-    return _credentials_from_token(await _refresh_access_token(credential.refresh))
+async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
+    return _credentials_from_token(await _refresh_access_token(credential.refresh, cancel))
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:
@@ -514,6 +517,7 @@ async def _to_auth(credential: OAuthCredential) -> ModelAuth:
 
 openai_codex_oauth = OAuthAuth(
     name="OpenAI (ChatGPT Plus/Pro)",
+    is_subscription=True,
     login=_login,
     refresh=_refresh,
     to_auth=_to_auth,

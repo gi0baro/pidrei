@@ -7,21 +7,23 @@ from pidrei_ai.auth.types import (
     AuthContext,
     AuthEvent,
     AuthInfoLink,
-    AuthInteraction,
     AuthPrompt,
     AuthPromptOption,
     AuthResult,
     ModelAuth,
     ProviderAuth,
+    ProviderAuthInteraction,
 )
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.registry import Provider, create_provider
+from pidrei_ai.utils.cancel import CancelToken
 
 
 VERTEX_ADC_PATH = "~/.config/gcloud/application_default_credentials.json"
 
 
-async def _login(interaction: AuthInteraction) -> ApiKeyCredential:
+async def _login(interaction: ProviderAuthInteraction) -> ApiKeyCredential:
+    interaction.cancel.raise_if_cancelled()
     method = await interaction.prompt(
         AuthPrompt(
             type="select",
@@ -33,6 +35,7 @@ async def _login(interaction: AuthInteraction) -> ApiKeyCredential:
             ],
         )
     )
+    interaction.cancel.raise_if_cancelled()
     if method == "api-key":
         return ApiKeyCredential(
             key=await interaction.prompt(AuthPrompt(type="secret", message="Enter Google Cloud API key"))
@@ -71,9 +74,15 @@ async def _login(interaction: AuthInteraction) -> ApiKeyCredential:
     )
 
 
-async def _resolve(ctx: AuthContext, credential: ApiKeyCredential | None) -> AuthResult | None:
+async def _resolve(ctx: AuthContext, credential: ApiKeyCredential | None, cancel: CancelToken) -> AuthResult | None:
+    async def env(name: str) -> str | None:
+        cancel.raise_if_cancelled()
+        value = await ctx.env(name)
+        cancel.raise_if_cancelled()
+        return value
+
     stored_key = credential.key if credential is not None else None
-    key = stored_key or await ctx.env("GOOGLE_CLOUD_API_KEY")
+    key = stored_key or await env("GOOGLE_CLOUD_API_KEY")
     if key:
         return AuthResult(
             auth=ModelAuth(api_key=key),
@@ -81,14 +90,14 @@ async def _resolve(ctx: AuthContext, credential: ApiKeyCredential | None) -> Aut
         )
 
     credential_env = (credential.env if credential is not None else None) or {}
-    adc_path = credential_env.get("GOOGLE_APPLICATION_CREDENTIALS") or await ctx.env("GOOGLE_APPLICATION_CREDENTIALS")
+    adc_path = credential_env.get("GOOGLE_APPLICATION_CREDENTIALS") or await env("GOOGLE_APPLICATION_CREDENTIALS")
+    cancel.raise_if_cancelled()
     has_credentials = await ctx.file_exists(adc_path or VERTEX_ADC_PATH)
+    cancel.raise_if_cancelled()
     project = (
-        credential_env.get("GOOGLE_CLOUD_PROJECT")
-        or await ctx.env("GOOGLE_CLOUD_PROJECT")
-        or await ctx.env("GCLOUD_PROJECT")
+        credential_env.get("GOOGLE_CLOUD_PROJECT") or await env("GOOGLE_CLOUD_PROJECT") or await env("GCLOUD_PROJECT")
     )
-    location = credential_env.get("GOOGLE_CLOUD_LOCATION") or await ctx.env("GOOGLE_CLOUD_LOCATION")
+    location = credential_env.get("GOOGLE_CLOUD_LOCATION") or await env("GOOGLE_CLOUD_LOCATION")
     if has_credentials and project and location:
         return AuthResult(
             auth=ModelAuth(),

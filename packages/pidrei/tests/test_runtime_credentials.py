@@ -6,7 +6,61 @@ import pytest
 
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.runtime_credentials import RuntimeCredentials
-from pidrei_ai.auth.types import ApiKeyCredential, CredentialInfo, OAuthCredential
+from pidrei_ai.auth.types import ApiKeyCredential, AuthOperationOptions, CredentialInfo, OAuthCredential
+from pidrei_ai.utils.cancel import AbortError, CancelToken
+
+
+@pytest.mark.tonio
+async def test_forwards_operation_options_to_the_persistent_store():
+    controller = CancelToken()
+    received: list = []
+
+    class RecordingStore:
+        async def read(self, _provider_id, options=None):
+            received.append(options.cancel if options is not None else None)
+
+        async def list(self, options=None):
+            received.append(options.cancel if options is not None else None)
+            return []
+
+        async def modify(self, _provider_id, _fn, options=None):
+            received.append(options.cancel if options is not None else None)
+
+        async def delete(self, _provider_id, options=None):
+            received.append(options.cancel if options is not None else None)
+
+    credentials = RuntimeCredentials(RecordingStore())
+    options = AuthOperationOptions(cancel=controller)
+
+    async def keep(_current):
+        return None
+
+    await credentials.read("anthropic", options)
+    await credentials.list(options)
+    await credentials.modify("anthropic", keep, options)
+    await credentials.delete("anthropic", options)
+
+    assert received == [controller, controller, controller, controller]
+
+
+@pytest.mark.tonio
+async def test_keeps_a_runtime_override_when_persistent_deletion_is_cancelled():
+    aborted = AbortError("cancelled")
+    storage = AuthStorage.in_memory({"anthropic": ApiKeyCredential(key="stored-key")})
+    delete_calls = {"count": 0}
+
+    async def failing_delete(_provider_id, _options=None):
+        delete_calls["count"] += 1
+        raise aborted
+
+    storage.delete = failing_delete
+    credentials = RuntimeCredentials(storage)
+    credentials.set_runtime_api_key("anthropic", "runtime-key")
+
+    with pytest.raises(AbortError):
+        await credentials.delete("anthropic", AuthOperationOptions(cancel=CancelToken()))
+    assert delete_calls["count"] == 1
+    assert await credentials.read("anthropic") == ApiKeyCredential(key="runtime-key")
 
 
 @pytest.mark.tonio

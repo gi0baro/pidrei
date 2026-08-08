@@ -472,6 +472,42 @@ async def test_should_handle_abort_controller():
 
 
 @pytest.mark.tonio
+async def test_should_reject_reset_while_processing_without_corrupting_the_transcript():
+    stream_started = tonio.Event()
+    release_response = tonio.Event()
+
+    async def stream_fn(_model, _context, _options):
+        stream = AssistantMessageEventStream()
+
+        async def run():
+            stream.push(StartEvent(partial=create_assistant_message("")))
+            stream_started.set()
+            await release_response.wait(None)
+            stream.push(DoneEvent(reason="stop", message=create_assistant_message("Done")))
+
+        tonio.spawn.without_tracking(run())
+        return stream
+
+    agent = Agent(stream_fn=stream_fn)
+    prompt_handle = tonio.spawn(agent.prompt("Hello"))
+    await stream_started.wait(None)
+
+    try:
+        assert agent.state.is_streaming is True
+        assert [getattr(m, "role", None) for m in agent.state.messages] == ["user"]
+        with pytest.raises(Exception, match="Agent is already processing. Wait for completion before resetting."):
+            agent.reset()
+        assert agent.state.is_streaming is True
+        assert [getattr(m, "role", None) for m in agent.state.messages] == ["user"]
+    finally:
+        release_response.set()
+        await prompt_handle
+
+    assert agent.state.is_streaming is False
+    assert [getattr(m, "role", None) for m in agent.state.messages] == ["user", "assistant"]
+
+
+@pytest.mark.tonio
 async def test_should_throw_when_prompt_called_while_streaming():
     agent = Agent(stream_fn=abort_responsive_stream_fn)
 
@@ -584,6 +620,44 @@ async def test_keeps_legacy_prepare_next_turn_signal_callback_behavior():
 
     assert request_count == 2
     assert saw_cancel_token is True
+
+
+@pytest.mark.tonio
+async def test_forwards_should_stop_after_turn_through_agent_options():
+    async def execute(_tool_call_id, _params, _cancel, _on_update):
+        return AgentToolResult(content=[TextContent(text="tool complete")], details={})
+
+    tool = FnTool("noop", "Noop", "Noop tool", EMPTY_SCHEMA, execute)
+    request_count = 0
+    saw_cancel_token = False
+    callback_context_roles: list[str] = []
+
+    async def should_stop_after_turn(context, signal):
+        nonlocal saw_cancel_token, callback_context_roles
+        saw_cancel_token = isinstance(signal, CancelToken)
+        callback_context_roles = [getattr(m, "role", None) for m in context.context.messages]
+        return True
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal request_count
+        request_count += 1
+        if request_count == 1:
+            return done_stream(
+                create_assistant_tool_use_message([ToolCall(id="tool-1", name="noop", arguments={})]), "toolUse"
+            )
+        return done_stream(create_assistant_message("should not run"))
+
+    agent = Agent(
+        initial_state=AgentInitialState(tools=[tool]),
+        should_stop_after_turn=should_stop_after_turn,
+        stream_fn=stream_fn,
+    )
+
+    await agent.prompt("start")
+
+    assert request_count == 1
+    assert saw_cancel_token is True
+    assert callback_context_roles == ["user", "assistant", "toolResult"]
 
 
 @pytest.mark.tonio

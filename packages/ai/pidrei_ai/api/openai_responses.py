@@ -340,6 +340,10 @@ def build_params(
         if model.provider == "xai":
             params["include"] = ["reasoning.encrypted_content"]
 
+    # Last so custom keys override the named request fields.
+    if options.sampling_params:
+        params.update(options.sampling_params)
+
     return params
 
 

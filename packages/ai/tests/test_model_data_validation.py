@@ -75,6 +75,18 @@ def write_manifest(data_dir: Path, manifest: dict) -> None:
     (data_dir / model_data.MODEL_DATA_MANIFEST_FILE).write_text(json.dumps(manifest) + "\n")
 
 
+def test_rejects_a_missing_upstream_model_from_an_exact_generated_allowlist():
+    with pytest.raises(RuntimeError) as excinfo:
+        model_data.assert_exact_model_ids("qwen-token-plan-individual", ["model-a", "model-b"], ["model-a"])
+    assert "qwen-token-plan-individual model IDs do not match (missing: model-b)" in str(excinfo.value)
+
+
+def test_rejects_an_unexpected_model_from_an_exact_generated_allowlist():
+    with pytest.raises(RuntimeError) as excinfo:
+        model_data.assert_exact_model_ids("test-provider", ["model-a"], ["model-a", "model-b"])
+    assert "test-provider model IDs do not match (extra: model-b)" in str(excinfo.value)
+
+
 def test_reads_and_validates_api_grouped_model_data(tmp_path):
     data_dir, structure, _ = create_fixture(tmp_path)
 

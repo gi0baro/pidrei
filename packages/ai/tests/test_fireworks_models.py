@@ -75,6 +75,92 @@ def test_aligns_glm_52_fast_with_glm_52_openai_compatible_config():
     assert fast.thinking_level_map == base.thinking_level_map
 
 
+@pytest.mark.skip(
+    reason="catalog regen deferred to U11 (`make models-data`) — pi b9497c8c1 adds session-affinity compat at generation time; unskip after regen"
+)
+@pytest.mark.parametrize("model_id", ["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"])
+@pytest.mark.tonio
+async def test_omits_unsupported_long_cache_retention_for_glm_52(model_id):
+    from pidrei_ai.api.openai_completions import stream_simple as stream_simple_completions
+
+    model = get_builtin_model("fireworks", model_id)
+    assert model is not None
+    captured: dict = {}
+
+    async def on_payload(payload, _model):
+        captured["payload"] = payload
+        raise RuntimeError("payload captured")
+
+    await stream_simple_completions(
+        model,
+        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        SimpleStreamOptions(
+            api_key="test-fireworks-key",
+            cache_retention="long",
+            session_id="test-fireworks-session",
+            on_payload=on_payload,
+        ),
+    ).result()
+
+    assert "payload" in captured
+    assert "prompt_cache_retention" not in captured["payload"]
+
+
+@pytest.mark.skip(
+    reason="catalog regen deferred to U11 (`make models-data`) — pi a688e257c routes kimi-k3 at generation time; unskip after regen"
+)
+@pytest.mark.tonio
+async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effort_controls():
+    from pidrei_ai.api.openai_completions import stream_simple as stream_simple_completions
+    from pidrei_ai.types import OpenAICompletionsCompat, SimpleStreamOptions
+
+    base = get_builtin_model("fireworks", "accounts/fireworks/models/kimi-k3")
+    fast = get_builtin_model("fireworks", "accounts/fireworks/routers/kimi-k3-fast")
+    compat = OpenAICompletionsCompat(
+        supports_store=False,
+        supports_developer_role=False,
+        requires_reasoning_content_on_assistant_messages=True,
+        thinking_format="openai",
+        deferred_tools_mode="kimi",
+        send_session_affinity_headers=True,
+        supports_long_cache_retention=False,
+    )
+    thinking_level_map = {
+        "off": None,
+        "minimal": None,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": None,
+        "max": "max",
+    }
+
+    assert base is not None and fast is not None
+    assert base.api == "openai-completions"
+    assert base.base_url == "https://api.fireworks.ai/inference/v1"
+    assert base.compat == compat
+    assert base.thinking_level_map == thinking_level_map
+    assert fast.api == base.api
+    assert fast.base_url == base.base_url
+    assert fast.compat == compat
+    assert fast.thinking_level_map == thinking_level_map
+
+    captured: dict = {}
+
+    async def on_payload(payload, _model):
+        captured["payload"] = payload
+        raise RuntimeError("payload captured")
+
+    result = await stream_simple_completions(
+        base,
+        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        SimpleStreamOptions(api_key="test-fireworks-key", reasoning="max", on_payload=on_payload),
+    ).result()
+    assert result.stop_reason == "error"
+
+    assert captured["payload"].get("reasoning_effort") == "max"
+
+
 @pytest.mark.tonio
 async def test_resolves_fireworks_api_key_from_the_environment():
     env = {"FIREWORKS_API_KEY": "test-fireworks-key"}

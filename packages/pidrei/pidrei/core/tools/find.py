@@ -80,6 +80,11 @@ FIND_SCHEMA = {
     "required": ["pattern"],
 }
 
+FIND_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "Find files by glob pattern (respects .gitignore)",
+    "guidelines": (),
+}
+
 DEFAULT_LIMIT = 1000
 
 
@@ -235,7 +240,7 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             f"Respects .gitignore. Output is truncated to {DEFAULT_LIMIT} results or "
             f"{DEFAULT_MAX_BYTES // 1024}KB (whichever is hit first)."
         ),
-        prompt_snippet="Find files by glob pattern (respects .gitignore)",
+        prompt_snippet=FIND_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         parameters=FIND_SCHEMA,
         execute=execute,
         render_call=render_call,

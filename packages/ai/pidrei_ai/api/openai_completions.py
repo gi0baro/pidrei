@@ -31,7 +31,7 @@ from pidrei_ai.api.constrained_sampling import (
 )
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
-from pidrei_ai.api.simple_options import build_base_options
+from pidrei_ai.api.simple_options import MIN_ANSWER_TOKENS, build_base_options, clamp_reasoning
 from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
@@ -54,6 +54,7 @@ from pidrei_ai.types import (
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
+    ThinkingBudgets,
     ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
@@ -82,6 +83,8 @@ from pidrei_ai.utils.sse import iterate_sse_messages
 class OpenAICompletionsOptions(StreamOptions):
     tool_choice: Any = None
     reasoning_effort: str | None = None  # "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+    # Token budgets per thinking level. Only used when `compat.supports_thinking_token_budget` is set.
+    thinking_budgets: ThinkingBudgets | None = None
     # Pre-built client instance (test injection / alternative transports).
     client: OpenAICompletionsClient | None = None
 
@@ -183,6 +186,7 @@ class _ResolvedCompat:
     supports_developer_role: bool
     supports_reasoning_effort: bool
     supports_usage_in_streaming: bool
+    supports_finish_reason: bool
     max_tokens_field: str
     requires_tool_result_name: bool
     requires_assistant_after_tool_result: bool
@@ -192,9 +196,11 @@ class _ResolvedCompat:
     open_router_routing: dict
     vercel_gateway_routing: dict
     chat_template_kwargs: dict
+    chat_template_args: dict
     zai_tool_stream: bool
     supports_strict_mode: bool
     supports_openai_grammar_tools: bool
+    supports_thinking_token_budget: bool
     cache_control_format: str | None
     send_session_affinity_headers: bool
     deferred_tools_mode: str | None
@@ -277,6 +283,7 @@ def detect_compat(model: Model) -> _ResolvedCompat:
             and not is_ant_ling
         ),
         supports_usage_in_streaming=True,
+        supports_finish_reason=True,
         max_tokens_field="max_tokens" if use_max_tokens else "max_completion_tokens",
         requires_tool_result_name=False,
         requires_assistant_after_tool_result=False,
@@ -286,9 +293,11 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         open_router_routing={},
         vercel_gateway_routing={},
         chat_template_kwargs={},
+        chat_template_args={},
         zai_tool_stream=False,
         supports_strict_mode=not is_moonshot and not is_together and not is_cloudflare_ai_gateway and not is_nvidia,
         supports_openai_grammar_tools=False,
+        supports_thinking_token_budget=False,
         cache_control_format=cache_control_format,
         send_session_affinity_headers=False,
         deferred_tools_mode=None,
@@ -314,6 +323,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
         supports_developer_role=pick(compat.supports_developer_role, detected.supports_developer_role),
         supports_reasoning_effort=pick(compat.supports_reasoning_effort, detected.supports_reasoning_effort),
         supports_usage_in_streaming=pick(compat.supports_usage_in_streaming, detected.supports_usage_in_streaming),
+        supports_finish_reason=pick(compat.supports_finish_reason, detected.supports_finish_reason),
         max_tokens_field=pick(compat.max_tokens_field, detected.max_tokens_field),
         requires_tool_result_name=pick(compat.requires_tool_result_name, detected.requires_tool_result_name),
         requires_assistant_after_tool_result=pick(
@@ -337,10 +347,16 @@ def get_compat(model: Model) -> _ResolvedCompat:
             if compat.chat_template_kwargs is not None
             else detected.chat_template_kwargs
         ),
+        chat_template_args=(
+            dict(compat.chat_template_args) if compat.chat_template_args is not None else detected.chat_template_args
+        ),
         zai_tool_stream=pick(compat.zai_tool_stream, detected.zai_tool_stream),
         supports_strict_mode=pick(compat.supports_strict_mode, detected.supports_strict_mode),
         supports_openai_grammar_tools=pick(
             compat.supports_openai_grammar_tools, detected.supports_openai_grammar_tools
+        ),
+        supports_thinking_token_budget=pick(
+            compat.supports_thinking_token_budget, detected.supports_thinking_token_budget
         ),
         cache_control_format=pick(compat.cache_control_format, detected.cache_control_format),
         send_session_affinity_headers=pick(
@@ -595,16 +611,14 @@ def _resolve_chat_template_kwarg_value(model: Model, options: OpenAICompletionsO
     return mapped_value if isinstance(mapped_value, str) else None
 
 
-def _build_chat_template_kwargs(
-    model: Model, options: OpenAICompletionsOptions, compat: _ResolvedCompat
-) -> dict | None:
-    kwargs: dict[str, Any] = {}
-    for key, value in compat.chat_template_kwargs.items():
+def _build_chat_template_values(model: Model, options: OpenAICompletionsOptions, values: dict[str, Any]) -> dict | None:
+    resolved_values: dict[str, Any] = {}
+    for key, value in values.items():
         resolved = _resolve_chat_template_kwarg_value(model, options, value)
         if resolved is None:
             continue
-        kwargs[key] = None if resolved is _INCLUDE_NULL else resolved
-    return kwargs if kwargs else None
+        resolved_values[key] = None if resolved is _INCLUDE_NULL else resolved
+    return resolved_values if resolved_values else None
 
 
 def convert_tools(tools: list[Tool], compat: _ResolvedCompat) -> list[dict]:
@@ -940,9 +954,18 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
     elif compat.thinking_format == "qwen-chat-template" and model.reasoning:
         params["chat_template_kwargs"] = {"enable_thinking": bool(effort), "preserve_thinking": True}
     elif compat.thinking_format == "chat-template" and model.reasoning:
-        chat_template_kwargs = _build_chat_template_kwargs(model, options, compat)
+        chat_template_kwargs = _build_chat_template_values(model, options, compat.chat_template_kwargs)
         if chat_template_kwargs:
             params["chat_template_kwargs"] = chat_template_kwargs
+    elif compat.thinking_format == "baseten" and model.reasoning:
+        chat_template_args = _build_chat_template_values(model, options, compat.chat_template_args)
+        if chat_template_args:
+            params["chat_template_args"] = chat_template_args
+        if compat.supports_reasoning_effort:
+            mapped_effort = mapping.get(effort, "__missing__") if effort else mapping.get("off", "__missing__")
+            resolved = effort if mapped_effort == "__missing__" else mapped_effort
+            if isinstance(resolved, str):
+                params["reasoning_effort"] = resolved
     elif compat.thinking_format == "deepseek" and model.reasoning:
         if effort:
             params["thinking"] = {"type": "enabled"}
@@ -979,6 +1002,19 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
         if isinstance(off_value, str):
             params["reasoning_effort"] = off_value
 
+    # vLLM caps reasoning with a top-level thinking_token_budget. Independent of
+    # thinking_format: the same server can serve zai, qwen or chat-template models.
+    # Reasoning and the answer share max_tokens here, so an uncapped reasoning
+    # phase can consume the whole response and leave no answer and no tool call.
+    if compat.supports_thinking_token_budget and effort and model.reasoning:
+        level = clamp_reasoning(effort)
+        budgets = {"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384, **(options.thinking_budgets or {})}
+        ceiling = params.get("max_tokens") or params.get("max_completion_tokens") or model.max_tokens
+        # Always leave room for the answer, otherwise the budget recreates the bug it prevents.
+        budget = min(budgets[level], max(0, ceiling - MIN_ANSWER_TOKENS))
+        if budget > 0:
+            params["thinking_token_budget"] = budget
+
     model_compat = model.compat if isinstance(model.compat, OpenAICompletionsCompat) else None
     if model_compat is not None and model_compat.open_router_routing is not None:
         params["provider"] = model_compat.open_router_routing
@@ -991,6 +1027,10 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
             gateway_options["order"] = routing["order"]
         if gateway_options:
             params["providerOptions"] = {"gateway": gateway_options}
+
+    # Last so custom keys override the named request fields.
+    if options.sampling_params:
+        params.update(options.sampling_params)
 
     return params
 
@@ -1308,9 +1348,11 @@ def stream(  # noqa: C901
 
             if output.stop_reason == "aborted":
                 raise RuntimeError("Request was aborted")
+            if not has_finish_reason and not compat.supports_finish_reason:
+                output.stop_reason = "toolUse" if any(block.type == "toolCall" for block in output.content) else "stop"
             if output.stop_reason == "error":
                 raise RuntimeError(output.error_message or "Provider returned an error stop reason")
-            if not has_finish_reason or output.stop_reason == "pending":
+            if (compat.supports_finish_reason and not has_finish_reason) or output.stop_reason == "pending":
                 raise RuntimeError("Stream ended without finish_reason")
 
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
@@ -1346,4 +1388,5 @@ def stream_simple(
     opts = _openai_options(base)
     opts.reasoning_effort = reasoning_effort
     opts.tool_choice = tool_choice
+    opts.thinking_budgets = options.thinking_budgets if options else None
     return stream(model, context, opts)

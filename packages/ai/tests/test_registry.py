@@ -1,13 +1,25 @@
 """Tests for the models registry port (registry.py)."""
 
 import pytest
+import tonio.colored as tonio
 
-from pidrei_ai.auth.resolve import ModelsError
-from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.auth.credential_store import InMemoryCredentialStore
+from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError
+from pidrei_ai.auth.types import (
+    ApiKeyAuth,
+    AuthCheck,
+    AuthOperationOptions,
+    AuthResult,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuth,
+)
 from pidrei_ai.models_store import InMemoryModelsStore, ModelsStoreEntry
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.registry import (
     Models,
+    ModelsPublication,
     ModelsRefreshOptions,
     calculate_cost,
     clamp_thinking_level,
@@ -27,6 +39,7 @@ from pidrei_ai.types import (
     StreamOptions,
     Usage,
 )
+from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
@@ -48,7 +61,7 @@ def make_model(provider: str = "test", id: str = "model-1", **overrides) -> Mode
 
 
 def static_auth(key: str = "static-key") -> ProviderAuth:
-    async def resolve(ctx, credential):
+    async def resolve(ctx, credential, cancel):
         stored = credential.key if credential is not None and credential.key else None
         return AuthResult(auth=ModelAuth(api_key=stored or key), source="static")
 
@@ -56,10 +69,51 @@ def static_auth(key: str = "static-key") -> ProviderAuth:
 
 
 def unconfigured_auth() -> ProviderAuth:
-    async def resolve(ctx, credential):
+    async def resolve(ctx, credential, cancel):
         return None
 
     return ProviderAuth(api_key=ApiKeyAuth(name="unconfigured", resolve=resolve))
+
+
+async def _noop_refresh(_context) -> None:
+    return
+
+
+def _far_future_ms() -> int:
+    import time
+
+    return int(time.time() * 1000) + 60_000
+
+
+class DynamicTestProvider:
+    """pi's `testProvider({id, refreshModels})` double: a raw provider object
+    with a scripted `refresh_models`."""
+
+    def __init__(self, id: str, refresh_models, auth: ProviderAuth | None = None, models: list | None = None):
+        self.id = id
+        self.name = id
+        self.base_url = None
+        self.headers = None
+        self.auth = auth if auth is not None else ProviderAuth(api_key=static_auth())
+        self.filter_models = None
+        self._refresh_models = refresh_models
+        self._models = models if models is not None else []
+
+    @property
+    def has_dynamic_models(self) -> bool:
+        return True
+
+    def get_models(self) -> list:
+        return list(self._models)
+
+    async def refresh_models(self, context) -> None:
+        await self._refresh_models(context)
+
+    def stream(self, model, context, options=None):
+        raise RuntimeError("not used")
+
+    def stream_simple(self, model, context, options=None):
+        raise RuntimeError("not used")
 
 
 class EchoApi:
@@ -235,6 +289,119 @@ async def test_api_map_dispatch_and_missing_api_error():
     assert missing.error_message == 'Provider test has no API implementation for "other-api"'
 
 
+@pytest.mark.tonio
+async def test_lazily_exposes_only_declared_deferred_capabilities():
+    from pidrei_ai.api.lazy import lazy_api
+    from pidrei_ai.types import DeferredHandle
+
+    loads = 0
+    streams = EchoApi()
+    streams.fetch_deferred = lambda model, handle, options=None: streams.stream_simple(model, Context())
+
+    async def load():
+        nonlocal loads
+        loads += 1
+        return streams
+
+    api = lazy_api(load, {"fetch_deferred": True})
+    model = make_model(api="api-a", id="model-a")
+    handle = DeferredHandle(provider=model.provider, model_id=model.id, api=model.api, id="response-1")
+
+    assert loads == 0
+    assert getattr(api, "cancel_deferred", None) is None
+    assert (await api.fetch_deferred(model, handle).result()).stop_reason == "stop"
+    assert loads == 1
+
+
+@pytest.mark.tonio
+async def test_applies_resolved_request_options_to_deferred_fetch_and_cancellation():
+    from pidrei_ai.types import DeferredFetchOptions, DeferredHandle, ProviderRequestOptions
+
+    captured: dict = {}
+    api = EchoApi()
+
+    def fetch_deferred(model, handle, options=None):
+        captured["fetch_model"] = model
+        captured["fetch_options"] = options
+        return api.stream_simple(model, Context())
+
+    async def cancel_deferred(model, handle, options=None):
+        captured["cancel_options"] = options
+
+    api.fetch_deferred = fetch_deferred
+    api.cancel_deferred = cancel_deferred
+
+    async def resolve(_ctx, _credential, _cancel):
+        return AuthResult(
+            auth=ModelAuth(
+                api_key="provider-key",
+                base_url="https://resolved.test/v1",
+                headers={"Authorization": "Bearer provider", "X-Shared": "provider"},
+            ),
+            env={"PROVIDER_ONLY": "provider", "SHARED": "provider"},
+        )
+
+    deferred_model = make_model(provider="deferred-provider", id="model-a", api="api-a")
+    models = create_models()
+    models.set_provider(
+        create_provider(
+            id="deferred-provider",
+            auth=ProviderAuth(api_key=ApiKeyAuth(name="Test", resolve=resolve)),
+            models=[deferred_model],
+            api=api,
+        )
+    )
+    handle = DeferredHandle(
+        provider=deferred_model.provider, model_id=deferred_model.id, api=deferred_model.api, id="response-1"
+    )
+
+    async def transform_fetch(headers):
+        return {**headers, "X-Transformed": "yes"}
+
+    async def transform_cancel(headers):
+        return {**headers, "X-Cancel": "yes"}
+
+    await models.fetch_deferred(
+        deferred_model,
+        handle,
+        DeferredFetchOptions(
+            wait=50,
+            timeout_ms=100,
+            api_key="request-key",
+            headers={"X-Request": "request", "x-shared": "request"},
+            env={"REQUEST_ONLY": "request", "SHARED": "request"},
+            transform_headers=transform_fetch,
+        ),
+    )
+    await models.cancel_deferred(
+        deferred_model,
+        handle,
+        ProviderRequestOptions(timeout_ms=200, transform_headers=transform_cancel),
+    )
+
+    assert captured["fetch_model"].base_url == "https://resolved.test/v1"
+    fetch_options = captured["fetch_options"]
+    assert fetch_options.wait == 50
+    assert fetch_options.timeout_ms == 100
+    assert fetch_options.api_key == "request-key"
+    assert fetch_options.headers == {
+        "Authorization": "Bearer provider",
+        "X-Request": "request",
+        "x-shared": "request",
+        "X-Transformed": "yes",
+    }
+    assert fetch_options.env == {"PROVIDER_ONLY": "provider", "REQUEST_ONLY": "request", "SHARED": "request"}
+    cancel_options = captured["cancel_options"]
+    assert cancel_options.timeout_ms == 200
+    assert cancel_options.api_key == "provider-key"
+    assert cancel_options.headers == {
+        "Authorization": "Bearer provider",
+        "X-Shared": "provider",
+        "X-Cancel": "yes",
+    }
+    assert cancel_options.env == {"PROVIDER_ONLY": "provider", "SHARED": "provider"}
+
+
 # -- refresh -------------------------------------------------------------------
 
 
@@ -323,6 +490,518 @@ async def test_refresh_skips_unconfigured_providers():
     result = await models.refresh(ModelsRefreshOptions())
     assert result.errors == {}
     assert calls == 0
+
+
+@pytest.mark.tonio
+async def test_restricts_refresh_work_to_selected_providers():
+    calls: list[str] = []
+    models = create_models()
+    for provider_id in ("one", "two"):
+
+        async def refresh(context, provider_id=provider_id):
+            calls.append(f"{provider_id}:{'network' if context.allow_network else 'cache'}")
+
+        models.set_provider(DynamicTestProvider(provider_id, refresh))
+
+    result = await models.refresh(ModelsRefreshOptions(providers=["two", "unknown"]))
+
+    assert result.errors == {}
+    assert calls == ["two:cache", "two:network"]
+
+
+@pytest.mark.tonio
+async def test_restores_cached_models_before_waiting_for_network_auth():
+    store = InMemoryModelsStore()
+    await store.write("dynamic", ModelsStoreEntry(models=[make_model(provider="dynamic", id="cached")]))
+    auth_started = tonio.Event()
+    blocked_auth = tonio.Event()
+
+    async def blocked_resolve(_ctx, _credential, _cancel):
+        auth_started.set()
+        await blocked_auth.wait()
+        return AuthResult(auth=ModelAuth(api_key="key"))
+
+    async def fetch_models(_context):
+        raise RuntimeError("must not fetch")
+
+    provider = create_provider(
+        id="dynamic",
+        auth=ProviderAuth(api_key=ApiKeyAuth(name="Blocked auth", resolve=blocked_resolve)),
+        models=[],
+        fetch_models=fetch_models,
+        api=EchoApi(),
+    )
+    models = create_models(models_store=store)
+    models.set_provider(provider)
+    controller = CancelToken()
+    outcome: dict = {}
+
+    async def run_refresh() -> None:
+        outcome["result"] = await models.refresh(ModelsRefreshOptions(providers=["dynamic"], cancel=controller))
+
+    async def drive() -> None:
+        await auth_started.wait()
+        assert models.get_model("dynamic", "cached") is not None
+        controller.cancel()
+
+    await tonio.spawn(run_refresh(), drive())
+    assert outcome["result"].aborted is True
+    blocked_auth.set()
+
+
+@pytest.mark.tonio
+async def test_lets_providers_choose_persistent_deletion_and_ephemeral_publication_atomically():
+    state = {"entry": ModelsStoreEntry(models=[make_model(provider="dynamic", id="stored")]), "phase": "initial"}
+
+    class RecordingStore:
+        async def read(self, _provider_id, options=None):
+            return state["entry"]
+
+        async def write(self, _provider_id, entry, options=None):
+            state["entry"] = entry
+
+        async def delete(self, _provider_id, options=None):
+            state["entry"] = None
+
+    models = create_models(models_store=RecordingStore())
+
+    async def refresh(context):
+        assert context.stored is not None
+        assert context.stored.models[0].id == "stored"
+
+        def deleted() -> None:
+            assert state["entry"] is None
+            state["phase"] = "deleted"
+
+        assert await context.publish(ModelsPublication(persist=None, update=deleted)) is True
+
+        def ephemeral() -> None:
+            state["phase"] = "ephemeral"
+
+        assert await context.publish(ModelsPublication(update=ephemeral)) is True
+
+    models.set_provider(DynamicTestProvider("dynamic", refresh))
+
+    result = await models.refresh(ModelsRefreshOptions(allow_network=False))
+
+    assert result.errors == {}
+    assert state["entry"] is None
+    assert state["phase"] == "ephemeral"
+
+
+@pytest.mark.tonio
+async def test_always_gives_providers_a_concrete_cancel():
+    received: dict = {}
+    models = create_models()
+
+    async def refresh(context):
+        received["cancel"] = context.cancel
+
+    models.set_provider(DynamicTestProvider("dynamic", refresh))
+
+    result = await models.refresh()
+    assert result.aborted is False
+    assert isinstance(received["cancel"], CancelToken)
+    assert received["cancel"].cancelled is False
+
+
+@pytest.mark.tonio
+async def test_binds_model_store_waits_to_the_provider_refresh_cancel():
+    storage_cancels: list = []
+
+    class RecordingStore:
+        async def read(self, _provider_id, options=None):
+            storage_cancels.append(options.cancel if options is not None else None)
+
+        async def write(self, _provider_id, _entry, options=None):
+            storage_cancels.append(options.cancel if options is not None else None)
+
+        async def delete(self, _provider_id, options=None):
+            storage_cancels.append(options.cancel if options is not None else None)
+
+    received: dict = {}
+    models = create_models(models_store=RecordingStore())
+
+    async def refresh(context):
+        received["cancel"] = context.cancel
+        if not context.allow_network:
+            return
+        await context.publish(
+            ModelsPublication(persist=ModelsStoreEntry(models=[make_model(provider="dynamic", id="fresh")]))
+        )
+
+    models.set_provider(DynamicTestProvider("dynamic", refresh))
+
+    result = await models.refresh(ModelsRefreshOptions(providers=["dynamic"]))
+
+    assert result.errors == {}
+    assert len(storage_cancels) == 3
+    assert all(cancel is received["cancel"] for cancel in storage_cancels)
+
+
+@pytest.mark.tonio
+async def test_returns_aborted_state_without_reporting_cancellation_as_a_provider_error():
+    controller = CancelToken()
+    models = create_models()
+
+    async def refresh(context):
+        controller.cancel()
+        if context.cancel.cancelled:
+            return
+
+    models.set_provider(DynamicTestProvider("dynamic", refresh))
+
+    result = await models.refresh(ModelsRefreshOptions(cancel=controller))
+    assert result.aborted is True
+    assert result.errors == {}
+
+
+@pytest.mark.tonio
+async def test_stops_waiting_on_abort_when_a_provider_ignores_its_cancel():
+    controller = CancelToken()
+    started = tonio.Event()
+    release = tonio.Event()
+    state = {"calls": 0, "fail_late": False}
+
+    async def refresh(_context):
+        state["calls"] += 1
+        if state["calls"] != 1:
+            return
+        started.set()
+        await release.wait()
+        if state["fail_late"]:
+            raise RuntimeError("late provider failure")
+
+    models = create_models()
+    models.set_provider(DynamicTestProvider("dynamic", refresh))
+    outcome: dict = {}
+
+    async def run_refresh() -> None:
+        outcome["result"] = await models.refresh(ModelsRefreshOptions(cancel=controller))
+
+    async def drive() -> None:
+        await started.wait()
+        controller.cancel()
+
+    await tonio.spawn(run_refresh(), drive())
+    result = outcome["result"]
+    assert result.aborted is True
+    assert result.errors == {}
+
+    state["fail_late"] = True
+    release.set()
+    await tonio.time.sleep(0.01)
+    assert result.errors == {}
+
+
+@pytest.mark.tonio
+async def test_rejects_late_publication_from_a_superseded_non_cooperative_provider():
+    store = InMemoryModelsStore()
+    state = {"value": "initial", "calls": 0}
+    first_started = tonio.Event()
+    first_blocked = tonio.Event()
+    first_finished = tonio.Event()
+
+    async def refresh(context):
+        if not context.allow_network:
+            return
+        state["calls"] += 1
+        current = state["calls"]
+        if current == 1:
+            first_started.set()
+            await first_blocked.wait()
+        value = f"generation-{current}"
+
+        def apply(value: str = value) -> None:
+            state["value"] = value
+
+        try:
+            await context.publish(
+                ModelsPublication(
+                    persist=ModelsStoreEntry(models=[make_model(provider="dynamic", id=value)]),
+                    update=apply,
+                )
+            )
+        finally:
+            if current == 1:
+                first_finished.set()
+
+    models = create_models(models_store=store)
+    models.set_provider(DynamicTestProvider("dynamic", refresh))
+
+    async def run_first() -> None:
+        await models.refresh(ModelsRefreshOptions(providers=["dynamic"]))
+
+    async def drive() -> None:
+        await first_started.wait()
+        await models.refresh(ModelsRefreshOptions(providers=["dynamic"]))
+
+    await tonio.spawn(run_first(), drive())
+    first_blocked.set()
+    # Wait for the superseded provider's late publication to settle — a parked
+    # leftover would outlive the test (and wedge interpreter shutdown).
+    await first_finished.wait()
+    await tonio.time.sleep(0.01)
+
+    assert state["value"] == "generation-2"
+    entry = await store.read("dynamic")
+    assert entry is not None
+    assert entry.models[0].id == "generation-2"
+
+
+@pytest.mark.tonio
+async def test_lets_a_newer_dynamic_refresh_bypass_and_supersede_older_network_work():
+    state = {"fetches": 0}
+    first_started = tonio.Event()
+    first_blocked = tonio.Event()
+
+    async def fetch_models(_context):
+        state["fetches"] += 1
+        current = state["fetches"]
+        if current == 1:
+            first_started.set()
+            await first_blocked.wait()
+        return [make_model(provider="dynamic", id=f"listed-{current}", api="api-a")]
+
+    provider = create_provider(
+        id="dynamic",
+        auth=ProviderAuth(api_key=static_auth()),
+        models=[],
+        fetch_models=fetch_models,
+        api=EchoApi(),
+    )
+    store = InMemoryModelsStore()
+    models = create_models(models_store=store)
+    models.set_provider(provider)
+    assert provider.get_models() == []
+    outcome: dict = {}
+
+    async def run_first() -> None:
+        outcome["first"] = await models.refresh(ModelsRefreshOptions(providers=["dynamic"]))
+
+    async def drive() -> None:
+        await first_started.wait()
+        outcome["second"] = await models.refresh(ModelsRefreshOptions(providers=["dynamic"]))
+
+    await tonio.spawn(run_first(), drive())
+    assert outcome["second"].aborted is False
+    assert outcome["first"].aborted is False
+    assert state["fetches"] == 2
+    assert [model.id for model in provider.get_models()] == ["listed-2"]
+    assert [model.id for model in (await store.read("dynamic")).models] == ["listed-2"]
+
+    first_blocked.set()
+    await tonio.time.sleep(0.01)
+    assert [model.id for model in provider.get_models()] == ["listed-2"]
+    assert [model.id for model in (await store.read("dynamic")).models] == ["listed-2"]
+
+
+@pytest.mark.tonio
+async def test_passes_caller_cancels_to_provider_auth_callbacks():
+    controller = CancelToken()
+    received: list = []
+
+    async def login(interaction):
+        received.append(interaction.cancel)
+        return __import__("pidrei_ai.auth.types", fromlist=["ApiKeyCredential"]).ApiKeyCredential(key="saved")
+
+    async def check(_ctx, _credential, cancel):
+        received.append(cancel)
+        return AuthCheck(type="api_key")
+
+    async def resolve(_ctx, _credential, cancel):
+        received.append(cancel)
+        return AuthResult(auth=ModelAuth(api_key="resolved"))
+
+    api_key = ApiKeyAuth(name="Signal auth", login=login, check=check, resolve=resolve)
+    models = create_models()
+    models.set_provider(DynamicTestProvider("p1", _noop_refresh, auth=ProviderAuth(api_key=api_key)))
+
+    class Interaction:
+        cancel = controller
+
+        async def prompt(self, prompt):
+            return "unused"
+
+        def notify(self, event):
+            pass
+
+    await models.check_auth("p1", AuthOperationOptions(cancel=controller))
+    await models.get_auth("p1", AuthResolutionOverrides(cancel=controller))
+    await models.login("p1", "api_key", Interaction())
+
+    assert received == [controller, controller, controller]
+
+
+@pytest.mark.tonio
+async def test_stops_waiting_for_non_cooperative_auth_callbacks():
+    check_started = tonio.Event()
+    blocked_check = tonio.Event()
+    resolve_started = tonio.Event()
+    blocked_resolve = tonio.Event()
+
+    async def check(_ctx, _credential, _cancel):
+        check_started.set()
+        await blocked_check.wait()
+        return AuthCheck(type="api_key")
+
+    async def resolve(_ctx, _credential, _cancel):
+        resolve_started.set()
+        await blocked_resolve.wait()
+        return AuthResult(auth=ModelAuth(api_key="key"))
+
+    models = create_models()
+    models.set_provider(
+        DynamicTestProvider(
+            "p1",
+            _noop_refresh,
+            auth=ProviderAuth(api_key=ApiKeyAuth(name="Blocked auth", check=check, resolve=resolve)),
+        )
+    )
+
+    available_controller = CancelToken()
+    available_outcome: dict = {}
+
+    async def run_available() -> None:
+        try:
+            await models.get_available(None, AuthOperationOptions(cancel=available_controller))
+            available_outcome["error"] = None
+        except BaseException as error:
+            available_outcome["error"] = error
+
+    async def drive_available() -> None:
+        await check_started.wait()
+        available_controller.cancel()
+
+    await tonio.spawn(run_available(), drive_available())
+    assert isinstance(available_outcome["error"], AbortError)
+
+    auth_controller = CancelToken()
+    auth_outcome: dict = {}
+
+    async def run_auth() -> None:
+        try:
+            await models.get_auth("p1", AuthResolutionOverrides(cancel=auth_controller))
+            auth_outcome["error"] = None
+        except BaseException as error:
+            auth_outcome["error"] = error
+
+    async def drive_auth() -> None:
+        await resolve_started.wait()
+        auth_controller.cancel()
+
+    await tonio.spawn(run_auth(), drive_auth())
+    assert isinstance(auth_outcome["error"], AbortError)
+
+    blocked_check.set()
+    blocked_resolve.set()
+
+
+@pytest.mark.tonio
+async def test_cancels_queued_credential_mutations_without_running_them_later():
+    credentials = InMemoryCredentialStore()
+    first_entered = tonio.Event()
+    first_blocked = tonio.Event()
+    state = {"second_ran": False}
+
+    from pidrei_ai.auth.types import ApiKeyCredential
+
+    async def first_fn(_current):
+        first_entered.set()
+        await first_blocked.wait()
+        return ApiKeyCredential(key="first")
+
+    async def second_fn(_current):
+        state["second_ran"] = True
+        return ApiKeyCredential(key="second")
+
+    controller = CancelToken()
+    outcome: dict = {}
+
+    async def run_first() -> None:
+        outcome["first"] = await credentials.modify("p1", first_fn)
+
+    async def run_second() -> None:
+        # pi registers both mutations on the chain synchronously; here the
+        # ordering handshake is explicit.
+        await first_entered.wait()
+        try:
+            await credentials.modify("p1", second_fn, AuthOperationOptions(cancel=controller))
+            outcome["second_error"] = None
+        except BaseException as error:
+            outcome["second_error"] = error
+
+    async def drive() -> None:
+        await first_entered.wait()
+        await tonio.time.sleep(0.01)
+        controller.cancel()
+        first_blocked.set()
+
+    await tonio.spawn(run_first(), run_second(), drive())
+    await tonio.time.sleep(0.01)
+
+    assert isinstance(outcome["second_error"], AbortError)
+    assert state["second_ran"] is False
+    assert await credentials.read("p1") == ApiKeyCredential(key="first")
+
+
+@pytest.mark.tonio
+async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_credential():
+    credentials = InMemoryCredentialStore()
+    previous = OAuthCredential(access="old", refresh="old-refresh", expires=0)
+
+    async def seed(_current):
+        return previous
+
+    await credentials.modify("p1", seed)
+    refresh_started = tonio.Event()
+    blocked_refresh = tonio.Event()
+    received: dict = {}
+
+    async def refresh(_credential, cancel):
+        received["cancel"] = cancel
+        refresh_started.set()
+        await blocked_refresh.wait()
+        return OAuthCredential(access="new", refresh="old-refresh", expires=_far_future_ms())
+
+    async def login(_interaction):
+        raise RuntimeError("not used")
+
+    async def to_auth(credential):
+        return ModelAuth(api_key=credential.access)
+
+    models = create_models(credentials=credentials)
+    models.set_provider(
+        DynamicTestProvider(
+            "p1",
+            _noop_refresh,
+            auth=ProviderAuth(oauth=OAuthAuth(name="Test OAuth", login=login, refresh=refresh, to_auth=to_auth)),
+        )
+    )
+    controller = CancelToken()
+    outcome: dict = {}
+
+    async def run_auth() -> None:
+        try:
+            await models.get_auth("p1", AuthResolutionOverrides(cancel=controller))
+            outcome["error"] = None
+        except BaseException as error:
+            outcome["error"] = error
+
+    async def drive() -> None:
+        await refresh_started.wait()
+        controller.cancel()
+
+    await tonio.spawn(run_auth(), drive())
+
+    assert isinstance(outcome["error"], AbortError)
+    # d3da2e968: the refresh receives a composite token carrying the caller's reason.
+    assert isinstance(received["cancel"], CancelToken)
+    assert received["cancel"].cancelled is True
+    assert received["cancel"].reason is controller.reason
+    blocked_refresh.set()
+    await tonio.time.sleep(0.01)
+    assert await credentials.read("p1") == previous
 
 
 # -- availability --------------------------------------------------------------

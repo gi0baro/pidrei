@@ -181,6 +181,10 @@ def _apply_schema_array_coercion(value: list, schema: dict) -> None:
 
 def _coerce_with_union_schema(value: Any, schemas: list) -> Any:
     for schema in schemas:
+        if isinstance(schema, dict) and _sub_schema_check(schema, value):
+            return value
+
+    for schema in schemas:
         if not isinstance(schema, dict):
             continue
         candidate = copy.deepcopy(value)

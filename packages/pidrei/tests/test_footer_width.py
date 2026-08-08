@@ -32,6 +32,7 @@ def create_session(
     branch_usage: Usage | None = None,
     compaction_usage: Usage | None = None,
     tool_usage: Usage | None = None,
+    using_subscription: bool = False,
 ):
     entries: list = []
 
@@ -60,7 +61,7 @@ def create_session(
         # AgentSession.get_context_usage is a method (pi calls it too) — the
         # fake must be callable, not a data attribute.
         get_context_usage=lambda: SimpleNamespace(context_window=200_000, percent=12.3),
-        model_runtime=SimpleNamespace(is_using_oauth=lambda provider_id: False),
+        model_runtime=SimpleNamespace(is_using_subscription=lambda provider_id: using_subscription),
     )
 
 
@@ -134,6 +135,24 @@ class TestFooterComponentWidthHandling:
 
         stats_line = strip_ansi(footer.render(120)[1])
         assert "CH25.0%" in stats_line
+
+    def test_marks_explicitly_identified_subscription_auth(self):
+        session = create_session(session_name="", provider="anthropic", using_subscription=True)
+        footer = FooterComponent(session, create_footer_data(1))
+
+        assert "$0.000 (sub)" in strip_ansi(footer.render(120)[1])
+
+    def test_does_not_mark_generic_oauth_sign_in_as_a_subscription(self):
+        session = create_session(
+            session_name="",
+            provider="openrouter",
+            usage=_usage(input=100, output=10, total=1.234),
+        )
+        footer = FooterComponent(session, create_footer_data(1))
+
+        line = strip_ansi(footer.render(120)[1])
+        assert "$1.234" in line
+        assert "(sub)" not in line
 
     def test_marks_kimi_coding_costs_as_subscription_estimates(self):
         session = create_session(

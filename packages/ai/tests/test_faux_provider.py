@@ -21,7 +21,16 @@ from pidrei_ai.providers.faux import (
     faux_tool_call,
 )
 from pidrei_ai.registry import create_models
-from pidrei_ai.types import Context, StreamOptions, TextContent, ThinkingContent, Tool, UserMessage
+from pidrei_ai.types import (
+    Context,
+    DeferredFetchOptions,
+    SimpleStreamOptions,
+    StreamOptions,
+    TextContent,
+    ThinkingContent,
+    Tool,
+    UserMessage,
+)
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.estimate import _tool_json_shape
 
@@ -527,3 +536,64 @@ async def test_supports_aborting_mid_toolcall_stream_when_paced():
     assert "toolcall_delta" in events
     assert "error" in events
     assert "toolcall_end" not in events
+
+
+@pytest.mark.tonio
+async def test_submits_polls_and_redeems_deferred_responses():
+    faux = faux_provider(deferred={"pending_fetches": 1, "poll_after_ms": 25})
+    models = create_models()
+    models.set_provider(faux.provider)
+    faux.set_responses([faux_assistant_message("ready")])
+    model = faux.get_model()
+    context = user_context()
+
+    submission = models.stream_simple(model, context, SimpleStreamOptions(deferred={"window": "1h"}))
+    event_types = [event.type async for event in submission]
+    deferred = await submission.result()
+    assert event_types == ["start", "done"]
+    assert deferred.stop_reason == "deferred"
+    assert deferred.content == []
+    handle = deferred.deferred
+    assert handle is not None
+    assert (handle.provider, handle.model_id, handle.api) == (model.provider, model.id, model.api)
+    assert isinstance(handle.id, str)
+    assert handle.poll_after_ms == 25
+
+    pending = await models.fetch_deferred(model, handle)
+    assert pending.stop_reason == "deferred"
+    assert pending.deferred == handle
+
+    ready = await models.fetch_deferred(model, handle, DeferredFetchOptions(wait=0))
+    assert ready.stop_reason == "stop"
+    assert ready.content == [TextContent(text="ready")]
+    assert ready.usage.total_tokens > 0
+    assert faux.state.call_count == 1
+    assert faux.state.deferred_fetch_count == 2
+
+
+@pytest.mark.tonio
+async def test_records_cancellation_and_returns_deferred_fetch_failures_in_band():
+    faux = faux_provider()
+    models = create_models()
+    models.set_provider(faux.provider)
+
+    async def failing_step(_context, _options, _state, _model):
+        raise RuntimeError("deferred failed")
+
+    faux.set_responses([failing_step, faux_assistant_message("cancelled")])
+    model = faux.get_model()
+    context = user_context()
+
+    failed_submission = await models.complete_simple(model, context, SimpleStreamOptions(deferred=True))
+    assert failed_submission.deferred is not None
+    failed = await models.fetch_deferred(model, failed_submission.deferred)
+    assert failed.stop_reason == "error"
+    assert failed.error_message == "deferred failed"
+
+    cancelled_submission = await models.complete_simple(model, context, SimpleStreamOptions(deferred=True))
+    assert cancelled_submission.deferred is not None
+    await models.cancel_deferred(model, cancelled_submission.deferred)
+    assert faux.state.cancelled_deferred == [cancelled_submission.deferred]
+    cancelled = await models.fetch_deferred(model, cancelled_submission.deferred)
+    assert cancelled.stop_reason == "error"
+    assert "was cancelled" in cancelled.error_message

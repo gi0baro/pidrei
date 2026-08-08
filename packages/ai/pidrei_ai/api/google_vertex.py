@@ -30,6 +30,7 @@ from pidrei_ai.api.google_shared import (
     map_stop_reason,
     resolve_google_function_calling_mode,
     retain_thought_signature,
+    retry_google_request,
     supports_google_strict_tool_sampling,
 )
 from pidrei_ai.api.simple_options import build_base_options
@@ -136,7 +137,9 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
-            google_stream = client.generate_content_stream(params, env=opts.env, cancel=opts.cancel)
+            google_stream = await retry_google_request(
+                lambda: client.generate_content_stream(params, env=opts.env, cancel=opts.cancel), opts
+            )
 
             out_stream.push(StartEvent(partial=output))
             current_block: TextContent | ThinkingContent | None = None

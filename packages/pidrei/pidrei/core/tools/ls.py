@@ -68,6 +68,11 @@ LS_SCHEMA = {
     },
 }
 
+LS_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "List directory contents",
+    "guidelines": (),
+}
+
 DEFAULT_LIMIT = 500
 
 
@@ -181,7 +186,7 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
             f"Includes dotfiles. Output is truncated to {DEFAULT_LIMIT} entries or "
             f"{DEFAULT_MAX_BYTES // 1024}KB (whichever is hit first)."
         ),
-        prompt_snippet="List directory contents",
+        prompt_snippet=LS_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         parameters=LS_SCHEMA,
         execute=execute,
         render_call=render_call,

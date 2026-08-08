@@ -55,6 +55,34 @@ class TestNormalizeProviderError:
         assert norm.message_carries_body is True
         assert norm.message == body
 
+    def test_ignores_a_class_instance_error_field_instead_of_serializing_it(self):
+        # pi's `$response.body` twin case has no counterpart here by design
+        # (see the module docstring); the `error`-field shape is shared.
+        class SdkInnerError:
+            def __init__(self):
+                self.code = "EPROTO"
+                self.internal_state = {}
+
+        error = _error("TLS handshake failed", status=502, error=SdkInnerError())
+
+        norm = normalize_provider_error(error)
+
+        assert norm.body is None
+        assert norm.message == "TLS handshake failed"
+        assert norm.message_carries_body is True
+
+    def test_still_surfaces_a_plain_parsed_json_body_object(self):
+        error = _error(
+            "400 status code (no body)",
+            status=400,
+            error={"message": "schema validation failed", "field": "tools[0]"},
+        )
+
+        norm = normalize_provider_error(error)
+
+        assert norm.body == '{"message":"schema validation failed","field":"tools[0]"}'
+        assert norm.message_carries_body is False
+
     def test_json_stringifies_a_non_error_thrown_value(self):
         norm = normalize_provider_error({"reason": "boom"})
 

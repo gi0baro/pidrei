@@ -1,7 +1,6 @@
 """Mirror of pi agent/test/harness/compaction.test.ts."""
 
 import time
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -23,17 +22,15 @@ from pidrei_agent.harness.compaction.compaction import (
     should_compact,
 )
 from pidrei_agent.harness.compaction.utils import FileOperations, serialize_conversation
-from pidrei_agent.harness.session.session import build_session_context
-from pidrei_agent.harness.types import (
+from pidrei_agent.harness.session.context import SessionModelRef, build_session_context
+from pidrei_agent.harness.session.types import (
     BranchSummaryEntry,
     CompactionEntry,
-    CustomMessageEntry,
     MessageEntry,
     ModelChangeEntry,
-    SessionModelRef,
-    ThinkingLevelChangeEntry,
-    get_or_throw,
+    ThinkingLevelEntry,
 )
+from pidrei_agent.harness.types import get_or_throw
 from pidrei_ai.providers.faux import FauxModelDefinition, faux_assistant_message, faux_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.types import (
@@ -65,8 +62,8 @@ def _reset_ids():
     _next_id = 0
 
 
-def _iso_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+def _now_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def create_mock_usage(input: int, output: int, cache_read: int = 0, cache_write: int = 0) -> Usage:
@@ -97,33 +94,34 @@ def create_assistant_message(text: str, usage: Usage | None = None) -> Assistant
 
 
 def create_message_entry(message, parent_id: str | None = None) -> MessageEntry:
-    return MessageEntry(id=create_id(), parent_id=parent_id, timestamp=_iso_now(), message=message)
+    return MessageEntry(id=create_id(), parent_id=parent_id, seq=_next_id, timestamp=_now_ms(), message=message)
 
 
 def create_compaction_entry(
     summary: str,
-    first_kept_entry_id: str,
     parent_id: str | None = None,
     retained_tail=None,
 ) -> CompactionEntry:
     return CompactionEntry(
         id=create_id(),
         parent_id=parent_id,
-        timestamp=_iso_now(),
+        seq=_next_id,
+        timestamp=_now_ms(),
         summary=summary,
-        first_kept_entry_id=first_kept_entry_id,
         tokens_before=1234,
-        retained_tail=retained_tail,
+        retained_tail=retained_tail if retained_tail is not None else [],
     )
 
 
-def create_thinking_level_entry(level: str, parent_id: str | None = None) -> ThinkingLevelChangeEntry:
-    return ThinkingLevelChangeEntry(id=create_id(), parent_id=parent_id, timestamp=_iso_now(), thinking_level=level)
+def create_thinking_level_entry(level: str, parent_id: str | None = None) -> ThinkingLevelEntry:
+    return ThinkingLevelEntry(
+        id=create_id(), parent_id=parent_id, seq=_next_id, timestamp=_now_ms(), thinking_level=level
+    )
 
 
 def create_model_change_entry(provider: str, model_id: str, parent_id: str | None = None) -> ModelChangeEntry:
     return ModelChangeEntry(
-        id=create_id(), parent_id=parent_id, timestamp=_iso_now(), provider=provider, model_id=model_id
+        id=create_id(), parent_id=parent_id, seq=_next_id, timestamp=_now_ms(), provider=provider, model_id=model_id
     )
 
 
@@ -206,21 +204,17 @@ async def test_covers_cut_point_and_turn_start_edge_cases():
     assert (result.first_kept_entry_index, result.turn_start_index, result.is_split_turn) == (0, -1, False)
 
     branch_summary = BranchSummaryEntry(
-        id=create_id(), parent_id=model_change.id, timestamp=_iso_now(), from_id="branch", summary="branch summary"
-    )
-    custom_message = CustomMessageEntry(
         id=create_id(),
-        parent_id=branch_summary.id,
-        timestamp=_iso_now(),
-        custom_type="note",
-        content="custom content",
-        display=True,
+        parent_id=model_change.id,
+        seq=_next_id,
+        timestamp=_now_ms(),
+        from_id="branch",
+        summary="branch summary",
     )
     assert find_turn_start_index([thinking, branch_summary], 1, 0) == 1
-    assert find_turn_start_index([thinking, custom_message], 1, 0) == 1
     assert find_turn_start_index([thinking, model_change], 1, 0) == -1
 
-    result = find_cut_point([thinking, branch_summary, custom_message], 0, 3, 1)
+    result = find_cut_point([thinking, branch_summary], 0, 2, 1)
     assert result.first_kept_entry_index == 0
 
     tool_result = create_message_entry(
@@ -236,7 +230,7 @@ async def test_covers_cut_point_and_turn_start_edge_cases():
     assert (result.first_kept_entry_index, result.turn_start_index, result.is_split_turn) == (0, -1, False)
 
     user = create_message_entry(create_user_message("user"))
-    compaction = create_compaction_entry("summary", user.id, user.id)
+    compaction = create_compaction_entry("summary", user.id)
     assistant = create_message_entry(create_assistant_message("assistant"), compaction.id)
     assert find_cut_point([user, compaction, assistant], 0, 3, 1).first_kept_entry_index == 2
 
@@ -339,7 +333,7 @@ async def test_builds_session_context_with_a_compaction_entry():
     u2 = create_message_entry(create_user_message("2"), a1.id)
     a2 = create_message_entry(create_assistant_message("b"), u2.id)
     compaction = create_compaction_entry(
-        "Summary of 1,a,2,b", u2.id, a2.id, [create_user_message("2"), create_assistant_message("b")]
+        "Summary of 1,a,2,b", a2.id, [create_user_message("2"), create_assistant_message("b")]
     )
     u3 = create_message_entry(create_user_message("3"), compaction.id)
     a3 = create_message_entry(create_assistant_message("c"), u3.id)
@@ -352,18 +346,6 @@ async def test_builds_session_context_with_a_compaction_entry():
         "user",
         "assistant",
     ]
-
-
-@pytest.mark.tonio
-async def test_falls_back_to_first_kept_entry_id_when_a_compaction_has_no_retained_tail():
-    u1 = create_message_entry(create_user_message("1"))
-    a1 = create_message_entry(create_assistant_message("a"), u1.id)
-    u2 = create_message_entry(create_user_message("2"), a1.id)
-    a2 = create_message_entry(create_assistant_message("b"), u2.id)
-    compaction = create_compaction_entry("Summary of 1,a,2,b", u2.id, a2.id)
-    u3 = create_message_entry(create_user_message("3"), compaction.id)
-    loaded = build_session_context([u1, a1, u2, a2, compaction, u3])
-    assert [getattr(m, "role", None) for m in loaded.messages] == ["compactionSummary", "user", "assistant", "user"]
 
 
 @pytest.mark.tonio
@@ -383,16 +365,38 @@ async def test_prepares_compaction_using_the_latest_compaction_summary_as_previo
     a1 = create_message_entry(create_assistant_message("assistant msg 1"), u1.id)
     u2 = create_message_entry(create_user_message("user msg 2"), a1.id)
     a2 = create_message_entry(create_assistant_message("assistant msg 2", create_mock_usage(5000, 1000)), u2.id)
-    compaction1 = create_compaction_entry("First summary", u2.id, a2.id)
+    compaction1 = create_compaction_entry("First summary", a2.id)
     u3 = create_message_entry(create_user_message("user msg 3"), compaction1.id)
     a3 = create_message_entry(create_assistant_message("assistant msg 3", create_mock_usage(8000, 2000)), u3.id)
     path_entries = [u1, a1, u2, a2, compaction1, u3, a3]
     preparation = get_or_throw(prepare_compaction(path_entries, DEFAULT_COMPACTION_SETTINGS))
     assert preparation is not None
     assert preparation.previous_summary == "First summary"
-    assert preparation.first_kept_entry_id
     assert len(preparation.retained_tail) > 0
     assert preparation.tokens_before == estimate_context_tokens(build_session_context(path_entries).messages).tokens
+
+
+@pytest.mark.tonio
+async def test_carries_a_previous_compactions_retained_tail_into_the_next_preparation():
+    retained_user = create_user_message("retained user")
+    retained_assistant = create_assistant_message("retained assistant")
+    compaction = create_compaction_entry("previous summary", None, [retained_user, retained_assistant])
+    user = create_message_entry(create_user_message("new user"), compaction.id)
+    assistant = create_message_entry(create_assistant_message("new assistant"), user.id)
+
+    preparation = get_or_throw(
+        prepare_compaction(
+            [compaction, user, assistant],
+            CompactionSettings(enabled=True, reserve_tokens=100, keep_recent_tokens=1),
+        )
+    )
+    assert preparation is not None
+    assert preparation.previous_summary == "previous summary"
+    assert [
+        *preparation.messages_to_summarize,
+        *preparation.turn_prefix_messages,
+        *preparation.retained_tail,
+    ] == [retained_user, retained_assistant, user.message, assistant.message]
 
 
 @pytest.mark.tonio
@@ -405,8 +409,8 @@ async def test_prepares_split_turn_compaction_with_prior_file_operation_details(
         content=[ToolCall(id="tool-1", name="write", arguments={"path": "written.ts"})],
     )
     a1 = create_message_entry(assistant_message, u1.id)
-    compaction1 = create_compaction_entry("First summary", u1.id, a1.id)
-    compaction1.details = {"readFiles": ["old-read.ts"], "modifiedFiles": ["old-edit.ts"]}
+    compaction1 = create_compaction_entry("First summary", a1.id)
+    compaction1.details = {"readFiles": ["old-read.ts"], "modifiedFiles": ["old-edit.ts", "written.ts"]}
     u2 = create_message_entry(create_user_message("large turn"), compaction1.id)
     a2 = create_message_entry(create_assistant_message("large assistant message"), u2.id)
     preparation = get_or_throw(
@@ -422,38 +426,12 @@ async def test_prepares_split_turn_compaction_with_prior_file_operation_details(
     assert [getattr(m, "role", None) for m in preparation.turn_prefix_messages] == ["user"]
     assert "old-read.ts" in preparation.file_ops.read
     assert "old-edit.ts" in preparation.file_ops.edited
-    assert "written.ts" in preparation.file_ops.written
-
-
-@pytest.mark.tonio
-async def test_prepares_custom_and_branch_summary_entries_for_summarization():
-    branch_summary = BranchSummaryEntry(
-        id=create_id(), parent_id=None, timestamp=_iso_now(), from_id="branch", summary="branch summary"
-    )
-    custom_message = CustomMessageEntry(
-        id=create_id(),
-        parent_id=branch_summary.id,
-        timestamp=_iso_now(),
-        custom_type="note",
-        content="custom content",
-        display=True,
-    )
-    user = create_message_entry(create_user_message("keep"), custom_message.id)
-    assistant = create_message_entry(create_assistant_message("assistant"), user.id)
-    preparation = get_or_throw(
-        prepare_compaction(
-            [branch_summary, custom_message, user, assistant],
-            CompactionSettings(enabled=True, reserve_tokens=100, keep_recent_tokens=1),
-        )
-    )
-
-    assert preparation is not None
-    assert [getattr(m, "role", None) for m in preparation.messages_to_summarize] == ["branchSummary", "custom"]
+    assert "written.ts" in preparation.file_ops.edited
 
 
 @pytest.mark.tonio
 async def test_does_not_prepare_compaction_when_there_is_nothing_valid_to_compact():
-    compaction = create_compaction_entry("already compacted", "entry-keep")
+    compaction = create_compaction_entry("already compacted")
     assert get_or_throw(prepare_compaction([compaction], DEFAULT_COMPACTION_SETTINGS)) is None
     assert get_or_throw(prepare_compaction([], DEFAULT_COMPACTION_SETTINGS)) is None
 
@@ -568,7 +546,6 @@ async def test_clamps_compaction_summary_max_tokens_to_the_model_output_cap():
     faux, model = create_faux_model(False, 128000)
     faux.set_responses([responder, responder])
     preparation = CompactionPreparation(
-        first_kept_entry_id="entry-keep",
         messages_to_summarize=messages,
         turn_prefix_messages=messages,
         retained_tail=messages,
@@ -588,11 +565,9 @@ async def test_clamps_compaction_summary_max_tokens_to_the_model_output_cap():
 
 @pytest.mark.tonio
 async def test_returns_compaction_error_results_without_throwing():
-    from dataclasses import replace as dc_replace
 
     messages = [create_user_message("Summarize this.")]
     preparation = CompactionPreparation(
-        first_kept_entry_id="entry-keep",
         messages_to_summarize=messages,
         turn_prefix_messages=[],
         retained_tail=messages,
@@ -607,13 +582,6 @@ async def test_returns_compaction_error_results_without_throwing():
     assert result.ok is False
     assert result.error.code == "summarization_failed"
     assert result.error.message == "Summarization failed: history failed"
-
-    _, invalid_model = create_faux_model(False)
-    invalid_result = await compact(
-        dc_replace(preparation, messages_to_summarize=[], first_kept_entry_id=""), models, invalid_model
-    )
-    assert invalid_result.ok is False
-    assert invalid_result.error.code == "invalid_session"
 
 
 @pytest.mark.tonio
@@ -631,7 +599,6 @@ async def test_combines_usage_for_split_turn_compaction_summaries():
         ]
     )
     preparation = CompactionPreparation(
-        first_kept_entry_id="entry-keep",
         messages_to_summarize=messages,
         turn_prefix_messages=messages,
         is_split_turn=True,
@@ -658,7 +625,6 @@ async def test_passes_reasoning_through_turn_prefix_summaries_when_enabled():
     faux, model = create_faux_model(True)
     faux.set_responses([responder])
     preparation = CompactionPreparation(
-        first_kept_entry_id="entry-keep",
         messages_to_summarize=[],
         turn_prefix_messages=messages,
         retained_tail=messages,
@@ -677,7 +643,6 @@ async def test_passes_reasoning_through_turn_prefix_summaries_when_enabled():
 async def test_returns_turn_prefix_compaction_errors_without_throwing():
     messages = [create_user_message("Summarize this.")]
     preparation = CompactionPreparation(
-        first_kept_entry_id="entry-keep",
         messages_to_summarize=[],
         turn_prefix_messages=messages,
         retained_tail=messages,
@@ -720,7 +685,6 @@ async def test_returns_a_compaction_result_with_file_details():
     faux.set_responses([faux_assistant_message("## Goal\nTest summary")])
     result = get_or_throw(await compact(preparation, models, model))
     assert len(result.summary) > 0
-    assert result.first_kept_entry_id
     assert result.usage is not None and result.usage.total_tokens > 0
     assert result.retained_tail is not None and len(result.retained_tail) > 0
     assert result.details is not None

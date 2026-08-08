@@ -28,6 +28,9 @@ from pidrei_ai.registry import Provider, create_provider
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
+    DeferredCancelOptions,
+    DeferredFetchOptions,
+    DeferredHandle,
     DoneEvent,
     ErrorEvent,
     Message,
@@ -73,10 +76,12 @@ type FauxResponseStep = AssistantMessage | Callable[..., Awaitable[AssistantMess
 
 
 class FauxState:
-    __slots__ = ("call_count",)
+    __slots__ = ("call_count", "cancelled_deferred", "deferred_fetch_count")
 
     def __init__(self) -> None:
         self.call_count = 0
+        self.deferred_fetch_count = 0
+        self.cancelled_deferred: list[DeferredHandle] = []
 
 
 @dataclass(slots=True)
@@ -116,6 +121,7 @@ def faux_assistant_message(
     content: str | FauxContentBlock | list[FauxContentBlock],
     *,
     stop_reason: StopReason = "stop",
+    deferred: DeferredHandle | None = None,
     error_message: str | None = None,
     response_id: str | None = None,
     timestamp: int | None = None,
@@ -127,6 +133,7 @@ def faux_assistant_message(
         model=DEFAULT_MODEL_ID,
         usage=Usage(),
         stop_reason=stop_reason,
+        deferred=deferred,
         error_message=error_message,
         response_id=response_id,
         timestamp=timestamp if timestamp is not None else int(time.time() * 1000),
@@ -306,6 +313,18 @@ async def _stream_with_deltas(
 # --- core ---------------------------------------------------------------------
 
 
+@dataclass(slots=True)
+class _FauxDeferredEntry:
+    handle: DeferredHandle
+    step: FauxResponseStep
+    context: Context
+    options: SimpleStreamOptions | None
+    model: Model
+    pending_fetches: int
+    cancelled: bool = False
+    final: AssistantMessage | None = None
+
+
 class FauxCore:
     """The scripted streaming engine; also satisfies the ProviderStreams shape."""
 
@@ -315,6 +334,7 @@ class FauxCore:
         api: str | None = None,
         provider: str | None = None,
         models: list[FauxModelDefinition] | None = None,
+        deferred: dict[str, Any] | None = None,
         tokens_per_second: float | None = None,
         token_size_min: int | None = None,
         token_size_max: int | None = None,
@@ -326,6 +346,10 @@ class FauxCore:
         self._min_token_size = max(1, min(requested_min, requested_max))
         self._max_token_size = max(self._min_token_size, requested_max)
         self._tokens_per_second = tokens_per_second
+        # {"pending_fetches": N, "poll_after_ms": ms} — N fetches return the
+        # original handle before the scripted response becomes ready.
+        self._deferred_options: dict[str, Any] = dict(deferred or {})
+        self._deferred_responses: dict[str, _FauxDeferredEntry] = {}
         self.state = FauxState()
         self._guard = threading.Lock()
         self._pending_responses: list[FauxResponseStep] = []
@@ -422,6 +446,32 @@ class FauxCore:
             timestamp=int(time.time() * 1000),
         )
 
+    def _create_deferred_message(self, model: Model, handle: DeferredHandle) -> AssistantMessage:
+        return AssistantMessage(
+            content=[],
+            api=model.api,
+            provider=model.provider,
+            model=model.id,
+            usage=Usage(),
+            stop_reason="deferred",
+            deferred=handle,
+            timestamp=int(time.time() * 1000),
+        )
+
+    async def _resolve_response(
+        self,
+        step: FauxResponseStep,
+        context: Context,
+        stream_options: SimpleStreamOptions | None,
+        request_model: Model,
+    ) -> AssistantMessage:
+        if callable(step):
+            resolved = await step(context, stream_options, self.state, request_model)
+        else:
+            resolved = step
+        message = self._clone_message(resolved, request_model.id)
+        return self._with_usage_estimate(message, context, stream_options)
+
     # -- ProviderStreams -------------------------------------------------------
 
     def stream(
@@ -446,12 +496,34 @@ class FauxCore:
                     outer.end(message)
                     return
 
-                if callable(step):
-                    resolved = await step(context, stream_options, self.state, request_model)
-                else:
-                    resolved = step
-                message = self._clone_message(resolved, request_model.id)
-                message = self._with_usage_estimate(message, context, stream_options)
+                if stream_options is not None and getattr(stream_options, "deferred", None):
+                    handle = DeferredHandle(
+                        provider=request_model.provider,
+                        model_id=request_model.id,
+                        api=request_model.api,
+                        id=_random_id("deferred"),
+                        poll_after_ms=self._deferred_options.get("poll_after_ms"),
+                    )
+                    with self._guard:
+                        self._deferred_responses[handle.id] = _FauxDeferredEntry(
+                            handle=handle,
+                            step=step,
+                            context=context,
+                            options=stream_options,
+                            model=request_model,
+                            pending_fetches=max(0, int(self._deferred_options.get("pending_fetches") or 0)),
+                        )
+                    await _stream_with_deltas(
+                        outer,
+                        self._create_deferred_message(request_model, handle),
+                        self._min_token_size,
+                        self._max_token_size,
+                        self._tokens_per_second,
+                        stream_options.cancel,
+                    )
+                    return
+
+                message = await self._resolve_response(step, context, stream_options, request_model)
                 await _stream_with_deltas(
                     outer,
                     message,
@@ -475,6 +547,88 @@ class FauxCore:
         stream_options: SimpleStreamOptions | None = None,
     ) -> AssistantMessageEventStream:
         return self.stream(request_model, context, stream_options)
+
+    def fetch_deferred(
+        self,
+        request_model: Model,
+        handle: DeferredHandle,
+        fetch_options: DeferredFetchOptions | None = None,
+    ) -> AssistantMessageEventStream:
+        outer = AssistantMessageEventStream()
+        with self._guard:
+            self.state.deferred_fetch_count += 1
+
+        async def _run() -> None:
+            try:
+                if fetch_options is not None and fetch_options.on_response is not None:
+                    await fetch_options.on_response(ProviderResponse(status=200, headers={}), request_model)
+                with self._guard:
+                    entry = self._deferred_responses.get(handle.id)
+                if (
+                    entry is None
+                    or entry.handle.provider != handle.provider
+                    or entry.handle.model_id != handle.model_id
+                    or entry.handle.api != handle.api
+                ):
+                    raise RuntimeError(f"Unknown faux deferred response: {handle.id}")
+                if entry.cancelled:
+                    raise RuntimeError(f"Faux deferred response was cancelled: {handle.id}")
+
+                if entry.pending_fetches > 0:
+                    entry.pending_fetches -= 1
+                    await _stream_with_deltas(
+                        outer,
+                        self._create_deferred_message(request_model, entry.handle),
+                        self._min_token_size,
+                        self._max_token_size,
+                        self._tokens_per_second,
+                        fetch_options.cancel if fetch_options is not None else None,
+                    )
+                    return
+
+                if entry.final is None:
+                    # pi strips the submission-only fields (deferred, signal,
+                    # onResponse) and resolves against the submission options
+                    # alone; fetch options are transport-only.
+                    submission = replace(
+                        entry.options if entry.options is not None else SimpleStreamOptions(),
+                        deferred=None,
+                        cancel=None,
+                        on_response=None,
+                    )
+                    try:
+                        entry.final = await self._resolve_response(entry.step, entry.context, submission, entry.model)
+                    except Exception as error:
+                        entry.final = self._create_error_message(error, entry.model.id)
+                await _stream_with_deltas(
+                    outer,
+                    entry.final,
+                    self._min_token_size,
+                    self._max_token_size,
+                    self._tokens_per_second,
+                    fetch_options.cancel if fetch_options is not None else None,
+                )
+            except Exception as error:
+                message = self._create_error_message(error, request_model.id)
+                outer.push(ErrorEvent(reason="error", error=message))
+                outer.end(message)
+
+        tonio.spawn.without_tracking(_run())
+        return outer
+
+    async def cancel_deferred(
+        self,
+        request_model: Model,
+        handle: DeferredHandle,
+        cancel_options: DeferredCancelOptions | None = None,
+    ) -> None:
+        with self._guard:
+            self.state.cancelled_deferred.append(copy.deepcopy(handle))
+            entry = self._deferred_responses.get(handle.id)
+            if entry is not None:
+                entry.cancelled = True
+        if cancel_options is not None and cancel_options.on_response is not None:
+            await cancel_options.on_response(ProviderResponse(status=200, headers={}), request_model)
 
 
 @dataclass(slots=True)
@@ -503,7 +657,7 @@ def faux_provider(**options) -> FauxProviderHandle:
     """
     core = create_faux_core(**options)
 
-    async def resolve(_ctx, _credential) -> AuthResult:
+    async def resolve(_ctx, _credential, _cancel) -> AuthResult:
         return AuthResult(auth=ModelAuth())
 
     provider = create_provider(

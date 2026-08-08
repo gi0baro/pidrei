@@ -15,6 +15,7 @@ from pidrei_agent.types import (
     AgentLoopTurnUpdate,
     AgentTool,
     AgentToolResult,
+    BeforeToolCallResult,
 )
 from pidrei_ai.types import (
     AssistantMessage,
@@ -931,6 +932,99 @@ async def test_should_stop_after_a_tool_batch_when_every_tool_result_sets_termin
     assert llm_calls == 1
     assert [getattr(m, "role", None) for m in messages] == ["user", "assistant", "toolResult"]
     assert len([event for event in events if event.type == "turn_end"]) == 1
+
+
+@pytest.mark.tonio
+async def test_should_stop_after_a_blocked_tool_call_when_before_tool_call_sets_terminate_true():
+    executed = False
+
+    async def execute(_tool_call_id, params):
+        nonlocal executed
+        executed = True
+        return AgentToolResult(content=[TextContent(text="should not execute")], details={"value": "unexpected"})
+
+    tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
+    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+
+    async def before_tool_call(_context, _cancel):
+        return BeforeToolCallResult(block=True, reason="Blocked by policy", terminate=True)
+
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, before_tool_call=before_tool_call)
+
+    llm_calls = 0
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal llm_calls
+        llm_calls += 1
+        if llm_calls == 1:
+            return done_stream(
+                create_assistant_message([ToolCall(id="tool-1", name="echo", arguments={"value": "hello"})], "toolUse"),
+                "toolUse",
+            )
+        return done_stream(create_assistant_message([TextContent(text="should not run")]))
+
+    stream = agent_loop([create_user_message("echo something")], context, config, None, stream_fn)
+    async for _event in stream:
+        pass
+
+    messages = await stream.result()
+    tool_result = next((m for m in messages if getattr(m, "role", None) == "toolResult"), None)
+    assert executed is False
+    assert llm_calls == 1
+    assert tool_result is not None and tool_result.is_error is True
+    assert TextContent(text="Blocked by policy") in tool_result.content
+
+
+@pytest.mark.tonio
+async def test_should_continue_after_a_mixed_batch_with_one_terminating_blocked_call():
+    executed = []
+
+    async def execute(_tool_call_id, params):
+        executed.append(params["value"])
+        return AgentToolResult(
+            content=[TextContent(text=f"echoed: {params['value']}")], details={"value": params["value"]}
+        )
+
+    tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
+    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+
+    async def before_tool_call(before_context, _cancel):
+        if before_context.args["value"] == "first":
+            return BeforeToolCallResult(block=True, reason="Blocked first", terminate=True)
+        return None
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        tool_execution="parallel",
+        before_tool_call=before_tool_call,
+    )
+
+    llm_calls = 0
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal llm_calls
+        llm_calls += 1
+        if llm_calls == 1:
+            return done_stream(
+                create_assistant_message(
+                    [
+                        ToolCall(id="tool-1", name="echo", arguments={"value": "first"}),
+                        ToolCall(id="tool-2", name="echo", arguments={"value": "second"}),
+                    ],
+                    "toolUse",
+                ),
+                "toolUse",
+            )
+        return done_stream(create_assistant_message([TextContent(text="done")]))
+
+    stream = agent_loop([create_user_message("echo both")], context, config, None, stream_fn)
+    async for _event in stream:
+        pass
+
+    await stream.result()
+    assert executed == ["second"]
+    assert llm_calls == 2
 
 
 @pytest.mark.tonio

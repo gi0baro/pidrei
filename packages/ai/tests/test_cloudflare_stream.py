@@ -11,6 +11,10 @@ import pytest
 from pidrei_ai.providers.cloudflare_auth import cloudflare_ai_gateway_auth, cloudflare_workers_ai_auth
 from pidrei_ai.providers.cloudflare_stream import cloudflare_streams
 from pidrei_ai.types import Context, Model, ModelCost, StreamOptions
+from pidrei_ai.utils.cancel import CancelToken
+
+
+_never_aborted_cancel = CancelToken()
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
@@ -84,7 +88,9 @@ class _Ctx:
 async def test_workers_ai_resolves_the_key_and_account_from_the_environment():
     auth = cloudflare_workers_ai_auth()
 
-    result = await auth.resolve(_Ctx({"CLOUDFLARE_API_KEY": "k", "CLOUDFLARE_ACCOUNT_ID": "acct"}), None)
+    result = await auth.resolve(
+        _Ctx({"CLOUDFLARE_API_KEY": "k", "CLOUDFLARE_ACCOUNT_ID": "acct"}), None, _never_aborted_cancel
+    )
 
     assert result.auth.api_key == "k"
     assert result.env == {"CLOUDFLARE_ACCOUNT_ID": "acct"}
@@ -95,7 +101,7 @@ async def test_workers_ai_resolves_the_key_and_account_from_the_environment():
 async def test_workers_ai_is_unconfigured_without_an_account_id():
     auth = cloudflare_workers_ai_auth()
 
-    assert await auth.resolve(_Ctx({"CLOUDFLARE_API_KEY": "k"}), None) is None
+    assert await auth.resolve(_Ctx({"CLOUDFLARE_API_KEY": "k"}), None, _never_aborted_cancel) is None
 
 
 @pytest.mark.tonio
@@ -111,6 +117,7 @@ async def test_the_gateway_suppresses_the_upstream_providers_auth_headers():
             }
         ),
         None,
+        _never_aborted_cancel,
     )
 
     assert result.auth.api_key is None
@@ -126,7 +133,12 @@ async def test_the_gateway_suppresses_the_upstream_providers_auth_headers():
 async def test_the_gateway_is_unconfigured_without_a_gateway_id():
     auth = cloudflare_ai_gateway_auth()
 
-    assert await auth.resolve(_Ctx({"CLOUDFLARE_API_KEY": "k", "CLOUDFLARE_ACCOUNT_ID": "acct"}), None) is None
+    assert (
+        await auth.resolve(
+            _Ctx({"CLOUDFLARE_API_KEY": "k", "CLOUDFLARE_ACCOUNT_ID": "acct"}), None, _never_aborted_cancel
+        )
+        is None
+    )
 
 
 @pytest.mark.tonio
@@ -138,6 +150,7 @@ async def test_a_credential_carrying_only_the_key_still_picks_up_ambient_ids():
     result = await auth.resolve(
         _Ctx({"CLOUDFLARE_ACCOUNT_ID": "acct", "CLOUDFLARE_GATEWAY_ID": "gw"}),
         ApiKeyCredential(key="stored-key"),
+        _never_aborted_cancel,
     )
 
     assert result.auth.headers["cf-aig-authorization"] == "Bearer stored-key"

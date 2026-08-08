@@ -7,6 +7,7 @@ import pytest
 from pidrei_ai.auth.oauth.kimi_coding import kimi_coding_oauth
 from pidrei_ai.auth.types import OAuthCredential
 from pidrei_ai.utils import clock
+from pidrei_ai.utils.cancel import CancelToken
 
 from .oauth_helpers import (
     DEFAULT_START_MS,
@@ -141,7 +142,7 @@ async def test_refreshes_tokens_and_returns_a_bearer_header_for_requests():
 
     with virtual_clock(), stub_oauth_http(handler):
         credential = await kimi_coding_oauth.refresh(
-            OAuthCredential(access="old-access", refresh="old-refresh", expires=DEFAULT_START_MS), None
+            OAuthCredential(access="old-access", refresh="old-refresh", expires=DEFAULT_START_MS), CancelToken()
         )
         auth = await kimi_coding_oauth.to_auth(credential)
 
@@ -164,7 +165,9 @@ async def test_retries_refresh_on_429_and_fails_unauthorized_on_invalid_grant():
         return json_response({"access_token": "a", "refresh_token": "r", "expires_in": 60})
 
     with virtual_clock(), stub_oauth_http(retry_then_succeed):
-        credential = await kimi_coding_oauth.refresh(OAuthCredential(access="old", refresh="old", expires=0), None)
+        credential = await kimi_coding_oauth.refresh(
+            OAuthCredential(access="old", refresh="old", expires=0), CancelToken()
+        )
 
     assert credential.access == "a"
     assert calls == 2
@@ -178,6 +181,6 @@ async def test_retries_refresh_on_429_and_fails_unauthorized_on_invalid_grant():
         stub_oauth_http(invalid_grant) as invalid_calls,
         pytest.raises(RuntimeError, match="unauthorized"),
     ):
-        await kimi_coding_oauth.refresh(OAuthCredential(access="old", refresh="old", expires=0), None)
+        await kimi_coding_oauth.refresh(OAuthCredential(access="old", refresh="old", expires=0), CancelToken())
 
     assert len(invalid_calls) == 1

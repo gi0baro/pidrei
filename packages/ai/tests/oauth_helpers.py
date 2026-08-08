@@ -154,7 +154,9 @@ class RecordingInteraction:
         prompt: Callable[[AuthPrompt], Any] | None = None,
         cancel: CancelToken | None = None,
     ):
-        self.cancel = cancel
+        # Provider logins receive a normalized interaction whose cancel is
+        # always present (pi's `ProviderAuthInteraction`).
+        self.cancel = cancel if cancel is not None else CancelToken()
         self.events: list[AuthEvent] = []
         self.prompts: list[AuthPrompt] = []
         self._prompt = prompt

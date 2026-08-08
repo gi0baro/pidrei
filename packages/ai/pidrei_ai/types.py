@@ -59,6 +59,7 @@ type KnownProvider = Literal[
     "huggingface",
     "fireworks",
     "together",
+    "baseten",
     "opencode",
     "opencode-go",
     "kimi-coding",
@@ -66,6 +67,7 @@ type KnownProvider = Literal[
     "cloudflare-ai-gateway",
     "qwen-token-plan",
     "qwen-token-plan-cn",
+    "qwen-token-plan-individual",
     "xiaomi",
     "xiaomi-token-plan-cn",
     "xiaomi-token-plan-ams",
@@ -91,7 +93,7 @@ type ProviderEnv = Mapping[str, str]
 # A None value suppresses a provider/API default header with the same name.
 type ProviderHeaders = Mapping[str, str | None]
 
-type StopReason = Literal["pending", "stop", "length", "toolUse", "error", "aborted"]
+type StopReason = Literal["pending", "stop", "length", "toolUse", "error", "aborted", "deferred"]
 
 
 class TextSignatureV1(TypedDict, total=False):
@@ -204,6 +206,21 @@ class AssistantMessageDiagnostic:
 
 
 @dataclass(slots=True)
+class DeferredHandle:
+    """Provider handle for a deferred (background/batch) assistant response."""
+
+    provider: str
+    model_id: str
+    api: str
+    # Provider token, such as a response id or batch id plus row id.
+    id: str
+    expires_at: int | None = None
+    poll_after_ms: int | None = None
+    # Provider conversion data required to reconstruct the final assistant message.
+    data: Any = None
+
+
+@dataclass(slots=True)
 class UserMessage:
     content: str | list[UserContent]
     timestamp: int  # Unix timestamp in milliseconds
@@ -225,6 +242,8 @@ class AssistantMessage:
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
+    # Present exactly when stop_reason == "deferred": the provider handle to redeem.
+    deferred: DeferredHandle | None = None
     role: Literal["assistant"] = "assistant"
 
 
@@ -318,6 +337,7 @@ type ThinkingFormat = Literal[
     "openrouter",
     "deepseek",
     "together",
+    "baseten",
     "zai",
     "qwen",
     "chat-template",
@@ -339,6 +359,9 @@ class OpenAICompletionsCompat:
     supports_developer_role: bool | None = None
     supports_reasoning_effort: bool | None = None
     supports_usage_in_streaming: bool | None = None  # default True
+    # Whether streamed responses include `finish_reason`. When False, pi infers
+    # `stop` or `toolUse` when the stream ends. Default: True.
+    supports_finish_reason: bool | None = None
     max_tokens_field: Literal["max_completion_tokens", "max_tokens"] | None = None
     requires_tool_result_name: bool | None = None
     requires_assistant_after_tool_result: bool | None = None
@@ -346,9 +369,16 @@ class OpenAICompletionsCompat:
     requires_reasoning_content_on_assistant_messages: bool | None = None
     thinking_format: ThinkingFormat | None = None  # default "openai"
     chat_template_kwargs: dict[str, ChatTemplateKwargValue] | None = None
+    # Arguments to send as `chat_template_args` when thinking_format is "baseten".
+    chat_template_args: dict[str, ChatTemplateKwargValue] | None = None
     open_router_routing: OpenRouterRouting | None = None
     vercel_gateway_routing: VercelGatewayRouting | None = None
     zai_tool_stream: bool | None = None  # default False
+    # Whether the provider supports top-level `thinking_token_budget` to cap
+    # reasoning tokens (vLLM). Reasoning and the answer share `max_tokens` on
+    # these endpoints, so without a budget a reasoning-heavy turn can consume
+    # the whole response and emit no answer. Default: False.
+    supports_thinking_token_budget: bool | None = None
     supports_openai_grammar_tools: bool | None = None  # default False
     supports_strict_mode: bool | None = None  # default True
     cache_control_format: Literal["anthropic"] | None = None
@@ -440,6 +470,9 @@ class Model:
     cost: ModelCost
     context_window: int
     max_tokens: int
+    # Default sampling parameters for this model. See StreamOptions.sampling_params;
+    # per-request keys override these.
+    sampling_params: dict[str, Any] | None = None
     thinking_level_map: ThinkingLevelMap | None = None
     headers: dict[str, str] | None = None
     # Compatibility overrides; when None, auto-detected from base_url (API-specific).
@@ -463,40 +496,65 @@ type OnResponse = Callable[[ProviderResponse, Model], Awaitable[Any]]
 
 
 @dataclass(slots=True)
-class StreamOptions:
-    temperature: float | None = None
-    max_tokens: int | None = None
+class ProviderRequestOptions:
+    """Authentication, HTTP transport, and lifecycle callbacks shared by provider requests."""
+
     cancel: CancelToken | None = None  # pi: `signal?: AbortSignal`
     api_key: str | None = None
+    # Provider-scoped environment values, taking precedence over os.environ.
+    env: ProviderEnv | None = None
+    # Inspect or replace the provider payload before sending (return None to keep unchanged).
+    on_payload: OnPayload | None = None
+    # Invoked after an HTTP response is received.
+    on_response: OnResponse | None = None
+    # Merged with provider defaults; caller values override; None suppresses a default header.
+    headers: ProviderHeaders | None = None
+    timeout_ms: float | None = None
+    max_retries: int | None = None
+    # Cap on server-requested retry delays; beyond it the request fails immediately so
+    # higher-level retry logic can surface it. Default 60000; 0 disables the cap.
+    max_retry_delay_ms: float | None = None
+    # Models-only (pi: ModelsRequestTransforms.transformHeaders): transform fully
+    # assembled model/auth/request headers before provider dispatch.
+    # Awaitable-returning; stripped before options reach the provider.
+    transform_headers: Callable[[ProviderHeaders], Awaitable[ProviderHeaders]] | None = None
+
+
+@dataclass(slots=True)
+class StreamOptions(ProviderRequestOptions):
+    temperature: float | None = None
+    # Arbitrary sampling parameters merged into the request body as-is, after the
+    # named request fields, so keys here override them. Lets custom
+    # OpenAI-compatible servers (llama.cpp, vLLM, SGLang, ...) receive parameters
+    # pi does not model, e.g. `top_p`, `top_k`, `min_p`, `repetition_penalty`.
+    # Merged over `Model.sampling_params` per key. Only applied by
+    # OpenAI-compatible adapters (completions, responses, Azure responses);
+    # other APIs ignore it.
+    sampling_params: dict[str, Any] | None = None
+    max_tokens: int | None = None
     # Preferred transport for providers that support multiple transports.
     transport: Transport | None = None
     # Prompt cache retention preference; providers map this to their supported values.
     cache_retention: CacheRetention | None = None  # default "short"
     # Session identifier for providers supporting session-based caching/routing.
     session_id: str | None = None
-    # Inspect or replace the provider payload before sending (return None to keep unchanged).
-    on_payload: OnPayload | None = None
-    # Invoked after an HTTP response is received, before its body stream is consumed.
-    on_response: OnResponse | None = None
-    # Merged with provider defaults; caller values override; None suppresses a default header.
-    headers: ProviderHeaders | None = None
-    timeout_ms: float | None = None
     # WebSocket connect timeout (connection/open handshake only; stream idleness uses timeout_ms).
     websocket_connect_timeout_ms: float | None = None
-    max_retries: int | None = None
-    # Cap on server-requested retry delays; beyond it the request fails immediately so
-    # higher-level retry logic can surface it. Default 60000; 0 disables the cap.
-    max_retry_delay_ms: float | None = None
     # Provider-extracted metadata (e.g. Anthropic `user_id`).
     metadata: dict[str, Any] | None = None
-    # Provider-scoped environment values, taking precedence over os.environ.
-    env: ProviderEnv | None = None
     # pi's ProviderStreamOptions allows arbitrary extra provider options.
     extra: dict[str, Any] | None = None
-    # Models-only (pi: ModelsStreamTransforms.transformHeaders): transform fully
-    # assembled model/auth/request headers before provider dispatch.
-    # Awaitable-returning; stripped before options reach the provider.
-    transform_headers: Callable[[ProviderHeaders], Awaitable[ProviderHeaders]] | None = None
+
+
+@dataclass(slots=True)
+class DeferredFetchOptions(ProviderRequestOptions):
+    # Maximum provider long-poll duration in milliseconds.
+    # Defaults to 0, which performs one status check.
+    wait: float | None = None
+
+
+# Request options for best-effort deferred-response cancellation.
+type DeferredCancelOptions = ProviderRequestOptions
 
 
 @dataclass(slots=True)
@@ -504,6 +562,9 @@ class SimpleStreamOptions(StreamOptions):
     """Unified options with reasoning, passed to `stream_simple`/`complete_simple`."""
 
     reasoning: ThinkingLevel | None = None
+    # Ask a capable provider to return a durable handle and continue the request
+    # asynchronously. pi: `boolean | { window?: "15m" | "1h" | "24h" }`.
+    deferred: bool | dict[str, Any] | None = None
     # Custom token budgets for thinking levels (token-based providers only).
     thinking_budgets: ThinkingBudgets | None = None
 
@@ -588,7 +649,7 @@ class ToolCallEndEvent:
 
 @dataclass(slots=True)
 class DoneEvent:
-    reason: Literal["stop", "length", "toolUse"]
+    reason: Literal["stop", "length", "toolUse", "deferred"]
     message: AssistantMessage
     type: Literal["done"] = "done"
 
@@ -619,8 +680,12 @@ type AssistantMessageEvent = (
 class ProviderStreams(Protocol):
     """The uniform stream contract of an API implementation module.
 
-    Every module under `pidrei_ai/api/` exports exactly `stream` and
-    `stream_simple`, so the module itself satisfies this protocol.
+    Every module under `pidrei_ai/api/` exports `stream` and `stream_simple`,
+    so the module itself satisfies this protocol. Capable modules may also
+    export deferred-response methods (`fetch_deferred(model, handle, options)`
+    returning an event stream and `async cancel_deferred(model, handle,
+    options)`); their presence is probed with `getattr`, mirroring pi's
+    optional `ProviderStreams` members.
     """
 
     def stream(self, model: Model, context: Context, options: StreamOptions | None = None) -> Any: ...
@@ -675,20 +740,7 @@ class AssistantImages:
 
 
 @dataclass(slots=True)
-class ImagesOptions:
-    cancel: CancelToken | None = None  # pi: `signal?: AbortSignal`
-    api_key: str | None = None
-    # Provider-scoped environment values, taking precedence over os.environ.
-    env: ProviderEnv | None = None
-    # Inspect or replace the provider payload before sending (return None to keep unchanged).
-    on_payload: OnPayload | None = None
-    # Invoked after an HTTP response is received.
-    on_response: OnResponse | None = None
-    # Merged with provider defaults; caller values override; None suppresses a default header.
-    headers: ProviderHeaders | None = None
-    timeout_ms: float | None = None
-    max_retries: int | None = None
-    max_retry_delay_ms: float | None = None
+class ImagesOptions(ProviderRequestOptions):
     metadata: dict[str, Any] | None = None
 
 

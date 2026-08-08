@@ -53,6 +53,7 @@ from .types import (
     MessageStartEvent,
     PrepareNextTurnContext,
     QueueMode,
+    ShouldStopAfterTurnContext,
     StreamFn,
     ThinkingLevel,
     ToolExecutionMode,
@@ -203,6 +204,8 @@ class Agent:
             Awaitable[AfterToolCallResult | None],
         ]
         | None = None,
+        should_stop_after_turn: Callable[[ShouldStopAfterTurnContext, CancelToken | None], Awaitable[bool]]
+        | None = None,
         prepare_next_turn: Callable[[CancelToken | None], Awaitable[AgentLoopTurnUpdate | None]] | None = None,
         prepare_next_turn_with_context: Callable[
             [PrepareNextTurnContext, CancelToken | None],
@@ -239,6 +242,7 @@ class Agent:
         self.on_response = on_response
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
+        self.should_stop_after_turn = should_stop_after_turn
         self.prepare_next_turn = prepare_next_turn
         self.prepare_next_turn_with_context = prepare_next_turn_with_context
         # Session identifier forwarded to providers for cache-aware backends.
@@ -348,6 +352,9 @@ class Agent:
 
     def reset(self) -> None:
         """Clear transcript state, runtime state, and queued messages."""
+        if self._active_run is not None:
+            raise Exception("Agent is already processing. Wait for completion before resetting.")
+
         self._state.messages = []
         self._state.is_streaming = False
         self._state.streaming_message = None
@@ -444,6 +451,13 @@ class Agent:
     def _create_loop_config(self, options: _RunOptions | None = None) -> AgentLoopConfig:
         skip_initial_steering_poll = options is not None and options.skip_initial_steering_poll
 
+        should_stop_after_turn = None
+        if self.should_stop_after_turn is not None:
+            configured_should_stop = self.should_stop_after_turn
+
+            async def should_stop_after_turn(context: ShouldStopAfterTurnContext) -> bool:
+                return await configured_should_stop(context, self.signal)
+
         prepare_next_turn = None
         if self.prepare_next_turn_with_context is not None or self.prepare_next_turn is not None:
 
@@ -476,6 +490,7 @@ class Agent:
             tool_execution=self.tool_execution,
             before_tool_call=self.before_tool_call,
             after_tool_call=self.after_tool_call,
+            should_stop_after_turn=should_stop_after_turn,
             prepare_next_turn=prepare_next_turn,
             convert_to_llm=self.convert_to_llm,
             transform_context=self.transform_context,

@@ -153,7 +153,8 @@ class FooterComponent:
         # Kimi Coding is subscription-backed despite using API-key
         # authentication.
         using_subscription = (
-            state.model.provider == "kimi-coding" or self._session.model_runtime.is_using_oauth(state.model.provider)
+            state.model.provider == "kimi-coding"
+            or self._session.model_runtime.is_using_subscription(state.model.provider)
             if state.model is not None
             else False
         )

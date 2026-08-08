@@ -16,12 +16,16 @@ from pidrei_ai.env_api_keys import ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOK
 from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.cancel import CancelToken
 from tests.anthropic_helpers import (
     PayloadCaptured,
     _recording_transport,
     capture_request,
     now_ms,
 )
+
+
+_never_aborted_cancel = CancelToken()
 
 
 class _EnvContext:
@@ -95,6 +99,7 @@ async def test_resolves_anthropic_auth_token_as_a_bearer_authorization_header():
             }
         ),
         None,
+        _never_aborted_cancel,
     )
 
     assert auth == AuthResult(
@@ -114,6 +119,7 @@ async def test_preserves_anthropic_oauth_token_as_oauth_shaped_api_auth():
             }
         ),
         None,
+        _never_aborted_cancel,
     )
 
     assert auth == AuthResult(auth=ModelAuth(api_key="oauth-token"), source=ANTHROPIC_OAUTH_TOKEN_ENV)

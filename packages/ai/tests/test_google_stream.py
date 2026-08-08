@@ -34,10 +34,13 @@ def _streaming(adapter, chunks, *, raises: Exception | None = None):
             pass
 
         async def generate_content_stream(self, _params, *, env=None, cancel=None):
-            for chunk in chunks:
-                yield chunk
-            if raises is not None:
-                raise raises
+            async def _chunks():
+                for chunk in chunks:
+                    yield chunk
+                if raises is not None:
+                    raise raises
+
+            return _chunks()
 
     original = adapter.GoogleGenAI
     adapter.GoogleGenAI = _Fake

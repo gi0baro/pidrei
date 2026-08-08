@@ -597,11 +597,16 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                     block_type = content_block.get("type")
                     index = event.get("index")
                     if block_type == "text":
-                        blocks.append(TextContent(text=""))
+                        blocks.append(TextContent(text=content_block.get("text") or ""))
                         anthropic_index_to_content[index] = len(blocks) - 1
                         out_stream.push(TextStartEvent(content_index=len(blocks) - 1, partial=output))
                     elif block_type == "thinking":
-                        blocks.append(ThinkingContent(thinking="", thinking_signature=""))
+                        blocks.append(
+                            ThinkingContent(
+                                thinking=content_block.get("thinking") or "",
+                                thinking_signature=content_block.get("signature") or "",
+                            )
+                        )
                         anthropic_index_to_content[index] = len(blocks) - 1
                         out_stream.push(ThinkingStartEvent(content_index=len(blocks) - 1, partial=output))
                     elif block_type == "redacted_thinking":

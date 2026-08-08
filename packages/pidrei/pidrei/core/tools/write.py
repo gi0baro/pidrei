@@ -161,6 +161,11 @@ WRITE_SCHEMA = {
     "required": ["path", "content"],
 }
 
+WRITE_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "Create or overwrite files",
+    "guidelines": ("Use write only for new files or complete rewrites.",),
+}
+
 
 class LocalWriteOperations:
     async def write_file(self, absolute_path: str, content: str) -> None:
@@ -252,8 +257,8 @@ def create_write_tool_definition(cwd: str, *, operations: Any = None) -> ToolDef
             "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. "
             "Automatically creates parent directories."
         ),
-        prompt_snippet="Create or overwrite files",
-        prompt_guidelines=["Use write only for new files or complete rewrites."],
+        prompt_snippet=WRITE_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
+        prompt_guidelines=list(WRITE_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=WRITE_SCHEMA,
         execute=execute,
         render_call=render_call,

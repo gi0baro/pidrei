@@ -38,7 +38,7 @@ class OAuthDeviceCodePollResult:
     interval_seconds: float | None = None
 
 
-async def _abortable_sleep(ms: float, cancel: CancelToken | None, cancel_message: str) -> None:
+async def _abortable_sleep(ms: float, cancel: CancelToken, cancel_message: str) -> None:
     try:
         await clock.sleep_ms(ms, cancel)
     except AbortError:
@@ -59,10 +59,10 @@ def _positive_interval_ms(interval_seconds: float | None) -> float | None:
 async def poll_oauth_device_code_flow(
     *,
     poll: Callable[[], Awaitable[OAuthDeviceCodePollResult]],
+    cancel: CancelToken,
     interval_seconds: float | None = None,
     expires_in_seconds: float | None = None,
     wait_before_first_poll: bool = False,
-    cancel: CancelToken | None = None,
 ) -> Any:
     """Poll `poll` until it completes, fails, or the device code expires."""
     deadline = clock.now_ms() + expires_in_seconds * 1000 if expires_in_seconds is not None else math.inf
@@ -78,7 +78,7 @@ async def poll_oauth_device_code_flow(
             await _abortable_sleep(min(interval_ms, remaining_ms), cancel, CANCEL_MESSAGE)
 
     while clock.now_ms() < deadline:
-        if cancel is not None and cancel.cancelled:
+        if cancel.cancelled:
             raise RuntimeError(CANCEL_MESSAGE)
 
         result = await poll()

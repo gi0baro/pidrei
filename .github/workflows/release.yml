@@ -49,7 +49,7 @@ jobs:
         # dist/. This is how the missing `pidrei-tui` dependency was found.
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for name in pidrei pidrei_ai pidrei_agent pidrei_tui pidrei_server; do
+          for name in pidrei pidrei_ai pidrei_agent pidrei_protocol pidrei_client pidrei_tui pidrei_server; do
             test -f "dist/${name}-${version}-py3-none-any.whl" \
               || { echo "missing wheel: ${name}-${version}"; exit 1; }
             test -f "dist/${name}-${version}.tar.gz" \

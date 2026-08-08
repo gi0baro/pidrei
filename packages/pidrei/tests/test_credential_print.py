@@ -5,12 +5,8 @@ import time
 import pytest
 
 from pidrei.cli.args import parse_args
-from pidrei.cli.credential_print import (
-    CredentialPrintError,
-    is_credential_print_help,
-    parse_credential_print_command,
-    resolve_credential_for_print,
-)
+from pidrei.cli.auth_command import AuthCommandError, is_auth_command_help, parse_auth_command
+from pidrei.cli.credential_print import resolve_credential_for_print
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.model_runtime import ModelRuntime
 from pidrei_ai.auth.types import ApiKeyCredential, OAuthCredential
@@ -33,7 +29,7 @@ async def create_runtime(credentials: AuthStorage) -> ModelRuntime:
 @pytest.mark.tonio
 async def test_prints_a_resolved_api_key():
     runtime = await create_runtime(AuthStorage.in_memory({"openai": ApiKeyCredential(key="test-api-key")}))
-    args = parse_args(["--model", "gpt-5.5"])
+    args = parse_args(["--provider", "openai"])
 
     assert await resolve_credential_for_print(args, runtime, "api_key") == "test-api-key"
 
@@ -51,7 +47,7 @@ async def test_prints_bearer_tokens_resolved_from_an_authorization_header():
             }
         )
     )
-    args = parse_args(["--provider", "kimi-coding", "--model", "kimi-for-coding"])
+    args = parse_args(["--provider", "kimi-coding"])
 
     assert await resolve_credential_for_print(args, runtime, "bearer_token") == "header-test-token"
 
@@ -86,7 +82,7 @@ async def test_refreshes_an_expired_oauth_token_before_printing_it():
     # manually and restore (monkeypatch cannot run under the tonio mark).
     oauth.refresh = refresh
     try:
-        args = parse_args(["--provider", "openai-codex", "--model", "gpt-5.5"])
+        args = parse_args(["--provider", "openai-codex"])
 
         assert await resolve_credential_for_print(args, runtime, "bearer_token") == "fresh-test-token"
         assert len(refresh_calls) == 1
@@ -94,6 +90,27 @@ async def test_refreshes_an_expired_oauth_token_before_printing_it():
         assert stored is not None and stored.access == "fresh-test-token"
     finally:
         oauth.refresh = original_refresh
+
+
+@pytest.mark.tonio
+async def test_reports_unknown_auth_options_like_package_commands():
+    """pi drives `main()`; pidrei calls the extracted `_run_auth_command`."""
+    import contextlib
+    import io
+
+    from pidrei.main import _run_auth_command
+    from pidrei.utils.ansi import strip_ansi
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stderr(buffer):
+        exit_code = await _run_auth_command(["auth", "check", "--provider", "openai-codex", "--credentails"])
+
+    stderr = strip_ansi(buffer.getvalue())
+    assert 'Unknown option --credentails for "auth check".' in stderr
+    assert (
+        'Use "pidrei --help" or "pidrei auth check --provider <provider> [--json] [--credentials] [--no-refresh]".'
+    ) in stderr
+    assert exit_code == 1
 
 
 @pytest.mark.tonio
@@ -110,33 +127,31 @@ async def test_parses_credential_commands_and_rejects_invalid_arguments_or_crede
         )
     )
 
-    command = parse_credential_print_command(["auth", "print-api-key", "--provider", "openai"])
+    command = parse_auth_command(["auth", "print-api-key", "--provider", "openai"])
     assert command is not None
     assert command.kind == "api_key"
     assert command.args == ["--provider", "openai"]
     assert command.min_expiry_ms is None
 
-    command = parse_credential_print_command(["auth", "print-bearer-token"])
+    command = parse_auth_command(["auth", "print-bearer-token"])
     assert command is not None and command.kind == "bearer_token"
 
-    command = parse_credential_print_command(["auth", "print-bearer-token", "--min-expiry", "30m"])
+    command = parse_auth_command(["auth", "print-bearer-token", "--min-expiry", "30m"])
     assert command is not None
     assert command.kind == "bearer_token"
     assert command.args == []
     assert command.min_expiry_ms == 30 * 60_000
 
-    with pytest.raises(CredentialPrintError, match="only supported by print-bearer-token"):
-        parse_credential_print_command(["auth", "print-api-key", "--min-expiry", "30m"])
+    with pytest.raises(AuthCommandError, match="only supported by print-bearer-token"):
+        parse_auth_command(["auth", "print-api-key", "--min-expiry", "30m"])
 
-    assert is_credential_print_help(["auth", "--help"]) is True
+    assert is_auth_command_help(["auth", "--help"]) is True
 
-    with pytest.raises(CredentialPrintError):
-        parse_credential_print_command(["auth", "unknown"])
+    with pytest.raises(AuthCommandError):
+        parse_auth_command(["auth", "unknown"])
 
-    with pytest.raises(CredentialPrintError, match="requires --model"):
+    with pytest.raises(AuthCommandError, match=r"requires --provider <provider> or --model <model>"):
         await resolve_credential_for_print(parse_args([]), runtime, "api_key")
 
-    with pytest.raises(CredentialPrintError, match="configured with OAuth"):
-        await resolve_credential_for_print(
-            parse_args(["--provider", "openai-codex", "--model", "gpt-5.5"]), runtime, "api_key"
-        )
+    with pytest.raises(AuthCommandError, match="configured with OAuth"):
+        await resolve_credential_for_print(parse_args(["--provider", "openai-codex"]), runtime, "api_key")

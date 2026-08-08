@@ -46,7 +46,7 @@ _SPECIAL_TO_SNAKE = {"supportsOpenAIGrammarTools": "supports_openai_grammar_tool
 _SPECIAL_TO_CAMEL = {snake: camel for camel, snake in _SPECIAL_TO_SNAKE.items()}
 
 # Nested compat objects deep-merged one level by pi's mergeCompat.
-_NESTED_COMPAT_KEYS = ("openRouterRouting", "vercelGatewayRouting", "chatTemplateKwargs")
+_NESTED_COMPAT_KEYS = ("openRouterRouting", "vercelGatewayRouting", "chatTemplateKwargs", "chatTemplateArgs")
 
 
 def _snake(name: str) -> str:

@@ -53,50 +53,113 @@ async def _store(credential: OAuthCredential) -> OAuthCredential:
     return credential
 
 
-@pytest.mark.tonio
-async def test_filters_models_to_the_authenticated_account_picker_catalog():
-    fetched_urls: list[str] = []
+async def refresh_github_copilot_models_for_test(
+    data: list[dict[str, Any]],
+    proxy_host: str = "proxy.individual.githubcopilot.com",
+) -> OAuthCredential:
+    access_token = f"tid=test;exp=9999999999;proxy-ep={proxy_host};"
+    models_url = f"https://{proxy_host.replace('proxy.', 'api.', 1)}/models"
 
     def handler(request: OAuthRequest):
-        fetched_urls.append(request.url)
         if "/copilot_internal/v2/token" in request.url:
-            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
+            return json_response({"token": access_token, "expires_at": 9999999999})
 
-        assert request.url == "https://api.individual.githubcopilot.com/models"
-        assert request.headers["Authorization"] == f"Bearer {COPILOT_TOKEN}"
-        return json_response(
-            {
-                "data": [
-                    {"id": "gpt-4.1", "model_picker_enabled": True, "capabilities": {"supports": {"tool_calls": True}}},
-                    {
-                        "id": "claude-opus-4.7",
-                        "model_picker_enabled": True,
-                        "policy": {"state": "disabled"},
-                        "capabilities": {"supports": {"tool_calls": True}},
-                    },
-                    {
-                        "id": "gpt-5.4-nano",
-                        "model_picker_enabled": False,
-                        "capabilities": {"supports": {"tool_calls": True}},
-                    },
-                ]
-            }
-        )
+        assert request.url == models_url
+        assert request.headers["Authorization"] == f"Bearer {access_token}"
+        return json_response({"data": data})
 
     with virtual_clock(), stub_oauth_http(handler):
-        credential = await github_copilot_oauth.refresh(
+        return await github_copilot_oauth.refresh(
             OAuthCredential(access="old-access-token", refresh="ghu_refresh_token", expires=0), None
         )
 
-        assert credential.extra["availableModelIds"] == ["gpt-4.1"]
 
-        store = InMemoryCredentialStore()
-        await store.modify("github-copilot", lambda _current: _store(credential))
-        models = create_models(credentials=store)
-        models.set_provider(github_copilot_provider())
-        available = await models.get_available("github-copilot")
+@pytest.mark.tonio
+async def test_filters_models_to_the_authenticated_account_picker_catalog():
+    credential = await refresh_github_copilot_models_for_test(
+        [
+            {"id": "gpt-4.1", "model_picker_enabled": True, "capabilities": {"supports": {"tool_calls": True}}},
+            {
+                "id": "claude-opus-4.7",
+                "model_picker_enabled": True,
+                "policy": {"state": "disabled"},
+                "capabilities": {"supports": {"tool_calls": True}},
+            },
+            {
+                "id": "gpt-5.4-nano",
+                "model_picker_enabled": False,
+                "policy": {"state": "enabled"},
+                "capabilities": {"supports": {"tool_calls": True}},
+            },
+        ]
+    )
+    assert credential.extra["availableModelIds"] == ["gpt-4.1"]
+
+    store = InMemoryCredentialStore()
+    await store.modify("github-copilot", lambda _current: _store(credential))
+    models = create_models(credentials=store)
+    models.set_provider(github_copilot_provider())
+    available = await models.get_available("github-copilot")
 
     assert [model.id for model in available] == ["gpt-4.1"]
+
+
+@pytest.mark.tonio
+async def test_falls_back_to_explicitly_enabled_policy_models_when_the_picker_catalog_is_empty():
+    credential = await refresh_github_copilot_models_for_test(
+        [
+            {
+                "id": "gpt-4.1",
+                "model_picker_enabled": False,
+                "policy": {"state": "enabled"},
+                "capabilities": {"supports": {"tool_calls": True}},
+            },
+            {
+                "id": "claude-opus-4.7",
+                "model_picker_enabled": False,
+                "policy": {"state": "disabled"},
+                "capabilities": {"supports": {"tool_calls": True}},
+            },
+            {
+                "id": "gpt-5.4-nano",
+                "model_picker_enabled": False,
+                "capabilities": {"supports": {"tool_calls": True}},
+            },
+            {
+                "id": "gpt-4o",
+                "model_picker_enabled": False,
+                "policy": {"state": "enabled"},
+                "capabilities": {"supports": {"tool_calls": False}},
+            },
+        ]
+    )
+
+    assert credential.extra["availableModelIds"] == ["gpt-4.1"]
+
+    store = InMemoryCredentialStore()
+    await store.modify("github-copilot", lambda _current: _store(credential))
+    models = create_models(credentials=store)
+    models.set_provider(github_copilot_provider())
+    available = await models.get_available("github-copilot")
+
+    assert [model.id for model in available] == ["gpt-4.1"]
+
+
+@pytest.mark.tonio
+async def test_does_not_fall_back_to_policy_models_for_non_individual_accounts():
+    credential = await refresh_github_copilot_models_for_test(
+        [
+            {
+                "id": "gpt-4.1",
+                "model_picker_enabled": False,
+                "policy": {"state": "enabled"},
+                "capabilities": {"supports": {"tool_calls": True}},
+            },
+        ],
+        "proxy.business.githubcopilot.com",
+    )
+
+    assert credential.extra["availableModelIds"] == []
 
 
 @pytest.mark.tonio

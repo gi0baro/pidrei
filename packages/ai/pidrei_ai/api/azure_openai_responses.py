@@ -386,4 +386,8 @@ def build_params(
             off_value = mapping.get("off")
             params["reasoning"] = {"effort": off_value if off_value is not None else "none"}
 
+    # Last so custom keys override the named request fields.
+    if options.sampling_params:
+        params.update(options.sampling_params)
+
     return params

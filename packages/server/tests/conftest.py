@@ -1,14 +1,8 @@
-import os
 import shutil
 import tempfile
 from pathlib import Path
 
 import pytest
-
-
-def pytest_configure(config):
-    # Hermetic runs: no remote-catalog network.
-    os.environ["PIDREI_OFFLINE"] = "1"
 
 
 @pytest.fixture

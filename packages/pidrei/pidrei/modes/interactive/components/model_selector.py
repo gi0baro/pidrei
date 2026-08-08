@@ -163,7 +163,10 @@ class ModelSelectorComponent(Container):
                 provider = next(iter(result.errors))
                 self._error_message = f"Could not refresh {provider}; showing cached models."
             elif len(result.errors) > 1:
-                self._error_message = f"Could not refresh {len(result.errors)} model catalogs; showing cached models."
+                self._error_message = (
+                    f"Could not refresh {len(result.errors)} model catalogs "
+                    f"({', '.join(result.errors)}); showing cached models."
+                )
             else:
                 self._error_message = self._model_runtime.get_error()
                 if not self._error_message:
@@ -172,11 +175,24 @@ class ModelSelectorComponent(Container):
             self._load_models_from_snapshot()
             self._filter_models(self._search_input.get_value())
             self._tui.request_render()
+        except Exception as error:
+            if self._closed:
+                return
+            self._refresh_status_message = ""
+            self._error_message = (
+                "Model refresh timed out; showing cached models."
+                if timed_out
+                else f"Could not refresh model catalogs: {error}"
+            )
+            self._filter_models(self._search_input.get_value())
+            self._tui.request_render()
         finally:
             if self._refresh_timeout is not None:
                 self._refresh_timeout.cancel()
 
-    def _close(self) -> None:
+    def dispose(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         if self._refresh_timeout is not None:
             self._refresh_timeout.cancel()
@@ -314,7 +330,7 @@ class ModelSelectorComponent(Container):
                 self._handle_select(self._filtered_models[self._selected_index]["model"])
         # Escape or Ctrl+C
         elif kb.matches(key_data, "tui.select.cancel"):
-            self._close()
+            self.dispose()
             self._on_cancel_callback()
         # Pass everything else to search input
         else:
@@ -322,7 +338,7 @@ class ModelSelectorComponent(Container):
             self._filter_models(self._search_input.get_value())
 
     def _handle_select(self, model) -> None:
-        self._close()
+        self.dispose()
         # Save as new default
         self._settings_manager.set_default_model_and_provider(model.provider, model.id)
         self._on_select_callback(model)

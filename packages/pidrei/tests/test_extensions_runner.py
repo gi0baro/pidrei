@@ -743,7 +743,7 @@ async def test_bind_core_ignores_invalid_queued_registrations_and_reports_extens
     assert errors == [
         '/tmp/broken-extension.py: Provider broken-provider: "api" is required when registering streamSimple.'
     ]
-    assert await fx.model_registry.refresh() is None
+    assert (await fx.model_registry.refresh()).aborted is False
 
 
 @pytest.mark.tonio

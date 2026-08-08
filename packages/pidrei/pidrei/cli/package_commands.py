@@ -370,14 +370,24 @@ def _report_project_trust_warnings(warnings: list[str]) -> None:
 
 
 async def _refresh_model_catalogs(agent_dir: str) -> None:
+    from pidrei_ai.utils.cancel import CancelToken
+
     from ..core.model_runtime import ModelRuntime, ModelsRefreshOptions
 
+    cancel = CancelToken()
+
+    async def _expire() -> None:
+        await tonio.time.sleep(15)
+        cancel.cancel(TimeoutError("The operation timed out."))
+
+    tonio.spawn.without_tracking(_expire())
     runtime = await ModelRuntime.create(
         auth_path=get_auth_path(),
         models_path=get_models_path(),
         allow_model_network=False,
+        cancel=cancel,
     )
-    result = await runtime.refresh(ModelsRefreshOptions(allow_network=True, force=True))
+    result = await runtime.refresh(ModelsRefreshOptions(allow_network=True, force=True, cancel=cancel))
     if getattr(result, "aborted", False):
         raise Exception("Model catalog refresh timed out.")
     errors = getattr(result, "errors", None) or {}

@@ -15,6 +15,7 @@ Two deliberate structural differences from pi, both forced by the layout:
 
 import hashlib
 import json
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,14 @@ def _describe_set_difference(expected: list[str], actual: list[str]) -> str:
     if extra:
         parts.append(f"extra: {', '.join(extra)}")
     return "; ".join(parts)
+
+
+def assert_exact_model_ids(label: str, expected: Iterable[str], actual: Iterable[str]) -> None:
+    expected_ids = sorted(set(expected))
+    actual_ids = sorted(set(actual))
+    if expected_ids == actual_ids:
+        return
+    raise RuntimeError(f"{label} model IDs do not match ({_describe_set_difference(expected_ids, actual_ids)})")
 
 
 def _read_json_object(path: Path, description: str, errors: list[str]) -> dict[str, Any] | None:

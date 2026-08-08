@@ -54,8 +54,17 @@ def _extract_status(error: BaseException) -> int | None:
     return None
 
 
-def _is_non_empty_object(value: Any) -> bool:
-    return isinstance(value, dict) and len(value) > 0
+def _is_plain_non_empty_object(value: Any) -> bool:
+    """Only a PLAIN object counts as an HTTP body. Error fields can hold class
+    instances instead of parsed bodies, and stringifying one produces
+    internals-noise which then REPLACES `str(error)` in the composed display
+    string — the one place the real deserialized exception text lives. A class
+    instance yields no body, `message_carries_body` stays True, and the real
+    message survives. Parsed JSON bodies are plain dicts by construction; pi's
+    `Object.getPrototypeOf(value) === Object.prototype` check maps to an exact
+    `dict` type check (subclasses are wrapper classes, not parsed JSON).
+    """
+    return type(value) is dict and len(value) > 0
 
 
 def _pick_body_text(error: BaseException) -> str | None:
@@ -63,7 +72,7 @@ def _pick_body_text(error: BaseException) -> str | None:
     if isinstance(body, str):
         return body
     error_field = getattr(error, "error", None)
-    if _is_non_empty_object(error_field):
+    if _is_plain_non_empty_object(error_field):
         return safe_json_stringify(error_field)
     return None
 

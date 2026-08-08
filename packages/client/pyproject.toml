@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pidrei-client"
+version = "0.83.0.1"
+description = "Transport-neutral client for remote sessions of pidrei (port of pi-client)"
+requires-python = ">=3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+
+authors = [
+    { name = "Giovanni Barillari", email = "g@baro.dev" }
+]
+
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
+
+dependencies = [
+    "pidrei-protocol==0.83.0.1",
+    "tonio~=0.9.4",
+]
+
+[tool.uv.sources]
+pidrei-protocol = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["pidrei_client"]

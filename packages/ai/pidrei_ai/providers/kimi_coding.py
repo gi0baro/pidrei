@@ -16,7 +16,10 @@ def kimi_coding_provider() -> Provider:
         auth=ProviderAuth(
             api_key=env_api_key_auth("Kimi API key", ["KIMI_API_KEY"]),
             oauth=lazy_oauth(
-                name="Kimi Code (subscription)", load=load_kimi_coding_oauth, login_label="Sign in with Kimi Code"
+                name="Kimi Code (subscription)",
+                is_subscription=True,
+                load=load_kimi_coding_oauth,
+                login_label="Sign in with Kimi Code",
             ),
         ),
         models=list(MODELS.get("kimi-coding", [])),

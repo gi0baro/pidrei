@@ -249,7 +249,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   {APP_NAME} update --models           Refresh model catalogs
   {APP_NAME} list                      List installed extensions from settings
   {APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  {APP_NAME} auth <command>            Print credentials for external clients
+  {APP_NAME} auth <command>            Print credentials or check provider readiness
   {APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
 
 {bold("Options:")}
@@ -299,10 +299,10 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
 
 {bold("Examples:")}
   # Print a provider API key for an external client
-  {APP_NAME} auth print-api-key --provider openai --model gpt-5.5
+  {APP_NAME} auth print-api-key --provider openai
 
   # Print an OAuth bearer token for an external client (refreshes if expired)
-  {APP_NAME} auth print-bearer-token --provider openai-codex --model gpt-5.5
+  {APP_NAME} auth print-bearer-token --provider openai-codex
 
   # Interactive mode
   {APP_NAME}
@@ -375,6 +375,7 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
   XAI_API_KEY                      - xAI Grok API key
   FIREWORKS_API_KEY                - Fireworks API key
   TOGETHER_API_KEY                 - Together AI API key
+  BASETEN_API_KEY                  - Baseten API key
   OPENROUTER_API_KEY               - OpenRouter API key
   AI_GATEWAY_API_KEY               - Vercel AI Gateway API key
   ZAI_API_KEY                      - ZAI Coding Plan API key (Global)

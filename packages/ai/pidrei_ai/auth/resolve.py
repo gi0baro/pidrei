@@ -8,10 +8,13 @@ credential type without a matching handler.
 import time
 from dataclasses import dataclass
 
+import tonio.colored as tonio
+
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
     AuthContext,
+    AuthOperationOptions,
     AuthResult,
     Credential,
     CredentialStore,
@@ -20,6 +23,9 @@ from pidrei_ai.auth.types import (
     ProviderAuth,
 )
 from pidrei_ai.types import ProviderEnv
+from pidrei_ai.utils import clock
+from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
+from pidrei_ai.utils.cancel import AbortError, CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.diagnostics import format_thrown_value
 
 
@@ -50,6 +56,7 @@ class AuthResolutionOverrides:
     env: ProviderEnv | None = None
     #: Require this much remaining OAuth-token validity; defaults to five minutes.
     min_oauth_validity_ms: int | None = None
+    cancel: CancelToken | None = None
 
 
 def _now_ms() -> int:
@@ -77,6 +84,21 @@ async def resolve_provider_auth(
     overrides: AuthResolutionOverrides | None = None,
 ) -> AuthResult | None:
     """Auth resolution shared by the Models collection."""
+    cancel = operation_cancel(overrides.cancel if overrides is not None else None)
+    return await race_with_cancel(
+        _resolve_provider_auth_with_cancel(provider, credentials, auth_context, overrides, cancel),
+        cancel,
+    )
+
+
+async def _resolve_provider_auth_with_cancel(
+    provider,
+    credentials: CredentialStore,
+    auth_context: AuthContext,
+    overrides: AuthResolutionOverrides | None,
+    cancel: CancelToken,
+) -> AuthResult | None:
+    cancel.raise_if_cancelled()
     provider_auth: ProviderAuth = provider.auth
     request_auth_context: AuthContext = (
         _OverlayEnvAuthContext(auth_context, overrides.env) if overrides is not None and overrides.env else auth_context
@@ -88,9 +110,10 @@ async def resolve_provider_auth(
             provider_auth.api_key,
             provider.id,
             ApiKeyCredential(key=overrides.api_key, env=overrides.env),
+            cancel,
         )
 
-    stored = await _read_credential(credentials, provider.id)
+    stored = await _read_credential(credentials, provider.id, cancel)
     if stored is not None:
         if stored.type == "oauth" and provider_auth.oauth is not None:
             return await _resolve_stored_oauth(
@@ -98,22 +121,24 @@ async def resolve_provider_auth(
                 provider.id,
                 provider_auth.oauth,
                 stored,
+                cancel,
                 overrides.min_oauth_validity_ms if overrides is not None else None,
             )
         if stored.type == "api_key" and provider_auth.api_key is not None:
             credential = stored
             if overrides is not None and overrides.env:
                 credential = ApiKeyCredential(key=stored.key, env={**(stored.env or {}), **overrides.env})
-            return await _resolve_api_key(request_auth_context, provider_auth.api_key, provider.id, credential)
+            return await _resolve_api_key(request_auth_context, provider_auth.api_key, provider.id, credential, cancel)
         return None
 
     # Ambient (env vars, AWS profiles, ADC files).
     if provider_auth.api_key is not None:
-        return await _resolve_api_key(request_auth_context, provider_auth.api_key, provider.id, None)
+        return await _resolve_api_key(request_auth_context, provider_auth.api_key, provider.id, None, cancel)
     return None
 
 
 DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000
+DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000
 
 
 async def _resolve_stored_oauth(
@@ -121,6 +146,7 @@ async def _resolve_stored_oauth(
     provider_id: str,
     oauth: OAuthAuth,
     stored: OAuthCredential,
+    cancel: CancelToken,
     min_oauth_validity_ms: int | None = None,
 ) -> AuthResult | None:
     """OAuth resolution with double-checked locking: tokens with less than five
@@ -142,12 +168,32 @@ async def _resolve_stored_oauth(
             if not expires_soon(current):
                 return None  # another process/request refreshed
             try:
-                return await oauth.refresh(current, None)
+                # pi: `AbortSignal.any([signal, AbortSignal.timeout(15s)])` — a
+                # hung refresh must not hold the credential lock forever.
+                timeout_cancel = CancelToken()
+                timer = CancelToken()
+
+                async def _expire(timeout_cancel: CancelToken = timeout_cancel, timer: CancelToken = timer) -> None:
+                    try:
+                        await clock.sleep_ms(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS, timer)
+                    except AbortError:
+                        return
+                    timeout_cancel.cancel(TimeoutError("The operation timed out."))
+
+                tonio.spawn.without_tracking(_expire())
+                # No cleanup: pi's `AbortSignal.any` composite stays linked to
+                # the caller's signal after resolution (a late caller abort
+                # still shows on the token handed to the refresh).
+                combined = combine_cancel_tokens(cancel, timeout_cancel)
+                try:
+                    return await oauth.refresh(current, combined.token)
+                finally:
+                    timer.cancel()
             except Exception as error:
                 raise ModelsError("oauth", f"OAuth refresh failed for {provider_id}", cause=error)
 
         try:
-            post = await credentials.modify(provider_id, _refresh_under_lock)
+            post = await credentials.modify(provider_id, _refresh_under_lock, AuthOperationOptions(cancel=cancel))
         except ModelsError:
             raise
         except Exception as error:
@@ -172,15 +218,16 @@ async def _resolve_api_key(
     api_key: ApiKeyAuth,
     provider_id: str,
     credential: ApiKeyCredential | None,
+    cancel: CancelToken,
 ) -> AuthResult | None:
     try:
-        return await api_key.resolve(auth_context, credential)
+        return await api_key.resolve(auth_context, credential, cancel)
     except Exception as error:
         raise ModelsError("auth", f"API key auth failed for provider {provider_id}", cause=error)
 
 
-async def _read_credential(credentials: CredentialStore, provider_id: str) -> Credential | None:
+async def _read_credential(credentials: CredentialStore, provider_id: str, cancel: CancelToken) -> Credential | None:
     try:
-        return await credentials.read(provider_id)
+        return await credentials.read(provider_id, AuthOperationOptions(cancel=cancel))
     except Exception as error:
         raise ModelsError("auth", f"Credential store read failed for {provider_id}", cause=error)

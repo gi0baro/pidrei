@@ -98,7 +98,7 @@ def _file_info_from_stat(path: str, stat_result: os.stat_result) -> Result[FileI
     kind = _file_kind_from_mode(stat_result.st_mode)
     if kind is None:
         return err(FileError("invalid", "Unsupported file type", path))
-    name = path.rstrip("/").split("/")[-1] or path
+    name = os.path.basename(path.rstrip("/")) or path
     return ok(
         FileInfo(
             name=name,
@@ -110,11 +110,13 @@ def _file_info_from_stat(path: str, stat_result: os.stat_result) -> Result[FileI
     )
 
 
-def _to_file_error(error: Exception, path: str | None = None) -> FileError:
+def _to_file_error(error: Exception, fallback_path: str | None = None) -> FileError:
     if isinstance(error, FileError):
         return error
     cause = to_error(error)
     message = str(cause)
+    # Prefer the path the OS actually reported over the caller's fallback.
+    path = error.filename if isinstance(error, OSError) and isinstance(error.filename, str) else fallback_path
     if isinstance(error, OSError):
         match error.errno:
             case errno_module.ENOENT:
@@ -301,6 +303,19 @@ class LocalExecutionEnv:
             return ok(None)
         except Exception as error:
             return err(_to_file_error(error, resolved))
+
+    async def rename_file(
+        self, source_path: str, destination_path: str, cancel: CancelToken | None = None
+    ) -> Result[None, FileError]:
+        source = _resolve_path(self.cwd, source_path)
+        destination = _resolve_path(self.cwd, destination_path)
+        if (aborted := _abort_result(cancel, destination)) is not None:
+            return aborted
+        try:
+            await tonio.spawn_blocking(os.replace, source, destination)
+            return ok(None)
+        except Exception as error:
+            return err(_to_file_error(error, source))
 
     async def file_info(self, path: str, cancel: CancelToken | None = None) -> Result[FileInfo, FileError]:
         resolved = _resolve_path(self.cwd, path)

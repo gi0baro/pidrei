@@ -138,6 +138,10 @@ class BeforeToolCallResult:
 
     block: bool | None = None
     reason: str | None = None
+    # Hint that the agent should stop after the current tool batch when this
+    # call is blocked. Early termination only happens when every finalized tool
+    # result in the batch sets this to true.
+    terminate: bool | None = None
 
 
 @dataclass(slots=True)

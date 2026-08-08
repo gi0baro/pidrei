@@ -426,7 +426,7 @@ class TestCustomModelsMergeBehavior:
                     "api": "openai-completions",
                     "models": [
                         {
-                            "id": "demo-model",
+                            "id": "kwargs-model",
                             "reasoning": True,
                             "input": ["text"],
                             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
@@ -439,18 +439,38 @@ class TestCustomModelsMergeBehavior:
                                     "thinking": {"$var": "thinking.enabled"},
                                 },
                             },
-                        }
+                        },
+                        {
+                            "id": "args-model",
+                            "reasoning": True,
+                            "input": ["text"],
+                            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                            "contextWindow": 1000,
+                            "maxTokens": 100,
+                            "compat": {
+                                "thinkingFormat": "baseten",
+                                "chatTemplateArgs": {
+                                    "enable_thinking": {"$var": "thinking.enabled"},
+                                },
+                            },
+                        },
                     ],
                 }
             },
         )
 
         registry = await create_model_registry(auth_storage, models_json_path)
-        compat = registry.find("demo", "demo-model").compat
+        kwargs_compat = registry.find("demo", "kwargs-model").compat
+        args_compat = registry.find("demo", "args-model").compat
 
         assert registry.get_error() is None
-        assert compat.thinking_format == "chat-template"
-        assert compat.chat_template_kwargs == {"preserve_thinking": True, "thinking": {"$var": "thinking.enabled"}}
+        assert kwargs_compat.thinking_format == "chat-template"
+        assert kwargs_compat.chat_template_kwargs == {
+            "preserve_thinking": True,
+            "thinking": {"$var": "thinking.enabled"},
+        }
+        assert args_compat.thinking_format == "baseten"
+        assert args_compat.chat_template_args == {"enable_thinking": {"$var": "thinking.enabled"}}
 
     @pytest.mark.tonio
     async def test_compat_schema_accepts_anthropic_eager_tool_input_streaming_flag(self, registry_env):
@@ -639,6 +659,41 @@ class TestModelOverrides:
 
         assert next(model for model in models if model.id == first_id).name == "Custom Sonnet Name"
         assert next(model for model in models if model.id == second_id).name != "Custom Sonnet Name"
+
+    @pytest.mark.tonio
+    async def test_custom_model_and_model_override_carry_sampling_params(self, registry_env):
+        """Adapted: pi exercises both halves on the openrouter builtin; here the
+        custom model lives on a demo provider and the override targets an
+        anthropic built-in (no openrouter builtin yet)."""
+        _tmp, models_json_path, auth_storage = registry_env
+        first_id, second_id = ANTHROPIC_IDS[0], ANTHROPIC_IDS[1]
+        write_models_json(
+            models_json_path,
+            {
+                "demo": {
+                    "baseUrl": "https://my-proxy.example.com/v1",
+                    "apiKey": "test-key",
+                    "api": "openai-completions",
+                    "models": [
+                        {
+                            "id": "custom/sampling-model",
+                            "samplingParams": {"temperature": 1, "top_p": 0.95, "top_k": 0},
+                        }
+                    ],
+                },
+                "anthropic": {"modelOverrides": {first_id: {"samplingParams": {"top_p": 0.9}}}},
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+
+        custom = registry.find("demo", "custom/sampling-model")
+        assert custom.sampling_params == {"temperature": 1, "top_p": 0.95, "top_k": 0}
+
+        models = models_for_provider(registry, "anthropic")
+        assert next(model for model in models if model.id == first_id).sampling_params == {"top_p": 0.9}
+        # Models without sampling config keep it unset.
+        assert next(model for model in models if model.id == second_id).sampling_params is None
 
     @pytest.mark.tonio
     async def test_model_override_with_compat_open_router_routing(self, registry_env):
@@ -897,10 +952,6 @@ class TestDynamicProviderLifecycle:
 
     @pytest.mark.tonio
     async def test_stored_api_key_env_propagates_to_request_auth_and_resolves_headers(self, registry_env):
-        """Adapted from pi's cloudflare-ai-gateway variant: a custom provider
-        exercises the same stored-credential env propagation (the cf builtin
-        lands in Phase 5). Unlike cf's builtin auth, the custom provider
-        resolves the key into apiKey and keeps all env values."""
         _tmp, models_json_path, auth_storage = registry_env
 
         async def set_credential(_current):
@@ -913,29 +964,28 @@ class TestDynamicProviderLifecycle:
                 },
             )
 
-        await auth_storage.modify("gateway-provider", set_credential)
+        await auth_storage.modify("cloudflare-ai-gateway", set_credential)
         write_models_json(
             models_json_path,
-            {
-                "gateway-provider": {
-                    **provider_config("https://gateway.test/v1", [{"id": "gw-model"}], "openai-completions"),
-                    "headers": {"x-account": "$CLOUDFLARE_ACCOUNT_ID"},
-                }
-            },
+            {"cloudflare-ai-gateway": {"headers": {"x-account": "$CLOUDFLARE_ACCOUNT_ID"}}},
         )
 
         registry = await create_model_registry(auth_storage, models_json_path)
-        model = registry.find("gateway-provider", "gw-model")
+        model = next((entry for entry in registry.get_all() if entry.provider == "cloudflare-ai-gateway"), None)
         assert model is not None
 
         auth = await registry.get_api_key_and_headers(model)
 
         assert auth == ResolvedRequestAuth(
             ok=True,
-            api_key="stored-cf-token",
-            headers={"x-account": "stored-account"},
+            api_key=None,
+            headers={
+                "cf-aig-authorization": "Bearer stored-cf-token",
+                "Authorization": None,
+                "x-api-key": None,
+                "x-account": "stored-account",
+            },
             env={
-                "CLOUDFLARE_API_KEY": "stored-cf-token",
                 "CLOUDFLARE_ACCOUNT_ID": "stored-account",
                 "CLOUDFLARE_GATEWAY_ID": "stored-gateway",
             },

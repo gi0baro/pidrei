@@ -7,18 +7,20 @@ from pidrei_ai.auth.types import (
     AuthContext,
     AuthEvent,
     AuthInfoLink,
-    AuthInteraction,
     AuthPrompt,
     AuthPromptOption,
     AuthResult,
     ModelAuth,
     ProviderAuth,
+    ProviderAuthInteraction,
 )
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.registry import Provider, create_provider
+from pidrei_ai.utils.cancel import CancelToken
 
 
-async def _login(interaction: AuthInteraction) -> ApiKeyCredential:
+async def _login(interaction: ProviderAuthInteraction) -> ApiKeyCredential:
+    interaction.cancel.raise_if_cancelled()
     method = await interaction.prompt(
         AuthPrompt(
             type="select",
@@ -30,6 +32,7 @@ async def _login(interaction: AuthInteraction) -> ApiKeyCredential:
             ],
         )
     )
+    interaction.cancel.raise_if_cancelled()
     if method == "bearer-token":
         return ApiKeyCredential(
             key=await interaction.prompt(AuthPrompt(type="secret", message="Enter Amazon Bedrock bearer token"))
@@ -56,25 +59,31 @@ async def _login(interaction: AuthInteraction) -> ApiKeyCredential:
     return ApiKeyCredential()
 
 
-async def _resolve(ctx: AuthContext, credential: ApiKeyCredential | None) -> AuthResult | None:
+async def _resolve(ctx: AuthContext, credential: ApiKeyCredential | None, cancel: CancelToken) -> AuthResult | None:
+    async def env(name: str) -> str | None:
+        cancel.raise_if_cancelled()
+        value = await ctx.env(name)
+        cancel.raise_if_cancelled()
+        return value
+
     credential_env = (credential.env if credential is not None else None) or {}
     if credential is not None and credential.key:
         return AuthResult(auth=ModelAuth(api_key=credential.key), env=credential.env, source="stored credential")
-    if await ctx.env("AWS_BEARER_TOKEN_BEDROCK"):
+    if await env("AWS_BEARER_TOKEN_BEDROCK"):
         return AuthResult(auth=ModelAuth(), source="AWS_BEARER_TOKEN_BEDROCK")
-    if credential_env.get("AWS_PROFILE") or await ctx.env("AWS_PROFILE"):
+    if credential_env.get("AWS_PROFILE") or await env("AWS_PROFILE"):
         return AuthResult(
             auth=ModelAuth(),
             env=credential.env if credential is not None else None,
             source="stored credential" if credential_env.get("AWS_PROFILE") else "AWS_PROFILE",
         )
-    if await ctx.env("AWS_ACCESS_KEY_ID") and await ctx.env("AWS_SECRET_ACCESS_KEY"):
+    if await env("AWS_ACCESS_KEY_ID") and await env("AWS_SECRET_ACCESS_KEY"):
         return AuthResult(auth=ModelAuth(), source="AWS access keys")
-    if await ctx.env("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"):
+    if await env("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"):
         return AuthResult(auth=ModelAuth(), source="ECS task role")
-    if await ctx.env("AWS_CONTAINER_CREDENTIALS_FULL_URI"):
+    if await env("AWS_CONTAINER_CREDENTIALS_FULL_URI"):
         return AuthResult(auth=ModelAuth(), source="ECS task role")
-    if await ctx.env("AWS_WEB_IDENTITY_TOKEN_FILE"):
+    if await env("AWS_WEB_IDENTITY_TOKEN_FILE"):
         return AuthResult(auth=ModelAuth(), source="web identity token")
     return None
 

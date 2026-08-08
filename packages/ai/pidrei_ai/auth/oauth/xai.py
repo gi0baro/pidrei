@@ -7,7 +7,7 @@ from typing import Any
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
 from pidrei_ai.auth.oauth.urls import https_url
-from pidrei_ai.auth.types import AuthEvent, AuthInteraction, ModelAuth, OAuthAuth, OAuthCredential
+from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
@@ -60,20 +60,18 @@ def _validate_verification_uri(raw: str) -> str:
     return url
 
 
-async def _post_form(
-    url: str, fields: dict[str, str], cancel: CancelToken | None = None
-) -> oauth_http.OAuthHttpResponse:
+async def _post_form(url: str, fields: dict[str, str], cancel: CancelToken) -> oauth_http.OAuthHttpResponse:
     try:
         return await oauth_http.request(url, form=fields, headers=_FORM_HEADERS, cancel=cancel)
     except AbortError:
         raise RuntimeError("Login cancelled") from None
 
 
-def _response_body(response: oauth_http.OAuthHttpResponse, cancel: CancelToken | None) -> dict[str, Any]:
+def _response_body(response: oauth_http.OAuthHttpResponse, cancel: CancelToken) -> dict[str, Any]:
     try:
         parsed = response.json()
     except ValueError:
-        if cancel is not None and cancel.cancelled:
+        if cancel.cancelled:
             raise RuntimeError("Login cancelled") from None
         raise RuntimeError(f"xAI OAuth returned invalid JSON (HTTP {response.status})") from None
     return parsed if isinstance(parsed, dict) else {}
@@ -132,7 +130,7 @@ def _credentials_from_token_response(
     )
 
 
-async def _request_device_code(cancel: CancelToken | None = None) -> _XaiDeviceCode:
+async def _request_device_code(cancel: CancelToken) -> _XaiDeviceCode:
     response = await _post_form(
         XAI_DEVICE_CODE_URL,
         {"client_id": XAI_CLIENT_ID, "scope": XAI_SCOPE, "referrer": "pi"},
@@ -144,7 +142,7 @@ async def _request_device_code(cancel: CancelToken | None = None) -> _XaiDeviceC
     return _parse_device_code(body)
 
 
-async def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken | None = None) -> OAuthCredential:
+async def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken) -> OAuthCredential:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _post_form(
             XAI_TOKEN_URL,
@@ -188,7 +186,7 @@ async def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken | None = 
     )
 
 
-async def _login_xai(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_xai(interaction: ProviderAuthInteraction) -> OAuthCredential:
     device = await _request_device_code(interaction.cancel)
     interaction.notify(
         AuthEvent(
@@ -202,7 +200,7 @@ async def _login_xai(interaction: AuthInteraction) -> OAuthCredential:
     return await _poll_for_tokens(device, interaction.cancel)
 
 
-async def _refresh_xai_token(refresh_token: str, cancel: CancelToken | None = None) -> OAuthCredential:
+async def _refresh_xai_token(refresh_token: str, cancel: CancelToken) -> OAuthCredential:
     response = await _post_form(
         XAI_TOKEN_URL,
         {"grant_type": "refresh_token", "client_id": XAI_CLIENT_ID, "refresh_token": refresh_token},
@@ -214,7 +212,7 @@ async def _refresh_xai_token(refresh_token: str, cancel: CancelToken | None = No
     return _credentials_from_token_response(body, refresh_token)
 
 
-async def _refresh(credential: OAuthCredential, cancel: CancelToken | None) -> OAuthCredential:
+async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
     return await _refresh_xai_token(credential.refresh, cancel)
 
 
@@ -224,6 +222,7 @@ async def _to_auth(credential: OAuthCredential) -> ModelAuth:
 
 xai_oauth = OAuthAuth(
     name="xAI (Grok/X subscription)",
+    is_subscription=True,
     login_label="Sign in with SuperGrok or X Premium",
     login=_login_xai,
     refresh=_refresh,

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from model_data import (  # sibling script, not an installed module
     MODEL_DATA_MANIFEST_FILE,
     ModelDataStructure,
+    assert_exact_model_ids,
     create_model_data_manifest,
     validate_generated_model_data,
     validate_model_data_directory,
@@ -190,6 +191,21 @@ QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = {
     "qwen3.7-max",
     "qwen3.7-plus",
 }
+# Retired preview id — models.dev may still list it after GA ships.
+QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = {"qwen3.8-max-preview"}
+QWEN_TOKEN_PLAN_PROVIDER_IDS = {"qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"}
+# QwenCloud Token Plan Individual text-model allowlist, verified 2026-08-05.
+# Retired models remain excluded above even if the public catalog lags.
+# https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
+QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = {
+    "deepseek-v4-flash-0731",
+    "deepseek-v4-pro",
+    "glm-5.2",
+    "qwen3.6-flash",
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.8-max",
+}
 
 KIMI_K3_MAX_TOKENS = 131072
 KIMI_K3_COST = {"input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 0}
@@ -310,13 +326,22 @@ def with_openai_long_context_pricing(cost: dict[str, Any]) -> dict[str, Any]:
         "tiers": [
             {
                 "inputTokensAbove": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
-                "input": cost["input"] * 2,
-                "output": cost["output"] * 1.5,
-                "cacheRead": cost["cacheRead"] * 2,
-                "cacheWrite": cost["cacheWrite"] * 2,
+                "input": round_cost(cost["input"] * 2),
+                "output": round_cost(cost["output"] * 1.5),
+                "cacheRead": round_cost(cost["cacheRead"] * 2),
+                "cacheWrite": round_cost(cost["cacheWrite"] * 2),
             }
         ],
     }
+
+
+# OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. Keep these
+# authoritative values until models.dev and passthrough catalogs catch up.
+# https://developers.openai.com/api/docs/pricing
+OPENAI_GPT_56_STANDARD_COSTS: dict[str, dict[str, Any]] = {
+    "gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cacheRead": 0.02, "cacheWrite": 0.25},
+    "gpt-5.6-terra": {"input": 2, "output": 12, "cacheRead": 0.2, "cacheWrite": 2.5},
+}
 
 
 def merge_thinking_level_map(model: dict[str, Any], mapping: dict[str, str | None]) -> None:
@@ -419,6 +444,7 @@ OPENAI_COMPLETIONS_DEFAULT_COMPAT: dict[str, Any] = {
     "supportsDeveloperRole": True,
     "supportsReasoningEffort": True,
     "supportsUsageInStreaming": True,
+    "supportsFinishReason": True,
     "maxTokensField": "max_completion_tokens",
     "requiresToolResultName": False,
     "requiresAssistantAfterToolResult": False,
@@ -428,6 +454,7 @@ OPENAI_COMPLETIONS_DEFAULT_COMPAT: dict[str, Any] = {
     "openRouterRouting": {},
     "vercelGatewayRouting": {},
     "chatTemplateKwargs": {},
+    "chatTemplateArgs": {},
     "zaiToolStream": False,
     "supportsStrictMode": True,
     "supportsOpenAIGrammarTools": False,
@@ -507,6 +534,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
             is_grok or is_zai or is_moonshot or is_together or is_cloudflare_ai_gateway or is_nvidia or is_ant_ling
         ),
         "supportsUsageInStreaming": True,
+        "supportsFinishReason": True,
         "maxTokensField": "max_tokens" if use_max_tokens else "max_completion_tokens",
         "requiresToolResultName": False,
         "requiresAssistantAfterToolResult": False,
@@ -516,6 +544,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
         "openRouterRouting": {},
         "vercelGatewayRouting": {},
         "chatTemplateKwargs": {},
+        "chatTemplateArgs": {},
         "zaiToolStream": False,
         "supportsStrictMode": not (is_moonshot or is_together or is_cloudflare_ai_gateway or is_nvidia),
         "supportsOpenAIGrammarTools": False,
@@ -630,7 +659,7 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
         merge_thinking_level_map(
             model, {"off": None, "minimal": "MINIMAL", "low": None, "medium": None, "high": "HIGH"}
         )
-    if provider == "groq" and model_id == "qwen/qwen3-32b":
+    if provider == "groq" and model_id == "qwen/qwen3.6-27b":
         merge_thinking_level_map(model, {"minimal": None, "low": None, "medium": None, "high": "default"})
     if provider == "openai-codex" and supports_openai_xhigh(model_id):
         merge_thinking_level_map(model, {"minimal": "low"})
@@ -1284,35 +1313,7 @@ def _load_gateway_providers(
         record("huggingface", model_id, source)
 
     # Fireworks
-    for model_id, source in _models_of(catalog, "fireworks-ai").items():
-        if not _tool_capable(source):
-            continue
-        models.append(
-            {
-                "id": model_id,
-                "name": source.get("name") or model_id,
-                "api": "anthropic-messages",
-                "provider": "fireworks",
-                # Fireworks Anthropic-compatible API - SDK appends /v1/messages
-                "baseUrl": "https://api.fireworks.ai/inference",
-                "reasoning": source.get("reasoning") is True,
-                "input": _input(source),
-                "cost": _cost(source),
-                "contextWindow": _context(source),
-                "maxTokens": _max_tokens(source),
-                # Fireworks prompt caching uses automatic prefix matching + session
-                # affinity: x-session-affinity routes requests to the same replica for
-                # cache hits, and cache_control on tools / eager_input_streaming are
-                # unsupported. https://docs.fireworks.ai/tools-sdks/anthropic-compatibility
-                "compat": {
-                    "sendSessionAffinityHeaders": True,
-                    "supportsEagerToolInputStreaming": False,
-                    "supportsCacheControlOnTools": False,
-                    "supportsLongCacheRetention": False,
-                },
-            }
-        )
-        record("fireworks", model_id, source)
+    models.extend(_process_fireworks_models(_models_of(catalog, "fireworks-ai"), record))
 
     # NVIDIA NIM
     for model_id, source in _models_of(catalog, "nvidia").items():
@@ -1381,6 +1382,171 @@ def _load_gateway_providers(
         }
         models.append(model)
         record("together", model_id, source)
+
+    # Baseten
+    models.extend(_process_baseten_models(_models_of(catalog, "baseten"), record))
+
+    return models
+
+
+def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorder) -> list[dict[str, Any]]:
+    anthropic_compat = {
+        "sendSessionAffinityHeaders": True,
+        "supportsEagerToolInputStreaming": False,
+        "supportsCacheControlOnTools": False,
+        "supportsLongCacheRetention": False,
+    }
+    openai_compat = {
+        "supportsStore": False,
+        "supportsDeveloperRole": False,
+        "sendSessionAffinityHeaders": True,
+        "supportsLongCacheRetention": False,
+    }
+    kimi_k3_compat = {
+        **openai_compat,
+        "requiresReasoningContentOnAssistantMessages": True,
+        "thinkingFormat": "openai",
+        "deferredToolsMode": "kimi",
+    }
+    models: list[dict[str, Any]] = []
+
+    for model_id, source in fireworks_models.items():
+        if not _tool_capable(source):
+            continue
+
+        common = {
+            "id": model_id,
+            "name": source.get("name") or model_id,
+            "provider": "fireworks",
+            "reasoning": source.get("reasoning") is True,
+            "input": _input(source),
+            "cost": _cost(source),
+            "contextWindow": _context(source),
+            "maxTokens": _max_tokens(source),
+        }
+
+        if "glm-5p2" in model_id:
+            models.append(
+                {
+                    **common,
+                    "api": "openai-completions",
+                    "baseUrl": "https://api.fireworks.ai/inference/v1",
+                    "compat": dict(openai_compat),
+                }
+            )
+        elif "kimi-k3" in model_id:
+            models.append(
+                {
+                    **common,
+                    "api": "openai-completions",
+                    "baseUrl": "https://api.fireworks.ai/inference/v1",
+                    "compat": dict(kimi_k3_compat),
+                }
+            )
+        else:
+            models.append(
+                {
+                    **common,
+                    "api": "anthropic-messages",
+                    # Fireworks Anthropic-compatible API - SDK appends /v1/messages.
+                    "baseUrl": "https://api.fireworks.ai/inference",
+                    # Fireworks prompt caching uses automatic prefix matching + session
+                    # affinity: x-session-affinity routes requests to the same replica for
+                    # cache hits, and cache_control on tools / eager_input_streaming are
+                    # unsupported. https://docs.fireworks.ai/tools-sdks/anthropic-compatibility
+                    "compat": dict(anthropic_compat),
+                }
+            )
+        record("fireworks", model_id, source)
+
+    return models
+
+
+def _process_baseten_models(baseten_models: dict[str, Any], record: _Recorder) -> list[dict[str, Any]]:
+    base_url = "https://inference.baseten.co/v1"
+    base_compat: dict[str, Any] = {
+        "supportsStore": False,
+        "supportsDeveloperRole": False,
+        "supportsReasoningEffort": False,
+        "supportsUsageInStreaming": True,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": True,
+        "supportsLongCacheRetention": False,
+    }
+    reasoning_effort_compat = {**base_compat, "supportsReasoningEffort": True, "thinkingFormat": "openai"}
+    toggle_reasoning_compat = {
+        **base_compat,
+        "thinkingFormat": "baseten",
+        "chatTemplateArgs": {"enable_thinking": {"$var": "thinking.enabled"}},
+    }
+    toggle_reasoning_effort_compat = {
+        **reasoning_effort_compat,
+        "thinkingFormat": "baseten",
+        "chatTemplateArgs": {"enable_thinking": {"$var": "thinking.enabled"}},
+    }
+    toggle_thinking_level_map = {
+        "off": "off",
+        "minimal": None,
+        "low": None,
+        "medium": None,
+        "high": "high",
+        "xhigh": None,
+        "max": None,
+    }
+    glm52_thinking_level_map = {
+        "off": "none",
+        "minimal": None,
+        "low": None,
+        "medium": None,
+        "high": "high",
+        "xhigh": None,
+        "max": "max",
+    }
+    models: list[dict[str, Any]] = []
+
+    for model_id, source in baseten_models.items():
+        if source.get("status") == "deprecated":
+            continue
+
+        reasoning = source.get("reasoning") is True
+        reasoning_options = source.get("reasoning_options") or []
+        is_glm52 = model_id in ("zai-org/GLM-5.2", "zai-org/GLM-5.2-Fast")
+        supports_toggle = any(option.get("type") == "toggle" for option in reasoning_options) or is_glm52
+        supports_effort = any(option.get("type") == "effort" for option in reasoning_options) or is_glm52
+        if supports_toggle and supports_effort:
+            compat = toggle_reasoning_effort_compat
+        elif supports_toggle:
+            compat = toggle_reasoning_compat
+        elif supports_effort:
+            compat = reasoning_effort_compat
+        else:
+            compat = base_compat
+        if is_glm52:
+            thinking_level_map = glm52_thinking_level_map
+        elif supports_toggle:
+            thinking_level_map = toggle_thinking_level_map
+        else:
+            thinking_level_map = get_effort_thinking_level_map(reasoning_options)
+
+        model = {
+            "id": model_id,
+            "name": source.get("name") or model_id,
+            "api": "openai-completions",
+            "provider": "baseten",
+            "baseUrl": base_url,
+            "reasoning": reasoning,
+        }
+        if thinking_level_map:
+            model["thinkingLevelMap"] = dict(thinking_level_map)
+        model |= {
+            "input": _input(source),
+            "cost": _cost(source),
+            "compat": dict(compat),
+            "contextWindow": _context(source),
+            "maxTokens": _max_tokens(source),
+        }
+        models.append(model)
+        record("baseten", model_id, source)
 
     return models
 
@@ -1476,8 +1642,8 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
 
         # Claude 4.x and 5.x models route to the Anthropic Messages API.
         is_copilot_claude = _COPILOT_CLAUDE_RE.match(model_id) is not None
-        # gpt-5, oswe and MAI-Code models are only served through /responses.
-        needs_responses_api = model_id.startswith(("gpt-5", "oswe", "mai-"))
+        # Grok 4.5, gpt-5, oswe and MAI-Code models are only served through /responses.
+        needs_responses_api = model_id == "grok-4.5" or model_id.startswith(("gpt-5", "oswe", "mai-"))
         api = (
             "anthropic-messages"
             if is_copilot_claude
@@ -1670,29 +1836,52 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
             )
             record(provider, model_id, source)
 
-    # Alibaba Cloud Model Studio Token Plan. Two regions (international / cn) with
-    # identical catalogs, separate endpoints and API keys (sk-sp- prefix). models.dev
-    # keys them as "alibaba-token-plan[-cn]"; pi exposes them as "qwen-token-plan[-cn]".
+    models.extend(_process_qwen_token_plan_models(catalog, record))
+
+    return models
+
+
+def _process_qwen_token_plan_models(catalog: dict[str, Any], record: _Recorder) -> list[dict[str, Any]]:
+    """Alibaba Cloud Model Studio Token Plan. International and China use separate
+    endpoints and API keys (sk-sp- prefix). The Individual provider reuses the
+    international source and endpoint with a narrower catalog. models.dev keys are
+    "alibaba-token-plan[-cn]"; pi exposes them as "qwen-token-plan[-cn]" plus the
+    Individual catalog view.
+    """
     qwen_token_plan_compat: dict[str, Any] = {
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": False,
         "supportsStore": False,
         "supportsReasoningEffort": True,
     }
-    for source_key, provider, base_url in (
+    models: list[dict[str, Any]] = []
+    for source_key, provider, base_url, allowed_model_ids in (
         (
             "alibaba-token-plan",
             "qwen-token-plan",
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+            None,
+        ),
+        (
+            "alibaba-token-plan",
+            "qwen-token-plan-individual",
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+            QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS,
         ),
         (
             "alibaba-token-plan-cn",
             "qwen-token-plan-cn",
             "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            None,
         ),
     ):
+        emitted_model_ids: set[str] | None = set() if allowed_model_ids is not None else None
         for model_id, source in _models_of(catalog, source_key).items():
             if not _tool_capable(source):
+                continue
+            if model_id in QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS:
+                continue
+            if allowed_model_ids is not None and model_id not in allowed_model_ids:
                 continue
             supports_reasoning_effort = model_id not in QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS
             entry: dict[str, Any] = {
@@ -1713,11 +1902,18 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
             if supports_reasoning_effort:
                 entry["thinkingLevelMap"] = dict(
                     QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
-                    if model_id == "qwen3.8-max-preview"
+                    if model_id == "qwen3.8-max"
                     else QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP
                 )
             models.append(entry)
+            if emitted_model_ids is not None:
+                emitted_model_ids.add(model_id)
             record(provider, model_id, source)
+
+        # pi gates this on `--strict`; this generator is always-strict (see the
+        # module docstring's deviation note).
+        if allowed_model_ids is not None and emitted_model_ids is not None:
+            assert_exact_model_ids(provider, allowed_model_ids, emitted_model_ids)
 
     return models
 
@@ -1766,7 +1962,7 @@ MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "reasoning": True,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing({"input": 2.5, "output": 15, "cacheRead": 0.25, "cacheWrite": 3.125}),
+        "cost": with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
         "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
         "maxTokens": 128000,
     },
@@ -1778,7 +1974,7 @@ MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "reasoning": True,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing({"input": 1, "output": 6, "cacheRead": 0.1, "cacheWrite": 1.25}),
+        "cost": with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
         "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
         "maxTokens": 128000,
     },
@@ -1946,7 +2142,7 @@ CODEX_MODELS: list[dict[str, Any]] = [
     _codex_model(
         "gpt-5.6-luna",
         "GPT-5.6 Luna",
-        with_openai_long_context_pricing({"input": 1, "output": 6, "cacheRead": 0.1, "cacheWrite": 1.25}),
+        with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
         context_window=CODEX_GPT_56_CONTEXT,
         model_input=["text", "image"],
     ),
@@ -1960,7 +2156,7 @@ CODEX_MODELS: list[dict[str, Any]] = [
     _codex_model(
         "gpt-5.6-terra",
         "GPT-5.6 Terra",
-        with_openai_long_context_pricing({"input": 2.5, "output": 15, "cacheRead": 0.25, "cacheWrite": 3.125}),
+        with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
         context_window=CODEX_GPT_56_CONTEXT,
         model_input=["text", "image"],
     ),
@@ -2007,7 +2203,15 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
             candidate["contextWindow"] = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD
             candidate["maxTokens"] = 128000
         if provider == "openai" and model_id in OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS:
-            candidate["cost"] = with_openai_long_context_pricing(candidate["cost"])
+            standard_cost = OPENAI_GPT_56_STANDARD_COSTS.get(model_id)
+            candidate["cost"] = with_openai_long_context_pricing(
+                standard_cost if standard_cost is not None else candidate["cost"]
+            )
+        # Cloudflare AI Gateway passes OpenAI usage through at OpenAI list prices.
+        if provider == "cloudflare-ai-gateway":
+            standard_cost = OPENAI_GPT_56_STANDARD_COSTS.get(model_id)
+            if standard_cost:
+                candidate["cost"] = with_openai_long_context_pricing(standard_cost)
         # models.dev reports gpt-5-pro output as 272000 (a duplicate of the input
         # sub-limit); the actual max output is 128000. Propagates to the Azure clone.
         if provider == "openai" and model_id == "gpt-5-pro":
@@ -2033,10 +2237,6 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
             candidate["cost"]["input"] = 0.6
             candidate["cost"]["output"] = 1.9
             candidate["cost"]["cacheRead"] = 0.119
-        if provider == "fireworks" and "glm-5p2" in model_id:
-            candidate["api"] = "openai-completions"
-            candidate["baseUrl"] = "https://api.fireworks.ai/inference/v1"
-            candidate["compat"] = {"supportsStore": False, "supportsDeveloperRole": False}
 
 
 def apply_deepseek_v4_compat(models: list[dict[str, Any]]) -> None:
@@ -2044,7 +2244,7 @@ def apply_deepseek_v4_compat(models: list[dict[str, Any]]) -> None:
         if (
             candidate["api"] != "openai-completions"
             or "deepseek-v4" not in candidate["id"]
-            or candidate["provider"] in ("qwen-token-plan", "qwen-token-plan-cn")
+            or candidate["provider"] in QWEN_TOKEN_PLAN_PROVIDER_IDS
         ):
             continue
         preserves_native_reasoning_effort = candidate["provider"] in ("openrouter", "opencode")

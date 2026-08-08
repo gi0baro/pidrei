@@ -13,7 +13,13 @@ def openai_codex_provider() -> Provider:
         id="openai-codex",
         name="OpenAI Codex",
         base_url="https://chatgpt.com/backend-api",
-        auth=ProviderAuth(oauth=lazy_oauth(name="OpenAI (ChatGPT Plus/Pro)", load=load_openai_codex_oauth)),
+        auth=ProviderAuth(
+            oauth=lazy_oauth(
+                name="OpenAI (ChatGPT Plus/Pro)",
+                is_subscription=True,
+                load=load_openai_codex_oauth,
+            )
+        ),
         models=list(MODELS.get("openai-codex", [])),
         api=openai_codex_responses_api(),
     )

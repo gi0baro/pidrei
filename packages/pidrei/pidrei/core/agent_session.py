@@ -1476,11 +1476,10 @@ class AgentSession:
         return await self._cycle_available_model(direction)
 
     async def _cycle_scoped_model(self, direction: str) -> ModelCycleResult | None:
-        checks = []
-        for scoped in self._scoped_models:
-            auth = await self._model_runtime.check_auth(scoped.model.provider)
-            checks.append((scoped, auth))
-        scoped_models = [scoped for scoped, auth in checks if auth is not None]
+        available_ids = {(model.provider, model.id) for model in self._model_runtime.get_available_snapshot()}
+        scoped_models = [
+            scoped for scoped in self._scoped_models if (scoped.model.provider, scoped.model.id) in available_ids
+        ]
         if len(scoped_models) <= 1:
             return None
 
@@ -1508,7 +1507,7 @@ class AgentSession:
         return ModelCycleResult(model=next_scoped.model, thinking_level=self.thinking_level, is_scoped=True)
 
     async def _cycle_available_model(self, direction: str) -> ModelCycleResult | None:
-        available_models = await self._model_runtime.get_available()
+        available_models = self._model_runtime.get_available_snapshot()
         if len(available_models) <= 1:
             return None
 

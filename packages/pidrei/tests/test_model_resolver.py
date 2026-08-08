@@ -78,7 +78,10 @@ class MockRuntime:
     def get_models(self):
         return list(self._models)
 
-    async def get_available(self):
+    async def get_available(self, provider_id=None, options=None):
+        return list(self._models)
+
+    def get_available_snapshot(self):
         return list(self._models)
 
     def get_model(self, provider, model_id):
@@ -468,6 +471,9 @@ class TestDefaultModelSelection:
     def test_ai_gateway_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["vercel-ai-gateway"] == "zai/glm-5.1"
 
+    def test_qwen_token_plan_individual_default_tracks_current_model(self):
+        assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual"] == "qwen3.8-max"
+
     @pytest.mark.tonio
     async def test_find_initial_model_accepts_explicit_provider_custom_model_ids(self):
         result = await find_initial_model(
@@ -533,7 +539,7 @@ class TestDefaultModelSelection:
             def has_configured_auth(self, provider):
                 return provider == "spark-two"
 
-            async def get_available(self):
+            def get_available_snapshot(self):
                 return [local_deepseek]
 
         result = await find_initial_model(

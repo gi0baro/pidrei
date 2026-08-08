@@ -24,14 +24,22 @@ from typing import Any
 import tonio.colored as tonio
 
 from .cli.args import Args, parse_args, print_help
-from .cli.credential_print import (
-    CredentialPrintError,
-    is_credential_print_help,
-    parse_credential_print_command,
-    print_credential_print_help,
-    resolve_credential_for_print,
-    validate_credential_print_args,
+from .cli.auth_check import (
+    AuthCheckResult,
+    check_provider_auth,
+    create_auth_check_model_runtime,
+    get_provider_credential,
 )
+from .cli.auth_command import (
+    AuthCommandError,
+    get_auth_command_name,
+    get_auth_command_usage,
+    is_auth_command_help,
+    parse_auth_command,
+    print_auth_command_help,
+    validate_auth_command_args,
+)
+from .cli.credential_print import resolve_credential_for_print
 from .cli.file_processor import process_file_arguments
 from .cli.initial_message import InitialMessageResult, build_initial_message
 from .cli.list_models import list_models
@@ -39,7 +47,7 @@ from .cli.package_commands import handle_config_command, handle_package_command
 from .cli.project_trust import CreateProjectTrustContextOptions, create_project_trust_context
 from .cli.session_picker import select_session
 from .cli.startup_ui import should_run_first_time_setup, show_first_time_setup, show_startup_selector
-from .config import ENV_SESSION_DIR, VERSION, expand_tilde_path, get_agent_dir
+from .config import APP_NAME, ENV_SESSION_DIR, VERSION, expand_tilde_path, get_agent_dir
 from .core.agent_session_runtime import CreateAgentSessionRuntimeResult, create_agent_session_runtime
 from .core.agent_session_services import (
     AgentSessionRuntimeDiagnostic,
@@ -49,6 +57,7 @@ from .core.agent_session_services import (
     create_agent_session_services,
 )
 from .core.auth_guidance import format_no_models_available_message
+from .core.auth_storage import AuthStorage, ReadOnlyAuthStorage
 from .core.http_config import apply_http_proxy_settings
 from .core.model_resolver import resolve_cli_model, resolve_model_scope
 from .core.model_runtime import ModelRuntime
@@ -75,7 +84,21 @@ from .utils.paths import is_local_path, normalize_path, resolve_path
 
 EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pidrei -ne".'
 
+from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import ModelsRefreshOptions, models_are_equal
+from pidrei_ai.utils.cancel import CancelToken
+
+
+def _timeout_cancel(ms: float) -> CancelToken:
+    """Mirror of `AbortSignal.timeout(ms)` for one-shot CLI operations."""
+    token = CancelToken()
+
+    async def _expire() -> None:
+        await tonio.time.sleep(ms / 1000)
+        token.cancel(TimeoutError("The operation timed out."))
+
+    tonio.spawn.without_tracking(_expire())
+    return token
 
 
 async def _read_piped_stdin() -> str | None:
@@ -144,39 +167,80 @@ def _is_plain_runtime_metadata_command(parsed: Args) -> bool:
     return not parsed.print and parsed.mode is None and (parsed.help is True or parsed.list_models is not None)
 
 
-async def _run_credential_print_command(args: list[str]) -> bool:
-    """pi's runCredentialPrintCommand: handle `auth <command>` before normal
-    startup. Returns False when the args are not an auth command; error paths
-    raise SystemExit(1)."""
-    if is_credential_print_help(args):
-        print_credential_print_help()
-        return True
+async def _run_auth_command(args: list[str]) -> int | None:
+    """pi's runAuthCommand: handle `auth <command>` before normal startup.
+    Returns the process exit code, or None when the args are not an auth
+    command."""
+    import json as json_module
+
+    if is_auth_command_help(args):
+        print_auth_command_help()
+        return 0
 
     try:
-        command = parse_credential_print_command(args)
+        command = parse_auth_command(args)
     except Exception as error:
-        message = str(error) if isinstance(error, CredentialPrintError) else "Failed to parse auth command"
+        message = str(error) if isinstance(error, AuthCommandError) else "Failed to parse auth command"
         print(red(f"Error: {message}"), file=sys.stderr)
-        raise SystemExit(1) from None
+        return 1
     if command is None:
-        return False
+        return None
 
     parsed = parse_args(command.args)
-    if parsed.diagnostics:
-        for diagnostic in parsed.diagnostics:
-            print(red(f"Error: {diagnostic['message']}"), file=sys.stderr)
-        raise SystemExit(1)
-
+    if parsed.unknown_flags:
+        option = next(iter(parsed.unknown_flags))
+        print(red(f'Unknown option --{option} for "{get_auth_command_name(command.kind)}".'), file=sys.stderr)
+        print(dim(f'Use "{APP_NAME} --help" or "{get_auth_command_usage(command.kind)}".'), file=sys.stderr)
+        return 1
     try:
-        validate_credential_print_args(parsed)
-        model_runtime = await ModelRuntime.create(allow_model_network=False)
-        credential = await resolve_credential_for_print(parsed, model_runtime, command.kind, command.min_expiry_ms)
-        sys.stdout.write(f"{credential}\n")
+        if parsed.diagnostics:
+            raise AuthCommandError("\n".join(diagnostic["message"] for diagnostic in parsed.diagnostics))
+        if command.kind != "check":
+            cancel = _timeout_cancel(15_000)
+            model_runtime = await ModelRuntime.create(allow_model_network=False, cancel=cancel)
+            credential = await resolve_credential_for_print(
+                parsed, model_runtime, command.kind, command.min_expiry_ms, cancel
+            )
+            sys.stdout.write(f"{credential}\n")
+            return 0
+
+        requested_provider, requested_model = validate_auth_command_args(parsed, command.kind)
+        credential: str | None = None
+        try:
+            credentials = ReadOnlyAuthStorage() if command.no_refresh else await AuthStorage.create()
+            model_runtime = await create_auth_check_model_runtime(credentials)
+            result = await check_provider_auth(parsed, model_runtime, refresh=not command.no_refresh)
+            if command.credentials and result.status == "ready":
+                credential = await get_provider_credential(
+                    result.provider, model_runtime, credentials, refresh=not command.no_refresh
+                )
+                if not credential:
+                    result = AuthCheckResult(
+                        status="not_ready", provider=result.provider, reason="credential_not_available"
+                    )
+        except Exception:
+            result = AuthCheckResult(
+                status="invalid",
+                provider=requested_provider if requested_provider is not None else requested_model,
+                reason="invalid_state",
+            )
+        if command.json:
+            payload = {"status": result.status, "provider": result.provider}
+            if result.reason is not None:
+                payload["reason"] = result.reason
+            if result.auth_type is not None:
+                payload["authType"] = result.auth_type
+            if credential:
+                payload["credentials"] = credential
+            output = json_module.dumps(payload, separators=(",", ":"))
+        else:
+            output = credential if credential else result.status
+        sys.stdout.write(f"{output}\n")
+        return 0 if result.status == "ready" else 1 if result.status == "not_ready" else 2
     except Exception as error:
-        message = str(error) if isinstance(error, CredentialPrintError) else "Failed to resolve credential"
+        message = str(error) if isinstance(error, AuthCommandError) else "Failed to resolve credential"
         print(red(f"Error: {message}"), file=sys.stderr)
-        raise SystemExit(1) from None
-    return True
+        return 2 if command.kind == "check" else 1
 
 
 async def _prepare_initial_message(
@@ -522,6 +586,10 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     bootstrap_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
 
+    auth_exit_code = await _run_auth_command(args)
+    if auth_exit_code is not None:
+        raise SystemExit(auth_exit_code)
+
     # The package subcommands run and exit here, before the normal argument
     # parse, exactly as pi dispatches them (package-manager-cli.ts).
     handled = await handle_package_command(args, extension_factories=extension_factories)
@@ -529,9 +597,6 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         handled = await handle_config_command(args, extension_factories=extension_factories)
     if handled is not False:
         raise SystemExit(handled)
-
-    if await _run_credential_print_command(args):
-        raise SystemExit(0)
 
     parsed = parse_args(args)
     if parsed.diagnostics:
@@ -689,6 +754,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 cwd=cwd,
                 agent_dir=agent_dir,
                 settings_manager=runtime_settings_manager,
+                model_runtime_cancel=_timeout_cancel(15_000),
                 extension_flag_values=dict(parsed.unknown_flags),
                 resource_loader_reload_options=(
                     {"resolve_project_trust": resolve_trust} if should_resolve_project_trust else None
@@ -725,7 +791,13 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         ]
 
         model_patterns = parsed.models if parsed.models is not None else settings_manager.get_enabled_models()
-        scoped_models = await resolve_model_scope(model_patterns, model_runtime) if model_patterns else []
+        scoped_models = (
+            await resolve_model_scope(
+                model_patterns, model_runtime, AuthOperationOptions(cancel=_timeout_cancel(15_000))
+            )
+            if model_patterns
+            else []
+        )
         session_options_result = _build_session_options(
             parsed,
             scoped_models,
@@ -745,10 +817,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                     )
                 )
             else:
-                await model_runtime.set_runtime_api_key(
-                    session_options.model.provider, parsed.api_key, ModelsRefreshOptions(allow_network=False)
-                )
-                await services.model_runtime.get_available()
+                await model_runtime.set_runtime_api_key(session_options.model.provider, parsed.api_key)
 
         created = await create_agent_session_from_services(
             CreateAgentSessionFromServicesOptions(
@@ -800,7 +869,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     if parsed.list_models is not None:
         search_pattern = parsed.list_models if isinstance(parsed.list_models, str) else None
-        await list_models(model_runtime, search_pattern)
+        await list_models(model_runtime, search_pattern, _timeout_cancel(15_000))
         raise SystemExit(0)
 
     # Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
@@ -842,7 +911,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
         async def _background_refresh() -> None:
             try:
-                await model_runtime.refresh()
+                await model_runtime.refresh(ModelsRefreshOptions(cancel=_timeout_cancel(15_000)))
             except Exception:
                 pass
 

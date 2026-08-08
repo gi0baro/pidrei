@@ -136,6 +136,7 @@ class ImagesModels:
                 AuthResolutionOverrides(
                     api_key=options.api_key if options else None,
                     env=options.env if options else None,
+                    cancel=options.cancel if options else None,
                 ),
             )
             auth = resolution.auth if resolution is not None else None

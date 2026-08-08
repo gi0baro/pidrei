@@ -559,7 +559,10 @@ class TestSdkSessionManagerDefaults:
         session = result.session
 
         assert session.session_file
-        assert "Inspect PIDREI_* environment variables for current model and session details." in session.system_prompt
+        assert (
+            "You can inspect PIDREI_* environment variables for current model and session details."
+            in session.system_prompt
+        )
 
         bash_tool = next((tool for tool in session.agent.state.tools if tool.name == "bash"), None)
         assert bash_tool is not None

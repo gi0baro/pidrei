@@ -176,10 +176,13 @@ class GoogleGenAI:
         env: ProviderEnv | None = None,
         cancel: CancelToken | None = None,
     ) -> AsyncGenerator[dict[str, Any]]:
-        """`client.models.generateContentStream(params)`.
+        """`await client.models.generateContentStream(params)`.
 
         pi never touches the rest of the `models` namespace, so the method sits
-        directly on the client instead of behind an empty holder object.
+        directly on the client instead of behind an empty holder object. Like
+        the SDK's promise, this resolves once the response headers arrive (so a
+        retry wrapper around the call covers the request, and `GoogleApiError`
+        raises here); only the body is consumed through the returned generator.
         """
         url = self._request_url(params["model"])
         body = build_request_body(params, vertexai=self._vertexai)
@@ -191,8 +194,7 @@ class GoogleGenAI:
             raw = (await response.read()).decode("utf-8", "replace")
             raise GoogleApiError(response.status_code, _error_message(response.status_code, raw))
 
-        async for chunk in _iterate_chunks(response, cancel):
-            yield chunk
+        return _iterate_chunks(response, cancel)
 
 
 def _error_message(status: int, raw: str) -> str:

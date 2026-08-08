@@ -67,11 +67,21 @@ class BedrockRuntimeServiceException(Exception):
     matches on those.
     """
 
-    def __init__(self, name: str, message: str, status: int | None = None, body: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        message: str,
+        status: int | None = None,
+        body: str | None = None,
+        request_id: str | None = None,
+    ):
         super().__init__(message)
         self.name = name
         self.status = status
         self.body = body
+        # The SDK's `$metadata.requestId`; present only when the error came from
+        # an HTTP response that carried `x-amzn-requestid`.
+        self.request_id = request_id
 
 
 @dataclass(slots=True)
@@ -312,7 +322,9 @@ def _service_exception_from_response(
     if isinstance(parsed, dict):
         name = name or str(parsed.get("__type", "")).split("#")[-1]
         message = parsed.get("message") or parsed.get("Message") or raw
-    return BedrockRuntimeServiceException(name or "UnknownError", message, status=status, body=raw)
+    return BedrockRuntimeServiceException(
+        name or "UnknownError", message, status=status, body=raw, request_id=headers.get("x-amzn-requestid")
+    )
 
 
 async def _iterate_event_stream(response: Any, cancel: CancelToken | None) -> AsyncGenerator[dict[str, Any]]:

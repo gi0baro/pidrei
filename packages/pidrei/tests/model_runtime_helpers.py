@@ -2,11 +2,19 @@
 
 from pidrei.core.model_registry import ModelRegistry
 from pidrei.core.model_runtime import ModelRuntime
+from pidrei.core.models_store import InMemoryCodingAgentModelsStore
 from pidrei_ai.types import Model, ModelCost
 
 
 async def create_model_registry(credentials, models_path: str) -> ModelRegistry:
-    runtime = await ModelRuntime.create(credentials=credentials, models_path=models_path, allow_model_network=False)
+    """Load optional models.json configuration without introducing file-backed
+    catalog locks into unit tests."""
+    runtime = await ModelRuntime.create(
+        credentials=credentials,
+        models_path=models_path,
+        models_store=InMemoryCodingAgentModelsStore(),
+        allow_model_network=False,
+    )
     return ModelRegistry(runtime)
 
 

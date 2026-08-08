@@ -30,6 +30,8 @@ import tonio.colored as tonio
 from tonio.colored import fs, signals as tonio_signals
 
 from pidrei_agent.harness.session.serde import serialize_message
+from pidrei_ai.auth.types import AuthOperationOptions
+from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
 from pidrei_tui import (
     TUI,
@@ -77,9 +79,9 @@ from ...core.messages import create_compaction_summary_message
 from ...core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,
     find_exact_model_reference_match,
-    resolve_model_scope,
-    resolve_model_scope_with_diagnostics,
+    resolve_model_scope_from_models,
 )
+from ...core.model_runtime import CredentialSynchronizationError
 from ...core.package_manager import DefaultPackageManager
 from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
 from ...core.session_manager import SessionManager, session_entry_to_context_messages
@@ -155,6 +157,29 @@ from .theme import (
     stop_theme_watcher,
     theme,
 )
+
+
+class _TimeoutCancel:
+    """Mirror of pi's `setTimeout(() => controller.abort(), ms)` pattern for
+    bounding catalog refreshes; `timed_out` reports whether the timer (rather
+    than a caller) fired."""
+
+    __slots__ = ("timed_out", "token")
+
+    def __init__(self, ms: float):
+        self.token = AiCancelToken()
+        self.timed_out = False
+
+        async def _expire() -> None:
+            await tonio.time.sleep(ms / 1000)
+            self.timed_out = True
+            self.token.cancel(TimeoutError("The operation timed out."))
+
+        tonio.spawn.without_tracking(_expire())
+
+
+def _timeout_cancel(ms: float) -> AiCancelToken:
+    return _TimeoutCancel(ms).token
 
 
 def is_expandable(obj) -> bool:
@@ -505,6 +530,10 @@ class InteractiveMode:
         # chat on submit)
         self._pending_bash_components: list = []
 
+        # Active editor-area selector (disposed when replaced or on stop)
+        self._active_selector_token: object | None = None
+        self._active_selector_dispose = None
+
         # Auto-compaction / auto-retry state
         self._auto_compaction_escape_handler = None
         self._retry_escape_handler = None
@@ -626,11 +655,10 @@ class InteractiveMode:
         if model_command is not None:
 
             async def get_model_completions(prefix: str):
-                # Get available models (scoped or from registry)
                 if self.session.scoped_models:
                     models = [s["model"] if isinstance(s, dict) else s.model for s in self.session.scoped_models]
                 else:
-                    models = await self.session.model_runtime.get_available()
+                    models = self.session.model_runtime.get_available_snapshot()
 
                 if not models:
                     return None
@@ -933,7 +961,7 @@ class InteractiveMode:
 
             async def refresh_models() -> None:
                 with contextlib.suppress(Exception):
-                    await self.session.model_runtime.refresh()
+                    await self.session.model_runtime.refresh(ModelsRefreshOptions(cancel=_timeout_cancel(15_000)))
                     self._update_available_provider_count()
 
             tonio.spawn.without_tracking(refresh_models())
@@ -2135,6 +2163,7 @@ class InteractiveMode:
             },
         )
 
+        self._dispose_active_selector()
         self._editor_container.clear()
         self._editor_container.add_child(self._extension_selector)
         self.ui.set_focus(self._extension_selector)
@@ -2201,6 +2230,7 @@ class InteractiveMode:
             {"tui": self.ui, "timeout": opts.get("timeout")},
         )
 
+        self._dispose_active_selector()
         self._editor_container.clear()
         self._editor_container.add_child(self._extension_input)
         self.ui.set_focus(self._extension_input)
@@ -2244,6 +2274,7 @@ class InteractiveMode:
             self.settings_manager.get_external_editor_command(),
         )
 
+        self._dispose_active_selector()
         self._editor_container.clear()
         self._editor_container.add_child(self._extension_editor)
         self.ui.set_focus(self._extension_editor)
@@ -2272,6 +2303,7 @@ class InteractiveMode:
         # Save text from current editor before switching
         current_text = self.editor.get_text()
 
+        self._dispose_active_selector()
         self._editor_container.clear()
 
         if factory is not None:
@@ -2409,6 +2441,7 @@ class InteractiveMode:
                 if on_handle is not None:
                     on_handle(handle)
             else:
+                self._dispose_active_selector()
                 self._editor_container.clear()
                 self._editor_container.add_child(component)
                 self.ui.set_focus(component)
@@ -2556,7 +2589,7 @@ class InteractiveMode:
             return
         if text == "/scoped-models":
             self.editor.set_text("")
-            await self._show_models_selector()
+            self._show_models_selector()
             return
         if text == "/model" or text.startswith("/model "):
             search_term = text[7:].strip() if text.startswith("/model ") else None
@@ -3844,19 +3877,38 @@ class InteractiveMode:
     # Selectors
     # =========================================================================
 
+    def _dispose_active_selector(self) -> None:
+        dispose = self._active_selector_dispose
+        self._active_selector_token = None
+        self._active_selector_dispose = None
+        if dispose is not None:
+            dispose()
+
     def _show_selector(self, create) -> None:
         """Show a selector component in place of the editor.
 
         ``create`` receives a ``done`` callback and returns a
-        ``{"component", "focus"}`` record.
+        ``{"component", "focus"}`` record with an optional ``"dispose"``.
         """
+        token = object()
+        dispose_holder: list = [None]
 
         def done() -> None:
+            if dispose_holder[0] is not None:
+                dispose_holder[0]()
+            if self._active_selector_token is not token:
+                return
+            self._active_selector_token = None
+            self._active_selector_dispose = None
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
             self.ui.set_focus(self.editor)
 
         created = create(done)
+        dispose_holder[0] = created.get("dispose")
+        self._dispose_active_selector()
+        self._active_selector_token = token
+        self._active_selector_dispose = created.get("dispose")
         self._editor_container.clear()
         self._editor_container.add_child(created["component"])
         self.ui.set_focus(created["focus"])
@@ -4062,18 +4114,30 @@ class InteractiveMode:
         self._show_model_selector(search_term)
 
     async def _find_exact_model_match(self, search_term: str):
-        models = await self._get_model_candidates()
-        return find_exact_model_reference_match(search_term, models)
+        cached_models = (
+            [scoped.model for scoped in self.session.scoped_models]
+            if self.session.scoped_models
+            else list(self.session.model_runtime.get_available_snapshot())
+        )
+        cached_match = find_exact_model_reference_match(search_term, cached_models)
+        if cached_match is not None or self.session.scoped_models:
+            return cached_match
 
-    async def _get_model_candidates(self) -> list:
-        if self.session.scoped_models:
-            return [scoped.model for scoped in self.session.scoped_models]
-
+        self.show_status("Refreshing model catalogs…")
+        timeout = _TimeoutCancel(15_000)
         try:
-            await self.session.model_runtime.refresh()
-            return list(await self.session.model_runtime.get_available())
-        except Exception:
-            return []
+            result = await self.session.model_runtime.refresh(ModelsRefreshOptions(cancel=timeout.token))
+            if result.aborted and timeout.timed_out:
+                self.show_warning("Model refresh timed out; searching cached models.")
+            elif result.errors:
+                self.show_warning(f"Could not refresh {', '.join(result.errors)}; searching cached models.")
+        except Exception as error:
+            self.show_warning(
+                "Model refresh timed out; searching cached models."
+                if timeout.timed_out
+                else f"Could not refresh model catalogs: {error}"
+            )
+        return find_exact_model_reference_match(search_term, list(self.session.model_runtime.get_available_snapshot()))
 
     def _update_available_provider_count(self) -> None:
         """Update the footer's available provider count from the current
@@ -4191,80 +4255,70 @@ class InteractiveMode:
                 on_cancel,
                 initial_search_input,
             )
-            return {"component": selector, "focus": selector}
+            return {"component": selector, "focus": selector, "dispose": selector.dispose}
 
         self._show_selector(create)
 
-    async def _show_models_selector(self) -> None:
-        # Get all available models
-        await self.session.model_runtime.refresh()
-        all_models = list(await self.session.model_runtime.get_available())
-        all_model_ids = {f"{model.provider}/{model.id}" for model in all_models}
+    def _show_models_selector(self) -> None:
+        state = {
+            "availableModels": list(self.session.model_runtime.get_available_snapshot()),
+            "selectionChanged": False,
+        }
+        state["availableModelIds"] = {f"{model.provider}/{model.id}" for model in state["availableModels"]}
         configured_patterns = self.settings_manager.get_enabled_models()
         session_scoped_models = self.session.scoped_models
 
-        if not all_models and not configured_patterns and not session_scoped_models:
-            self.show_status("No models available")
-            return
+        def configured_enabled_ids(models) -> list | None:
+            if not configured_patterns:
+                return None
+            resolved = resolve_model_scope_from_models(configured_patterns, list(models))
+            ids = [f"{scoped.model.provider}/{scoped.model.id}" for scoped in resolved.scoped_models]
+            # Configured patterns that matched nothing stay listed (and
+            # editable) as unavailable entries.
+            for diagnostic in resolved.diagnostics:
+                if diagnostic.code == "no-match" and diagnostic.pattern not in ids:
+                    ids.append(diagnostic.pattern)
+            return ids
 
-        configured_scope = (
-            await resolve_model_scope_with_diagnostics(configured_patterns, self.session.model_runtime)
-            if configured_patterns
-            else None
+        state["enabledIds"] = (
+            [f"{scoped.model.provider}/{scoped.model.id}" for scoped in session_scoped_models]
+            if session_scoped_models
+            else configured_enabled_ids(state["availableModels"])
         )
 
-        # Check if session has scoped models (from previous session-only
-        # changes or CLI --models)
-        has_session_scope = len(session_scoped_models) > 0
-
-        # Build enabled model IDs from session state or settings
-        current_enabled_ids: list | None = None
-
-        if has_session_scope:
-            # Use current session's scoped models
-            current_enabled_ids = [f"{scoped.model.provider}/{scoped.model.id}" for scoped in session_scoped_models]
-        elif configured_scope is not None:
-            current_enabled_ids = [
-                f"{scoped.model.provider}/{scoped.model.id}" for scoped in configured_scope.scoped_models
-            ]
-
-        # Configured patterns that matched nothing stay listed (and editable)
-        # as unavailable entries.
-        for diagnostic in configured_scope.diagnostics if configured_scope is not None else []:
-            if diagnostic.code != "no-match":
-                continue
-            if current_enabled_ids is None:
-                current_enabled_ids = []
-            if diagnostic.pattern not in current_enabled_ids:
-                current_enabled_ids.append(diagnostic.pattern)
-
-        state = {"enabledIds": current_enabled_ids}
-
         # Helper to update session's scoped models (session-only, no persist)
-        async def update_session_models(enabled_ids) -> None:
+        def update_session_models(enabled_ids) -> None:
             state["enabledIds"] = None if enabled_ids is None else list(enabled_ids)
-            has_enabled_available_model = any(model_id in all_model_ids for model_id in enabled_ids or [])
+            available_model_ids = state["availableModelIds"]
+            has_enabled_available_model = any(model_id in available_model_ids for model_id in enabled_ids or [])
             all_available_models_enabled = enabled_ids is not None and all(
-                model_id in enabled_ids for model_id in all_model_ids
+                model_id in enabled_ids for model_id in available_model_ids
             )
             if enabled_ids and has_enabled_available_model and not all_available_models_enabled:
-                new_scoped_models = await resolve_model_scope(enabled_ids, self.session.model_runtime)
+                new_scoped_models = resolve_model_scope_from_models(enabled_ids, state["availableModels"]).scoped_models
                 self.session.set_scoped_models(
                     [ScopedModel(model=sm.model, thinking_level=sm.thinking_level) for sm in new_scoped_models]
                 )
             else:
-                # All enabled or none enabled = no filter
                 self.session.set_scoped_models([])
             self._update_available_provider_count()
             self.ui.request_render()
 
         def create(done):
+            disposed = {"value": False}
+            timeout = _TimeoutCancel(15_000)
+
+            def on_change(enabled_ids) -> None:
+                state["selectionChanged"] = True
+                update_session_models(enabled_ids)
+
             def on_persist(enabled_ids) -> None:
-                # Persist to settings
+                available_models = state["availableModels"]
+                available_model_ids = state["availableModelIds"]
                 all_enabled = (
                     enabled_ids is not None
-                    and len(enabled_ids) == len(all_models)
-                    and all(model_id in all_model_ids for model_id in enabled_ids)
+                    and len(enabled_ids) == len(available_models)
+                    and all(model_id in available_model_ids for model_id in enabled_ids)
                 )
                 new_patterns = None if enabled_ids is None or all_enabled else enabled_ids
                 self.settings_manager.set_enabled_models(list(new_patterns) if new_patterns else None)
@@ -4276,16 +4330,59 @@ class InteractiveMode:
 
             selector = ScopedModelsSelectorComponent(
                 {
-                    "allModels": all_models,
+                    "allModels": state["availableModels"],
                     "enabledModelIds": state["enabledIds"],
+                    "refreshStatus": "Refreshing model catalogs…",
                 },
                 {
-                    "onChange": lambda enabled_ids: tonio.spawn.without_tracking(update_session_models(enabled_ids)),
+                    "onChange": on_change,
                     "onPersist": on_persist,
                     "onCancel": on_cancel,
                 },
             )
-            return {"component": selector, "focus": selector}
+
+            async def refresh_catalogs() -> None:
+                try:
+                    result = await self.session.model_runtime.refresh(ModelsRefreshOptions(cancel=timeout.token))
+                except Exception as error:
+                    if disposed["value"]:
+                        return
+                    selector.set_refresh_status(
+                        "Model refresh timed out; showing cached models."
+                        if timeout.timed_out
+                        else f"Could not refresh model catalogs: {error}",
+                        "warning",
+                    )
+                    self.ui.request_render()
+                    return
+                if disposed["value"]:
+                    return
+                state["availableModels"] = list(self.session.model_runtime.get_available_snapshot())
+                state["availableModelIds"] = {f"{model.provider}/{model.id}" for model in state["availableModels"]}
+                if not state["selectionChanged"] and not session_scoped_models:
+                    state["enabledIds"] = configured_enabled_ids(state["availableModels"])
+                    selector.update_models(state["availableModels"], state["enabledIds"])
+                else:
+                    selector.update_models(state["availableModels"])
+                if state["enabledIds"] is not None:
+                    update_session_models(state["enabledIds"])
+                if result.aborted and timeout.timed_out:
+                    selector.set_refresh_status("Model refresh timed out; showing cached models.", "warning")
+                elif result.errors:
+                    selector.set_refresh_status(
+                        f"Could not refresh {', '.join(result.errors)}; showing cached models.", "warning"
+                    )
+                else:
+                    selector.set_refresh_status("Model catalogs refreshed.", "success")
+                self.ui.request_render()
+
+            tonio.spawn.without_tracking(refresh_catalogs())
+
+            def dispose() -> None:
+                disposed["value"] = True
+                timeout.token.cancel()
+
+            return {"component": selector, "focus": selector, "dispose": dispose}
 
         self._show_selector(create)
 
@@ -4580,7 +4677,9 @@ class InteractiveMode:
 
     async def _get_logout_provider_options(self) -> list:
         options = []
-        for credential in await self.session.model_runtime.list_credentials():
+        for credential in await self.session.model_runtime.list_credentials(
+            AuthOperationOptions(cancel=_timeout_cancel(15_000))
+        ):
             provider = self.session.model_runtime.get_provider(credential.provider_id)
             options.append(
                 {
@@ -4604,7 +4703,6 @@ class InteractiveMode:
         ]
 
     async def _handle_login_command(self, provider_ref: str | None = None) -> None:
-        await self.session.model_runtime.get_available()
         if not provider_ref:
             self._show_login_auth_type_selector()
             return
@@ -4751,7 +4849,11 @@ class InteractiveMode:
         tonio.spawn.without_tracking(self._show_logout_selector(mode))
 
     async def _show_logout_selector(self, mode: str) -> None:
-        provider_options = await self._get_logout_provider_options()
+        try:
+            provider_options = await self._get_logout_provider_options()
+        except Exception as error:
+            self.show_error(f"Could not read stored credentials: {error}")
+            return
         if not provider_options:
             self.show_status(
                 "No stored credentials to remove. /logout only removes credentials saved by /login; "
@@ -4770,7 +4872,9 @@ class InteractiveMode:
                     return
 
                 try:
-                    await self.session.model_runtime.logout(provider_option["id"])
+                    await self.session.model_runtime.logout(
+                        provider_option["id"], AuthOperationOptions(cancel=_timeout_cancel(15_000))
+                    )
                     self._update_available_provider_count()
                     message = (
                         f"Logged out of {provider_option['name']}"
@@ -4780,7 +4884,12 @@ class InteractiveMode:
                     )
                     self.show_status(message)
                 except Exception as error:
-                    self.show_error(f"Logout failed: {error}")
+                    self.show_error(
+                        f"Credentials removed for {provider_option['name']}, "
+                        f"but local model state could not be synchronized: {error}"
+                        if isinstance(error, CredentialSynchronizationError)
+                        else f"Logout failed: {error}"
+                    )
 
             def on_cancel() -> None:
                 done()
@@ -4799,14 +4908,12 @@ class InteractiveMode:
     async def _complete_provider_authentication(
         self, provider_id: str, provider_name: str, auth_type: str, previous_model
     ) -> None:
-        await self.session.model_runtime.get_available()
-
         action_label = f"Logged in to {provider_name}" if auth_type == "oauth" else f"Saved API key for {provider_name}"
 
         selected_model = None
         selection_error: str | None = None
         if _is_unknown_model(previous_model):
-            available_models = await self.session.model_runtime.get_available()
+            available_models = self.session.model_runtime.get_available_snapshot()
             provider_models = [model for model in available_models if model.provider == provider_id]
             if provider_id not in DEFAULT_MODEL_PER_PROVIDER:
                 selection_error = (
@@ -4848,6 +4955,26 @@ class InteractiveMode:
                 self.show_error(selection_error)
             else:
                 tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth())
+
+        timeout = _TimeoutCancel(15_000)
+
+        async def refresh_provider_catalog() -> None:
+            try:
+                result = await self.session.model_runtime.refresh(
+                    ModelsRefreshOptions(providers=[provider_id], cancel=timeout.token)
+                )
+            except Exception as error:
+                self.show_warning(f"{action_label}, but its model catalog could not be refreshed: {error}")
+                return
+            if result.aborted:
+                self.show_warning(f"{action_label}, but its model catalog refresh timed out; using cached models.")
+            elif result.errors:
+                self.show_warning(f"{action_label}, but its model catalog could not be refreshed; using cached models.")
+            self._update_available_provider_count()
+            self._footer.invalidate()
+            self.ui.request_render()
+
+        tonio.spawn.without_tracking(refresh_provider_catalog())
 
     def _show_ambient_auth_dialog(self, provider_option: dict) -> None:
         def restore_editor() -> None:
@@ -4912,7 +5039,11 @@ class InteractiveMode:
         except Exception as error:
             restore_editor()
             error_msg = str(error)
-            if error_msg != "Login cancelled":
+            if isinstance(error, CredentialSynchronizationError):
+                self.show_error(
+                    f"Saved API key for {provider_name}, but local model state could not be synchronized: {error_msg}"
+                )
+            elif error_msg != "Login cancelled":
                 self.show_error(f"Failed to save API key for {provider_name}: {error_msg}")
 
     async def _show_auth_select(self, dialog, prompt) -> str:
@@ -5035,7 +5166,11 @@ class InteractiveMode:
         except Exception as error:
             restore_editor()
             error_msg = str(error)
-            if error_msg != "Login cancelled":
+            if isinstance(error, CredentialSynchronizationError):
+                self.show_error(
+                    f"Logged in to {provider_name}, but local model state could not be synchronized: {error_msg}"
+                )
+            elif error_msg != "Login cancelled":
                 self.show_error(f"Failed to login to {provider_name}: {error_msg}")
 
     # =========================================================================
@@ -5695,6 +5830,7 @@ class InteractiveMode:
             await self.session.compact(custom_instructions)
 
     async def stop(self) -> None:
+        self._dispose_active_selector()
         if self.settings_manager.get_show_terminal_progress():
             self.ui.terminal.set_progress(False)
         self._clear_status_indicator()

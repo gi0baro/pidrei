@@ -1,345 +1,276 @@
-"""Session tree wrapper and context building (port of pi `harness/session/session.ts`)."""
+"""Session tree API over a `SessionStorage` backend (port of pi `session/session.ts`).
 
-import re
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Any
+`Session` binds the "main" lane; `view(lane)` returns a `SessionTree` bound to
+another lane without caching its leaf. Durable payloads are validated before any
+storage mutation: entries and records must be JSON-representable — port-typed
+dataclasses (entries, messages, usage) count as plain objects, everything else
+(arbitrary class instances, non-finite numbers, cycles) is rejected exactly
+where pi rejects non-plain JS values.
+"""
 
-from ..messages import create_branch_summary_message, create_compaction_summary_message, create_custom_message
-from ..types import (
-    ActiveToolsChangeEntry,
-    BranchSummaryEntry,
-    CompactionEntry,
+import dataclasses
+import math
+from dataclasses import replace
+from typing import Any, NoReturn
+
+from pidrei_ai.utils.uuid import uuidv7
+
+from .state import assert_valid_cursor, assert_valid_limit
+from .types import (
+    BranchQuery,
     CustomEntry,
-    CustomMessageEntry,
-    LabelEntry,
+    Entry,
+    EntryQuery,
+    IdGenerator,
+    LanePointer,
+    LaneRecord,
+    LogItem,
+    LogOptions,
     MessageEntry,
-    ModelChangeEntry,
-    SessionContext,
-    SessionEntryCursorOptions,
+    OperationStartedRecord,
+    RecordQuery,
     SessionError,
-    SessionInfoEntry,
     SessionMetadata,
-    SessionModelRef,
     SessionStats,
     SessionStorage,
-    SessionTreeEntry,
-    ThinkingLevelChangeEntry,
+    SessionTree,
 )
 
 
-# Additional entry transform applied after the default compaction transform.
-type ContextEntryTransform = Callable[[Sequence[SessionTreeEntry]], Sequence[SessionTreeEntry]]
-
-# Optional custom-entry projector. Custom entries are omitted from model context by default.
-type CustomEntryContextMessageProjector = Callable[[CustomEntry, int, Sequence[SessionTreeEntry]], Sequence[Any] | None]
+def _invalid_payload(reason: str) -> NoReturn:
+    raise SessionError("invalid_payload", f"Durable payload {reason}")
 
 
-@dataclass(slots=True)
-class SessionContextBuildOptions:
-    # Additional entry transforms applied after the default compaction transform.
-    entry_transforms: list[ContextEntryTransform] = field(default_factory=list)
-    # Optional custom-entry projectors keyed by custom type.
-    entry_projectors: Mapping[str, CustomEntryContextMessageProjector] = field(default_factory=dict)
+def assert_json_serializable(value: Any) -> None:
+    active: set[int] = set()
+    stack: list[tuple[str, Any]] = [("value", value)]
+    while stack:
+        op, candidate = stack.pop()
+        if op == "exit":
+            active.discard(id(candidate))
+            continue
+        if candidate is None or isinstance(candidate, str | bool):
+            continue
+        if isinstance(candidate, int):
+            continue
+        if isinstance(candidate, float):
+            if not math.isfinite(candidate):
+                _invalid_payload("contains a non-finite number")
+            continue
+        if id(candidate) in active:
+            _invalid_payload("contains a cycle")
+        if isinstance(candidate, list):
+            active.add(id(candidate))
+            stack.append(("exit", candidate))
+            for item in reversed(candidate):
+                stack.append(("value", item))
+            continue
+        if isinstance(candidate, dict):
+            active.add(id(candidate))
+            stack.append(("exit", candidate))
+            for key in reversed(candidate.keys()):
+                if not isinstance(key, str):
+                    _invalid_payload("contains a non-string key")
+                stack.append(("value", candidate[key]))
+            continue
+        if dataclasses.is_dataclass(candidate) and not isinstance(candidate, type):
+            # Port-typed vocabulary (entries, messages, usage, intents) stands in
+            # for pi's plain JS objects; their fields are validated recursively.
+            active.add(id(candidate))
+            stack.append(("exit", candidate))
+            for field in reversed(dataclasses.fields(candidate)):
+                stack.append(("value", getattr(candidate, field.name)))
+            continue
+        _invalid_payload(f"contains {type(candidate).__name__}")
 
 
-def _iso_now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
-def _derive_session_context_state(
-    path_entries: Sequence[SessionTreeEntry],
-) -> tuple[str, SessionModelRef | None, list[str] | None]:
-    thinking_level = "off"
-    model: SessionModelRef | None = None
-    active_tool_names: list[str] | None = None
-
-    for entry in path_entries:
-        if entry.type == "thinking_level_change":
-            thinking_level = entry.thinking_level
-        elif entry.type == "model_change":
-            model = SessionModelRef(provider=entry.provider, model_id=entry.model_id)
-        elif entry.type == "message" and getattr(entry.message, "role", None) == "assistant":
-            model = SessionModelRef(provider=entry.message.provider, model_id=entry.message.model)
-        elif entry.type == "active_tools_change":
-            active_tool_names = list(entry.active_tool_names)
-
-    return thinking_level, model, active_tool_names
-
-
-def default_context_entry_transform(path_entries: Sequence[SessionTreeEntry]) -> list[SessionTreeEntry]:
-    compaction: CompactionEntry | None = None
-    for entry in path_entries:
-        if entry.type == "compaction":
-            compaction = entry
-    if compaction is None:
-        return list(path_entries)
-
-    entries: list[SessionTreeEntry] = [compaction]
-    compaction_idx = next(
-        index for index, entry in enumerate(path_entries) if entry.type == "compaction" and entry.id == compaction.id
-    )
-    if compaction.retained_tail is not None:
-        entries.extend(path_entries[compaction_idx + 1 :])
-        return entries
-    if compaction.first_kept_entry_id:
-        found_first_kept = False
-        for entry in path_entries[:compaction_idx]:
-            if entry.id == compaction.first_kept_entry_id:
-                found_first_kept = True
-            if found_first_kept:
-                entries.append(entry)
-    entries.extend(path_entries[compaction_idx + 1 :])
-    return entries
-
-
-def build_context_entries(
-    path_entries: Sequence[SessionTreeEntry],
-    options: SessionContextBuildOptions | None = None,
-) -> list[SessionTreeEntry]:
-    options = options if options is not None else SessionContextBuildOptions()
-    entries = default_context_entry_transform(path_entries)
-    for transform in options.entry_transforms:
-        entries = list(transform(entries))
-    return entries
-
-
-def session_entry_to_context_messages(
-    entry: SessionTreeEntry,
-    index: int,
-    entries: Sequence[SessionTreeEntry],
-    options: SessionContextBuildOptions | None = None,
-) -> list[Any]:
-    options = options if options is not None else SessionContextBuildOptions()
-    if entry.type == "message":
-        return [entry.message]
-    if entry.type == "custom_message":
-        return [create_custom_message(entry.custom_type, entry.content, entry.display, entry.details, entry.timestamp)]
-    if entry.type == "compaction":
-        return [
-            create_compaction_summary_message(entry.summary, entry.tokens_before, entry.timestamp),
-            *(entry.retained_tail or []),
-        ]
-    if entry.type == "branch_summary" and entry.summary:
-        return [create_branch_summary_message(entry.summary, entry.from_id, entry.timestamp)]
-    if entry.type == "custom":
-        projector = options.entry_projectors.get(entry.custom_type)
-        if projector is not None:
-            return list(projector(entry, index, entries) or [])
-        return []
-    return []
-
-
-def build_session_context(
-    path_entries: Sequence[SessionTreeEntry],
-    options: SessionContextBuildOptions | None = None,
-) -> SessionContext:
-    thinking_level, model, active_tool_names = _derive_session_context_state(path_entries)
-    context_entries = build_context_entries(path_entries, options)
-    messages = [
-        message
-        for index, entry in enumerate(context_entries)
-        for message in session_entry_to_context_messages(entry, index, context_entries, options)
-    ]
-    return SessionContext(
-        messages=messages, thinking_level=thinking_level, model=model, active_tool_names=active_tool_names
-    )
+class _Uuidv7IdGenerator:
+    def next(self) -> str:
+        return uuidv7()
 
 
 class Session:
-    """Session tree API over a `SessionStorage` backend."""
-
-    def __init__(self, storage: SessionStorage, context_build_options: SessionContextBuildOptions | None = None):
+    def __init__(self, storage: SessionStorage, id_generator: IdGenerator | None = None):
         self._storage = storage
-        self._context_build_options = (
-            context_build_options if context_build_options is not None else SessionContextBuildOptions()
-        )
+        self.id_generator: IdGenerator = id_generator if id_generator is not None else _Uuidv7IdGenerator()
 
     async def get_metadata(self) -> SessionMetadata:
         return await self._storage.get_metadata()
 
-    def get_storage(self) -> SessionStorage:
-        return self._storage
+    def view(self, lane: str) -> SessionTree:
+        if lane == "main":
+            return self
+        return _LaneView(self, lane)
 
     async def get_leaf_id(self) -> str | None:
-        return await self._storage.get_leaf_id()
+        return await self._get_leaf_id_for_lane("main")
 
-    async def get_entry(self, id: str) -> SessionTreeEntry | None:
+    async def get_entry(self, id: str) -> Entry | None:
         return await self._storage.get_entry(id)
 
-    async def get_entries(self, options: SessionEntryCursorOptions | None = None) -> list[SessionTreeEntry]:
-        return await self._storage.get_entries(options)
+    async def get_stats(self) -> SessionStats:
+        return await self._storage.get_stats()
 
-    async def get_branch(self, from_id: str | None = None) -> list[SessionTreeEntry]:
-        leaf_id = from_id if from_id is not None else await self._storage.get_leaf_id()
-        return await self._storage.get_path_to_root_or_compaction(leaf_id)
+    async def get_name(self) -> str | None:
+        return await self._storage.get_name()
 
-    async def build_context_entries(self, options: SessionContextBuildOptions | None = None) -> list[SessionTreeEntry]:
-        return build_context_entries(await self.get_branch(), self._merge_context_build_options(options))
+    async def set_name(self, name: str) -> None:
+        await self._storage.set_name(name)
 
-    async def build_context(self, options: SessionContextBuildOptions | None = None) -> SessionContext:
-        return build_session_context(await self.get_branch(), self._merge_context_build_options(options))
+    async def get_label(self, target_id: str) -> str | None:
+        return await self._storage.get_label(target_id)
 
-    def _merge_context_build_options(self, options: SessionContextBuildOptions | None) -> SessionContextBuildOptions:
-        options = options if options is not None else SessionContextBuildOptions()
-        return SessionContextBuildOptions(
-            entry_transforms=[*self._context_build_options.entry_transforms, *options.entry_transforms],
-            entry_projectors={**self._context_build_options.entry_projectors, **options.entry_projectors},
-        )
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        await self._storage.set_label(target_id, label)
 
-    async def get_label(self, id: str) -> str | None:
-        return await self._storage.get_label(id)
+    async def find_entries(self, query: EntryQuery | None = None) -> list[Entry]:
+        return await self._query_entries(query)
 
-    async def get_session_stats(self) -> SessionStats:
-        return await self._storage.get_session_stats()
+    async def find_entry(self, query: EntryQuery | None = None) -> Entry | None:
+        results = await self._query_entries(query, result_limit=1)
+        return results[0] if results else None
 
-    async def get_session_name(self) -> str | None:
-        return await self._storage.get_session_name()
+    async def find_entries_on_branch(self, query: BranchQuery | None = None) -> list[Entry]:
+        return await self._query_branch_entries("main", query)
 
-    async def _append_typed_entry(self, entry: SessionTreeEntry) -> str:
-        await self._storage.append_entry(entry)
-        return entry.id
+    async def find_entry_on_branch(self, query: BranchQuery | None = None) -> Entry | None:
+        results = await self._query_branch_entries("main", query, result_limit=1)
+        return results[0] if results else None
 
     async def append_message(self, message: Any) -> str:
-        return await self._append_typed_entry(
-            MessageEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                message=message,
-            )
-        )
-
-    async def append_thinking_level_change(self, thinking_level: str) -> str:
-        return await self._append_typed_entry(
-            ThinkingLevelChangeEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                thinking_level=thinking_level,
-            )
-        )
-
-    async def append_model_change(self, provider: str, model_id: str) -> str:
-        return await self._append_typed_entry(
-            ModelChangeEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                provider=provider,
-                model_id=model_id,
-            )
-        )
-
-    async def append_active_tools_change(self, active_tool_names: list[str]) -> str:
-        return await self._append_typed_entry(
-            ActiveToolsChangeEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                active_tool_names=list(active_tool_names),
-            )
-        )
-
-    async def append_compaction(
-        self,
-        summary: str,
-        first_kept_entry_id: str | None,
-        tokens_before: int,
-        details: Any = None,
-        from_hook: bool | None = None,
-        usage: Any = None,
-        retained_tail: list[Any] | None = None,
-    ) -> str:
-        return await self._append_typed_entry(
-            CompactionEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                summary=summary,
-                first_kept_entry_id=first_kept_entry_id,
-                tokens_before=tokens_before,
-                retained_tail=retained_tail,
-                details=details,
-                usage=usage,
-                from_hook=from_hook,
-            )
-        )
+        return await self._append_message_to_lane("main", message)
 
     async def append_custom_entry(self, custom_type: str, data: Any = None) -> str:
-        return await self._append_typed_entry(
-            CustomEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                custom_type=custom_type,
-                data=data,
-            )
+        return await self._append_custom_entry_to_lane("main", custom_type, data)
+
+    async def get_lanes(self) -> list[LanePointer]:
+        return await self._storage.get_lanes()
+
+    async def create_lane(self, lane: str, at: str | None) -> None:
+        await self._storage.create_lane(lane, at)
+
+    async def move_lane(self, lane: str, to: str | None) -> None:
+        await self._storage.move_lane(lane, to)
+
+    async def append_entry[TEntry: Entry](self, entry: TEntry, lane: str) -> TEntry:
+        return await self._commit_entry(entry, lane)
+
+    async def append_record[TRecord: LaneRecord](self, record: TRecord) -> TRecord:
+        return await self._commit_record(record)
+
+    async def find_records(self, query: RecordQuery | None = None) -> list[LaneRecord]:
+        return await self._query_records(query)
+
+    async def find_open_operations(self, lane: str, limit: int | None = None) -> list[OperationStartedRecord]:
+        assert_valid_limit(limit)
+        return await self._storage.find_open_operations(lane, limit)
+
+    async def get_log(self, options: LogOptions | None = None) -> list[LogItem]:
+        options = options if options is not None else LogOptions()
+        assert_valid_limit(options.limit)
+        assert_valid_cursor(options.after_seq)
+        return await self._storage.get_log(options)
+
+    async def _get_leaf_id_for_lane(self, lane: str) -> str | None:
+        for pointer in await self.get_lanes():
+            if pointer.lane == lane:
+                return pointer.leaf_id
+        raise SessionError("invalid_lane", f"Lane not found: {lane}")
+
+    async def _query_entries(self, query: EntryQuery | None, result_limit: int | None = None) -> list[Entry]:
+        query = query if query is not None else EntryQuery()
+        assert_valid_limit(query.limit)
+        assert_valid_cursor(query.cursor.after_seq if query.cursor is not None else None)
+        if result_limit is None:
+            result_limit = query.limit
+        return await self._storage.find_entries(
+            query if result_limit == query.limit else replace(query, limit=result_limit)
         )
 
-    async def append_custom_message_entry(
-        self, custom_type: str, content: Any, display: bool, details: Any = None
-    ) -> str:
-        return await self._append_typed_entry(
-            CustomMessageEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                custom_type=custom_type,
-                content=content,
-                display=display,
-                details=details,
-            )
-        )
+    async def _query_branch_entries(
+        self, lane: str, query: BranchQuery | None, result_limit: int | None = None
+    ) -> list[Entry]:
+        query = query if query is not None else BranchQuery()
+        assert_valid_limit(query.limit)
+        assert_valid_cursor(query.cursor.after_seq if query.cursor is not None else None)
+        if result_limit is None:
+            result_limit = query.limit
+        start = query.start if query.start is not None else await self._get_leaf_id_for_lane(lane)
+        if start is None:
+            return []
+        return await self._storage.find_entries_on_branch(replace(query, start=start, limit=result_limit))
 
-    async def append_label(self, target_id: str, label: str | None) -> str:
-        if await self._storage.get_entry(target_id) is None:
-            raise SessionError("not_found", f"Entry {target_id} not found")
-        return await self._append_typed_entry(
-            LabelEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                target_id=target_id,
-                label=label,
-            )
-        )
+    async def _query_records(self, query: RecordQuery | None) -> list[LaneRecord]:
+        query = query if query is not None else RecordQuery()
+        assert_valid_limit(query.limit)
+        assert_valid_cursor(query.after_seq)
+        if query.operation_kind is not None and query.type != "operation_started":
+            raise SessionError("invalid_query", 'operationKind requires type "operation_started"')
+        return await self._storage.find_records(query)
 
-    async def append_session_name(self, name: str) -> str:
-        sanitized_name = re.sub(r"[\r\n]+", " ", name).strip()
-        return await self._append_typed_entry(
-            SessionInfoEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=await self._storage.get_leaf_id(),
-                timestamp=_iso_now(),
-                name=sanitized_name,
-            )
-        )
+    async def _append_message_to_lane(self, lane: str, message: Any) -> str:
+        entry = await self._commit_entry(MessageEntry(id=self.id_generator.next(), message=message), lane)
+        return entry.id
 
-    async def move_to(
-        self,
-        entry_id: str | None,
-        summary: dict[str, Any] | None = None,
-    ) -> str | None:
-        """Move the leaf; optionally append a branch summary.
-
-        `summary` mirrors pi's shape: {"summary": str, "details"?, "usage"?, "from_hook"?}.
-        """
-        if entry_id is not None and await self._storage.get_entry(entry_id) is None:
-            raise SessionError("not_found", f"Entry {entry_id} not found")
-        await self._storage.set_leaf_id(entry_id)
-        if summary is None:
-            return None
-        return await self._append_typed_entry(
-            BranchSummaryEntry(
-                id=await self._storage.create_entry_id(),
-                parent_id=entry_id,
-                timestamp=_iso_now(),
-                from_id=entry_id if entry_id is not None else "root",
-                summary=summary["summary"],
-                details=summary.get("details"),
-                usage=summary.get("usage"),
-                from_hook=summary.get("from_hook"),
-            )
+    async def _append_custom_entry_to_lane(self, lane: str, custom_type: str, data: Any) -> str:
+        entry = await self._commit_entry(
+            CustomEntry(id=self.id_generator.next(), custom_type=custom_type, data=data), lane
         )
+        return entry.id
+
+    async def _commit_entry[TEntry: Entry](self, entry: TEntry, lane: str) -> TEntry:
+        assert_json_serializable(entry)
+        return await self._storage.append_entry(entry, lane)
+
+    async def _commit_record[TRecord: LaneRecord](self, record: TRecord) -> TRecord:
+        assert_json_serializable(record)
+        return await self._storage.append_record(record)
+
+
+class _LaneView:
+    """SessionTree bound to a non-main lane; resolves the leaf per call."""
+
+    def __init__(self, session: Session, lane: str):
+        self._session = session
+        self._lane = lane
+
+    async def get_leaf_id(self) -> str | None:
+        return await self._session._get_leaf_id_for_lane(self._lane)
+
+    async def get_entry(self, id: str) -> Entry | None:
+        return await self._session.get_entry(id)
+
+    async def get_stats(self) -> SessionStats:
+        return await self._session.get_stats()
+
+    async def get_name(self) -> str | None:
+        return await self._session.get_name()
+
+    async def set_name(self, name: str) -> None:
+        await self._session.set_name(name)
+
+    async def get_label(self, target_id: str) -> str | None:
+        return await self._session.get_label(target_id)
+
+    async def set_label(self, target_id: str, label: str | None) -> None:
+        await self._session.set_label(target_id, label)
+
+    async def find_entries(self, query: EntryQuery | None = None) -> list[Entry]:
+        return await self._session._query_entries(query)
+
+    async def find_entry(self, query: EntryQuery | None = None) -> Entry | None:
+        results = await self._session._query_entries(query, result_limit=1)
+        return results[0] if results else None
+
+    async def find_entries_on_branch(self, query: BranchQuery | None = None) -> list[Entry]:
+        return await self._session._query_branch_entries(self._lane, query)
+
+    async def find_entry_on_branch(self, query: BranchQuery | None = None) -> Entry | None:
+        results = await self._session._query_branch_entries(self._lane, query, result_limit=1)
+        return results[0] if results else None
+
+    async def append_message(self, message: Any) -> str:
+        return await self._session._append_message_to_lane(self._lane, message)
+
+    async def append_custom_entry(self, custom_type: str, data: Any = None) -> str:
+        return await self._session._append_custom_entry_to_lane(self._lane, custom_type, data)

@@ -27,7 +27,7 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuth,
 )
-from pidrei_ai.registry import Provider, RefreshModelsContext
+from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model, ModelCost
 
 from .model_config import ModelConfig
@@ -53,6 +53,8 @@ class ExtensionOAuthConfig:
     login: Any
     refresh_token: Any
     get_api_key: Any
+    # Whether access through this auth method is backed by a provider subscription.
+    is_subscription: bool | None = None
     # Deprecated: retained for extension source compatibility; ignored by canonical auth flows.
     uses_callback_server: bool = False
     modify_models: Any = None
@@ -158,6 +160,9 @@ def apply_model_override(model: Model, override: dict[str, Any]) -> Model:
         cost=cost,
         context_window=_nn(override.get("contextWindow"), model.context_window),
         max_tokens=_nn(override.get("maxTokens"), model.max_tokens),
+        sampling_params={**(model.sampling_params or {}), **override["samplingParams"]}
+        if override.get("samplingParams") is not None
+        else model.sampling_params,
         compat=merge_compat(model.api, model.compat, override.get("compat")),
     )
 
@@ -192,6 +197,7 @@ def _model_from_json(
         cost=_model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0),
         context_window=_nn(definition.get("contextWindow"), 128000),
         max_tokens=_nn(definition.get("maxTokens"), 16384),
+        sampling_params=definition.get("samplingParams"),
         headers=None,
         compat=merge_compat(api, parse_compat(api, provider_config.get("compat")), definition.get("compat")),
     )
@@ -306,13 +312,15 @@ def adapt_oauth(config: ExtensionOAuthConfig) -> OAuthAuth:
         )
         return _to_oauth_credential(await config.login(callbacks))
 
-    async def refresh(credential: OAuthCredential, _cancel: Any = None) -> OAuthCredential:
-        return _to_oauth_credential(await config.refresh_token(credential))
+    async def refresh(credential: OAuthCredential, cancel: Any) -> OAuthCredential:
+        return _to_oauth_credential(await config.refresh_token(credential, cancel))
 
     async def to_auth(credential: OAuthCredential) -> ModelAuth:
         return ModelAuth(api_key=config.get_api_key(credential))
 
-    return OAuthAuth(name=config.name, login=login, refresh=refresh, to_auth=to_auth)
+    return OAuthAuth(
+        name=config.name, is_subscription=config.is_subscription, login=login, refresh=refresh, to_auth=to_auth
+    )
 
 
 def _with_configured_auth(auth: ModelAuth, headers: dict[str, str] | None, auth_header: bool) -> ModelAuth:
@@ -380,13 +388,13 @@ def compose_api_key_auth(
     async def default_login(interaction: AuthInteraction) -> ApiKeyCredential:
         return ApiKeyCredential(key=await interaction.prompt(AuthPrompt(type="secret", message="Enter API key")))
 
-    async def check(ctx: AuthContext, credential: ApiKeyCredential | None) -> AuthCheck | None:
+    async def check(ctx: AuthContext, credential: ApiKeyCredential | None, cancel: Any) -> AuthCheck | None:
         if credential is not None:
             if inherited is not None and inherited.check is not None:
-                return await inherited.check(ctx, credential)
+                return await inherited.check(ctx, credential, cancel)
             if credential.key:
                 return AuthCheck(type="api_key", source="stored credential")
-            resolved = await inherited.resolve(ctx, credential) if inherited is not None else None
+            resolved = await inherited.resolve(ctx, credential, cancel) if inherited is not None else None
             return AuthCheck(type="api_key", source=resolved.source) if resolved is not None else None
         if raw_key is not None:
             if is_command_config_value(raw_key):
@@ -396,14 +404,14 @@ def compose_api_key_auth(
                     return None
             return AuthCheck(type="api_key", source="configured API key")
         if inherited is not None and inherited.check is not None:
-            return await inherited.check(ctx, None)
-        resolved = await inherited.resolve(ctx, None) if inherited is not None else None
+            return await inherited.check(ctx, None, cancel)
+        resolved = await inherited.resolve(ctx, None, cancel) if inherited is not None else None
         return AuthCheck(type="api_key", source=resolved.source) if resolved is not None else None
 
-    async def resolve(ctx: AuthContext, credential: ApiKeyCredential | None) -> AuthResult | None:
+    async def resolve(ctx: AuthContext, credential: ApiKeyCredential | None, cancel: Any) -> AuthResult | None:
         if credential is not None:
             if inherited is not None:
-                result = await inherited.resolve(ctx, credential)
+                result = await inherited.resolve(ctx, credential, cancel)
             elif credential.key:
                 result = AuthResult(
                     auth=ModelAuth(api_key=credential.key), env=credential.env, source="stored credential"
@@ -414,11 +422,11 @@ def compose_api_key_auth(
             env = await _config_context_env([raw_key], ctx)
             key = await resolve_config_value_or_throw(raw_key, f'API key for provider "{provider_id}"', env)
             if inherited is not None:
-                result = await inherited.resolve(ctx, ApiKeyCredential(key=key))
+                result = await inherited.resolve(ctx, ApiKeyCredential(key=key), cancel)
             else:
                 result = AuthResult(auth=ModelAuth(api_key=key), source="configured API key")
         else:
-            result = await inherited.resolve(ctx, None) if inherited is not None else None
+            result = await inherited.resolve(ctx, None, cancel) if inherited is not None else None
         if result is None:
             return None
         explicit_env = {
@@ -573,9 +581,15 @@ class ComposedProvider:
         if self._base is not None and self._base.has_dynamic_models:
             await self._base.refresh_models(context)
         extension_refresh = self._extension.get("refreshModels") if self._extension else None
+        refreshed: list[dict[str, Any]] | None = None
         if extension_refresh is not None:
             refreshed = await extension_refresh(context)
-            if context.cancel is None or not context.cancel.cancelled:
+        if context.cancel.cancelled:
+            return
+        oauth_credential = context.credential if isinstance(context.credential, OAuthCredential) else None
+
+        def _apply() -> None:
+            if refreshed is not None:
                 # Validate before publishing the new synchronous list.
                 apply_extension(
                     self.id,
@@ -583,9 +597,9 @@ class ComposedProvider:
                     {**(self._extension or {}), "models": refreshed},
                 )
                 self._refreshed_extension_models = refreshed
-        self._extension_oauth_credential = (
-            context.credential if isinstance(context.credential, OAuthCredential) else None
-        )
+            self._extension_oauth_credential = oauth_credential
+
+        await context.publish(ModelsPublication(update=_apply))
 
     def _supports_base_api(self, model: Model) -> bool:
         if self._base is None:
@@ -615,6 +629,23 @@ class ComposedProvider:
 
     def stream_simple(self, model: Model, context: Any, options: Any = None) -> Any:
         return self._stream_with(model, context, options, True)
+
+    # Native deferred methods pass straight through to the base provider
+    # (pi: `provider.fetchDeferred = base?.fetchDeferred` conditional wiring).
+
+    @property
+    def supports_fetch_deferred(self) -> bool:
+        return self._base is not None and self._base.supports_fetch_deferred
+
+    @property
+    def supports_cancel_deferred(self) -> bool:
+        return self._base is not None and self._base.supports_cancel_deferred
+
+    def fetch_deferred(self, model: Model, handle: Any, options: Any = None) -> Any:
+        return self._base.fetch_deferred(model, handle, options)
+
+    async def cancel_deferred(self, model: Model, handle: Any, options: Any = None) -> None:
+        await self._base.cancel_deferred(model, handle, options)
 
 
 def compose_model_provider(

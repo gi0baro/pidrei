@@ -29,7 +29,7 @@ import tomllib
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGES = ("ai", "agent", "server", "tui", "pidrei")
+PACKAGES = ("ai", "agent", "protocol", "client", "server", "tui", "pidrei")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 
 failures: list[str] = []

@@ -75,6 +75,24 @@ def test_rejects_invalid_coercions_for_serialized_plain_json_schemas(schema, inp
         validate_tool_arguments(tool, tool_call)
 
 
+def test_preserves_a_value_that_already_matches_a_nullable_union_arm():
+    tool, tool_call = create_tool_call_with_plain_schema({"anyOf": [{"type": "number"}, {"type": "null"}]}, None)
+
+    assert validate_tool_arguments(tool, tool_call) == {"value": None}
+
+
+def test_preserves_a_value_that_already_matches_a_one_of_nullable_union_arm():
+    tool, tool_call = create_tool_call_with_plain_schema({"oneOf": [{"type": "number"}, {"type": "null"}]}, None)
+
+    assert validate_tool_arguments(tool, tool_call) == {"value": None}
+
+
+def test_still_coerces_nullable_unions_when_the_original_value_does_not_match_any_arm():
+    tool, tool_call = create_tool_call_with_plain_schema({"anyOf": [{"type": "number"}, {"type": "null"}]}, "42")
+
+    assert validate_tool_arguments(tool, tool_call) == {"value": 42}
+
+
 def test_accepts_null_for_nullable_array_schemas_with_items():
     # pi additionally exercises TypeBox's generated validator here; that half
     # is a TypeBox-only concern (see module docstring).

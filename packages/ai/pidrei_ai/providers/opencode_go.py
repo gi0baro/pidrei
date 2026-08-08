@@ -15,7 +15,7 @@ from pidrei_ai.registry import Provider, create_provider
 def opencode_go_provider() -> Provider:
     return create_provider(
         id="opencode-go",
-        name="OpenCode Zen Go",
+        name="OpenCode Go",
         auth=ProviderAuth(api_key=env_api_key_auth("OpenCode API key", ["OPENCODE_API_KEY"])),
         models=list(MODELS.get("opencode-go", [])),
         api={

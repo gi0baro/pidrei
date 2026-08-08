@@ -50,6 +50,11 @@ BASH_SCHEMA = {
     "required": ["command"],
 }
 
+BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
+    "snippet": "Execute bash commands (ls, grep, find, etc.)",
+    "guidelines": ("You can inspect PIDREI_* environment variables for current model and session details.",),
+}
+
 
 def _resolve_timeout_ms(timeout: float | None) -> float | None:
     if timeout is None:
@@ -548,11 +553,9 @@ def create_bash_tool_definition(
             "(whichever is hit first). If truncated, full output is saved to a temp file. "
             "Optionally provide a timeout in seconds."
         ),
-        prompt_snippet="Execute bash commands (ls, grep, find, etc.)",
+        prompt_snippet=BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=(
-            ["Inspect PIDREI_* environment variables for current model and session details."]
-            if expose_session_environment
-            else None
+            list(BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]) if expose_session_environment else None
         ),
         parameters=BASH_SCHEMA,
         execute=execute,

@@ -21,24 +21,22 @@ __all__ = ["ModelRegistry", "ProviderConfigInput", "ResolvedRequestAuth", "clear
 class ResolvedRequestAuth:
     ok: bool
     api_key: str | None = None
-    headers: dict[str, str] | None = None
+    # None header values are deletion markers and are preserved (pi #7030);
+    # pi-ai streams strip them at request time.
+    headers: dict[str, str | None] | None = None
+    # Credential-resolved endpoint (e.g. GitHub Copilot Business/Enterprise).
+    base_url: str | None = None
     env: dict[str, str] | None = None
     error: str | None = None
-
-
-def _filter_null_headers(headers) -> dict[str, str] | None:
-    if headers is None:
-        return None
-    return {name: value for name, value in headers.items() if value is not None}
 
 
 class ModelRegistry:
     def __init__(self, runtime: ModelRuntime):
         self._runtime = runtime
 
-    async def refresh(self) -> None:
+    async def refresh(self, options=None):
         """Reload models.json asynchronously. Await before making synchronous registry reads."""
-        await self._runtime.refresh()
+        return await self._runtime.refresh(options)
 
     def get_error(self) -> str | None:
         return self._runtime.get_error()
@@ -62,11 +60,14 @@ class ModelRegistry:
                 compatibility = await self._runtime.get_compatibility_request_config(model)
                 if compatibility.auth_header:
                     return ResolvedRequestAuth(ok=False, error=f'No API key found for "{model.provider}"')
-                return ResolvedRequestAuth(ok=True, headers=_filter_null_headers(compatibility.headers))
+                return ResolvedRequestAuth(
+                    ok=True, headers=dict(compatibility.headers) if compatibility.headers is not None else None
+                )
             return ResolvedRequestAuth(
                 ok=True,
                 api_key=resolution.auth.api_key,
-                headers=_filter_null_headers(resolution.auth.headers),
+                headers=dict(resolution.auth.headers) if resolution.auth.headers is not None else None,
+                base_url=resolution.auth.base_url,
                 env=dict(resolution.env) if resolution.env is not None else None,
             )
         except Exception as error:

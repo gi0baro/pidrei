@@ -14,7 +14,9 @@ Deviations from pi (documented):
 
 import os
 import threading
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import sync
@@ -22,8 +24,10 @@ from tonio.colored import sync
 from pidrei_ai.api.lazy import lazy_stream
 from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError
 from pidrei_ai.auth.types import (
+    ApiKeyCredential,
     AuthCheck,
     AuthInteraction,
+    AuthOperationOptions,
     AuthResult,
     AuthType,
     Credential,
@@ -33,11 +37,12 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.models_store import ModelsStore
 from pidrei_ai.providers.all import builtin_providers, get_builtin_model_data_generated_at
 from pidrei_ai.registry import ModelsRefreshOptions, ModelsRefreshResult, Provider, create_models
-from pidrei_ai.types import Context, Model, SimpleStreamOptions, StreamOptions
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.types import Context, DeferredHandle, Model, SimpleStreamOptions, StreamOptions
+from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.headers import merge_headers
 
 from ..config import get_agent_dir
+from ..utils.abort import operation_cancel
 from .auth_storage import AuthStorage
 from .model_config import ModelConfig
 from .models_store import FileModelsStore, InMemoryCodingAgentModelsStore
@@ -74,20 +79,53 @@ def _unwrap_spawn_error(error: Exception) -> Exception:
     return error
 
 
-class _AvailabilityRun:
-    __slots__ = ("done", "error")
-
-    def __init__(self):
-        self.done = tonio.Event()
-        self.error: Exception | None = None
-
-
 @dataclass(slots=True, kw_only=True)
 class ModelRuntimeAuthOverrides:
     api_key: str | None = None
     env: dict[str, str] | None = None
     #: Require this much remaining OAuth-token validity; defaults to five minutes.
     min_oauth_validity_ms: int | None = None
+    cancel: CancelToken | None = None
+
+
+type CredentialSynchronizationOperation = str  # "login" | "logout" | "setRuntimeApiKey" | "removeRuntimeApiKey"
+
+
+class _CancelBoundInteraction:
+    """pi: `{ ...interaction, signal }` — the interaction surface with the
+    operation's cancel token bound."""
+
+    __slots__ = ("_base", "cancel")
+
+    def __init__(self, base: AuthInteraction, cancel: CancelToken):
+        self._base = base
+        self.cancel = cancel
+
+    async def prompt(self, prompt: Any) -> str:
+        return await self._base.prompt(prompt)
+
+    def notify(self, event: Any) -> None:
+        self._base.notify(event)
+
+
+class CredentialSynchronizationError(Exception):
+    """Credentials changed successfully, but the local model/auth snapshot could
+    not be synchronized."""
+
+    def __init__(
+        self,
+        provider_id: str,
+        operation: CredentialSynchronizationOperation,
+        credential: Credential | None,
+        *,
+        cause: BaseException | None = None,
+    ):
+        super().__init__(f"Credential {operation} committed for {provider_id}, but local synchronization failed")
+        self.provider_id = provider_id
+        self.operation = operation
+        self.credential = credential
+        if cause is not None:
+            self.__cause__ = cause
 
 
 class ModelRuntime:
@@ -110,8 +148,14 @@ class ModelRuntime:
         self._extension_providers: dict[str, ProviderConfigInput] = {}
         self._composition_errors: dict[str, str] = {}
         self._snapshot = _Snapshot()
-        self._availability_refresh: _AvailabilityRun | None = None
+        self._availability_refresh_seq = 0
+        self._availability_error_seq = 0
+        self._provider_availability_seq: dict[str, int] = {}
         self._availability_error: str | None = None
+        # Per-provider serialized credential operations (pi chains promises;
+        # each link is an Event marking that operation settled).
+        self._credential_operations: dict[str, Any] = {}
+        self._credential_operations_guard = threading.Lock()
         # pi composes providers on one event loop, so a mutation and a rebuild
         # can never interleave. Here a detached refresh rebuilds on another
         # thread while a caller registers or unregisters on this one, and the
@@ -150,6 +194,8 @@ class ModelRuntime:
         allow_model_network: bool = False,
         model_refresh_timeout_ms: float | None = None,
         catalog_base_url: str | None = None,
+        cancel: CancelToken | None = None,
+        refresh_on_create: bool = True,
     ) -> ModelRuntime:
         runtime_credentials = RuntimeCredentials(
             credentials if credentials is not None else await AuthStorage.create(auth_path)
@@ -187,20 +233,23 @@ class ModelRuntime:
         )
         runtime._rebuild_providers()
         refresh_from_network = runtime._model_network_enabled and allow_model_network is True
-        cancel = CancelToken() if refresh_from_network else None
+        controller = CancelToken() if refresh_from_network and model_refresh_timeout_ms is not None else None
         settled = tonio.Event()
-        if cancel is not None:
-            timeout_s = (model_refresh_timeout_ms if model_refresh_timeout_ms is not None else 15_000) / 1000
+        if controller is not None:
+            timeout_s = model_refresh_timeout_ms / 1000
 
             async def watchdog() -> None:
                 await settled.wait(timeout_s)
                 if not settled.is_set():
-                    cancel.cancel()
+                    controller.cancel()
 
             tonio.spawn.without_tracking(watchdog())
+        combined = combine_cancel_tokens(cancel, controller)
         try:
-            await runtime.refresh(ModelsRefreshOptions(allow_network=refresh_from_network, cancel=cancel))
+            if refresh_on_create:
+                await runtime.refresh(ModelsRefreshOptions(allow_network=refresh_from_network, cancel=combined.token))
         finally:
+            combined.cleanup()
             settled.set()
         return runtime
 
@@ -266,11 +315,12 @@ class ModelRuntime:
 
     # -- availability ----------------------------------------------------------
 
-    async def _run_availability_refresh(self) -> None:
+    async def _run_availability_refresh(self, seq: int, error_seq: int, cancel: CancelToken) -> None:
         providers = self._models.get_providers()
+        options = AuthOperationOptions(cancel=cancel)
 
         async def check_one(provider: Provider) -> tuple[str, AuthCheck | None]:
-            return provider.id, await self._models.check_auth(provider.id)
+            return provider.id, await self._models.check_auth(provider.id, options)
 
         async def check_all() -> list[tuple[str, AuthCheck | None]]:
             if not providers:
@@ -278,8 +328,13 @@ class ModelRuntime:
             return await tonio.map(check_one, providers)
 
         available, checks, credentials = await tonio.spawn(
-            self._models.get_available(), check_all(), self._credentials.list()
+            self._models.get_available(None, options), check_all(), self._credentials.list(options)
         )
+        # A newer rebuild was requested while this one was in flight; drop this
+        # result so a slow, superseded refresh cannot clobber the snapshot with
+        # stale data.
+        if seq != self._availability_refresh_seq:
+            return
         auth = dict(checks)
         configured_providers = {provider_id for provider_id, check in checks if check is not None}
         self._snapshot = _Snapshot(
@@ -289,41 +344,86 @@ class ModelRuntime:
             stored_providers={entry.provider_id for entry in credentials},
             auth=auth,
         )
-        self._availability_error = None
+        if error_seq == self._availability_error_seq:
+            self._availability_error = None
 
-    def _queue_availability_refresh(self, after: _AvailabilityRun | None) -> _AvailabilityRun:
-        run = _AvailabilityRun()
-
-        async def task() -> None:
-            if after is not None:
-                await after.done.wait()
-            try:
-                await self._run_availability_refresh()
-            except Exception as error:
-                unwrapped = _unwrap_spawn_error(error)
+    async def _queue_availability_refresh(self, cancel: CancelToken | None = None) -> None:
+        self._availability_refresh_seq += 1
+        seq = self._availability_refresh_seq
+        for provider_id, provider_seq in self._provider_availability_seq.items():
+            self._provider_availability_seq[provider_id] = provider_seq + 1
+        self._availability_error_seq += 1
+        error_seq = self._availability_error_seq
+        effective_cancel = cancel if cancel is not None else CancelToken()
+        try:
+            await self._run_availability_refresh(seq, error_seq, effective_cancel)
+        except Exception as error:
+            unwrapped = _unwrap_spawn_error(error)
+            # Only the latest requested rebuild owns the error state.
+            if error_seq == self._availability_error_seq and not effective_cancel.cancelled:
                 self._availability_error = str(unwrapped)
-                run.error = unwrapped
-            finally:
-                if self._availability_refresh is run:
-                    self._availability_refresh = None
-                run.done.set()
+            raise unwrapped from error
 
-        self._availability_refresh = run
-        tonio.spawn.without_tracking(task())
-        return run
-
-    async def _await_run(self, run: _AvailabilityRun) -> None:
-        await run.done.wait()
-        if run.error is not None:
-            raise run.error
-
-    def _refresh_availability(self) -> _AvailabilityRun:
-        """Coalesce concurrent readers onto the pending refresh."""
-        return self._availability_refresh or self._queue_availability_refresh(None)
-
-    def _force_refresh_availability(self) -> _AvailabilityRun:
-        """Mutations must not observe an in-flight refresh started before them."""
-        return self._queue_availability_refresh(self._availability_refresh)
+    async def _refresh_provider_availability(self, provider_id: str, cancel: CancelToken) -> None:
+        # Invalidate any full availability pass that started before this credential change.
+        self._availability_refresh_seq += 1
+        provider_seq = self._provider_availability_seq.get(provider_id, 0) + 1
+        self._provider_availability_seq[provider_id] = provider_seq
+        self._availability_error_seq += 1
+        error_seq = self._availability_error_seq
+        options = AuthOperationOptions(cancel=cancel)
+        try:
+            available, auth, credential = await tonio.spawn(
+                self._models.get_available(provider_id, options),
+                self._models.check_auth(provider_id, options),
+                self._credentials.read(provider_id, options),
+            )
+            cancel.raise_if_cancelled()
+            if self._provider_availability_seq.get(provider_id) != provider_seq:
+                return
+            configured_providers = set(self._snapshot.configured_providers)
+            stored_providers = set(self._snapshot.stored_providers)
+            auth_by_provider = dict(self._snapshot.auth)
+            if auth is not None:
+                configured_providers.add(provider_id)
+                auth_by_provider[provider_id] = auth
+            else:
+                configured_providers.discard(provider_id)
+                auth_by_provider.pop(provider_id, None)
+            if credential is not None:
+                stored_providers.add(provider_id)
+            else:
+                stored_providers.discard(provider_id)
+            all_models = list(self._models.get_models())
+            available_by_id = {
+                (model.provider, model.id): model
+                for model in [
+                    *[model for model in self._snapshot.available if model.provider != provider_id],
+                    *available,
+                ]
+            }
+            self._snapshot = _Snapshot(
+                all=all_models,
+                available=[
+                    available_by_id[(model.provider, model.id)]
+                    for model in all_models
+                    if (model.provider, model.id) in available_by_id
+                ],
+                configured_providers=configured_providers,
+                stored_providers=stored_providers,
+                auth=auth_by_provider,
+            )
+            if error_seq == self._availability_error_seq:
+                self._availability_error = None
+        except Exception as error:
+            unwrapped = _unwrap_spawn_error(error)
+            if (
+                self._provider_availability_seq.get(provider_id) == provider_seq
+                and error_seq == self._availability_error_seq
+                and not cancel.cancelled
+            ):
+                self._availability_error = str(unwrapped)
+            raise unwrapped from error
 
     # -- reads -----------------------------------------------------------------
 
@@ -339,22 +439,27 @@ class ModelRuntime:
     def get_model(self, provider_id: str, model_id: str) -> Model | None:
         return self._models.get_model(provider_id, model_id)
 
-    async def check_auth(self, provider_id: str) -> AuthCheck | None:
-        return await self._models.check_auth(provider_id)
+    async def check_auth(self, provider_id: str, options: AuthOperationOptions | None = None) -> AuthCheck | None:
+        return await self._models.check_auth(provider_id, options)
 
-    async def get_available(self, provider_id: str | None = None) -> list[Model]:
+    async def get_available(
+        self, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[Model]:
         if provider_id:
-            run = self._availability_refresh
-            if run is not None:
-                await self._await_run(run)
-                return [model for model in self._snapshot.available if model.provider == provider_id]
+            self._availability_error_seq += 1
+            error_seq = self._availability_error_seq
             try:
-                return await self._models.get_available(provider_id)
+                available = await self._models.get_available(provider_id, options)
             except Exception as error:
                 unwrapped = _unwrap_spawn_error(error)
-                self._availability_error = str(unwrapped)
+                cancel = options.cancel if options is not None else None
+                if error_seq == self._availability_error_seq and (cancel is None or not cancel.cancelled):
+                    self._availability_error = str(unwrapped)
                 raise unwrapped from error
-        await self._await_run(self._refresh_availability())
+            if error_seq == self._availability_error_seq:
+                self._availability_error = None
+            return available
+        await self._queue_availability_refresh(options.cancel if options is not None else None)
         return self._snapshot.available
 
     def get_available_snapshot(self) -> list[Model]:
@@ -395,6 +500,12 @@ class ModelRuntime:
         check = self._snapshot.auth.get(provider_id)
         return check is not None and check.type == "oauth"
 
+    def is_using_subscription(self, provider_id: str) -> bool:
+        if not self.is_using_oauth(provider_id):
+            return False
+        provider = self._models.get_provider(provider_id)
+        return provider is not None and provider.auth.oauth is not None and provider.auth.oauth.is_subscription is True
+
     def has_configured_auth(self, provider_id: str) -> bool:
         return provider_id in self._snapshot.configured_providers
 
@@ -407,7 +518,10 @@ class ModelRuntime:
     ) -> AuthResult | None:
         overrides = overrides if overrides is not None else ModelRuntimeAuthOverrides()
         resolution_overrides = AuthResolutionOverrides(
-            api_key=overrides.api_key, env=overrides.env, min_oauth_validity_ms=overrides.min_oauth_validity_ms
+            api_key=overrides.api_key,
+            env=overrides.env,
+            min_oauth_validity_ms=overrides.min_oauth_validity_ms,
+            cancel=overrides.cancel,
         )
         if isinstance(provider_or_model, str):
             return await self._models.get_auth(provider_or_model, resolution_overrides)
@@ -425,32 +539,111 @@ class ModelRuntime:
             auth=replace(resolution.auth, headers=merge_headers(resolution.auth.headers, configured_headers)),
         )
 
+    async def _enqueue_credential_operation(
+        self,
+        provider_id: str,
+        cancel: CancelToken,
+        task: Callable[[], Awaitable[Any]],
+    ) -> Any:
+        """Serialize credential operations per provider. A cancellation before
+        the queued task begins rejects with the abort reason; once the task has
+        started, its result (or failure) is awaited to completion."""
+        with self._credential_operations_guard:
+            previous = self._credential_operations.get(provider_id)
+            done = tonio.Event()
+            entry = (done,)
+            self._credential_operations[provider_id] = entry
+
+        started = tonio.Event()
+        outcome: list[tuple[str, Any]] = []
+
+        async def _operation() -> None:
+            try:
+                if previous is not None:
+                    await previous[0].wait()
+                cancel.raise_if_cancelled()
+                started.set()
+                outcome.append(("value", await task()))
+            except BaseException as error:
+                outcome.append(("error", error))
+            finally:
+                done.set()
+                with self._credential_operations_guard:
+                    if self._credential_operations.get(provider_id) is entry:
+                        del self._credential_operations[provider_id]
+
+        tonio.spawn.without_tracking(_operation())
+
+        async def _wait_done() -> str:
+            await done.wait()
+            return "done"
+
+        async def _wait_aborted() -> str:
+            await cancel.wait()
+            return "aborted"
+
+        winner = await tonio.select(_wait_done(), _wait_aborted())
+        if winner == "aborted" and not started.is_set() and not done.is_set():
+            raise cancel.reason  # type: ignore[misc]
+        await done.wait()
+        kind, payload = outcome[0]
+        if kind == "error":
+            raise payload
+        return payload
+
+    async def _synchronize_credential_state(
+        self,
+        provider_id: str,
+        operation: CredentialSynchronizationOperation,
+        credential: Credential | None,
+        cancel: CancelToken,
+    ) -> None:
+        try:
+            cancel.raise_if_cancelled()
+            self._recompose_provider(provider_id)
+            composition_error = self._composition_errors.get(provider_id)
+            if composition_error:
+                raise Exception(composition_error)
+            result = await self._models.refresh(
+                ModelsRefreshOptions(allow_network=False, providers=[provider_id], cancel=cancel)
+            )
+            if result.aborted:
+                cancel.raise_if_cancelled()
+            refresh_error = result.errors.get(provider_id)
+            if refresh_error is not None:
+                raise refresh_error
+            self._update_model_snapshot()
+            await self._refresh_provider_availability(provider_id, cancel)
+        except BaseException as cause:
+            raise CredentialSynchronizationError(provider_id, operation, credential, cause=cause)
+
     async def set_runtime_api_key(
         self,
         provider_id: str,
         api_key: str,
-        refresh_options: ModelsRefreshOptions | None = None,
+        options: AuthOperationOptions | None = None,
     ) -> None:
-        self._credentials.set_runtime_api_key(provider_id, api_key)
-        auth = dict(self._snapshot.auth)
-        auth[provider_id] = AuthCheck(type="api_key", source="runtime API key")
-        configured_providers = set(self._snapshot.configured_providers) | {provider_id}
-        stored_providers = set(self._snapshot.stored_providers) | {provider_id}
-        self._snapshot = replace(
-            self._snapshot,
-            auth=auth,
-            configured_providers=configured_providers,
-            stored_providers=stored_providers,
-            available=[model for model in self._snapshot.all if model.provider in configured_providers],
-        )
-        await self.refresh(refresh_options if refresh_options is not None else ModelsRefreshOptions())
+        cancel = operation_cancel(options.cancel if options is not None else None)
 
-    async def remove_runtime_api_key(self, provider_id: str) -> None:
-        self._credentials.remove_runtime_api_key(provider_id)
-        await self.refresh(ModelsRefreshOptions(allow_network=self._model_network_enabled))
+        async def task() -> None:
+            self._credentials.set_runtime_api_key(provider_id, api_key)
+            await self._synchronize_credential_state(
+                provider_id, "setRuntimeApiKey", ApiKeyCredential(key=api_key), cancel
+            )
 
-    async def list_credentials(self) -> list[CredentialInfo]:
-        return await self._credentials.list()
+        await self._enqueue_credential_operation(provider_id, cancel, task)
+
+    async def remove_runtime_api_key(self, provider_id: str, options: AuthOperationOptions | None = None) -> None:
+        cancel = operation_cancel(options.cancel if options is not None else None)
+
+        async def task() -> None:
+            self._credentials.remove_runtime_api_key(provider_id)
+            await self._synchronize_credential_state(provider_id, "removeRuntimeApiKey", None, cancel)
+
+        await self._enqueue_credential_operation(provider_id, cancel, task)
+
+    async def list_credentials(self, options: AuthOperationOptions | None = None) -> list[CredentialInfo]:
+        return await self._credentials.list(options)
 
     def get_provider_auth_status(self, provider_id: str) -> AuthStatus:
         if self._credentials.has_runtime_api_key(provider_id):
@@ -483,6 +676,7 @@ class ModelRuntime:
             ModelRuntimeAuthOverrides(
                 api_key=options.api_key if options is not None else None,
                 env=options.env if options is not None else None,
+                cancel=options.cancel if options is not None else None,
             ),
         )
         if resolution is None:
@@ -528,18 +722,41 @@ class ModelRuntime:
     async def complete_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return await self.stream_simple(model, context, options).result()
 
+    async def fetch_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
+        async def setup():
+            provider, request_model, request_options = await self._prepare_request(model, options)
+            if not getattr(provider, "supports_fetch_deferred", False):
+                raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
+            return provider.fetch_deferred(request_model, handle, request_options)
+
+        return await lazy_stream(model, setup).result()
+
+    async def cancel_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None) -> None:
+        provider, request_model, request_options = await self._prepare_request(model, options)
+        if not getattr(provider, "supports_cancel_deferred", False):
+            raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
+        await provider.cancel_deferred(request_model, handle, request_options)
+
     # -- lifecycle -------------------------------------------------------------
 
     async def login(self, provider_id: str, type: AuthType, interaction: AuthInteraction) -> Credential:
-        credential = await self._models.login(provider_id, type, interaction)
-        await self.refresh(ModelsRefreshOptions(allow_network=self._model_network_enabled))
-        return credential
+        cancel = operation_cancel(interaction.cancel)
 
-    async def logout(self, provider_id: str) -> None:
-        await self._models.logout(provider_id)
-        # Reset credential-dependent compatibility projections before the unconfigured provider is skipped by refresh.
-        self._recompose_provider(provider_id)
-        await self.refresh(ModelsRefreshOptions(allow_network=self._model_network_enabled))
+        async def task() -> Credential:
+            credential = await self._models.login(provider_id, type, _CancelBoundInteraction(interaction, cancel))
+            await self._synchronize_credential_state(provider_id, "login", credential, cancel)
+            return credential
+
+        return await self._enqueue_credential_operation(provider_id, cancel, task)
+
+    async def logout(self, provider_id: str, options: AuthOperationOptions | None = None) -> None:
+        cancel = operation_cancel(options.cancel if options is not None else None)
+
+        async def task() -> None:
+            await self._models.logout(provider_id, AuthOperationOptions(cancel=cancel))
+            await self._synchronize_credential_state(provider_id, "logout", None, cancel)
+
+        await self._enqueue_credential_operation(provider_id, cancel, task)
 
     def _request_refresh(self) -> None:
         """Ask for a refresh without racing awaited ones (see __init__ notes)."""
@@ -553,25 +770,57 @@ class ModelRuntime:
 
     async def refresh(self, options: ModelsRefreshOptions | None = None) -> ModelsRefreshResult:
         options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
-        # One refresh at a time: rebuild, registry refresh and snapshot must
-        # see one provider generation (see `_refresh_serial` in __init__).
-        async with self._refresh_serial:
-            # Requests made before this run starts are satisfied by it; a
-            # request landing mid-run sets the flag again and spawns its own
-            # drain, which will run after this one releases the lock.
-            self._refresh_requested = False
+        cancel = options.cancel
+        if options.providers is not None:
+            # Provider-scoped refreshes must interleave freely (pi runs each
+            # login/logout synchronization concurrently); cross-refresh
+            # consistency comes from the per-provider generation guards.
             config = await ModelConfig.load(self._models_path)
             with self._composition_guard:
                 self._config = config
-                self._rebuild_providers()
+                for provider_id in dict.fromkeys(options.providers):
+                    self._recompose_provider(provider_id)
+                self._update_model_snapshot()
             result = await self._models.refresh(options)
+            errors = dict(result.errors)
             with self._composition_guard:
                 self._update_model_snapshot()
-        try:
-            await self._await_run(self._force_refresh_availability())
-        except Exception:
-            pass  # Availability errors are recorded by the refresh run; refreshed models remain usable.
-        return result
+        else:
+            # One full refresh at a time: rebuild, registry refresh and snapshot
+            # must see one provider generation (see `_refresh_serial` in __init__).
+            async with self._refresh_serial:
+                # Requests made before this run starts are satisfied by it; a
+                # request landing mid-run sets the flag again and spawns its own
+                # drain, which will run after this one releases the lock.
+                self._refresh_requested = False
+                config = await ModelConfig.load(self._models_path)
+                with self._composition_guard:
+                    self._config = config
+                    self._rebuild_providers()
+                result = await self._models.refresh(options)
+                errors = dict(result.errors)
+                with self._composition_guard:
+                    self._update_model_snapshot()
+        if options.providers is not None:
+
+            async def refresh_one_availability(provider_id: str) -> None:
+                try:
+                    await self._refresh_provider_availability(provider_id, operation_cancel(cancel))
+                except Exception as error:
+                    if cancel is None or not cancel.cancelled:
+                        errors[provider_id] = error
+
+            unique_providers = list(dict.fromkeys(options.providers))
+            if unique_providers:
+                await tonio.map(refresh_one_availability, unique_providers)
+        else:
+            try:
+                await self._queue_availability_refresh(cancel)
+            except Exception:
+                pass  # Availability errors are recorded by the latest pass; refreshed models remain usable.
+        return ModelsRefreshResult(
+            aborted=result.aborted or (cancel.cancelled if cancel is not None else False), errors=errors
+        )
 
     def register_native_provider(self, provider: Provider) -> None:
         if not provider.id.strip():

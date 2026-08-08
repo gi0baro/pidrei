@@ -510,7 +510,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             # =================================================================
 
             case "set_model":
-                models = await session.model_runtime.get_available()
+                models = session.model_runtime.get_available_snapshot()
                 model = next(
                     (m for m in models if m.provider == command.get("provider") and m.id == command.get("modelId")),
                     None,
@@ -529,7 +529,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 return success(id, "cycle_model", result)
 
             case "get_available_models":
-                models = await session.model_runtime.get_available()
+                models = session.model_runtime.get_available_snapshot()
                 return success(id, "get_available_models", {"models": models})
 
             # =================================================================

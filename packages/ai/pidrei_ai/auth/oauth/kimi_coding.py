@@ -14,9 +14,9 @@ from typing import Any
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
 from pidrei_ai.auth.oauth.urls import http_or_https_url
-from pidrei_ai.auth.types import AuthEvent, AuthInteraction, ModelAuth, OAuthAuth, OAuthCredential
+from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
 from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
 
 
@@ -66,15 +66,13 @@ def _stringify(value: Any) -> str:
     return json_module.dumps(value, separators=(",", ":"))
 
 
-async def _post_form(
-    url: str, fields: dict[str, str], cancel: CancelToken | None = None
-) -> oauth_http.OAuthHttpResponse:
+async def _post_form(url: str, fields: dict[str, str], cancel: CancelToken) -> oauth_http.OAuthHttpResponse:
     return await oauth_http.request(
         url, form=fields, headers=_FORM_HEADERS, timeout_ms=REQUEST_TIMEOUT_MS, cancel=cancel
     )
 
 
-async def _start_device_authorization(oauth_host: str, cancel: CancelToken | None = None) -> _DeviceAuthorization:
+async def _start_device_authorization(oauth_host: str, cancel: CancelToken) -> _DeviceAuthorization:
     response = await _post_form(f"{oauth_host}/api/oauth/device_authorization", {"client_id": CLIENT_ID}, cancel)
 
     if not response.ok:
@@ -133,9 +131,7 @@ def _parse_token_response(body: dict[str, Any] | None, operation: str) -> _Token
     )
 
 
-async def _poll_for_token(
-    oauth_host: str, device: _DeviceAuthorization, cancel: CancelToken | None = None
-) -> _TokenResponse:
+async def _poll_for_token(oauth_host: str, device: _DeviceAuthorization, cancel: CancelToken) -> _TokenResponse:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _post_form(
             f"{oauth_host}/api/oauth/token",
@@ -205,14 +201,21 @@ def _is_retryable_refresh_failure(status: int) -> bool:
     return status == 429 or status >= 500
 
 
-async def _refresh_token(
-    oauth_host: str, refresh_token_value: str, cancel: CancelToken | None = None
-) -> _TokenResponse:
+async def _sleep(ms: float, cancel: CancelToken) -> None:
+    """pi's abortable sleep rejects with the signal's reason."""
+    try:
+        await clock.sleep_ms(ms, cancel)
+    except AbortError:
+        cancel.raise_if_cancelled()
+        raise
+
+
+async def _refresh_token(oauth_host: str, refresh_token_value: str, cancel: CancelToken) -> _TokenResponse:
     last_error: Exception | None = None
     for attempt in range(REFRESH_MAX_RETRIES + 1):
         if attempt > 0:
-            await clock.sleep_ms(1000 * 2 ** (attempt - 1))
-        if cancel is not None and cancel.cancelled:
+            await _sleep(1000 * 2 ** (attempt - 1), cancel)
+        if cancel.cancelled:
             raise RuntimeError("Kimi Code token refresh aborted")
 
         try:
@@ -249,7 +252,7 @@ async def _refresh_token(
     raise last_error if last_error is not None else RuntimeError("Kimi Code token refresh failed")
 
 
-async def _login_kimi_coding(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_kimi_coding(interaction: ProviderAuthInteraction) -> OAuthCredential:
     oauth_host = _get_oauth_host()
     device = await _start_device_authorization(oauth_host, interaction.cancel)
     interaction.notify(
@@ -265,7 +268,7 @@ async def _login_kimi_coding(interaction: AuthInteraction) -> OAuthCredential:
     return OAuthCredential(access=token.access, refresh=token.refresh, expires=token.expires)
 
 
-async def _refresh(credential: OAuthCredential, cancel: CancelToken | None) -> OAuthCredential:
+async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
     token = await _refresh_token(_get_oauth_host(), credential.refresh, cancel)
     return OAuthCredential(access=token.access, refresh=token.refresh, expires=token.expires)
 
@@ -276,6 +279,7 @@ async def _to_auth(credential: OAuthCredential) -> ModelAuth:
 
 kimi_coding_oauth = OAuthAuth(
     name="Kimi Code (subscription)",
+    is_subscription=True,
     login_label="Sign in with Kimi Code",
     login=_login_kimi_coding,
     refresh=_refresh,

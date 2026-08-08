@@ -23,7 +23,14 @@ from pidrei_ai.auth.oauth.callback_server import (
 )
 from pidrei_ai.auth.oauth.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.auth.oauth.pkce import generate_pkce
-from pidrei_ai.auth.types import AuthEvent, AuthInteraction, AuthPrompt, ModelAuth, OAuthAuth, OAuthCredential
+from pidrei_ai.auth.types import (
+    AuthEvent,
+    AuthPrompt,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuthInteraction,
+)
 from pidrei_ai.utils import http
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
@@ -74,8 +81,8 @@ def _error_detail(body: dict[str, Any]) -> str | None:
     return None
 
 
-async def _exchange_authorization_code(code: str, verifier: str, cancel: CancelToken | None = None) -> OAuthCredential:
-    if cancel is not None and cancel.cancelled:
+async def _exchange_authorization_code(code: str, verifier: str, cancel: CancelToken) -> OAuthCredential:
+    if cancel.cancelled:
         raise RuntimeError("Login cancelled")
 
     body: dict[str, Any] = {}
@@ -139,10 +146,8 @@ class _OpenRouterCallbackServer:
         self._close()
 
 
-async def _start_callback_server(
-    callback_path: str, verifier: str, cancel: CancelToken | None = None
-) -> _OpenRouterCallbackServer:
-    if cancel is not None and cancel.cancelled:
+async def _start_callback_server(callback_path: str, verifier: str, cancel: CancelToken) -> _OpenRouterCallbackServer:
+    if cancel.cancelled:
         raise RuntimeError("Login cancelled")
     callback_host = _get_callback_host()
     result = OneShotValue()
@@ -199,10 +204,9 @@ async def _start_callback_server(
 
     server = await start_callback_server(host=callback_host, port=0, handle=handle)
 
-    if cancel is not None:
-        unsubscribe = cancel.on_cancel(lambda _reason: finish("error", RuntimeError("Login cancelled")))
-        if result.settled:
-            raise RuntimeError("Login cancelled")
+    unsubscribe = cancel.on_cancel(lambda _reason: finish("error", RuntimeError("Login cancelled")))
+    if result.settled:
+        raise RuntimeError("Login cancelled")
 
     async def _login_deadline() -> None:
         if not await result.wait_for(LOGIN_TIMEOUT_MS / 1000):
@@ -218,7 +222,7 @@ async def _start_callback_server(
     )
 
 
-async def _login_openrouter(interaction: AuthInteraction) -> OAuthCredential:
+async def _login_openrouter(interaction: ProviderAuthInteraction) -> OAuthCredential:
     pkce = generate_pkce()
     callback_path = f"/oauth/callback/{uuid.uuid4()}"
     callback = await _start_callback_server(callback_path, pkce.verifier, interaction.cancel)
@@ -288,7 +292,7 @@ async def _login_openrouter(interaction: AuthInteraction) -> OAuthCredential:
         callback.close()
 
 
-async def _refresh(credential: OAuthCredential, _cancel: CancelToken | None) -> OAuthCredential:
+async def _refresh(credential: OAuthCredential, _cancel: CancelToken) -> OAuthCredential:
     return credential
 
 

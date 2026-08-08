@@ -43,7 +43,7 @@ class FakeProvider:
 def env_api_key_auth(env_name: str) -> ApiKeyAuth:
     """Resolve like pi's env-var providers: stored key wins, then ctx env."""
 
-    async def resolve(ctx, credential):
+    async def resolve(ctx, credential, cancel):
         key = credential.key if credential is not None and credential.key else await ctx.env(env_name)
         if not key:
             return None

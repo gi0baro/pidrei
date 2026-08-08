@@ -247,6 +247,7 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         _editor_container=editor_container,
         _keybindings={},
         ui=ui,
+        _dispose_active_selector=lambda: None,
     )
 
     async def show_extension_custom(key, factory, options=None):
@@ -388,13 +389,13 @@ class TestSetupAutocompleteProvider:
 
 
 def _create_base_provider_fake(models=None, login_provider_options=None):
-    async def get_available():
+    def get_available_snapshot():
         return models or []
 
     fake = _BareInteractiveMode()
     fake.session = SimpleNamespace(
         scoped_models=[],
-        model_runtime=SimpleNamespace(get_available=get_available),
+        model_runtime=SimpleNamespace(get_available_snapshot=get_available_snapshot),
         prompt_templates=[],
         extension_runner=SimpleNamespace(get_registered_commands=list),
         resource_loader=SimpleNamespace(get_skills=lambda: SimpleNamespace(skills=[])),

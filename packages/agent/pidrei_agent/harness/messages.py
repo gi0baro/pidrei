@@ -59,7 +59,9 @@ class CompactionSummaryMessage:
     role: Literal["compactionSummary"] = "compactionSummary"
 
 
-def _iso_to_epoch_ms(timestamp: str) -> int:
+def _to_epoch_ms(timestamp: str | int) -> int:
+    if isinstance(timestamp, int):
+        return timestamp
     return int(datetime.fromisoformat(timestamp).timestamp() * 1000)
 
 
@@ -78,12 +80,14 @@ def bash_execution_to_text(msg: BashExecutionMessage) -> str:
     return text
 
 
-def create_branch_summary_message(summary: str, from_id: str, timestamp: str) -> BranchSummaryMessage:
-    return BranchSummaryMessage(summary=summary, from_id=from_id, timestamp=_iso_to_epoch_ms(timestamp))
+def create_branch_summary_message(summary: str, from_id: str, timestamp: str | int) -> BranchSummaryMessage:
+    return BranchSummaryMessage(summary=summary, from_id=from_id, timestamp=_to_epoch_ms(timestamp))
 
 
-def create_compaction_summary_message(summary: str, tokens_before: int, timestamp: str) -> CompactionSummaryMessage:
-    return CompactionSummaryMessage(summary=summary, tokens_before=tokens_before, timestamp=_iso_to_epoch_ms(timestamp))
+def create_compaction_summary_message(
+    summary: str, tokens_before: int, timestamp: str | int
+) -> CompactionSummaryMessage:
+    return CompactionSummaryMessage(summary=summary, tokens_before=tokens_before, timestamp=_to_epoch_ms(timestamp))
 
 
 def create_custom_message(
@@ -91,14 +95,14 @@ def create_custom_message(
     content: Any,
     display: bool,
     details: Any,
-    timestamp: str,
+    timestamp: str | int,
 ) -> CustomMessage:
     return CustomMessage(
         custom_type=custom_type,
         content=content,
         display=display,
         details=details,
-        timestamp=_iso_to_epoch_ms(timestamp),
+        timestamp=_to_epoch_ms(timestamp),
     )
 
 

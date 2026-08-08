@@ -208,6 +208,7 @@ RENAMES = {
     "packages/coding-agent/src/core/remote-catalog-provider.ts": "packages/pidrei/pidrei/core/remote_catalog.py",
     "packages/coding-agent/test/package-command-paths.test.ts": "packages/pidrei/tests/test_package_commands.py",
     # 0.84.x additions (PORT_0.84.1.md).
+    "packages/agent/src/harness/session/jsonl.ts": "packages/agent/pidrei_agent/harness/session/jsonl/__init__.py",
     "packages/coding-agent/src/package-manager-cli.ts": "packages/pidrei/pidrei/cli/package_commands.py",
     "packages/agent/src/harness/env/nodejs.ts": "packages/agent/pidrei_agent/harness/env/local.py",
     "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
@@ -219,6 +220,28 @@ RENAMES = {
     "packages/coding-agent/src/core/http-dispatcher.ts": "packages/pidrei/pidrei/core/http_config.py",
     "packages/coding-agent/src/modes/interactive/theme/theme-schema.json": "packages/pidrei/pidrei/modes/interactive/theme/theme-schema.json",
     "packages/tui/src/TuiAltScreen.ts": "packages/tui/pidrei_tui/tui_alt_screen.py",
+    # Server package (U4): mid-range names collapsed by upstream refactors —
+    # backend.ts became service.ts (bb6a1cddc), unix-lifecycle.test.ts was
+    # consolidated into unix.test.ts (546e00235); the stale-socket child
+    # fixture is inlined as a python -c script in test_unix.py.
+    "packages/server/src/testing/backend.ts": "packages/server/pidrei_server/testing/service.py",
+    "packages/server/test/unix-lifecycle.test.ts": "packages/server/tests/test_unix.py",
+    "packages/server/test/fixtures/stale-socket-server.mjs": "packages/server/tests/test_unix.py",
+    # Remote-session client helpers (U5): the mechanical target tests/support.py
+    # collides with the client package's helper across the shared `tests`
+    # namespace.
+    "packages/coding-agent/test/client/support.ts": "packages/pidrei/tests/remote_session_support.py",
+    # Experimental CLI (U5): mid-range names collapsed by upstream refactors —
+    # auth-options.ts/options.ts became auth.ts/command.ts (68ad320af),
+    # endpoint.ts became transport-address.ts (0ac010b74).
+    "packages/coding-agent/src/cli/experimental/auth-options.ts": "packages/pidrei/pidrei/cli/experimental/auth.py",
+    "packages/coding-agent/src/cli/experimental/options.ts": "packages/pidrei/pidrei/cli/experimental/command.py",
+    "packages/coding-agent/src/cli/experimental/endpoint.ts": (
+        "packages/pidrei/pidrei/cli/experimental/transport_address.py"
+    ),
+    "packages/coding-agent/test/experimental-cli-options.test.ts": (
+        "packages/pidrei/tests/test_experimental_cli_command.py"
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests

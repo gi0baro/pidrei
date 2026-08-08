@@ -45,6 +45,14 @@ print(",".join(name for name in leaked if name not in allowed))
 """
 
 
+def test_identifies_only_subscription_backed_oauth_flows_as_subscriptions():
+    from pidrei_ai.auth.oauth.kimi_coding import kimi_coding_oauth
+
+    for oauth in (anthropic_oauth, openai_codex_oauth, github_copilot_oauth, kimi_coding_oauth, xai_oauth):
+        assert oauth.is_subscription is True
+    assert openrouter_oauth.is_subscription is not True
+
+
 def test_constructing_the_builtin_providers_does_not_import_a_flow_module():
     result = subprocess.run(  # noqa: S603 - fixed argv, no shell
         [sys.executable, "-c", _LAZY_CHAIN_PROBE],
