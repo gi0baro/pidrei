@@ -1,9 +1,8 @@
 """Mirror of pi's baseten-models.test.ts.
 
-pi resolves Baseten models from the generated catalog; pidrei's catalog regen
-is deferred to U11 (`make models-data`), so the pure catalog-shape case is
-skipped until then and the wire-behavior cases build the models the generator
-emits (`_process_baseten_models` in scripts/generate_models.py) by hand.
+pi resolves Baseten models from the generated catalog; the wire-behavior cases
+here build the models the generator emits (`_process_baseten_models` in
+scripts/generate_models.py) by hand so they assert the payload, not the catalog.
 """
 
 import pytest
@@ -86,7 +85,6 @@ async def capture_payload(model: Model, reasoning: str | None = None) -> dict:
     return captured["payload"]
 
 
-@pytest.mark.skip(reason="catalog regen deferred to U11 (`make models-data`) — pi c1019d920; unskip after regen")
 def test_registers_glm_52_as_the_default_openai_compatible_reasoning_model():
     model = get_builtin_model("baseten", "zai-org/GLM-5.2")
 

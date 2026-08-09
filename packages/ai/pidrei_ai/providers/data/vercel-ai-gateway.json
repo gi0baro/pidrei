@@ -485,6 +485,26 @@
       "contextWindow": 1000000,
       "maxTokens": 64000
     },
+    "alibaba/qwen3.8-max": {
+      "id": "alibaba/qwen3.8-max",
+      "name": "Qwen 3.8 Max",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cacheRead": 0.25,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000
+    },
     "amazon/nova-2-lite": {
       "id": "amazon/nova-2-lite",
       "name": "Nova 2 Lite",
@@ -651,26 +671,6 @@
       },
       "contextWindow": 200000,
       "maxTokens": 8192
-    },
-    "anthropic/claude-opus-4.1": {
-      "id": "anthropic/claude-opus-4.1",
-      "name": "Claude Opus 4.1",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 15.0,
-        "output": 75.0,
-        "cacheRead": 1.5,
-        "cacheWrite": 18.75
-      },
-      "contextWindow": 200000,
-      "maxTokens": 32000
     },
     "anthropic/claude-opus-4.5": {
       "id": "anthropic/claude-opus-4.5",
@@ -1173,9 +1173,28 @@
         "text"
       ],
       "cost": {
-        "input": 0.138,
-        "output": 0.275,
-        "cacheRead": 0.028,
+        "input": 0.2,
+        "output": 0.4,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 384000
+    },
+    "deepseek/deepseek-v4-flash-0731": {
+      "id": "deepseek/deepseek-v4-flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.2,
+        "output": 0.4,
+        "cacheRead": 0.04,
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
@@ -1192,13 +1211,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.435,
-        "output": 0.87,
-        "cacheRead": 0.0036,
+        "input": 1.74,
+        "output": 3.48,
+        "cacheRead": 0.14,
         "cacheWrite": 0.0
       },
-      "contextWindow": 1000000,
-      "maxTokens": 384000
+      "contextWindow": 1048600,
+      "maxTokens": 1048600
     },
     "google/gemini-2.5-flash": {
       "id": "google/gemini-2.5-flash",
@@ -1417,7 +1436,7 @@
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 262144,
+      "contextWindow": 256000,
       "maxTokens": 131072
     },
     "inception/mercury-2": {
@@ -1458,9 +1477,28 @@
       "contextWindow": 32000,
       "maxTokens": 16384
     },
-    "inclusionai/ling-3.0-flash-free": {
-      "id": "inclusionai/ling-3.0-flash-free",
+    "inclusionai/ling-3.0-flash": {
+      "id": "inclusionai/ling-3.0-flash",
       "name": "Ling 3.0 Flash",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.06,
+        "output": 0.18,
+        "cacheRead": 0.012,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 256000,
+      "maxTokens": 32000
+    },
+    "inclusionai/ling-3.0-tiny-free": {
+      "id": "inclusionai/ling-3.0-tiny-free",
+      "name": "Ling 3.0 Tiny (Free)",
       "api": "anthropic-messages",
       "baseUrl": "https://ai-gateway.vercel.sh",
       "provider": "vercel-ai-gateway",
@@ -1475,7 +1513,7 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 32000
     },
     "interfaze/interfaze-beta": {
       "id": "interfaze/interfaze-beta",
@@ -1505,7 +1543,8 @@
       "provider": "vercel-ai-gateway",
       "reasoning": true,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.15,
@@ -1562,7 +1601,8 @@
       "provider": "vercel-ai-gateway",
       "reasoning": true,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.74,
@@ -1685,6 +1725,46 @@
         "input": 1.25,
         "output": 4.25,
         "cacheRead": 0.15,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
+    },
+    "meta/muse-spark-1.2": {
+      "id": "meta/muse-spark-1.2",
+      "name": "Muse Spark 1.2",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.25,
+        "output": 4.25,
+        "cacheRead": 0.15,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
+    },
+    "meta/muse-spark-1.2-contributor": {
+      "id": "meta/muse-spark-1.2-contributor",
+      "name": "Muse Spark 1.2 Contributor",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.2,
+        "cacheRead": 0.002,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -1969,7 +2049,8 @@
       "provider": "vercel-ai-gateway",
       "reasoning": false,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.1,
@@ -1988,7 +2069,8 @@
       "provider": "vercel-ai-gateway",
       "reasoning": false,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.15,
@@ -2067,7 +2149,8 @@
       "provider": "vercel-ai-gateway",
       "reasoning": false,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.15,
@@ -2671,26 +2754,6 @@
       "contextWindow": 400000,
       "maxTokens": 128000
     },
-    "openai/gpt-5.1-instant": {
-      "id": "openai/gpt-5.1-instant",
-      "name": "GPT-5.1 Instant",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": false,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 1.25,
-        "output": 10.0,
-        "cacheRead": 0.13,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 128000,
-      "maxTokens": 16384
-    },
     "openai/gpt-5.1-thinking": {
       "id": "openai/gpt-5.1-thinking",
       "name": "GPT 5.1 Thinking",
@@ -3278,7 +3341,8 @@
       "provider": "vercel-ai-gateway",
       "reasoning": true,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 0.09,
@@ -3347,6 +3411,26 @@
       },
       "contextWindow": 256000,
       "maxTokens": 256000
+    },
+    "thinkingmachines/inkling-small": {
+      "id": "thinkingmachines/inkling-small",
+      "name": "Inkling Small",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.5,
+        "output": 1.2,
+        "cacheRead": 0.1,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 1000000
     },
     "xai/grok-4.1-fast-non-reasoning": {
       "id": "xai/grok-4.1-fast-non-reasoning",
@@ -3835,8 +3919,8 @@
         "cacheRead": 0.26,
         "cacheWrite": 0.0
       },
-      "contextWindow": 202000,
-      "maxTokens": 202000
+      "contextWindow": 202800,
+      "maxTokens": 64000
     },
     "zai/glm-5.2": {
       "id": "zai/glm-5.2",

@@ -1,6 +1,8 @@
 """Tests for the vendored catalog loader (models_generated.py)."""
 
-from pidrei_ai.models_generated import MODELS
+import pytest
+
+from pidrei_ai.models_generated import MODELS, parse_model_dict
 from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import AnthropicMessagesCompat, Model, OpenAIResponsesCompat
 
@@ -61,6 +63,40 @@ def test_openai_models_have_typed_compat():
     with_compat = [model for model in openai_models if model.compat is not None]
     assert with_compat
     assert all(isinstance(model.compat, OpenAIResponsesCompat) for model in with_compat)
+
+
+def _responses_model_dict(compat: dict) -> dict:
+    return {
+        "id": "grok-build-0.1",
+        "name": "grok-build-0.1",
+        "api": "openai-responses",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/zen/v1",
+        "reasoning": True,
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 256000,
+        "maxTokens": 64000,
+        "compat": compat,
+    }
+
+
+def test_drops_a_compat_field_that_belongs_to_another_api():
+    # pi's generator hardcodes `supportsReasoningEffort: false` for this model,
+    # which models.dev has since re-typed as an `openai-responses` model. TS
+    # carries the stray key and no adapter reads it; the typed dataclass here
+    # cannot hold it, so it is dropped rather than rejected.
+    model = parse_model_dict(
+        _responses_model_dict({"sessionAffinityFormat": "openai-nosession", "supportsReasoningEffort": False})
+    )
+
+    assert isinstance(model.compat, OpenAIResponsesCompat)
+    assert model.compat.session_affinity_format == "openai-nosession"
+
+
+def test_rejects_a_compat_field_no_api_declares():
+    with pytest.raises(ValueError, match="supportsTeleportation"):
+        parse_model_dict(_responses_model_dict({"supportsTeleportation": True}))
 
 
 def test_openai_long_context_pricing_tiers_load():

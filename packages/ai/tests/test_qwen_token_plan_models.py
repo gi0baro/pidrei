@@ -2,11 +2,6 @@
 
 pi asserts payloads via streamSimple + a mocked OpenAI SDK; here the payload
 comes straight from `build_params`, which is the object pi's mock captures.
-
-U11 note (pi 2f7f75a20): after the `make models-data` regen, every
-`qwen3.8-max-preview` reference below must become `qwen3.8-max` (the generator
-now excludes the retired preview id), and the skipped omits-retired-preview
-test starts running against the new catalog.
 """
 
 import pytest
@@ -31,7 +26,7 @@ TEXT_MODELS = [
     "qwen3.6-plus",
     "qwen3.7-max",
     "qwen3.7-plus",
-    "qwen3.8-max-preview",
+    "qwen3.8-max",
 ]
 
 INDIVIDUAL_TEXT_MODELS = [
@@ -48,6 +43,8 @@ IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-
 
 PROVIDERS = ["qwen-token-plan", "qwen-token-plan-cn"]
 
+ALL_PROVIDERS = [*PROVIDERS, "qwen-token-plan-individual"]
+
 
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_exposes_all_text_models(provider):
@@ -57,18 +54,12 @@ def test_exposes_all_text_models(provider):
         assert expected in model_ids, f"{provider} should include {expected}"
 
 
-@pytest.mark.skip(
-    reason="catalog regen deferred to U11 (`make models-data`) — pi 2f7f75a20 excludes the retired id at generation time; unskip after regen"
-)
-@pytest.mark.parametrize("provider", [*PROVIDERS, "qwen-token-plan-individual"])
+@pytest.mark.parametrize("provider", ALL_PROVIDERS)
 def test_omits_retired_qwen38_max_preview(provider):
     model_ids = [model.id for model in get_builtin_models(provider)]
     assert "qwen3.8-max-preview" not in model_ids
 
 
-@pytest.mark.skip(
-    reason="catalog regen deferred to U11 (`make models-data`) — pi c03d78bdc generates the Individual catalog; unskip after regen and extend the provider-parametrized cases with qwen-token-plan-individual per that commit"
-)
 def test_exposes_exactly_the_documented_individual_text_models():
     model_ids = sorted(model.id for model in get_builtin_models("qwen-token-plan-individual"))
 
@@ -105,10 +96,22 @@ THINKING_MODELS = [
     "qwen3.6-plus",
     "qwen3.7-max",
     "qwen3.7-plus",
-    "qwen3.8-max-preview",
+    "qwen3.8-max",
 ]
 
 REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"]
+
+INDIVIDUAL_REASONING_EFFORT_MODELS = ["deepseek-v4-flash-0731", "deepseek-v4-pro", "glm-5.2"]
+
+# pi builds these as explicit {provider, modelId} case lists: the Individual
+# catalog carries a different model set, so it cannot be a second axis.
+THINKING_MODEL_CASES = [(provider, model_id) for provider in PROVIDERS for model_id in THINKING_MODELS] + [
+    ("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_TEXT_MODELS
+]
+
+REASONING_EFFORT_MODEL_CASES = [
+    (provider, model_id) for provider in PROVIDERS for model_id in REASONING_EFFORT_MODELS
+] + [("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_REASONING_EFFORT_MODELS]
 
 
 def _context() -> Context:
@@ -120,8 +123,7 @@ def _payload(model, reasoning_effort: str) -> dict:
 
 
 # docs: https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api&commonbuy=1#/api/?type=model&url=3016807
-@pytest.mark.parametrize("provider", PROVIDERS)
-@pytest.mark.parametrize("model_id", THINKING_MODELS)
+@pytest.mark.parametrize(("provider", "model_id"), THINKING_MODEL_CASES)
 def test_sends_qwen_thinking_fields(provider, model_id):
     model = get_builtin_model(provider, model_id)
     assert model is not None, f"Missing model: {provider}/{model_id}"
@@ -132,8 +134,7 @@ def test_sends_qwen_thinking_fields(provider, model_id):
     assert "thinking" not in payload
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
-@pytest.mark.parametrize("model_id", REASONING_EFFORT_MODELS)
+@pytest.mark.parametrize(("provider", "model_id"), REASONING_EFFORT_MODEL_CASES)
 def test_exposes_qwen_reasoning_effort_levels(provider, model_id):
     model = get_builtin_model(provider, model_id)
     assert model is not None, f"Missing model: {provider}/{model_id}"
@@ -148,10 +149,10 @@ def test_exposes_qwen_reasoning_effort_levels(provider, model_id):
     }
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("provider", ALL_PROVIDERS)
 def test_exposes_qwen38_reasoning_effort_levels(provider):
-    model = get_builtin_model(provider, "qwen3.8-max-preview")
-    assert model is not None, f"Missing model: {provider}/qwen3.8-max-preview"
+    model = get_builtin_model(provider, "qwen3.8-max")
+    assert model is not None, f"Missing model: {provider}/qwen3.8-max"
 
     assert model.thinking_level_map == {
         "minimal": None,
@@ -163,8 +164,7 @@ def test_exposes_qwen38_reasoning_effort_levels(provider):
     }
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
-@pytest.mark.parametrize("model_id", REASONING_EFFORT_MODELS)
+@pytest.mark.parametrize(("provider", "model_id"), REASONING_EFFORT_MODEL_CASES)
 def test_sends_qwen_reasoning_effort(provider, model_id):
     model = get_builtin_model(provider, model_id)
     assert model is not None, f"Missing model: {provider}/{model_id}"
@@ -174,10 +174,10 @@ def test_sends_qwen_reasoning_effort(provider, model_id):
     assert payload["reasoning_effort"] == "high"
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("provider", ALL_PROVIDERS)
 def test_sends_qwen38_max_reasoning_effort(provider):
-    model = get_builtin_model(provider, "qwen3.8-max-preview")
-    assert model is not None, f"Missing model: {provider}/qwen3.8-max-preview"
+    model = get_builtin_model(provider, "qwen3.8-max")
+    assert model is not None, f"Missing model: {provider}/qwen3.8-max"
 
     payload = _payload(model, "xhigh")
 

@@ -75,9 +75,6 @@ def test_aligns_glm_52_fast_with_glm_52_openai_compatible_config():
     assert fast.thinking_level_map == base.thinking_level_map
 
 
-@pytest.mark.skip(
-    reason="catalog regen deferred to U11 (`make models-data`) — pi b9497c8c1 adds session-affinity compat at generation time; unskip after regen"
-)
 @pytest.mark.parametrize("model_id", ["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"])
 @pytest.mark.tonio
 async def test_omits_unsupported_long_cache_retention_for_glm_52(model_id):
@@ -106,9 +103,6 @@ async def test_omits_unsupported_long_cache_retention_for_glm_52(model_id):
     assert "prompt_cache_retention" not in captured["payload"]
 
 
-@pytest.mark.skip(
-    reason="catalog regen deferred to U11 (`make models-data`) — pi a688e257c routes kimi-k3 at generation time; unskip after regen"
-)
 @pytest.mark.tonio
 async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effort_controls():
     from pidrei_ai.api.openai_completions import stream_simple as stream_simple_completions

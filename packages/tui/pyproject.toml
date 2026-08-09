@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-tui"
-version = "0.83.0.1"
+version = "0.84.1.0"
 description = "pidrei terminal UI package: terminal driver, input stack, renderer and components (port of pi tui)"
 requires-python = ">=3.14"
 license = "MIT"

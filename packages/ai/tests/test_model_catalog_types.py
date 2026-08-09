@@ -7,8 +7,6 @@ group a model is nested under is the api it loads with, and id/provider match
 its position — is checkable at runtime, so that is what this mirror asserts.
 """
 
-import pytest
-
 from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
 
 
@@ -24,9 +22,6 @@ def test_derives_model_api_id_and_provider_from_grouped_model_data():
     assert grok_43.api == "openai-completions"
 
 
-@pytest.mark.skip(
-    reason="catalog regen deferred to U11 (`make models-data`) — pi 720f0e8ee routes it at generation time; unskip after regen"
-)
 def test_routes_github_copilot_grok_45_through_the_responses_api():
     model = get_builtin_model("github-copilot", "grok-4.5")
     assert model is not None

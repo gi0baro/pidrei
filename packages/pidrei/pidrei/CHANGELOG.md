@@ -6,6 +6,173 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.1.0] - 2026-08-09
+
+Tracks [Pi 0.84.1](https://github.com/earendil-works/pi/releases/tag/v0.84.1),
+and folds in [Pi 0.84.0](https://github.com/earendil-works/pi/releases/tag/v0.84.0).
+
+### Added
+
+- Fullscreen TUI mode: `--tui-mode fullscreen`, the `tuiMode` setting, and a
+  **TUI mode** row in `/settings` that switches renderers without restarting.
+  Fullscreen keeps a sticky editor, status, widget and footer dock while the
+  transcript scrolls independently, and adds a draggable scrollbar
+  (`auto`/`always`/`hidden`), page and half-page scrolling, marked-message
+  navigation, stacked transient notifications, double-click word and
+  triple-click line selection, and an optional `scrollbarThumb` theme color
+  that falls back to `selectedBg`.
+- Remote sessions. Two new packages — `pidrei-protocol` (CBOR codec plus
+  length-prefixed framing) and `pidrei-client` (transport-neutral `PiClient`
+  and the `RemoteSession` controller with transcript reducers) — and a
+  `pidrei-server` rebuilt on top of them, serving sessions over a Unix socket
+  with durable snapshots and single-flight acquisition. This replaces the old
+  supervisor/IPC server wholesale: the `pidrei-server` console script and its
+  `serve`/`list`/`stop` commands are gone.
+- `pidrei auth check`: verify a provider's or model's credentials before a
+  run, with `--json` and an optional `--credentials` dump of the resolved
+  credential.
+- Qwen Token Plan Individual as a built-in provider, sharing the
+  international `QWEN_TOKEN_PLAN_API_KEY`, and Baseten with
+  `BASETEN_API_KEY` and `zai-org/GLM-5.2` as its default model. Model catalog
+  refreshed from models.dev.
+- `pi.register_markdown_transformer()`: chainable, display-only transforms
+  over user and assistant Markdown, applied per render with the message type,
+  streaming flag, and available width.
+- Per-directory `AGENTS.override.md` context files, which replace `AGENTS.md`
+  or `CLAUDE.md` in the same directory while leaving other directories'
+  context intact.
+- Arbitrary OpenAI-compatible sampling parameters through `samplingParams` in
+  `models.json`, model overrides, extension providers and stream options,
+  plus opt-in vLLM `thinking_token_budget` for models that share their output
+  budget between reasoning and the answer.
+- Extension `tool_call` handlers can set `terminate` on a blocked call, so a
+  batch where every call is terminated skips the automatic follow-up model
+  call.
+- Opt-in `Ctrl+P`/`Ctrl+N` prompt-history navigation; explicit history
+  bindings win over application shortcuts while the editor is focused.
+- Terminal-friendly Unicode rendering for LaTeX expressions in Markdown.
+- `AI_AGENT=pidrei` in CLI and RPC child-process environments, for tools that
+  detect a coding agent generically. The variable keeps upstream's name on
+  purpose — renaming it would defeat a cross-tool signal.
+- Deferred provider requests (durable response handles, authenticated
+  fetch/cancel dispatch, faux-provider support for pending, ready, failed and
+  cancelled responses), support for OpenAI-compatible streams that omit
+  `finish_reason` via `compat.supportsFinishReason`, structured Amazon
+  Bedrock failure diagnostics (HTTP status, modeled error code, AWS request
+  id), and `AgentOptions.should_stop_after_turn`.
+- The agent harness moves to the v4 lane-based `Session`, `SessionStorage`
+  and `SessionRepo` APIs — durable operation records, global facts, shared
+  sequence numbers, tree-scoped lane views, an append-only
+  `JsonlSessionRepo`, and bounded branch-entry and open-operation recovery
+  queries.
+
+### Changed
+
+- **Breaking.** JSON and RPC `message_update` events carry only
+  `assistantMessageEvent` deltas. The cumulative `message` and
+  `assistantMessageEvent.partial` fields are gone — they made output grow
+  quadratically. Clients that need a partial message assemble deltas between
+  `message_start` and `message_end`; `message_end` remains authoritative.
+- **Breaking.** `ModelRegistry.get_api_key_and_headers()` returns headers
+  whose values may be `None`, preserving deletion markers instead of dropping
+  them; this stops placeholder OpenAI credentials from reaching Cloudflare AI
+  Gateway. `ModelRegistry.refresh()` takes refresh options and returns a
+  result rather than discarding cancellation and provider errors, and
+  `ModelRuntime.set_runtime_api_key()` now takes auth cancellation options —
+  call `refresh(providers=[provider_id], cancel=...)` separately when remote
+  freshness matters.
+- **Breaking.** Dynamic providers read the `context.stored` snapshot and
+  commit through the generation-checked `context.publish()` instead of
+  touching the store directly. Providers built with `create_provider(...)`
+  that only return fetched models need no change.
+- **Breaking.** The legacy in-memory and JSONL harness repositories are
+  removed in favour of the v4 `SessionRepo` implementations, and harness
+  filesystems must implement `rename_file()` with same-filesystem replacement
+  semantics for atomic JSONL publication.
+- The bash tool's guideline about `PIDREI_*` environment variables is
+  softened, to cut down on unnecessary inspection commands.
+- Automatic terminal theme detection probes color-scheme and background
+  support concurrently, halving its worst case from 200 ms to 100 ms.
+- The fullscreen mouse wheel steps one line instead of three.
+- `ModelsStore` reads, writes and deletions accept cancellation, and catalog
+  orchestration binds those waits to the provider refresh token.
+
+### Fixed
+
+- Responses truncated below their intended output limit compact and retry
+  once instead of ending the run.
+- Manual `/compact` no longer races threshold auto-compaction, and messages
+  queued during a manual compaction are sent afterwards instead of failing.
+- Extension TUI method wrappers no longer recurse indefinitely when
+  delegating to the original method.
+- Extension event-bus listeners are disposed with the session instead of
+  surviving reloads.
+- `set_tools_expanded(False)` is a no-op when tool output is already
+  collapsed, so extensions stop emitting redundant `Tool output: collapsed`
+  notices at startup.
+- Oversized images returned by extension and built-in tools go through
+  automatic resizing instead of bypassing it.
+- Bare exact `--model` ids shared by several providers resolve to the sole
+  authenticated provider, or fail with an explicit ambiguity error naming the
+  candidates, instead of silently taking the first catalog entry.
+- GitHub Copilot compaction and branch summaries use the credential-resolved
+  Business or Enterprise endpoint rather than the Individual one, and
+  extension model calls keep credential-resolved endpoints when forwarding
+  request authentication.
+- Project-level nested provider retry settings merge into global settings
+  instead of replacing them.
+- Session discovery finds sessions stored behind symlinked directories, and
+  JSONL session ids are unique per working directory rather than globally.
+- JSONL session forks and torn-tail repairs publish atomically, so an
+  interrupted write cannot leave a partial session behind.
+- `find` results at a filesystem root keep their first path segment and gain
+  no duplicate separators.
+- Tool-argument validation preserves values that already match an
+  `anyOf`/`oneOf` arm before coercion, so a nullable union no longer turns
+  `null` into another primitive.
+- Fireworks GLM 5.2 requests drop the unsupported `prompt_cache_retention`
+  field when long cache retention is on, and enable session affinity for
+  automatic prompt caching. GitHub Copilot Grok 4.5 uses the Responses API.
+- Malformed resource arrays in package manifests no longer crash session
+  startup; invalid fields are ignored and the rest of the manifest is used.
+- Long-running sessions pick up credentials written by another process
+  instead of using stale ones, concurrent credential mutations no longer lose
+  unrelated providers' updates, and concurrent model-store reads no longer
+  form a lock convoy that delays startup.
+- OAuth token refreshes release the credential-store lock when a request
+  stalls, and waiting on a file-backed credential or catalog lock is
+  cancellable — a cancelled mutation cannot commit later.
+- Provider login no longer hangs after credentials are saved when a catalog
+  refresh stalls; forced availability refreshes no longer queue behind a
+  stalled earlier one; stale availability, pi.dev, llama.cpp and extension
+  catalog results no longer publish after a newer pass; `/model` reports
+  every catalog that failed; `/model <name>` and `/scoped-models` answer from
+  the cache instead of waiting for a refresh.
+- Fullscreen shutdown no longer leaks terminal capability-query replies into
+  the parent shell prompt, `Ctrl+X` copy confirmations show the transient
+  `Copied!` marker instead of a transcript line, Kitty image previews stop
+  overlapping the sticky dock while scrolling, image-heavy sessions no longer
+  retransmit visible image payloads on every layout change, and fullscreen
+  transcript navigation leaves `Ctrl`-modified `Home`/`End`/`PageUp`/
+  `PageDown` available to the editor.
+- Spaces typed in a `/settings` search no longer toggle the highlighted
+  setting, so multi-word queries such as **TUI mode** work.
+- Custom editors inherit the default editor's autocomplete dropdown item
+  limit.
+- The footer no longer shows `(sub)` for generic OAuth sign-ins without a
+  known subscription; extension OAuth providers opt in with
+  `is_subscription`.
+- `/copy` reads clipboard text on Wayland when no X11 clipboard is available.
+
+### Not ported
+
+- Upstream's vendor-neutral telemetry contracts. pidrei ships no telemetry.
+- Mermaid diagram rendering, which upstream implements with a JavaScript
+  dependency.
+- Windows fixes (drive-path resolution, right-click paste, `find` globs) and
+  Bun/npm packaging fixes: pidrei is POSIX-only and is not distributed
+  through npm.
+
 ## [0.83.0.1] - 2026-08-07
 
 PiDrei fixes on top of Pi 0.83.0.

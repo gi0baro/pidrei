@@ -430,7 +430,7 @@ def test_sends_max_tokens_for_zai_completions_models():
     from pidrei_ai.providers.all import get_builtin_model
 
     # Regenerated Z.AI catalog entries carry the compat directly.
-    for model_id in ("glm-5.1", "glm-5.2"):
+    for model_id in ("glm-5-turbo", "glm-5.2"):
         catalog_model = get_builtin_model("zai", model_id)
         assert catalog_model is not None
         assert catalog_model.compat is not None and catalog_model.compat.max_tokens_field == "max_tokens"

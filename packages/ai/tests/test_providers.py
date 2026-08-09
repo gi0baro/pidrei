@@ -95,11 +95,6 @@ def test_builtin_models_registers_every_builtin_provider_with_models():
 
     for provider in providers:
         listed = models.get_models(provider.id)
-        # These catalogs arrive with the U11 `make models-data` regen
-        # (pi c1019d920 / c03d78bdc generate them from models.dev); drop the
-        # carve-outs then.
-        if provider.id in ("baseten", "qwen-token-plan-individual"):
-            continue
         assert listed, provider.id
         assert all(model.provider == provider.id for model in listed)
 

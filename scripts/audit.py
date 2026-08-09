@@ -310,7 +310,9 @@ def _check_sync_ports_of_pi_async(findings: list[str], notes: list[str]) -> None
     for ours, theirs in PACKAGE_UPSTREAM.items():
         pi_async = _pi_async_methods(pi_root, theirs)
         if not pi_async:
-            notes.append(f"pi async/sync drift: no sources for pi package {theirs!r}, skipped")
+            # Either the pi package is absent, or it genuinely has no async
+            # methods to drift from (pi's `protocol` is all pure functions).
+            notes.append(f"pi async/sync drift: no async methods in pi package {theirs!r}, skipped")
             continue
         for path in sorted((ROOT / "packages" / ours).rglob("*.py")):
             rel = path.relative_to(ROOT)

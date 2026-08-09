@@ -582,6 +582,25 @@
       },
       "contextWindow": 128000,
       "maxTokens": 128000
+    },
+    "voxtral-small-latest": {
+      "id": "voxtral-small-latest",
+      "name": "Voxtral Small (latest)",
+      "api": "mistral-conversations",
+      "provider": "mistral",
+      "baseUrl": "https://api.mistral.ai",
+      "reasoning": false,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.3,
+        "cacheRead": 0.01,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32000,
+      "maxTokens": 32000
     }
   }
 }
