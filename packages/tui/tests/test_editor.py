@@ -7,7 +7,7 @@ import tonio.colored as tonio
 
 from pidrei_tui.autocomplete import CombinedAutocompleteProvider
 from pidrei_tui.components.editor import Editor, word_wrap_line
-from pidrei_tui.tui import TUI
+from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_tui.utils import visible_width
 
 from .themes import default_editor_theme
@@ -23,7 +23,7 @@ def strip_ansi(line: str) -> str:
 
 def create_test_tui(cols=80, rows=24):
     """Create a TUI with a virtual terminal for testing."""
-    return TUI(VirtualTerminal(cols, rows))
+    return TuiMainScreen(VirtualTerminal(cols, rows))
 
 
 def apply_completion(lines, cursor_line, cursor_col, item, prefix):

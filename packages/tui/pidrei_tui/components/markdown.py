@@ -16,6 +16,7 @@ renderer over it.
 
 import re
 
+from ..latex import render_latex
 from ..terminal_image import get_capabilities, hyperlink, is_image_line
 from ..utils import apply_background_to_line, visible_width, wrap_text_with_ansi
 from ._marked import lex, trim_partial_closing_fences
@@ -252,6 +253,16 @@ class Markdown:
         elif token_type == "text":
             lines.append(self._render_inline_tokens([token], style_context))
 
+        elif token_type == "latexBlock":
+            if not token.get("pending") and self._options.get("renderLatex") is not False:
+                rendered = render_latex(token["text"], {"display": True}) or token["raw"].strip()
+            else:
+                rendered = token["raw"].strip()
+            for line in rendered.split("\n"):
+                lines.append(self._apply_default_style(line))
+            if next_token_type and next_token_type != "space":
+                lines.append("")
+
         elif token_type == "code":
             indent = self._theme.get("codeBlockIndent", "  ")
             lines.append(self._theme["codeBlockBorder"](f"```{token.get('lang') or ''}"))
@@ -360,7 +371,14 @@ class Markdown:
         for token in tokens:
             token_type = token["type"]
 
-            if token_type == "escape":
+            if token_type == "latex":
+                if not token.get("pending") and self._options.get("renderLatex") is not False:
+                    rendered = render_latex(token["text"]) or token["raw"]
+                else:
+                    rendered = token["raw"]
+                result += apply_text_with_newlines(rendered)
+
+            elif token_type == "escape":
                 result += apply_text_with_newlines(
                     token["raw"] if self._options.get("preserveBackslashEscapes") else token["text"]
                 )

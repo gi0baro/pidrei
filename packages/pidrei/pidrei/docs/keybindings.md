@@ -27,6 +27,16 @@ the current bindings with `/keybindings`.
 `app.session.new`, `.tree`, `.fork` and `.resume` have no default key; bind them
 if you want them.
 
+### Prompt history
+
+`up`/`down` (`tui.editor.cursorUp`/`.cursorDown`) move the cursor and browse
+history at the first and last line. `tui.editor.historyPrevious` and
+`tui.editor.historyNext` are unbound by default and always change history
+entries, wherever the cursor sits in a multiline prompt. An explicit history
+binding beats an application action while the main editor is focused, so
+binding `tui.editor.historyPrevious` to `ctrl+p` overrides model cycling there
+without changing `ctrl+p` in selectors.
+
 ### Session tree
 
 | Keys | Action |
@@ -46,6 +56,37 @@ if you want them.
 
 The same keys mean different things in different surfaces — bindings are scoped
 to the component that has focus.
+
+### Alternate-screen viewport
+
+Only with `--alt`, and targeting the primary transcript scroll region.
+Two-finger trackpad and mouse-wheel input scroll the region under the pointer,
+falling back to the transcript over the fixed editor/status/footer dock.
+Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the
+primary mouse button selects text and copies it to the clipboard; holding at
+the transcript's top or bottom edge auto-scrolls into off-screen content.
+
+| Keys | Action | Does |
+|------|--------|------|
+| `pageUp` | `tui.altScreen.pageUp` | Scroll the transcript up by one page |
+| `pageDown` | `tui.altScreen.pageDown` | Scroll the transcript down by one page |
+| *(none)* | `tui.altScreen.halfPageUp` | Scroll the transcript up by half a page |
+| *(none)* | `tui.altScreen.halfPageDown` | Scroll the transcript down by half a page |
+| `ctrl+shift+up` | `tui.altScreen.previousPrompt` | Jump to the previous marked message |
+| `ctrl+shift+down` | `tui.altScreen.nextPrompt` | Jump to the next marked message |
+| `home` | `tui.altScreen.top` | Scroll to the beginning of the transcript |
+| `end` | `tui.altScreen.bottom` | Scroll to the transcript end and follow new output |
+
+These bindings take precedence over the editor's, so with `--alt` the
+unmodified navigation keys drive the transcript and their `ctrl` variants
+(`ctrl+home`, `ctrl+end`, `ctrl+pageUp`, `ctrl+pageDown`) drive the editor.
+Without `--alt`, both variants drive the editor.
+
+The routing is just action bindings, so it is configurable:
+`"tui.altScreen.pageUp": "ctrl+pageUp"` gives `pageUp` back to the editor, and
+`"tui.altScreen.pageUp": []` disables the transcript shortcut. Bind
+`tui.altScreen.halfPageUp`/`halfPageDown` for smaller steps while keeping the
+full-page bindings. A user binding replaces that action's defaults.
 
 ## Customizing
 

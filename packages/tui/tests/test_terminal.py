@@ -175,6 +175,19 @@ async def test_replays_buffered_csi_prefix_input_when_it_is_not_a_kitty_response
         await harness.cleanup()
 
 
+# ProcessTerminal progress
+
+
+def test_writes_a_valid_osc_9_4_clear_sequence():
+    terminal = ProcessTerminal()
+    writes: list[str] = []
+    terminal._write_stdout = writes.append
+
+    terminal.set_progress(False)
+
+    assert writes == ["\x1b]9;4;0\x07"]
+
+
 # ProcessTerminal dimensions
 
 

@@ -7,7 +7,9 @@ import os
 from contextlib import contextmanager
 
 import pytest
+import tonio.colored as tonio
 
+from pidrei_tui import tui as tui_module
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
     delete_kitty_image,
@@ -16,7 +18,7 @@ from pidrei_tui.terminal_image import (
     set_capabilities,
     set_cell_dimensions,
 )
-from pidrei_tui.tui import TUI
+from pidrei_tui.tui_main_screen import TuiMainScreen
 
 from .tui_helpers import env_var
 from .virtual_terminal import LoggingVirtualTerminal, VirtualTerminal
@@ -35,6 +37,63 @@ class TestComponent:
         pass
 
 
+class InputComponent(TestComponent):
+    __test__ = False
+
+    def __init__(self):
+        super().__init__()
+        self.render_count = 0
+
+    def render(self, width):
+        self.render_count += 1
+        return super().render(width)
+
+    async def handle_input(self, data):
+        self.lines = [data]
+
+
+# TUI render scheduling
+
+
+@pytest.mark.tonio
+async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
+    """pi asserts one render on the next tick; the throttle here is a real
+    wait, so it is stretched to 2s for the test — a preempted frame lands in
+    milliseconds, a throttled one could not."""
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = InputComponent()
+    component.lines = ["initial"]
+    tui.add_child(component)
+    tui.set_focus(component)
+    await tui.start()
+    await terminal.wait_for_render()
+    render_count_before_input = component.render_count
+
+    original_interval = tui_module._MIN_RENDER_INTERVAL_S
+    tui_module._MIN_RENDER_INTERVAL_S = 2.0
+    try:
+        # Queue a normal throttled render first, and let the loop park in the
+        # throttle. Keyboard input must preempt it.
+        component.lines = ["pending"]
+        since = terminal.frames
+        tui.request_render()
+        await tonio.sleep(0.02)
+        assert terminal.frames == since, "the throttled frame should still be pending"
+
+        await terminal.send_input("first")
+        await terminal.send_input("second")
+        await terminal.send_input("typed")
+        await terminal.wait_for_render(since, timeout=1.0)
+    finally:
+        tui_module._MIN_RENDER_INTERVAL_S = original_interval
+
+    assert terminal.frames > since, "keyboard input should not wait for the throttle"
+    assert component.render_count == render_count_before_input + 1
+    assert component.lines == ["typed"]
+    await tui.stop()
+
+
 # TUI debug logging
 
 
@@ -42,7 +101,7 @@ class TestComponent:
 async def test_writes_redraw_logs_to_the_provided_directory(tmp_dir):
     with env_var("PIDREI_DEBUG_REDRAW", "1"):
         terminal = VirtualTerminal(40, 10)
-        tui = TUI(terminal, None, str(tmp_dir))
+        tui = TuiMainScreen(terminal, None, str(tmp_dir))
         component = TestComponent()
         tui.add_child(component)
         component.lines = ["test"]
@@ -60,7 +119,7 @@ async def test_writes_redraw_logs_to_the_provided_directory(tmp_dir):
 @pytest.mark.tonio
 async def test_deletes_changed_image_ids_before_drawing_moved_placements():
     terminal = LoggingVirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -88,7 +147,7 @@ async def test_deletes_changed_image_ids_before_drawing_moved_placements():
 @pytest.mark.tonio
 async def test_redraws_image_lines_when_an_earlier_reserved_image_row_changes():
     terminal = LoggingVirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -116,7 +175,7 @@ async def test_redraws_image_lines_when_an_earlier_reserved_image_row_changes():
 @pytest.mark.tonio
 async def test_deletes_previously_rendered_image_ids_during_full_redraws():
     terminal = LoggingVirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -146,7 +205,7 @@ async def test_deletes_previously_rendered_image_ids_during_full_redraws():
 async def test_triggers_full_re_render_when_terminal_height_changes():
     with env_var("TERMUX_VERSION", None):
         terminal = VirtualTerminal(40, 10)
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         component = TestComponent()
         tui.add_child(component)
 
@@ -173,7 +232,7 @@ async def test_triggers_full_re_render_when_terminal_height_changes():
 async def test_skips_full_re_render_on_height_changes_in_termux():
     with env_var("TERMUX_VERSION", "1"):
         terminal = LoggingVirtualTerminal(40, 10)
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         component = TestComponent()
         tui.add_child(component)
 
@@ -200,7 +259,7 @@ async def test_skips_full_re_render_on_height_changes_in_termux():
 @pytest.mark.tonio
 async def test_triggers_full_re_render_when_terminal_width_changes():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -226,7 +285,7 @@ async def test_triggers_full_re_render_when_terminal_width_changes():
 @pytest.mark.tonio
 async def test_clears_empty_rows_when_content_shrinks_significantly():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     tui.set_clear_on_shrink(True)  # Explicitly enable (may be disabled via env var)
     component = TestComponent()
     tui.add_child(component)
@@ -259,7 +318,7 @@ async def test_clears_empty_rows_when_content_shrinks_significantly():
 @pytest.mark.tonio
 async def test_handles_shrink_to_single_line():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     tui.set_clear_on_shrink(True)
     component = TestComponent()
     tui.add_child(component)
@@ -283,7 +342,7 @@ async def test_handles_shrink_to_single_line():
 @pytest.mark.tonio
 async def test_handles_shrink_to_empty():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     tui.set_clear_on_shrink(True)
     component = TestComponent()
     tui.add_child(component)
@@ -311,7 +370,7 @@ async def test_handles_shrink_to_empty():
 @pytest.mark.tonio
 async def test_tracks_cursor_correctly_when_content_shrinks_with_unchanged_remaining_lines():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -341,7 +400,7 @@ async def test_tracks_cursor_correctly_when_content_shrinks_with_unchanged_remai
 @pytest.mark.tonio
 async def test_renders_correctly_when_only_a_middle_line_changes_spinner_case():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -367,7 +426,7 @@ async def test_renders_correctly_when_only_a_middle_line_changes_spinner_case():
 @pytest.mark.tonio
 async def test_resets_styles_after_each_rendered_line():
     terminal = VirtualTerminal(20, 6)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -382,7 +441,7 @@ async def test_resets_styles_after_each_rendered_line():
 @pytest.mark.tonio
 async def test_renders_correctly_when_first_line_changes_but_rest_stays_same():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -407,7 +466,7 @@ async def test_renders_correctly_when_first_line_changes_but_rest_stays_same():
 @pytest.mark.tonio
 async def test_renders_correctly_when_last_line_changes_but_rest_stays_same():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -432,7 +491,7 @@ async def test_renders_correctly_when_last_line_changes_but_rest_stays_same():
 @pytest.mark.tonio
 async def test_renders_correctly_when_multiple_non_adjacent_lines_change():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -460,7 +519,7 @@ async def test_renders_correctly_when_multiple_non_adjacent_lines_change():
 @pytest.mark.tonio
 async def test_handles_transition_from_content_to_empty_and_back_to_content():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -492,7 +551,7 @@ async def test_handles_transition_from_content_to_empty_and_back_to_content():
 @pytest.mark.tonio
 async def test_full_re_renders_when_deleted_lines_move_the_viewport_upward():
     terminal = VirtualTerminal(20, 5)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -515,7 +574,7 @@ async def test_full_re_renders_when_deleted_lines_move_the_viewport_upward():
 @pytest.mark.tonio
 async def test_appends_after_a_shrink_without_another_full_redraw_once_the_viewport_is_reset():
     terminal = VirtualTerminal(20, 5)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = TestComponent()
     tui.add_child(component)
 
@@ -545,7 +604,7 @@ async def test_appends_after_a_shrink_without_another_full_redraw_once_the_viewp
 @pytest.mark.tonio
 async def test_clears_stale_content_when_max_lines_rendered_was_inflated_by_a_transient_component():
     terminal = VirtualTerminal(40, 10)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     chat = TestComponent()
     editor = TestComponent()
     tui.add_child(chat)
@@ -617,7 +676,7 @@ def kitty_capabilities():
 async def test_clears_reserved_kitty_image_rows_before_drawing_appended_image_placements():
     with kitty_capabilities():
         terminal = LoggingVirtualTerminal(40, 10)
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         component = TestComponent()
         tui.add_child(component)
 
@@ -654,7 +713,7 @@ async def test_clears_reserved_kitty_image_rows_before_drawing_appended_image_pl
 async def test_falls_back_to_full_redraw_when_kitty_image_pre_clear_would_scroll():
     with kitty_capabilities():
         terminal = LoggingVirtualTerminal(40, 2)
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         component = TestComponent()
         tui.add_child(component)
 
@@ -685,7 +744,7 @@ async def test_falls_back_to_full_redraw_when_kitty_image_pre_clear_would_scroll
 async def test_reserves_kitty_image_rows_before_drawing_during_full_redraw_fallbacks():
     with kitty_capabilities():
         terminal = LoggingVirtualTerminal(40, 5)
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         component = TestComponent()
         tui.add_child(component)
 
@@ -724,7 +783,7 @@ async def test_reserves_kitty_image_rows_before_drawing_during_full_redraw_fallb
 async def test_does_not_use_cursor_up_placement_for_kitty_images_taller_than_the_viewport():
     with kitty_capabilities():
         terminal = LoggingVirtualTerminal(40, 5)
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         component = TestComponent()
         tui.add_child(component)
 

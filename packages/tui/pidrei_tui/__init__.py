@@ -4,15 +4,18 @@ from .autocomplete import CombinedAutocompleteProvider
 from .components.box import Box
 from .components.cancellable_loader import CancellableLoader
 from .components.editor import Editor, word_wrap_line
+from .components.h_stack import HStack
 from .components.image import Image
 from .components.input import Input
 from .components.loader import Loader
 from .components.markdown import Markdown
+from .components.scroll_view import ScrollView
 from .components.select_list import SelectList
 from .components.settings_list import SettingsList
 from .components.spacer import Spacer
 from .components.text import Text
 from .components.truncated_text import TruncatedText
+from .components.v_stack import VStack
 from .editor_component import EditorComponent
 from .fuzzy import fuzzy_filter, fuzzy_match
 from .keybindings import (
@@ -31,6 +34,7 @@ from .keys import (
     parse_key,
     set_kitty_protocol_active,
 )
+from .latex import render_latex
 from .stdin_buffer import StdinBuffer
 from .terminal import (
     ProcessTerminal,
@@ -72,9 +76,20 @@ from .tui import (
     Container,
     Focusable,
     OverlayHandle,
+    composite_tui_line,
     is_focusable,
+    is_viewport_tui,
 )
-from .utils import slice_by_column, truncate_to_width, visible_width, wrap_text_with_ansi
+from .tui_alt_screen import TuiAltScreen
+from .tui_main_screen import TuiMainScreen
+from .utils import (
+    get_osc8_link_at_column,
+    slice_by_column,
+    strip_terminal_sequences,
+    truncate_to_width,
+    visible_width,
+    wrap_text_with_ansi,
+)
 
 
 __all__ = [
@@ -89,6 +104,7 @@ __all__ = [
     "Editor",
     "EditorComponent",
     "Focusable",
+    "HStack",
     "Image",
     "Input",
     "Key",
@@ -97,6 +113,7 @@ __all__ = [
     "Markdown",
     "OverlayHandle",
     "ProcessTerminal",
+    "ScrollView",
     "SelectList",
     "SettingsList",
     "Spacer",
@@ -104,8 +121,12 @@ __all__ = [
     "Terminal",
     "Text",
     "TruncatedText",
+    "TuiAltScreen",
+    "TuiMainScreen",
+    "VStack",
     "allocate_image_id",
     "calculate_image_rows",
+    "composite_tui_line",
     "decode_kitty_printable",
     "delete_all_kitty_images",
     "delete_kitty_image",
@@ -120,6 +141,7 @@ __all__ = [
     "get_image_dimensions",
     "get_jpeg_dimensions",
     "get_keybindings",
+    "get_osc8_link_at_column",
     "get_png_dimensions",
     "get_webp_dimensions",
     "hyperlink",
@@ -129,6 +151,7 @@ __all__ = [
     "is_key_release",
     "is_key_repeat",
     "is_kitty_protocol_active",
+    "is_viewport_tui",
     "matches_key",
     "normalize_apple_terminal_input",
     "parse_key",
@@ -136,12 +159,14 @@ __all__ = [
     "parse_osc11_background_color",
     "parse_terminal_color_scheme_report",
     "render_image",
+    "render_latex",
     "reset_capabilities_cache",
     "set_capabilities",
     "set_cell_dimensions",
     "set_keybindings",
     "set_kitty_protocol_active",
     "slice_by_column",
+    "strip_terminal_sequences",
     "truncate_to_width",
     "visible_width",
     "word_wrap_line",

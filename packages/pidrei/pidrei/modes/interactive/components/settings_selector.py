@@ -658,6 +658,18 @@ class SettingsSelectorComponent(Container):
             },
         )
 
+        # Fullscreen scrollbar mode (insert after terminal progress)
+        insert_after(
+            "terminal-progress",
+            {
+                "id": "fullscreen-scrollbar",
+                "label": "Fullscreen scrollbar",
+                "description": "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
+                "currentValue": config["fullscreenScrollbar"],
+                "values": ["auto", "always", "hidden"],
+            },
+        )
+
         # Add borders
         self.add_child(DynamicBorder())
 
@@ -714,6 +726,8 @@ class SettingsSelectorComponent(Container):
                 callbacks["onClearOnShrinkChange"](new_value == "true")
             elif item_id == "terminal-progress":
                 callbacks["onShowTerminalProgressChange"](new_value == "true")
+            elif item_id == "fullscreen-scrollbar":
+                callbacks["onFullscreenScrollbarChange"](new_value)
             elif item_id == "theme":
                 callbacks["onThemeChange"](new_value)
 

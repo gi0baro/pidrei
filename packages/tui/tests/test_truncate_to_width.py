@@ -23,6 +23,14 @@ def test_preserves_ansi_styling_for_kept_text_and_resets_before_and_after_ellips
     assert truncated.endswith("\x1b[0m…\x1b[0m") is True
 
 
+def test_closes_a_bel_terminated_osc8_link_when_truncating_its_label():
+    open_link = "\x1b]8;;https://example.com\x07"
+    close_link = "\x1b]8;;\x07"
+    text = f"{open_link}some-longer-label-here{close_link}"
+
+    assert truncate_to_width(text, 15) == f"{open_link}some-longer-{close_link}\x1b[0m...\x1b[0m"
+
+
 def test_handles_malformed_ansi_escape_prefixes_without_hanging():
     text = "abc\x1bnot-ansi " + "🙂" * 1000
     truncated = truncate_to_width(text, 20, "…")
@@ -62,6 +70,49 @@ def test_keeps_a_contiguous_prefix_instead_of_skipping_a_wide_grapheme_and_resum
 
 def test_counts_tabs_inline_and_skips_ansi_inline():
     assert visible_width("\t\x1b[31m界\x1b[0m") == 5
+
+
+def test_counts_indic_conjunct_spacing_code_points_within_grapheme_clusters():
+    assert visible_width("र्क") == 2
+    assert visible_width("नेटवर्क") == 5
+    assert visible_width("सर्वाधिकार सुरक्षित। ऑर्डर पर क्लिक करें") == 33
+    assert visible_width("র্ক") == 2
+    assert visible_width("ર્ક") == 2
+    assert visible_width("ର୍କ") == 2
+    assert visible_width("ర్క") == 2
+    assert visible_width("ര്‍ക") == 2
+
+
+def test_keeps_ordinary_combining_marks_zero_width():
+    assert visible_width("é") == 1
+    assert visible_width("čřžůú") == 5
+    assert visible_width("שָׁ") == 1
+    assert visible_width("بّ") == 1
+    assert visible_width("རྐ") == 1
+    assert visible_width("ᜠ᜴") == 1
+    assert visible_width("가〮") == 2
+    assert visible_width("가〯") == 2
+
+
+def test_keeps_cjk_and_japanese_width_accounting_unchanged():
+    assert visible_width("网络") == 4
+    assert visible_width("ネットワーク") == 12
+    assert visible_width("が") == 2
+    assert visible_width("が") == 2
+
+
+def test_counts_myanmar_marks_that_terminals_allocate_cells_for():
+    assert visible_width("ကာ") == 2
+    assert visible_width("ကေ") == 2
+    assert visible_width("က်") == 2
+    assert visible_width("ကျ") == 2
+    assert visible_width("ကြ") == 2
+    assert visible_width("ကဳ") == 2
+    assert visible_width("ကဴ") == 2
+    assert visible_width("ကဵ") == 2
+    assert visible_width("ကး") == 2
+    assert visible_width("ကို") == 1
+    assert visible_width("က္") == 1
 
 
 def test_keeps_thai_and_lao_am_clusters_at_their_normal_cell_width():

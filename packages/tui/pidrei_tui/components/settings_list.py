@@ -157,15 +157,14 @@ class SettingsList:
             if not display_items:
                 return
             self._selected_index = 0 if self._selected_index == len(display_items) - 1 else self._selected_index + 1
-        elif kb.matches(data, "tui.select.confirm") or data == " ":
+        elif kb.matches(data, "tui.select.confirm") or (
+            data == " " and (not self._search_enabled or len(self._search_input.get_value()) == 0)
+        ):
             await self._activate_item()
         elif kb.matches(data, "tui.select.cancel"):
             await self._on_cancel()
         elif self._search_enabled and self._search_input is not None:
-            sanitized = data.replace(" ", "")
-            if not sanitized:
-                return
-            await self._search_input.handle_input(sanitized)
+            await self._search_input.handle_input(data)
             self._apply_filter(self._search_input.get_value())
 
     async def _activate_item(self) -> None:

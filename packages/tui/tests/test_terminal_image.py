@@ -12,13 +12,19 @@ import re
 
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
+    crop_kitty_image_line,
     delete_all_kitty_images,
+    delete_all_kitty_placements,
     delete_kitty_image,
     detect_capabilities,
+    encode_iterm2,
     encode_kitty,
+    get_kitty_image_metadata,
+    get_kitty_image_placement,
     hyperlink,
     image_fallback,
     is_image_line,
+    register_kitty_image_metadata,
     render_image,
     reset_capabilities_cache,
     set_capabilities,
@@ -388,6 +394,17 @@ def test_trusts_explicit_truecolor_hints_through_tmux():
 # Kitty image cursor movement
 
 
+# iTerm2 image encoding
+
+
+def test_includes_the_decoded_payload_size_in_osc_1337_metadata():
+    sequence = encode_iterm2("AAAA", width=2, height="auto")
+    assert sequence == "\x1b]1337;File=inline=1;size=3;width=2;height=auto:AAAA\x07"
+
+
+# Kitty image cursor movement
+
+
 def test_can_request_no_terminal_side_cursor_movement():
     sequence = encode_kitty("AAAA", columns=2, rows=2, move_cursor=False)
     assert sequence.startswith("\x1b_Ga=T,f=100,q=2,C=1,c=2,r=2;")
@@ -396,6 +413,7 @@ def test_can_request_no_terminal_side_cursor_movement():
 def test_suppresses_kitty_replies_for_delete_commands():
     assert delete_kitty_image(42) == "\x1b_Ga=d,d=I,i=42,q=2\x1b\\"
     assert delete_all_kitty_images() == "\x1b_Ga=d,d=A,q=2\x1b\\"
+    assert delete_all_kitty_placements() == "\x1b_Ga=d,d=a,q=2\x1b\\"
 
 
 def test_preserves_render_image_default_terminal_side_cursor_movement():
@@ -422,6 +440,40 @@ def test_can_opt_render_image_into_no_terminal_side_cursor_movement():
     finally:
         reset_capabilities_cache()
         set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+def test_registers_metadata_and_crops_a_partially_visible_placement():
+    set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
+    set_cell_dimensions({"widthPx": 10, "heightPx": 10})
+    try:
+        result = render_image(
+            "AAAA", {"widthPx": 100, "heightPx": 100}, max_width_cells=3, image_id=42, move_cursor=False
+        )
+        assert result
+        assert get_kitty_image_metadata(result["sequence"]) == {
+            "imageId": 42,
+            "columns": 3,
+            "rows": 3,
+            "widthPx": 100,
+            "heightPx": 100,
+        }
+        assert "y=66,h=34,r=1" in crop_kitty_image_line(result["sequence"], 2, 1)
+    finally:
+        reset_capabilities_cache()
+        set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+def test_creates_placement_only_commands_for_uploaded_and_cropped_images():
+    register_kitty_image_metadata({"imageId": 42, "columns": 3, "rows": 3, "widthPx": 100, "heightPx": 100})
+    transmission = encode_kitty("A" * 8192, columns=3, rows=3, image_id=42, move_cursor=False)
+    line = f"left {crop_kitty_image_line(transmission, 2, 1)} right"
+    placement = get_kitty_image_placement(line)
+    assert placement
+    assert placement["transmissionBytes"] == len(line) - len("left ") - len(" right")
+    assert placement["estimatedDecodedBytes"] == 100 * 100 * 4
+    assert placement["sequence"] == "\x1b_Ga=p,q=2,C=1,c=3,i=42,y=66,h=34,r=1\x1b\\"
+    assert placement["replacementLine"] == f"left {placement['sequence']} right"
+    assert "AAAA" not in placement["replacementLine"]
 
 
 def test_honors_max_height_cells_by_reducing_rendered_width():

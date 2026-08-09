@@ -690,6 +690,16 @@ class Editor:
             self._yank_pop()
             return
 
+        # Dedicated history actions always browse entries instead of moving the cursor.
+        if kb.matches(data, "tui.editor.historyPrevious"):
+            self._cancel_autocomplete()
+            self._navigate_history(-1)
+            return
+        if kb.matches(data, "tui.editor.historyNext"):
+            self._cancel_autocomplete()
+            self._navigate_history(1)
+            return
+
         # Cursor movement actions
         if kb.matches(data, "tui.editor.cursorLineStart"):
             self._move_to_line_start()

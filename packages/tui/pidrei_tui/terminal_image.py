@@ -4,7 +4,9 @@ Records (camelCase like pi): TerminalCapabilities = {"images": "kitty" |
 "iterm2" | None, "trueColor": bool, "hyperlinks": bool}; CellDimensions /
 ImageDimensions = {"widthPx": int, "heightPx": int}; image cell size =
 {"columns": int, "rows": int}; render_image result = {"sequence": str,
-"rows": int, "imageId": int | None}.
+"columns": int, "rows": int, "imageId": int | None}; KittyImageMetadata =
+{"imageId": int, "columns": int, "rows": int, "widthPx": int,
+"heightPx": int}.
 
 Port notes: JS ``Buffer.from(base64)`` never raises — the dimension sniffers
 wrap ``base64.b64decode`` in try/except instead; ``Math.random``-based image
@@ -16,7 +18,9 @@ import binascii
 import math
 import os
 import random
+import re
 import subprocess
+import threading
 from pathlib import Path
 
 
@@ -213,6 +217,19 @@ def delete_all_kitty_images() -> str:
     return "\x1b_Ga=d,d=A,q=2\x1b\\"
 
 
+def delete_all_kitty_placements() -> str:
+    """Delete all visible Kitty placements while retaining their uploaded image data."""
+    return "\x1b_Ga=d,d=a,q=2\x1b\\"
+
+
+_BASE64_NON_ALPHABET_RE = re.compile(r"[^A-Za-z0-9+/]")
+
+
+def _base64_decoded_size(base64_data: str) -> int:
+    """``Buffer.byteLength(data, "base64")``: never raises on malformed input."""
+    return len(_BASE64_NON_ALPHABET_RE.sub("", base64_data.split("=", 1)[0])) * 3 // 4
+
+
 def encode_iterm2(
     base64_data: str,
     *,
@@ -222,7 +239,10 @@ def encode_iterm2(
     preserve_aspect_ratio: bool | None = None,
     inline: bool | None = None,
 ) -> str:
-    params = [f"inline={1 if inline is not False else 0}"]
+    params = [
+        f"inline={1 if inline is not False else 0}",
+        f"size={_base64_decoded_size(base64_data)}",
+    ]
 
     if width is not None:
         params.append(f"width={width}")
@@ -235,6 +255,126 @@ def encode_iterm2(
         params.append("preserveAspectRatio=0")
 
     return f"\x1b]1337;File={';'.join(params)}:{base64_data}\x07"
+
+
+# Kitty placement metadata, keyed by image id: {"imageId", "columns", "rows",
+# "widthPx", "heightPx"}. The alternate-screen renderer needs the pixel size to
+# crop a placement that is partially scrolled off the top of the viewport.
+_kitty_image_metadata: dict[int, dict] = {}
+_kitty_image_metadata_lock = threading.Lock()
+_kitty_transmission_generation = 0
+
+_KITTY_CONTROLS_RE = re.compile(r"\x1b_G([^;]*);")
+_KITTY_IMAGE_ID_RE = re.compile(r"(?:^|,)i=(\d+)(?:,|$)")
+_KITTY_CROP_CONTROL_RE = re.compile(r"^[yhr]=")
+
+
+def register_kitty_image_metadata(metadata: dict) -> None:
+    global _kitty_transmission_generation
+    with _kitty_image_metadata_lock:
+        _kitty_transmission_generation += 1
+        _kitty_image_metadata.pop(metadata["imageId"], None)
+        _kitty_image_metadata[metadata["imageId"]] = {
+            **metadata,
+            "transmissionGeneration": _kitty_transmission_generation,
+        }
+        if len(_kitty_image_metadata) > 1000:
+            oldest_image_id = next(iter(_kitty_image_metadata), None)
+            if oldest_image_id is not None:
+                del _kitty_image_metadata[oldest_image_id]
+
+
+def _get_registered_kitty_image_metadata(line: str) -> dict | None:
+    controls = _KITTY_CONTROLS_RE.search(line)
+    if not controls or not controls.group(1):
+        return None
+    image_id = _KITTY_IMAGE_ID_RE.search(controls.group(1))
+    if image_id is None:
+        return None
+    with _kitty_image_metadata_lock:
+        return _kitty_image_metadata.get(int(image_id.group(1)))
+
+
+def get_kitty_image_metadata(line: str) -> dict | None:
+    metadata = _get_registered_kitty_image_metadata(line)
+    if not metadata:
+        return None
+    return {
+        "imageId": metadata["imageId"],
+        "columns": metadata["columns"],
+        "rows": metadata["rows"],
+        "widthPx": metadata["widthPx"],
+        "heightPx": metadata["heightPx"],
+    }
+
+
+# Controls that belong to a placement command rather than a transmission.
+_KITTY_PLACEMENT_CONTROL_KEYS = frozenset(
+    {"i", "p", "x", "y", "w", "h", "X", "Y", "c", "r", "C", "U", "z", "P", "Q", "H", "V"}
+)
+
+_KITTY_CHUNK_CONTINUES_RE = re.compile(r"(?:^|,)m=1(?:,|$)")
+
+
+def get_kitty_image_placement(line: str) -> dict | None:
+    """Placement-only command for a `render_image` line, or None.
+
+    Returns {"imageId", "transmissionGeneration", "transmissionBytes",
+    "estimatedDecodedBytes", "sequence", "replacementLine"};
+    `replacementLine` re-places an already-uploaded image without resending its
+    payload.
+    """
+    match = _KITTY_CONTROLS_RE.search(line)
+    metadata = _get_registered_kitty_image_metadata(line)
+    if not match or not metadata:
+        return None
+
+    command_start = match.start()
+    command_controls = match.group(1)
+    while True:
+        terminator = line.find("\x1b\\", command_start + len(KITTY_PREFIX))
+        if terminator == -1:
+            return None
+        transmission_end = terminator + 2
+        if not _KITTY_CHUNK_CONTINUES_RE.search(command_controls):
+            break
+        command_start = transmission_end
+        if not line.startswith(KITTY_PREFIX, command_start):
+            return None
+        controls_end = line.find(";", command_start + len(KITTY_PREFIX))
+        if controls_end == -1:
+            return None
+        command_controls = line[command_start + len(KITTY_PREFIX) : controls_end]
+
+    controls = [
+        control for control in match.group(1).split(",") if control.split("=", 1)[0] in _KITTY_PLACEMENT_CONTROL_KEYS
+    ]
+    sequence = f"\x1b_Ga=p,q=2,{','.join(controls)}\x1b\\"
+    return {
+        "imageId": metadata["imageId"],
+        "transmissionGeneration": metadata["transmissionGeneration"],
+        "transmissionBytes": transmission_end - match.start(),
+        "estimatedDecodedBytes": metadata["widthPx"] * metadata["heightPx"] * 4,
+        "sequence": sequence,
+        "replacementLine": f"{line[: match.start()]}{sequence}{line[transmission_end:]}",
+    }
+
+
+def crop_kitty_image_line(line: str, hidden_rows: int, visible_rows: int) -> str:
+    """Re-issue a Kitty placement cropped to its still-visible bottom rows."""
+    metadata = get_kitty_image_metadata(line)
+    match = _KITTY_CONTROLS_RE.search(line)
+    if not metadata or not match or hidden_rows < 0 or hidden_rows >= metadata["rows"] or visible_rows <= 0:
+        return line
+    cropped_rows = min(visible_rows, metadata["rows"] - hidden_rows)
+    if hidden_rows == 0 and cropped_rows == metadata["rows"]:
+        return line
+    source_y = math.floor(metadata["heightPx"] * hidden_rows / metadata["rows"])
+    source_end = math.ceil(metadata["heightPx"] * (hidden_rows + cropped_rows) / metadata["rows"])
+    source_height = max(1, min(metadata["heightPx"], source_end) - source_y)
+    controls = [control for control in match.group(1).split(",") if not _KITTY_CROP_CONTROL_RE.match(control)]
+    controls.extend([f"y={source_y}", f"h={source_height}", f"r={cropped_rows}"])
+    return f"{line[: match.start()]}\x1b_G{','.join(controls)};{line[match.end() :]}"
 
 
 def calculate_image_cell_size(
@@ -396,6 +536,16 @@ def render_image(
     size = calculate_image_cell_size(image_dimensions, max_width, max_height_cells, get_cell_dimensions())
 
     if caps["images"] == "kitty":
+        if image_id is not None:
+            register_kitty_image_metadata(
+                {
+                    "imageId": image_id,
+                    "columns": size["columns"],
+                    "rows": size["rows"],
+                    "widthPx": image_dimensions["widthPx"],
+                    "heightPx": image_dimensions["heightPx"],
+                }
+            )
         sequence = encode_kitty(
             base64_data,
             columns=size["columns"],
@@ -403,7 +553,7 @@ def render_image(
             image_id=image_id,
             move_cursor=move_cursor,
         )
-        return {"sequence": sequence, "rows": size["rows"], "imageId": image_id}
+        return {"sequence": sequence, "columns": size["columns"], "rows": size["rows"], "imageId": image_id}
 
     if caps["images"] == "iterm2":
         sequence = encode_iterm2(
@@ -412,7 +562,7 @@ def render_image(
             height="auto",
             preserve_aspect_ratio=preserve_aspect_ratio if preserve_aspect_ratio is not None else True,
         )
-        return {"sequence": sequence, "rows": size["rows"], "imageId": None}
+        return {"sequence": sequence, "columns": size["columns"], "rows": size["rows"], "imageId": None}
 
     return None
 

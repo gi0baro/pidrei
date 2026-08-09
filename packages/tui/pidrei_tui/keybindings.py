@@ -13,6 +13,14 @@ from .keys import matches_key
 TUI_KEYBINDINGS = {
     "tui.editor.cursorUp": {"defaultKeys": "up", "description": "Move cursor up"},
     "tui.editor.cursorDown": {"defaultKeys": "down", "description": "Move cursor down"},
+    "tui.editor.historyPrevious": {
+        "defaultKeys": [],
+        "description": "Select previous prompt history entry",
+    },
+    "tui.editor.historyNext": {
+        "defaultKeys": [],
+        "description": "Select next prompt history entry",
+    },
     "tui.editor.cursorLeft": {
         "defaultKeys": ["left", "ctrl+b"],
         "description": "Move cursor left",
@@ -30,11 +38,11 @@ TUI_KEYBINDINGS = {
         "description": "Move cursor word right",
     },
     "tui.editor.cursorLineStart": {
-        "defaultKeys": ["home", "ctrl+a"],
+        "defaultKeys": ["home", "ctrl+home", "ctrl+a"],
         "description": "Move to line start",
     },
     "tui.editor.cursorLineEnd": {
-        "defaultKeys": ["end", "ctrl+e"],
+        "defaultKeys": ["end", "ctrl+end", "ctrl+e"],
         "description": "Move to line end",
     },
     "tui.editor.jumpForward": {
@@ -45,8 +53,8 @@ TUI_KEYBINDINGS = {
         "defaultKeys": "ctrl+alt+]",
         "description": "Jump backward to character",
     },
-    "tui.editor.pageUp": {"defaultKeys": "pageUp", "description": "Page up"},
-    "tui.editor.pageDown": {"defaultKeys": "pageDown", "description": "Page down"},
+    "tui.editor.pageUp": {"defaultKeys": ["pageUp", "ctrl+pageUp"], "description": "Page up"},
+    "tui.editor.pageDown": {"defaultKeys": ["pageDown", "ctrl+pageDown"], "description": "Page down"},
     "tui.editor.deleteCharBackward": {
         "defaultKeys": "backspace",
         "description": "Delete character backward",
@@ -90,6 +98,28 @@ TUI_KEYBINDINGS = {
         "defaultKeys": ["escape", "ctrl+c"],
         "description": "Cancel selection",
     },
+    # Alternate-screen viewport navigation.
+    # These intentionally shadow the unmodified editor bindings in fullscreen mode.
+    "tui.altScreen.pageUp": {"defaultKeys": "pageUp", "description": "Scroll viewport up one page"},
+    "tui.altScreen.pageDown": {"defaultKeys": "pageDown", "description": "Scroll viewport down one page"},
+    "tui.altScreen.halfPageUp": {
+        "defaultKeys": [],
+        "description": "Scroll viewport up half a page",
+    },
+    "tui.altScreen.halfPageDown": {
+        "defaultKeys": [],
+        "description": "Scroll viewport down half a page",
+    },
+    "tui.altScreen.previousPrompt": {
+        "defaultKeys": "ctrl+shift+up",
+        "description": "Jump to previous semantic prompt",
+    },
+    "tui.altScreen.nextPrompt": {
+        "defaultKeys": "ctrl+shift+down",
+        "description": "Jump to next semantic prompt",
+    },
+    "tui.altScreen.top": {"defaultKeys": "home", "description": "Scroll viewport to top"},
+    "tui.altScreen.bottom": {"defaultKeys": "end", "description": "Scroll viewport to bottom"},
 }
 
 

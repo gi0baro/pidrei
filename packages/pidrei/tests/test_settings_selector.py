@@ -1,93 +1,83 @@
-"""Regression tests for the theme submenu's coroutine-returning callbacks.
+"""Mirror of pi coding-agent test/settings-selector.test.ts.
 
-Not a pi mirror: pi types these component callbacks sync (`=> void`) and
-calls them bare, so nothing there can be dropped. The port made previews and
-persistence async (never-block rule), and the invocation sites in
-`SelectList`/`SettingsList` used to discard the returned coroutines — theme
-preview on navigation, Esc, and Apply silently did nothing. These tests pin
-the awaited flow end to end.
+pi casts a four-key object to `SettingsConfig`; JS reads the missing keys as
+undefined, so here the config is spelled out with neutral values (a Python
+dict would raise KeyError instead).
 """
 
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
-from pidrei.modes.interactive.components.settings_selector import ThemeSubmenu
+from pidrei.modes.interactive.components.settings_selector import SettingsSelectorComponent
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei_tui import set_keybindings
 
 
-DOWN = "\x1b[B"
-ESC = "\x1b"
-ENTER = "\n"
-
-THEMES = ["dark", "light"]
+BASE_CONFIG = {
+    "autoCompact": True,
+    "autocompleteMaxVisible": 5,
+    "autoResizeImages": True,
+    "availableThemes": [],
+    "availableThinkingLevels": [],
+    "blockImages": False,
+    "clearOnShrink": False,
+    "collapseChangelog": False,
+    "currentTheme": "dark",
+    "defaultProjectTrust": "ask",
+    "doubleEscapeAction": "none",
+    "editorPaddingX": 1,
+    "enableProviderAttribution": True,
+    "enableSkillCommands": False,
+    "followUpMode": "queue",
+    "fullscreenScrollbar": "auto",
+    "hideThinkingBlock": False,
+    "httpIdleTimeoutMs": 0,
+    "imageWidthCells": 40,
+    "outputPad": 1,
+    "quietStartup": False,
+    "showCacheMissNotices": True,
+    "showHardwareCursor": False,
+    "showImages": True,
+    "showTerminalProgress": False,
+    "steeringMode": "interrupt",
+    "terminalTheme": "dark",
+    "thinkingLevel": "off",
+    "transport": "auto",
+    "treeFilterMode": "default",
+    "warnings": {},
+}
 
 
 @pytest.fixture(autouse=True)
-def _setup():
+def _theme():
     init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+    set_keybindings(KeybindingsManager(None, None))
 
 
-def _submenu(current_setting: str, previews: list, done_calls: list) -> ThemeSubmenu:
-    async def on_theme_preview(theme_name: str) -> None:
-        previews.append(theme_name)
+@pytest.mark.tonio
+async def test_cycles_through_fullscreen_scrollbar_modes():
+    changes: list[str] = []
 
-    async def done(value: str | None = None) -> None:
-        done_calls.append(value)
+    def on_change(mode: str) -> None:
+        changes.append(mode)
 
-    return ThemeSubmenu(current_setting, "dark", THEMES, {"onThemePreview": on_theme_preview}, done)
+    async def on_cancel() -> None:
+        pass
 
+    selector = SettingsSelectorComponent(
+        dict(BASE_CONFIG),
+        {
+            "onFullscreenScrollbarChange": on_change,
+            "onWarningsChange": lambda warnings: None,
+            "onCancel": on_cancel,
+        },
+    )
+    settings_list = selector.get_settings_list()
 
-class TestThemeSubmenu:
-    @pytest.mark.tonio
-    async def test_previews_theme_while_navigating_single_menu(self):
-        previews: list = []
-        submenu = _submenu("dark", previews, [])
+    for character in "Fullscreen scrollbar":
+        await settings_list.handle_input(character)
+    await settings_list.handle_input("\r")
+    await settings_list.handle_input("\r")
+    await settings_list.handle_input("\r")
 
-        await submenu.handle_input(DOWN)
-
-        assert len(previews) == 1
-
-    @pytest.mark.tonio
-    async def test_escape_restores_preview_and_reports_done(self):
-        previews: list = []
-        done_calls: list = []
-        submenu = _submenu("dark", previews, done_calls)
-
-        await submenu.handle_input(ESC)
-
-        assert previews == ["dark"]  # original setting restored
-        assert done_calls == [None]
-
-    @pytest.mark.tonio
-    async def test_selecting_a_theme_applies_it(self):
-        done_calls: list = []
-        submenu = _submenu("dark", [], done_calls)
-
-        await submenu.handle_input(ENTER)
-
-        assert done_calls == ["dark"]
-
-    @pytest.mark.tonio
-    async def test_automatic_menu_apply_reports_the_combined_setting(self):
-        done_calls: list = []
-        submenu = _submenu("light/dark", [], done_calls)
-
-        # Items: light-theme, dark-theme, apply, single-mode.
-        await submenu.handle_input(DOWN)
-        await submenu.handle_input(DOWN)
-        await submenu.handle_input(ENTER)
-
-        assert done_calls == ["light/dark"]
-
-    @pytest.mark.tonio
-    async def test_automatic_menu_escape_restores_preview_and_reports_done(self):
-        previews: list = []
-        done_calls: list = []
-        submenu = _submenu("light/dark", previews, done_calls)
-
-        await submenu.handle_input(ESC)
-
-        assert previews == ["light/dark"]
-        assert done_calls == [None]
+    assert changes == ["always", "hidden", "auto"]

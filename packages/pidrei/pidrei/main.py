@@ -953,6 +953,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 "initialImages": initial.initial_images,
                 "initialMessages": parsed.messages,
                 "verbose": parsed.verbose,
+                "alt": parsed.alt,
             },
         )
         if startup_benchmark:

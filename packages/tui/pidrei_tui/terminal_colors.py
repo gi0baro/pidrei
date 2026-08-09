@@ -8,7 +8,7 @@ import re
 
 
 _OSC11_BACKGROUND_COLOR_RESPONSE_RE = re.compile(r"^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$", re.IGNORECASE)
-_COLOR_SCHEME_REPORT_RE = re.compile(r"^\x1b\[\?997;(1|2)n$")
+_COLOR_SCHEME_REPORT_RE = re.compile(r"^(?:\x1b\[\?997;(1|2)n)+$")
 _HEX_CHANNEL_RE = re.compile(r"^[0-9a-f]+$", re.IGNORECASE)
 _HEX6_RE = re.compile(r"^[0-9a-f]{6}$", re.IGNORECASE)
 _HEX12_RE = re.compile(r"^[0-9a-f]{12}$", re.IGNORECASE)

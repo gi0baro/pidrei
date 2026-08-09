@@ -275,6 +275,13 @@ class TestOfflineFlag:
         assert result.offline is True
 
 
+class TestAltFlag:
+    def test_parses_alt_flag(self):
+        result = parse_args(["--alt"])
+        assert result.alt is True
+        assert "alt" not in result.unknown_flags
+
+
 class TestToolFlags:
     def test_parses_no_tools_flag(self):
         result = parse_args(["--no-tools"])

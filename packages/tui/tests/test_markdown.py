@@ -6,7 +6,7 @@ import pytest
 
 from pidrei_tui.components.markdown import Markdown
 from pidrei_tui.terminal_image import reset_capabilities_cache, set_capabilities
-from pidrei_tui.tui import TUI
+from pidrei_tui.tui_main_screen import TuiMainScreen
 
 from .chalk_like import chalk
 from .themes import default_markdown_theme
@@ -679,7 +679,7 @@ async def test_should_not_leak_styles_into_following_lines_when_rendered_in_tui(
     )
 
     terminal = VirtualTerminal(80, 6)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = MarkdownWithInput(markdown)
     tui.add_child(component)
     await tui.start()
@@ -1052,7 +1052,7 @@ def test_should_preserve_heading_styling_after_inline_code_for_h1():
 async def test_should_not_leak_h1_underline_into_padding_when_inline_code_is_the_last_token():
     markdown = Markdown("# Important distinction from `open()`", 0, 0, default_markdown_theme)
     terminal = VirtualTerminal(80, 4)
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     tui.add_child(markdown)
     await tui.start()
     await terminal.wait_for_render()
@@ -1280,3 +1280,145 @@ def test_stabilizes_partial_closing_fence_rendering():
     complete = Markdown("```ts\nconst x = 1;\n```", 0, 0, default_markdown_theme)
 
     assert len(partial.render(80)) == len(complete.render(80))
+
+
+# LaTeX math
+
+
+def test_renders_inline_dollar_and_parenthesis_delimiters():
+    markdown = Markdown(
+        r"A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, and \(s \to \infty\).",
+        0,
+        0,
+        default_markdown_theme,
+    )
+
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, and s → ∞."]
+
+
+def test_renders_display_dollar_delimiters_without_markdown_escape_corruption():
+    markdown = Markdown(
+        "Before\n\n$$\\{3x+2y,\\; x \\in \\{0, \\pm 1\\}\\}$$\n\nafter",
+        0,
+        0,
+        default_markdown_theme,
+    )
+
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["Before", "", "{3x+2y, x ∈ {0, ± 1}}", "", "after"]
+
+
+def test_renders_display_bracket_delimiters():
+    markdown = Markdown(
+        "Before\n\n\\[\nE \\approx \\frac{0.1\\ \\text{lux}}{100\\ \\text{lm/W}}\n\\]\n\nafter",
+        0,
+        0,
+        default_markdown_theme,
+    )
+
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["Before", "", "    0.1 lux", "E ≈ ────────", "    100 lm/W", "", "after"]
+
+
+def test_aligns_matrix_rows_with_the_opening_delimiter():
+    markdown = Markdown(
+        "Consider the matrix\n\n\\[\nA=\n\\begin{pmatrix}\n\\pi & 0\\\\\n0 & \\frac{1}{\\pi}\n\\end{pmatrix}.\n\\]",
+        0,
+        0,
+        default_markdown_theme,
+    )
+
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["Consider the matrix", "", "A = ⎛ π │ 0   ⎞", "    ⎝ 0 │ 1/π ⎠."]
+
+
+def test_renders_lower_limits_beneath_display_operators():
+    markdown = Markdown(
+        "\\[\n\\lim_{x\\to 0}\\frac{\\frac{\\sin x}{x}-1}{\\frac{e^x-1}{x}-1}=0\n\\]",
+        0,
+        0,
+        default_markdown_theme,
+    )
+
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["     (sin x)/x-1", "lim  ─────────── = 0", "x→0  (eˣ-1)/x-1"]
+
+
+def test_renders_math_inside_lists_and_tables():
+    markdown = Markdown(
+        "- Formula: $F_1 = u^2$\n\n| Value |\n| --- |\n| $\\mathbb{C}^3$ |",
+        0,
+        0,
+        default_markdown_theme,
+    )
+
+    output = "\n".join(strip_ansi(line).rstrip() for line in markdown.render(80))
+
+    assert "- Formula: F₁ = u²" in output
+    assert "│ ℂ³" in output
+
+
+def test_does_not_treat_currency_shell_variables_or_code_spans_as_math():
+    source = "Costs $5 and $10 or $8k–$12k; use `$x$`, $HOME, and $" + "{PATH}."
+    markdown = Markdown(source, 0, 0, default_markdown_theme)
+
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["Costs $5 and $10 or $8k–$12k; use $x$, $HOME, and $" + "{PATH}."]
+
+    shell_variables = "Paths: $HOME/$USER and $XDG_CONFIG_HOME/$APP_CONFIG"
+    shell_lines = [
+        strip_ansi(line).rstrip() for line in Markdown(shell_variables, 0, 0, default_markdown_theme).render(80)
+    ]
+    assert shell_lines == [shell_variables]
+
+
+@pytest.mark.parametrize("source", [r"Unknown $x + \unknown{y}$ after", r"Streaming $\mathbb{C}^3"])
+def test_preserves_unsupported_and_incomplete_latex_exactly(source):
+    markdown = Markdown(source, 0, 0, default_markdown_theme)
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+    assert lines == [source]
+
+
+def test_preserves_incomplete_backslash_delimiters_while_streaming():
+    inline = Markdown(r"Map \(\mathbb{C}^3", 0, 0, default_markdown_theme)
+    assert [strip_ansi(line).rstrip() for line in inline.render(80)] == [r"Map \(\mathbb{C}^3"]
+
+    display = Markdown("\\[\nx^2", 0, 0, default_markdown_theme)
+    assert [strip_ansi(line).rstrip() for line in display.render(80)] == ["\\[", "x^2"]
+
+
+def test_does_not_render_latex_inside_escaped_delimiters_or_code_fences():
+    source = "Escaped \\$x-y\\$.\n\n```text\n$\\mathbb{C}^3$\n```"
+    markdown = Markdown(source, 0, 0, default_markdown_theme)
+    lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
+
+    assert lines == ["Escaped $x-y$.", "", "```text", r"  $\mathbb{C}^3$", "```"]
+
+
+def test_allows_latex_rendering_to_be_disabled():
+    markdown = Markdown(
+        r"Map $\mathbb{C}^3 \to \mathbb{C}^3$",
+        0,
+        0,
+        default_markdown_theme,
+        None,
+        {"renderLatex": False},
+    )
+
+    assert [strip_ansi(line).rstrip() for line in markdown.render(80)] == [r"Map $\mathbb{C}^3 \to \mathbb{C}^3$"]
+
+
+def test_switches_from_raw_to_rendered_math_when_a_streamed_delimiter_closes():
+    markdown = Markdown(r"Map $\mathbb{C}^3", 0, 0, default_markdown_theme)
+    assert [strip_ansi(line).rstrip() for line in markdown.render(80)] == [r"Map $\mathbb{C}^3"]
+
+    markdown.set_text(r"Map $\mathbb{C}^3$")
+
+    assert [strip_ansi(line).rstrip() for line in markdown.render(80)] == ["Map ℂ³"]

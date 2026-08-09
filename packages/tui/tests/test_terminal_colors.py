@@ -25,6 +25,8 @@ def test_rejects_non_strict_osc11_responses():
 def test_parses_color_scheme_reports():
     assert parse_terminal_color_scheme_report("\x1b[?997;1n") == "dark"
     assert parse_terminal_color_scheme_report("\x1b[?997;2n") == "light"
+    assert parse_terminal_color_scheme_report("\x1b[?997;2n\x1b[?997;1n\x1b[?997;1n") == "dark"
+    assert parse_terminal_color_scheme_report("\x1b[?997;1n\x1b[?997;2n\x1b[?997;2n") == "light"
     assert parse_terminal_color_scheme_report("\x1b[?997;3n") is None
     assert parse_terminal_color_scheme_report("\x1b[?996n") is None
     assert parse_terminal_color_scheme_report("x\x1b[?997;1n") is None

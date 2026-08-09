@@ -450,6 +450,17 @@ def test_matches_ss3_arrows_and_home_end():
     assert matches_key("\x1bOF", "end") is True
 
 
+def test_matches_xterm_ctrl_modified_viewport_navigation():
+    assert matches_key("\x1b[1;5H", "ctrl+home") is True
+    assert matches_key("\x1b[1;5F", "ctrl+end") is True
+    assert matches_key("\x1b[5;5~", "ctrl+pageUp") is True
+    assert matches_key("\x1b[6;5~", "ctrl+pageDown") is True
+    assert parse_key("\x1b[1;5H") == "ctrl+home"
+    assert parse_key("\x1b[1;5F") == "ctrl+end"
+    assert parse_key("\x1b[5;5~") == "ctrl+pageUp"
+    assert parse_key("\x1b[6;5~") == "ctrl+pageDown"
+
+
 def test_matches_legacy_function_keys_and_clear():
     assert matches_key("\x1bOP", "f1") is True
     assert matches_key("\x1b[24~", "f12") is True

@@ -39,12 +39,17 @@ from pidrei_tui import (
     Container,
     Markdown,
     ProcessTerminal,
+    ScrollView,
     Spacer,
     Text,
     TruncatedText,
+    TuiAltScreen,
+    TuiMainScreen,
+    VStack,
     fuzzy_filter,
     get_capabilities,
     hyperlink,
+    is_viewport_tui,
     matches_key,
     set_keybindings,
     visible_width,
@@ -95,6 +100,7 @@ from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboa
 from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
+from ...utils.open_browser import open_browser
 from ...utils.paths import get_cwd_relative_path
 from ...utils.process import run_command
 from ...utils.shell import kill_tracked_detached_children
@@ -423,10 +429,18 @@ class ExtensionUIContext:
         self._mode.set_tools_expanded(expanded)
 
 
+def create_interactive_tui(*, alt: bool, show_hardware_cursor: bool, log_directory: str, terminal=None) -> TUI:
+    """Composition root for selecting the interactive terminal renderer."""
+    terminal = terminal if terminal is not None else ProcessTerminal()
+    if alt:
+        return TuiAltScreen(terminal, show_hardware_cursor, log_directory, open_url=open_browser)
+    return TuiMainScreen(terminal, show_hardware_cursor, log_directory)
+
+
 class InteractiveMode:
     """Options: ``{"migratedProviders"?, "modelFallbackMessage"?,
     "autoTrustOnReloadCwd"?, "initialMessage"?, "initialImages"?,
-    "initialMessages"?, "verbose"?}``."""
+    "initialMessages"?, "verbose"?, "alt"?}``."""
 
     def __init__(self, runtime_host, options: dict | None = None) -> None:
         options = options or {}
@@ -438,11 +452,22 @@ class InteractiveMode:
             lambda _session=None: self._rebind_current_session({"renderBeforeBind": True})
         )
         self._version = VERSION
-        self.ui = TUI(ProcessTerminal(), self.settings_manager.get_show_hardware_cursor(), get_agent_dir())
+        self.ui = create_interactive_tui(
+            alt=bool(options.get("alt")),
+            show_hardware_cursor=self.settings_manager.get_show_hardware_cursor(),
+            log_directory=get_agent_dir(),
+        )
         self.ui.set_clear_on_shrink(self.settings_manager.get_clear_on_shrink())
         self._header_container = Container()
         self._loaded_resources_container = Container()
         self._chat_container = Container()
+        # Keep loaded resources before chat so restored session messages never
+        # precede them; the whole document is what the alt screen scrolls.
+        self._document_container = Container()
+        self._document_container.add_child(self._header_container)
+        self._document_container.add_child(self._loaded_resources_container)
+        self._document_container.add_child(self._chat_container)
+        self._transcript_scroll_view = None
         self._pending_messages_container = Container()
         self._status_container = Container()
         self._widget_container_above = Container()
@@ -469,6 +494,8 @@ class InteractiveMode:
         self._footer_data_provider = FooterDataProvider(self.session_manager.get_cwd())
         self._footer = FooterComponent(self.session, self._footer_data_provider)
         self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
+        self._footer_container = Container()
+        self._footer_container.add_child(self._footer)
 
         self._is_initialized = False
         self._on_input_callback = None
@@ -828,20 +855,45 @@ class InteractiveMode:
             )
             print(theme.fg("dim", f"Model scope: {model_list}{cycle_hint}"))
 
-        # Add header container as first child. Populate it after applying
-        # theme settings. Keep loaded resources before chat so restored
-        # session messages never precede them.
-        self.ui.add_child(self._header_container)
-        self.ui.add_child(self._loaded_resources_container)
-
-        self.ui.add_child(self._chat_container)
-        self.ui.add_child(self._pending_messages_container)
-        self.ui.add_child(self._status_container)
+        # Populate stable regions before selecting the renderer-specific composition.
         self._render_widgets()  # Initialize with default spacer
-        self.ui.add_child(self._widget_container_above)
-        self.ui.add_child(self._editor_container)
-        self.ui.add_child(self._widget_container_below)
-        self.ui.add_child(self._footer)
+        if is_viewport_tui(self.ui):
+            self._transcript_scroll_view = ScrollView(
+                self._document_container,
+                {
+                    "follow": "end",
+                    "primary": True,
+                    "overscroll": "chain",
+                    "scrollbar": self.settings_manager.get_fullscreen_scrollbar(),
+                    "scrollbarStyle": lambda text: theme.bg("selectedBg", text),
+                },
+            )
+            dock = VStack(
+                [
+                    {"component": self._pending_messages_container, "shrink": 1, "minSize": 0},
+                    {"component": self._status_container, "shrink": 1, "minSize": 0},
+                    {"component": self._widget_container_above, "shrink": 1, "minSize": 0},
+                    {"component": self._editor_container, "shrink": 1, "minSize": 3},
+                    {"component": self._widget_container_below, "shrink": 1, "minSize": 0},
+                    {"component": self._footer_container, "shrink": 1, "minSize": 1},
+                ]
+            )
+            self.ui.set_layout_root(
+                VStack(
+                    [
+                        {"component": self._transcript_scroll_view, "basis": 0, "grow": 1, "shrink": 1, "minSize": 1},
+                        {"component": dock, "basis": "auto", "grow": 0, "shrink": 1, "minSize": 1},
+                    ]
+                )
+            )
+        else:
+            self.ui.add_child(self._document_container)
+            self.ui.add_child(self._pending_messages_container)
+            self.ui.add_child(self._status_container)
+            self.ui.add_child(self._widget_container_above)
+            self.ui.add_child(self._editor_container)
+            self.ui.add_child(self._widget_container_below)
+            self.ui.add_child(self._footer_container)
         self.ui.set_focus(self.editor)
 
         self._setup_key_handlers()
@@ -1741,9 +1793,14 @@ class InteractiveMode:
         self._show_loaded_resources({"force": False, "showDiagnosticsWhenQuiet": True})
         self._show_startup_notices_if_needed()
 
+    def _apply_fullscreen_scrollbar_setting(self) -> None:
+        if self._transcript_scroll_view is not None:
+            self._transcript_scroll_view.set_scrollbar(self.settings_manager.get_fullscreen_scrollbar())
+
     def _apply_runtime_settings(self) -> None:
         # pi configures the undici HTTP dispatcher here; pidrei's HTTP
         # transport is punkreq's concern (see core/http_config.py).
+        self._apply_fullscreen_scrollbar_setting()
         self._footer.set_session(self.session)
         self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
         self._footer_data_provider.set_cwd(self.session_manager.get_cwd())
@@ -1895,7 +1952,7 @@ class InteractiveMode:
             self._active_status_indicator.dispose()
         self._active_status_indicator = None
         self._status_container.clear()
-        if had_active_status_indicator and self.ui.get_clear_on_shrink():
+        if had_active_status_indicator and not self._options.get("alt") and self.ui.get_clear_on_shrink():
             self._status_container.add_child(self._idle_status)
 
     def _set_working_visible(self, visible: bool) -> None:
@@ -2035,20 +2092,15 @@ class InteractiveMode:
         if self._custom_footer is not None and getattr(self._custom_footer, "dispose", None) is not None:
             self._custom_footer.dispose()
 
-        # Remove current footer from UI
-        if self._custom_footer is not None:
-            self.ui.remove_child(self._custom_footer)
-        else:
-            self.ui.remove_child(self._footer)
-
+        self._footer_container.clear()
         if factory is not None:
             # Create and add custom footer, passing the data provider
             self._custom_footer = factory(self.ui, theme, self._footer_data_provider)
-            self.ui.add_child(self._custom_footer)
+            self._footer_container.add_child(self._custom_footer)
         else:
             # Restore built-in footer
             self._custom_footer = None
-            self.ui.add_child(self._footer)
+            self._footer_container.add_child(self._footer)
 
         self.ui.request_render()
 
@@ -2521,7 +2573,8 @@ class InteractiveMode:
             sync_action(lambda: tonio.spawn.without_tracking(self._handle_open_external_editor())),
         )
         self._default_editor.on_action(
-            "app.message.copy", sync_action(lambda: tonio.spawn.without_tracking(self._handle_copy_command()))
+            "app.message.copy",
+            sync_action(lambda: tonio.spawn.without_tracking(self._handle_copy_command({"flashConfirmation": True}))),
         )
         self._default_editor.on_action(
             "app.message.followUp", sync_action(lambda: tonio.spawn.without_tracking(self._handle_follow_up()))
@@ -4012,6 +4065,10 @@ class InteractiveMode:
                 if not enabled and self._active_status_indicator is None:
                     self._status_container.clear()
 
+            def on_fullscreen_scrollbar_change(mode: str) -> None:
+                self.settings_manager.set_fullscreen_scrollbar(mode)
+                self._apply_fullscreen_scrollbar_setting()
+
             async def on_cancel() -> None:
                 done()
                 self.ui.request_render()
@@ -4047,6 +4104,7 @@ class InteractiveMode:
                     "quietStartup": self.settings_manager.get_quiet_startup(),
                     "clearOnShrink": self.settings_manager.get_clear_on_shrink(),
                     "showTerminalProgress": self.settings_manager.get_show_terminal_progress(),
+                    "fullscreenScrollbar": self.settings_manager.get_fullscreen_scrollbar(),
                     "warnings": self.settings_manager.get_warnings(),
                 },
                 {
@@ -4085,6 +4143,7 @@ class InteractiveMode:
                     "onShowTerminalProgressChange": lambda enabled: self.settings_manager.set_show_terminal_progress(
                         enabled
                     ),
+                    "onFullscreenScrollbarChange": on_fullscreen_scrollbar_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
                     "onCancel": on_cancel,
                 },
@@ -5231,30 +5290,13 @@ class InteractiveMode:
         try:
             await self.session.reload(restore_chat_before_session_start)
             await restore_chat_before_session_start()
-            # pi reconfigures the undici HTTP dispatcher here; punkreq owns
-            # HTTP transport in pidrei (see core/http_config.py).
             await self._keybindings.reload()
             active_header = self._custom_header if self._custom_header is not None else self._built_in_header
             if is_expandable(active_header):
                 active_header.set_expanded(self._tool_output_expanded)
             set_registered_themes(self.session.resource_loader.get_themes()["themes"])
             await self._theme_controller.apply_from_settings()
-            editor_padding_x = self.settings_manager.get_editor_padding_x()
-            autocomplete_max_visible = self.settings_manager.get_autocomplete_max_visible()
-            self._default_editor.set_padding_x(editor_padding_x)
-            self._default_editor.set_autocomplete_max_visible(autocomplete_max_visible)
-            if self.editor is not self._default_editor:
-                set_padding = getattr(self.editor, "set_padding_x", None)
-                if set_padding is not None:
-                    set_padding(editor_padding_x)
-                set_max_visible = getattr(self.editor, "set_autocomplete_max_visible", None)
-                if set_max_visible is not None:
-                    set_max_visible(autocomplete_max_visible)
-            self.ui.set_show_hardware_cursor(self.settings_manager.get_show_hardware_cursor())
-            clear_on_shrink = self.settings_manager.get_clear_on_shrink()
-            self.ui.set_clear_on_shrink(clear_on_shrink)
-            if not clear_on_shrink and self._active_status_indicator is None:
-                self._status_container.clear()
+            self._apply_runtime_settings()
             self._setup_autocomplete_provider()
             runner = self.session.extension_runner
             self._setup_extension_shortcuts(runner)
@@ -5428,7 +5470,8 @@ class InteractiveMode:
                 restore_editor()
                 self.show_error(f"Failed to create gist: {error if str(error) else 'Unknown error'}")
 
-    async def _handle_copy_command(self) -> None:
+    async def _handle_copy_command(self, options: dict | None = None) -> None:
+        options = options or {}
         text = self.session.get_last_assistant_text()
         if not text:
             self.show_error("No agent messages to copy yet.")
@@ -5436,7 +5479,10 @@ class InteractiveMode:
 
         try:
             await copy_to_clipboard(text)
-            self.show_status("Copied last agent message to clipboard")
+            if options.get("flashConfirmation") and self.ui.mode == "fullscreen":
+                self.ui.flash("Copied!")
+            else:
+                self.show_status("Copied last agent message to clipboard")
         except Exception as error:
             self.show_error(str(error))
 

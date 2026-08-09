@@ -332,6 +332,22 @@ class TestExternalEditor:
         assert SettingsManager.in_memory().get_external_editor_command() == "nano"
 
 
+class TestFullscreenScrollbar:
+    @pytest.mark.tonio
+    async def test_validates_and_persists_the_fullscreen_scrollbar_mode(self, dirs):
+        agent_dir, project_dir = dirs
+        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        assert manager.get_fullscreen_scrollbar() == "auto"
+
+        manager.set_fullscreen_scrollbar("hidden")
+        await manager.flush()
+        assert read_json(agent_dir / "settings.json")["fullscreenScrollbar"] == "hidden"
+
+        write_json(agent_dir / "settings.json", {"fullscreenScrollbar": "sometimes"})
+        reloaded = await SettingsManager.create(str(project_dir), str(agent_dir))
+        assert reloaded.get_fullscreen_scrollbar() == "auto"
+
+
 class TestOutputPad:
     @pytest.mark.tonio
     async def test_defaults_to_1_and_persists_binary_values(self, dirs):

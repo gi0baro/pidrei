@@ -18,7 +18,7 @@ import tonio.colored as tonio
 from pidrei.core.source_info import SourceInfo
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import init_theme, init_theme_sync
-from pidrei_tui import TUI, CombinedAutocompleteProvider, Container
+from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScreen
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tui" / "tests"))
@@ -234,7 +234,7 @@ class TestCreateExtensionUIContextSetTheme:
 async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_closes():
     await init_theme("dark")
     terminal = VirtualTerminal(80, 24)
-    ui = TUI(terminal)
+    ui = TuiMainScreen(terminal)
     editor_container = Container()
     editor = FakeFocusableComponent("EDITOR")
     palette = FakeFocusableComponent("PALETTE")

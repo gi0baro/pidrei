@@ -10,7 +10,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_tui import TUI, ProcessTerminal
+from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen
 
 from ..modes.interactive.components.config_selector import ConfigSelectorComponent
 from ..modes.interactive.theme import init_theme, stop_theme_watcher
@@ -28,7 +28,7 @@ async def select_config(
     """Run the config TUI until the user closes it."""
     await init_theme(settings_manager.get_theme(), True)
 
-    ui = TUI(ProcessTerminal(), None, agent_dir)
+    ui: TUI = TuiMainScreen(ProcessTerminal(), None, agent_dir)
     closed = tonio.Event()
 
     # `TUI.start`/`stop` are async; these callbacks are sync (the component

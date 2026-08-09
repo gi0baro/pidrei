@@ -13,7 +13,13 @@ Block tokens: ``heading`` (depth, tokens), ``paragraph``/``text`` (tokens;
 
 Inline tokens: ``text``, ``escape`` (raw, text), ``strong``/``em``/``del``
 (tokens), ``codespan`` (text), ``link`` (href, text, tokens), ``br``,
-``html`` (raw), ``image`` (text).
+``html`` (raw), ``image`` (text), ``latex`` (text, raw, pending).
+
+``latexBlock`` (text, raw, pending) joins the block tokens. pi registers the
+two LaTeX tokenizers as ``marked`` extensions; here they are a markdown-it
+block rule (before ``fence``) and inline rule (before ``escape``), which puts
+them at the same points in the scan: escaped delimiters and code spans are
+consumed by their own rules first, so neither becomes math.
 
 Deltas vs marked (documented, none observable in pi's test spec):
 
@@ -45,6 +51,143 @@ _md.disable("text_join")
 
 _TASK_MARKER_RE = re.compile(r"^\[[ xX]\] +")
 _FENCE_MARKER_RE = re.compile(r"^(`{3,}|~{3,})")
+
+# --- LaTeX math (pi registers these as `marked` tokenizer extensions) --------
+
+_PENDING_DOLLAR_MATH_RE = re.compile(r"\\[A-Za-z]+|[_^=+*/<>()\[\]|±≤≥≠≈∈→⇒∞∫∑√-]")
+_TRAILING_SPACE_RE = re.compile(r"\s$")
+_LEADING_DIGIT_RE = re.compile(r"^\d")
+_SHELL_VARIABLE_RE = re.compile(r"^[A-Z_][A-Z0-9_]*(?:[^A-Za-z0-9_\s])?$")
+_LEADING_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*")
+_DOLLAR_THEN_SPACE_RE = re.compile(r"^\$\s")
+_BLOCK_DOLLAR_RE = re.compile(r"^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*?)\$\$[ \t]*(?:\n|$)")
+_BLOCK_BRACKET_RE = re.compile(r"^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*?)\\\][ \t]*(?:\n|$)")
+_PENDING_BLOCK_BRACKET_RE = re.compile(r"^ {0,3}\\\[[ \t]*(?:\n)?([\s\S]*)$")
+_PENDING_BLOCK_DOLLAR_RE = re.compile(r"^ {0,3}\$\$[ \t]*(?:\n)?([\s\S]*)$")
+
+
+def _is_escaped(source: str, index: int) -> bool:
+    backslashes = 0
+    position = index - 1
+    while position >= 0 and source[position] == "\\":
+        backslashes += 1
+        position -= 1
+    return backslashes % 2 == 1
+
+
+def _find_closing_delimiter(source: str, closing: str, start: int) -> int:
+    index = source.find(closing, start)
+    while index >= 0 and _is_escaped(source, index):
+        index = source.find(closing, index + len(closing))
+    return index
+
+
+def _looks_like_pending_dollar_math(source: str) -> bool:
+    return bool(_PENDING_DOLLAR_MATH_RE.search(source))
+
+
+def _tokenize_inline_latex(source: str) -> dict | None:
+    """Records: {"raw", "text", "pending"?} or None when this is not math."""
+    if source.startswith("$$"):
+        opening = closing = "$$"
+    elif source.startswith("\\("):
+        opening, closing = "\\(", "\\)"
+    elif source.startswith("\\["):
+        opening, closing = "\\[", "\\]"
+    elif source.startswith("$") and not _DOLLAR_THEN_SPACE_RE.match(source):
+        opening = closing = "$"
+    else:
+        return None
+
+    closing_index = _find_closing_delimiter(source, closing, len(opening))
+    if closing_index >= 0 and opening == "$":
+        body = source[len(opening) : closing_index]
+        after = source[closing_index + 1 :]
+        if (
+            _TRAILING_SPACE_RE.search(body)
+            or _LEADING_DIGIT_RE.match(after)
+            or (_SHELL_VARIABLE_RE.match(body) and _LEADING_IDENTIFIER_RE.match(after))
+            or "`" in body
+        ):
+            return None
+
+    if closing_index < 0:
+        pending_source = source[len(opening) :]
+        if opening.startswith("\\") or _looks_like_pending_dollar_math(pending_source):
+            return {"raw": source, "text": pending_source, "pending": True}
+        return None
+
+    text = source[len(opening) : closing_index]
+    if not text or "\n" in text:
+        return None
+
+    return {"raw": source[: closing_index + len(closing)], "text": text}
+
+
+def _tokenize_block_latex(source: str) -> dict | None:
+    dollar_match = _BLOCK_DOLLAR_RE.match(source)
+    if dollar_match and dollar_match.group(1):
+        return {"raw": dollar_match.group(0), "text": dollar_match.group(1).strip()}
+
+    bracket_match = _BLOCK_BRACKET_RE.match(source)
+    if bracket_match and bracket_match.group(1):
+        return {"raw": bracket_match.group(0), "text": bracket_match.group(1).strip()}
+
+    pending_bracket = _PENDING_BLOCK_BRACKET_RE.match(source)
+    if pending_bracket:
+        return {"raw": pending_bracket.group(0), "text": pending_bracket.group(1), "pending": True}
+    pending_dollar = _PENDING_BLOCK_DOLLAR_RE.match(source)
+    if pending_dollar and pending_dollar.group(1) and _looks_like_pending_dollar_math(pending_dollar.group(1)):
+        return {"raw": pending_dollar.group(0), "text": pending_dollar.group(1), "pending": True}
+    return None
+
+
+def _latex_block_rule(state, start_line: int, end_line: int, silent: bool) -> bool:
+    """markdown-it block rule standing in for pi's `latexBlock` extension."""
+    if state.is_code_block(start_line):
+        return False
+    start = state.bMarks[start_line] + state.tShift[start_line]
+    indent = state.sCount[start_line]
+    if indent > 3:
+        return False
+    source = " " * indent + state.src[start:]
+    token = _tokenize_block_latex(source)
+    if not token:
+        return False
+    if silent:
+        return True
+
+    consumed = len(token["raw"]) - indent
+    line = start_line
+    remaining = consumed
+    while line < end_line and remaining > 0:
+        line_length = state.eMarks[line] - (state.bMarks[line] + state.tShift[line]) + 1
+        remaining -= line_length
+        line += 1
+    state.line = max(line, start_line + 1)
+
+    md_token = state.push("latex_block", "", 0)
+    md_token.content = token["text"]
+    md_token.meta = {"raw": token["raw"], "pending": bool(token.get("pending"))}
+    md_token.map = [start_line, state.line]
+    return True
+
+
+def _latex_inline_rule(state, silent: bool) -> bool:
+    """markdown-it inline rule standing in for pi's `latex` extension."""
+    token = _tokenize_inline_latex(state.src[state.pos :])
+    if not token:
+        return False
+    if not silent:
+        md_token = state.push("latex_inline", "", 0)
+        md_token.content = token["text"]
+        md_token.meta = {"raw": token["raw"], "pending": bool(token.get("pending"))}
+    state.pos += len(token["raw"])
+    return True
+
+
+_md.block.ruler.before("fence", "latex_block", _latex_block_rule)
+_md.inline.ruler.before("escape", "latex_inline", _latex_inline_rule)
 
 
 def lex(text: str) -> list[dict]:
@@ -179,6 +322,14 @@ def _convert_block(node: dict, lines: list[str], *, in_list_item: bool) -> dict 
 
     if kind == "html_block":
         return {"type": "html", "raw": token.content}
+
+    if kind == "latex_block":
+        return {
+            "type": "latexBlock",
+            "text": token.content,
+            "raw": token.meta["raw"],
+            "pending": token.meta["pending"],
+        }
 
     if kind == "table_open":
         return _convert_table(node, lines)
@@ -317,6 +468,16 @@ def _convert_inline(children: list) -> list[dict]:
         elif kind == "code_inline":
             flush()
             out.append({"type": "codespan", "text": token.content})
+        elif kind == "latex_inline":
+            flush()
+            out.append(
+                {
+                    "type": "latex",
+                    "text": token.content,
+                    "raw": token.meta["raw"],
+                    "pending": token.meta["pending"],
+                }
+            )
         elif kind == "hardbreak":
             flush()
             out.append({"type": "br"})

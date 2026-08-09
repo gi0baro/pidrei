@@ -2,7 +2,8 @@
 
 import pytest
 
-from pidrei_tui.tui import TUI, Container
+from pidrei_tui.tui import Container
+from pidrei_tui.tui_main_screen import TuiMainScreen
 
 from .virtual_terminal import VirtualTerminal
 
@@ -72,7 +73,7 @@ async def render_and_flush(tui, terminal):
 
 def _make(columns=80, rows=24):
     terminal = VirtualTerminal(columns, rows)
-    return terminal, TUI(terminal)
+    return terminal, TuiMainScreen(terminal)
 
 
 # focus management

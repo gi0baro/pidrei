@@ -5,7 +5,7 @@ import os
 
 import tonio.colored as tonio
 
-from pidrei_tui import TUI, ProcessTerminal, get_capabilities, set_keybindings
+from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen, get_capabilities, set_keybindings
 
 from ..config import APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, get_agent_dir, get_settings_path
 from ..core.experimental import are_experimental_features_enabled
@@ -80,7 +80,7 @@ async def create_startup_tui(settings_manager: SettingsManager) -> TUI:
     terminal_theme = detect_terminal_background_from_env()["theme"]
     await init_theme(resolve_theme_setting(settings_manager.get_theme_setting(), terminal_theme) or terminal_theme)
     set_keybindings(await KeybindingsManager.create())
-    ui = TUI(ProcessTerminal(), settings_manager.get_show_hardware_cursor(), get_agent_dir())
+    ui: TUI = TuiMainScreen(ProcessTerminal(), settings_manager.get_show_hardware_cursor(), get_agent_dir())
     ui.set_clear_on_shrink(settings_manager.get_clear_on_shrink())
     return ui
 

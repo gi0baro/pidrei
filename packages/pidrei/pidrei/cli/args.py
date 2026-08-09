@@ -61,6 +61,7 @@ class Args:
     # str for a search pattern, True for a bare --list-models
     list_models: str | bool | None = None
     offline: bool | None = None
+    alt: bool | None = None
     verbose: bool | None = None
     project_trust_override: bool | None = None
     messages: list[str] = field(default_factory=list)
@@ -193,6 +194,8 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
                 result.list_models = args[i]
             else:
                 result.list_models = True
+        elif arg == "--alt":
+            result.alt = True
         elif arg == "--verbose":
             result.verbose = True
         elif arg in ("--approve", "-a"):
@@ -289,6 +292,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
+  --alt                          Use the alternate-screen TUI in interactive mode
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PIDREI_OFFLINE=1)

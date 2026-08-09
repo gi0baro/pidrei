@@ -7,7 +7,7 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_tui.terminal_image import get_cell_dimensions, reset_capabilities_cache, set_cell_dimensions
-from pidrei_tui.tui import TUI
+from pidrei_tui.tui_main_screen import TuiMainScreen
 
 from .tui_helpers import env_var
 
@@ -103,7 +103,7 @@ class InputRecorder:
 @pytest.mark.tonio
 async def test_writes_osc11_query_and_resolves_with_the_parsed_rgb_reply():
     terminal = TestTerminal()
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     await tui.start()
     try:
 
@@ -124,7 +124,7 @@ async def test_writes_osc11_query_and_resolves_with_the_parsed_rgb_reply():
 @pytest.mark.tonio
 async def test_consumes_osc11_replies_before_input_listeners_and_focused_component_dispatch():
     terminal = TestTerminal()
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = InputRecorder()
     listener_inputs = []
     tui.add_child(component)
@@ -151,7 +151,7 @@ async def test_consumes_osc11_replies_before_input_listeners_and_focused_compone
 @pytest.mark.tonio
 async def test_consumes_unparseable_strict_osc11_replies_and_resolves_none():
     terminal = TestTerminal()
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = InputRecorder()
     listener_inputs = []
     tui.add_child(component)
@@ -178,7 +178,7 @@ async def test_consumes_unparseable_strict_osc11_replies_and_resolves_none():
 @pytest.mark.tonio
 async def test_dispatches_non_matching_input_normally_while_waiting_for_an_osc11_reply():
     terminal = TestTerminal()
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = InputRecorder()
     listener_inputs = []
     tui.add_child(component)
@@ -211,7 +211,7 @@ async def test_dispatches_non_matching_input_normally_while_waiting_for_an_osc11
 @pytest.mark.tonio
 async def test_keeps_consuming_a_late_osc11_reply_after_timeout():
     terminal = TestTerminal()
-    tui = TUI(terminal)
+    tui = TuiMainScreen(terminal)
     component = InputRecorder()
     listener_inputs = []
     tui.add_child(component)
@@ -247,7 +247,7 @@ def image_terminal():
 async def test_forwards_bare_escape_even_when_a_cell_size_query_was_sent_at_startup():
     with image_terminal():
         terminal = TestTerminal()
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         recorder = InputRecorder()
 
         tui.set_focus(recorder)
@@ -265,7 +265,7 @@ async def test_consumes_cell_size_responses_and_still_forwards_later_user_input(
         set_cell_dimensions({"widthPx": 9, "heightPx": 18})
 
         terminal = TestTerminal()
-        tui = TUI(terminal)
+        tui = TuiMainScreen(terminal)
         recorder = InputRecorder()
 
         tui.set_focus(recorder)

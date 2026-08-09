@@ -904,6 +904,15 @@ class SettingsManager:
         self._mark_modified("terminal", "showTerminalProgress")
         self._save()
 
+    def get_fullscreen_scrollbar(self) -> str:
+        mode = self._settings.get("fullscreenScrollbar")
+        return mode if mode in ("always", "hidden") else "auto"
+
+    def set_fullscreen_scrollbar(self, mode: str) -> None:
+        self._global_settings["fullscreenScrollbar"] = mode
+        self._mark_modified("fullscreenScrollbar")
+        self._save()
+
     def get_image_auto_resize(self) -> bool:
         auto_resize = (self._settings.get("images") or {}).get("autoResize")
         return auto_resize if auto_resize is not None else True

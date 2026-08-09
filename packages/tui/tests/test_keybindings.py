@@ -11,6 +11,35 @@ def test_binds_ctrl_j_as_default_newline_alias():
     assert keybindings.matches("\x1b[106;5u", "tui.input.newLine") is True
 
 
+def test_binds_modified_and_unmodified_editor_viewport_navigation():
+    keybindings = KeybindingsManager(TUI_KEYBINDINGS)
+
+    assert keybindings.get_keys("tui.editor.cursorLineStart") == ["home", "ctrl+home", "ctrl+a"]
+    assert keybindings.get_keys("tui.editor.cursorLineEnd") == ["end", "ctrl+end", "ctrl+e"]
+    assert keybindings.get_keys("tui.editor.pageUp") == ["pageUp", "ctrl+pageUp"]
+    assert keybindings.get_keys("tui.editor.pageDown") == ["pageDown", "ctrl+pageDown"]
+
+
+def test_leaves_dedicated_prompt_history_navigation_unbound_by_default():
+    keybindings = KeybindingsManager(TUI_KEYBINDINGS)
+
+    assert keybindings.get_keys("tui.editor.historyPrevious") == []
+    assert keybindings.get_keys("tui.editor.historyNext") == []
+
+
+def test_binds_unmodified_terminal_viewport_shortcuts_to_alternate_screen_navigation():
+    keybindings = KeybindingsManager(TUI_KEYBINDINGS)
+
+    assert keybindings.get_keys("tui.altScreen.pageUp") == ["pageUp"]
+    assert keybindings.get_keys("tui.altScreen.pageDown") == ["pageDown"]
+    assert keybindings.get_keys("tui.altScreen.halfPageUp") == []
+    assert keybindings.get_keys("tui.altScreen.halfPageDown") == []
+    assert keybindings.get_keys("tui.altScreen.previousPrompt") == ["ctrl+shift+up"]
+    assert keybindings.get_keys("tui.altScreen.nextPrompt") == ["ctrl+shift+down"]
+    assert keybindings.get_keys("tui.altScreen.top") == ["home"]
+    assert keybindings.get_keys("tui.altScreen.bottom") == ["end"]
+
+
 def test_does_not_evict_selector_confirm_when_input_submit_is_rebound():
     keybindings = KeybindingsManager(
         TUI_KEYBINDINGS,

@@ -19,9 +19,15 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
 - JS ``\\p{...}`` property regexes → ``unicodedata.category`` checks plus a
   Default_Ignorable_Code_Point range table (stdlib has no DI property).
 - ``\\p{RGI_Emoji}`` (a sequence property) has no Python equivalent; the
-  check is approximated: VS16 or ZWJ present, flag pairs, skin-tone and
-  keycap and tag sequences → emoji (width 2). Single-codepoint emoji get
-  width 2 through their East_Asian_Width=W anyway.
+  check is approximated: VS16 present, ZWJ present *after an emoji-block
+  base*, flag pairs, skin-tone and keycap and tag sequences → emoji
+  (width 2). Single-codepoint emoji get width 2 through their
+  East_Asian_Width=W anyway. The emoji-base condition on ZWJ matters because
+  Indic conjuncts join with ZWJ too (Malayalam chillu) — and because the
+  ``grapheme`` package predates UAX #29's GB9c, it hands those over as their
+  own cluster where ICU (and therefore pi) keeps the whole conjunct
+  together. The per-cluster widths differ; the line widths agree, which is
+  what the renderer measures.
 - ``cjkBreakRegex`` (Script_Extensions) → explicit codepoint ranges for
   Han/Hiragana/Katakana/Hangul/Bopomofo blocks and CJK punctuation.
 - JS ``String.length`` is UTF-16 units; where the distinction matters
@@ -33,6 +39,7 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
 """
 
 import logging
+import math
 import re
 import threading
 import unicodedata
@@ -182,8 +189,22 @@ def _is_default_ignorable(cp: int) -> bool:
     return False
 
 
+def js_round(value: float) -> int:
+    """``Math.round``: halves go up, not to even like Python's ``round``."""
+    return math.floor(value + 0.5)
+
+
 def _utf16_length(s: str) -> int:
     return sum(2 if ord(char) > 0xFFFF else 1 for char in s)
+
+
+def _is_emoji_block(cp: int) -> bool:
+    return (
+        (0x1F000 <= cp <= 0x1FBFF)  # Emoji and Pictograph
+        or (0x2300 <= cp <= 0x23FF)  # Misc technical
+        or (0x2600 <= cp <= 0x27BF)  # Misc symbols, dingbats
+        or (0x2B50 <= cp <= 0x2B55)  # Specific stars/circles
+    )
 
 
 def _could_be_emoji(segment: str) -> bool:
@@ -193,20 +214,23 @@ def _could_be_emoji(segment: str) -> bool:
     tested Unicode blocks are deliberately broad to account for future
     Unicode additions.
     """
-    cp = ord(segment[0])
     return (
-        (0x1F000 <= cp <= 0x1FBFF)  # Emoji and Pictograph
-        or (0x2300 <= cp <= 0x23FF)  # Misc technical
-        or (0x2600 <= cp <= 0x27BF)  # Misc symbols, dingbats
-        or (0x2B50 <= cp <= 0x2B55)  # Specific stars/circles
+        _is_emoji_block(ord(segment[0]))
         or "️" in segment  # Contains VS16 (emoji presentation selector)
         or _utf16_length(segment) > 2  # Multi-codepoint sequences (ZWJ, skin tones, etc.)
     )
 
 
 def _is_emoji_sequence(segment: str) -> bool:
-    """Approximation of JS ``/^\\p{RGI_Emoji}$/v`` (see module docstring)."""
-    if "️" in segment or "‍" in segment:
+    """Approximation of JS ``/^\\p{RGI_Emoji}$/v`` (see module docstring).
+
+    A ZWJ only makes a sequence emoji when what it joins is: Indic conjuncts
+    use ZWJ too (Malayalam chillu), and treating those as emoji doubled their
+    width.
+    """
+    if "️" in segment:
+        return True
+    if "‍" in segment and _is_emoji_block(ord(segment[0])):
         return True
     codepoints = [ord(char) for char in segment]
     if len(codepoints) < 2:
@@ -231,6 +255,38 @@ def _is_zero_width_cluster(segment: str) -> bool:
             continue
         return False
     return True
+
+
+def _is_non_printing_char(char: str) -> bool:
+    # JS: /^(?:\p{Default_Ignorable_Code_Point}|\p{Control}|\p{Format}|\p{Mark}|\p{Surrogate})$/v
+    category = unicodedata.category(char)
+    return category in ("Cc", "Cf", "Cs") or category.startswith("M") or _is_default_ignorable(ord(char))
+
+
+def _is_mark_char(char: str) -> bool:
+    # JS: /^\p{Mark}$/v
+    return unicodedata.category(char).startswith("M")
+
+
+# Marks that terminals allocate cells for when attached to a base character.
+# This includes Unicode spacing marks and non-spacing exceptions in legacy
+# wcwidth tables. JS:
+# /^(?:[\p{Spacing_Mark}--[᜴〮〯]]|[ٟཿါာေဳ-ဵး်-ှ])+$/v
+_SPACING_MARK_EXCLUSIONS = frozenset({0x1734, 0x302E, 0x302F})
+_TERMINAL_SPACING_MARK_EXTRAS = frozenset(
+    {0x065F, 0x0F7F, 0x102B, 0x102C, 0x1031, *range(0x1033, 0x1036), 0x1038, *range(0x103A, 0x103F)}
+)
+
+
+def _is_terminal_spacing_mark_char(char: str) -> bool:
+    cp = ord(char)
+    if cp in _TERMINAL_SPACING_MARK_EXTRAS:
+        return True
+    return unicodedata.category(char) == "Mc" and cp not in _SPACING_MARK_EXCLUSIONS
+
+
+def _is_terminal_spacing_mark(segment: str) -> bool:
+    return bool(segment) and all(_is_terminal_spacing_mark_char(char) for char in segment)
 
 
 def _strip_leading_non_printing(segment: str) -> str:
@@ -270,6 +326,10 @@ def _grapheme_width(segment: str) -> int:
     if segment == "\t":
         return 3
 
+    # Some marks occupy cells even without a base character.
+    if _is_terminal_spacing_mark(segment):
+        return len(segment)
+
     # Zero-width clusters
     if _is_zero_width_cluster(segment):
         return 0
@@ -292,14 +352,25 @@ def _grapheme_width(segment: str) -> int:
 
     width = _east_asian_width(cp)
 
-    # Trailing halfwidth/fullwidth forms and AM vowels that segment with a base.
-    if len(segment) > 1:
-        for char in segment[1:]:
+    # The grapheme segmenter can group multiple terminal-spacing code points
+    # into one grapheme. Count trailing visible code points that terminals may
+    # allocate cells for: Indic consonants after marks, halfwidth/fullwidth
+    # forms, and Thai/Lao AM vowels.
+    follows_mark = False
+    for char in base[1:]:
+        if _is_terminal_spacing_mark_char(char):
+            width += 1
+            follows_mark = False
+        elif _is_mark_char(char):
+            follows_mark = True
+        elif not _is_non_printing_char(char):
             c = ord(char)
-            if 0xFF00 <= c <= 0xFFEF:
+            if follows_mark or (0xFF00 <= c <= 0xFFEF):
+                # halfwidth + fullwidth forms
                 width += _east_asian_width(c)
             elif c in (0x0E33, 0x0EB3):
                 width += 1
+            follows_mark = False
 
     return width
 
@@ -352,6 +423,71 @@ def visible_width(s: str) -> int:
         _width_cache[s] = width
 
     return width
+
+
+def strip_terminal_sequences(s: str) -> str:
+    """Remove ANSI, OSC, and APC control sequences while preserving visible text."""
+    if "\x1b" not in s:
+        return s
+    result: list[str] = []
+    i = 0
+    while i < len(s):
+        ansi = extract_ansi_code(s, i)
+        if ansi:
+            i += ansi["length"]
+            continue
+        result.append(s[i])
+        i += 1
+    return "".join(result)
+
+
+def get_grapheme_cell_range(line: str, column: int) -> tuple[int, int] | None:
+    """Return the terminal-cell range ``(start, end)`` of the grapheme at a visible column."""
+    current_col = 0
+    i = 0
+    while i < len(line):
+        ansi = extract_ansi_code(line, i)
+        if ansi:
+            i += ansi["length"]
+            continue
+        text_end = i
+        while text_end < len(line) and not extract_ansi_code(line, text_end):
+            text_end += 1
+        for segment in grapheme_lib.graphemes(line[i:text_end]):
+            width = _grapheme_width(segment)
+            if width > 0 and current_col <= column < current_col + width:
+                return (current_col, current_col + width)
+            current_col += width
+        i = text_end
+    return None
+
+
+_OSC8_LINK_AT_COLUMN_RE = re.compile(r"^\x1b\]8;[^;]*;([^\x07\x1b]*)(?:\x07|\x1b\\)$")
+
+
+def get_osc8_link_at_column(line: str, column: int) -> str | None:
+    """Return the OSC 8 hyperlink covering a visible terminal column."""
+    active_url: str | None = None
+    current_col = 0
+    i = 0
+    while i < len(line):
+        ansi = extract_ansi_code(line, i)
+        if ansi:
+            hyperlink = _OSC8_LINK_AT_COLUMN_RE.match(ansi["code"])
+            if hyperlink:
+                active_url = hyperlink.group(1) or None
+            i += ansi["length"]
+            continue
+        text_end = i
+        while text_end < len(line) and not extract_ansi_code(line, text_end):
+            text_end += 1
+        for segment in grapheme_lib.graphemes(line[i:text_end]):
+            width = 3 if segment == "\t" else _grapheme_width(segment)
+            if current_col <= column < current_col + width:
+                return active_url
+            current_col += width
+        i = text_end
+    return None
 
 
 THAI_LAO_AM_RE = re.compile("[ำຳ]")
@@ -455,6 +591,24 @@ def _format_osc8_hyperlink(hyperlink: dict) -> str:
 
 def _format_osc8_close(terminator: str) -> str:
     return f"\x1b]8;;{terminator}"
+
+
+def _get_active_osc8_close(prefix: str) -> str:
+    if "\x1b]8;" not in prefix:
+        return ""
+
+    active_hyperlink = None
+    i = 0
+    while i < len(prefix):
+        ansi = extract_ansi_code(prefix, i)
+        if ansi:
+            hyperlink = _parse_osc8_hyperlink(ansi["code"])
+            if hyperlink is not _NOT_OSC8:
+                active_hyperlink = hyperlink
+            i += ansi["length"]
+        else:
+            i += 1
+    return _format_osc8_close(active_hyperlink["terminator"]) if active_hyperlink else ""
 
 
 class AnsiCodeTracker:
@@ -988,12 +1142,13 @@ def _finalize_truncated_result(
     pad: bool,
 ) -> str:
     reset = "\x1b[0m"
+    hyperlink_close = _get_active_osc8_close(prefix)
     visible = prefix_width + ellipsis_width
 
     if len(ellipsis) > 0:
-        result = f"{prefix}{reset}{ellipsis}{reset}"
+        result = f"{prefix}{hyperlink_close}{reset}{ellipsis}{reset}"
     else:
-        result = f"{prefix}{reset}"
+        result = f"{prefix}{hyperlink_close}{reset}"
 
     return result + " " * max(0, max_width - visible) if pad else result
 

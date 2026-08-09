@@ -70,6 +70,15 @@ class CustomEditor(Editor):
             return
             # (non-empty editors fall through to delete-char-forward below)
 
+        # Explicit history bindings take precedence over app actions while the
+        # editor is focused. This lets users bind Ctrl+P even though it cycles
+        # models by default.
+        if self._keybindings.matches(data, "tui.editor.historyPrevious") or self._keybindings.matches(
+            data, "tui.editor.historyNext"
+        ):
+            await super().handle_input(data)
+            return
+
         # Check all other app actions
         for action, handler in list(self.action_handlers.items()):
             if action not in ("app.interrupt", "app.exit") and self._keybindings.matches(data, action):
