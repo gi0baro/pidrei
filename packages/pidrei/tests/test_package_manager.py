@@ -1037,3 +1037,22 @@ async def test_an_autoload_disabled_package_contributes_nothing_for_unlisted_typ
 
     assert paths_of(result.extensions) == [os.path.join(package_dir, "extensions", "foo.py")]
     assert result.skills == []
+
+
+@pytest.mark.tonio
+async def test_ignores_invalid_manifest_resource_fields_without_dropping_valid_fields(dirs):
+    """pi's #7187 regression, on a local package (npm sources are not ported).
+
+    A resource field that is not a list of strings is dropped, and dropping it
+    must not resurrect auto-discovery for that type nor lose the valid fields.
+    """
+    package_dir = os.path.join(dirs.root, "bad-package")
+    skill_path = write_skill(os.path.join(package_dir, "skills", "bad", "SKILL.md"), "bad", "Must not load")
+    prompt_path = write(os.path.join(package_dir, "prompts", "valid.md"), "Valid prompt\n")
+    write_manifest(package_dir, {"skills": "./skills", "prompts": ["./prompts"]})
+    dirs.settings.set_packages([package_dir])
+
+    result = await dirs.manager.resolve()
+
+    assert skill_path not in paths_of(result.skills)
+    assert prompt_path in paths_of(result.prompts)

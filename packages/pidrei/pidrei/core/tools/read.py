@@ -52,7 +52,7 @@ class ReadToolDetails:
     truncation: TruncationResult | None = None
 
 
-_COMPACT_RESOURCE_FILE_NAMES = {"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
+_COMPACT_RESOURCE_FILE_NAMES = {"AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
 
 
 def _format_read_line_range(args: dict | None, theme) -> str:

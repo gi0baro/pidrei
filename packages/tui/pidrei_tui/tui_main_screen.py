@@ -100,6 +100,34 @@ class TuiMainScreen(TuiBase):
         self._max_lines_rendered = 0  # Track terminal's working area (max lines ever rendered)
         self._previous_viewport_top = 0  # Track previous viewport top for resize-aware cursor moves
 
+    def capture_render_state(self) -> dict:
+        """The differential state, so a re-created renderer can pick it up.
+
+        pi's ``TuiMainScreenRenderState`` — a plain record here, keyed like pi's
+        fields, because the only consumer is ``restore_render_state``.
+        """
+        return {
+            "previousLines": list(self._previous_lines),
+            "previousWidth": self._previous_width,
+            "previousHeight": self._previous_height,
+            "cursorRow": self._cursor_row,
+            "hardwareCursorRow": self._hardware_cursor_row,
+            "maxLinesRendered": self._max_lines_rendered,
+            "previousViewportTop": self._previous_viewport_top,
+        }
+
+    def restore_render_state(self, state: dict) -> None:
+        # Image lines are dropped: their kitty placements belong to the previous
+        # renderer's uploads, so this renderer must repaint them from scratch.
+        self._previous_lines = ["" if is_image_line(line) else line for line in state["previousLines"]]
+        self._previous_kitty_image_ids = set()
+        self._previous_width = state["previousWidth"]
+        self._previous_height = state["previousHeight"]
+        self._cursor_row = state["cursorRow"]
+        self._hardware_cursor_row = state["hardwareCursorRow"]
+        self._max_lines_rendered = state["maxLinesRendered"]
+        self._previous_viewport_top = state["previousViewportTop"]
+
     def _reset_render_state(self) -> None:
         self._previous_lines = []
         self._previous_width = -1  # -1 triggers width_changed, forcing a full clear
@@ -109,9 +137,9 @@ class TuiMainScreen(TuiBase):
         self._max_lines_rendered = 0
         self._previous_viewport_top = 0
 
-    async def _before_terminal_stop(self) -> None:
+    async def _before_terminal_stop(self, options: dict) -> None:
         # Move cursor to the end of the content to prevent overwriting/artifacts on exit
-        if not self._previous_lines:
+        if options.get("preserveScreen") or not self._previous_lines:
             return
         # Overwrite the inverted cursor with a normal space to clear the artifact
         await self.terminal.write(" ")

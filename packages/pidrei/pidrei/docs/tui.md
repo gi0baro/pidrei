@@ -17,16 +17,21 @@ the terminal diffs frames and writes only what changed.
 
 Two renderers implement that contract. `TuiMainScreen` (the default) renders
 into the terminal's own screen and scrollback. `TuiAltScreen`, selected with
-`--alt`, takes over the alternate screen and owns both the box tree and the
-scrolling: the transcript scrolls inside a `ScrollView` while queued messages,
-working status, extension widgets, editor and footer stay fixed in a dock
-below it. `shift+pageUp`/`shift+pageDown`/`ctrl+home`/`ctrl+end` move the
-transcript, the mouse wheel scrolls whichever region is under the pointer,
-dragging selects text into the clipboard, and clicking an OSC 8 link opens it.
-Inline images then need the Kitty graphics protocol (Kitty, Ghostty); iTerm2
-falls back to text placeholders because its protocol cannot delete or crop
-placements while the application scrolls. Without `--alt`, iTerm2 inline
-images render normally.
+`--tui-mode fullscreen`, takes over the alternate screen and owns both the box
+tree and the scrolling: the transcript scrolls inside a `ScrollView` while
+queued messages, working status, extension widgets, editor and footer stay
+fixed in a dock below it. `shift+pageUp`/`shift+pageDown`/`ctrl+home`/`ctrl+end`
+move the transcript, the mouse wheel scrolls whichever region is under the
+pointer, dragging selects text into the clipboard, and clicking an OSC 8 link
+opens it. Inline images then need the Kitty graphics protocol (Kitty,
+Ghostty); iTerm2 falls back to text placeholders because its protocol cannot
+delete or crop placements while the application scrolls. In `regular` mode,
+iTerm2 inline images render normally.
+
+Either mode can be selected at runtime from **TUI mode** in `/settings`;
+InteractiveMode swaps the renderer under a stable `ui` reference, so the whole
+component tree is remounted rather than rebuilt. The setting is only consulted
+for the initial renderer, which `--tui-mode` overrides for one run.
 
 `VStack`/`HStack` (flex-style `basis`/`grow`/`shrink`/`minSize`/`maxSize`
 entries) and `ScrollView` are the layout-aware components the alternate screen

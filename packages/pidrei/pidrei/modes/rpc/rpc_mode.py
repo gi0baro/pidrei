@@ -36,6 +36,7 @@ from ...core.output_guard import (
 from ...core.session_manager import SessionManager
 from ...utils.fd_io import FdReader, hard_exit
 from ...utils.shell import kill_tracked_detached_children
+from ..json_event import to_json_event
 from .jsonl import JsonlLineDecoder, serialize_json_line
 from .rpc_types import RpcSessionState, RpcSlashCommand
 
@@ -392,7 +393,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             unsubscribe_backpressure()
 
         def on_event(event) -> None:
-            output(event)
+            output(to_json_event(event))
             if getattr(event, "type", None) == "agent_settled":
                 tonio.spawn.without_tracking(check_shutdown_requested())
 

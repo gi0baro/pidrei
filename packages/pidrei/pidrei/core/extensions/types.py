@@ -168,6 +168,7 @@ class Extension:
     flags: dict[str, ExtensionFlag] = field(default_factory=dict)
     shortcuts: dict[str, Any] = field(default_factory=dict)
     message_renderers: dict[str, Any] = field(default_factory=dict)
+    markdown_transformer: Any = None
     entry_renderers: dict[str, Any] = field(default_factory=dict)
 
 
@@ -212,6 +213,7 @@ class ExtensionRuntime:
         self.unregister_provider: Callable[..., None] = self._unqueue_provider
 
         self._stale_message: str | None = None
+        self._event_bus_unsubscribers: set = set()
 
     def _queue_provider(self, name: str, config: Any, extension_path: str = "<unknown>") -> None:
         self.pending_provider_registrations.append({"name": name, "config": config, "extension_path": extension_path})
@@ -228,8 +230,28 @@ class ExtensionRuntime:
         ]
 
     def invalidate(self, message: str) -> None:
-        if self._stale_message is None:
-            self._stale_message = message
+        """Mark this extension instance stale after runtime replacement or reload."""
+        if self._stale_message is not None:
+            return
+        self._stale_message = message
+        for unsubscribe in list(self._event_bus_unsubscribers):
+            unsubscribe()
+        self._event_bus_unsubscribers.clear()
+
+    def track_event_bus_subscription(self, unsubscribe: Callable[[], None]) -> Callable[[], None]:
+        """Retain an event-bus subscription until this runtime is invalidated."""
+        active = True
+
+        def tracked_unsubscribe() -> None:
+            nonlocal active
+            if not active:
+                return
+            active = False
+            self._event_bus_unsubscribers.discard(tracked_unsubscribe)
+            unsubscribe()
+
+        self._event_bus_unsubscribers.add(tracked_unsubscribe)
+        return tracked_unsubscribe
 
     def assert_active(self) -> None:
         if self._stale_message is not None:

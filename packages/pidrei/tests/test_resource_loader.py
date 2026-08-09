@@ -166,8 +166,30 @@ class TestReload:
         assert any("AGENTS.md" in file.path for file in loader.get_agents_files())
 
     @pytest.mark.tonio
+    async def test_prefers_agents_override_md_per_directory_while_preserving_ancestor_layering(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        nested_cwd = cwd / "service"
+        nested_cwd.mkdir()
+        write(agent_dir / "AGENTS.md", "global instructions")
+        write(agent_dir / "AGENTS.override.md", "global override")
+        write(cwd / "AGENTS.md", "project instructions")
+        write(nested_cwd / "AGENTS.md", "service instructions")
+        write(nested_cwd / "AGENTS.override.md", "service override")
+
+        loader = DefaultResourceLoader(cwd=str(nested_cwd), agent_dir=str(agent_dir))
+        with fake_home(home):
+            await loader.reload()
+
+        assert [(file.path, file.content) for file in loader.get_agents_files()] == [
+            (str(agent_dir / "AGENTS.override.md"), "global override"),
+            (str(cwd / "AGENTS.md"), "project instructions"),
+            (str(nested_cwd / "AGENTS.override.md"), "service override"),
+        ]
+
+    @pytest.mark.tonio
     async def test_ignores_context_file_candidates_that_are_directories(self, dirs):
         _tmp, agent_dir, cwd, home = dirs
+        (cwd / "AGENTS.override.md").mkdir()
         (cwd / "AGENTS.md").mkdir()
         write(cwd / "CLAUDE.md", "Fallback instructions")
         # No monkeypatch fixture under the tonio mark (yield fixture); swap by hand.
@@ -186,10 +208,12 @@ class TestReload:
             for file in loader.get_agents_files()
         )
         assert not any(str(cwd / "AGENTS.md") in warning for warning in warnings)
+        assert not any(str(cwd / "AGENTS.override.md") in warning for warning in warnings)
 
     @pytest.mark.tonio
     async def test_skips_context_file_discovery_when_no_context_files_is_true(self, dirs):
         _tmp, agent_dir, cwd, home = dirs
+        write(cwd / "AGENTS.override.md", "# Override Guidelines\n\nBe helpful.")
         write(cwd / "AGENTS.md", "# Project Guidelines\n\nBe helpful.")
         write(cwd / "CLAUDE.md", "# Claude Guidelines\n\nBe helpful.")
 

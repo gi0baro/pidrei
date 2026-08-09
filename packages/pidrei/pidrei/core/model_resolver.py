@@ -400,18 +400,38 @@ def resolve_cli_model(
 
     # If no provider was inferred from the slash, try exact matches without provider inference.
     # This handles models whose IDs naturally contain slashes (e.g. OpenRouter-style IDs).
+    # Bare exact IDs can exist in multiple providers, so do not choose by catalog order.
+    # Prefer the sole authenticated provider when there is one; otherwise require an
+    # explicit provider to avoid silently selecting an unusable provider.
     if not provider:
         lower = cli_model.lower()
-        exact = next(
-            (
-                model
-                for model in available_models
-                if model.id.lower() == lower or f"{model.provider}/{model.id}".lower() == lower
-            ),
-            None,
-        )
-        if exact is not None:
-            return ResolveCliModelResult(model=exact)
+        exact_matches = [
+            model
+            for model in available_models
+            if model.id.lower() == lower or f"{model.provider}/{model.id}".lower() == lower
+        ]
+        if len(exact_matches) == 1:
+            return ResolveCliModelResult(model=exact_matches[0])
+        if len(exact_matches) > 1:
+            authenticated_exact_matches = [
+                model for model in exact_matches if model_runtime.has_configured_auth(model.provider)
+            ]
+            if len(authenticated_exact_matches) == 1:
+                return ResolveCliModelResult(model=authenticated_exact_matches[0])
+
+            matches = ", ".join(sorted(f"{model.provider}/{model.id}" for model in exact_matches))
+            auth_hint = (
+                "No matching provider is authenticated."
+                if not authenticated_exact_matches
+                else "More than one matching provider is authenticated."
+            )
+            return ResolveCliModelResult(
+                model=None,
+                error=(
+                    f'Model "{cli_model}" is ambiguous across providers: {matches}. '
+                    f"{auth_hint} Use --provider or provider/model."
+                ),
+            )
 
     if cli_provider and provider:
         # If both were provided, tolerate --model <provider>/<pattern> by stripping the provider prefix

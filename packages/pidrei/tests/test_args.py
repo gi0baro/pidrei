@@ -1,5 +1,7 @@
 """Mirrors pi coding-agent test/args.test.ts."""
 
+import pytest
+
 from pidrei.cli.args import parse_args
 
 
@@ -275,11 +277,26 @@ class TestOfflineFlag:
         assert result.offline is True
 
 
-class TestAltFlag:
-    def test_parses_alt_flag(self):
-        result = parse_args(["--alt"])
-        assert result.alt is True
-        assert "alt" not in result.unknown_flags
+class TestTuiModeFlag:
+    @pytest.mark.parametrize("mode", ["regular", "fullscreen"])
+    def test_parses_mode(self, mode):
+        result = parse_args(["--tui-mode", mode])
+        assert result.tui_mode == mode
+
+    def test_rejects_invalid_modes(self):
+        result = parse_args(["--tui-mode", "other"])
+        assert result.diagnostics == [
+            {"type": "error", "message": 'Invalid TUI mode "other". Valid values: regular, fullscreen'}
+        ]
+
+    def test_requires_a_mode(self):
+        result = parse_args(["--tui-mode"])
+        assert result.diagnostics == [{"type": "error", "message": "--tui-mode requires regular or fullscreen"}]
+
+    def test_does_not_recognize_the_old_ui_mode_flag(self):
+        result = parse_args(["--ui-mode", "fullscreen"])
+        assert result.tui_mode is None
+        assert result.unknown_flags.get("ui-mode") == "fullscreen"
 
 
 class TestToolFlags:

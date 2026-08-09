@@ -57,6 +57,7 @@ class _FakeExtensionRunner:
 class _FakeSession:
     def __init__(self, assistant_message):
         self.session_manager = SimpleNamespace(get_header=lambda: None)
+        self.agent = SimpleNamespace(wait_for_idle=self.wait_for_idle, subscribe=lambda _listener: lambda: None)
         self.state = SimpleNamespace(messages=[assistant_message])
         self.extension_runner = _FakeExtensionRunner()
         self.bind_calls = []

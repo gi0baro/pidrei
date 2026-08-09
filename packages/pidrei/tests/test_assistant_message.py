@@ -59,7 +59,7 @@ class TestAssistantMessageComponent:
         assert OSC133_ZONE_FINAL not in rendered
 
     @pytest.mark.tonio
-    async def test_renders_length_stops_as_visible_errors(self):
+    async def test_renders_length_stops_with_neutral_truncation_wording(self):
         await init_theme("dark")
 
         component = AssistantMessageComponent(
@@ -69,8 +69,7 @@ class TestAssistantMessageComponent:
         rendered = "\n".join(component.render(80))
 
         assert "Thinking..." in rendered
-        assert "maximum output token limit" in rendered
-        assert "response may be incomplete" in rendered
+        assert "Response was truncated before completion." in rendered
 
     @pytest.mark.tonio
     async def test_coalesces_adjacent_thinking_blocks_into_one_hidden_thinking_label(self):
@@ -117,6 +116,117 @@ class TestAssistantMessageComponent:
         updated_lines = [strip_ansi(line) for line in component.render(80)]
         assert any(line.startswith("hello") for line in updated_lines)
         assert any(line.startswith("reasoning") for line in updated_lines)
+
+    @pytest.mark.tonio
+    async def test_chains_markdown_transformers_in_registration_order(self):
+        await init_theme("dark")
+        calls: list[str] = []
+        contexts: list[dict] = []
+
+        def formula(markdown, context):
+            calls.append("formula")
+            contexts.append(context)
+            return markdown.replace("$x^2$", "x²")
+
+        def suffix(markdown, _context):
+            calls.append("suffix")
+            return f"{markdown} Done."
+
+        message = create_assistant_message([TextContent(text="The result is $x^2$.")])
+        component = AssistantMessageComponent(message, False, None, "Thinking...", 1, [formula, suffix])
+
+        assert "The result is x². Done." in strip_ansi("\n".join(component.render(80)))
+        assert calls == ["formula", "suffix"]
+        assert contexts == [{"messageType": "assistant", "isStreaming": False, "availableWidth": 78}]
+
+    @pytest.mark.tonio
+    async def test_identifies_partial_assistant_markdown_as_streaming(self):
+        await init_theme("dark")
+        streaming_states: list[bool] = []
+
+        def transformer(markdown, context):
+            streaming_states.append(context["isStreaming"])
+            return markdown if context["isStreaming"] else f"{markdown} transformed"
+
+        message = create_assistant_message([TextContent(text="partial")])
+        component = AssistantMessageComponent(None, False, None, "Thinking...", 1, [transformer])
+
+        component.update_content(message, True)
+        assert "transformed" not in strip_ansi("\n".join(component.render(80)))
+
+        component.update_content(message, False)
+        assert "partial transformed" in strip_ansi("\n".join(component.render(80)))
+        assert streaming_states == [True, False]
+
+    @pytest.mark.tonio
+    async def test_reapplies_markdown_transformers_when_available_width_changes(self):
+        await init_theme("dark")
+        available_widths: list[int] = []
+
+        def transformer(markdown, context):
+            available_widths.append(context["availableWidth"])
+            return f"{markdown} ({context['availableWidth']})"
+
+        component = AssistantMessageComponent(
+            create_assistant_message([TextContent(text="answer")]),
+            False,
+            None,
+            "Thinking...",
+            1,
+            [transformer],
+        )
+
+        assert "answer (78)" in strip_ansi("\n".join(component.render(80)))
+        component.render(80)
+        assert "answer (58)" in strip_ansi("\n".join(component.render(60)))
+        assert available_widths == [78, 58]
+
+    @pytest.mark.tonio
+    async def test_continues_the_markdown_transformer_chain_when_a_transformer_raises(self):
+        await init_theme("dark")
+        calls: list[str] = []
+
+        def first(markdown, _context):
+            calls.append("first")
+            return markdown.replace("still", "remains")
+
+        def broken(_markdown, _context):
+            calls.append("throw")
+            raise RuntimeError("broken transformer")
+
+        def last(markdown, _context):
+            calls.append("last")
+            return f"{markdown} after error"
+
+        component = AssistantMessageComponent(
+            create_assistant_message([TextContent(text="still visible")]),
+            False,
+            None,
+            "Thinking...",
+            1,
+            [first, broken, last],
+        )
+
+        assert "remains visible after error" in strip_ansi("\n".join(component.render(80)))
+        assert calls == ["first", "throw", "last"]
+
+    @pytest.mark.tonio
+    async def test_transforms_text_and_thinking_markdown_without_mutating_the_original_message(self):
+        await init_theme("dark")
+        message = create_assistant_message([TextContent(text="answer"), ThinkingContent(thinking="reasoning")])
+        component = AssistantMessageComponent(
+            message,
+            False,
+            None,
+            "Thinking...",
+            1,
+            [lambda markdown, context: f"{context['messageType']}:{markdown}"],
+        )
+
+        rendered = strip_ansi("\n".join(component.render(80)))
+        assert "assistant:answer" in rendered
+        assert "assistant-thinking:reasoning" in rendered
+        assert message.content == [TextContent(text="answer"), ThinkingContent(thinking="reasoning")]
 
     @pytest.mark.tonio
     async def test_uses_configured_output_padding_for_user_messages(self):

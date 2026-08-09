@@ -61,7 +61,7 @@ class Args:
     # str for a search pattern, True for a bare --list-models
     list_models: str | bool | None = None
     offline: bool | None = None
-    alt: bool | None = None
+    tui_mode: str | None = None
     verbose: bool | None = None
     project_trust_override: bool | None = None
     messages: list[str] = field(default_factory=list)
@@ -194,8 +194,18 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
                 result.list_models = args[i]
             else:
                 result.list_models = True
-        elif arg == "--alt":
-            result.alt = True
+        elif arg == "--tui-mode":
+            mode = args[i + 1] if i + 1 < len(args) else None
+            if mode in ("regular", "fullscreen"):
+                result.tui_mode = mode
+                i += 1
+            elif mode is None or mode.startswith("-"):
+                result.diagnostics.append({"type": "error", "message": "--tui-mode requires regular or fullscreen"})
+            else:
+                i += 1
+                result.diagnostics.append(
+                    {"type": "error", "message": f'Invalid TUI mode "{mode}". Valid values: regular, fullscreen'}
+                )
         elif arg == "--verbose":
             result.verbose = True
         elif arg in ("--approve", "-a"):
@@ -292,7 +302,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
-  --alt                          Use the alternate-screen TUI in interactive mode
+  --tui-mode <mode>              TUI mode: regular (default) or fullscreen
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PIDREI_OFFLINE=1)

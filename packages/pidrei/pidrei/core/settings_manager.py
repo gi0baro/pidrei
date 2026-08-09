@@ -33,21 +33,30 @@ type Settings = dict[str, Any]
 type SettingsScope = Literal["global", "project"]
 
 
-def deep_merge_settings(base: Settings, overrides: Settings) -> Settings:
-    """Deep merge settings: project/overrides take precedence, nested objects merge recursively."""
+def _is_mergeable_object(value: Any) -> bool:
+    return isinstance(value, dict)
+
+
+def _deep_merge_objects(base: dict, overrides: dict) -> dict:
     result = dict(base)
 
+    # pi skips `undefined` overrides here; Python has no undefined and a parsed
+    # JSON `null` is a real value, so (as before this port's rewrite) every key
+    # present in `overrides` wins.
     for key, override_value in overrides.items():
-        base_value = result.get(key)
-
-        # For nested objects, merge recursively
-        if isinstance(override_value, dict) and isinstance(base_value, dict):
-            result[key] = {**base_value, **override_value}
-        else:
-            # For primitives and arrays, override value wins
-            result[key] = override_value
+        base_value = base.get(key)
+        result[key] = (
+            _deep_merge_objects(base_value, override_value)
+            if _is_mergeable_object(base_value) and _is_mergeable_object(override_value)
+            else override_value
+        )
 
     return result
+
+
+def deep_merge_settings(base: Settings, overrides: Settings) -> Settings:
+    """Deep merge settings: project/overrides take precedence, nested objects merge recursively."""
+    return _deep_merge_objects(base, overrides)
 
 
 def _parse_timeout_setting(value: Any, setting_name: str) -> int | None:
@@ -969,6 +978,14 @@ class SettingsManager:
     def set_show_hardware_cursor(self, enabled: bool) -> None:
         self._global_settings["showHardwareCursor"] = enabled
         self._mark_modified("showHardwareCursor")
+        self._save()
+
+    def get_tui_mode(self) -> str:
+        return "fullscreen" if self._settings.get("tuiMode") == "fullscreen" else "regular"
+
+    def set_tui_mode(self, mode: str) -> None:
+        self._global_settings["tuiMode"] = mode
+        self._mark_modified("tuiMode")
         self._save()
 
     def get_editor_padding_x(self) -> int:

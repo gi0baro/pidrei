@@ -3,6 +3,7 @@
 from pidrei_tui import Container, Markdown, Spacer, Text
 
 from ..theme import get_markdown_theme, theme
+from .markdown_transform import create_markdown_transform
 
 
 OSC133_ZONE_START = "\x1b]133;A\x07"
@@ -26,6 +27,7 @@ class AssistantMessageComponent(Container):
         markdown_theme: dict | None = None,
         hidden_thinking_label: str = "Thinking...",
         output_pad: int = 1,
+        markdown_transformers=(),
     ) -> None:
         super().__init__()
 
@@ -33,8 +35,10 @@ class AssistantMessageComponent(Container):
         self._markdown_theme = markdown_theme if markdown_theme is not None else get_markdown_theme()
         self._hidden_thinking_label = hidden_thinking_label
         self._output_pad = output_pad
+        self._markdown_transformers = markdown_transformers
         self._last_message = None
         self._has_tool_calls = False
+        self._is_streaming = False
 
         # Container for text/thinking content
         self._content_container = Container()
@@ -72,8 +76,11 @@ class AssistantMessageComponent(Container):
         lines[-1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[-1]
         return lines
 
-    def update_content(self, message) -> None:
+    def update_content(self, message, is_streaming: bool | None = None) -> None:
+        # pi defaults the parameter to `this.isStreaming`; None means "keep".
         self._last_message = message
+        if is_streaming is not None:
+            self._is_streaming = is_streaming
 
         # Clear content container
         self._content_container.clear()
@@ -89,7 +96,18 @@ class AssistantMessageComponent(Container):
                 # Assistant text messages with no background - trim the text.
                 # paddingY=0 avoids extra spacing before tool executions.
                 self._content_container.add_child(
-                    Markdown(content.text.strip(), self._output_pad, 0, self._markdown_theme)
+                    Markdown(
+                        content.text.strip(),
+                        self._output_pad,
+                        0,
+                        self._markdown_theme,
+                        None,
+                        {
+                            "transform": create_markdown_transform(
+                                "assistant", self._is_streaming, self._markdown_transformers
+                            )
+                        },
+                    )
                 )
             elif content.type == "thinking":
                 thinking_blocks: list = []
@@ -130,6 +148,11 @@ class AssistantMessageComponent(Container):
                             0,
                             self._markdown_theme,
                             {"color": lambda text: theme.fg("thinkingText", text), "italic": True},
+                            {
+                                "transform": create_markdown_transform(
+                                    "assistant-thinking", self._is_streaming, self._markdown_transformers
+                                )
+                            },
                         )
                     )
                 if has_visible_content_after:
@@ -145,15 +168,7 @@ class AssistantMessageComponent(Container):
         if message.stop_reason == "length":
             self._content_container.add_child(Spacer(1))
             self._content_container.add_child(
-                Text(
-                    theme.fg(
-                        "error",
-                        "Error: Model stopped because it reached the maximum output token limit. "
-                        "The response may be incomplete.",
-                    ),
-                    self._output_pad,
-                    0,
-                )
+                Text(theme.fg("error", "Response was truncated before completion."), self._output_pad, 0)
             )
         elif not has_tool_calls:
             if message.stop_reason == "aborted":

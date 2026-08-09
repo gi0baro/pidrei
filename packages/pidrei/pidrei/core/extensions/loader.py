@@ -30,7 +30,6 @@ import os
 import re
 import sys
 import threading
-import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -40,6 +39,7 @@ import tonio.colored as tonio
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.event_bus import EventBus
 from pidrei.core.exec import exec_command
+from pidrei.core.pidrei_manifest import read_pidrei_manifest
 from pidrei.core.source_info import create_synthetic_source_info
 from pidrei.core.timings import time as record_time
 from pidrei.utils.paths import resolve_path
@@ -60,9 +60,6 @@ from .types import (
 
 #: Module attribute holding the extension factory (pi: the default export).
 FACTORY_ATTRIBUTE = "extension"
-
-#: Manifest table in pyproject.toml (pi: the "pi" key in package.json).
-MANIFEST_TABLE = ("tool", "pidrei")
 
 
 # -- factory cache ---------------------------------------------------------------
@@ -116,6 +113,24 @@ def create_extension_runtime() -> ExtensionRuntime:
 # -- the API handed to extension factories ---------------------------------------
 
 
+class _ExtensionEventBus:
+    """`pi.events` for one extension instance: staleness-checked and tracked."""
+
+    __slots__ = ("_event_bus", "_runtime")
+
+    def __init__(self, runtime: ExtensionRuntime, event_bus: EventBus):
+        self._runtime = runtime
+        self._event_bus = event_bus
+
+    def emit(self, channel: str, data: Any) -> None:
+        self._runtime.assert_active()
+        self._event_bus.emit(channel, data)
+
+    def on(self, channel: str, handler: Any) -> Callable[[], None]:
+        self._runtime.assert_active()
+        return self._runtime.track_event_bus_subscription(self._event_bus.on(channel, handler))
+
+
 class ExtensionAPI:
     """pi's ExtensionAPI: the `pi` object an extension factory receives.
 
@@ -129,8 +144,10 @@ class ExtensionAPI:
         self._extension = extension
         self._runtime = runtime
         self._cwd = cwd
-        #: Shared event bus for extension-to-extension communication.
-        self.events = event_bus
+        #: Shared event bus for extension-to-extension communication. Wrapped so
+        #: a stale ctx cannot use it and so subscriptions die with the runtime
+        #: (pi #7193: a reload's old handlers kept receiving every event).
+        self.events = _ExtensionEventBus(runtime, event_bus)
 
     def _action(self, name: str) -> Callable[..., Any]:
         action = getattr(self._runtime, name, None)
@@ -190,6 +207,10 @@ class ExtensionAPI:
     def register_message_renderer(self, custom_type: str, renderer: Any) -> None:
         self._runtime.assert_active()
         self._extension.message_renderers[custom_type] = renderer
+
+    def register_markdown_transformer(self, transformer: Any) -> None:
+        self._runtime.assert_active()
+        self._extension.markdown_transformer = transformer
 
     def register_entry_renderer(self, custom_type: str, renderer: Any) -> None:
         self._runtime.assert_active()
@@ -460,20 +481,6 @@ async def load_extensions_cached(
 
 
 # -- discovery -------------------------------------------------------------------
-
-
-def read_pidrei_manifest(pyproject_path: str) -> dict[str, Any] | None:
-    """The `[tool.pidrei]` table (pi: the `pi` key in package.json)."""
-    try:
-        with open(pyproject_path, "rb") as handle:
-            document: Any = tomllib.load(handle)
-        for key in MANIFEST_TABLE:
-            document = document.get(key)
-            if not isinstance(document, dict):
-                return None
-        return document
-    except Exception:
-        return None
 
 
 def is_extension_file(name: str) -> bool:

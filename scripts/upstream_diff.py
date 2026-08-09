@@ -218,6 +218,9 @@ RENAMES = {
     "packages/ai/src/image-models.generated.ts": "packages/ai/pidrei_ai/image_models_generated.py",
     "packages/coding-agent/src/cli.ts": "packages/pidrei/pidrei/__main__.py",
     "packages/coding-agent/src/core/http-dispatcher.ts": "packages/pidrei/pidrei/core/http_config.py",
+    # pi's manifest is package.json's `pi` key; pidrei's is pyproject.toml's
+    # `[tool.pidrei]`, so the module follows the pi→pidrei rename (U10).
+    "packages/coding-agent/src/core/pi-manifest.ts": "packages/pidrei/pidrei/core/pidrei_manifest.py",
     "packages/coding-agent/src/modes/interactive/theme/theme-schema.json": "packages/pidrei/pidrei/modes/interactive/theme/theme-schema.json",
     "packages/tui/src/TuiAltScreen.ts": "packages/tui/pidrei_tui/tui_alt_screen.py",
     # Server package (U4): mid-range names collapsed by upstream refactors —

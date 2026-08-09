@@ -223,6 +223,10 @@ def extension(pi):
     pi.on("tool_call", guard)
 ```
 
+A blocked call may also set `"terminate": True` to hint that the agent should
+stop after the current tool batch. The turn only ends early when *every*
+finalized tool result in that batch sets it.
+
 ### Transforming input
 
 ```python
@@ -275,6 +279,7 @@ arguments.
 | `register_shortcut(shortcut, *, handler, description=None)` | Bind a key |
 | `register_flag(name, *, type, description=None, default=None)` | Add a CLI flag |
 | `register_message_renderer(custom_type, renderer)` | Render a custom message |
+| `register_markdown_transformer(transformer)` | Rewrite Markdown before Pidrei renders it |
 | `register_entry_renderer(custom_type, renderer)` | Render a custom session entry |
 | `get_flag(name)` | Read a registered flag's value |
 
@@ -428,6 +433,39 @@ Components come from `pidrei_tui` — `Container`, `Text`, `Spacer`,
 `SelectList`, `SettingsList` and friends. See [tui.md](tui.md).
 
 Guard UI work with `ctx.has_ui`.
+
+### register_markdown_transformer(transformer)
+
+Rewrite the Markdown of normal user text, assistant text, and thinking blocks
+before Pidrei renders it. Transformers run in extension load order and each one
+receives the Markdown the previous one returned; the built-in renderer then
+renders the result.
+
+The transformer is called with the Markdown string and a context dict:
+
+- `messageType` — `"user"`, `"assistant"`, or `"assistant-thinking"`
+- `isStreaming` — `True` for partial assistant updates; `False` for user,
+  finalized assistant, and restored messages
+- `availableWidth` — the exact terminal columns available for the content
+
+```python
+def transformer(markdown, context):
+    if context["isStreaming"] or context["messageType"] == "assistant-thinking":
+        return markdown
+    return markdown.replace("-->", "→")
+
+
+pi.register_markdown_transformer(transformer)
+```
+
+If a transformer raises, Pidrei keeps the Markdown produced so far and continues
+with the next one. The hook is display-only: the session and the model context
+keep the original message. It runs for new user messages, assistant streaming
+updates, restored session messages, and terminal width changes — so unlike every
+other extension callback it is **synchronous**, and it must stay inexpensive.
+
+`pidrei_tui.lex_markdown(text)` exposes the bundled Markdown lexer (pi exports
+its bundled `Marked` here) if a transformer needs to inspect the token stream.
 
 ## Error handling
 

@@ -226,7 +226,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if output.stop_reason == "pending":
                 raise RuntimeError("Azure OpenAI Responses stream ended without a stop reason")
             if output.stop_reason in ("aborted", "error"):
-                raise RuntimeError("An unknown error occurred")
+                raise RuntimeError(output.error_message or "An unknown error occurred")
 
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()

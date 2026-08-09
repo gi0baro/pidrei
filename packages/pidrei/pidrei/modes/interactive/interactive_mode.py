@@ -429,34 +429,95 @@ class ExtensionUIContext:
         self._mode.set_tools_expanded(expanded)
 
 
-def create_interactive_tui(*, alt: bool, show_hardware_cursor: bool, log_directory: str, terminal=None) -> TUI:
+def create_interactive_tui(*, tui_mode: str, show_hardware_cursor: bool, log_directory: str, terminal=None) -> TUI:
     """Composition root for selecting the interactive terminal renderer."""
     terminal = terminal if terminal is not None else ProcessTerminal()
-    if alt:
+    if tui_mode == "fullscreen":
         return TuiAltScreen(terminal, show_hardware_cursor, log_directory, open_url=open_browser)
     return TuiMainScreen(terminal, show_hardware_cursor, log_directory)
+
+
+class _InteractiveTuiReference:
+    """Stable reference for components while InteractiveMode replaces the active renderer.
+
+    pi uses a `Proxy`; attribute delegation is the Python equivalent. `isinstance`
+    is deliberately NOT faked (pi's `getPrototypeOf` trap makes `instanceof` see
+    through), so the few renderer-type checks read `self._renderer` instead.
+    """
+
+    def __init__(self, get_tui) -> None:
+        object.__setattr__(self, "_get_tui", get_tui)
+
+    def __getattr__(self, name: str):
+        get_tui = object.__getattribute__(self, "_get_tui")
+        tui = get_tui()
+        value = getattr(tui, name)
+        if not callable(value):
+            return value
+
+        # A captured method must follow a later renderer swap (pi #7731), but it
+        # must not re-resolve on every call either: a wrapper installed *onto*
+        # the reference lives on the renderer, so re-reading the attribute each
+        # time would call the wrapper from inside itself.
+        bound = [tui, value]
+
+        def call(*args, **kwargs):
+            current = get_tui()
+            if current is not bound[0]:
+                method = getattr(current, name)
+                if not callable(method):
+                    raise TypeError(f"TUI property {name} is not callable")
+                bound[0], bound[1] = current, method
+            return bound[1](*args, **kwargs)
+
+        return call
+
+    def __setattr__(self, name: str, value) -> None:
+        setattr(object.__getattribute__(self, "_get_tui")(), name, value)
+
+
+def create_interactive_tui_reference(get_tui) -> TUI:
+    return _InteractiveTuiReference(get_tui)
+
+
+class _TerminalInputSubscription:
+    """An extension input listener plus its current unsubscribe handle.
+
+    Switching renderers moves every listener to the new one, so the handle has
+    to be replaceable while the identity the caller holds stays the same.
+    """
+
+    __slots__ = ("handler", "unsubscribe")
+
+    def __init__(self, handler, unsubscribe) -> None:
+        self.handler = handler
+        self.unsubscribe = unsubscribe
 
 
 class InteractiveMode:
     """Options: ``{"migratedProviders"?, "modelFallbackMessage"?,
     "autoTrustOnReloadCwd"?, "initialMessage"?, "initialImages"?,
-    "initialMessages"?, "verbose"?, "alt"?}``."""
+    "initialMessages"?, "verbose"?, "tuiMode"?}``."""
 
     def __init__(self, runtime_host, options: dict | None = None) -> None:
         options = options or {}
         self.runtime_host = runtime_host
-        self._options = options
+        tui_mode = options.get("tuiMode") or self.settings_manager.get_tui_mode()
+        self._options = {**options, "tuiMode": tui_mode}
         self._auto_trust_on_reload_cwd = options.get("autoTrustOnReloadCwd")
         self.runtime_host.set_before_session_invalidate(lambda: self._reset_extension_ui())
         self.runtime_host.set_rebind_session(
             lambda _session=None: self._rebind_current_session({"renderBeforeBind": True})
         )
         self._version = VERSION
-        self.ui = create_interactive_tui(
-            alt=bool(options.get("alt")),
+        self._renderer = create_interactive_tui(
+            tui_mode=tui_mode,
             show_hardware_cursor=self.settings_manager.get_show_hardware_cursor(),
             log_directory=get_agent_dir(),
         )
+        self._main_screen_render_state = None
+        self._fullscreen_layout_root = None
+        self.ui = create_interactive_tui_reference(lambda: self._renderer)
         self.ui.set_clear_on_shrink(self.settings_manager.get_clear_on_shrink())
         self._header_container = Container()
         self._loaded_resources_container = Container()
@@ -576,7 +637,7 @@ class InteractiveMode:
         self._extension_selector = None
         self._extension_input = None
         self._extension_editor = None
-        self._extension_terminal_input_unsubscribers: set = set()
+        self._extension_terminal_input_subscriptions: set = set()
 
         # Extension widgets (components rendered above/below the editor)
         self._extension_widgets_above: dict = {}
@@ -811,6 +872,72 @@ class InteractiveMode:
             self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(DynamicBorder())
 
+    def _mount_interactive_tui(self, tui, components) -> None:
+        for component in components:
+            tui.add_child(component)
+        if is_viewport_tui(tui):
+            if self._fullscreen_layout_root is None:
+                raise RuntimeError("Fullscreen layout is not initialized")
+            tui.set_layout_root(self._fullscreen_layout_root)
+
+    async def _stop_interactive_tui(self) -> None:
+        if self._renderer.mode == "fullscreen":
+            while self._renderer.has_overlay_entries:
+                self._renderer.hide_overlay()
+            await self._switch_tui_mode("regular", restore_progress=False, start_renderer=False)
+            await self._renderer.render_now()
+        await self.ui.stop()
+
+    async def _switch_tui_mode(self, mode: str, restore_progress: bool = True, start_renderer: bool = True) -> bool:
+        previous_ui = self._renderer
+        if mode == previous_ui.mode:
+            return True
+        if previous_ui.has_overlay_entries:
+            return False
+
+        components = list(previous_ui.children)
+        focus = previous_ui.get_focused_component()
+        terminal = previous_ui.terminal
+        show_hardware_cursor = previous_ui.get_show_hardware_cursor()
+        clear_on_shrink = previous_ui.get_clear_on_shrink()
+        on_debug = previous_ui.on_debug
+        if isinstance(previous_ui, TuiMainScreen):
+            self._main_screen_render_state = previous_ui.capture_render_state()
+
+        await previous_ui.stop({"preserveScreen": True})
+        previous_ui.set_focus(None)
+        previous_ui.clear()
+        if is_viewport_tui(previous_ui):
+            previous_ui.set_layout_root(None)
+
+        next_ui = create_interactive_tui(
+            tui_mode=mode,
+            show_hardware_cursor=show_hardware_cursor,
+            log_directory=get_agent_dir(),
+            terminal=terminal,
+        )
+        next_ui.set_clear_on_shrink(clear_on_shrink)
+        next_ui.on_debug = on_debug
+        if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
+            next_ui.restore_render_state(self._main_screen_render_state)
+        self._renderer = next_ui
+        self._options["tuiMode"] = mode
+        self._mount_interactive_tui(next_ui, components)
+        next_ui.invalidate()
+        next_ui.set_focus(focus)
+        if not start_renderer:
+            return True
+        await next_ui.start()
+        await self._theme_controller.rebind_tui()
+        self._rebind_extension_terminal_input_listeners()
+        if (
+            restore_progress
+            and self.settings_manager.get_show_terminal_progress()
+            and (self.session.is_streaming or self.session.is_compacting)
+        ):
+            terminal.set_progress(True)
+        return True
+
     async def init(self) -> None:
         if self._is_initialized:
             return
@@ -855,45 +982,46 @@ class InteractiveMode:
             )
             print(theme.fg("dim", f"Model scope: {model_list}{cycle_hint}"))
 
-        # Populate stable regions before selecting the renderer-specific composition.
+        # Keep one component tree and remount it when changing renderers.
         self._render_widgets()  # Initialize with default spacer
-        if is_viewport_tui(self.ui):
-            self._transcript_scroll_view = ScrollView(
+        self._transcript_scroll_view = ScrollView(
+            self._document_container,
+            {
+                "follow": "end",
+                "primary": True,
+                "overscroll": "chain",
+                "scrollbar": self.settings_manager.get_fullscreen_scrollbar(),
+                "scrollbarStyle": lambda text: theme.bg("scrollbarThumb", text),
+            },
+        )
+        dock = VStack(
+            [
+                {"component": self._pending_messages_container, "shrink": 1, "minSize": 0},
+                {"component": self._status_container, "shrink": 1, "minSize": 0},
+                {"component": self._widget_container_above, "shrink": 1, "minSize": 0},
+                {"component": self._editor_container, "shrink": 1, "minSize": 3},
+                {"component": self._widget_container_below, "shrink": 1, "minSize": 0},
+                {"component": self._footer_container, "shrink": 1, "minSize": 1},
+            ]
+        )
+        self._fullscreen_layout_root = VStack(
+            [
+                {"component": self._transcript_scroll_view, "basis": 0, "grow": 1, "shrink": 1, "minSize": 1},
+                {"component": dock, "basis": "auto", "grow": 0, "shrink": 1, "minSize": 1},
+            ]
+        )
+        self._mount_interactive_tui(
+            self._renderer,
+            [
                 self._document_container,
-                {
-                    "follow": "end",
-                    "primary": True,
-                    "overscroll": "chain",
-                    "scrollbar": self.settings_manager.get_fullscreen_scrollbar(),
-                    "scrollbarStyle": lambda text: theme.bg("selectedBg", text),
-                },
-            )
-            dock = VStack(
-                [
-                    {"component": self._pending_messages_container, "shrink": 1, "minSize": 0},
-                    {"component": self._status_container, "shrink": 1, "minSize": 0},
-                    {"component": self._widget_container_above, "shrink": 1, "minSize": 0},
-                    {"component": self._editor_container, "shrink": 1, "minSize": 3},
-                    {"component": self._widget_container_below, "shrink": 1, "minSize": 0},
-                    {"component": self._footer_container, "shrink": 1, "minSize": 1},
-                ]
-            )
-            self.ui.set_layout_root(
-                VStack(
-                    [
-                        {"component": self._transcript_scroll_view, "basis": 0, "grow": 1, "shrink": 1, "minSize": 1},
-                        {"component": dock, "basis": "auto", "grow": 0, "shrink": 1, "minSize": 1},
-                    ]
-                )
-            )
-        else:
-            self.ui.add_child(self._document_container)
-            self.ui.add_child(self._pending_messages_container)
-            self.ui.add_child(self._status_container)
-            self.ui.add_child(self._widget_container_above)
-            self.ui.add_child(self._editor_container)
-            self.ui.add_child(self._widget_container_below)
-            self.ui.add_child(self._footer_container)
+                self._pending_messages_container,
+                self._status_container,
+                self._widget_container_above,
+                self._editor_container,
+                self._widget_container_below,
+                self._footer_container,
+            ],
+        )
         self.ui.set_focus(self.editor)
 
         self._setup_key_handlers()
@@ -1868,6 +1996,9 @@ class InteractiveMode:
         """Get a registered tool definition by name (for custom rendering)."""
         return self.session.get_tool_definition(tool_name)
 
+    def _get_markdown_transformers(self) -> list:
+        return self.session.extension_runner.get_markdown_transformers()
+
     def _setup_extension_shortcuts(self, extension_runner) -> None:
         """Set up keyboard shortcuts registered by extensions."""
         get_shortcuts = getattr(extension_runner, "get_shortcuts", None)
@@ -1952,7 +2083,7 @@ class InteractiveMode:
             self._active_status_indicator.dispose()
         self._active_status_indicator = None
         self._status_container.clear()
-        if had_active_status_indicator and not self._options.get("alt") and self.ui.get_clear_on_shrink():
+        if had_active_status_indicator and self._options.get("tuiMode") == "regular" and self.ui.get_clear_on_shrink():
             self._status_container.add_child(self._idle_status)
 
     def _set_working_visible(self, visible: bool) -> None:
@@ -2144,19 +2275,24 @@ class InteractiveMode:
         self.ui.request_render()
 
     def _add_extension_terminal_input_listener(self, handler):
-        unsubscribe = self.ui.add_input_listener(handler)
-        self._extension_terminal_input_unsubscribers.add(unsubscribe)
+        subscription = _TerminalInputSubscription(handler, self.ui.add_input_listener(handler))
+        self._extension_terminal_input_subscriptions.add(subscription)
 
         def remove() -> None:
-            unsubscribe()
-            self._extension_terminal_input_unsubscribers.discard(unsubscribe)
+            subscription.unsubscribe()
+            self._extension_terminal_input_subscriptions.discard(subscription)
 
         return remove
 
+    def _rebind_extension_terminal_input_listeners(self) -> None:
+        for subscription in self._extension_terminal_input_subscriptions:
+            subscription.unsubscribe()
+            subscription.unsubscribe = self.ui.add_input_listener(subscription.handler)
+
     def _clear_extension_terminal_input_listeners(self) -> None:
-        for unsubscribe in self._extension_terminal_input_unsubscribers:
-            unsubscribe()
-        self._extension_terminal_input_unsubscribers.clear()
+        for subscription in self._extension_terminal_input_subscriptions:
+            subscription.unsubscribe()
+        self._extension_terminal_input_subscriptions.clear()
 
     def _create_project_trust_context(self, cwd: str) -> dict:
         ui = self._create_extension_ui_context()
@@ -2375,6 +2511,9 @@ class InteractiveMode:
             set_padding = getattr(new_editor, "set_padding_x", None)
             if set_padding is not None:
                 set_padding(self._default_editor.get_padding_x())
+            set_max_visible = getattr(new_editor, "set_autocomplete_max_visible", None)
+            if set_max_visible is not None:
+                set_max_visible(self._default_editor.get_autocomplete_max_visible())
 
             # Set autocomplete if supported
             set_provider = getattr(new_editor, "set_autocomplete_provider", None)
@@ -2862,16 +3001,17 @@ class InteractiveMode:
                     self._get_markdown_theme_with_settings(),
                     self._hidden_thinking_label,
                     self._output_pad,
+                    self._get_markdown_transformers(),
                 )
                 self._streaming_message = event.message
                 self._chat_container.add_child(self._streaming_component)
-                self._streaming_component.update_content(self._streaming_message)
+                self._streaming_component.update_content(self._streaming_message, True)
                 self.ui.request_render()
 
         elif event_type == "message_update":
             if self._streaming_component is not None and event.message.role == "assistant":
                 self._streaming_message = event.message
-                self._streaming_component.update_content(self._streaming_message)
+                self._streaming_component.update_content(self._streaming_message, True)
 
                 for content in self._streaming_message.content:
                     if content.type == "toolCall":
@@ -2911,7 +3051,7 @@ class InteractiveMode:
                         else "Operation aborted"
                     )
                     self._streaming_message.error_message = error_message
-                self._streaming_component.update_content(self._streaming_message)
+                self._streaming_component.update_content(self._streaming_message, False)
 
                 if self._streaming_message.stop_reason in ("aborted", "error"):
                     if not error_message:
@@ -3187,12 +3327,18 @@ class InteractiveMode:
                     if skill_block.user_message:
                         self._chat_container.add_child(Spacer(1))
                         user_component = UserMessageComponent(
-                            skill_block.user_message, self._get_markdown_theme_with_settings(), self._output_pad
+                            skill_block.user_message,
+                            self._get_markdown_theme_with_settings(),
+                            self._output_pad,
+                            self._get_markdown_transformers(),
                         )
                         self._chat_container.add_child(user_component)
                 else:
                     user_component = UserMessageComponent(
-                        text_content, self._get_markdown_theme_with_settings(), self._output_pad
+                        text_content,
+                        self._get_markdown_theme_with_settings(),
+                        self._output_pad,
+                        self._get_markdown_transformers(),
                     )
                     self._chat_container.add_child(user_component)
                 if options.get("populateHistory"):
@@ -3206,6 +3352,7 @@ class InteractiveMode:
                 self._get_markdown_theme_with_settings(),
                 self._hidden_thinking_label,
                 self._output_pad,
+                self._get_markdown_transformers(),
             )
             self._chat_container.add_child(assistant_component)
         elif role == "toolResult":
@@ -3649,6 +3796,9 @@ class InteractiveMode:
         self.set_tools_expanded(not self._tool_output_expanded)
 
     def set_tools_expanded(self, expanded: bool) -> None:
+        if expanded == self._tool_output_expanded:
+            return
+
         self._tool_output_expanded = expanded
         active_header = self._custom_header if self._custom_header is not None else self._built_in_header
         if is_expandable(active_header):
@@ -3699,7 +3849,7 @@ class InteractiveMode:
 
     def show_error(self, error_message: str) -> None:
         self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), 1, 0))
+        self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), self._output_pad, 0))
         self.ui.request_render()
 
     def show_warning(self, warning_message: str) -> None:
@@ -4065,6 +4215,16 @@ class InteractiveMode:
                 if not enabled and self._active_status_indicator is None:
                     self._status_container.clear()
 
+            async def on_tui_mode_change(mode: str) -> None:
+                if not await self._switch_tui_mode(mode):
+                    selector.get_settings_list().update_value("tui-mode", self._renderer.mode)
+                    self.show_status("Close active overlays before changing TUI mode")
+                    return
+                self.settings_manager.set_tui_mode(mode)
+                if self._active_status_indicator is None:
+                    self._status_container.clear()
+                self.show_status(f"TUI mode: {mode}")
+
             def on_fullscreen_scrollbar_change(mode: str) -> None:
                 self.settings_manager.set_fullscreen_scrollbar(mode)
                 self._apply_fullscreen_scrollbar_setting()
@@ -4104,6 +4264,7 @@ class InteractiveMode:
                     "quietStartup": self.settings_manager.get_quiet_startup(),
                     "clearOnShrink": self.settings_manager.get_clear_on_shrink(),
                     "showTerminalProgress": self.settings_manager.get_show_terminal_progress(),
+                    "tuiMode": self._renderer.mode,
                     "fullscreenScrollbar": self.settings_manager.get_fullscreen_scrollbar(),
                     "warnings": self.settings_manager.get_warnings(),
                 },
@@ -4143,6 +4304,7 @@ class InteractiveMode:
                     "onShowTerminalProgressChange": lambda enabled: self.settings_manager.set_show_terminal_progress(
                         enabled
                     ),
+                    "onTuiModeChange": on_tui_mode_change,
                     "onFullscreenScrollbarChange": on_fullscreen_scrollbar_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
                     "onCancel": on_cancel,
@@ -5479,7 +5641,9 @@ class InteractiveMode:
 
         try:
             await copy_to_clipboard(text)
-            if options.get("flashConfirmation") and self.ui.mode == "fullscreen":
+            # pi narrows with `instanceof TuiAltScreen`; the reference proxy is
+            # deliberately not isinstance-transparent, so ask the renderer.
+            if options.get("flashConfirmation") and isinstance(self._renderer, TuiAltScreen):
                 self.ui.flash("Copied!")
             else:
                 self.show_status("Copied last agent message to clipboard")
@@ -5887,6 +6051,6 @@ class InteractiveMode:
         if self._unsubscribe:
             self._unsubscribe()
         if self._is_initialized:
-            await self.ui.stop()
+            await self._stop_interactive_tui()
             self._is_initialized = False
         self._unregister_signal_handlers()

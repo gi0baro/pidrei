@@ -301,12 +301,12 @@ class TuiBase(Container, ABC):
 
     async def _after_terminal_start(self) -> None: ...
 
-    async def _before_terminal_stop(self) -> None: ...
+    async def _before_terminal_stop(self, options: dict) -> None: ...
 
-    async def _after_terminal_stop(self) -> None: ...
+    async def _after_terminal_stop(self, options: dict) -> None: ...
 
     @property
-    def _has_overlay_entries(self) -> bool:
+    def has_overlay_entries(self) -> bool:
         return bool(self._overlay_stack)
 
     @property
@@ -338,6 +338,9 @@ class TuiBase(Container, ABC):
     # ------------------------------------------------------------------
     # Focus and overlay focus-restore machinery
     # ------------------------------------------------------------------
+
+    def get_focused_component(self):
+        return self._focused_component
 
     def set_focus(self, component) -> None:
         self._set_focus_internal(component, overlay_focus_restore="clear")
@@ -608,7 +611,8 @@ class TuiBase(Container, ABC):
         return topmost
 
     def invalidate(self) -> None:
-        super().invalidate()
+        for root in self._get_mounted_roots():
+            root.invalidate()
         for overlay in self._overlay_stack:
             invalidate = getattr(overlay.component, "invalidate", None)
             if invalidate is not None:
@@ -670,7 +674,13 @@ class TuiBase(Container, ABC):
         # Response format: CSI 6 ; height ; width t
         await self.terminal.write("\x1b[16t")
 
-    async def stop(self) -> None:
+    async def stop(self, options: dict | None = None) -> None:
+        """``options`` mirrors pi's ``TuiStopOptions`` (``{"preserveScreen"?}``).
+
+        ``preserveScreen`` leaves the renderer's output on the terminal for
+        another TUI taking the same terminal over (the runtime UI-mode switch).
+        """
+        options = options or {}
         self._stopped = True
         self._render_immediate_signal.set()
         self._render_signal.set()
@@ -679,10 +689,22 @@ class TuiBase(Container, ABC):
             self._render_scope = None
         if self._color_scheme_notifications_enabled:
             await self.terminal.write("\x1b[?2031l")
-        await self._before_terminal_stop()
+        await self._before_terminal_stop(options)
         self.terminal.show_cursor()
         await self.terminal.stop()
-        await self._after_terminal_stop()
+        await self._after_terminal_stop(options)
+
+    async def render_now(self, force: bool = False) -> None:
+        """Render one frame synchronously, bypassing the loop and its throttle."""
+        if force:
+            self._reset_render_state()
+        with self._render_force_lock:
+            self._render_force = False
+            self._render_immediate = False
+        self._render_signal.clear()
+        self._render_immediate_signal.clear()
+        self._last_render_at = _time.monotonic()
+        await self._do_render()
 
     def request_render(self, force: bool = False) -> None:
         # pi calls resetRenderState() right here. That is safe on one thread

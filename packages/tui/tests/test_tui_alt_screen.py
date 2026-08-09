@@ -177,6 +177,21 @@ async def test_keeps_an_explicit_dock_fixed_while_the_transcript_scrolls():
 
 
 @pytest.mark.tonio
+async def test_invalidates_overlays_with_an_explicit_layout_root():
+    tui = TuiAltScreen(VirtualTerminal())
+    overlay = Text("overlay", 0, 0)
+    invalidated: list[bool] = []
+    overlay.invalidate = lambda: invalidated.append(True)
+    tui.set_layout_root(Text("root", 0, 0))
+    tui.show_overlay(overlay)
+
+    tui.invalidate()
+
+    assert invalidated == [True]
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_routes_wheel_input_to_the_scroll_view_under_the_pointer():
     terminal = VirtualTerminal(20, 4)
     tui = TuiAltScreen(terminal)

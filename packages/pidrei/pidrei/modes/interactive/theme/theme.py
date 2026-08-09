@@ -52,7 +52,7 @@ _REQUIRED_COLORS = [
     "dim",
     "text",
     "thinkingText",
-    # Backgrounds & Content Text (11 colors)
+    # Backgrounds & Content Text (11 required, 1 optional: scrollbarThumb)
     "selectedBg",
     "userMessageBg",
     "userMessageText",
@@ -104,6 +104,7 @@ _EXPORT_KEYS = ("pageBg", "cardBg", "infoBg")
 
 THEME_BG_KEYS = (
     "selectedBg",
+    "scrollbarThumb",
     "userMessageBg",
     "customMessageBg",
     "toolPendingBg",
@@ -299,7 +300,10 @@ def _with_theme_color_fallbacks(colors: dict) -> dict:
     fallback = colors.get("thinkingMax")
     if fallback is None:
         fallback = colors["thinkingXhigh"]
-    return {**colors, "thinkingMax": fallback}
+    scrollbar_thumb = colors.get("scrollbarThumb")
+    if scrollbar_thumb is None:
+        scrollbar_thumb = colors["selectedBg"]
+    return {**colors, "thinkingMax": fallback, "scrollbarThumb": scrollbar_thumb}
 
 
 # ============================================================================
@@ -320,7 +324,8 @@ class Theme:
         self._fg_colors = {
             key: _fg_ansi(value, mode) for key, value in {**fg_colors, "thinkingMax": thinking_max}.items()
         }
-        self._bg_colors = {key: _bg_ansi(value, mode) for key, value in bg_colors.items()}
+        backgrounds = {**bg_colors, "scrollbarThumb": bg_colors.get("scrollbarThumb") or bg_colors["selectedBg"]}
+        self._bg_colors = {key: _bg_ansi(value, mode) for key, value in backgrounds.items()}
 
     def fg(self, color: str, text: str) -> str:
         ansi = self._fg_colors.get(color)
@@ -668,17 +673,29 @@ async def detect_terminal_background_theme(options: dict) -> dict:
 
 
 async def detect_terminal_theme_for_auto(options: dict) -> str:
+    # Both probes are started before either is awaited, so an unsupported
+    # color-scheme DSR costs its timeout only once instead of serializing ahead
+    # of the OSC 11 fallback.
+    color_scheme_task = None
     query_color_scheme = getattr(options["ui"], "query_terminal_color_scheme", None)
     if query_color_scheme is not None:
         try:
-            color_scheme = await query_color_scheme(timeout_ms=options["timeoutMs"])
+            color_scheme_task = tonio.spawn(query_color_scheme(timeout_ms=options["timeoutMs"]))
+        except Exception:
+            # Fall back to OSC 11 / COLORFGBG detection when starting the
+            # color-scheme query fails.
+            color_scheme_task = None
+    background_task = tonio.spawn(detect_terminal_background_theme(options))
+
+    if color_scheme_task is not None:
+        try:
+            color_scheme = await color_scheme_task
             if color_scheme:
                 return color_scheme
         except Exception:
-            # Fall back to OSC 11 / COLORFGBG detection when color-scheme DSR
-            # is unsupported.
+            # Fall back to the concurrently queried OSC 11 / COLORFGBG detection.
             pass
-    return (await detect_terminal_background_theme(options))["theme"]
+    return (await background_task)["theme"]
 
 
 def get_default_theme() -> str:

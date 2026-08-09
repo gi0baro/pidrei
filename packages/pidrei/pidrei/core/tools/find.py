@@ -99,6 +99,18 @@ def _throw_if_aborted(cancel: Any) -> None:
         raise Exception("Operation aborted")
 
 
+def relativize_find_result_path(result_path: str, search_path: str) -> str:
+    """Relativize a find result against the search root, keeping a trailing separator.
+
+    POSIX-only, so pi's injectable `pathModule` and its `\\`-separator branches
+    are dropped: `os.sep` is always `/` here.
+    """
+    had_trailing_separator = result_path.endswith(os.sep)
+    relative_path = os.path.relpath(result_path, search_path) if os.path.isabs(result_path) else result_path
+    posix_path = relative_path.replace(os.sep, "/")
+    return f"{posix_path}/" if had_trailing_separator and not posix_path.endswith("/") else posix_path
+
+
 def _build_details_result(relativized: list[str], effective_limit: int) -> AgentToolResult:
     result_limit_reached = len(relativized) >= effective_limit
     raw_output = "\n".join(relativized)
@@ -152,12 +164,7 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
                 return AgentToolResult(content=[TextContent(text="No files found matching pattern")], details=None)
 
             # Relativize paths against the search root for stable output.
-            relativized = []
-            for result_path in results:
-                if result_path.startswith(search_path):
-                    relativized.append(result_path[len(search_path) + 1 :])
-                else:
-                    relativized.append(os.path.relpath(result_path, search_path))
+            relativized = [relativize_find_result_path(result_path, search_path) for result_path in results]
             return _build_details_result(relativized, effective_limit)
 
         # Default implementation uses fd.
@@ -211,14 +218,7 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             line = raw_line.removesuffix("\r").strip()
             if not line:
                 continue
-            had_trailing_slash = line.endswith("/")
-            if line.startswith(search_path):
-                relative_path = line[len(search_path) + 1 :]
-            else:
-                relative_path = os.path.relpath(line, search_path)
-            if had_trailing_slash and not relative_path.endswith("/"):
-                relative_path += "/"
-            relativized.append(relative_path)
+            relativized.append(relativize_find_result_path(line, search_path))
 
         return _build_details_result(relativized, effective_limit)
 

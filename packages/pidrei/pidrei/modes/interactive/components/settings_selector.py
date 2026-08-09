@@ -513,6 +513,20 @@ class SettingsSelectorComponent(Container):
                 "submenu": thinking_submenu,
             },
             {
+                "id": "tui-mode",
+                "label": "TUI mode",
+                "description": "Interface layout; fullscreen mode is experimental",
+                "currentValue": config["tuiMode"],
+                "values": ["regular", "fullscreen"],
+            },
+            {
+                "id": "fullscreen-scrollbar",
+                "label": "Fullscreen scrollbar",
+                "description": "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
+                "currentValue": config["fullscreenScrollbar"],
+                "values": ["auto", "always", "hidden"],
+            },
+            {
                 "id": "theme",
                 "label": "Theme",
                 "description": "Color theme for the interface",
@@ -658,18 +672,6 @@ class SettingsSelectorComponent(Container):
             },
         )
 
-        # Fullscreen scrollbar mode (insert after terminal progress)
-        insert_after(
-            "terminal-progress",
-            {
-                "id": "fullscreen-scrollbar",
-                "label": "Fullscreen scrollbar",
-                "description": "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
-                "currentValue": config["fullscreenScrollbar"],
-                "values": ["auto", "always", "hidden"],
-            },
-        )
-
         # Add borders
         self.add_child(DynamicBorder())
 
@@ -726,6 +728,11 @@ class SettingsSelectorComponent(Container):
                 callbacks["onClearOnShrinkChange"](new_value == "true")
             elif item_id == "terminal-progress":
                 callbacks["onShowTerminalProgressChange"](new_value == "true")
+            elif item_id == "tui-mode":
+                # Awaited, unlike its siblings: switching renderers is async here
+                # (pi's stop/start are sync) and the status line it writes must
+                # land after the swap, not race it.
+                await callbacks["onTuiModeChange"](new_value)
             elif item_id == "fullscreen-scrollbar":
                 callbacks["onFullscreenScrollbarChange"](new_value)
             elif item_id == "theme":

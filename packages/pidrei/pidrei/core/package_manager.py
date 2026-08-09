@@ -39,7 +39,8 @@ from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
 from .exec import exec_command
-from .extensions.loader import is_extension_file, read_pidrei_manifest, resolve_extension_entries
+from .extensions.loader import is_extension_file, resolve_extension_entries
+from .pidrei_manifest import read_pidrei_manifest
 from .settings_manager import SettingsManager
 from .skills import IgnoreMatcher, add_ignore_rules
 from .source_info import PathMetadata
@@ -1333,7 +1334,10 @@ class DefaultPackageManager:
             return True
 
         manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
-        if manifest:
+        # `is not None`, not truthiness: a manifest whose resource fields are all
+        # absent or malformed is still a manifest, and a package that declares one
+        # never falls back to auto-discovery (pi's `{}` object is truthy).
+        if manifest is not None:
             for resource_type in RESOURCE_TYPES:
                 self._add_manifest_entries(
                     manifest.get(resource_type), package_root, resource_type, accumulator[resource_type], metadata

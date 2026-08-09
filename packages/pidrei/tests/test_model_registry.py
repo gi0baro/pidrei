@@ -15,7 +15,7 @@ import os
 import pytest
 
 from pidrei.core.auth_storage import AuthStorage, FileAuthStorageBackend
-from pidrei.core.model_registry import ResolvedRequestAuth, clear_api_key_cache
+from pidrei.core.model_registry import ModelRegistry, ResolvedRequestAuth, clear_api_key_cache
 from pidrei.core.provider_composer import AuthStatus, ExtensionOAuthConfig
 from pidrei_ai.auth.types import ApiKeyCredential
 from pidrei_ai.models_generated import MODELS
@@ -1762,3 +1762,30 @@ class TestModelsJsonErrors:
                         del os.environ[key]
                 else:
                     os.environ[key] = saved[key]
+
+
+class TestCompleteFacade:
+    """pi's #7325 test drives its `custom-compaction` example extension and
+    asserts the example calls `ctx.modelRegistry.complete`. pidrei ships no such
+    example, so what is mirrored is the surface the example depends on: the
+    facade must expose `complete` and route it to the runtime unchanged, since
+    extensions have no other way to reach a completion after pi-ai's `compat`
+    `complete()` helper (never ported) stopped being the documented path.
+    """
+
+    @pytest.mark.tonio
+    async def test_complete_forwards_to_the_runtime(self):
+        calls: list[tuple] = []
+
+        class _Runtime:
+            async def complete(self, model, context, options=None):
+                calls.append((model, context, options))
+                return "assistant-message"
+
+        registry = ModelRegistry(_Runtime())
+        model = object()
+        context = object()
+        options = object()
+
+        assert await registry.complete(model, context, options) == "assistant-message"
+        assert calls == [(model, context, options)]

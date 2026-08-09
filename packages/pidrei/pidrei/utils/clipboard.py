@@ -79,7 +79,7 @@ async def read_clipboard_text() -> str | None:
     elif os.environ.get("TERMUX_VERSION"):
         text = await _read_output(["termux-clipboard-get"])
     elif is_wayland_session() and os.environ.get("WAYLAND_DISPLAY"):
-        text = await _read_output(["wl-paste", "--no-newline"])
+        text = await _read_output(["wl-paste", "--no-newline", "--type", "text"])
     elif os.environ.get("DISPLAY"):
         text = await _read_output(["xclip", "-selection", "clipboard", "-o"])
         if text is None:

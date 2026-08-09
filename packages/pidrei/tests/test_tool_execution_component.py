@@ -373,6 +373,14 @@ class TestToolExecutionComponentParity:
                 None,
             ),
             (
+                "AGENTS.override.md",
+                os.path.join(CWD, ".pidrei", "AGENTS.override.md"),
+                "Hidden override instructions",
+                "read resource .pidrei/AGENTS.override.md",
+                "Hidden override instructions",
+                None,
+            ),
+            (
                 "outside AGENTS.md",
                 os.path.abspath(os.path.join(CWD, "..", "AGENTS.md")),
                 "Hidden outside resource instructions",

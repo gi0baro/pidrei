@@ -699,6 +699,9 @@ class ExtensionRunner:
                 return renderer
         return None
 
+    def get_markdown_transformers(self) -> list[Any]:
+        return [ext.markdown_transformer for ext in self._extensions if ext.markdown_transformer is not None]
+
     def get_entry_renderer(self, custom_type: str) -> Any:
         for ext in self._extensions:
             renderer = ext.entry_renderers.get(custom_type)

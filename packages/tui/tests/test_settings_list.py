@@ -17,7 +17,7 @@ TEST_THEME = {
     "hint": lambda text: text,
 }
 
-ITEMS = [{"id": "ui-mode", "label": "UI mode", "currentValue": "regular", "values": ["regular", "fullscreen"]}]
+ITEMS = [{"id": "tui-mode", "label": "TUI mode", "currentValue": "regular", "values": ["regular", "fullscreen"]}]
 
 
 def _make_list(changes: list[dict]) -> SettingsList:
@@ -35,14 +35,14 @@ async def test_includes_spaces_in_an_active_search_instead_of_changing_the_selec
     changes: list[dict] = []
     settings_list = _make_list(changes)
 
-    for character in "UI mode":
+    for character in "TUI mode":
         await settings_list.handle_input(character)
 
     assert changes == []
-    assert re.search("UI mode", settings_list.render(80)[0])
+    assert re.search("TUI mode", settings_list.render(80)[0])
 
     await settings_list.handle_input("\r")
-    assert changes == [{"id": "ui-mode", "value": "fullscreen"}]
+    assert changes == [{"id": "tui-mode", "value": "fullscreen"}]
 
 
 @pytest.mark.tonio
@@ -52,4 +52,4 @@ async def test_keeps_space_as_a_change_shortcut_before_a_search_query_is_entered
 
     await settings_list.handle_input(" ")
 
-    assert changes == [{"id": "ui-mode", "value": "fullscreen"}]
+    assert changes == [{"id": "tui-mode", "value": "fullscreen"}]

@@ -20,6 +20,36 @@ def strip_ansi(line: str) -> str:
     return _ANSI_RE.sub("", line)
 
 
+# Transforms
+
+
+def test_caches_transformed_markdown_by_source_and_available_width():
+    calls: list[dict] = []
+
+    def transform(source: str, available_width: int) -> str:
+        calls.append({"source": source, "availableWidth": available_width})
+        return f"{source} {available_width}"
+
+    markdown = Markdown("source", 2, 0, default_markdown_theme, None, {"transform": transform})
+
+    assert [strip_ansi(line).strip() for line in markdown.render(80)] == ["source 76"]
+    markdown.render(80)
+    assert [strip_ansi(line).strip() for line in markdown.render(60)] == ["source 56"]
+    assert calls == [
+        {"source": "source", "availableWidth": 76},
+        {"source": "source", "availableWidth": 56},
+    ]
+
+    markdown.set_text("updated")
+    assert [strip_ansi(line).strip() for line in markdown.render(60)] == ["updated 56"]
+    assert calls[-1] == {"source": "updated", "availableWidth": 56}
+
+    markdown.invalidate()
+    markdown.render(60)
+    assert calls[-1] == {"source": "updated", "availableWidth": 56}
+    assert len(calls) == 4
+
+
 # Lists
 
 

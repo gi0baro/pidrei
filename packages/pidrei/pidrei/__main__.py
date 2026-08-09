@@ -15,6 +15,9 @@ from .utils.runtime_options import runtime_options
 
 def run() -> None:
     os.environ["PIDREI_CODING_AGENT"] = "true"
+    # Cross-tool convention (pi #7493): the NAME stays as upstream publishes it
+    # so third-party tooling detects an agent session; only the value renames.
+    os.environ["AI_AGENT"] = "pidrei"
     # Before any fd registration flips O_NONBLOCK on the shell's descriptors:
     # the atexit restore this registers is half of the stdio teardown policy
     # (`hard_exit` is the other half).

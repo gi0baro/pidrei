@@ -11,7 +11,11 @@ renderer over it.
 ``highlightCode`` and ``codeBlockIndent``); ``default_text_style`` mirrors
 ``DefaultTextStyle`` (``{"color", "bgColor", "bold", "italic",
 "strikethrough", "underline"}``); ``options`` mirrors ``MarkdownOptions``
-(``{"preserveOrderedListMarkers", "preserveBackslashEscapes"}``).
+(``{"preserveOrderedListMarkers", "preserveBackslashEscapes", "transform"}``).
+
+``transform`` is ``(markdown, available_width) -> str``, applied to the source
+text before parsing. It is deliberately sync (pi's is too): it runs on every
+render, including width changes and every streaming update.
 """
 
 import re
@@ -70,9 +74,11 @@ class Markdown:
 
         # Calculate available width for content (subtract horizontal padding)
         content_width = max(1, width - self._padding_x * 2)
+        transform = self._options.get("transform")
+        text = self._text if transform is None else transform(self._text, content_width)
 
         # Don't render anything if there's no actual text
-        if not self._text or self._text.strip() == "":
+        if not text or text.strip() == "":
             result: list[str] = []
             self._cached_text = self._text
             self._cached_width = width
@@ -80,7 +86,7 @@ class Markdown:
             return result
 
         # Replace tabs with 3 spaces for consistent rendering
-        normalized_text = self._text.replace("\t", "   ")
+        normalized_text = text.replace("\t", "   ")
 
         # Parse markdown to marked-shaped tokens
         tokens = lex(normalized_text)

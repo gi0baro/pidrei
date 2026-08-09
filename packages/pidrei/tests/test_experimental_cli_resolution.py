@@ -1,11 +1,4 @@
-"""Mirror of pi coding-agent test/experimental-cli-resolution.test.ts.
-
-Upstream's two `--ui-mode` cases exercise a flag pidrei has not ported yet
-(it lands with U10's ui-mode commits); until then the same behavior — legacy
-parser output and diagnostics composing with the capability error — is
-exercised through `--mode` and an unknown short option. Align these cases
-with upstream when `--tui-mode` lands.
-"""
+"""Mirror of pi coding-agent test/experimental-cli-resolution.test.ts."""
 
 import pytest
 
@@ -81,21 +74,20 @@ def test_rejects_existing_options_that_the_server_command_does_not_support_yet()
 
 
 def test_rejects_existing_options_that_the_client_command_does_not_support_yet():
-    # Upstream: ["client", "--ui-mode", "fullscreen", "@prompt.md"].
-    result = experimental_cli.parse(["client", "--mode", "json", "@prompt.md"])
+    result = experimental_cli.parse(["client", "--tui-mode", "fullscreen", "@prompt.md"])
 
     assert result.ok is False
     assert result.errors == (UNSUPPORTED_CLIENT_OPTIONS,)
 
 
 def test_reports_existing_parser_errors_before_capability_errors():
-    # Upstream: ["client", "--ui-mode", "wrong", "--model", "claude-sonnet"]
-    # with the invalid-UI-mode diagnostic; pidrei has no --ui-mode yet, so an
-    # unknown short option produces the parser-error diagnostic instead.
-    result = experimental_cli.parse(["client", "-x", "--model", "claude-sonnet"])
+    result = experimental_cli.parse(["client", "--tui-mode", "wrong", "--model", "claude-sonnet"])
 
     assert result.ok is False
-    assert result.errors == ("Unknown option: -x", UNSUPPORTED_CLIENT_OPTIONS)
+    assert result.errors == (
+        'Invalid TUI mode "wrong". Valid values: regular, fullscreen',
+        UNSUPPORTED_CLIENT_OPTIONS,
+    )
 
 
 def test_parses_an_empty_server_command():

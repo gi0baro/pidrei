@@ -82,6 +82,16 @@ def is_context_overflow(message: AssistantMessage, context_window: int | None = 
     return False
 
 
+def is_recoverable_length(message: AssistantMessage, desired_max_output: int) -> bool:
+    """Whether a length stop ended below the caller or model's intended output limit.
+
+    Such responses may be caused by context pressure or provider-side truncation,
+    so callers can make one bounded compact-and-retry attempt. `desired_max_output`
+    must be the original limit before any context-based clamping.
+    """
+    return message.stop_reason == "length" and desired_max_output > 0 and message.usage.output < desired_max_output
+
+
 def get_overflow_patterns() -> list[re.Pattern[str]]:
     """Get the overflow patterns for testing purposes."""
     return list(_OVERFLOW_PATTERNS)

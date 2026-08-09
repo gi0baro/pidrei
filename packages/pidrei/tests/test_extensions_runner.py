@@ -512,6 +512,16 @@ def extension(pi):
 
 
 @pytest.mark.tonio
+async def test_gets_markdown_transformers_in_extension_load_order(fx):
+    source = "\ndef extension(pi):\n    pi.register_markdown_transformer(lambda markdown, context: markdown)\n"
+    fx.write("markdown-renderer-a.py", source)
+    fx.write("markdown-renderer-b.py", source)
+
+    runner = await make_runner(fx)
+    assert len(runner.get_markdown_transformers()) == 2
+
+
+@pytest.mark.tonio
 async def test_gets_message_renderer_by_type(fx):
     fx.write(
         "renderer.py",

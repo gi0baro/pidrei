@@ -70,6 +70,14 @@ MOCK_OPENROUTER_MODELS = [
 ALL_MODELS = [*MOCK_MODELS, *MOCK_OPENROUTER_MODELS]
 
 
+def _ambiguous_models() -> list:
+    """The same bare id under two providers (pi's gpt-5.6-sol case)."""
+    return [
+        make_model(provider, "gpt-5.6-sol", api="anthropic-messages", name="GPT 5.6 Sol")
+        for provider in ("azure-openai-responses", "openai-codex")
+    ]
+
+
 class MockRuntime:
     def __init__(self, models, *, configured=None):
         self._models = models
@@ -322,6 +330,26 @@ class TestResolveCliModel:
         result = resolve_cli_model(cli_provider="openai", cli_model="gpt-4o", model_runtime=MockRuntime([]))
         assert result.model is None
         assert "No models available" in result.error
+
+    def test_prefers_the_sole_authenticated_provider_for_an_ambiguous_bare_exact_model_id(self):
+        result = resolve_cli_model(
+            cli_model="gpt-5.6-sol",
+            model_runtime=MockRuntime(_ambiguous_models(), configured=lambda provider: provider == "openai-codex"),
+        )
+        assert result.error is None
+        assert result.model.provider == "openai-codex"
+        assert result.model.id == "gpt-5.6-sol"
+
+    def test_requires_an_explicit_provider_for_an_ambiguous_bare_exact_model_id(self):
+        result = resolve_cli_model(
+            cli_model="gpt-5.6-sol",
+            model_runtime=MockRuntime(_ambiguous_models(), configured=lambda _provider: False),
+        )
+        assert result.model is None
+        assert 'Model "gpt-5.6-sol" is ambiguous across providers' in result.error
+        assert "azure-openai-responses/gpt-5.6-sol" in result.error
+        assert "openai-codex/gpt-5.6-sol" in result.error
+        assert "Use --provider or provider/model" in result.error
 
     def test_prefers_provider_model_split_over_gateway_model_with_matching_id(self):
         zai_model = make_model(

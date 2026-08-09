@@ -10,7 +10,7 @@ the current bindings with `/keybindings`.
 | Keys | Action | Does |
 |------|--------|------|
 | `escape` | `app.interrupt` | Cancel or abort |
-| `ctrl+c` | `app.clear` | Clear the editor |
+| `ctrl+c` | `app.clear` | Clear the editor (first press) / exit (second) |
 | `ctrl+d` | `app.exit` | Exit when the editor is empty |
 | `ctrl+z` | `app.suspend` | Suspend to background |
 | `shift+tab` | `app.thinking.cycle` | Cycle thinking level |
@@ -59,7 +59,8 @@ to the component that has focus.
 
 ### Alternate-screen viewport
 
-Only with `--alt`, and targeting the primary transcript scroll region.
+Only in `--tui-mode fullscreen`, and targeting the primary transcript scroll
+region.
 Two-finger trackpad and mouse-wheel input scroll the region under the pointer,
 falling back to the transcript over the fixed editor/status/footer dock.
 Clicking an OSC 8 hyperlink opens it in the default handler. Dragging with the
@@ -77,10 +78,10 @@ the transcript's top or bottom edge auto-scrolls into off-screen content.
 | `home` | `tui.altScreen.top` | Scroll to the beginning of the transcript |
 | `end` | `tui.altScreen.bottom` | Scroll to the transcript end and follow new output |
 
-These bindings take precedence over the editor's, so with `--alt` the
+These bindings take precedence over the editor's, so in fullscreen mode the
 unmodified navigation keys drive the transcript and their `ctrl` variants
 (`ctrl+home`, `ctrl+end`, `ctrl+pageUp`, `ctrl+pageDown`) drive the editor.
-Without `--alt`, both variants drive the editor.
+In regular mode, both variants drive the editor.
 
 The routing is just action bindings, so it is configurable:
 `"tui.altScreen.pageUp": "ctrl+pageUp"` gives `pageUp` back to the editor, and
@@ -104,9 +105,13 @@ Add a `keybindings` object to `settings.json`, keyed by action id:
 
 A string binds one key, a list binds several, and an empty list unbinds.
 
-Key syntax is modifiers plus a key: `ctrl+`, `alt+`, `shift+`, then a letter,
-digit, or a named key (`enter`, `escape`, `tab`, `space`, `up`, `down`, `left`,
-`right`, `home`, `end`, `pageup`, `pagedown`, `f1`–`f12`).
+Key syntax is modifiers plus a key: `ctrl+`, `alt+`, `shift+`, `super+`, then a
+letter, digit, or a named key (`enter`, `escape`, `tab`, `space`, `up`, `down`,
+`left`, `right`, `home`, `end`, `pageup`, `pagedown`, `f1`–`f12`). Modifiers
+combine: `ctrl+shift+x`, `super+k`, `ctrl+super+k`.
+
+`super` bindings need a terminal that reports the modifier separately, in
+practice one speaking the Kitty keyboard protocol; elsewhere they never fire.
 
 ## Extension shortcuts
 

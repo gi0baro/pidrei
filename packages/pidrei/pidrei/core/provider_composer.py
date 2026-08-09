@@ -7,6 +7,13 @@ dataclass.
 
 pi's global compat API registry (`getApiProvider`) is unported; the fallback
 dispatch maps known api names onto pidrei-ai adapter modules directly.
+
+A config's optional ``streamSimple`` handler
+(``(model, context, options) -> AssistantMessageEventStream``) carries the same
+contract as the built-in providers: it must invoke ``options.on_payload`` before
+sending the provider request and use any replacement payload it returns, and it
+must invoke ``options.on_response`` after receiving the response and before
+consuming its body. ``api`` is required alongside it.
 """
 
 from dataclasses import dataclass, replace

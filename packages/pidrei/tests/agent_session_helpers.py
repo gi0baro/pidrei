@@ -15,6 +15,7 @@ from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.extensions import ExtensionRuntime, LoadExtensionsResult
 from pidrei.core.model_registry import ModelRegistry
 from pidrei.core.model_runtime import ModelRuntime
+from pidrei.core.models_store import InMemoryCodingAgentModelsStore
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
 from pidrei_agent.agent import Agent, AgentInitialState
@@ -149,8 +150,13 @@ async def create_agent_session(
 
     if provider_auth is not None:
         await auth_storage.modify(provider_auth, set_key)
+    # In-memory catalog store (pi's `createInMemoryModelRegistry`, #7394's flaky
+    # RPC-prompt fix): the file-backed store's disk lock is contention only here.
     model_runtime = await ModelRuntime.create(
-        credentials=auth_storage, models_path=os.path.join(temp_dir, "models.json"), allow_model_network=False
+        credentials=auth_storage,
+        models_path=os.path.join(temp_dir, "models.json"),
+        models_store=InMemoryCodingAgentModelsStore(),
+        allow_model_network=False,
     )
 
     return AgentSession(

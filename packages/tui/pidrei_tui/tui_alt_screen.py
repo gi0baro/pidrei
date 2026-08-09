@@ -167,11 +167,6 @@ class TuiAltScreen(TuiBase):
     def render(self, width: int) -> list[str]:
         return self._layout_root.render(width) if self._layout_root is not None else super().render(width)
 
-    def invalidate(self) -> None:
-        super().invalidate()
-        if self._layout_root is not None:
-            self._layout_root.invalidate()
-
     def _get_mounted_roots(self) -> list:
         return [self._layout_root] if self._layout_root is not None else self.children
 
@@ -217,7 +212,7 @@ class TuiAltScreen(TuiBase):
             f"{ENTER_ALT_SCREEN}{DISABLE_AUTOWRAP}{mouse_sequence if self._mouse_enabled else ''}\x1b[2J\x1b[H\x1b[?25l"
         )
 
-    async def _before_terminal_stop(self) -> None:
+    async def _before_terminal_stop(self, _options: dict) -> None:
         self._stop_selection_auto_scroll()
         self._selection_press_active = False
         self._stop_scrollbar_hover()
@@ -231,23 +226,28 @@ class TuiAltScreen(TuiBase):
         )
         self._uploaded_kitty_images.clear()
 
-    async def _after_terminal_stop(self) -> None:
+    async def _after_terminal_stop(self, options: dict) -> None:
         if not self._alt_screen_active:
             return
         self._alt_screen_active = False
-        width = max(1, self.terminal.columns)
-        document_lines = [OSC133_ZONE_PREFIX.sub("", line) for line in self.render(width)]
-        self._last_document = [
-            line if is_image_line(line) or visible_width(line) <= width else slice_by_column(line, 0, width, True)
-            for line in self._apply_line_resets([line.replace(CURSOR_MARKER, "") for line in document_lines])
-        ]
-        buffer = f"{BEGIN_SYNCHRONIZED_OUTPUT}{EXIT_ALT_SCREEN}{DISABLE_AUTOWRAP}"
-        for row, line in enumerate(self._last_document):
-            if row > 0:
-                buffer += "\r\n"
-            buffer += f"\r\x1b[2K{line}"
-        buffer += f"\x1b[0m{ENABLE_AUTOWRAP}\r\n\x1b[?25h{END_SYNCHRONIZED_OUTPUT}"
-        await self.terminal.write(buffer)
+        if options.get("preserveScreen"):
+            # The renderer taking over owns the main screen from here; leaving
+            # the alt screen is all this one still has to do.
+            await self.terminal.write(f"{BEGIN_SYNCHRONIZED_OUTPUT}{EXIT_ALT_SCREEN}\x1b[?25h{END_SYNCHRONIZED_OUTPUT}")
+        else:
+            width = max(1, self.terminal.columns)
+            document_lines = [OSC133_ZONE_PREFIX.sub("", line) for line in self.render(width)]
+            self._last_document = [
+                line if is_image_line(line) or visible_width(line) <= width else slice_by_column(line, 0, width, True)
+                for line in self._apply_line_resets([line.replace(CURSOR_MARKER, "") for line in document_lines])
+            ]
+            buffer = f"{BEGIN_SYNCHRONIZED_OUTPUT}{EXIT_ALT_SCREEN}{DISABLE_AUTOWRAP}"
+            for row, line in enumerate(self._last_document):
+                if row > 0:
+                    buffer += "\r\n"
+                buffer += f"\r\x1b[2K{line}"
+            buffer += f"\x1b[0m{ENABLE_AUTOWRAP}\r\n\x1b[?25h{END_SYNCHRONIZED_OUTPUT}"
+            await self.terminal.write(buffer)
         if self._saved_capabilities:
             set_capabilities(self._saved_capabilities)
             self._saved_capabilities = None

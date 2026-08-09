@@ -17,6 +17,7 @@ from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model
 
 from ..config import VERSION
+from ..utils.management_http import fetch_with_retry
 from ..utils.user_agent import get_pidrei_user_agent
 from .model_wire import parse_model_dict
 
@@ -33,10 +34,7 @@ class CatalogResponse:
 
 
 async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> CatalogResponse:
-    # lazy: resolved per call so the http seam stays swappable in tests
-    from pidrei_ai.utils.http import shared_client
-
-    response = await shared_client().get(url, headers=headers)
+    response = await fetch_with_retry(url, headers=headers)
     body = await response.read()
     return CatalogResponse(
         status=response.status_code,

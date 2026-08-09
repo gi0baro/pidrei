@@ -15,9 +15,10 @@ from typing import Any
 
 from ..core.agent_session import ExtensionBindings
 from ..core.json_wire import to_wire
-from ..core.output_guard import flush_raw_stdout, write_raw_stdout
+from ..core.output_guard import flush_raw_stdout, wait_for_raw_stdout_backpressure, write_raw_stdout
 from ..utils.fd_io import hard_exit
 from ..utils.shell import kill_tracked_detached_children
+from .json_event import to_json_event
 
 
 @dataclass(slots=True, kw_only=True)
@@ -44,6 +45,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
     exit_code = 0
     session = runtime_host.session
     unsubscribe: Any = None
+    unsubscribe_backpressure: Any = None
     disposed = False
     signal_cleanup_handlers: list[Any] = []
 
@@ -54,6 +56,8 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
         disposed = True
         if unsubscribe is not None:
             unsubscribe()
+        if unsubscribe_backpressure is not None:
+            unsubscribe_backpressure()
         await runtime_host.dispose()
 
     def register_signal_handlers() -> None:
@@ -85,7 +89,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
     runtime_host.set_rebind_session(rebind_from_runtime)
 
     async def rebind_session() -> None:
-        nonlocal session, unsubscribe
+        nonlocal session, unsubscribe, unsubscribe_backpressure
         session = runtime_host.session
 
         async def fork(entry_id, fork_options=None):
@@ -134,12 +138,18 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
 
         if unsubscribe is not None:
             unsubscribe()
+        if unsubscribe_backpressure is not None:
+            unsubscribe_backpressure()
 
         def on_event(event) -> None:
             if mode == "json":
-                write_raw_stdout(json.dumps(to_wire(event), ensure_ascii=False) + "\n")
+                write_raw_stdout(json.dumps(to_wire(to_json_event(event)), ensure_ascii=False) + "\n")
+
+        async def on_agent_event(*_args) -> None:
+            await wait_for_raw_stdout_backpressure()
 
         unsubscribe = session.subscribe(on_event)
+        unsubscribe_backpressure = session.agent.subscribe(on_agent_event) if mode == "json" else None
 
     try:
         if mode == "json":

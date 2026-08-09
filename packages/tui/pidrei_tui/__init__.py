@@ -9,6 +9,7 @@ from .components.image import Image
 from .components.input import Input
 from .components.loader import Loader
 from .components.markdown import Markdown
+from .components.markdown_lexer import lex_markdown
 from .components.scroll_view import ScrollView
 from .components.select_list import SelectList
 from .components.settings_list import SettingsList
@@ -152,6 +153,7 @@ __all__ = [
     "is_key_repeat",
     "is_kitty_protocol_active",
     "is_viewport_tui",
+    "lex_markdown",
     "matches_key",
     "normalize_apple_terminal_input",
     "parse_key",

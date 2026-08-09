@@ -25,7 +25,18 @@ class InteractiveThemeController:
         self._active_theme_name = resolve_theme_setting(
             self._settings_manager.get_theme_setting(), self._terminal_theme
         )
-        self._ui.on_terminal_color_scheme_change(self._apply_terminal_theme)
+        self._terminal_color_scheme_unsubscribe = None
+        self._bind_terminal_color_scheme_listener()
+
+    async def rebind_tui(self) -> None:
+        """Re-attach to the renderer InteractiveMode just swapped in."""
+        if self._terminal_color_scheme_unsubscribe is not None:
+            self._terminal_color_scheme_unsubscribe()
+        self._bind_terminal_color_scheme_listener()
+        await self._ui.set_terminal_color_scheme_notifications(self._auto_sync_enabled)
+
+    def _bind_terminal_color_scheme_listener(self) -> None:
+        self._terminal_color_scheme_unsubscribe = self._ui.on_terminal_color_scheme_change(self._apply_terminal_theme)
 
     def prime(self) -> Awaitable[None]:
         """Load the initial theme off the runtime.

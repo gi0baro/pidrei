@@ -44,6 +44,7 @@ BASE_CONFIG = {
     "thinkingLevel": "off",
     "transport": "auto",
     "treeFilterMode": "default",
+    "tuiMode": "regular",
     "warnings": {},
 }
 

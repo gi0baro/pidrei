@@ -17,6 +17,7 @@ import json
 import os
 import re
 
+from .management_http import fetch_with_retry
 from .user_agent import get_pidrei_user_agent
 
 
@@ -88,18 +89,16 @@ async def get_latest_release(current_version: str, options: dict | None = None) 
         return None
     options = options or {}
 
-    # lazy: resolved per call so the http seam stays swappable in tests
-    from pidrei_ai.utils.http import request_timeout, shared_client
-
     timeout_ms = options.get("timeoutMs", _DEFAULT_VERSION_CHECK_TIMEOUT_MS)
-    response = await shared_client().get(
+    response = await fetch_with_retry(
         _LATEST_RELEASE_URL,
         headers={
             "User-Agent": get_pidrei_user_agent(current_version),
             "accept": "application/vnd.github+json",
             "x-github-api-version": "2022-11-28",
         },
-        timeout=request_timeout(timeout_ms),
+        max_retries=2 if options.get("retry") else 0,
+        timeout_ms=timeout_ms,
     )
     if response.status_code < 200 or response.status_code >= 300:
         return None

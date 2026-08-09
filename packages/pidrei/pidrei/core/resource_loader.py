@@ -77,7 +77,7 @@ def _resolve_prompt_input_sync(input: str | None, description: str) -> str | Non
 
 
 def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
-    for filename in ("AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"):
+    for filename in ("AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"):
         file_path = os.path.join(dir, filename)
         if os.path.exists(file_path):
             try:

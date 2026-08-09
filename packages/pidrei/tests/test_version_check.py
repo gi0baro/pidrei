@@ -207,3 +207,45 @@ async def test_no_pi_dev_host_is_contacted(stub_http):
 
 def test_release_url_constant_points_at_our_repo():
     assert RELEASES_URL == "https://github.com/gi0baro/pidrei/releases"
+
+
+@pytest.mark.tonio
+async def test_retries_a_transient_version_request_when_explicitly_requested(stub_http):
+    stub_http({"tag_name": "1.2.4"})  # registers the teardown for shared_client
+
+    class _FlakyClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.calls < 3:
+                raise OSError("connection refused")
+            return _Response({"tag_name": "1.2.4"})
+
+    client = _FlakyClient()
+    http_module.shared_client = lambda: client
+
+    release = await get_latest_release("1.2.3", {"retry": True})
+
+    assert release["version"] == "1.2.4"
+    assert client.calls == 3
+
+
+@pytest.mark.tonio
+async def test_keeps_automatic_version_checks_to_one_request(stub_http):
+    stub_http({"tag_name": "1.2.4"})  # registers the teardown for shared_client
+
+    class _FailingClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def get(self, *_args, **_kwargs):
+            self.calls += 1
+            raise OSError("connection refused")
+
+    client = _FailingClient()
+    http_module.shared_client = lambda: client
+
+    assert await check_for_new_version("1.2.3") is None
+    assert client.calls == 1

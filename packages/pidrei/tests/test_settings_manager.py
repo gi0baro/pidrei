@@ -348,6 +348,30 @@ class TestFullscreenScrollbar:
         assert reloaded.get_fullscreen_scrollbar() == "auto"
 
 
+class TestTuiMode:
+    @pytest.mark.tonio
+    async def test_defaults_to_regular_and_persists_fullscreen_mode(self, dirs):
+        agent_dir, project_dir = dirs
+        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+
+        assert manager.get_tui_mode() == "regular"
+
+        manager.set_tui_mode("fullscreen")
+        await manager.flush()
+
+        assert manager.get_tui_mode() == "fullscreen"
+        assert read_json(agent_dir / "settings.json")["tuiMode"] == "fullscreen"
+
+    @pytest.mark.tonio
+    async def test_falls_back_to_regular_for_unsupported_values(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"tuiMode": "other"})
+
+        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+
+        assert manager.get_tui_mode() == "regular"
+
+
 class TestOutputPad:
     @pytest.mark.tonio
     async def test_defaults_to_1_and_persists_binary_values(self, dirs):

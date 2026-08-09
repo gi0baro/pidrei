@@ -356,17 +356,24 @@ class _Slot:
     json_buffer: GrammarToolInputJsonBuffer | None = None
 
 
-def _map_stop_reason(status: str | None) -> StopReason:
+def _map_stop_reason(status: str | None, incomplete_reason: str | None = None) -> tuple[StopReason, str | None]:
+    """Returns ``(stop_reason, error_message)`` — pi's `{stopReason, errorMessage}`."""
     if not status:
-        return "stop"
+        return "stop", None
     if status == "completed":
-        return "stop"
+        return "stop", None
     if status == "incomplete":
-        return "length"
+        if incomplete_reason == "max_output_tokens":
+            return "length", None
+        return "error", (
+            f"Response incomplete: {incomplete_reason}"
+            if incomplete_reason
+            else "Response incomplete without a provider reason"
+        )
     if status in ("failed", "cancelled"):
-        return "error"
+        return "error", None
     if status in ("in_progress", "queued"):  # These two are wonky...
-        return "stop"
+        return "stop", None
     raise RuntimeError(f"Unhandled stop reason: {status}")
 
 
@@ -509,9 +516,16 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                     response.get("service_tier") if response.get("service_tier") is not None else service_tier
                 )
             apply_service_tier_pricing(output.usage, resolved_tier)
+        # Map status to stop reason. For incomplete responses, retain the
+        # provider's specific reason so max-output truncation and content
+        # filtering stay distinct.
         status = response.get("status")
-        output.raw_stop_reason = status
-        output.stop_reason = _map_stop_reason(status)
+        incomplete_details = response.get("incomplete_details")
+        incomplete_reason = None
+        if isinstance(incomplete_details, dict) and isinstance(incomplete_details.get("reason"), str):
+            incomplete_reason = incomplete_details["reason"]
+        output.raw_stop_reason = f"{status}.{incomplete_reason}" if incomplete_reason else status
+        output.stop_reason, output.error_message = _map_stop_reason(status, incomplete_reason)
         if any(block.type == "toolCall" for block in output.content) and output.stop_reason == "stop":
             output.stop_reason = "toolUse"
 

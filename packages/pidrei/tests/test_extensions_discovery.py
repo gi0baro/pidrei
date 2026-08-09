@@ -276,6 +276,7 @@ async def test_registers_message_and_entry_renderers(temp):
         os.path.join(temp.extensions, "with-renderer.py"),
         """
 def extension(pi):
+    pi.register_markdown_transformer(lambda markdown, context: markdown)
     pi.register_message_renderer("my-custom-type", lambda *args: None)
     pi.register_entry_renderer("my-entry-type", lambda *args: None)
 """,
@@ -285,6 +286,7 @@ def extension(pi):
 
     assert result.errors == []
     assert len(result.extensions) == 1
+    assert result.extensions[0].markdown_transformer is not None
     assert "my-custom-type" in result.extensions[0].message_renderers
     assert "my-entry-type" in result.extensions[0].entry_renderers
 

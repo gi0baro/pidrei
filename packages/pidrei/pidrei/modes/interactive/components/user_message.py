@@ -3,6 +3,7 @@
 from pidrei_tui import Box, Container, Markdown
 
 from ..theme import get_markdown_theme, theme
+from .markdown_transform import create_markdown_transform
 
 
 OSC133_ZONE_START = "\x1b]133;A\x07"
@@ -13,11 +14,18 @@ OSC133_ZONE_FINAL = "\x1b]133;C\x07"
 class UserMessageComponent(Container):
     """Component that renders a user message."""
 
-    def __init__(self, text: str, markdown_theme: dict | None = None, output_pad: int = 1) -> None:
+    def __init__(
+        self,
+        text: str,
+        markdown_theme: dict | None = None,
+        output_pad: int = 1,
+        markdown_transformers=(),
+    ) -> None:
         super().__init__()
         self._text = text
         self._markdown_theme = markdown_theme if markdown_theme is not None else get_markdown_theme()
         self._output_pad = output_pad
+        self._markdown_transformers = markdown_transformers
         self._rebuild()
 
     def set_output_pad(self, padding: int) -> None:
@@ -34,7 +42,11 @@ class UserMessageComponent(Container):
                 0,
                 self._markdown_theme,
                 {"color": lambda content: theme.fg("userMessageText", content)},
-                {"preserveOrderedListMarkers": True, "preserveBackslashEscapes": True},
+                {
+                    "preserveOrderedListMarkers": True,
+                    "preserveBackslashEscapes": True,
+                    "transform": create_markdown_transform("user", False, self._markdown_transformers),
+                },
             )
         )
         self.add_child(content_box)

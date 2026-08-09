@@ -44,7 +44,7 @@ from pidrei_agent.types import (
 from pidrei_ai.registry import clamp_thinking_level, get_supported_thinking_levels, models_are_equal
 from pidrei_ai.types import AssistantMessage, ImageContent, Model, TextContent, Usage, UserMessage
 from pidrei_ai.utils.cancel import CancelToken
-from pidrei_ai.utils.overflow import is_context_overflow
+from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error
 from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.text import content_text
@@ -52,6 +52,7 @@ from pidrei_ai.utils.text import content_text
 from ..utils.frontmatter import strip_frontmatter
 from ..utils.paths import resolve_path
 from ..utils.sleep import sleep
+from ..utils.tool_result_images import normalize_tool_result_images
 from .auth_guidance import format_no_api_key_found_message, format_no_model_selected_message
 from .bash_executor import BashResult, execute_bash_with_operations
 from .compaction import (
@@ -506,6 +507,7 @@ class AgentSession:
             raise
         if result is not None and (result.auth.api_key or result.auth.headers):
             return {
+                "model": dataclass_replace(model, base_url=result.auth.base_url) if result.auth.base_url else model,
                 "api_key": result.auth.api_key,
                 "headers": _without_deleted_headers(result.auth.headers),
                 "env": dict(result.env) if result.env is not None else None,
@@ -519,29 +521,25 @@ class AgentSession:
             )
         raise Exception(format_no_api_key_found_message(model.provider))
 
-    def _uses_default_stream_simple(self) -> bool:
-        """pi checks `agent.streamFunction === streamSimple` (the pi-ai compat
-        global). Sessions built by pidrei's sdk always install a runtime-bound
-        stream closure — exactly like pi's sdk — so the check is False for
-        every session this package creates; the compat global itself is not
-        ported."""
-        return False
-
     async def _get_summarization_request_auth(self, model: Model) -> dict[str, Any]:
-        if self._uses_default_stream_simple():
-            return await self._get_required_request_auth(model)
+        """Auth for summarization requests, plus the model to send them to.
 
+        A credential-resolved `base_url` (GitHub Copilot Business/Enterprise)
+        must reach the request, so the resolved model comes back with it applied
+        (pi #6768).
+        """
         try:
             result = await self._model_runtime.get_auth(model)
             if result is None:
-                return {"api_key": None, "headers": None, "env": None}
+                return {"model": model, "api_key": None, "headers": None, "env": None}
             return {
+                "model": dataclass_replace(model, base_url=result.auth.base_url) if result.auth.base_url else model,
                 "api_key": result.auth.api_key,
                 "headers": _without_deleted_headers(result.auth.headers),
                 "env": dict(result.env) if result.env is not None else None,
             }
         except Exception:
-            return {"api_key": None, "headers": None, "env": None}
+            return {"model": model, "api_key": None, "headers": None, "env": None}
 
     def _install_agent_tool_hooks(self) -> None:
         """Install tool hooks once on the Agent instance.
@@ -570,31 +568,42 @@ class AgentSession:
             if result is None:
                 return None
 
-            return BeforeToolCallResult(block=result.get("block"), reason=result.get("reason"))
+            return BeforeToolCallResult(
+                block=result.get("block"), reason=result.get("reason"), terminate=result.get("terminate")
+            )
 
         async def after_tool_call(ctx: AfterToolCallContext, _cancel=None):
             runner = self._extension_runner
-            if not runner.has_handlers("tool_result"):
-                return None
-
-            hook_result = await runner.emit_tool_result(
-                {
-                    "type": "tool_result",
-                    "toolName": ctx.tool_call.name,
-                    "toolCallId": ctx.tool_call.id,
-                    "input": ctx.args,
-                    "content": ctx.result.content,
-                    "details": ctx.result.details,
-                    "isError": ctx.is_error,
-                    "usage": ctx.result.usage,
-                }
+            hook_result = (
+                await runner.emit_tool_result(
+                    {
+                        "type": "tool_result",
+                        "toolName": ctx.tool_call.name,
+                        "toolCallId": ctx.tool_call.id,
+                        "input": ctx.args,
+                        "content": ctx.result.content,
+                        "details": ctx.result.details,
+                        "isError": ctx.is_error,
+                        "usage": ctx.result.usage,
+                    }
+                )
+                if runner.has_handlers("tool_result")
+                else None
             )
 
-            if hook_result is None:
+            content = (hook_result.get("content") if hook_result is not None else None) or ctx.result.content or []
+            # Runs after the extension hook so images injected or replaced by
+            # extensions are normalized too.
+            normalized_content = await normalize_tool_result_images(
+                content, auto_resize_images=self.settings_manager.get_image_auto_resize()
+            )
+
+            if hook_result is None and normalized_content is content:
                 return None
 
+            hook_result = hook_result or {}
             return AfterToolCallResult(
-                content=hook_result.get("content"),
+                content=normalized_content,
                 details=hook_result.get("details"),
                 is_error=hook_result.get("isError") if hook_result.get("isError") is not None else ctx.is_error,
                 usage=hook_result.get("usage"),
@@ -720,7 +729,7 @@ class AgentSession:
             if role == "assistant":
                 self._last_assistant_message = message
 
-                if message.stop_reason != "error":
+                if message.stop_reason != "error" and message.stop_reason != "length":
                     self._overflow_recovery_attempted = False
 
                 # Reset retry counter immediately on successful assistant response.
@@ -844,14 +853,10 @@ class AgentSession:
         return unsubscribe
 
     def _disconnect_from_agent(self) -> None:
+        """Disconnect from agent events during disposal."""
         if self._unsubscribe_agent is not None:
             self._unsubscribe_agent()
             self._unsubscribe_agent = None
-
-    def _reconnect_to_agent(self) -> None:
-        if self._unsubscribe_agent is not None:
-            return  # Already connected
-        self._unsubscribe_agent = self.agent.subscribe(self._handle_agent_event)
 
     def dispose(self) -> None:
         """Remove all listeners and disconnect from agent."""
@@ -1098,6 +1103,11 @@ class AgentSession:
                     if preflight_result:
                         preflight_result(True)
                     return
+
+            if self._compaction_cancel is not None:
+                raise Exception(
+                    "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry."
+                )
 
             # Emit input event for extension interception (before skill/template expansion)
             current_text = text
@@ -1613,7 +1623,6 @@ class AgentSession:
 
     async def compact(self, custom_instructions: str | None = None) -> CompactionResult:
         """Manually compact the session context. Aborts current agent operation first."""
-        self._disconnect_from_agent()
         await self.abort()
         self._compaction_cancel = CancelToken()
         self._emit(CompactionStartEvent(reason="manual"))
@@ -1669,7 +1678,7 @@ class AgentSession:
                 # Generate compaction result
                 result = await run_compact(
                     preparation,
-                    self.model,
+                    auth["model"],
                     auth["api_key"],
                     auth["headers"],
                     custom_instructions,
@@ -1721,11 +1730,15 @@ class AgentSession:
                 usage=usage,
                 details=details,
             )
+            # compaction_end listeners may submit queued prompts, so expose idle
+            # state before notifying them.
+            self._compaction_cancel = None
             self._emit(CompactionEndEvent(reason="manual", result=compaction_result, aborted=False, will_retry=False))
             return compaction_result
         except Exception as error:
             message = str(error)
             aborted = message == "Compaction cancelled" or type(error).__name__ == "AbortError"
+            self._compaction_cancel = None
             self._emit(
                 CompactionEndEvent(
                     reason="manual",
@@ -1738,7 +1751,6 @@ class AgentSession:
             raise
         finally:
             self._compaction_cancel = None
-            self._reconnect_to_agent()
 
     def abort_compaction(self) -> None:
         """Cancel in-progress compaction (manual or auto)."""
@@ -1789,10 +1801,17 @@ class AgentSession:
         if assistant_is_from_before_compaction:
             return False
 
-        # Case 1: Overflow. A successful response over the configured window should
-        # compact but must not retry: the assistant answer already completed and
-        # agent.continue_() cannot continue from an assistant message.
-        if same_model and is_context_overflow(assistant_message, context_window):
+        # Case 1: Recoverable failure. Explicit/silent context overflow still uses
+        # context metadata. A length stop is recoverable when output ended below the
+        # model's original desired limit, independent of the configured context size
+        # or any context-clamped provider request limit. A successful response over
+        # the configured window should compact but must not retry: the assistant
+        # answer already completed and agent.continue_() cannot continue from an
+        # assistant message.
+        recoverable_length = same_model and is_recoverable_length(
+            assistant_message, (self.model.max_tokens if self.model is not None else 0) or 0
+        )
+        if same_model and (is_context_overflow(assistant_message, context_window) or recoverable_length):
             will_retry = assistant_message.stop_reason != "stop"
 
             if not will_retry:
@@ -1814,8 +1833,8 @@ class AgentSession:
                 return False
 
             self._overflow_recovery_attempted = True
-            # Remove the error message from agent state (it IS saved to session for
-            # history, but we don't want it in context for the retry)
+            # Remove the failed or truncated message from agent state. It remains in
+            # session history, but must not be included in the compact-and-retry context.
             messages = self.agent.state.messages
             if messages and getattr(messages[-1], "role", None) == "assistant":
                 self.agent.state.messages = messages[:-1]
@@ -1858,10 +1877,7 @@ class AgentSession:
             if self.model is None:
                 return False
 
-            if self._uses_default_stream_simple():
-                auth = await self._get_required_request_auth(self.model)
-            else:
-                auth = await self._get_summarization_request_auth(self.model)
+            auth = await self._get_summarization_request_auth(self.model)
 
             path_entries = self.session_manager.get_branch()
 
@@ -1906,7 +1922,7 @@ class AgentSession:
             else:
                 compact_result = await run_compact(
                     preparation,
-                    self.model,
+                    auth["model"],
                     auth["api_key"],
                     auth["headers"],
                     None,
@@ -1963,10 +1979,16 @@ class AgentSession:
             if will_retry:
                 messages = self.agent.state.messages
                 last_msg = messages[-1] if messages else None
+                # The overflow response was persisted on message_end before
+                # _check_compaction() removed it from agent state. Rebuilding state
+                # from the new compaction can restore that kept entry, leaving an
+                # assistant as the final message. agent.continue_() rejects that
+                # state, so remove the retriable error or truncated-length response
+                # again before continuing the interrupted turn.
                 if (
                     last_msg is not None
                     and getattr(last_msg, "role", None) == "assistant"
-                    and last_msg.stop_reason == "error"
+                    and last_msg.stop_reason in ("error", "length")
                 ):
                     self.agent.state.messages = messages[:-1]
                 return True
@@ -2383,8 +2405,10 @@ class AgentSession:
 
     async def reload(self, before_session_start: Callable[[], Awaitable[None]] | None = None) -> None:
 
-        previous_flag_values = self._extension_runner.get_flag_values()
-        await emit_session_shutdown_event(self._extension_runner, {"type": "session_shutdown", "reason": "reload"})
+        old_runner = self._extension_runner
+        previous_flag_values = old_runner.get_flag_values()
+        await emit_session_shutdown_event(old_runner, {"type": "session_shutdown", "reason": "reload"})
+        old_runner.invalidate()
         await self.settings_manager.reload()  # drains queued writes first, like pi
         self.sync_queue_modes_from_settings()
         # pi calls resetApiProviders() (the pi-ai compat registry); pidrei's
@@ -2703,7 +2727,7 @@ class AgentSession:
                 branch_summary_settings = self.settings_manager.get_branch_summary_settings()
                 result = await generate_branch_summary(
                     entries_to_summarize,
-                    model=model,
+                    model=auth["model"],
                     api_key=auth["api_key"],
                     headers=auth["headers"],
                     env=auth["env"],

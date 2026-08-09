@@ -45,7 +45,9 @@ readable, but any `colors` entry can be a literal hex value.
 
 The full list of roles is in `theme-schema.json`, shipped next to the built-in
 themes. Point `$schema` at it and an editor will complete and validate as you
-type.
+type. Two roles are optional, so older themes keep loading: `thinkingMax` falls
+back to `thinkingXhigh`, and `scrollbarThumb` (the fullscreen scrollbar thumb)
+falls back to `selectedBg`.
 
 ## Automatic light/dark
 

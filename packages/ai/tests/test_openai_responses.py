@@ -306,10 +306,28 @@ def phased_message_events(phases: tuple[str, str], terminal_status: str = "compl
         {
             "type": f"response.{terminal_status}",
             "sequence_number": 2,
-            "response": {"id": "resp_phase", "status": terminal_status},
+            "response": (
+                {"id": "resp_phase", "status": terminal_status, "incomplete_details": {"reason": "max_output_tokens"}}
+                if terminal_status == "incomplete"
+                else {"id": "resp_phase", "status": terminal_status}
+            ),
         },
     ]
     return events
+
+
+def incomplete_events(reason: str = "max_output_tokens") -> list[dict]:
+    return [
+        {
+            "type": "response.incomplete",
+            "sequence_number": 0,
+            "response": {
+                "id": "resp_incomplete",
+                "status": "incomplete",
+                "incomplete_details": {"reason": reason},
+            },
+        }
+    ]
 
 
 @pytest.mark.tonio
@@ -345,7 +363,33 @@ async def test_replaces_a_provisional_final_answer_stop_with_an_incomplete_termi
 
     assert stream.observed_stop_reasons == ["stop", "stop"]
     assert output.stop_reason == "length"
-    assert output.raw_stop_reason == "incomplete"
+    assert output.raw_stop_reason == "incomplete.max_output_tokens"
+
+
+@pytest.mark.tonio
+async def test_finalizes_content_filtered_incomplete_responses_as_non_retryable_errors():
+    model = make_model()
+    output = make_output(model)
+    stream = AssistantMessageEventStream()
+
+    await process_responses_stream(events_from(incomplete_events("content_filter")), output, stream, model)
+
+    assert output.stop_reason == "error"
+    assert output.raw_stop_reason == "incomplete.content_filter"
+    assert output.error_message == "Response incomplete: content_filter"
+
+
+@pytest.mark.tonio
+async def test_preserves_unknown_provider_incomplete_reasons_as_non_retryable_errors():
+    model = make_model()
+    output = make_output(model)
+    stream = AssistantMessageEventStream()
+
+    await process_responses_stream(events_from(incomplete_events("max_time_limit")), output, stream, model)
+
+    assert output.stop_reason == "error"
+    assert output.raw_stop_reason == "incomplete.max_time_limit"
+    assert output.error_message == "Response incomplete: max_time_limit"
 
 
 @pytest.mark.tonio
