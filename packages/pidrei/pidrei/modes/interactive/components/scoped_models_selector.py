@@ -221,10 +221,14 @@ class ScopedModelsSelectorComponent(Container):
         self._callbacks["onChange"](None if self._enabled_ids is None else list(self._enabled_ids))
 
     def _update_list(self) -> None:
-        self._list_container.clear()
+        # Built into a local list and published in one step: the catalog
+        # refresh calls this from a spawned task, so a clear-then-repopulate
+        # would let a concurrent render see the list container empty.
+        rows: list = []
 
         if not self._filtered_items:
-            self._list_container.add_child(Text(theme.fg("muted", "  No matching models"), 0, 0))
+            rows.append(Text(theme.fg("muted", "  No matching models"), 0, 0))
+            self._list_container.set_children(rows)
             return
 
         start_index = max(
@@ -251,19 +255,19 @@ class ScopedModelsSelectorComponent(Container):
                 status = theme.fg("success", " ✓")
             else:
                 status = theme.fg("dim", " ✗")
-            self._list_container.add_child(Text(f"{prefix}{model_text}{provider_badge}{status}", 0, 0))
+            rows.append(Text(f"{prefix}{model_text}{provider_badge}{status}", 0, 0))
 
         # Add scroll indicator if needed
         if start_index > 0 or end_index < len(self._filtered_items):
-            self._list_container.add_child(
-                Text(theme.fg("muted", f"  ({self._selected_index + 1}/{len(self._filtered_items)})"), 0, 0)
-            )
+            rows.append(Text(theme.fg("muted", f"  ({self._selected_index + 1}/{len(self._filtered_items)})"), 0, 0))
 
         if self._filtered_items:
             selected = self._filtered_items[self._selected_index]
             detail = f"Model Name: {selected['model'].name}" if selected["model"] is not None else "Model unavailable"
-            self._list_container.add_child(Spacer(1))
-            self._list_container.add_child(Text(theme.fg("muted", f"  {detail}"), 0, 0))
+            rows.append(Spacer(1))
+            rows.append(Text(theme.fg("muted", f"  {detail}"), 0, 0))
+
+        self._list_container.set_children(rows)
 
     async def handle_input(self, data: str) -> None:
         kb = get_keybindings()

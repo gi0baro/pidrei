@@ -23,7 +23,7 @@ classifiers = [
 
 dependencies = [
     "pidrei-ai==0.84.1.0",
-    "tonio~=0.9.4",
+    "tonio~=0.9.6",
     "pyyaml~=6.0",
     "pathspec~=1.1",
 ]

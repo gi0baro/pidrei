@@ -167,6 +167,19 @@ class Container:
     def clear(self) -> None:
         self.children = []
 
+    def set_children(self, children: list) -> None:
+        """Replace the children in one step.
+
+        `clear()` followed by `add_child()` calls is fine on pi's single event
+        loop, where nothing can render in between. Here a component can be
+        rebuilt from a spawned task while the render loop reads it on another
+        thread, and the half-populated window renders as a component that has
+        briefly vanished. Rebuilding into a local list and publishing it with
+        one assignment closes that window: a concurrent `render` sees either
+        the old children or the new ones.
+        """
+        self.children = list(children)
+
     def invalidate(self) -> None:
         for child in self.children:
             invalidate = getattr(child, "invalidate", None)
@@ -175,6 +188,8 @@ class Container:
 
     def render(self, width: int) -> list[str]:
         lines: list[str] = []
+        # Bind once: `set_children` publishes a new list, so a rebuild landing
+        # mid-render cannot make this iteration see a partial one.
         for child in self.children:
             lines.extend(child.render(width))
         return lines

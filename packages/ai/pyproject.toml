@@ -22,11 +22,11 @@ classifiers = [
 ]
 
 dependencies = [
-    "tonio~=0.9.4",
-    "punkreq~=0.1.1",
+    "tonio~=0.9.6",
+    "punkreq~=0.1.2",
     # punkreq's own transport, declared directly because the OAuth callback
     # servers use its server-side HTTP/1 connection (utils/http.py).
-    "httpunk~=0.1.2",
+    "httpunk~=0.1.3",
     # Sans-io WebSocket frame codec only (no client, no asyncio): the Codex
     # responses transport drives it over httpunk's H1Upgraded (utils/websocket.py).
     "websockets~=16.1",

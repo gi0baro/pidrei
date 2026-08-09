@@ -89,7 +89,12 @@ async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
         tui_module._MIN_RENDER_INTERVAL_S = original_interval
 
     assert terminal.frames > since, "keyboard input should not wait for the throttle"
-    assert component.render_count == render_count_before_input + 1
+    # How many of the three inputs coalesce into one frame is a property of
+    # the machine, not of the preemption: a slower box lets the render loop
+    # wake between them and renders more than once (CI saw 2 extra renders).
+    # What this test pins is that a render happened at all inside the 1s wait
+    # while the throttle was 2s, so only "more than before" is asserted here.
+    assert component.render_count > render_count_before_input
     assert component.lines == ["typed"]
     await tui.stop()
 

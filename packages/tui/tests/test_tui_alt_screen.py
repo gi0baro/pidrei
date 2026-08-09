@@ -8,6 +8,7 @@ read a stale viewport.
 
 import base64
 import os
+import time
 from contextlib import contextmanager
 
 import pytest
@@ -72,6 +73,25 @@ class RecordingTerminal(VirtualTerminal):
 
     def writes_containing(self, needle: str) -> list[str]:
         return [event["data"] for event in self.events if event["type"] == "write" and needle in event["data"]]
+
+    async def wait_for_write(self, needle: str, count: int = 1, timeout: float = 2.0) -> list[str]:
+        """Poll until `count` writes contain `needle`, bounded so a miss fails.
+
+        `wait_for_render(since)` waits for *a* frame after `since`, which is not
+        the same as the frame that reflects the input just sent: the render loop
+        is a separate throttled task, so a frame already computed before the
+        input can be the one that satisfies the wait. With several inputs per
+        wait that is a real window, and it is how the mouse-selection tests here
+        failed on the macOS CI runners while passing everywhere else. Use this
+        whenever the assertion is that a write *did* happen; `wait_for_render`
+        still fits assertions that nothing further happens.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            found = self.writes_containing(needle)
+            if len(found) >= count or time.monotonic() >= deadline:
+                return found
+            await tonio.sleep(0.005)
 
 
 class RenderComponent:
@@ -321,7 +341,7 @@ async def test_keeps_the_scrollbar_column_selectable_while_the_thumb_is_hidden()
     await terminal.send_input("\x1b[<0;10;2m")
     await terminal.wait_for_render(since)
 
-    assert terminal.writes_containing(_osc52("A\nabcdefghij"))
+    assert await terminal.wait_for_write(_osc52("A\nabcdefghij"))
     await tui.stop()
 
 
@@ -601,7 +621,7 @@ async def test_reuses_moved_kitty_images_without_dropping_hstack_siblings():
         tui.set_layout_root(VStack([{"component": header, "basis": "auto"}, {"component": row, "basis": 4}]))
         await tui.start()
         await terminal.wait_for_render()
-        assert terminal.writes_containing("\x1b_Ga=T")
+        assert await terminal.wait_for_write("\x1b_Ga=T")
 
         event_count = len(terminal.events)
         label.set_text("changed")
@@ -634,7 +654,7 @@ async def test_retains_recently_offscreen_kitty_images_for_placement_only_reuse(
         tui.set_layout_root(_image_scroll_view([image_line, "after"]))
         await tui.start()
         await terminal.wait_for_render()
-        assert terminal.writes_containing("\x1b_Ga=T")
+        assert await terminal.wait_for_write("\x1b_Ga=T")
 
         event_count = len(terminal.events)
         since = terminal.frames
@@ -670,7 +690,7 @@ async def test_evicts_the_least_recently_visible_kitty_image_when_the_cache_is_f
             since = terminal.frames
             tui.scroll_by(1)
             await terminal.wait_for_render(since)
-        assert terminal.writes_containing(f"\x1b_Ga=d,d=I,i={first_image_id},q=2\x1b\\")
+        assert await terminal.wait_for_write(f"\x1b_Ga=d,d=I,i={first_image_id},q=2\x1b\\")
 
         event_count = len(terminal.events)
         since = terminal.frames
@@ -701,7 +721,7 @@ async def test_evicts_offscreen_kitty_images_when_decoded_raster_memory_exceeds_
             since = terminal.frames
             tui.scroll_by(1)
             await terminal.wait_for_render(since)
-        assert terminal.writes_containing(f"\x1b_Ga=d,d=I,i={first_image_id},q=2\x1b\\")
+        assert await terminal.wait_for_write(f"\x1b_Ga=d,d=I,i={first_image_id},q=2\x1b\\")
         await tui.stop()
 
 
@@ -754,9 +774,9 @@ async def test_selects_visible_text_with_the_mouse_and_copies_it_with_osc52():
     await terminal.send_input("\x1b[<0;4;2m")
     await terminal.wait_for_render(since)
 
-    assert terminal.writes_containing(_osc52("alpha\nbeta"))
-    assert terminal.writes_containing("\x1b[7m")
-    assert terminal.writes_containing("\x1b[7m\x1b[0m\x1b[7m"), (
+    assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
+    assert await terminal.wait_for_write("\x1b[7m")
+    assert await terminal.wait_for_write("\x1b[7m\x1b[0m\x1b[7m"), (
         "selection inverse must be reapplied after layout segment resets"
     )
     assert any("Copied!" in line for line in terminal.get_viewport())
@@ -772,13 +792,11 @@ async def test_does_not_append_whitespace_to_double_click_word_highlighting():
     await tui.start()
     await terminal.wait_for_render()
 
-    since = terminal.frames
     await terminal.send_input("\x1b[<0;1;1M")
     await terminal.send_input("\x1b[<0;1;1m")
     await terminal.send_input("\x1b[<0;3;1M")
-    await terminal.wait_for_render(since)
 
-    assert terminal.writes_containing("foo\x1b[27m")
+    assert await terminal.wait_for_write("foo\x1b[27m")
     await tui.stop()
 
 
@@ -797,7 +815,7 @@ async def test_highlights_a_complete_whitespace_segment_during_a_word_drag():
     await terminal.send_input("\x1b[<32;4;1M")
     await terminal.wait_for_render(since)
 
-    assert terminal.writes_containing("foo  \x1b[27m")
+    assert await terminal.wait_for_write("foo  \x1b[27m")
     await tui.stop()
 
 
@@ -816,7 +834,7 @@ async def test_selects_whole_words_on_double_click_extends_word_drags_and_select
     await terminal.send_input("\x1b[<0;10;1M")
     await terminal.send_input("\x1b[<0;10;1m")
     await terminal.wait_for_render(since)
-    assert terminal.writes_containing(_osc52("alpha"))
+    assert await terminal.wait_for_write(_osc52("alpha"))
 
     # A double-click drag includes each word touched, rather than partial words.
     since = terminal.frames
@@ -826,7 +844,7 @@ async def test_selects_whole_words_on_double_click_extends_word_drags_and_select
     await terminal.send_input("\x1b[<32;3;2M")
     await terminal.send_input("\x1b[<0;3;2m")
     await terminal.wait_for_render(since)
-    assert terminal.writes_containing(_osc52("beta\ngamma"))
+    assert await terminal.wait_for_write(_osc52("beta\ngamma"))
 
     since = terminal.frames
     await terminal.send_input("\x1b[<0;7;2M")
@@ -836,7 +854,7 @@ async def test_selects_whole_words_on_double_click_extends_word_drags_and_select
     await terminal.send_input("\x1b[<0;11;2M")
     await terminal.send_input("\x1b[<0;11;2m")
     await terminal.wait_for_render(since)
-    assert terminal.writes_containing(_osc52("gamma delta"))
+    assert await terminal.wait_for_write(_osc52("gamma delta"))
 
     await tui.stop()
 
@@ -924,7 +942,7 @@ async def test_auto_scrolls_and_extends_a_drag_selection_held_at_the_viewport_ed
 
     selected_lines = [f"line {selection_top + index + 1}" for index in range(8 - selection_top)]
     selected_lines.append("l")
-    assert terminal.writes_containing(_osc52("\n".join(selected_lines)))
+    assert await terminal.wait_for_write(_osc52("\n".join(selected_lines)))
     await tui.stop()
 
 
@@ -942,21 +960,21 @@ async def test_snaps_mouse_selection_to_cjk_emoji_and_combining_grapheme_boundar
     await terminal.send_input("\x1b[<32;4;1M")
     await terminal.send_input("\x1b[<0;4;1m")
     await terminal.wait_for_render(since)
-    assert len(terminal.writes_containing(wide_selection)) == 1
+    assert len(await terminal.wait_for_write(wide_selection)) == 1
 
     since = terminal.frames
     await terminal.send_input("\x1b[<0;5;1M")
     await terminal.send_input("\x1b[<32;2;1M")
     await terminal.send_input("\x1b[<0;2;1m")
     await terminal.wait_for_render(since)
-    assert len(terminal.writes_containing(wide_selection)) == 2
+    assert len(await terminal.wait_for_write(wide_selection, count=2)) == 2
 
     since = terminal.frames
     await terminal.send_input("\x1b[<0;6;1M")
     await terminal.send_input("\x1b[<32;7;1M")
     await terminal.send_input("\x1b[<0;7;1m")
     await terminal.wait_for_render(since)
-    assert terminal.writes_containing(_osc52("éZ"))
+    assert await terminal.wait_for_write(_osc52("éZ"))
 
     await tui.stop()
 

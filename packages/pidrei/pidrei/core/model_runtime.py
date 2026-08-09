@@ -151,6 +151,17 @@ class ModelRuntime:
         self._availability_refresh_seq = 0
         self._availability_error_seq = 0
         self._provider_availability_seq: dict[str, int] = {}
+        # Providers with a credential-driven availability pass in flight, by
+        # count (see `_refresh_provider_availability`). pi supersedes those from
+        # a newer full pass by bumping their seq; that is safe on one loop,
+        # where the full pass can only have started after the credential write
+        # it is racing. Here the two run on different threads, so the full pass
+        # can be carrying pre-credential data and still be the "newer" one by
+        # seq — it would then drop the login's publish and republish the state
+        # from before the login. The full pass leaves these providers alone
+        # instead, and the pass that owns them publishes its own merge.
+        self._provider_availability_inflight: dict[str, int] = {}
+        self._availability_guard = threading.Lock()
         self._availability_error: str | None = None
         # Per-provider serialized credential operations (pi chains promises;
         # each link is an Event marking that operation settled).
@@ -337,11 +348,44 @@ class ModelRuntime:
             return
         auth = dict(checks)
         configured_providers = {provider_id for provider_id, check in checks if check is not None}
+        stored_providers = {entry.provider_id for entry in credentials}
+        all_models = list(self._models.get_models())
+        available_models = list(available)
+        with self._availability_guard:
+            inflight = frozenset(self._provider_availability_inflight)
+        if inflight:
+            # These providers belong to a credential-driven pass that has not
+            # published yet; carry their current state through untouched rather
+            # than overwrite it with this pass's reading (see the note on
+            # `_provider_availability_inflight`).
+            previous = self._snapshot
+            for provider_id in inflight:
+                auth.pop(provider_id, None)
+                configured_providers.discard(provider_id)
+                stored_providers.discard(provider_id)
+                if provider_id in previous.auth:
+                    auth[provider_id] = previous.auth[provider_id]
+                if provider_id in previous.configured_providers:
+                    configured_providers.add(provider_id)
+                if provider_id in previous.stored_providers:
+                    stored_providers.add(provider_id)
+            available_by_id = {
+                (model.provider, model.id): model
+                for model in [
+                    *[model for model in available_models if model.provider not in inflight],
+                    *[model for model in previous.available if model.provider in inflight],
+                ]
+            }
+            available_models = [
+                available_by_id[(model.provider, model.id)]
+                for model in all_models
+                if (model.provider, model.id) in available_by_id
+            ]
         self._snapshot = _Snapshot(
-            all=list(self._models.get_models()),
-            available=list(available),
+            all=all_models,
+            available=available_models,
             configured_providers=configured_providers,
-            stored_providers={entry.provider_id for entry in credentials},
+            stored_providers=stored_providers,
             auth=auth,
         )
         if error_seq == self._availability_error_seq:
@@ -350,8 +394,11 @@ class ModelRuntime:
     async def _queue_availability_refresh(self, cancel: CancelToken | None = None) -> None:
         self._availability_refresh_seq += 1
         seq = self._availability_refresh_seq
-        for provider_id, provider_seq in self._provider_availability_seq.items():
-            self._provider_availability_seq[provider_id] = provider_seq + 1
+        # pi bumps every provider seq here so this pass supersedes any
+        # provider-scoped one still in flight. That invalidation is what
+        # `_run_availability_refresh` now expresses through
+        # `_provider_availability_inflight` instead — bumping the seq would
+        # make the in-flight pass drop its own, newer publish.
         self._availability_error_seq += 1
         error_seq = self._availability_error_seq
         effective_cancel = cancel if cancel is not None else CancelToken()
@@ -372,6 +419,10 @@ class ModelRuntime:
         self._availability_error_seq += 1
         error_seq = self._availability_error_seq
         options = AuthOperationOptions(cancel=cancel)
+        with self._availability_guard:
+            self._provider_availability_inflight[provider_id] = (
+                self._provider_availability_inflight.get(provider_id, 0) + 1
+            )
         try:
             available, auth, credential = await tonio.spawn(
                 self._models.get_available(provider_id, options),
@@ -424,6 +475,13 @@ class ModelRuntime:
             ):
                 self._availability_error = str(unwrapped)
             raise unwrapped from error
+        finally:
+            with self._availability_guard:
+                remaining = self._provider_availability_inflight.get(provider_id, 0) - 1
+                if remaining > 0:
+                    self._provider_availability_inflight[provider_id] = remaining
+                else:
+                    self._provider_availability_inflight.pop(provider_id, None)
 
     # -- reads -----------------------------------------------------------------
 

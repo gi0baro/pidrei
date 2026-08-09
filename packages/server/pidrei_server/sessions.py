@@ -5,8 +5,17 @@ sync prologues: `_terminate` flips `terminal` and `_maybe_dispose` claims
 `disposing` at call time, with the awaited remainder driven on the runtime so
 it completes even when voided (`scheduleMaybeDispose`). Everything awaited
 directly at its call site stays a plain coroutine.
+
+Being synchronous is not the same as being atomic. pi's prologues run to
+completion before any other task observes them because there is one event
+loop; here two tasks reach the same prologue on different threads, read the
+same "not claimed yet" state and both proceed. `_lifecycle_guard` covers every
+check-and-claim on a `_LiveSession` — the terminal flip and the three places
+that take ownership of `disposing`. CI caught the missing one as a runtime
+disposed twice after a terminal error.
 """
 
+import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -64,6 +73,7 @@ class LiveSessionManager:
         self._options = options
         self._live_sessions: dict[str, _LiveSession] = {}
         self._opening_sessions: dict[str, Deferred] = {}
+        self._lifecycle_guard = threading.Lock()
 
     async def execute_command(self, connection: ConnectionState, command: Command) -> CommandResult:
         name = command["command"]
@@ -170,11 +180,25 @@ class LiveSessionManager:
         self._live_sessions.clear()
 
         async def _close_one(live: _LiveSession) -> None:
-            if live.disposing is not None:
-                await live.disposing
+            # Same check-and-claim as `_maybe_dispose`, and it has to publish
+            # its claim for the same reason: a dispose already in flight there
+            # must be awaited, not repeated.
+            with self._lifecycle_guard:
+                existing = live.disposing
+                claimed = Deferred() if existing is None else None
+                if claimed is not None:
+                    live.disposing = claimed
+            if claimed is None:
+                assert existing is not None
+                await existing
                 return
             live.unsubscribe()
-            await live.runtime.dispose()
+            try:
+                await live.runtime.dispose()
+            except BaseException as error:
+                claimed.reject(error)
+                raise
+            claimed.resolve(None)
 
         await gather([_close_one(live) for live in sessions])
 
@@ -264,9 +288,10 @@ class LiveSessionManager:
         self._schedule_maybe_dispose(live)
 
     def _terminate(self, live: _LiveSession, error: PiServerError) -> Awaitable[None]:
-        if live.terminal:
-            return resolved(None)
-        live.terminal = True
+        with self._lifecycle_guard:
+            if live.terminal:
+                return resolved(None)
+            live.terminal = True
         self._options.report_error(error)
         live.unsubscribe()
         connections = list(live.connections)
@@ -318,29 +343,40 @@ class LiveSessionManager:
         self._watch(self._maybe_dispose(live))
 
     def _maybe_dispose(self, live: _LiveSession) -> Awaitable[None]:
-        if (
-            self._options.is_closing()
-            or not live.ready
-            or live.disposing is not None
-            or len(live.connections) > 0
-            or live.operation_count > 0
-            or (not live.terminal and live.runtime.get_phase() != "idle")
-        ):
-            return live.disposing if live.disposing is not None else resolved(None)
+        with self._lifecycle_guard:
+            if (
+                self._options.is_closing()
+                or not live.ready
+                or live.disposing is not None
+                or len(live.connections) > 0
+                or live.operation_count > 0
+                or (not live.terminal and live.runtime.get_phase() != "idle")
+            ):
+                return live.disposing if live.disposing is not None else resolved(None)
+            # Claim before releasing the guard, so a concurrent caller sees the
+            # claim rather than an unclaimed session. The claim is a bare
+            # Deferred so `unsubscribe()` and the runtime's own `dispose()`
+            # — both service-supplied — never run under the lock.
+            claimed = Deferred()
+            live.disposing = claimed
         live.unsubscribe()
 
         async def _dispose() -> None:
             try:
-                await live.runtime.dispose()
-            finally:
-                if self._live_sessions.get(live.id) is live:
-                    del self._live_sessions[live.id]
+                try:
+                    await live.runtime.dispose()
+                finally:
+                    if self._live_sessions.get(live.id) is live:
+                        del self._live_sessions[live.id]
+            except BaseException as error:
+                claimed.reject(error)
+                return
+            claimed.resolve(None)
 
-        disposing = driven(_dispose())
-        live.disposing = disposing
+        driven(_dispose())
 
         async def _finish() -> None:
-            await disposing
+            await claimed
             if not self._options.is_closing():
                 self._options.broadcast_server_snapshot()
 

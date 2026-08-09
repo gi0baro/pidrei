@@ -7,6 +7,7 @@ appended to disk before it lands in the in-memory state.
 """
 
 import copy
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -78,6 +79,7 @@ class JsonlSessionStorage:
         self._metadata = copy.deepcopy(metadata)
         self._state = SessionState()
         self._tail: tonio.Event | None = None
+        self._tail_guard = threading.Lock()
 
     @staticmethod
     async def create(fs: JsonlSessionRepoFileSystem, path: str, header: JsonlV4Header) -> JsonlSessionStorage:
@@ -237,11 +239,15 @@ class JsonlSessionStorage:
         return copy.deepcopy(self._state.get_stats())
 
     async def _enqueue[T](self, operation: Callable[[], Awaitable[T]]) -> T:
-        # FIFO chain: the reservation happens synchronously (no await between
-        # reading and replacing the tail), so operations commit in call order
-        # and a failed predecessor never blocks or fails its successors.
-        previous, mine = self._tail, tonio.Event()
-        self._tail = mine
+        # FIFO chain: operations commit in call order and a failed predecessor
+        # never blocks or fails its successors. The reservation is guarded
+        # because "no await between reading and replacing the tail" is only
+        # atomic on a single-threaded loop — tonio runs tasks on real threads,
+        # where two callers can read the same tail and then run concurrently.
+        # Same shape as `with_file_mutation_queue`'s `queues_guard`.
+        with self._tail_guard:
+            previous, mine = self._tail, tonio.Event()
+            self._tail = mine
         try:
             if previous is not None:
                 await previous.wait()

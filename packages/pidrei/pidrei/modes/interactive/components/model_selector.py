@@ -245,7 +245,10 @@ class ModelSelectorComponent(Container):
         self._update_list()
 
     def _update_list(self) -> None:
-        self._list_container.clear()
+        # Built into a local list and published in one step: `_refresh_models`
+        # runs detached, so a clear-then-repopulate would let a concurrent
+        # render see the list container empty (see `Container.set_children`).
+        rows: list = []
 
         max_visible = 10
         start_index = max(
@@ -268,27 +271,27 @@ class ModelSelectorComponent(Container):
             else:
                 line = f"  {item['id']} {provider_badge}{checkmark}"
 
-            self._list_container.add_child(Text(line, 0, 0))
+            rows.append(Text(line, 0, 0))
 
         # Add scroll indicator if needed
         if start_index > 0 or end_index < len(self._filtered_models):
             scroll_info = theme.fg("muted", f"  ({self._selected_index + 1}/{len(self._filtered_models)})")
-            self._list_container.add_child(Text(scroll_info, 0, 0))
+            rows.append(Text(scroll_info, 0, 0))
 
         # Show error message or "no results" if empty
         if self._error_message:
             # Show error in red
             for line in self._error_message.split("\n"):
-                self._list_container.add_child(Text(theme.fg("error", line), 0, 0))
+                rows.append(Text(theme.fg("error", line), 0, 0))
         elif not self._filtered_models:
-            self._list_container.add_child(Text(theme.fg("muted", "  No matching models"), 0, 0))
+            rows.append(Text(theme.fg("muted", "  No matching models"), 0, 0))
         else:
             selected = self._filtered_models[self._selected_index]
-            self._list_container.add_child(Spacer(1))
-            self._list_container.add_child(Text(theme.fg("muted", f"  Model Name: {selected['model'].name}"), 0, 0))
+            rows.append(Spacer(1))
+            rows.append(Text(theme.fg("muted", f"  Model Name: {selected['model'].name}"), 0, 0))
         if self._refresh_status_message:
-            self._list_container.add_child(Spacer(1))
-            self._list_container.add_child(
+            rows.append(Spacer(1))
+            rows.append(
                 Text(
                     theme.fg(
                         "success" if self._refresh_status_success else "muted",
@@ -298,6 +301,8 @@ class ModelSelectorComponent(Container):
                     0,
                 )
             )
+
+        self._list_container.set_children(rows)
 
     async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()

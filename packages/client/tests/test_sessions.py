@@ -4,7 +4,7 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_client import AcquireSessionOptions, PiSessionDetachedError, PiSessionOwnershipError
-from tests.support import MemoryByteServer, connect_client, flush, session_snapshot
+from tests.support import MemoryByteServer, connect_client, flush, session_snapshot, wait_for
 
 
 def _auto_respond(server: MemoryByteServer, session_id: str | None = None) -> None:
@@ -221,9 +221,11 @@ async def test_serializes_reacquisition_behind_final_lease_detachment():
         }
     )
     await detaching
-    await flush()
+    # The reacquisition is released by the detach response, on its own task —
+    # wait for the request rather than assume a fixed number of turns settles
+    # it (this assertion is what failed on a loaded CI runner).
+    assert await wait_for(lambda: requests[-1]["command"] == "attach"), "Missing second attach request"
     second_attach_request = requests[-1]
-    assert second_attach_request["command"] == "attach", "Missing second attach request"
     server.send(
         {
             "type": "response",

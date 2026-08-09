@@ -201,7 +201,14 @@ async def test_does_not_restore_a_stale_connection_when_a_snapshot_listener_reco
         connection[0] += 1
         return (first if index == 0 else second).connect(handlers)
 
-    client = PiClient(PiClientOptions(transport_factory=transport_factory))
+    # Snapshot listeners run inside the handshake and `ClientState._notify`
+    # swallows whatever they raise, so without this hook a listener that failed
+    # partway is indistinguishable from one that never ran — both leave
+    # `reconnect[0]` None while `connect()` still rejects. This test failed
+    # exactly that way on a CI runner, with nothing to go on; capture the error
+    # so a repeat says which of the two happened.
+    listener_errors: list[Exception] = []
+    client = PiClient(PiClientOptions(transport_factory=transport_factory, on_listener_error=listener_errors.append))
     reconnect = [None]
     reconnect_requested = [False]
 
@@ -216,6 +223,8 @@ async def test_does_not_restore_a_stale_connection_when_a_snapshot_listener_reco
 
     with pytest.raises(PiDisconnectedError):
         await client.connect()
+    assert listener_errors == [], f"the snapshot listener raised: {listener_errors}"
+    assert reconnect_requested[0] is True, "the snapshot listener never ran"
     assert reconnect[0] is not None
     snapshot = await reconnect[0]
     assert snapshot["revision"] == 2

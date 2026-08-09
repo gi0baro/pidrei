@@ -96,6 +96,9 @@ and folds in [Pi 0.84.0](https://github.com/earendil-works/pi/releases/tag/v0.84
 - The fullscreen mouse wheel steps one line instead of three.
 - `ModelsStore` reads, writes and deletions accept cancellation, and catalog
   orchestration binds those waits to the provider refresh token.
+- Runtime dependencies updated: tonio 0.9.6 (cancelling a task that is
+  waiting to acquire a lock or semaphore no longer strands the primitive, and
+  two waker-cleanup fixes), httpunk 0.1.3 and punkreq 0.1.2.
 
 ### Fixed
 
@@ -148,6 +151,16 @@ and folds in [Pi 0.84.0](https://github.com/earendil-works/pi/releases/tag/v0.84
   catalog results no longer publish after a newer pass; `/model` reports
   every catalog that failed; `/model <name>` and `/scoped-models` answer from
   the cache instead of waiting for a refresh.
+- A provider stays authenticated right after logging into it: a background
+  availability refresh running concurrently with the login no longer discards
+  the login's result and republishes the state from before the credential
+  existed.
+- Concurrent writes to the same session no longer collide on the next entry
+  sequence, which could abort a write with a non-consecutive-sequence error.
+- A remote session runtime is disposed once when it reports a terminal error,
+  rather than twice when the disconnect and the termination race.
+- The model and scoped-model selectors no longer flicker their list empty when
+  a background catalog refresh repopulates it mid-frame.
 - Fullscreen shutdown no longer leaks terminal capability-query replies into
   the parent shell prompt, `Ctrl+X` copy confirmations show the transient
   `Copied!` marker instead of a transcript line, Kitty image previews stop

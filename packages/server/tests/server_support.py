@@ -15,9 +15,14 @@ from pidrei_server.transports.unix import UnixServerOptions, create_unix_server
 
 
 async def flush(turns: int = 4) -> None:
-    """Let spawned tasks progress (stand-in for JS microtask turns)."""
+    """Let spawned tasks progress (stand-in for JS microtask turns).
+
+    A small positive sleep, not `sleep(0)` — see the note on the client
+    package's copy of this helper: a zero sleep is not a guaranteed
+    reschedule in tonio.
+    """
     for _ in range(turns):
-        await tonio.sleep(0)
+        await tonio.sleep(0.005)
 
 
 class Harness:

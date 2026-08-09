@@ -1,6 +1,7 @@
 """In-memory session backend (port of pi `session/memory.ts`)."""
 
 import copy
+import threading
 import time
 from dataclasses import replace
 from typing import Any
@@ -32,13 +33,28 @@ def _now_ms() -> int:
 
 
 class InMemorySessionStorage:
+    """In-memory backend.
+
+    pi's version needs no serialization: every mutating method there runs to
+    completion without yielding, so reading `next_sequence` and applying the
+    mutation is atomic by construction. tonio runs tasks on real threads, so
+    that reasoning does not carry over — two concurrent appends can read the
+    same next sequence and the second one then fails the consecutive-seq check.
+    `_guard` restores the atomicity the sequencing assumes. It is a plain
+    `threading.Lock` rather than `tonio.Lock` because every critical section
+    below is synchronous: there is nothing to await while holding it.
+    """
+
     def __init__(self, metadata: SessionMetadata):
         self._metadata = copy.deepcopy(metadata)
         self._state = SessionState()
+        self._guard = threading.Lock()
 
     def fork(self, metadata: SessionMetadata, options: ForkOptions) -> InMemorySessionStorage:
         storage = InMemorySessionStorage(metadata)
-        for mutation in self._state.create_fork_mutations(options):
+        with self._guard:
+            mutations = self._state.create_fork_mutations(options)
+        for mutation in mutations:
             storage._state.apply_mutation(mutation)
         return storage
 
@@ -49,35 +65,39 @@ class InMemorySessionStorage:
         return self._state.get_lanes()
 
     async def create_lane(self, lane: str, at: str | None) -> None:
-        self._state.validate_new_lane(lane)
-        self._state.validate_target(at)
-        self._state.apply_mutation(LaneMutation(seq=self._state.next_sequence, lane=lane, leaf_id=at))
+        with self._guard:
+            self._state.validate_new_lane(lane)
+            self._state.validate_target(at)
+            self._state.apply_mutation(LaneMutation(seq=self._state.next_sequence, lane=lane, leaf_id=at))
 
     async def move_lane(self, lane: str, to: str | None) -> None:
-        self._state.require_lane(lane)
-        self._state.validate_target(to)
-        self._state.apply_mutation(LaneMutation(seq=self._state.next_sequence, lane=lane, leaf_id=to))
+        with self._guard:
+            self._state.require_lane(lane)
+            self._state.validate_target(to)
+            self._state.apply_mutation(LaneMutation(seq=self._state.next_sequence, lane=lane, leaf_id=to))
 
     async def append_entry[TEntry: Entry](self, new_entry: TEntry, lane: str) -> TEntry:
-        parent_id = self._state.require_lane(lane)
-        self._state.validate_unused_id(new_entry.id)
-        entry = replace(
-            copy.deepcopy(new_entry), parent_id=parent_id, seq=self._state.next_sequence, timestamp=_now_ms()
-        )
-        self._state.apply_mutation(EntryMutation(lane=lane, entry=entry))
-        return copy.deepcopy(entry)
+        with self._guard:
+            parent_id = self._state.require_lane(lane)
+            self._state.validate_unused_id(new_entry.id)
+            entry = replace(
+                copy.deepcopy(new_entry), parent_id=parent_id, seq=self._state.next_sequence, timestamp=_now_ms()
+            )
+            self._state.apply_mutation(EntryMutation(lane=lane, entry=entry))
+            return copy.deepcopy(entry)
 
     async def append_record[TRecord: LaneRecord](self, new_record: TRecord) -> TRecord:
-        self._state.require_lane(new_record.lane)
-        self._state.validate_unused_id(new_record.id)
-        open_operations = self._state.find_open_operations(new_record.lane, limit=1)
-        if new_record.type == "operation_started" and open_operations:
-            raise SessionError(
-                "storage", f"Lane {new_record.lane} already has an open operation {open_operations[0].id}"
-            )
-        record = replace(copy.deepcopy(new_record), seq=self._state.next_sequence, timestamp=_now_ms())
-        self._state.apply_mutation(RecordMutation(record=record))
-        return copy.deepcopy(record)
+        with self._guard:
+            self._state.require_lane(new_record.lane)
+            self._state.validate_unused_id(new_record.id)
+            open_operations = self._state.find_open_operations(new_record.lane, limit=1)
+            if new_record.type == "operation_started" and open_operations:
+                raise SessionError(
+                    "storage", f"Lane {new_record.lane} already has an open operation {open_operations[0].id}"
+                )
+            record = replace(copy.deepcopy(new_record), seq=self._state.next_sequence, timestamp=_now_ms())
+            self._state.apply_mutation(RecordMutation(record=record))
+            return copy.deepcopy(record)
 
     async def get_entry(self, id: str) -> Entry | None:
         entry = self._state.get_entry(id)
@@ -102,14 +122,16 @@ class InMemorySessionStorage:
         return self._state.get_name()
 
     async def set_name(self, name: str) -> None:
-        self._state.apply_mutation(NameFactMutation(seq=self._state.next_sequence, name=name))
+        with self._guard:
+            self._state.apply_mutation(NameFactMutation(seq=self._state.next_sequence, name=name))
 
     async def get_label(self, id: str) -> str | None:
         return self._state.get_label(id)
 
     async def set_label(self, id: str, label: str | None) -> None:
-        self._state.validate_target(id)
-        self._state.apply_mutation(LabelFactMutation(seq=self._state.next_sequence, target_id=id, label=label))
+        with self._guard:
+            self._state.validate_target(id)
+            self._state.apply_mutation(LabelFactMutation(seq=self._state.next_sequence, target_id=id, label=label))
 
     async def get_stats(self) -> SessionStats:
         return copy.deepcopy(self._state.get_stats())

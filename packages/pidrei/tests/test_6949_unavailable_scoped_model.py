@@ -86,6 +86,19 @@ def create_interactive_context(*, all_models, enabled_model_ids, scoped_models=N
 
 
 async def show_models_selector(context) -> None:
+    """Open the selector; the assertions below hold before *and* after refresh.
+
+    `_show_models_selector` detaches `refresh_catalogs()` with
+    `spawn.without_tracking`, so on a threaded runtime it can be mutating the
+    selector while the test renders it. Deliberately no wait here: an
+    unavailable row is present from construction and survives the refresh's
+    `update_models`, so both states satisfy these tests. What used to make the
+    render unsafe was `_update_list` clearing the list container before
+    repopulating it — a render landing in that window saw *no* rows, which is
+    how `test_opens_when_only_a_session_scoped_model_is_unavailable` failed on
+    the macOS CI runners. That rebuild now publishes atomically, so waiting for
+    the refresh buys nothing and only adds a way to time out.
+    """
     InteractiveMode._show_models_selector(context)
 
 

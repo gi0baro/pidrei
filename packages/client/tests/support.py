@@ -26,9 +26,33 @@ from pidrei_protocol import (
 
 
 async def flush(turns: int = 4) -> None:
-    """Let spawned continuations settle (JS `await Promise.resolve()` turns)."""
+    """Let spawned continuations settle (JS `await Promise.resolve()` turns).
+
+    The sleep is a small *positive* interval, not `sleep(0)`: a zero sleep is
+    not a guaranteed reschedule in tonio, so on a loaded runner the
+    continuation this is meant to let through may not have run at all (that is
+    how `test_serializes_reacquisition_behind_final_lease_detachment` failed on
+    CI while passing everywhere else). Prefer waiting on the condition itself
+    where a test can — `flush` only fits the cases where "nothing further
+    should happen" is the thing being asserted.
+    """
     for _ in range(turns):
-        await tonio.sleep(0)
+        await tonio.sleep(0.005)
+
+
+async def wait_for(condition: Callable[[], bool], timeout: float = 2.0) -> bool:
+    """Poll until `condition` holds, bounded so a failure is an assertion.
+
+    The positive counterpart to `flush`: use this whenever a test needs
+    something to *have happened*, so the wait scales with the machine instead
+    of assuming a fixed number of scheduler turns.
+    """
+    deadline = tonio.time.time() + timeout
+    while not condition():
+        if tonio.time.time() >= deadline:
+            return False
+        await tonio.sleep(0.005)
+    return True
 
 
 class _MemoryTransport:

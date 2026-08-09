@@ -8,6 +8,7 @@ argv, and an empty clipboard reads as None rather than falling through.
 
 import contextlib
 import os
+import sys
 
 import pytest
 
@@ -43,6 +44,14 @@ def _wayland_session(output: str | None):
                 os.environ[name] = value
 
 
+# pi fakes `process.platform`; `sys.platform` is process-global and these tests
+# run on a threaded runtime, so faking it would leak across tasks. `read_clipboard_text`
+# checks darwin before Wayland, so on macOS the branch under test is unreachable
+# and the reader really does run `pbpaste` — nothing here is worth asserting there.
+NON_DARWIN_ONLY = pytest.mark.skipif(sys.platform == "darwin", reason="the Wayland reader is unreachable on macOS")
+
+
+@NON_DARWIN_ONLY
 @pytest.mark.tonio
 async def test_reads_the_wayland_clipboard_as_plain_text():
     with _wayland_session("Wayland text") as calls:
@@ -51,6 +60,7 @@ async def test_reads_the_wayland_clipboard_as_plain_text():
     assert calls == [["wl-paste", "--no-newline", "--type", "text"]]
 
 
+@NON_DARWIN_ONLY
 @pytest.mark.tonio
 async def test_reads_an_empty_wayland_clipboard_as_none():
     with _wayland_session(""):
