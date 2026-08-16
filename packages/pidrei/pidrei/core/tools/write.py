@@ -11,6 +11,7 @@ from pidrei_tui import Container, Text
 
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.theme import get_language_from_path, highlight_code
+from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .file_mutation_queue import resolve_mutation_queue_key, with_file_mutation_queue
 from .path_utils import resolve_to_cwd
@@ -260,6 +261,7 @@ def create_write_tool_definition(cwd: str, *, operations: Any = None) -> ToolDef
         prompt_snippet=WRITE_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=list(WRITE_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=WRITE_SCHEMA,
+        constrained_sampling=get_experimental_tool_sampling(),
         execute=execute,
         render_call=render_call,
         render_result=render_result,

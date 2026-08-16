@@ -28,8 +28,9 @@ class IdGenerator(Protocol):
 
 # --- entries --------------------------------------------------------------------
 # Base fields: `type` tag, `id`, `seq`, `parent_id`, Unix-millisecond `timestamp`.
-# `seq`/`parent_id`/`timestamp` are storage-assigned; their defaults mark a
-# provisioned (not yet appended) value.
+# `seq` (shared sequence; read-side), `parent_id` (the appending lane's leaf) and
+# `timestamp` (Unix ms) are storage-assigned; their defaults mark a provisioned
+# (not yet appended) value.
 
 
 @dataclass(slots=True, kw_only=True)
@@ -312,15 +313,19 @@ class EntryCursor:
 @dataclass(slots=True, kw_only=True)
 class EntryQuery:
     type: str | None = None
-    custom_type: str | None = None
-    order: EntryOrder | None = None
+    custom_type: str | None = None  # for type "custom"
+    order: EntryOrder | None = None  # default newestFirst
     limit: int | None = None
     cursor: EntryCursor | None = None
 
 
 @dataclass(slots=True, kw_only=True)
 class BranchQuery(EntryQuery):
-    """EntryQuery plus pi's `BranchBounds`; `start` defaults to the lane leaf."""
+    """EntryQuery plus pi's `BranchBounds`: bounds of a branch scan.
+
+    Default: the whole path, leaf to root (`start` defaults to the view's lane
+    leaf; the scan ends after the first `stop_at_type` match, inclusive).
+    """
 
     start: str | None = None
     stop_at_type: str | None = None
@@ -329,13 +334,21 @@ class BranchQuery(EntryQuery):
 
 @dataclass(slots=True, kw_only=True)
 class RecordQuery:
+    # Exact lane match. Omit to query every lane.
     lane: str | None = None
+    # Exact record discriminant match. Omit to query every record type.
     type: str | None = None
+    # Operation identity. Matches OperationStartedRecord.id and the run_id
+    # property of operation-owned records. Records without an operation
+    # identity do not match.
     run_id: str | None = None
-    # Valid only with type "operation_started".
+    # Exact operation intent kind. Valid only with type "operation_started".
     operation_kind: OperationKind | None = None
+    # Exclusive chronological lower bound: seq > after_seq, regardless of order.
     after_seq: int | None = None
+    # Sequence order. Default: "newestFirst".
     order: EntryOrder | None = None
+    # Positive maximum number of matching records.
     limit: int | None = None
 
 
@@ -389,7 +402,7 @@ class LaneLogItem:
 @dataclass(slots=True, kw_only=True)
 class NameFactLogItem:
     seq: int
-    name: str
+    name: str | None
     kind: Literal["fact"] = "fact"
     fact: Literal["name"] = "name"
 
@@ -431,7 +444,9 @@ class SessionStorage(Protocol):
     async def get_entry(self, id: str) -> Entry | None: ...
     async def find_entries(self, query: EntryQuery | None = None) -> list[Entry]: ...
     async def find_entries_on_branch(self, query: BranchQuery) -> list[Entry]:
-        """`start` is mandatory here; defaulting to a lane's leaf is view sugar."""
+        """`start` is mandatory here (as opposed to SessionTree's find_entries_on_branch);
+        defaulting to a lane's leaf is view sugar.
+        """
         ...
 
     async def find_records(self, query: RecordQuery | None = None) -> list[LaneRecord]: ...
@@ -447,7 +462,7 @@ class SessionStorage(Protocol):
 
     # Global facts
     async def get_name(self) -> str | None: ...
-    async def set_name(self, name: str) -> None: ...
+    async def set_name(self, name: str | None) -> None: ...
     async def get_label(self, id: str) -> str | None: ...
     async def set_label(self, id: str, label: str | None) -> None: ...
     async def get_stats(self) -> SessionStats: ...
@@ -457,14 +472,24 @@ class SessionTree(Protocol):
     async def get_leaf_id(self) -> str | None: ...
     async def get_entry(self, id: str) -> Entry | None: ...
     async def get_stats(self) -> SessionStats: ...
+
+    # Global facts. Latest wins; not branch-scoped. "set", not "append":
+    # append vocabulary is reserved for tree writes.
     async def get_name(self) -> str | None: ...
-    async def set_name(self, name: str) -> None: ...
+    async def set_name(self, name: str | None) -> None: ...
     async def get_label(self, target_id: str) -> str | None: ...
     async def set_label(self, target_id: str, label: str | None) -> None: ...
+
+    # Session-wide, all branches, sequence order.
     async def find_entries(self, query: EntryQuery | None = None) -> list[Entry]: ...
     async def find_entry(self, query: EntryQuery | None = None) -> Entry | None: ...
+
+    # Branch-scoped: the path from start toward root.
     async def find_entries_on_branch(self, query: BranchQuery | None = None) -> list[Entry]: ...
     async def find_entry_on_branch(self, query: BranchQuery | None = None) -> Entry | None: ...
+
+    # Writes. Resolve on durable acceptance; the returned id is the entry's
+    # id (provisioned when the write defers).
     async def append_message(self, message: Any) -> str: ...
     async def append_custom_entry(self, custom_type: str, data: Any = None) -> str: ...
 

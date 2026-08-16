@@ -913,6 +913,14 @@ class SettingsManager:
         self._mark_modified("terminal", "showTerminalProgress")
         self._save()
 
+    def get_fullscreen_exit_output(self) -> str:
+        return "resume-hint" if self._settings.get("fullscreenExitOutput") == "resume-hint" else "transcript"
+
+    def set_fullscreen_exit_output(self, output: str) -> None:
+        self._global_settings["fullscreenExitOutput"] = output
+        self._mark_modified("fullscreenExitOutput")
+        self._save()
+
     def get_fullscreen_scrollbar(self) -> str:
         mode = self._settings.get("fullscreenScrollbar")
         return mode if mode in ("always", "hidden") else "auto"
@@ -946,6 +954,14 @@ class SettingsManager:
 
     def get_enabled_models(self) -> list[str] | None:
         return self._settings.get("enabledModels")
+
+    def get_default_tools(self) -> list[str] | None:
+        """Initial built-in tool selection (settings key `defaultTools`).
+
+        pi: `tools ? [...tools] : undefined` — an empty array is truthy in JS,
+        so `[]` survives as an (empty) explicit selection."""
+        tools = self._settings.get("defaultTools")
+        return None if tools is None else list(tools)
 
     def set_enabled_models(self, patterns: list[str] | None) -> None:
         self._global_settings["enabledModels"] = patterns

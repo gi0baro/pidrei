@@ -26,6 +26,7 @@ from pidrei_ai.api.constrained_sampling import (
     append_grammar_tool_input_json_delta,
     create_grammar_tool_input_properties,
     get_grammar_tool_input,
+    get_json_schema_tool_parameters,
     resolve_grammar_constrained_sampling,
     resolve_json_schema_strict_sampling,
 )
@@ -221,6 +222,7 @@ def detect_compat(model: Model) -> _ResolvedCompat:
     is_cloudflare_ai_gateway = provider == "cloudflare-ai-gateway" or "gateway.ai.cloudflare.com" in base_url
     is_nvidia = provider == "nvidia" or "integrate.api.nvidia.com" in base_url
     is_ant_ling = provider == "ant-ling" or "api.ant-ling.com" in base_url
+    is_deepseek = provider == "deepseek" or "deepseek.com" in base_url.lower()
 
     is_non_standard = (
         is_nvidia
@@ -230,7 +232,7 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         or "api.x.ai" in base_url
         or is_together
         or "chutes.ai" in base_url
-        or "deepseek.com" in base_url
+        or is_deepseek
         or is_zai
         or is_moonshot
         or provider == "opencode"
@@ -242,6 +244,7 @@ def detect_compat(model: Model) -> _ResolvedCompat:
 
     use_max_tokens = (
         "chutes.ai" in base_url
+        or is_deepseek
         or is_moonshot
         or is_cloudflare_ai_gateway
         or is_together
@@ -251,7 +254,6 @@ def detect_compat(model: Model) -> _ResolvedCompat:
     )
 
     is_grok = provider == "xai" or "api.x.ai" in base_url
-    is_deepseek = provider == "deepseek" or "deepseek.com" in base_url
     is_openrouter_developer_role_model = is_openrouter and (
         model.id.startswith("anthropic/") or model.id.startswith("openai/")
     )
@@ -647,7 +649,7 @@ def convert_tools(tools: list[Tool], compat: _ResolvedCompat) -> list[dict]:
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters,
+                "parameters": get_json_schema_tool_parameters(tool, strict),
             },
         }
         # Only include strict if the provider supports it; some reject unknown fields.

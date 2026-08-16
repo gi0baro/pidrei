@@ -146,6 +146,8 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
     thought_signature: str | None = None  # Google-specific: opaque signature for thought context reuse
+    # OpenAI Responses namespace for calls to dynamically loaded or namespaced tools.
+    namespace: str | None = None
     type: Literal["toolCall"] = "toolCall"
 
 
@@ -242,6 +244,9 @@ class AssistantMessage:
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
+    # Provider indication of whether the model explicitly ended its turn.
+    # Preserved for debugging and does not currently affect agent control flow.
+    end_turn: bool | None = None
     # Present exactly when stop_reason == "deferred": the provider handle to redeem.
     deferred: DeferredHandle | None = None
     role: Literal["assistant"] = "assistant"
@@ -397,6 +402,8 @@ class OpenAIResponsesCompat:
     supports_long_cache_retention: bool | None = None  # default True
     supports_strict_mode: bool | None = None
     supports_openai_grammar_tools: bool | None = None  # default False
+    # Whether the model supports message-anchored `additional_tools` input items. Default: False.
+    supports_additional_tools: bool | None = None
     supports_tool_search: bool | None = None  # default False
     supports_explicit_prompt_cache_mode: bool | None = None  # default False
 

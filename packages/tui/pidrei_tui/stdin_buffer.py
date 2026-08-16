@@ -39,6 +39,8 @@ from ._timers import Timeout
 
 
 ESC = "\x1b"
+DEFAULT_SEQUENCE_TIMEOUT_MS = 50
+DEFAULT_ESCAPE_TIMEOUT_MS = 10
 BRACKETED_PASTE_START = "\x1b[200~"
 BRACKETED_PASTE_END = "\x1b[201~"
 
@@ -229,13 +231,16 @@ class StdinBuffer:
     """Buffers stdin input and emits complete sequences via data listeners.
 
     Handles partial escape sequences that arrive across multiple chunks.
-    ``timeout`` is the maximum time in milliseconds to wait for sequence
-    completion (default 10); after that the buffer is flushed even if
-    incomplete.
+    ``timeout`` is the maximum time in milliseconds to wait for an incomplete
+    sequence such as CSI or mouse (default 50); after that the buffer is
+    flushed even if incomplete. ``escape_timeout`` is the maximum time to wait
+    after a lone ESC before treating it as Escape (default 10); increase for
+    high-latency Alt+key input (SSH).
     """
 
-    def __init__(self, timeout: float = 10) -> None:
-        self._timeout_ms = timeout
+    def __init__(self, timeout: float | None = None, escape_timeout: float | None = None) -> None:
+        self._timeout_ms = timeout if timeout is not None else DEFAULT_SEQUENCE_TIMEOUT_MS
+        self._escape_timeout_ms = escape_timeout if escape_timeout is not None else DEFAULT_ESCAPE_TIMEOUT_MS
         self._lock = threading.RLock()
         self._buffer = ""
         self._timeout: Timeout | None = None
@@ -384,7 +389,8 @@ class StdinBuffer:
             # Same rule as `process`: collected under the lock, delivered after.
             await self._dispatch(emissions)
 
-        timer = Timeout(self._timeout_ms, fire)
+        timeout_ms = self._escape_timeout_ms if self._buffer == ESC else self._timeout_ms
+        timer = Timeout(timeout_ms, fire)
         self._timeout = timer
 
     def _emit_data_sequence(self, sequence: str, out: list[tuple[str, str]]) -> None:

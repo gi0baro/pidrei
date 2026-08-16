@@ -24,6 +24,11 @@ import time
 import tonio.colored as tonio
 
 from ._timers import Interval
+from .alt_screen_search import (
+    AltScreenSearchComponent,
+    find_alt_screen_search_matches,
+    get_alt_screen_search_match_key,
+)
 from .components.alt_screen_flash import AltScreenFlashContainer
 from .components.scroll_view import ScrollView
 from .keybindings import get_keybindings
@@ -95,7 +100,10 @@ class TuiAltScreen(TuiBase):
     ``wheel_scroll_lines`` — logical lines moved per mouse-wheel event;
     ``mouse`` — capture mouse events for viewport scrolling and
     application-owned text selection; ``open_url`` — callback for an OSC 8
-    hyperlink activated with a primary-button click.
+    hyperlink activated with a primary-button click; ``copy_selection`` —
+    async callback copying selected text to the system clipboard, returning
+    ``True`` on success (the caller flashes an error otherwise); when omitted,
+    the selection is copied via an OSC 52 write.
 
     Selection points are ``{"row", "col", "scrollView"?}`` records; mouse
     events are ``{"button", "x", "y", "release"}``; wheel events are
@@ -112,7 +120,10 @@ class TuiAltScreen(TuiBase):
         *,
         wheel_scroll_lines: int | None = None,
         mouse: bool | None = None,
+        search_match_style=None,
+        search_current_match_style=None,
         open_url=None,
+        copy_selection=None,
     ) -> None:
         super().__init__(terminal, show_hardware_cursor, log_directory)
         self._previous_screen: list[str] = []
@@ -144,9 +155,13 @@ class TuiAltScreen(TuiBase):
         self._scrollbar_hover = None
         self._pressed_url: str | None = None
         self._selection_dragged = False
+        self._active_search: dict | None = None
         self._wheel_scroll_lines = max(1, math.floor(wheel_scroll_lines if wheel_scroll_lines is not None else 1))
         self._mouse_enabled = mouse if mouse is not None else True
+        self._search_match_style = search_match_style or (lambda text: f"\x1b[4m{text}\x1b[24m")
+        self._search_current_match_style = search_current_match_style or (lambda text: f"\x1b[1;7m{text}\x1b[22;27m")
         self._open_url = open_url
+        self._copy_selection = copy_selection
         self.add_input_listener(self._handle_viewport_input)
 
     @property
@@ -213,6 +228,7 @@ class TuiAltScreen(TuiBase):
         )
 
     async def _before_terminal_stop(self, _options: dict) -> None:
+        self._close_search()
         self._stop_selection_auto_scroll()
         self._selection_press_active = False
         self._stop_scrollbar_hover()
@@ -349,13 +365,155 @@ class TuiAltScreen(TuiBase):
                 return
             row += direction
 
+    def _open_search(self) -> None:
+        if self._active_search is not None:
+            overlay = self._active_search.get("overlay")
+            if overlay is not None:
+                overlay.focus()
+            return
+        component = AltScreenSearchComponent(self._update_search_query)
+        search: dict = {
+            "component": component,
+            "overlay": None,
+            "query": "",
+            "matches": [],
+            "selectedIndex": -1,
+            "selectedKey": None,
+            "anchorRow": self._get_primary_scroll_view().scroll_top,
+            # "query" | "retain" | "next" | "previous"
+            "selectionMode": "query",
+        }
+        self._active_search = search
+        search["overlay"] = self.show_overlay(
+            component,
+            {"anchor": "top-right", "width": "40%", "minWidth": 24, "margin": 1},
+        )
+
+    def _close_search(self) -> None:
+        search = self._active_search
+        if search is None:
+            return
+        self._active_search = None
+        overlay = search.get("overlay")
+        if overlay is not None:
+            overlay.hide()
+        self.request_render()
+
+    def _update_search_query(self, query: str) -> None:
+        search = self._active_search
+        if search is None or query == search["query"]:
+            return
+        selected = (
+            search["matches"][search["selectedIndex"]]
+            if 0 <= search["selectedIndex"] < len(search["matches"])
+            else None
+        )
+        search["anchorRow"] = (
+            selected.segments[0].row
+            if selected is not None and selected.segments
+            else self._get_primary_scroll_view().scroll_top
+        )
+        search["query"] = query
+        search["selectionMode"] = "query"
+        search["component"].set_result(-1, 0)
+        self.request_render()
+
+    def _navigate_search(self, direction: int) -> None:
+        search = self._active_search
+        if search is None or not search["query"]:
+            return
+        search["selectionMode"] = "previous" if direction < 0 else "next"
+        self.request_render()
+
+    def _refresh_search(self, layout) -> bool:
+        search = self._active_search
+        if search is None:
+            return False
+        scroll_view = (
+            layout.primary_scroll_view if layout.primary_scroll_view is not None else self._implicit_scroll_view
+        )
+        box = get_scroll_view_box(layout, scroll_view)
+        lines = box.scroll_content_lines if box is not None else None
+        if not lines or not search["query"].strip():
+            search["matches"] = []
+            search["selectedIndex"] = -1
+            search["selectedKey"] = None
+            search["selectionMode"] = "retain"
+            search["component"].set_result(-1, 0)
+            return False
+
+        should_reveal_selection = search["selectionMode"] != "retain"
+        matches = find_alt_screen_search_matches(lines, search["query"])
+        exact_index = -1
+        if search["selectedKey"] is not None:
+            exact_index = next(
+                (
+                    index
+                    for index, match in enumerate(matches)
+                    if get_alt_screen_search_match_key(match) == search["selectedKey"]
+                ),
+                -1,
+            )
+        selected_index = -1
+        if matches:
+            if search["selectionMode"] == "query":
+                selected_index = next(
+                    (
+                        index
+                        for index, match in enumerate(matches)
+                        if (match.segments[0].row if match.segments else 0) >= search["anchorRow"]
+                    ),
+                    -1,
+                )
+                selected_index = max(selected_index, 0)
+            elif search["selectionMode"] == "next":
+                base_index = exact_index if exact_index >= 0 else min(search["selectedIndex"], len(matches) - 1)
+                selected_index = 0 if base_index < 0 else (base_index + 1) % len(matches)
+            elif search["selectionMode"] == "previous":
+                base_index = exact_index if exact_index >= 0 else min(search["selectedIndex"], len(matches) - 1)
+                selected_index = len(matches) - 1 if base_index < 0 else (base_index - 1 + len(matches)) % len(matches)
+            else:
+                selected_index = (
+                    exact_index if exact_index >= 0 else min(max(0, search["selectedIndex"]), len(matches) - 1)
+                )
+
+        search["matches"] = matches
+        search["selectedIndex"] = selected_index
+        search["selectedKey"] = (
+            get_alt_screen_search_match_key(matches[selected_index]) if selected_index >= 0 else None
+        )
+        search["selectionMode"] = "retain"
+        search["component"].set_result(selected_index, len(matches))
+        if not should_reveal_selection:
+            return False
+
+        selected = matches[selected_index] if 0 <= selected_index < len(matches) else None
+        first_segment = selected.segments[0] if selected is not None and selected.segments else None
+        last_segment = selected.segments[-1] if selected is not None and selected.segments else None
+        if box is None or first_segment is None or last_segment is None or scroll_view.viewport_height <= 0:
+            return False
+        before = scroll_view.scroll_top
+        visible_bottom = before + scroll_view.viewport_height - 1
+        target = before
+        if first_segment.row < before or last_segment.row > visible_bottom:
+            target = first_segment.row - scroll_view.viewport_height // 3
+        scroll_view.scroll_to(target, {"disableFollow": True})
+        return scroll_view.scroll_top != before
+
     def flash(self, message: str, duration_ms: float | None = None) -> None:
         """Show a transient message in the alternate-screen flash stack."""
         self._flashes.flash(message, duration_ms)
 
+    def _should_defer_viewport_input_to_overlay(self) -> bool:
+        search = self._active_search
+        search_overlay = search.get("overlay") if search is not None else None
+        search_focused = search_overlay is not None and search_overlay.is_focused()
+        return self._is_overlay_focused() and not search_focused
+
     def _handle_viewport_input(self, data: str) -> dict | None:
         if data == FOCUS_OUT:
             had_active_selection = self._selection_press_active
+            had_non_empty_active_selection = had_active_selection and self._get_selection_bounds() is not None
             self._selection_press_active = False
             self._stop_selection_auto_scroll()
             self._stop_scrollbar_hover()
@@ -367,14 +525,17 @@ class TuiAltScreen(TuiBase):
                 self._selection_focus = None
                 self._selection_granularity = "character"
                 self._selection_initial_range = None
+                if had_non_empty_active_selection:
+                    self.request_render()
             self._last_click = None
-            self.request_render()
             return {"consume": True}
         if data == FOCUS_IN:
             return {"consume": True}
 
         wheel_event = self._parse_wheel_event(data)
         if wheel_event:
+            if self._should_defer_viewport_input_to_overlay():
+                return None
             self._route_wheel(wheel_event)
             return {"consume": True}
         mouse_event = self._parse_sgr_mouse_event(data)
@@ -390,6 +551,27 @@ class TuiAltScreen(TuiBase):
 
         keybindings = get_keybindings()
         is_release = is_key_release(data)
+        if keybindings.matches(data, "tui.altScreen.search"):
+            if not is_release:
+                self._open_search()
+            return {"consume": True}
+        active_search = self._active_search
+        search_overlay = active_search.get("overlay") if active_search is not None else None
+        if search_overlay is not None and search_overlay.is_focused():
+            if keybindings.matches(data, "tui.altScreen.searchNext"):
+                if not is_release:
+                    self._navigate_search(1)
+                return {"consume": True}
+            if keybindings.matches(data, "tui.altScreen.searchPrevious"):
+                if not is_release:
+                    self._navigate_search(-1)
+                return {"consume": True}
+            if keybindings.matches(data, "tui.altScreen.searchClose"):
+                if not is_release:
+                    self._close_search()
+                return {"consume": True}
+        if self._should_defer_viewport_input_to_overlay():
+            return None
         if keybindings.matches(data, "tui.altScreen.pageUp"):
             if not is_release:
                 self.scroll_by(-max(1, self._get_primary_scroll_view().viewport_height - PAGE_SCROLL_OVERLAP))
@@ -405,6 +587,14 @@ class TuiAltScreen(TuiBase):
         if keybindings.matches(data, "tui.altScreen.halfPageDown"):
             if not is_release:
                 self.scroll_by(max(1, self._get_primary_scroll_view().viewport_height // 2))
+            return {"consume": True}
+        if keybindings.matches(data, "tui.altScreen.lineUp"):
+            if not is_release:
+                self.scroll_by(-1)
+            return {"consume": True}
+        if keybindings.matches(data, "tui.altScreen.lineDown"):
+            if not is_release:
+                self.scroll_by(1)
             return {"consume": True}
         if keybindings.matches(data, "tui.altScreen.previousPrompt"):
             if not is_release:
@@ -725,7 +915,8 @@ class TuiAltScreen(TuiBase):
         self._selection_drag_pointer = None
 
     def _handle_selection_mouse_event(self, event: dict) -> None:
-        if (event["button"] & 3) != 0:
+        button = event["button"] & 3
+        if button != 0 and not (event["release"] and button == 3):
             return
         anchor_scroll_view = self._selection_anchor.get("scrollView") if self._selection_anchor else None
         point = self._get_selection_point(event, anchor_scroll_view)
@@ -758,7 +949,7 @@ class TuiAltScreen(TuiBase):
                     pass
                 self.request_render()
                 return
-            self._copy_selection_to_clipboard()
+            tonio.spawn.without_tracking(self._copy_selection_to_clipboard())
             self.request_render()
             return
         if (event["button"] & 32) != 0:
@@ -829,7 +1020,7 @@ class TuiAltScreen(TuiBase):
                 end = cell_range[1] if cell_range else min(selection["end"]["col"] + 1, line_width)
         return max(min_column, start), min(max_column, end)
 
-    def _copy_selection_to_clipboard(self) -> None:
+    async def _copy_selection_to_clipboard(self) -> None:
         selection = self._get_selection_bounds()
         if not selection:
             return
@@ -849,9 +1040,92 @@ class TuiAltScreen(TuiBase):
         text = "\n".join(lines)
         if len(text) == 0:
             return
+        # Prefer an injected clipboard implementation (native clipboard +
+        # platform tools with a verified success path) when the host app
+        # provides one. A bare OSC 52 write can show "Copied!" while leaving
+        # the system clipboard untouched (e.g. macOS Terminal.app, tmux
+        # without OSC 52 clipboard passthrough), so only report success when
+        # it actually copies.
+        if self._copy_selection is not None:
+            ok = await self._copy_selection(text)
+            self.flash("Copied!" if ok else "Copy failed")
+            return
         encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        tonio.spawn.without_tracking(self.terminal.write(f"\x1b]52;c;{encoded}\x07"))
+        await self.terminal.write(f"\x1b]52;c;{encoded}\x07")
         self.flash("Copied!")
+
+    def _apply_search_text_highlight(self, text: str, current: bool) -> str:
+        style = self._search_current_match_style if current else self._search_match_style
+        result = ""
+        plain_start = 0
+        index = 0
+        while index < len(text):
+            ansi = extract_ansi_code(text, index)
+            if not ansi:
+                index += 1
+                continue
+            if index > plain_start:
+                result += style(text[plain_start:index])
+            result += ansi["code"]
+            index += ansi["length"]
+            plain_start = index
+        if plain_start < len(text):
+            result += style(text[plain_start:])
+        return result
+
+    def _apply_search_highlights(self, screen: list[str], layout) -> list[str]:
+        search = self._active_search
+        if search is None or search["selectedIndex"] < 0 or not search["matches"]:
+            return screen
+        scroll_view = (
+            layout.primary_scroll_view if layout.primary_scroll_view is not None else self._implicit_scroll_view
+        )
+        box = get_scroll_view_box(layout, scroll_view)
+        if box is None:
+            return screen
+
+        ranges_by_row: dict[int, list[dict]] = {}
+        scrollbar_geometry = get_scrollbar_geometry(box)
+        scrollbar_column = scrollbar_geometry["column"] if scrollbar_geometry is not None else None
+        min_row = max(0, box.rect.y, box.clip.y)
+        max_row = min(len(screen), box.rect.y + box.rect.height, box.clip.y + box.clip.height)
+        min_column = max(0, box.rect.x, box.clip.x)
+        max_column = min(
+            self.terminal.columns,
+            box.rect.x + box.rect.width,
+            box.clip.x + box.clip.width,
+            scrollbar_column if scrollbar_column is not None else math.inf,
+        )
+        for match_index, match in enumerate(search["matches"]):
+            for segment in match.segments:
+                row = box.rect.y + segment.row - scroll_view.scroll_top
+                if row < min_row or row >= max_row:
+                    continue
+                start_col = max(min_column, box.rect.x + segment.start_col)
+                end_col = min(max_column, box.rect.x + segment.end_col)
+                if end_col <= start_col:
+                    continue
+                ranges_by_row.setdefault(row, []).append(
+                    {"startCol": start_col, "endCol": end_col, "current": match_index == search["selectedIndex"]}
+                )
+
+        result = list(screen)
+        for row, ranges in ranges_by_row.items():
+            line = result[row] if row < len(result) else ""
+            if is_image_line(line):
+                continue
+            line_width = visible_width(line)
+            for range_ in sorted(ranges, key=lambda item: -item["startCol"]):
+                start_col = int(min(range_["startCol"], line_width))
+                end_col = int(min(range_["endCol"], line_width))
+                if end_col <= start_col:
+                    continue
+                before = slice_by_column(line, 0, start_col, True)
+                highlighted = slice_by_column(line, start_col, end_col - start_col, True)
+                after = slice_by_column(line, end_col, max(0, line_width - end_col), True)
+                line = f"{before}{self._apply_search_text_highlight(highlighted, range_['current'])}{after}"
+            result[row] = line
+        return result
 
     def _apply_selection_highlight(self, text: str) -> str:
         result = "\x1b[7m"
@@ -948,7 +1222,10 @@ class TuiAltScreen(TuiBase):
         height = max(1, self.terminal.rows)
         root = self._layout_root if self._layout_root is not None else self._implicit_scroll_view
         next_layout = render_layout_frame(root, width, height, self.request_render)
+        if self._refresh_search(next_layout):
+            next_layout = render_layout_frame(root, width, height, self.request_render)
         screen = [OSC133_ZONE_PREFIX.sub("", line) for line in next_layout.lines]
+        screen = self._apply_search_highlights(screen, next_layout)
         screen = self._composite_overlays(screen, width, height)
         if len(screen) > height:
             screen = screen[len(screen) - height :]

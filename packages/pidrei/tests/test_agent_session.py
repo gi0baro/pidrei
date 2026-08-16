@@ -1007,3 +1007,39 @@ class TestAutoCompactionQueue:
         # Should NOT compact: the only usage data is from a kept pre-compaction message
         assert run_calls == []
         session.dispose()
+
+
+@pytest.mark.tonio
+async def test_send_user_message_can_opt_into_prompt_template_expansion(tmp_dir):
+    # Mirrors the 0.84.2 case pi added to its agent-session-prompt suite
+    # (b987ead3); that characterization suite itself is a recorded parity gap.
+    from pidrei.core.prompt_templates import PromptTemplate
+    from pidrei.core.resource_loader import LoadPromptsResult
+    from pidrei.core.source_info import create_synthetic_source_info
+
+    template = PromptTemplate(
+        name="review",
+        description="Review template",
+        content="Review this code: $1",
+        file_path="/virtual/review.md",
+        source_info=create_synthetic_source_info("/virtual/review.md", source="local"),
+    )
+    resource_loader = create_test_resource_loader()
+    resource_loader.get_prompts = lambda: LoadPromptsResult(prompts=[template], diagnostics=[])
+    expanded_prompts: list[str] = []
+
+    async def stream_fn(_model, context, _options=None):
+        stream = AssistantMessageEventStream()
+        user = next((m for m in context.messages if getattr(m, "role", None) == "user"), None)
+        text = "".join(part.text for part in user.content if part.type == "text") if user is not None else ""
+        expanded_prompts.append(text)
+        stream.push(StartEvent(partial=create_assistant_message("")))
+        stream.push(DoneEvent(reason="stop", message=create_assistant_message("ok")))
+        return stream
+
+    session = await create_agent_session(tmp_dir, stream_fn=stream_fn, resource_loader=resource_loader)
+    try:
+        await session.send_user_message("/review src/index.ts", {"expandPromptTemplates": True})
+        assert expanded_prompts == ["Review this code: src/index.ts"]
+    finally:
+        session.dispose()

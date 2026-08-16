@@ -30,6 +30,7 @@ Port deviations (documented once here):
 """
 
 import codecs
+import math
 import os
 import re
 import signal as signal_module
@@ -177,6 +178,28 @@ def _resolve_write_log_path() -> str:
     return env
 
 
+DEFAULT_ESCAPE_TIMEOUT_MS = 10
+DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100
+
+
+def resolve_escape_timeout_ms(env: dict | None = None) -> float:
+    """Resolve how long to wait for the rest of an escape sequence before
+    dispatching a lone ESC as the Escape key. Legacy Alt+key input is ESC plus
+    another byte, so high-latency transports need a longer reassembly window.
+    """
+    if env is None:
+        env = os.environ
+    try:
+        configured = float(env.get("PIDREI_TUI_ESC_TIMEOUT") or "")
+    except ValueError:
+        configured = math.nan
+    if math.isfinite(configured) and configured > 0:
+        return configured
+    if env.get("SSH_CONNECTION") or env.get("SSH_TTY"):
+        return DEFAULT_SSH_ESCAPE_TIMEOUT_MS
+    return DEFAULT_ESCAPE_TIMEOUT_MS
+
+
 class ProcessTerminal:
     """Real terminal over the process stdin/stdout fds."""
 
@@ -243,7 +266,7 @@ class ProcessTerminal:
         raw stdin to handle the case where the response arrives split across
         multiple events.
         """
-        self._stdin_buffer = StdinBuffer(timeout=10)
+        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms())
 
         # Forward individual sequences to the input handler
         async def on_data(sequence: str) -> None:

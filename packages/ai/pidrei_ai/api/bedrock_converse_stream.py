@@ -45,7 +45,7 @@ from pidrei_ai.api.bedrock_runtime import (
     BedrockRuntimeServiceException,
     ConverseStreamCommand,
 )
-from pidrei_ai.api.constrained_sampling import resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.simple_options import (
     adjust_max_tokens_for_thinking,
     build_base_options,
@@ -701,6 +701,14 @@ def _create_required_text_block(text: str) -> dict[str, Any]:
     return _create_non_blank_text_block(text) or {"text": EMPTY_TEXT_PLACEHOLDER}
 
 
+def _sanitize_bedrock_document(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_sanitize_bedrock_document(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_bedrock_document(nested) for key, nested in value.items() if len(key) > 0}
+    return value
+
+
 def _convert_tool_result_content(content: list) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for c in content:
@@ -756,7 +764,15 @@ def convert_messages(
                         continue
                     content_blocks.append(text_block)
                 elif c.type == "toolCall":
-                    content_blocks.append({"toolUse": {"toolUseId": c.id, "name": c.name, "input": c.arguments}})
+                    content_blocks.append(
+                        {
+                            "toolUse": {
+                                "toolUseId": c.id,
+                                "name": c.name,
+                                "input": _sanitize_bedrock_document(c.arguments),
+                            }
+                        }
+                    )
                 elif c.type == "thinking":
                     thinking = sanitize_surrogates(c.thinking)
                     if thinking.strip() == "":
@@ -844,7 +860,7 @@ def convert_tool_config(
                 "toolSpec": {
                     "name": tool.name,
                     "description": tool.description,
-                    "inputSchema": {"json": tool.parameters},
+                    "inputSchema": {"json": get_json_schema_tool_parameters(tool, strict)},
                     **({"strict": True} if strict is True else {}),
                 }
             }

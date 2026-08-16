@@ -56,7 +56,8 @@ class LaneMutation:
 @dataclass(slots=True, kw_only=True)
 class NameFactMutation:
     seq: int
-    name: str
+    # None clears the name (pi: `name: string | undefined`).
+    name: str | None
     kind: Literal["fact"] = "fact"
     fact: Literal["name"] = "name"
 

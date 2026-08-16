@@ -121,7 +121,7 @@ class InMemorySessionStorage:
     async def get_name(self) -> str | None:
         return self._state.get_name()
 
-    async def set_name(self, name: str) -> None:
+    async def set_name(self, name: str | None) -> None:
         with self._guard:
             self._state.apply_mutation(NameFactMutation(seq=self._state.next_sequence, name=name))
 

@@ -128,6 +128,12 @@ async def test_cancels_the_background_refresh_when_the_selector_closes(harnesses
         await tonio.time.sleep(0.005)
         assert opened.refresh_cancel is not None
         await opened.selector.handle_input(ESC)
+        # 7d8c11d3: the shared coordinator aborts the runtime refresh only
+        # after the last waiter detaches (pi switched this to vi.waitFor).
+        waited = 0.0
+        while not opened.refresh_cancel.cancelled and waited < 2.0:
+            await tonio.time.sleep(0.005)
+            waited += 0.005
         assert opened.refresh_cancel.cancelled is True
         assert opened.done_calls == 1
     finally:

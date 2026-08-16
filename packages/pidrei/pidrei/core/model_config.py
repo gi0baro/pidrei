@@ -149,6 +149,7 @@ _OPENAI_RESPONSES_COMPAT = {
         "supportsLongCacheRetention": _BOOLEAN,
         "supportsStrictMode": _BOOLEAN,
         "supportsOpenAIGrammarTools": _BOOLEAN,
+        "supportsAdditionalTools": _BOOLEAN,
         "supportsToolSearch": _BOOLEAN,
     },
 }

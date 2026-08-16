@@ -65,7 +65,7 @@ if _literal_values(ModelThinkingLevel) != _literal_values(ThinkingLevel):
 _assert_exact_fields(TextContent, {"type", "text", "text_signature"})
 _assert_exact_fields(ThinkingContent, {"type", "thinking", "thinking_signature", "redacted"})
 _assert_exact_fields(ImageContent, {"type", "data", "mime_type"})
-_assert_exact_fields(ToolCall, {"type", "id", "name", "arguments", "thought_signature"})
+_assert_exact_fields(ToolCall, {"type", "id", "name", "arguments", "thought_signature", "namespace"})
 _assert_exact_fields(
     AiUsage, {"input", "output", "cache_read", "cache_write", "cache_write_1h", "reasoning", "total_tokens", "cost"}
 )
@@ -110,6 +110,7 @@ _assert_exact_fields(
         "deferred",
         "error_message",
         "raw_stop_reason",
+        "end_turn",
         "timestamp",
     },
 )

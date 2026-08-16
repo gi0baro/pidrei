@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import tonio.colored as tonio
 
-from ..config import CONFIG_DIR_NAME
+from ..config import APP_NAME, CONFIG_DIR_NAME
 from .extensions.runner import emit_project_trust_event
 from .extensions.types import LoadExtensionsResult, ProjectTrustContext
 from .trust_manager import (
@@ -32,7 +32,7 @@ class ResolveProjectTrustedOptions:
 
 def format_project_trust_prompt(cwd: str) -> str:
     return (
-        f"Trust project folder?\n{cwd}\n\nThis allows pidrei to load {CONFIG_DIR_NAME} settings and "
+        f"Trust project folder?\n{cwd}\n\nThis allows {APP_NAME} to load {CONFIG_DIR_NAME} settings and "
         "resources, install missing project packages, and execute project extensions."
     )
 

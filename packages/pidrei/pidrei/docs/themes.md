@@ -45,9 +45,29 @@ readable, but any `colors` entry can be a literal hex value.
 
 The full list of roles is in `theme-schema.json`, shipped next to the built-in
 themes. Point `$schema` at it and an editor will complete and validate as you
-type. Two roles are optional, so older themes keep loading: `thinkingMax` falls
-back to `thinkingXhigh`, and `scrollbarThumb` (the fullscreen scrollbar thumb)
-falls back to `selectedBg`.
+type. Four roles are optional, so older themes keep loading: `thinkingMax`
+falls back to `thinkingXhigh`, `scrollbarThumb` (the fullscreen scrollbar
+thumb) and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText`
+falls back to `text`. Non-current transcript search matches render as
+`searchMatchText` on `searchMatchBg` with an underline; the current match
+reverses that foreground/background pair and uses bold text.
+
+## Initial theme
+
+Start an interactive run with a theme without changing the saved setting:
+
+```bash
+pidrei --use-theme light
+```
+
+To follow terminal appearance, use `lightTheme/darkTheme` syntax:
+
+```bash
+pidrei --use-theme light/dark
+```
+
+The CLI value is the initial theme for that run. Choosing another theme later
+in `/settings` applies it immediately and saves it normally.
 
 ## Automatic light/dark
 

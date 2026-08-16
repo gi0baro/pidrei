@@ -1,14 +1,12 @@
 """Mirror of pi's mistral-reasoning-mode.test.ts.
 
 pi captures the payload by pointing the model at a dead port and reading
-`onPayload` before the request fails. Here the client is stubbed instead — same
-capture point, without depending on a connection refusal.
+`onPayload` before the request fails. Same capture point here, without
+depending on a connection refusal: `on_payload` raises before any transport.
 
-The payload stays camelCase, as pi's does: the snake_case rename happens at the
-client boundary (`to_wire_payload`), which is what the SDK does.
+The payload stays camelCase, as pi's does: the snake_case rename happens at
+the transport boundary (`to_mistral_wire_payload`).
 """
-
-import contextlib
 
 import pytest
 
@@ -21,23 +19,13 @@ from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
 captured: list[dict] = []
 
 
-class _CapturingClient:
-    def __init__(self, _api_key, _server_url=None, env=None):
-        pass
-
-    async def chat_stream(self, payload, *, headers=None, cancel=None, timeout_ms=None):
-        captured.append(payload)
-        raise RuntimeError("payload captured")
+class _PayloadCaptured(Exception):
+    pass
 
 
-@contextlib.contextmanager
-def _stubbed_client():
-    original = mistral.MistralClient
-    mistral.MistralClient = _CapturingClient
-    try:
-        yield
-    finally:
-        mistral.MistralClient = original
+async def _capturing_on_payload(payload, _model):
+    captured.append(payload)
+    raise _PayloadCaptured("payload captured")
 
 
 @pytest.fixture(autouse=True)
@@ -52,8 +40,8 @@ def make_context() -> Context:
 async def capture_payload(model, options: SimpleStreamOptions | None = None) -> dict:
     opts = options or SimpleStreamOptions()
     opts.api_key = "fake-key"
-    with _stubbed_client():
-        await stream_simple_mistral(model, make_context(), opts).result()
+    opts.on_payload = _capturing_on_payload
+    await stream_simple_mistral(model, make_context(), opts).result()
     assert captured, "Expected payload to be captured before request failure"
     return captured[0]
 
@@ -123,11 +111,11 @@ async def test_omits_prompt_cache_key_when_cache_retention_is_disabled():
     assert "promptCacheKey" not in payload
 
 
-# --- pidrei-only: the rename the SDK performs on the way out -------------------
+# --- pidrei-only: the rename the transport performs on the way out -------------
 
 
 def test_the_wire_payload_snake_cases_the_sdks_request_fields():
-    wire = mistral.to_wire_payload(
+    wire = mistral.to_mistral_wire_payload(
         {
             "model": "m",
             "maxTokens": 10,
@@ -151,9 +139,9 @@ def test_the_wire_payload_snake_cases_the_sdks_request_fields():
 
 
 def test_caller_controlled_json_is_never_renamed():
-    # A tool's schema and a tool call's arguments carry arbitrary user keys; a
-    # blanket recursive rename would corrupt them.
-    wire = mistral.to_wire_payload(
+    # A tool's schema and a tool call's arguments carry arbitrary user keys;
+    # the explicit per-structure tables never descend into them.
+    wire = mistral.to_mistral_wire_payload(
         {
             "tools": [
                 {

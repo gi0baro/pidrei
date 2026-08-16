@@ -75,6 +75,45 @@ def test_rejects_invalid_coercions_for_serialized_plain_json_schemas(schema, inp
         validate_tool_arguments(tool, tool_call)
 
 
+def test_treats_null_as_omission_for_optional_non_nullable_properties():
+    tool = Tool(
+        name="echo",
+        description="Echo tool",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "offset": {"type": "number"},
+                "nullable": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "metadata": {"type": "object", "properties": {"enabled": {"type": "boolean"}}},
+            },
+            "required": ["path", "metadata"],
+        },
+    )
+    tool_call = ToolCall(
+        id="tool-1",
+        name="echo",
+        arguments={"path": "file.txt", "offset": None, "nullable": None, "metadata": {"enabled": None}},
+    )
+
+    assert validate_tool_arguments(tool, tool_call) == {"path": "file.txt", "nullable": None, "metadata": {}}
+
+
+def test_preserves_optional_nulls_whose_referenced_schema_is_nullable():
+    tool = Tool(
+        name="echo",
+        description="Echo tool",
+        parameters={
+            "type": "object",
+            "properties": {"value": {"$ref": "#/$defs/value"}},
+            "$defs": {"value": {"anyOf": [{"type": "number"}, {"type": "null"}]}},
+        },
+    )
+    tool_call = ToolCall(id="tool-1", name="echo", arguments={"value": None})
+
+    assert validate_tool_arguments(tool, tool_call) == {"value": None}
+
+
 def test_preserves_a_value_that_already_matches_a_nullable_union_arm():
     tool, tool_call = create_tool_call_with_plain_schema({"anyOf": [{"type": "number"}, {"type": "null"}]}, None)
 

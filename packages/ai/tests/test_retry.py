@@ -41,6 +41,12 @@ class TestProviderRetryClassification:
     def test_matches_bun_fetch_socket_drop_wording(self):
         assert is_retryable_assistant_error(error_message(BUN_FETCH_SOCKET_CLOSED_MESSAGE)) is True
 
+    def test_matches_upstream_request_buffer_exhaustion_wording(self):
+        assert (
+            is_retryable_assistant_error(error_message("Error: exceeded request buffer limit while retrying upstream"))
+            is True
+        )
+
     @pytest.mark.parametrize(
         "text",
         [

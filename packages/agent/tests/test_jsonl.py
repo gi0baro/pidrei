@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.session.jsonl import (
@@ -150,6 +151,56 @@ async def test_exposes_the_complete_metadata_contract():
 
 
 @pytest.mark.tonio
+async def test_rejects_a_malformed_json_header_on_open_and_skips_it_when_listing():
+    root = create_temp_dir()
+    repository = create_repository(root)
+    await repository.create(JsonlSessionCreateOptions(id="valid", cwd=root))
+    session = await repository.create(JsonlSessionCreateOptions(id="malformed-header", cwd=root))
+    metadata = await session.get_metadata()
+    malformed = "not json\n"
+    with open(metadata.path, "w", encoding="utf-8") as file:
+        file.write(malformed)
+
+    with pytest.raises(SessionError) as excinfo:
+        await repository.open(metadata)
+    assert excinfo.value.code == "invalid_entry"
+    assert [listed.id for listed in await repository.list(JsonlSessionListOptions(cwd=root))] == ["valid"]
+    with open(metadata.path, encoding="utf-8") as file:
+        assert file.read() == malformed
+
+
+@pytest.mark.tonio
+async def test_rejects_non_object_header_metadata_on_open_and_skips_it_when_listing():
+    root = create_temp_dir()
+    repository = create_repository(root)
+    await repository.create(JsonlSessionCreateOptions(id="valid", cwd=root))
+    session = await repository.create(JsonlSessionCreateOptions(id="invalid-header-metadata", cwd=root))
+    metadata = await session.get_metadata()
+    malformed = (
+        json.dumps(
+            {
+                "kind": "header",
+                "version": 4,
+                "id": metadata.id,
+                "createdAt": metadata.created_at,
+                "cwd": metadata.cwd,
+                "metadata": "invalid",
+            }
+        )
+        + "\n"
+    )
+    with open(metadata.path, "w", encoding="utf-8") as file:
+        file.write(malformed)
+
+    with pytest.raises(SessionError) as excinfo:
+        await repository.open(metadata)
+    assert excinfo.value.code == "invalid_entry"
+    assert [listed.id for listed in await repository.list(JsonlSessionListOptions(cwd=root))] == ["valid"]
+    with open(metadata.path, encoding="utf-8") as file:
+        assert file.read() == malformed
+
+
+@pytest.mark.tonio
 async def test_rejects_session_ids_that_cannot_be_used_in_coding_agent_filenames():
     root = create_temp_dir()
     repository = create_repository(root)
@@ -172,6 +223,100 @@ async def test_allows_the_same_explicit_session_id_in_different_working_director
     assert (await first.get_metadata()).cwd == first_cwd
     assert (await second.get_metadata()).cwd == second_cwd
     assert [metadata.id for metadata in await repository.list()] == ["shared", "shared"]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("first_kind", "second_kind"),
+    [("create", "create"), ("create", "fork"), ("fork", "fork")],
+)
+async def test_rejects_concurrent_create_and_fork_calls_for_the_same_destination(first_kind, second_kind):
+    # pi freezes Date so both calls target one filename; pidrei's destination
+    # claim is keyed on {cwd, id} and is timestamp-independent, so plain
+    # concurrent calls exercise the same rejection.
+    root = create_temp_dir()
+    repository = create_repository(root)
+    cwd = os.path.join(root, "workspace")
+    source = await repository.create(JsonlSessionCreateOptions(id="source", cwd=cwd))
+    source_metadata = await source.get_metadata()
+
+    async def settled_run(kind: str):
+        try:
+            if kind == "create":
+                return "fulfilled", await repository.create(JsonlSessionCreateOptions(id="same", cwd=cwd))
+            return "fulfilled", await repository.fork(
+                source_metadata, ForkOptions(), JsonlSessionCreateOptions(id="same", cwd=cwd)
+            )
+        except SessionError as error:
+            return "rejected", error
+
+    results = await tonio.spawn(settled_run(first_kind), settled_run(second_kind))
+    successes = [value for status, value in results if status == "fulfilled"]
+    failures = [value for status, value in results if status == "rejected"]
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0].code == "already_exists"
+    listed = await repository.list(JsonlSessionListOptions(cwd=cwd))
+    assert len([metadata for metadata in listed if metadata.id == "same"]) == 1
+
+
+class _FailOnceWriteEnv(LocalExecutionEnv):
+    """Once armed, fails the next write_file call (pi's mockResolvedValueOnce)."""
+
+    def __init__(self, cwd: str):
+        super().__init__(cwd=cwd)
+        self._armed = False
+
+    def arm(self) -> None:
+        self._armed = True
+
+    async def write_file(self, path, content, cancel=None):
+        if self._armed:
+            self._armed = False
+            return err(FileError("unknown", "injected creation failure"))
+        return await super().write_file(path, content, cancel)
+
+
+class _FailOnceRenameEnv(LocalExecutionEnv):
+    """Once armed, fails the next rename_file call (pi's mockResolvedValueOnce)."""
+
+    def __init__(self, cwd: str):
+        super().__init__(cwd=cwd)
+        self._armed = False
+
+    def arm(self) -> None:
+        self._armed = True
+
+    async def rename_file(self, source_path, destination_path, cancel=None):
+        if self._armed:
+            self._armed = False
+            return err(FileError("unknown", "injected fork failure"))
+        return await super().rename_file(source_path, destination_path, cancel)
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("kind", ["create", "fork"])
+async def test_releases_a_destination_reservation_after_a_failed_call(kind):
+    root = create_temp_dir()
+    env = _FailOnceWriteEnv(cwd=root) if kind == "create" else _FailOnceRenameEnv(cwd=root)
+    repository = JsonlSessionRepo(JsonlSessionRepoOptions(fs=env, sessions_root=root))
+    cwd = os.path.join(root, "workspace")
+    source = await repository.create(JsonlSessionCreateOptions(id="source", cwd=cwd))
+    source_metadata = await source.get_metadata()
+    env.arm()
+
+    async def run():
+        if kind == "create":
+            return await repository.create(JsonlSessionCreateOptions(id="retry", cwd=cwd))
+        return await repository.fork(source_metadata, ForkOptions(), JsonlSessionCreateOptions(id="retry", cwd=cwd))
+
+    with pytest.raises(SessionError) as excinfo:
+        await run()
+    assert excinfo.value.code == "storage"
+    assert await run() is not None
+    listed = await repository.list(JsonlSessionListOptions(cwd=cwd))
+    assert len([metadata for metadata in listed if metadata.id == "retry"]) == 1
 
 
 @pytest.mark.tonio
@@ -481,7 +626,9 @@ async def test_rejects_an_imported_entry_that_references_a_missing_parent():
     with pytest.raises(SessionError) as excinfo:
         await repository.open(metadata)
     assert excinfo.value.code == "invalid_entry"
-    assert "references missing parent missing" in excinfo.value.message
+    assert excinfo.value.message == (
+        f"Invalid JSONL v4 session {metadata.path}: line 2 Invalid session mutation: references missing parent missing"
+    )
 
 
 @pytest.mark.tonio
@@ -650,6 +797,20 @@ async def test_rejects_invalid_mutations_during_replay(name, message, mutations)
 
 
 @pytest.mark.tonio
+async def test_rejects_a_complete_invalid_final_mutation_without_modifying_the_file():
+    root = create_temp_dir()
+    metadata = write_raw_session(root, "invalid-final-mutation", [{"kind": "unknown", "seq": 1}])
+    with open(metadata.path, encoding="utf-8") as file:
+        corrupted = file.read()
+
+    with pytest.raises(SessionError) as excinfo:
+        await create_repository(root).open(metadata)
+    assert excinfo.value.code == "invalid_entry"
+    with open(metadata.path, encoding="utf-8") as file:
+        assert file.read() == corrupted
+
+
+@pytest.mark.tonio
 async def test_rejects_a_complete_malformed_interior_mutation_without_modifying_the_file():
     root = create_temp_dir()
     metadata = write_raw_session(
@@ -708,6 +869,30 @@ async def test_preserves_the_session_when_staging_torn_tail_repair_fails():
         original = file.read()
 
     env = _TruncatingWriteEnv(cwd=root)
+    failing_repository = JsonlSessionRepo(JsonlSessionRepoOptions(fs=env, sessions_root=root))
+
+    with pytest.raises(SessionError) as excinfo:
+        await failing_repository.open(metadata)
+    assert excinfo.value.code == "storage"
+    with open(metadata.path, encoding="utf-8") as file:
+        assert file.read() == original
+    assert not os.path.exists(f"{metadata.path}.tmp")
+
+
+@pytest.mark.tonio
+async def test_preserves_the_session_when_torn_tail_repair_cannot_be_published():
+    root = create_temp_dir()
+    repository = create_repository(root)
+    session = await repository.create(JsonlSessionCreateOptions(id="repair-rename-failure", cwd=root))
+    metadata = await session.get_metadata()
+    await session.append_custom_entry("kept")
+    with open(metadata.path, "a", encoding="utf-8") as file:
+        file.write('{"kind":"entry"')
+    with open(metadata.path, encoding="utf-8") as file:
+        original = file.read()
+
+    env = _FailOnceRenameEnv(cwd=root)
+    env.arm()
     failing_repository = JsonlSessionRepo(JsonlSessionRepoOptions(fs=env, sessions_root=root))
 
     with pytest.raises(SessionError) as excinfo:

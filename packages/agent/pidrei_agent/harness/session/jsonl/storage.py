@@ -38,7 +38,7 @@ from ..types import (
     SessionStats,
 )
 from .codec import encode_header, encode_mutation, metadata_from_header, parse_header, parse_mutation
-from .errors import file_result, invalid_file
+from .errors import JsonlDecodeError, file_result, invalid_file
 from .types import JsonlSessionMetadata, JsonlSessionRepoFileSystem, JsonlV4Header
 
 
@@ -94,27 +94,35 @@ class JsonlSessionStorage:
         if physical_lines and physical_lines[-1] == "":
             physical_lines.pop()
         if not physical_lines or not physical_lines[0]:
-            raise invalid_file(path, 1, "is missing a header")
-        header = parse_header(physical_lines[0], path)
+            raise invalid_file(path, 1, JsonlDecodeError("schema", "is missing a header"))
+        header_result = parse_header(physical_lines[0])
+        if not header_result.ok:
+            raise invalid_file(path, 1, header_result.error)
         file_info = file_result(await fs.file_info(path), f"Failed to read session metadata {path}")
-        storage = JsonlSessionStorage(fs, metadata_from_header(header, path, file_info.mtime_ms))
+        storage = JsonlSessionStorage(fs, metadata_from_header(header_result.value, path, file_info.mtime_ms))
         for index in range(1, len(physical_lines)):
             line = physical_lines[index]
+            mutation_result = parse_mutation(line)
+            if not mutation_result.ok:
+                is_torn_tail = index == len(physical_lines) - 1 and mutation_result.error.kind == "syntax"
+                if is_torn_tail:
+                    # Drop the unacknowledged partial append by atomically publishing the valid prefix.
+                    valid_prefix = "\n".join(physical_lines[:index]) + "\n"
+
+                    async def populate(temp_path: str, valid_prefix: str = valid_prefix) -> None:
+                        file_result(
+                            await fs.write_file(temp_path, valid_prefix), f"Failed to stage torn-tail repair {path}"
+                        )
+
+                    await publish_file_atomically(fs, path, populate)
+                    return storage
+                raise invalid_file(path, index + 1, mutation_result.error)
             try:
-                mutation = parse_mutation(line, path, index + 1)
+                storage._apply_mutation(mutation_result.value)
             except SessionError as error:
-                if index != len(physical_lines) - 1 or error.__cause__ is None:
-                    raise
-                valid_prefix = "\n".join(physical_lines[:index]) + "\n"
-
-                async def populate(temp_path: str, valid_prefix: str = valid_prefix) -> None:
-                    file_result(
-                        await fs.write_file(temp_path, valid_prefix), f"Failed to stage torn-tail repair {path}"
-                    )
-
-                await publish_file_atomically(fs, path, populate)
-                return storage
-            storage._apply_mutation(mutation, path, index + 1)
+                if error.code == "invalid_entry":
+                    raise invalid_file(path, index + 1, error) from error
+                raise
         if not content.endswith("\n"):
             file_result(await fs.append_file(path, "\n"), f"Failed to repair unterminated session tail {path}")
         return storage
@@ -215,7 +223,7 @@ class JsonlSessionStorage:
     async def get_name(self) -> str | None:
         return self._state.get_name()
 
-    async def set_name(self, name: str) -> None:
+    async def set_name(self, name: str | None) -> None:
         async def operation() -> None:
             mutation = NameFactMutation(seq=self._state.next_sequence, name=name)
             await self._append_mutation(mutation)
@@ -261,11 +269,5 @@ class JsonlSessionStorage:
             f"Failed to append session {self._metadata.path}",
         )
 
-    def _apply_mutation(self, mutation: SessionMutation, path: str | None = None, line: int | None = None) -> None:
-        path = path if path is not None else self._metadata.path
-        line = line if line is not None else self._state.next_sequence + 1
-
-        def invalid(message: str):
-            raise invalid_file(path, line, message)
-
-        self._state.apply_mutation(mutation, invalid)
+    def _apply_mutation(self, mutation: SessionMutation) -> None:
+        self._state.apply_mutation(mutation)

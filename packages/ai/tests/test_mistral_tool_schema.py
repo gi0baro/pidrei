@@ -10,12 +10,12 @@ reaches the payload with `strict: true` and a schema that serializes cleanly,
 nesting included.
 """
 
-import contextlib
 import json
 
 import pytest
 
 from pidrei_ai.api import mistral_conversations as mistral
+from pidrei_ai.api.constrained_sampling import make_strict_json_schema
 from pidrei_ai.api.mistral_conversations import stream as stream_mistral
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, JsonSchemaConstrainedSampling, Tool, UserMessage
@@ -24,23 +24,9 @@ from pidrei_ai.types import Context, JsonSchemaConstrainedSampling, Tool, UserMe
 captured: list[dict] = []
 
 
-class _CapturingClient:
-    def __init__(self, _api_key, _server_url=None, env=None):
-        pass
-
-    async def chat_stream(self, payload, *, headers=None, cancel=None, timeout_ms=None):
-        captured.append(payload)
-        raise RuntimeError("payload captured")
-
-
-@contextlib.contextmanager
-def _stubbed_client():
-    original = mistral.MistralClient
-    mistral.MistralClient = _CapturingClient
-    try:
-        yield
-    finally:
-        mistral.MistralClient = original
+async def _capturing_on_payload(payload, _model):
+    captured.append(payload)
+    raise RuntimeError("payload captured")
 
 
 @pytest.mark.tonio
@@ -64,15 +50,20 @@ async def test_tool_schemas_reach_the_payload_intact_and_strict():
         ],
     )
 
-    with _stubbed_client():
-        response = await stream_mistral(model, context, mistral.MistralOptions(api_key="fake-key")).result()
+    response = await stream_mistral(
+        model, context, mistral.MistralOptions(api_key="fake-key", on_payload=_capturing_on_payload)
+    ).result()
 
     assert len(captured[0]["tools"]) == 1
     function = captured[0]["tools"][0]["function"]
     assert function["strict"] is True
-    assert function["parameters"] == parameters
+    # Since 0.84.2 (7915cdac) strict tools carry the converted closed-object
+    # schema, not the original; pi's test asserts a defined, symbol-free
+    # payload — here the checks are the strict conversion and that the tool's
+    # own definition stays untouched.
+    assert function["parameters"] == make_strict_json_schema(parameters)
+    assert context.tools[0].parameters == parameters
     # The payload must be JSON-serializable end to end, nesting included.
-    assert (
-        json.loads(json.dumps(mistral.to_wire_payload(captured[0])))["tools"][0]["function"]["parameters"] == parameters
-    )
+    wire = json.loads(json.dumps(mistral.to_mistral_wire_payload(captured[0])))
+    assert wire["tools"][0]["function"]["parameters"] == function["parameters"]
     assert response.stop_reason == "error"

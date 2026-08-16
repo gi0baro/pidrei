@@ -56,3 +56,18 @@ async def test_returns_queued_startup_input_before_installing_a_new_input_callba
     assert await InteractiveMode._get_user_input(context) == "queued prompt"
     assert context._on_input_callback is None
     assert context._pending_user_inputs == []
+
+
+@pytest.mark.tonio
+async def test_restores_a_prompt_submitted_while_managed_tool_setup_is_running():
+    statuses: list[str] = []
+    set_texts: list[str] = []
+    context = SimpleNamespace(
+        editor=SimpleNamespace(set_text=set_texts.append),
+        show_status=statuses.append,
+    )
+
+    InteractiveMode._handle_startup_submit(context, "early prompt")
+
+    assert set_texts == ["early prompt"]
+    assert statuses == ["Startup is still in progress"]

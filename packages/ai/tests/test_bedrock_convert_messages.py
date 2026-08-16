@@ -10,6 +10,7 @@ all `convert_messages` reads.
 
 import contextlib
 from dataclasses import dataclass
+from typing import ClassVar
 
 import pytest
 
@@ -113,6 +114,134 @@ async def test_gates_native_strict_tool_use_by_model_capability():
     tool.constrained_sampling = JsonSchemaConstrainedSampling(strict="prefer")
     nova_payload = await capture_payload(context, get_builtin_model("amazon-bedrock", "amazon.nova-lite-v1:0"))
     assert "strict" not in nova_payload["toolConfig"]["tools"][0]["toolSpec"]
+
+
+# --- tool arguments -------------------------------------------------------------
+
+
+class _StreamingClient:
+    """Client whose send() replays canned Converse stream events."""
+
+    stream_events: ClassVar[list[dict]] = []
+
+    def __init__(self, _config):
+        self.middleware_stack = _NullStack()
+
+    async def send(self, _command, *, cancel=None):
+        from types import SimpleNamespace
+
+        events = list(_StreamingClient.stream_events)
+
+        async def stream():
+            for event in events:
+                yield event
+
+        return SimpleNamespace(
+            metadata=SimpleNamespace(request_id=None, http_status_code=200),
+            stream=stream(),
+        )
+
+
+@contextlib.contextmanager
+def _streaming_client(events: list[dict]):
+    original = bedrock.BedrockRuntimeClient
+    _StreamingClient.stream_events = events
+    bedrock.BedrockRuntimeClient = _StreamingClient
+    try:
+        yield
+    finally:
+        bedrock.BedrockRuntimeClient = original
+        _StreamingClient.stream_events = []
+
+
+@pytest.mark.tonio
+async def test_preserves_empty_property_names_in_streamed_tool_arguments():
+    events = [
+        {"messageStart": {"role": "assistant"}},
+        {
+            "contentBlockStart": {
+                "contentBlockIndex": 0,
+                "start": {"toolUse": {"toolUseId": "tool-1", "name": "edit"}},
+            }
+        },
+        {
+            "contentBlockDelta": {
+                "contentBlockIndex": 0,
+                "delta": {
+                    "toolUse": {
+                        "input": (
+                            '{"path":"/workspace/foobar/file.js","edits":[{"oldText":"first","newText":"updated first"},'
+                            '{"oldText":"second","newText":"updated second","":""}]}'
+                        )
+                    }
+                },
+            }
+        },
+        {"contentBlockStop": {"contentBlockIndex": 0}},
+        {"messageStop": {"stopReason": "tool_use"}},
+    ]
+
+    with _streaming_client(events):
+        message = await stream_bedrock(
+            BASE_MODEL,
+            Context(messages=[UserMessage(content="Use the tool", timestamp=1)]),
+            BedrockOptions(cache_retention="none"),
+        ).result()
+
+    block = message.content[0]
+    assert block.type == "toolCall"
+    assert block.id == "tool-1"
+    assert block.name == "edit"
+    assert block.arguments == {
+        "path": "/workspace/foobar/file.js",
+        "edits": [
+            {"oldText": "first", "newText": "updated first"},
+            {"oldText": "second", "newText": "updated second", "": ""},
+        ],
+    }
+
+
+@pytest.mark.tonio
+async def test_removes_empty_property_names_only_from_replayed_bedrock_input():
+    from pidrei_ai.types import ToolCall
+
+    tool_arguments = {
+        "path": "/workspace/foobar/file.js",
+        "edits": [
+            {"oldText": "first", "newText": "updated first"},
+            {"oldText": "second", "newText": "updated second", "": ""},
+        ],
+    }
+    messages = [
+        AssistantMessage(
+            content=[ToolCall(id="tool-1", name="edit", arguments=tool_arguments)],
+            api="bedrock-converse-stream",
+            provider="amazon-bedrock",
+            model=BASE_MODEL.id,
+            usage=Usage(),
+            stop_reason="toolUse",
+            timestamp=1,
+        ),
+        ToolResultMessage(
+            tool_call_id="tool-1",
+            tool_name="edit",
+            content=[TextContent(text="done")],
+            is_error=False,
+            timestamp=2,
+        ),
+        UserMessage(content="Continue", timestamp=3),
+    ]
+
+    payload = await capture_payload(Context(messages=messages))
+
+    assert payload["messages"][0]["content"][0]["toolUse"]["input"] == {
+        "path": "/workspace/foobar/file.js",
+        "edits": [
+            {"oldText": "first", "newText": "updated first"},
+            {"oldText": "second", "newText": "updated second"},
+        ],
+    }
+    assert tool_arguments["edits"][1] == {"oldText": "second", "newText": "updated second", "": ""}
 
 
 # --- unknown content types ----------------------------------------------------

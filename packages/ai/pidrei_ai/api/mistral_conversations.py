@@ -1,17 +1,20 @@
 """Port of pi's Mistral adapter (packages/ai/src/api/mistral-conversations.ts).
 
-pi builds a `Mistral` client from `@mistralai/mistralai` and calls
-`mistral.chat.stream(payload, requestOptions)`. That SDK's job here is small: it
-POSTs `{serverURL}/v1/chat/completions` with a bearer token and converts the
-camelCase request model to the API's snake_case wire form. `MistralClient` below
-does exactly that over the punkreq seam.
+Since 0.84.2 pi speaks to the native Mistral Chat Completions endpoint itself
+(no `@mistralai/mistralai` SDK): it POSTs `{baseUrl}/v1/chat/completions` with a
+bearer token and remaps the SDK-style camelCase request model to the API's
+snake_case wire form with explicit per-structure key tables. The payload stays
+camelCase (`maxTokens`, `promptMode`, `reasoningEffort`, `promptCacheKey`)
+because that is the object pi's `onPayload` hook — and its
+mistral-reasoning-mode spec — sees; conversion happens at the transport
+boundary. `parameters` and `arguments` carry caller-controlled JSON whose keys
+are never touched.
 
-The payload stays camelCase (`maxTokens`, `promptMode`, `reasoningEffort`,
-`promptCacheKey`) because that is the object pi's `onPayload` hook — and its
-mistral-reasoning-mode spec — sees. Conversion to the wire happens at the client
-boundary, with an explicit key table rather than a blanket recursive rename:
-`parameters` and `arguments` carry caller-controlled JSON whose keys must not be
-touched.
+Deviations (established adapter conventions): pi's per-request `fetch`
+injection is a client-injection seam here (`MistralOptions.client`), and pi's
+whole-request `AbortSignal.timeout(timeoutMs ?? 60_000)` maps to the punkreq
+read timeout via `http.request_timeout` (a legitimately long stream must not
+be cut off; see that helper's docstring).
 """
 
 import json
@@ -21,7 +24,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_ai.api.constrained_sampling import resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.simple_options import build_base_options
 from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
@@ -32,6 +35,7 @@ from pidrei_ai.types import (
     ErrorEvent,
     Message,
     Model,
+    ProviderResponse,
     SimpleStreamOptions,
     StartEvent,
     StopReason,
@@ -64,79 +68,153 @@ from pidrei_ai.utils.sse import iterate_sse_messages
 MISTRAL_TOOL_CALL_ID_LENGTH = 9
 MAX_MISTRAL_ERROR_BODY_CHARS = 4000
 
-# camelCase request fields the SDK renames on the way out. Values inside
-# `parameters` and `arguments` are caller JSON and are never renamed.
-_WIRE_KEYS = {
-    "maxTokens": "max_tokens",
-    "toolChoice": "tool_choice",
-    "promptMode": "prompt_mode",
-    "reasoningEffort": "reasoning_effort",
-    "promptCacheKey": "prompt_cache_key",
-    "toolCalls": "tool_calls",
-    "toolCallId": "tool_call_id",
-    "imageUrl": "image_url",
-}
 
-
-class MistralApiError(Exception):
-    def __init__(self, status_code: int, message: str, body: str | None = None):
-        super().__init__(message)
+class MistralHttpError(Exception):
+    def __init__(self, status_code: int, body: str, status_text: str = ""):
+        super().__init__(status_text or f"Request failed with status {status_code}")
         self.status_code = status_code
         self.body = body
 
 
-class MistralClient:
-    """`new Mistral({apiKey, serverURL})`, for the one call pi makes on it."""
+class _PunkreqMistralClient:
+    """Default transport: POST the wire payload through the punkreq seam."""
 
-    def __init__(self, api_key: str, server_url: str | None = None, env=None):
-        self.api_key = api_key
-        self.server_url = (server_url or "https://api.mistral.ai").rstrip("/")
-        self.env = env
+    def __init__(self, env=None):
+        self._env = env
 
-    async def chat_stream(
+    async def post_chat_completions(
         self,
-        payload: dict[str, Any],
+        url: str,
+        wire_payload: dict[str, Any],
         *,
-        headers: dict[str, str] | None = None,
-        cancel: CancelToken | None = None,
-        timeout_ms: float | None = None,
+        headers: dict[str, str],
+        timeout_ms: float | None,
+        cancel: CancelToken | None,
     ):
-        url = f"{self.server_url}/v1/chat/completions"
-        request_headers = {
-            "authorization": f"Bearer {self.api_key}",
-            "accept": "text/event-stream",
-            **(headers or {}),
-        }
-        client = http.client_for(url, self.env)
-        response = await client.post(
-            url,
-            json=to_wire_payload(payload),
-            headers=request_headers,
-            timeout=http.request_timeout(timeout_ms),
-        )
-        if not 200 <= response.status_code < 300:
-            body = (await response.read()).decode("utf-8", "replace")
-            raise MistralApiError(response.status_code, body, body=body)
-        return _iterate_completion_events(response, cancel)
+        client = http.client_for(url, self._env)
+        return await client.post(url, json=wire_payload, headers=headers, timeout=http.request_timeout(timeout_ms))
 
 
-def to_wire_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Rename the SDK's camelCase request fields to the API's snake_case ones."""
-    return _rename(payload)
+async def request_mistral_stream(model: Model, payload: dict[str, Any], api_key: str, options: MistralOptions):
+    url = f"{(model.base_url or 'https://api.mistral.ai').rstrip('/')}/v1/chat/completions"
+    headers = build_mistral_headers(model, api_key, options)
+    client = options.client if options.client is not None else _PunkreqMistralClient(env=options.env)
+    response = await client.post_chat_completions(
+        url,
+        to_mistral_wire_payload(payload),
+        headers=headers,
+        timeout_ms=options.timeout_ms,
+        cancel=options.cancel,
+    )
+
+    await maybe_call(
+        options.on_response, ProviderResponse(status=response.status_code, headers=dict(response.headers)), model
+    )
+
+    if not 200 <= response.status_code < 300:
+        body = (await response.read()).decode("utf-8", "replace")
+        raise MistralHttpError(response.status_code, body)
+    return _iterate_completion_events(response, options.cancel)
 
 
-def _rename(value: Any, *, opaque: bool = False) -> Any:
-    if opaque:
-        return value
-    if isinstance(value, list):
-        return [_rename(item) for item in value]
-    if isinstance(value, dict):
-        result: dict[str, Any] = {}
-        for key, entry in value.items():
-            # Caller-controlled JSON: a tool's schema and a tool call's arguments.
-            result[_WIRE_KEYS.get(key, key)] = _rename(entry, opaque=key in ("parameters", "arguments"))
-        return result
-    return value
+def build_mistral_headers(model: Model, api_key: str, options: MistralOptions | None = None) -> dict[str, str]:
+    """pi builds a case-insensitive `Headers`; lowercase keys stand in for that."""
+    headers = {
+        "accept": "text/event-stream",
+        "authorization": f"Bearer {api_key}",
+        "content-type": "application/json",
+    }
+    _apply_mistral_header_overrides(headers, model.headers)
+    _apply_mistral_header_overrides(headers, options.headers if options is not None else None)
+
+    has_explicit_affinity = _has_mistral_header_override(model.headers, "x-affinity") or _has_mistral_header_override(
+        options.headers if options is not None else None, "x-affinity"
+    )
+    if _should_use_prompt_caching(options) and not has_explicit_affinity:
+        headers["x-affinity"] = options.session_id
+
+    return headers
+
+
+def _apply_mistral_header_overrides(headers: dict[str, str], overrides: dict[str, str | None] | None) -> None:
+    if not overrides:
+        return
+    for name, value in overrides.items():
+        if value is None:
+            headers.pop(name.lower(), None)
+        else:
+            headers[name.lower()] = value
+
+
+def _has_mistral_header_override(overrides: dict[str, str | None] | None, target: str) -> bool:
+    return bool(overrides) and any(name.lower() == target for name in overrides)
+
+
+_TOP_LEVEL_WIRE_KEYS = (
+    ("topP", "top_p"),
+    ("maxTokens", "max_tokens"),
+    ("randomSeed", "random_seed"),
+    ("responseFormat", "response_format"),
+    ("toolChoice", "tool_choice"),
+    ("presencePenalty", "presence_penalty"),
+    ("frequencyPenalty", "frequency_penalty"),
+    ("parallelToolCalls", "parallel_tool_calls"),
+    ("reasoningEffort", "reasoning_effort"),
+    ("promptMode", "prompt_mode"),
+    ("promptCacheKey", "prompt_cache_key"),
+    ("safePrompt", "safe_prompt"),
+)
+
+_CONTENT_CHUNK_WIRE_KEYS = (
+    ("imageUrl", "image_url"),
+    ("documentUrl", "document_url"),
+    ("documentName", "document_name"),
+    ("fileId", "file_id"),
+    ("referenceIds", "reference_ids"),
+    ("inputAudio", "input_audio"),
+)
+
+
+def to_mistral_wire_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    wire_payload = dict(payload)
+    for source, target in _TOP_LEVEL_WIRE_KEYS:
+        _remap_mistral_property(wire_payload, source, target)
+    wire_payload["messages"] = [to_mistral_wire_message(message) for message in payload.get("messages") or []]
+
+    response_format = wire_payload.get("response_format")
+    if isinstance(response_format, dict):
+        wire_response_format = dict(response_format)
+        _remap_mistral_property(wire_response_format, "jsonSchema", "json_schema")
+        json_schema = wire_response_format.get("json_schema")
+        if isinstance(json_schema, dict):
+            wire_json_schema = dict(json_schema)
+            _remap_mistral_property(wire_json_schema, "schemaDefinition", "schema")
+            wire_response_format["json_schema"] = wire_json_schema
+        wire_payload["response_format"] = wire_response_format
+
+    return wire_payload
+
+
+def to_mistral_wire_message(message: dict[str, Any]) -> dict[str, Any]:
+    wire_message = dict(message)
+    _remap_mistral_property(wire_message, "toolCalls", "tool_calls")
+    _remap_mistral_property(wire_message, "toolCallId", "tool_call_id")
+    if isinstance(message.get("content"), list):
+        wire_message["content"] = [to_mistral_wire_content_chunk(chunk) for chunk in message["content"]]
+    return wire_message
+
+
+def to_mistral_wire_content_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
+    wire_chunk = dict(chunk)
+    for source, target in _CONTENT_CHUNK_WIRE_KEYS:
+        _remap_mistral_property(wire_chunk, source, target)
+    return wire_chunk
+
+
+def _remap_mistral_property(record: dict[str, Any], source: str, target: str) -> None:
+    if source not in record:
+        return
+    record[target] = record.pop(source)
 
 
 async def _iterate_completion_events(response: Any, cancel: CancelToken | None):
@@ -148,8 +226,9 @@ async def _iterate_completion_events(response: Any, cancel: CancelToken | None):
                 ended = True
                 return
             chunk = json.loads(message.data)
-            if isinstance(chunk, dict):
-                yield chunk
+            if not isinstance(chunk, dict) or not isinstance(chunk.get("choices"), list):
+                raise RuntimeError("Invalid Mistral streaming event")  # noqa: TRY004 (mirrors pi's plain Error)
+            yield chunk
         ended = True
     finally:
         await http.finish_body(body, response, drain=ended)
@@ -161,6 +240,8 @@ class MistralOptions(StreamOptions):
     tool_choice: Any = None
     prompt_mode: str | None = None  # "reasoning"
     reasoning_effort: str | None = None  # "none" | "high"
+    # Transport seam (pi injects a per-request `fetch` here).
+    client: Any = None
 
 
 def _mistral_options(options: StreamOptions | None) -> MistralOptions:
@@ -184,9 +265,6 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             if not api_key:
                 raise RuntimeError(f"No API key for provider: {model.provider}")
 
-            # Intentionally per-request: avoids shared client state across concurrent turns.
-            mistral = MistralClient(api_key, model.base_url, env=opts.env)
-
             normalize = _create_mistral_tool_call_id_normalizer()
             transformed_messages = transform_messages(
                 context.messages, model, lambda id, _model, _source: normalize(id)
@@ -196,12 +274,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             next_payload = await maybe_call(opts.on_payload, payload, model)
             if next_payload is not None:
                 payload = next_payload
-            mistral_stream = await mistral.chat_stream(
-                payload,
-                headers=build_request_headers(model, opts),
-                cancel=opts.cancel,
-                timeout_ms=opts.timeout_ms,
-            )
+            mistral_stream = await request_mistral_stream(model, payload, api_key, opts)
             out_stream.push(StartEvent(partial=output))
             await consume_chat_stream(model, output, out_stream, mistral_stream)
 
@@ -317,20 +390,6 @@ def safe_json_stringify(value: Any) -> str:
         return str(value)
 
 
-def build_request_headers(model: Model, options: MistralOptions | None = None) -> dict[str, str]:
-    headers: dict[str, str] = {}
-    if model.headers:
-        headers.update(model.headers)
-    if options is not None and options.headers:
-        headers.update({k: v for k, v in options.headers.items() if v is not None})
-
-    # Mistral infrastructure uses `x-affinity` for KV-cache reuse (prefix caching).
-    # Respect explicit caller-provided header values.
-    if _should_use_prompt_caching(options) and not headers.get("x-affinity"):
-        headers["x-affinity"] = options.session_id
-    return headers
-
-
 def build_chat_payload(
     model: Model, context: Context, messages: list[Message], options: MistralOptions | None = None
 ) -> dict[str, Any]:
@@ -416,15 +475,14 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
 
         usage = chunk.get("usage")
         if usage:
-            prompt_tokens = usage.get("promptTokens") or usage.get("prompt_tokens") or 0
+            prompt_tokens = usage.get("prompt_tokens") or 0
             cached_prompt_tokens = _get_mistral_cached_prompt_tokens(usage, prompt_tokens)
             output.usage.input = max(0, prompt_tokens - cached_prompt_tokens)
-            output.usage.output = usage.get("completionTokens") or usage.get("completion_tokens") or 0
+            output.usage.output = usage.get("completion_tokens") or 0
             output.usage.cache_read = cached_prompt_tokens
             output.usage.cache_write = 0
             output.usage.total_tokens = (
-                usage.get("totalTokens")
-                or usage.get("total_tokens")
+                usage.get("total_tokens")
                 or output.usage.input + output.usage.output + output.usage.cache_read + output.usage.cache_write
             )
             calculate_cost(model, output.usage)
@@ -434,7 +492,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
             continue
         choice = choices[0]
 
-        finish_reason = choice.get("finishReason") or choice.get("finish_reason")
+        finish_reason = choice.get("finish_reason")
         if finish_reason:
             output.raw_stop_reason = finish_reason
             stop_reason, error_message = map_chat_stop_reason(finish_reason)
@@ -456,7 +514,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
                     continue
 
                 if item.get("type") == "thinking":
-                    delta_text = "".join(part.get("text", "") for part in item.get("thinking") or [] if "text" in part)
+                    delta_text = "".join(part.get("text") or "" for part in item.get("thinking") or [])
                     thinking_delta = sanitize_surrogates(delta_text)
                     if not thinking_delta:
                         continue
@@ -478,7 +536,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
                     current_block.text += text_delta
                     out_stream.push(TextDeltaEvent(content_index=block_index(), delta=text_delta, partial=output))
 
-        tool_calls = delta.get("toolCalls") or delta.get("tool_calls") or []
+        tool_calls = delta.get("tool_calls") or []
         for tool_call in tool_calls:
             if current_block is not None:
                 finish_current_block(current_block)
@@ -533,7 +591,7 @@ def to_function_tools(tools: list[Tool]) -> list[dict[str, Any]]:
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.parameters,
+                    "parameters": get_json_schema_tool_parameters(tool, strict),
                     "strict": strict if strict is not None else False,
                 },
             }
@@ -589,10 +647,11 @@ def to_chat_messages(messages: list[Message], supports_images: bool) -> list[dic
                             "name": block.name,
                             "arguments": json.dumps(block.arguments or {}, separators=(",", ":")),
                         },
+                        "index": 0,
                     }
                 )
 
-            assistant_message: dict[str, Any] = {"role": "assistant"}
+            assistant_message: dict[str, Any] = {"role": "assistant", "prefix": False}
             if content_parts:
                 assistant_message["content"] = content_parts
             if tool_calls:

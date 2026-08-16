@@ -11,6 +11,7 @@ tonio tasks, so the ticks become short real-time sleeps.
 import pytest
 import tonio.colored as tonio
 
+from pidrei_tui.keys import matches_key
 from pidrei_tui.stdin_buffer import StdinBuffer
 
 
@@ -146,6 +147,77 @@ async def test_flushes_incomplete_sequence_after_timeout():
     await tonio.sleep(FLUSH_WAIT)
 
     assert emitted == ["\x1b[<35"]
+
+
+@pytest.mark.tonio
+async def test_flushes_a_lone_esc_as_escape_when_cr_arrives_after_the_timeout():
+    # Legacy-mode Alt+Enter is ESC + CR; when the terminal/transport splits
+    # the bytes further apart than the timeout, ESC is flushed alone and the
+    # host sees Escape (interrupt) instead of Alt+Enter. This locks in the
+    # behavior so the configurable timeout in ProcessTerminal stays honest.
+    buffer, emitted = _make_buffer()
+    await buffer.process("\x1b")
+    await tonio.sleep(FLUSH_WAIT)
+    await buffer.process("\r")
+
+    assert emitted == ["\x1b", "\r"]
+    assert matches_key(emitted[0], "escape") is True
+
+
+@pytest.mark.tonio
+async def test_merges_esc_plus_cr_split_across_chunks_within_a_larger_escape_timeout():
+    buffer = StdinBuffer(escape_timeout=100)
+    emitted = []
+
+    async def record(sequence):
+        emitted.append(sequence)
+
+    buffer.on_data(record)
+
+    await buffer.process("\x1b")
+    await tonio.sleep(0.02)  # > 10ms default escape timeout, < 100ms configured
+    await buffer.process("\r")
+
+    assert emitted == ["\x1b\r"]
+    assert matches_key(emitted[0], "alt+enter") is True
+    buffer.destroy()
+
+
+@pytest.mark.tonio
+async def test_does_not_apply_the_sequence_timeout_to_a_lone_esc():
+    buffer = StdinBuffer(timeout=100)
+    emitted = []
+
+    async def record(sequence):
+        emitted.append(sequence)
+
+    buffer.on_data(record)
+
+    await buffer.process("\x1b")
+    await tonio.sleep(0.02)
+    await buffer.process("\r")
+
+    assert emitted == ["\x1b", "\r"]
+    assert matches_key(emitted[0], "escape") is True
+    buffer.destroy()
+
+
+@pytest.mark.tonio
+async def test_keeps_fragmented_mouse_sequences_buffered_across_delayed_chunks_by_default():
+    delayed_buffer = StdinBuffer()
+    delayed_sequences = []
+
+    async def record(sequence):
+        delayed_sequences.append(sequence)
+
+    delayed_buffer.on_data(record)
+
+    await delayed_buffer.process("\x1b[")
+    await tonio.sleep(0.02)
+    assert delayed_sequences == []
+    await delayed_buffer.process("<65;48;39M")
+    assert delayed_sequences == ["\x1b[<65;48;39M"]
+    delayed_buffer.destroy()
 
 
 # Mixed Content
@@ -384,6 +456,22 @@ async def test_handles_lone_escape_character_with_timeout():
     # After timeout, should emit
     await tonio.sleep(FLUSH_WAIT)
     assert emitted == ["\x1b"]
+
+
+@pytest.mark.tonio
+async def test_flushes_a_lone_escape_promptly_with_the_longer_default_sequence_timeout():
+    default_buffer = StdinBuffer()
+    default_sequences = []
+
+    async def record(sequence):
+        default_sequences.append(sequence)
+
+    default_buffer.on_data(record)
+
+    await default_buffer.process("\x1b")
+    await tonio.sleep(0.02)
+    assert default_sequences == ["\x1b"]
+    default_buffer.destroy()
 
 
 @pytest.mark.tonio

@@ -52,7 +52,8 @@ _REQUIRED_COLORS = [
     "dim",
     "text",
     "thinkingText",
-    # Backgrounds & Content Text (11 required, 1 optional: scrollbarThumb)
+    # Backgrounds & Content Text (11 required, 3 optional: scrollbarThumb,
+    # searchMatchBg, searchMatchText)
     "selectedBg",
     "userMessageBg",
     "userMessageText",
@@ -105,6 +106,7 @@ _EXPORT_KEYS = ("pageBg", "cardBg", "infoBg")
 THEME_BG_KEYS = (
     "selectedBg",
     "scrollbarThumb",
+    "searchMatchBg",
     "userMessageBg",
     "customMessageBg",
     "toolPendingBg",
@@ -303,7 +305,19 @@ def _with_theme_color_fallbacks(colors: dict) -> dict:
     scrollbar_thumb = colors.get("scrollbarThumb")
     if scrollbar_thumb is None:
         scrollbar_thumb = colors["selectedBg"]
-    return {**colors, "thinkingMax": fallback, "scrollbarThumb": scrollbar_thumb}
+    search_match_bg = colors.get("searchMatchBg")
+    if search_match_bg is None:
+        search_match_bg = colors["selectedBg"]
+    search_match_text = colors.get("searchMatchText")
+    if search_match_text is None:
+        search_match_text = colors["text"]
+    return {
+        **colors,
+        "thinkingMax": fallback,
+        "scrollbarThumb": scrollbar_thumb,
+        "searchMatchBg": search_match_bg,
+        "searchMatchText": search_match_text,
+    }
 
 
 # ============================================================================
@@ -321,10 +335,18 @@ class Theme:
         thinking_max = fg_colors.get("thinkingMax")
         if thinking_max is None:
             thinking_max = fg_colors["thinkingXhigh"]
+        search_match_text = fg_colors.get("searchMatchText")
+        if search_match_text is None:
+            search_match_text = fg_colors["text"]
         self._fg_colors = {
-            key: _fg_ansi(value, mode) for key, value in {**fg_colors, "thinkingMax": thinking_max}.items()
+            key: _fg_ansi(value, mode)
+            for key, value in {**fg_colors, "thinkingMax": thinking_max, "searchMatchText": search_match_text}.items()
         }
-        backgrounds = {**bg_colors, "scrollbarThumb": bg_colors.get("scrollbarThumb") or bg_colors["selectedBg"]}
+        backgrounds = {
+            **bg_colors,
+            "scrollbarThumb": bg_colors.get("scrollbarThumb") or bg_colors["selectedBg"],
+            "searchMatchBg": bg_colors.get("searchMatchBg") or bg_colors["selectedBg"],
+        }
         self._bg_colors = {key: _bg_ansi(value, mode) for key, value in backgrounds.items()}
 
     def fg(self, color: str, text: str) -> str:

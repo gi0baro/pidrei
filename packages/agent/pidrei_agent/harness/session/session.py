@@ -114,7 +114,7 @@ class Session:
     async def get_name(self) -> str | None:
         return await self._storage.get_name()
 
-    async def set_name(self, name: str) -> None:
+    async def set_name(self, name: str | None) -> None:
         await self._storage.set_name(name)
 
     async def get_label(self, target_id: str) -> str | None:
@@ -172,6 +172,7 @@ class Session:
         return await self._storage.get_log(options)
 
     async def _get_leaf_id_for_lane(self, lane: str) -> str | None:
+        """Returns the lane's current leaf, or None when empty. Raises when the lane does not exist."""
         for pointer in await self.get_lanes():
             if pointer.lane == lane:
                 return pointer.leaf_id
@@ -188,14 +189,18 @@ class Session:
         )
 
     async def _query_branch_entries(
-        self, lane: str, query: BranchQuery | None, result_limit: int | None = None
+        self, default_lane: str, query: BranchQuery | None, result_limit: int | None = None
     ) -> list[Entry]:
+        """Queries from `query.start` toward the root, defaulting to the lane's current leaf.
+
+        `result_limit` lets single-entry queries cap results without changing the caller's query.
+        """
         query = query if query is not None else BranchQuery()
         assert_valid_limit(query.limit)
         assert_valid_cursor(query.cursor.after_seq if query.cursor is not None else None)
         if result_limit is None:
             result_limit = query.limit
-        start = query.start if query.start is not None else await self._get_leaf_id_for_lane(lane)
+        start = query.start if query.start is not None else await self._get_leaf_id_for_lane(default_lane)
         if start is None:
             return []
         return await self._storage.find_entries_on_branch(replace(query, start=start, limit=result_limit))
@@ -246,7 +251,7 @@ class _LaneView:
     async def get_name(self) -> str | None:
         return await self._session.get_name()
 
-    async def set_name(self, name: str) -> None:
+    async def set_name(self, name: str | None) -> None:
         await self._session.set_name(name)
 
     async def get_label(self, target_id: str) -> str | None:

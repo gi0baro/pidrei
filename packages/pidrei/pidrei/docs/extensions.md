@@ -312,6 +312,9 @@ only when awaited, and resolves to a result with `stdout`, `stderr`, `code` and
 
 Both `send_message` and `send_user_message` accept `{"deliverAs": "followUp"}`
 to queue behind the current run, and `{"triggerTurn": True}` to start one.
+`send_user_message` also accepts `{"expandPromptTemplates": True}` to dispatch
+extension commands and expand skill commands and prompt templates (default:
+`False`).
 
 ### Providers
 

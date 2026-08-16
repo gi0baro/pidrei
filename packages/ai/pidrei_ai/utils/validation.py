@@ -231,6 +231,46 @@ def _coerce_with_json_schema(value: Any, schema: dict) -> Any:
     return next_value
 
 
+def _sub_schema_rejects_null(schema: dict) -> bool:
+    """pi: `getSubSchemaValidator(schema)?.Check(null) === false` — True only
+    when a validator could be built AND null fails it."""
+    try:
+        return _get_validator(schema).is_valid(None) is False
+    except Exception:
+        return False
+
+
+def _normalize_optional_nulls(value: Any, schema: dict) -> None:
+    if isinstance(value, list):
+        items = schema.get("items")
+        if isinstance(items, list):
+            for index, item in enumerate(value):
+                if index < len(items) and isinstance(items[index], dict):
+                    _normalize_optional_nulls(item, items[index])
+        elif isinstance(items, dict):
+            for item in value:
+                _normalize_optional_nulls(item, items)
+        return
+    properties = schema.get("properties")
+    if not isinstance(value, dict) or not isinstance(properties, dict):
+        return
+
+    required = set(schema.get("required") or [])
+    for key, property_schema in properties.items():
+        if key not in value or not isinstance(property_schema, dict):
+            continue
+        if (
+            value[key] is None
+            and key not in required
+            # A bare $ref sub-schema loses its $defs context; keep the null.
+            and not isinstance(property_schema.get("$ref"), str)
+            and _sub_schema_rejects_null(property_schema)
+        ):
+            del value[key]
+        else:
+            _normalize_optional_nulls(value[key], property_schema)
+
+
 _REQUIRED_PROPERTY_RE = re.compile(r"'(.+?)' is a required property")
 
 
@@ -255,6 +295,7 @@ def validate_tool_call(tools: list[Tool], tool_call: ToolCall) -> Any:
 def validate_tool_arguments(tool: Tool, tool_call: ToolCall) -> Any:
     """Validate tool call arguments, coercing pi-style; raises on failure."""
     args = copy.deepcopy(tool_call.arguments)
+    _normalize_optional_nulls(args, tool.parameters)
     coerced = _coerce_with_json_schema(args, tool.parameters)
 
     candidate = args

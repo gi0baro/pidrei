@@ -220,6 +220,13 @@ LATEX_ASSERT_CASES = [
     ("-\\sin\\theta", False, "-sin θ"),
     ("i\\sin\\theta", False, "i sin θ"),
     ("\\det(A)", False, "det(A)"),
+    # A backslash followed by a line ending is a control space.
+    (
+        "\\boxed{\n(1,1,1),\\ (1,1,2),\\ (1,2,5),\\ (1,5,13),\\ (2,5,29),\\\n(1,13,34),\\ (1,34,89)\n}.",
+        True,
+        "[(1,1,1), (1,1,2), (1,2,5), (1,5,13), (2,5,29), (1,13,34), (1,34,89)].",
+    ),
+    ("a\\\r\nb", False, "a b"),
     ("\\sum_{i=0}^n x_i", True, " n\n ∑  xᵢ\ni=0"),
     ("\\min_{x\\in X} f(x)", True, "min f(x)\nx∈X"),
     ("\\operatorname*{arg\\,max}_{x\\in X} f(x)", True, "arg max f(x)\n  x∈X"),
@@ -228,6 +235,7 @@ LATEX_ASSERT_CASES = [
     ("\\begin{cases}a & x<0 \\\\ b & x=0 \\\\ c & x>0\\end{cases}", False, "⎧ a if x < 0\n⎨ b if x = 0\n⎩ c if x > 0"),
     ("x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}", True, "    -b±√(b²-4ac)\nx = ────────────\n         2a"),
     ("\\frac{x^2+1}{x-1}", True, "x²+1\n────\nx-1"),
+    ("\\frac{1}\n{2}", True, "1\n─\n2"),
     ("e^{\\frac{1}{2}}", True, "e^(1/2)"),
     ("\\tfrac{1}{2}", True, "1/2"),
     ("x + \\unknown{y}", False, None),

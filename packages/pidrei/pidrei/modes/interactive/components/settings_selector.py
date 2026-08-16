@@ -520,6 +520,13 @@ class SettingsSelectorComponent(Container):
                 "values": ["regular", "fullscreen"],
             },
             {
+                "id": "fullscreen-exit-output",
+                "label": "Fullscreen exit output",
+                "description": "Print the transcript or only a session resume hint when exiting fullscreen mode",
+                "currentValue": config["fullscreenExitOutput"],
+                "values": ["transcript", "resume-hint"],
+            },
+            {
                 "id": "fullscreen-scrollbar",
                 "label": "Fullscreen scrollbar",
                 "description": "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
@@ -733,6 +740,8 @@ class SettingsSelectorComponent(Container):
                 # (pi's stop/start are sync) and the status line it writes must
                 # land after the swap, not race it.
                 await callbacks["onTuiModeChange"](new_value)
+            elif item_id == "fullscreen-exit-output":
+                callbacks["onFullscreenExitOutputChange"](new_value)
             elif item_id == "fullscreen-scrollbar":
                 callbacks["onFullscreenScrollbarChange"](new_value)
             elif item_id == "theme":

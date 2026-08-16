@@ -184,7 +184,7 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         if cancel is not None and cancel.cancelled:
             raise Exception("Operation aborted")
 
-        rg_path = await ensure_tool("rg", True)
+        rg_path = await ensure_tool("rg")
         if not rg_path:
             raise Exception(missing_tool_message("rg"))
 

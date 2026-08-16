@@ -261,7 +261,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
                 if finish_reason:
                     output.raw_stop_reason = finish_reason
                     output.stop_reason = map_stop_reason(finish_reason)
-                    if any(b.type == "toolCall" for b in output.content):
+                    if any(b.type == "toolCall" for b in output.content) and output.stop_reason == "stop":
                         output.stop_reason = "toolUse"
 
                 usage_metadata = chunk.get("usageMetadata")
@@ -469,17 +469,16 @@ def build_params(model: Model, context: Context, options: GoogleVertexOptions | 
     if options.max_tokens is not None:
         generation_config["maxOutputTokens"] = options.max_tokens
 
+    supports_strict_mode = supports_google_strict_tool_sampling(model.id)
     function_calling_mode = (
-        resolve_google_function_calling_mode(
-            context.tools, options.tool_choice, supports_google_strict_tool_sampling(model.id)
-        )
+        resolve_google_function_calling_mode(context.tools, options.tool_choice, supports_strict_mode)
         if context.tools
         else None
     )
     config: dict[str, Any] = {
         **generation_config,
         **({"systemInstruction": sanitize_surrogates(context.system_prompt)} if context.system_prompt else {}),
-        **({"tools": convert_tools(context.tools)} if context.tools else {}),
+        **({"tools": convert_tools(context.tools, False, supports_strict_mode)} if context.tools else {}),
         **(
             {"toolConfig": {"functionCallingConfig": {"mode": function_calling_mode}}}
             if function_calling_mode is not None

@@ -13,13 +13,37 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_tui.keys import set_kitty_protocol_active
-from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input
+from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input, resolve_escape_timeout_ms
 
 from .tui_helpers import env_var
 
 
-STDIN_FLUSH_WAIT = 0.05  # pi ticks 10ms for the StdinBuffer flush timer
+STDIN_FLUSH_WAIT = 0.1  # pi ticks 50ms for the StdinBuffer sequence flush timer
 NEGOTIATION_FLUSH_WAIT = 0.25  # pi ticks 150ms for the negotiation flush timer
+
+
+# resolve_escape_timeout_ms
+
+
+def test_uses_pidrei_tui_esc_timeout_when_configured():
+    assert resolve_escape_timeout_ms({"PIDREI_TUI_ESC_TIMEOUT": "80"}) == 80
+    assert resolve_escape_timeout_ms({"PIDREI_TUI_ESC_TIMEOUT": "80", "SSH_TTY": "/dev/pts/1"}) == 80
+
+
+def test_ignores_invalid_pidrei_tui_esc_timeout_values():
+    assert resolve_escape_timeout_ms({"PIDREI_TUI_ESC_TIMEOUT": "abc"}) == 10
+    assert resolve_escape_timeout_ms({"PIDREI_TUI_ESC_TIMEOUT": "0"}) == 10
+    assert resolve_escape_timeout_ms({"PIDREI_TUI_ESC_TIMEOUT": "-5"}) == 10
+    assert resolve_escape_timeout_ms({"PIDREI_TUI_ESC_TIMEOUT": ""}) == 10
+
+
+def test_defaults_to_100ms_over_ssh():
+    assert resolve_escape_timeout_ms({"SSH_CONNECTION": "10.0.0.1 22"}) == 100
+    assert resolve_escape_timeout_ms({"SSH_TTY": "/dev/pts/1"}) == 100
+
+
+def test_defaults_to_10ms_otherwise():
+    assert resolve_escape_timeout_ms({}) == 10
 
 
 # normalize_apple_terminal_input

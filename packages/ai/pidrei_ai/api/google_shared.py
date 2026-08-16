@@ -13,7 +13,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
-from pidrei_ai.api.constrained_sampling import resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.types import (
     AssistantMessage,
@@ -279,7 +279,9 @@ def _sanitize_for_open_api(schema: Any) -> Any:
     return result
 
 
-def convert_tools(tools: list[Tool], use_parameters: bool = False) -> list[dict[str, Any]] | None:
+def convert_tools(
+    tools: list[Tool], use_parameters: bool = False, supports_strict_mode: bool = True
+) -> list[dict[str, Any]] | None:
     """Convert tools to Gemini function declarations format.
 
     By default uses `parametersJsonSchema` which supports full JSON Schema (including
@@ -287,24 +289,23 @@ def convert_tools(tools: list[Tool], use_parameters: bool = False) -> list[dict[
     field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
     models, where the API translates `parameters` into Anthropic's `input_schema`.
     """
+
+    def declaration(tool: Tool) -> dict[str, Any]:
+        strict = resolve_json_schema_strict_sampling(tool, supports_strict_mode)
+        parameters = get_json_schema_tool_parameters(tool, strict)
+        return {
+            "name": tool.name,
+            "description": tool.description,
+            **(
+                {"parameters": _sanitize_for_open_api(parameters)}
+                if use_parameters
+                else {"parametersJsonSchema": parameters}
+            ),
+        }
+
     if len(tools) == 0:
         return None
-    return [
-        {
-            "functionDeclarations": [
-                {
-                    "name": tool.name,
-                    "description": tool.description,
-                    **(
-                        {"parameters": _sanitize_for_open_api(tool.parameters)}
-                        if use_parameters
-                        else {"parametersJsonSchema": tool.parameters}
-                    ),
-                }
-                for tool in tools
-            ]
-        }
-    ]
+    return [{"functionDeclarations": [declaration(tool) for tool in tools]}]
 
 
 def supports_google_strict_tool_sampling(model_id: str) -> bool:

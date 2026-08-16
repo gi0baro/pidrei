@@ -993,3 +993,24 @@ class TestShowLoadedResources:
         output = render_all(fake._loaded_resources_container)
         assert "[Skill conflicts]" in output
         assert "[Skills]" not in output
+
+
+class TestShowManagedToolStatus:
+    def test_renders_tool_updates_as_one_contiguous_group(self):
+        init_theme_sync("dark")
+        fake = SimpleNamespace(
+            _chat_container=Container(),
+            _managed_tool_status_started=False,
+            _last_status_spacer=None,
+            _last_status_text=None,
+        )
+        fake.ui = SimpleNamespace(request_render=lambda force=False: None)
+
+        InteractiveMode._show_managed_tool_status(fake, {"type": "info", "message": "fd downloading"})
+        InteractiveMode._show_managed_tool_status(fake, {"type": "info", "message": "rg downloading"})
+        InteractiveMode._show_managed_tool_status(fake, {"type": "warning", "message": "rg failed"})
+
+        assert len(fake._chat_container.children) == 4
+        assert normalize_rendered_output(fake._chat_container) == (
+            "fd downloading\n rg downloading\n Warning: rg failed"
+        )

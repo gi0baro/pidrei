@@ -150,6 +150,7 @@ from .components import (
     sync_action,
 )
 from .external_editor import edit_in_external_editor
+from .model_catalog_refresh import refresh_model_catalogs
 from .model_search import get_model_search_text
 from .theme import (
     InteractiveThemeController,
@@ -433,7 +434,26 @@ def create_interactive_tui(*, tui_mode: str, show_hardware_cursor: bool, log_dir
     """Composition root for selecting the interactive terminal renderer."""
     terminal = terminal if terminal is not None else ProcessTerminal()
     if tui_mode == "fullscreen":
-        return TuiAltScreen(terminal, show_hardware_cursor, log_directory, open_url=open_browser)
+
+        def style_search_match(text: str) -> str:
+            return theme.bg("searchMatchBg", theme.fg("searchMatchText", text))
+
+        async def copy_selection(text: str) -> bool:
+            try:
+                await copy_to_clipboard(text)
+                return True
+            except Exception:
+                return False
+
+        return TuiAltScreen(
+            terminal,
+            show_hardware_cursor,
+            log_directory,
+            search_match_style=lambda text: theme.underline(style_search_match(text)),
+            search_current_match_style=lambda text: theme.bold(theme.inverse(style_search_match(text))),
+            open_url=open_browser,
+            copy_selection=copy_selection,
+        )
     return TuiMainScreen(terminal, show_hardware_cursor, log_directory)
 
 
@@ -506,9 +526,12 @@ class InteractiveMode:
         self._options = {**options, "tuiMode": tui_mode}
         self._auto_trust_on_reload_cwd = options.get("autoTrustOnReloadCwd")
         self.runtime_host.set_before_session_invalidate(lambda: self._reset_extension_ui())
-        self.runtime_host.set_rebind_session(
-            lambda _session=None: self._rebind_current_session({"renderBeforeBind": True})
-        )
+
+        async def _rebind_session(_session=None) -> None:
+            await self._rebind_current_session({"renderBeforeBind": True})
+            await self._theme_controller.apply_from_settings()
+
+        self.runtime_host.set_rebind_session(_rebind_session)
         self._version = VERSION
         self._renderer = create_interactive_tui(
             tui_mode=tui_mode,
@@ -586,6 +609,7 @@ class InteractiveMode:
         # updates)
         self._last_status_spacer = None
         self._last_status_text = None
+        self._managed_tool_status_started = False
 
         # Streaming message tracking
         self._streaming_component = None
@@ -652,9 +676,12 @@ class InteractiveMode:
         set_registered_themes(self.session.resource_loader.get_themes()["themes"])
         self._theme_controller = InteractiveThemeController(
             self.ui,
-            self.settings_manager,
-            lambda message: self.show_error(message),
-            lambda: self._update_editor_border_color(),
+            {
+                "getSettingsManager": lambda: self.settings_manager,
+                "showError": lambda message: self.show_error(message),
+                "onChanged": lambda: self._update_editor_border_color(),
+                "initialThemeSetting": options.get("initialThemeSetting"),
+            },
         )
 
     # Convenience accessors
@@ -880,13 +907,13 @@ class InteractiveMode:
                 raise RuntimeError("Fullscreen layout is not initialized")
             tui.set_layout_root(self._fullscreen_layout_root)
 
-    async def _stop_interactive_tui(self) -> None:
-        if self._renderer.mode == "fullscreen":
+    async def _stop_interactive_tui(self, fullscreen_exit_output: str) -> None:
+        if self._renderer.mode == "fullscreen" and fullscreen_exit_output == "transcript":
             while self._renderer.has_overlay_entries:
                 self._renderer.hide_overlay()
             await self._switch_tui_mode("regular", restore_progress=False, start_renderer=False)
             await self._renderer.render_now()
-        await self.ui.stop()
+        await self.ui.stop({"preserveScreen": self._renderer.mode == "fullscreen"})
 
     async def _switch_tui_mode(self, mode: str, restore_progress: bool = True, start_renderer: bool = True) -> bool:
         previous_ui = self._renderer
@@ -957,11 +984,6 @@ class InteractiveMode:
         # Load changelog (only show new entries, skip for resumed sessions)
         self._changelog_markdown = await self._get_changelog_for_display()
 
-        # Ensure fd and rg are available. Both are needed: fd for
-        # autocomplete, rg for the grep tool and bash commands.
-        fd_path, _ = await tonio.map(ensure_tool, ("fd", "rg"))
-        self._fd_path = fd_path
-
         if self.session.scoped_models and (
             self._options.get("verbose") or not self.settings_manager.get_quiet_startup()
         ):
@@ -1024,8 +1046,11 @@ class InteractiveMode:
         )
         self.ui.set_focus(self.editor)
 
-        self._setup_key_handlers()
-        self._setup_editor_submit_handler()
+        # Accept text while startup completes, but only enable interrupt,
+        # exit, and submission feedback.
+        self._default_editor.on_action("app.clear", sync_action(self._handle_ctrl_c))
+        self._default_editor.on_ctrl_d = sync_action(self._handle_ctrl_d)
+        self._default_editor.on_submit = sync_action(self._handle_startup_submit)
 
         # Start the UI before initializing extensions so session_start
         # handlers can use interactive dialogs
@@ -1100,6 +1125,22 @@ class InteractiveMode:
             self._header_container.add_child(self._built_in_header)
         self.ui.request_render()
 
+        # Resolve fd and rg after mounting the TUI (pi also downloads them
+        # here; pidrei only looks them up — see utils/tools_manager.py — so
+        # `on_status` never fires but the staged-startup shape is pi's).
+        # Both are needed: fd for autocomplete, rg for the grep tool and bash
+        # commands.
+        async def _ensure(tool: str) -> str | None:
+            return await ensure_tool(tool, self._show_managed_tool_status)
+
+        fd_path, _ = await tonio.spawn(_ensure("fd"), _ensure("rg"))
+        self._fd_path = fd_path
+
+        # Enable the remaining input handlers only after managed-tool setup completes.
+        self._setup_key_handlers()
+        self._setup_editor_submit_handler()
+        self.ui.request_render()
+
         # Initialize extensions first so resources are shown before messages
         await self._rebind_current_session()
 
@@ -1141,7 +1182,7 @@ class InteractiveMode:
 
             async def refresh_models() -> None:
                 with contextlib.suppress(Exception):
-                    await self.session.model_runtime.refresh(ModelsRefreshOptions(cancel=_timeout_cancel(15_000)))
+                    await refresh_model_catalogs(self.session.model_runtime, _timeout_cancel(15_000))
                     self._update_available_provider_count()
 
             tonio.spawn.without_tracking(refresh_models())
@@ -1979,7 +2020,7 @@ class InteractiveMode:
     async def _handle_fatal_runtime_error(self, prefix: str, error) -> None:
         self.show_error(f"{prefix}: {error}")
         stop_theme_watcher()
-        await self.stop()
+        await self.stop("transcript")
         hard_exit(1)
 
     def render_current_session_state(self) -> None:
@@ -3231,6 +3272,22 @@ class InteractiveMode:
             if (c.get("type") if isinstance(c, dict) else getattr(c, "type", None)) == "text"
         )
 
+    def _handle_startup_submit(self, text: str) -> None:
+        self.editor.set_text(text)
+        self.show_status("Startup is still in progress")
+
+    def _show_managed_tool_status(self, status: dict) -> None:
+        """Show a managed-tool status update in the chat."""
+        if not self._managed_tool_status_started:
+            self._chat_container.add_child(Spacer(1))
+            self._managed_tool_status_started = True
+        message = f"Warning: {status['message']}" if status["type"] == "warning" else status["message"]
+        color = "warning" if status["type"] == "warning" else "dim"
+        self._chat_container.add_child(Text(theme.fg(color, message), 1, 0))
+        self._last_status_spacer = None
+        self._last_status_text = None
+        self.ui.request_render()
+
     def show_status(self, message: str) -> None:
         """Show a status message in the chat.
 
@@ -4161,7 +4218,7 @@ class InteractiveMode:
 
             def on_theme_change(theme_setting: str) -> None:
                 self.settings_manager.set_theme(theme_setting)
-                tonio.spawn.without_tracking(self._theme_controller.apply_from_settings())
+                tonio.spawn.without_tracking(self._theme_controller.set_theme_setting(theme_setting))
 
             def on_hide_thinking_block_change(hidden: bool) -> None:
                 self._hide_thinking_block = hidden
@@ -4247,7 +4304,7 @@ class InteractiveMode:
                     "httpIdleTimeoutMs": self.settings_manager.get_http_idle_timeout_ms(),
                     "thinkingLevel": self.session.thinking_level,
                     "availableThinkingLevels": self.session.get_available_thinking_levels(),
-                    "currentTheme": self.settings_manager.get_theme_setting() or "dark",
+                    "currentTheme": self._theme_controller.get_theme_selection() or "dark",
                     "terminalTheme": self._theme_controller.get_terminal_theme(),
                     "availableThemes": available_themes,
                     "hideThinkingBlock": self._hide_thinking_block,
@@ -4265,6 +4322,7 @@ class InteractiveMode:
                     "clearOnShrink": self.settings_manager.get_clear_on_shrink(),
                     "showTerminalProgress": self.settings_manager.get_show_terminal_progress(),
                     "tuiMode": self._renderer.mode,
+                    "fullscreenExitOutput": self.settings_manager.get_fullscreen_exit_output(),
                     "fullscreenScrollbar": self.settings_manager.get_fullscreen_scrollbar(),
                     "warnings": self.settings_manager.get_warnings(),
                 },
@@ -4305,6 +4363,9 @@ class InteractiveMode:
                         enabled
                     ),
                     "onTuiModeChange": on_tui_mode_change,
+                    "onFullscreenExitOutputChange": lambda output: self.settings_manager.set_fullscreen_exit_output(
+                        output
+                    ),
                     "onFullscreenScrollbarChange": on_fullscreen_scrollbar_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
                     "onCancel": on_cancel,
@@ -4347,7 +4408,7 @@ class InteractiveMode:
         self.show_status("Refreshing model catalogs…")
         timeout = _TimeoutCancel(15_000)
         try:
-            result = await self.session.model_runtime.refresh(ModelsRefreshOptions(cancel=timeout.token))
+            result = await refresh_model_catalogs(self.session.model_runtime, timeout.token)
             if result.aborted and timeout.timed_out:
                 self.show_warning("Model refresh timed out; searching cached models.")
             elif result.errors:
@@ -4564,7 +4625,7 @@ class InteractiveMode:
 
             async def refresh_catalogs() -> None:
                 try:
-                    result = await self.session.model_runtime.refresh(ModelsRefreshOptions(cancel=timeout.token))
+                    result = await refresh_model_catalogs(self.session.model_runtime, timeout.token)
                 except Exception as error:
                     if disposed["value"]:
                         return
@@ -5487,7 +5548,7 @@ class InteractiveMode:
                 file_path = await self.session.export_to_jsonl(output_path)
                 self.show_status(f"Session exported to: {file_path}")
             else:
-                file_path = await self.session.export_to_html(output_path)
+                file_path = await self.session.export_to_html(output_path, {"themeName": theme.name})
                 self.show_status(f"Session exported to: {file_path}")
         except Exception as error:
             self.show_error(f"Failed to export session: {error if str(error) else 'Unknown error'}")
@@ -5566,7 +5627,7 @@ class InteractiveMode:
         # Export to a temp file
         tmp_file = os.path.join(tempfile.gettempdir(), "session.html")
         try:
-            await self.session.export_to_html(tmp_file)
+            await self.session.export_to_html(tmp_file, {"themeName": theme.name})
         except Exception as error:
             self.show_error(f"Failed to export session: {error if str(error) else 'Unknown error'}")
             return
@@ -6039,7 +6100,9 @@ class InteractiveMode:
             # Ignore, will be emitted as an event
             await self.session.compact(custom_instructions)
 
-    async def stop(self) -> None:
+    async def stop(self, fullscreen_exit_output: str | None = None) -> None:
+        if fullscreen_exit_output is None:
+            fullscreen_exit_output = self.settings_manager.get_fullscreen_exit_output()
         self._dispose_active_selector()
         if self.settings_manager.get_show_terminal_progress():
             self.ui.terminal.set_progress(False)
@@ -6051,6 +6114,6 @@ class InteractiveMode:
         if self._unsubscribe:
             self._unsubscribe()
         if self._is_initialized:
-            await self._stop_interactive_tui()
+            await self._stop_interactive_tui(fullscreen_exit_output)
             self._is_initialized = False
         self._unregister_signal_handlers()

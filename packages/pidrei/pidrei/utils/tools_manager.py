@@ -60,6 +60,11 @@ def missing_tool_message(tool: str) -> str:
     return f"{name} is not installed. Install it and make sure it is on PATH, or use the bash tool instead."
 
 
-def ensure_tool(tool: str, silent: bool = False) -> Awaitable[str | None]:
-    """Resolve a tool path. Never downloads — see the module docstring."""
+def ensure_tool(tool: str, on_status=None) -> Awaitable[str | None]:
+    """Resolve a tool path. Never downloads — see the module docstring.
+
+    ``on_status`` mirrors pi's download-progress callback (6f707eb3); with the
+    download machinery unported there is nothing to report, so it is accepted
+    for call-site parity and never invoked.
+    """
     return tonio.spawn_blocking(get_tool_path, tool)

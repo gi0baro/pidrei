@@ -199,6 +199,7 @@ class _ResolvedCompat:
     supports_long_cache_retention: bool
     supports_strict_mode: bool
     supports_openai_grammar_tools: bool
+    supports_additional_tools: bool
     supports_tool_search: bool
     supports_explicit_prompt_cache_mode: bool
 
@@ -217,6 +218,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
         supports_long_cache_retention=pick(compat.supports_long_cache_retention if compat else None, True),
         supports_strict_mode=pick(compat.supports_strict_mode if compat else None, False),
         supports_openai_grammar_tools=pick(compat.supports_openai_grammar_tools if compat else None, False),
+        supports_additional_tools=pick(compat.supports_additional_tools if compat else None, False),
         supports_tool_search=pick(compat.supports_tool_search if compat else None, False),
         supports_explicit_prompt_cache_mode=pick(compat.supports_explicit_prompt_cache_mode if compat else None, False),
     )
@@ -280,13 +282,19 @@ def build_params(
             context.tools, compat.supports_openai_grammar_tools
         )
 
-    immediate_tools, deferred_map = split_deferred_tools(context, compat.supports_tool_search)
+    deferred_tools_mode = (
+        "additional-tools"
+        if compat.supports_additional_tools
+        else ("tool-search" if compat.supports_tool_search else None)
+    )
+    immediate_tools, deferred_map = split_deferred_tools(context, deferred_tools_mode is not None)
     messages = convert_responses_messages(
         model,
         context,
         set(OPENAI_TOOL_CALL_PROVIDERS),
         grammar_tool_input_properties=grammar_tool_input_properties,
         deferred_tools=deferred_map,
+        deferred_tools_mode=deferred_tools_mode,
         tool_options={
             "supports_strict_mode": compat.supports_strict_mode,
             "supports_openai_grammar_tools": compat.supports_openai_grammar_tools,

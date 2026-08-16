@@ -168,7 +168,7 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             return _build_details_result(relativized, effective_limit)
 
         # Default implementation uses fd.
-        fd_path = await ensure_tool("fd", True)
+        fd_path = await ensure_tool("fd")
         _throw_if_aborted(cancel)
         if not fd_path:
             raise Exception(missing_tool_message("fd"))

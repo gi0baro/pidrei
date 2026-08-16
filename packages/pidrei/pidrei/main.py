@@ -82,7 +82,7 @@ from .utils.fd_io import FdReader
 from .utils.paths import is_local_path, normalize_path, resolve_path
 
 
-EXTENSION_LOAD_FAILURE_HINT = 'Hint: Start without extensions using "pidrei -ne".'
+EXTENSION_LOAD_FAILURE_HINT = f'Hint: Start without extensions using "{APP_NAME} -ne".'
 
 from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import ModelsRefreshOptions, models_are_equal
@@ -651,6 +651,9 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         await show_first_time_setup(startup_settings_manager)
         time("firstTimeSetup")
 
+    if app_mode == "interactive" and parsed.use_theme is not None:
+        startup_settings_manager.apply_overrides({"theme": parsed.use_theme})
+
     # Decide the final runtime cwd before creating cwd-bound runtime services.
     # --session and --resume may select a session from another project, so project-local
     # settings, resources, provider registrations, and models must be resolved only after
@@ -954,6 +957,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 "initialMessages": parsed.messages,
                 "verbose": parsed.verbose,
                 "tuiMode": parsed.tui_mode,
+                "initialThemeSetting": parsed.use_theme,
             },
         )
         if startup_benchmark:

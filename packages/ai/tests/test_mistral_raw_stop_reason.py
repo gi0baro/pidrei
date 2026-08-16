@@ -1,46 +1,36 @@
-"""Mirror of pi's mistral-raw-stop-reason.test.ts."""
+"""Mirror of pi's mistral-raw-stop-reason.test.ts.
 
-import contextlib
+pi injects a `fetch` returning a canned SSE response; pidrei's transport seam
+is client injection (`MistralOptions.client`), fed the same SSE bytes.
+"""
+
+import json
 
 import pytest
 
-from pidrei_ai.api import mistral_conversations as mistral
-from pidrei_ai.api.mistral_conversations import stream as stream_mistral
+from pidrei_ai.api.mistral_conversations import MistralOptions, stream as stream_mistral
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, StreamOptions, UserMessage
+from pidrei_ai.types import Context, UserMessage
+from tests.mistral_helpers import FakeMistralClient, sse_body
 
 
 MODEL = get_builtin_model("mistral", "devstral-medium-latest")
-CONTEXT = Context(messages=[UserMessage(content="hello", timestamp=1)])
 
 
-@contextlib.contextmanager
-def _streaming(finish_reason: str):
-    class _Fake:
-        def __init__(self, _api_key, _server_url=None, env=None):
-            pass
-
-        async def chat_stream(self, _payload, *, headers=None, cancel=None, timeout_ms=None):
-            async def events():
-                yield {
-                    "id": "mistral-response-id",
-                    "choices": [{"finishReason": finish_reason, "delta": {}}],
-                    "usage": {"promptTokens": 1, "completionTokens": 0, "totalTokens": 1},
-                }
-
-            return events()
-
-    original = mistral.MistralClient
-    mistral.MistralClient = _Fake
-    try:
-        yield
-    finally:
-        mistral.MistralClient = original
+def _create_client(finish_reason: str) -> FakeMistralClient:
+    event = {
+        "id": "mistral-response-id",
+        "model": MODEL.id,
+        "choices": [{"index": 0, "finish_reason": finish_reason, "delta": {}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1},
+    }
+    return FakeMistralClient(body=sse_body([json.dumps(event)]))
 
 
 async def _result(finish_reason: str):
-    with _streaming(finish_reason):
-        return await stream_mistral(MODEL, CONTEXT, StreamOptions(api_key="test")).result()
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+    options = MistralOptions(api_key="test", client=_create_client(finish_reason))
+    return await stream_mistral(MODEL, context, options).result()
 
 
 @pytest.mark.tonio

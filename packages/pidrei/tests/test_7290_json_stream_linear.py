@@ -37,7 +37,9 @@ async def _measure_update_bytes(harnesses, text: str) -> int:
     updates = [to_json_event(event) for event in session_updates]
     assert len(updates) > 0
     for update in updates:
-        assert set(update) == {"type", "assistantMessageEvent"}
+        # `usage` joined the wire shape in 0.84.2 (c93ea6cc): fixed-size, so
+        # the linear-scaling property below still holds.
+        assert set(update) == {"type", "usage", "assistantMessageEvent"}
         assert "partial" not in update["assistantMessageEvent"]
     return sum(len(json.dumps(to_wire(update), ensure_ascii=False).encode("utf-8")) for update in updates)
 

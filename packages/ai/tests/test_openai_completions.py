@@ -357,6 +357,18 @@ def test_detect_compat_deepseek():
     assert compat.supports_store is False
     assert compat.thinking_format == "deepseek"
     assert compat.requires_reasoning_content_on_assistant_messages is True
+    # 0.84.2 (c185d412): DeepSeek rejects max_completion_tokens.
+    assert compat.max_tokens_field == "max_tokens"
+    custom = detect_compat(
+        make_model(provider="custom-deepseek", base_url="https://api.deepseek.com", id="custom-deepseek-model")
+    )
+    assert custom.max_tokens_field == "max_tokens"
+    # 0.84.2 (b647d187): the base-URL match is case-insensitive.
+    uppercase = detect_compat(
+        make_model(provider="custom-deepseek", base_url="https://API.DeepSeek.COM", id="custom-uppercase")
+    )
+    assert uppercase.max_tokens_field == "max_tokens"
+    assert uppercase.thinking_format == "deepseek"
 
 
 def test_detect_compat_openrouter_anthropic_models():

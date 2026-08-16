@@ -5,7 +5,9 @@ directory per working directory, one `<created-at>_<id>.jsonl` file per session.
 """
 
 import re
+import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -14,7 +16,7 @@ from pidrei_ai.utils.uuid import uuidv7
 from ..session import Session, assert_json_serializable
 from ..types import ForkOptions, SessionError
 from .codec import metadata_from_header, parse_header
-from .errors import file_result, invalid_file
+from .errors import file_result
 from .storage import JsonlSessionStorage
 from .types import (
     JsonlSessionCreateOptions,
@@ -37,8 +39,72 @@ def _validate_session_id(id: str) -> None:
         )
 
 
-def session_directory_name(cwd: str) -> str:
+def jsonl_session_directory_name(cwd: str) -> str:
     return f"--{re.sub(r'[/\\\\:]', '-', re.sub(r'^[/\\\\]', '', cwd))}--"
+
+
+async def _jsonl_sessions_root(options: JsonlSessionRepoOptions) -> str:
+    return file_result(
+        await options.fs.absolute_path(options.sessions_root),
+        f"Failed to resolve sessions root {options.sessions_root}",
+    )
+
+
+async def _jsonl_session_directory(fs, sessions_root: str, cwd: str) -> str:
+    return file_result(
+        await fs.join_path([sessions_root, jsonl_session_directory_name(cwd)]),
+        f"Failed to resolve sessions directory for {cwd}",
+    )
+
+
+async def _jsonl_session_directories(options: JsonlSessionRepoOptions, cwd: str | None = None) -> list[str]:
+    sessions_root = await _jsonl_sessions_root(options)
+    if cwd is not None:
+        resolved_cwd = file_result(await options.fs.absolute_path(cwd), f"Failed to resolve session cwd {cwd}")
+        directory = await _jsonl_session_directory(options.fs, sessions_root, resolved_cwd)
+        exists = file_result(await options.fs.exists(directory), f"Failed to check sessions directory {directory}")
+        return [directory] if exists else []
+    if not file_result(await options.fs.exists(sessions_root), f"Failed to check sessions directory {sessions_root}"):
+        return []
+    entries = file_result(
+        await options.fs.list_dir(sessions_root), f"Failed to list sessions directory {sessions_root}"
+    )
+    return [entry.path for entry in entries if entry.kind in ("directory", "symlink")]
+
+
+async def list_jsonl_session_metadata(
+    options: JsonlSessionRepoOptions, query: JsonlSessionListOptions | None = None
+) -> list[JsonlSessionMetadata]:
+    query = query if query is not None else JsonlSessionListOptions()
+    metadata: list[JsonlSessionMetadata] = []
+    for directory in await _jsonl_session_directories(options, query.cwd):
+        entries = file_result(await options.fs.list_dir(directory), f"Failed to list sessions directory {directory}")
+        files = [entry for entry in entries if entry.kind != "directory" and entry.name.endswith(".jsonl")]
+        for file in files:
+            lines = file_result(
+                await options.fs.read_text_lines(file.path, max_lines=1),
+                f"Failed to read session header {file.path}",
+            )
+            first_line = lines[0] if lines else None
+            if not first_line:
+                continue
+            header_result = parse_header(first_line)
+            if not header_result.ok:
+                continue
+            metadata.append(metadata_from_header(header_result.value, file.path, file.mtime_ms))
+    return sorted(metadata, key=lambda item: item.modified_at, reverse=True)
+
+
+async def load_jsonl_session_storage(
+    options: JsonlSessionRepoOptions, metadata: JsonlSessionMetadata
+) -> JsonlSessionStorage:
+    if not file_result(await options.fs.exists(metadata.path), f"Failed to check session {metadata.path}"):
+        raise SessionError("not_found", f"Session not found: {metadata.id}")
+    storage = await JsonlSessionStorage.load(options.fs, metadata.path)
+    loaded_metadata = await storage.get_metadata()
+    if loaded_metadata.id != metadata.id:
+        raise SessionError("invalid_entry", f"Session id does not match header: {metadata.id}")
+    return storage
 
 
 def session_file_name(created_at: int, id: str) -> str:
@@ -52,11 +118,20 @@ class JsonlSessionRepo:
     def __init__(self, options: JsonlSessionRepoOptions):
         self._fs = options.fs
         self._sessions_root_input = options.sessions_root
+        self._active_create_destinations: set[str] = set()
+        # pi's has/add on the set is event-loop-atomic; tonio tasks run on real
+        # threads, so the check-then-add needs a sync critical section.
+        self._create_claim_lock = threading.Lock()
         self._root: str | None = None
 
     async def create(self, options: JsonlSessionCreateOptions) -> Session:
-        header, path = await self._prepare_create(options)
-        return Session(await JsonlSessionStorage.create(self._fs, path, header))
+        destination = await self._resolve_create_destination(options)
+
+        async def operation() -> Session:
+            header, path = await self._prepare_create(destination, options)
+            return Session(await JsonlSessionStorage.create(self._fs, path, header))
+
+        return await self._claim_create_destination(destination, operation)
 
     async def open(self, metadata: JsonlSessionMetadata) -> Session:
         return Session(await self._load_storage(metadata))
@@ -76,22 +151,55 @@ class JsonlSessionRepo:
         source_storage = await self._load_storage(source)
         create = create if create is not None else JsonlSessionCreateOptions(cwd=source.cwd)
         parent_session_id = create.parent_session_id if create.parent_session_id is not None else source.id
-        header, path = await self._prepare_create(replace(create, parent_session_id=parent_session_id))
-        return Session(await source_storage.fork(path, header, options))
+        create_options = replace(create, parent_session_id=parent_session_id)
+        destination = await self._resolve_create_destination(create_options)
+
+        async def operation() -> Session:
+            header, path = await self._prepare_create(destination, create_options)
+            return Session(await source_storage.fork(path, header, options))
+
+        return await self._claim_create_destination(destination, operation)
 
     async def _load_storage(self, metadata: JsonlSessionMetadata) -> JsonlSessionStorage:
-        if not file_result(await self._fs.exists(metadata.path), f"Failed to check session {metadata.path}"):
-            raise SessionError("not_found", f"Session not found: {metadata.id}")
-        storage = await JsonlSessionStorage.load(self._fs, metadata.path)
-        loaded_metadata = await storage.get_metadata()
-        if loaded_metadata.id != metadata.id:
-            raise SessionError("invalid_entry", f"Session id does not match header: {metadata.id}")
-        return storage
+        return await load_jsonl_session_storage(
+            JsonlSessionRepoOptions(fs=self._fs, sessions_root=self._sessions_root_input), metadata
+        )
 
-    async def _prepare_create(self, options: JsonlSessionCreateOptions) -> tuple[JsonlV4Header, str]:
+    async def _resolve_create_destination(self, options: JsonlSessionCreateOptions) -> tuple[str, str]:
         id = options.id if options.id is not None else uuidv7()
         _validate_session_id(id)
         cwd = file_result(await self._fs.absolute_path(options.cwd), f"Failed to resolve session cwd {options.cwd}")
+        return id, cwd
+
+    async def _claim_create_destination[T](
+        self,
+        destination: tuple[str, str],
+        operation: Callable[[], Awaitable[T]],
+    ) -> T:
+        """Prevent same-process create/fork races for one logical destination.
+
+        The durable filename includes a timestamp, so the async filesystem
+        existence check alone can let two concurrent calls both decide the same
+        {cwd, id} is free and publish duplicate sessions.
+        """
+        id, cwd = destination
+        key = f"{cwd}\0{id}"
+        with self._create_claim_lock:
+            if key in self._active_create_destinations:
+                raise SessionError("already_exists", f"Session already exists: {id}")
+            self._active_create_destinations.add(key)
+        try:
+            return await operation()
+        finally:
+            with self._create_claim_lock:
+                self._active_create_destinations.discard(key)
+
+    async def _prepare_create(
+        self,
+        destination: tuple[str, str],
+        options: JsonlSessionCreateOptions,
+    ) -> tuple[JsonlV4Header, str]:
+        id, cwd = destination
         if await self._session_id_exists(id, cwd):
             raise SessionError("already_exists", f"Session already exists: {id}")
 
@@ -114,20 +222,9 @@ class JsonlSessionRepo:
         return header, path
 
     async def _list_direct(self, options: JsonlSessionListOptions) -> list[JsonlSessionMetadata]:
-        directories = await self._session_directories(options.cwd)
-        metadata: list[JsonlSessionMetadata] = []
-        for directory in directories:
-            entries = file_result(await self._fs.list_dir(directory), f"Failed to list sessions directory {directory}")
-            files = [entry for entry in entries if entry.kind != "directory" and entry.name.endswith(".jsonl")]
-            for file in files:
-                content = file_result(
-                    await self._fs.read_text_file(file.path), f"Failed to read session header {file.path}"
-                )
-                first_line = content.split("\n", 1)[0]
-                if not first_line:
-                    raise invalid_file(file.path, 1, "is missing a header")
-                metadata.append(metadata_from_header(parse_header(first_line, file.path), file.path, file.mtime_ms))
-        return sorted(metadata, key=lambda item: item.modified_at, reverse=True)
+        return await list_jsonl_session_metadata(
+            JsonlSessionRepoOptions(fs=self._fs, sessions_root=self._sessions_root_input), options
+        )
 
     async def _session_id_exists(self, id: str, cwd: str) -> bool:
         suffix = f"_{id}.jsonl"
@@ -137,21 +234,9 @@ class JsonlSessionRepo:
         files = file_result(await self._fs.list_dir(directory), f"Failed to list sessions directory {directory}")
         return any(entry.kind != "directory" and entry.name.endswith(suffix) for entry in files)
 
-    async def _session_directories(self, cwd: str | None) -> list[str]:
-        root = await self._resolve_root()
-        if cwd is not None:
-            resolved_cwd = file_result(await self._fs.absolute_path(cwd), f"Failed to resolve session cwd {cwd}")
-            directory = await self._session_directory(resolved_cwd)
-            exists = file_result(await self._fs.exists(directory), f"Failed to check sessions directory {directory}")
-            return [directory] if exists else []
-        if not file_result(await self._fs.exists(root), f"Failed to check sessions directory {root}"):
-            return []
-        entries = file_result(await self._fs.list_dir(root), f"Failed to list sessions directory {root}")
-        return [entry.path for entry in entries if entry.kind in ("directory", "symlink")]
-
     async def _session_directory(self, cwd: str) -> str:
         return file_result(
-            await self._fs.join_path([await self._resolve_root(), session_directory_name(cwd)]),
+            await self._fs.join_path([await self._resolve_root(), jsonl_session_directory_name(cwd)]),
             f"Failed to resolve sessions directory for {cwd}",
         )
 

@@ -8,6 +8,10 @@ from pidrei_tui import Box, Container, Image, Spacer, Text, get_capabilities
 
 from ....utils.image_process import convert_to_png
 from ..theme import theme
+from .keybinding_hints import key_hint
+
+
+FALLBACK_PREVIEW_LINES = 10
 
 
 def _block_type(block) -> str | None:
@@ -128,7 +132,17 @@ class ToolExecutionComponent(Container):
         output = self._get_text_output()
         if not output:
             return None
-        return Text(theme.fg("toolOutput", output), 0, 0)
+
+        lines = output.split("\n")
+        display_lines = lines if self._expanded else lines[:FALLBACK_PREVIEW_LINES]
+        remaining = len(lines) - len(display_lines)
+        text = "\n".join(theme.fg("toolOutput", line) for line in display_lines)
+        if remaining > 0:
+            text += (
+                f"{theme.fg('muted', f'\n... ({remaining} more lines,')} "
+                f"{key_hint('app.tools.expand', 'to expand')}{theme.fg('muted', ')')}"
+            )
+        return Text(text, 0, 0)
 
     def update_args(self, args) -> None:
         self._args = args

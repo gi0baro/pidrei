@@ -74,9 +74,8 @@ STRICT_TOOL = Tool(
     description="Look up a value",
     parameters={
         "type": "object",
-        "properties": {"value": {"type": "string"}},
+        "properties": {"value": {"type": "string"}, "optional": {"type": "number"}},
         "required": ["value"],
-        "additionalProperties": False,
         "title": "StrictLookupInput",
     },
     constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
@@ -157,4 +156,6 @@ async def test_only_sends_the_full_input_schema_for_strict_json_schema_tools():
     assert strict_body["tools"][0]["strict"] is True
     input_schema = strict_body["tools"][0]["input_schema"]
     assert input_schema["additionalProperties"] is False
+    assert input_schema["required"] == ["value", "optional"]
+    assert input_schema["properties"]["optional"] == {"anyOf": [{"type": "number"}, {"type": "null"}]}
     assert input_schema["title"] == "StrictLookupInput"

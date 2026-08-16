@@ -11,6 +11,7 @@ from pidrei_agent.harness.session.jsonl.codec import (
     parse_header,
     parse_mutation,
 )
+from pidrei_agent.harness.session.jsonl.errors import JsonlDecodeError
 from pidrei_agent.harness.session.jsonl.types import JsonlSessionMetadata, JsonlV4Header
 from pidrei_agent.harness.session.state import (
     EntryMutation,
@@ -20,19 +21,20 @@ from pidrei_agent.harness.session.state import (
     RecordMutation,
     SessionMutation,
 )
-from pidrei_agent.harness.session.types import CustomEntry, OperationStartedRecord, RunIntent, SessionError
+from pidrei_agent.harness.session.types import CustomEntry, OperationStartedRecord, RunIntent
+from pidrei_agent.harness.types import ok
 
 
 def expect_header_round_trip(header: JsonlV4Header) -> None:
     encoded = encode_header(header)
     assert encoded.endswith("\n")
-    assert parse_header(encoded.rstrip("\n"), "/sessions/example.jsonl") == header
+    assert parse_header(encoded.rstrip("\n")) == ok(header)
 
 
 def expect_mutation_round_trip(mutation: SessionMutation) -> None:
     encoded = encode_mutation(mutation)
     assert encoded.endswith("\n")
-    assert parse_mutation(encoded.rstrip("\n"), "/sessions/example.jsonl", 2) == mutation
+    assert parse_mutation(encoded.rstrip("\n")) == ok(mutation)
 
 
 def test_round_trips_every_header_field_with_a_resolved_parent():
@@ -115,9 +117,10 @@ def test_round_trips_a_lane_line():
     expect_mutation_round_trip(LaneMutation(seq=1, lane="thread", leaf_id="entry-1"))
 
 
-def test_round_trips_both_fact_line_discriminants():
+def test_round_trips_fact_lines_including_cleared_values():
     expect_mutation_round_trip(NameFactMutation(seq=1, name="Example"))
-    expect_mutation_round_trip(LabelFactMutation(seq=2, target_id="entry-1", label="checkpoint"))
+    expect_mutation_round_trip(NameFactMutation(seq=2, name=None))
+    expect_mutation_round_trip(LabelFactMutation(seq=3, target_id="entry-1", label="checkpoint"))
 
 
 @pytest.mark.parametrize(
@@ -154,5 +157,12 @@ def test_round_trips_both_fact_line_discriminants():
     ],
 )
 def test_rejects_invalid_mutation_lines(name, mutation):
-    with pytest.raises(SessionError):
-        parse_mutation(json.dumps(mutation), "/sessions/example.jsonl", 2)
+    assert parse_mutation(json.dumps(mutation)).ok is False
+
+
+def test_returns_syntax_and_schema_errors():
+    for line, kind in [("{", "syntax"), (json.dumps({"kind": "unknown", "seq": 1}), "schema")]:
+        result = parse_mutation(line)
+        assert result.ok is False
+        assert isinstance(result.error, JsonlDecodeError)
+        assert result.error.kind == kind

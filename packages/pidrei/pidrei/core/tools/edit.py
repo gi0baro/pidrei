@@ -13,6 +13,7 @@ from pidrei_ai.types import TextContent
 from pidrei_tui import Box, Container, Spacer, Text
 
 from ...modes.interactive.components.diff import render_diff
+from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .edit_diff import (
     Edit,
@@ -433,6 +434,7 @@ def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         prompt_snippet=EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=list(EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=EDIT_SCHEMA,
+        constrained_sampling=get_experimental_tool_sampling(),
         render_shell="self",
         render_call=render_call,
         render_result=render_result,

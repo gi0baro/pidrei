@@ -7,6 +7,8 @@ observable request headers without a mocked network layer.
 
 import time
 
+import pytest
+
 from pidrei_ai.api.openai_responses import OpenAIResponsesOptions, _create_client, build_params
 from pidrei_ai.types import Context, OpenAIResponsesCompat, UserMessage
 from tests.test_openai_responses import make_model
@@ -87,3 +89,42 @@ def test_omits_cache_affinity_headers_when_session_is_absent():
     assert "session_id" not in headers
     assert "x-client-request-id" not in headers
     assert "x-session-id" not in headers
+
+
+@pytest.mark.xfail(
+    reason="catalog assertion: awaiting `make models-data` regen with 75c7fd66's generator change "
+    "(0.84.2 close-out step; remove this marker there)",
+    strict=False,
+)
+def test_sets_strict_mode_explicitly_for_cloudflare_openai_responses_tools():
+    from pidrei_ai.providers.all import get_builtin_model
+    from pidrei_ai.types import JsonSchemaConstrainedSampling, Tool
+
+    model = get_builtin_model("cloudflare-ai-gateway", "gpt-5.6-sol")
+    assert model.compat is not None and model.compat.supports_strict_mode is True
+
+    context = Context(
+        messages=[UserMessage(content="Use a tool.", timestamp=1)],
+        tools=[
+            Tool(
+                name="ordinary",
+                description="An ordinary tool",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "offset": {"type": "number"}},
+                    "required": ["path"],
+                },
+            ),
+            Tool(
+                name="constrained",
+                description="A constrained tool",
+                parameters={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+                constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
+            ),
+        ],
+    )
+    params = build_params(model, context, OpenAIResponsesOptions())
+    assert [(tool.get("name"), tool.get("strict")) for tool in params["tools"]] == [
+        ("ordinary", False),
+        ("constrained", True),
+    ]

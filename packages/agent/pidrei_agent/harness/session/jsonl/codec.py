@@ -11,6 +11,7 @@ run intents) serialize without `parentId`/`seq`/`timestamp`, exactly like pi's
 import json
 from typing import Any
 
+from ...types import Result, err, ok
 from ..serde import parse_message, parse_usage, serialize_message, serialize_usage, to_wire_value
 from ..state import (
     EntryMutation,
@@ -44,7 +45,7 @@ from ..types import (
     UsageRecord,
     WriteDeferredRecord,
 )
-from .errors import invalid_file
+from .errors import JsonlDecodeError
 from .types import JsonlSessionMetadata, JsonlV4Header
 
 
@@ -75,19 +76,19 @@ def _is_object(value: Any) -> bool:
     return isinstance(value, dict)
 
 
-def _parse_object(line: str, path: str, line_number: int) -> dict[str, Any]:
+def _parse_object(line: str) -> dict[str, Any]:
     try:
         value = json.loads(line)
     except ValueError as error:
-        raise invalid_file(path, line_number, "is not valid JSON", error) from error
+        raise JsonlDecodeError("syntax", "is not valid JSON", error) from error
     if not _is_object(value):
-        raise invalid_file(path, line_number, "is not a JSON object")
+        raise JsonlDecodeError("schema", "is not a JSON object")
     return value
 
 
-def _require_string(value: Any, path: str, line: int, field: str) -> str:
+def _require_string(value: Any, field: str) -> str:
     if not isinstance(value, str):
-        raise invalid_file(path, line, f"has invalid {field}")
+        raise JsonlDecodeError("schema", f"has invalid {field}")
     return value
 
 
@@ -95,21 +96,21 @@ def _is_safe_integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _require_sequence(value: Any, path: str, line: int) -> int:
+def _require_sequence(value: Any) -> int:
     if not _is_safe_integer(value) or value <= 0:
-        raise invalid_file(path, line, "has invalid seq")
+        raise JsonlDecodeError("schema", "has invalid seq")
     return value
 
 
-def _require_timestamp(value: Any, path: str, line: int) -> int:
+def _require_timestamp(value: Any) -> int:
     if not _is_safe_integer(value) or value < 0:
-        raise invalid_file(path, line, "has invalid timestamp")
+        raise JsonlDecodeError("schema", "has invalid timestamp")
     return value
 
 
-def _require_nullable_id(value: Any, path: str, line: int, field: str) -> str | None:
+def _require_nullable_id(value: Any, field: str) -> str | None:
     if value is not None and not isinstance(value, str):
-        raise invalid_file(path, line, f"has invalid {field}")
+        raise JsonlDecodeError("schema", f"has invalid {field}")
     return value
 
 
@@ -122,31 +123,38 @@ def _dump(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
 
 
-def parse_header(line: str, path: str) -> JsonlV4Header:
-    value = _parse_object(line, path, 1)
+def _decode_header(line: str) -> JsonlV4Header:
+    value = _parse_object(line)
     if value.get("kind") != "header":
-        raise invalid_file(path, 1, "is not a header")
+        raise JsonlDecodeError("schema", "is not a header")
     if value.get("version") != 4 or isinstance(value.get("version"), bool):
-        raise invalid_file(path, 1, "has unsupported session version")
+        raise JsonlDecodeError("schema", "has unsupported session version")
     parent_session_id = value.get("parentSessionId")
     if parent_session_id is not None and not isinstance(parent_session_id, str):
-        raise invalid_file(path, 1, "has invalid parentSessionId")
+        raise JsonlDecodeError("schema", "has invalid parentSessionId")
     legacy_parent_session_path = value.get("legacyParentSessionPath")
     if legacy_parent_session_path is not None and not isinstance(legacy_parent_session_path, str):
-        raise invalid_file(path, 1, "has invalid legacyParentSessionPath")
+        raise JsonlDecodeError("schema", "has invalid legacyParentSessionPath")
     if parent_session_id is not None and legacy_parent_session_path is not None:
-        raise invalid_file(path, 1, "has both parentSessionId and legacyParentSessionPath")
+        raise JsonlDecodeError("schema", "has both parentSessionId and legacyParentSessionPath")
     metadata = value.get("metadata")
     if metadata is not None and not _is_object(metadata):
-        raise invalid_file(path, 1, "has invalid metadata")
+        raise JsonlDecodeError("schema", "has invalid metadata")
     return JsonlV4Header(
-        id=_require_string(value.get("id"), path, 1, "id"),
-        created_at=_require_timestamp(value.get("createdAt"), path, 1),
-        cwd=_require_string(value.get("cwd"), path, 1, "cwd"),
+        id=_require_string(value.get("id"), "id"),
+        created_at=_require_timestamp(value.get("createdAt")),
+        cwd=_require_string(value.get("cwd"), "cwd"),
         parent_session_id=parent_session_id,
         legacy_parent_session_path=legacy_parent_session_path,
         metadata=metadata,
     )
+
+
+def parse_header(line: str) -> Result[JsonlV4Header, JsonlDecodeError]:
+    try:
+        return ok(_decode_header(line))
+    except JsonlDecodeError as error:
+        return err(error)
 
 
 def encode_header(header: JsonlV4Header) -> str:
@@ -287,26 +295,25 @@ def _entry_to_wire(entry: Entry, *, provisioned: bool) -> dict[str, Any]:
     return data
 
 
-def _parse_provisioned_entry(value: Any, path: str, line: int, field: str) -> Entry:
+def _parse_provisioned_entry(value: Any, field: str) -> Entry:
     if not _is_object(value):
-        raise invalid_file(path, line, f"has invalid {field}")
-    entry_type = _require_string(value.get("type"), path, line, f"{field} entry type")
+        raise JsonlDecodeError("schema", f"has invalid {field}")
+    entry_type = _require_string(value.get("type"), f"{field} entry type")
     if entry_type not in ENTRY_TYPES:
-        raise invalid_file(path, line, f"has unknown entry type {entry_type}")
-    id = _require_string(value.get("id"), path, line, f"{field} id")
+        raise JsonlDecodeError("schema", f"has unknown entry type {entry_type}")
+    id = _require_string(value.get("id"), f"{field} id")
     if entry_type == "custom":
-        _require_string(value.get("customType"), path, line, "customType")
+        _require_string(value.get("customType"), "customType")
     return _entry_from_wire(value, entry_type, id=id, parent_id=None, seq=0, timestamp=0)
 
 
-def _intent_from_wire(value: dict[str, Any], path: str, line: int) -> OperationIntent:
+def _intent_from_wire(value: dict[str, Any]) -> OperationIntent:
     kind = value.get("kind")
     if kind == "run":
         return RunIntent(
             original_prompt=[parse_message(message) for message in value.get("originalPrompt") or []],
             initial_messages=[
-                _parse_provisioned_entry(entry, path, line, "initialMessages")
-                for entry in value.get("initialMessages") or []
+                _parse_provisioned_entry(entry, "initialMessages") for entry in value.get("initialMessages") or []
             ],
             system_prompt_override=value.get("systemPromptOverride"),
             resume_data=value.get("resumeData"),
@@ -349,8 +356,6 @@ def _intent_to_wire(intent: OperationIntent) -> dict[str, Any]:
 def _record_from_wire(
     value: dict[str, Any],
     record_type: str,
-    path: str,
-    line: int,
     *,
     id: str,
     lane: str,
@@ -364,7 +369,7 @@ def _record_from_wire(
             seq=seq,
             timestamp=timestamp,
             source_leaf_id=value.get("sourceLeafId"),
-            intent=_intent_from_wire(value["intent"], path, line),
+            intent=_intent_from_wire(value["intent"]),
         )
     if record_type == "abort_requested":
         return AbortRequestedRecord(id=id, lane=lane, seq=seq, timestamp=timestamp, run_id=value.get("runId", ""))
@@ -413,7 +418,7 @@ def _record_from_wire(
             timestamp=timestamp,
             queue=value.get("queue", "nextRun"),
             run_id=value.get("runId"),
-            target=_parse_provisioned_entry(value.get("target"), path, line, "target"),
+            target=_parse_provisioned_entry(value.get("target"), "target"),
         )
     if record_type == "queue_cancelled":
         return QueueCancelledRecord(
@@ -431,7 +436,7 @@ def _record_from_wire(
             seq=seq,
             timestamp=timestamp,
             run_id=value.get("runId", ""),
-            target=_parse_provisioned_entry(value.get("target"), path, line, "target"),
+            target=_parse_provisioned_entry(value.get("target"), "target"),
         )
     return UsageRecord(
         id=id,
@@ -499,65 +504,87 @@ def _record_to_wire(record: LaneRecord) -> dict[str, Any]:
     return data
 
 
-def parse_mutation(line: str, path: str, line_number: int) -> SessionMutation:
-    value = _parse_object(line, path, line_number)
-    seq = _require_sequence(value.get("seq"), path, line_number)
+def _parse_entry_mutation(value: dict[str, Any], seq: int) -> EntryMutation:
+    lane = value.get("lane")
+    if lane is not None:
+        lane = _require_string(lane, "lane")
+    id = _require_string(value.get("id"), "id")
+    entry_type = _require_string(value.get("type"), "entry type")
+    if entry_type not in ENTRY_TYPES:
+        raise JsonlDecodeError("schema", f"has unknown entry type {entry_type}")
+    parent_id = _require_nullable_id(value.get("parentId"), "parentId")
+    timestamp = _require_timestamp(value.get("timestamp"))
+    if entry_type == "custom":
+        _require_string(value.get("customType"), "customType")
+    entry = _entry_from_wire(value, entry_type, id=id, parent_id=parent_id, seq=seq, timestamp=timestamp)
+    return EntryMutation(entry=entry) if lane is None else EntryMutation(lane=lane, entry=entry)
+
+
+def _parse_record_mutation(value: dict[str, Any], seq: int) -> RecordMutation:
+    id = _require_string(value.get("id"), "id")
+    lane = _require_string(value.get("lane"), "lane")
+    record_type = _require_string(value.get("type"), "record type")
+    if record_type not in RECORD_TYPES:
+        raise JsonlDecodeError("schema", f"has unknown record type {record_type}")
+    timestamp = _require_timestamp(value.get("timestamp"))
+    if record_type == "operation_started":
+        if not _is_object(value.get("intent")):
+            raise JsonlDecodeError("schema", "has invalid intent")
+        operation_kind = _require_string(value["intent"].get("kind"), "operation kind")
+        if operation_kind not in OPERATION_KINDS:
+            raise JsonlDecodeError("schema", f"has unknown operation kind {operation_kind}")
+    if record_type == "operation_finished":
+        _require_string(value.get("runId"), "runId")
+    return RecordMutation(record=_record_from_wire(value, record_type, id=id, lane=lane, seq=seq, timestamp=timestamp))
+
+
+def _parse_lane_mutation(value: dict[str, Any], seq: int) -> LaneMutation:
+    return LaneMutation(
+        seq=seq,
+        lane=_require_string(value.get("lane"), "lane"),
+        leaf_id=_require_nullable_id(value.get("leafId"), "leafId"),
+    )
+
+
+def _parse_fact_mutation(value: dict[str, Any], seq: int) -> NameFactMutation | LabelFactMutation:
+    fact = value.get("fact")
+    if fact == "name":
+        name = value.get("name")
+        if name is not None and not isinstance(name, str):
+            raise JsonlDecodeError("schema", "has invalid name")
+        return NameFactMutation(seq=seq, name=name)
+    if fact == "label":
+        label = value.get("label")
+        if label is not None and not isinstance(label, str):
+            raise JsonlDecodeError("schema", "has invalid label")
+        return LabelFactMutation(
+            seq=seq,
+            target_id=_require_string(value.get("targetId"), "targetId"),
+            label=label,
+        )
+    raise JsonlDecodeError("schema", "has unknown fact type")
+
+
+def _decode_mutation(line: str) -> SessionMutation:
+    value = _parse_object(line)
+    seq = _require_sequence(value.get("seq"))
     kind = value.get("kind")
     if kind == "entry":
-        lane = value.get("lane")
-        if lane is not None:
-            lane = _require_string(lane, path, line_number, "lane")
-        id = _require_string(value.get("id"), path, line_number, "id")
-        entry_type = _require_string(value.get("type"), path, line_number, "entry type")
-        if entry_type not in ENTRY_TYPES:
-            raise invalid_file(path, line_number, f"has unknown entry type {entry_type}")
-        parent_id = _require_nullable_id(value.get("parentId"), path, line_number, "parentId")
-        timestamp = _require_timestamp(value.get("timestamp"), path, line_number)
-        if entry_type == "custom":
-            _require_string(value.get("customType"), path, line_number, "customType")
-        entry = _entry_from_wire(value, entry_type, id=id, parent_id=parent_id, seq=seq, timestamp=timestamp)
-        return EntryMutation(entry=entry) if lane is None else EntryMutation(lane=lane, entry=entry)
+        return _parse_entry_mutation(value, seq)
     if kind == "record":
-        id = _require_string(value.get("id"), path, line_number, "id")
-        lane = _require_string(value.get("lane"), path, line_number, "lane")
-        record_type = _require_string(value.get("type"), path, line_number, "record type")
-        if record_type not in RECORD_TYPES:
-            raise invalid_file(path, line_number, f"has unknown record type {record_type}")
-        timestamp = _require_timestamp(value.get("timestamp"), path, line_number)
-        if record_type == "operation_started":
-            if not _is_object(value.get("intent")):
-                raise invalid_file(path, line_number, "has invalid intent")
-            operation_kind = _require_string(value["intent"].get("kind"), path, line_number, "operation kind")
-            if operation_kind not in OPERATION_KINDS:
-                raise invalid_file(path, line_number, f"has unknown operation kind {operation_kind}")
-        if record_type == "operation_finished":
-            _require_string(value.get("runId"), path, line_number, "runId")
-        return RecordMutation(
-            record=_record_from_wire(
-                value, record_type, path, line_number, id=id, lane=lane, seq=seq, timestamp=timestamp
-            )
-        )
+        return _parse_record_mutation(value, seq)
     if kind == "lane":
-        return LaneMutation(
-            seq=seq,
-            lane=_require_string(value.get("lane"), path, line_number, "lane"),
-            leaf_id=_require_nullable_id(value.get("leafId"), path, line_number, "leafId"),
-        )
+        return _parse_lane_mutation(value, seq)
     if kind == "fact":
-        fact = value.get("fact")
-        if fact == "name":
-            return NameFactMutation(seq=seq, name=_require_string(value.get("name"), path, line_number, "name"))
-        if fact == "label":
-            label = value.get("label")
-            if label is not None and not isinstance(label, str):
-                raise invalid_file(path, line_number, "has invalid label")
-            return LabelFactMutation(
-                seq=seq,
-                target_id=_require_string(value.get("targetId"), path, line_number, "targetId"),
-                label=label,
-            )
-        raise invalid_file(path, line_number, "has unknown fact type")
-    raise invalid_file(path, line_number, "has unknown mutation kind")
+        return _parse_fact_mutation(value, seq)
+    raise JsonlDecodeError("schema", "has unknown mutation kind")
+
+
+def parse_mutation(line: str) -> Result[SessionMutation, JsonlDecodeError]:
+    try:
+        return ok(_decode_mutation(line))
+    except JsonlDecodeError as error:
+        return err(error)
 
 
 def encode_mutation(mutation: SessionMutation) -> str:
@@ -571,7 +598,10 @@ def encode_mutation(mutation: SessionMutation) -> str:
     if mutation.kind == "lane":
         return _dump({"kind": "lane", "seq": mutation.seq, "lane": mutation.lane, "leafId": mutation.leaf_id})
     if mutation.fact == "name":
-        return _dump({"kind": "fact", "seq": mutation.seq, "fact": "name", "name": mutation.name})
+        data = {"kind": "fact", "seq": mutation.seq, "fact": "name"}
+        # A cleared name is dropped from the wire like JSON.stringify drops undefined.
+        _put(data, "name", mutation.name)
+        return _dump(data)
     data = {"kind": "fact", "seq": mutation.seq, "fact": "label", "targetId": mutation.target_id}
     _put(data, "label", mutation.label)
     return _dump(data)

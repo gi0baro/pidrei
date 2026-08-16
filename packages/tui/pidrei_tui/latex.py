@@ -951,6 +951,11 @@ class _LatexParser:
             return ""
 
         first = self._source[self._position]
+        if first in ("\n", "\r"):
+            self._position += 1
+            if first == "\r" and self._position < len(self._source) and self._source[self._position] == "\n":
+                self._position += 1
+            return " "
         if _COMMAND_NAME_RE.match(first):
             start = self._position
             while self._position < len(self._source) and _COMMAND_NAME_RE.match(self._source[self._position]):
@@ -1117,7 +1122,7 @@ class _LatexParser:
         return value
 
     def _parse_required_argument_value(self) -> str:
-        while self._position < len(self._source) and self._source[self._position] in (" ", "\t"):
+        while self._position < len(self._source) and self._source[self._position].isspace():
             self._position += 1
         if self._position >= len(self._source):
             self._supported = False

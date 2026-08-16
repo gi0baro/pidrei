@@ -274,16 +274,26 @@ class TestToolExecutionComponentParity:
         rendered = strip_ansi("\n".join(component.render(120)))
         assert "arg:bar" in rendered
 
-    def test_falls_back_when_custom_renderers_are_absent(self):
+    def test_collapses_fallback_results_until_expanded(self):
         tool_definition = create_base_tool_definition()
 
         component = ToolExecutionComponent(
             "custom_tool", "tool-6", {"foo": "bar"}, {}, tool_definition, create_fake_tui(), CWD
         )
-        component.update_result({"content": [{"type": "text", "text": "done"}], "details": {}, "isError": False}, False)
-        rendered = strip_ansi("\n".join(component.render(120)))
-        assert "custom_tool" in rendered
-        assert "done" in rendered
+        output = "\n".join(f"line-{index + 1}" for index in range(15))
+        component.update_result({"content": [{"type": "text", "text": output}], "details": {}, "isError": False}, False)
+
+        collapsed = strip_ansi("\n".join(component.render(120)))
+        assert "custom_tool" in collapsed
+        assert "line-10" in collapsed
+        assert "line-11" not in collapsed
+        assert "5 more lines" in collapsed
+        assert "to expand" in collapsed
+
+        component.set_expanded(True)
+        expanded = strip_ansi("\n".join(component.render(120)))
+        assert "line-15" in expanded
+        assert "more lines" not in expanded
 
     def test_trims_trailing_blank_display_lines_from_write_previews(self):
         component = ToolExecutionComponent(

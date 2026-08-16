@@ -141,7 +141,7 @@ class _InvalidationProbe:
 
 
 @pytest.mark.tonio
-async def test_replaces_the_renderer_while_preserving_components_and_focus():
+async def test_replaces_the_renderer_and_restores_the_previous_screen_for_resume_hint_exits():
     terminal = RecordingTerminal(40, 8)
     renderer = create_interactive_tui(
         tui_mode="regular", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
@@ -164,10 +164,10 @@ async def test_replaces_the_renderer_while_preserving_components_and_focus():
     assert component.invalidated_modes == ["fullscreen"]
     assert [terminal.start_count, terminal.stop_count] == [2, 1]
 
-    await context._stop_interactive_tui()
+    await context._stop_interactive_tui("resume-hint")
 
-    assert context.ui.mode == "regular"
-    assert [terminal.start_count, terminal.stop_count] == [2, 3]
+    assert context.ui.mode == "fullscreen"
+    assert [terminal.start_count, terminal.stop_count] == [2, 2]
 
 
 class _CopyRecorder:

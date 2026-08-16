@@ -43,6 +43,7 @@ COPILOT_HEADERS = {
     "Copilot-Integration-Id": "vscode-chat",
 }
 COPILOT_API_VERSION = "2026-06-01"
+COPILOT_POLICY_CONCURRENCY = 4
 MODELS_FETCH_TIMEOUT_MS = 5000
 
 
@@ -357,7 +358,9 @@ async def _enable_all_models(token: str, enterprise_domain: str | None, cancel: 
     models = list(MODELS.get("github-copilot", []))
     if not models:  # pragma: no cover - the vendored catalog always has models
         return
-    await tonio.spawn(*[_enable_model(token, model.id, enterprise_domain, cancel) for model in models])
+    for index in range(0, len(models), COPILOT_POLICY_CONCURRENCY):
+        batch = models[index : index + COPILOT_POLICY_CONCURRENCY]
+        await tonio.spawn(*[_enable_model(token, model.id, enterprise_domain, cancel) for model in batch])
 
 
 async def _login_github_copilot(interaction: ProviderAuthInteraction) -> OAuthCredential:

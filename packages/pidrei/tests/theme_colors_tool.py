@@ -224,6 +224,9 @@ async def cmd_theme(theme_name: str) -> None:
 
     print("\n--- Backgrounds ---")
     print("userMessageBg:", theme.bg("userMessageBg", " Sample "))
+    search_match = theme.bg("searchMatchBg", theme.fg("searchMatchText", " Sample "))
+    print("searchMatch:", theme.underline(search_match))
+    print("searchCurrentMatch:", theme.bold(theme.inverse(search_match)))
     print("toolPendingBg:", theme.bg("toolPendingBg", " Sample "))
     print("toolSuccessBg:", theme.bg("toolSuccessBg", " Sample "))
     print("toolErrorBg:", theme.bg("toolErrorBg", " Sample "))

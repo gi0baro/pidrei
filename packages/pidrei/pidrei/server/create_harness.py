@@ -26,6 +26,7 @@ from pidrei_agent.harness.tools.tool_context import ExecutionToolContext
 from pidrei_agent.harness.tools.write import create_write_tool
 from pidrei_agent.harness.types import ExecutionEnv
 
+from ..core.experimental import get_experimental_tool_sampling
 from ..core.system_prompt import BuildSystemPromptOptions, ContextFile, build_system_prompt
 from ..core.tools.bash import BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION
 from ..core.tools.edit import EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION
@@ -41,6 +42,7 @@ class _ContextBoundHarnessTool:
         self._context = context
         self.prompt_snippet = prompt_snippet
         self.prompt_guidelines = prompt_guidelines
+        self.constrained_sampling = get_experimental_tool_sampling()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._tool, name)

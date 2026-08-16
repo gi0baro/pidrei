@@ -15,6 +15,7 @@ from pidrei_ai.api.constrained_sampling import (
     GrammarToolInputJsonBuffer,
     append_grammar_tool_input_json_delta,
     get_grammar_tool_input,
+    get_json_schema_tool_parameters,
     resolve_grammar_constrained_sampling,
     resolve_json_schema_strict_sampling,
 )
@@ -112,6 +113,7 @@ def convert_responses_messages(
     include_system_prompt: bool = True,
     grammar_tool_input_properties: dict[str, str] | None = None,
     deferred_tools: dict[str, Tool] | None = None,
+    deferred_tools_mode: str | None = None,
     tool_options: dict | None = None,
 ) -> list[dict]:
     grammar_tool_input_properties = grammar_tool_input_properties or {}
@@ -178,7 +180,9 @@ def convert_responses_messages(
                 messages.append({"role": "user", "content": content})
         elif msg.role == "assistant":
             output: list[dict] = []
-            is_different_model = msg.model != model.id and msg.provider == model.provider and msg.api == model.api
+            is_same_provider_and_api = msg.provider == model.provider and msg.api == model.api
+            is_same_model = is_same_provider_and_api and msg.model == model.id
+            is_different_model = is_same_provider_and_api and msg.model != model.id
             text_block_index = 0
 
             for block in msg.content:
@@ -223,6 +227,8 @@ def convert_responses_messages(
                     ):
                         item_id = None
 
+                    can_replay_namespace = is_same_model or block.name in deferred_tools
+
                     if custom_input_property is not None:
                         entry = {
                             "type": "custom_tool_call",
@@ -234,6 +240,8 @@ def convert_responses_messages(
                         }
                         if item_id is not None:
                             entry["id"] = item_id
+                        if can_replay_namespace and block.namespace is not None:
+                            entry["namespace"] = block.namespace
                         output.append(entry)
                     else:
                         entry = {
@@ -244,6 +252,8 @@ def convert_responses_messages(
                         }
                         if item_id is not None:
                             entry["id"] = item_id
+                        if can_replay_namespace and block.namespace is not None:
+                            entry["namespace"] = block.namespace
                         output.append(entry)
             if not output:
                 msg_index += 1
@@ -265,7 +275,15 @@ def convert_responses_messages(
                     continue
                 loaded_tool_names.add(name)
                 newly_loaded.append(tool)
-            if newly_loaded:
+            if newly_loaded and deferred_tools_mode == "additional-tools":
+                messages.append(
+                    {
+                        "type": "additional_tools",
+                        "role": "developer",
+                        "tools": convert_responses_tools(newly_loaded, **(tool_options or {})),
+                    }
+                )
+            elif newly_loaded and deferred_tools_mode == "tool-search":
                 names = [tool.name for tool in newly_loaded]
                 search_call_id = f"pi_tool_load_{short_hash(msg.tool_call_id + ':' + ','.join(names))}"
                 messages.append(
@@ -327,16 +345,17 @@ def convert_responses_tools(
             continue
 
         constrained_strict = resolve_json_schema_strict_sampling(tool, supports_strict_mode)
+        strict = constrained_strict if constrained_strict is not None else default_strict
         function_tool: dict[str, Any] = {
             "type": "function",
             "name": tool.name,
             "description": tool.description,
-            "parameters": tool.parameters,
+            "parameters": get_json_schema_tool_parameters(tool, strict is True),
         }
         if defer_loading:
             function_tool["defer_loading"] = True
         if supports_strict_mode:
-            function_tool["strict"] = constrained_strict if constrained_strict is not None else default_strict
+            function_tool["strict"] = strict
         converted.append(function_tool)
     return converted
 
@@ -437,7 +456,12 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             stream.push(TextStartEvent(content_index=slot.content_index, partial=output))
             return slot
         if item_type == "function_call":
-            block = ToolCall(id=f"{item.get('call_id')}|{item.get('id')}", name=item.get("name", ""), arguments={})
+            block = ToolCall(
+                id=f"{item.get('call_id')}|{item.get('id')}",
+                name=item.get("name", ""),
+                arguments={},
+                namespace=item.get("namespace"),
+            )
             output.content.append(block)
             slot = _Slot(
                 kind="toolCall",
@@ -455,6 +479,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 id=f"{item.get('call_id')}|{item.get('id')}",
                 name=item.get("name", ""),
                 arguments={input_property: input_value},
+                namespace=item.get("namespace"),
             )
             output.content.append(block)
             slot = _Slot(
@@ -616,6 +641,8 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 and slot.partial_json is not None
             ):
                 slot.block.arguments = parse_streaming_json(item.get("arguments") or slot.partial_json or "{}")
+                if item.get("namespace") is not None:
+                    slot.block.namespace = item["namespace"]
                 slot.partial_json = None
                 stream.push(ToolCallEndEvent(content_index=slot.content_index, tool_call=slot.block, partial=output))
                 output_slots.pop(event.get("output_index"), None)
@@ -630,6 +657,8 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                     slot,
                     append_custom_input(slot, next_input if next_input is not None else get_custom_input(slot), True),
                 )
+                if item.get("namespace") is not None:
+                    slot.block.namespace = item["namespace"]
                 slot.custom_property = None
                 slot.json_buffer = None
                 stream.push(ToolCallEndEvent(content_index=slot.content_index, tool_call=slot.block, partial=output))

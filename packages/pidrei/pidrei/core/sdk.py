@@ -219,6 +219,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     thinking_level = "off" if model is None else clamp_thinking_level(model, thinking_level)
 
     default_active_tool_names = ["read", "bash", "edit", "write"]
+    configured_default_tool_names = settings_manager.get_default_tools()
     allowed_tool_names = options.tools if options.tools is not None else ([] if options.no_tools == "all" else None)
     excluded_tool_names = options.exclude_tools
     excluded_tool_name_set = set(excluded_tool_names) if excluded_tool_names is not None else None
@@ -227,7 +228,15 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         for name in (
             list(options.tools)
             if options.tools is not None
-            else ([] if options.no_tools else default_active_tool_names)
+            else (
+                []
+                if options.no_tools
+                else (
+                    configured_default_tool_names
+                    if configured_default_tool_names is not None
+                    else default_active_tool_names
+                )
+            )
         )
         if excluded_tool_name_set is None or name not in excluded_tool_name_set
     ]

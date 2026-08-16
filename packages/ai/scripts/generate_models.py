@@ -52,7 +52,6 @@ COPILOT_STATIC_HEADERS = {
     "Copilot-Integration-Id": "vscode-chat",
 }
 
-KIMI_STATIC_HEADERS = {"User-Agent": "KimiCLI/1.5"}
 
 # pi: src/api/cloudflare.ts
 CLOUDFLARE_WORKERS_AI_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
@@ -164,6 +163,11 @@ DEEPSEEK_V4_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "max": "max",
 }
 
+DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP: dict[str, str | None] = {
+    **DEEPSEEK_V4_THINKING_LEVEL_MAP,
+    "low": "low",
+}
+
 QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "minimal": None,
     "low": None,
@@ -239,6 +243,12 @@ OPENAI_TOOL_SEARCH_MODEL_IDS = {
     "gpt-5.6-terra",
     "gpt-5.6-luna",
 }
+# Public OpenAI documents additional_tools for applications that load tools
+# outside the normal tool-search flow. Codex currently uses the input item for
+# its Responses Lite GPT-5.6 models.
+# https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
+OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
+OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000
 OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.4",
@@ -476,6 +486,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
     is_cloudflare_ai_gateway = provider == "cloudflare-ai-gateway" or "gateway.ai.cloudflare.com" in base_url
     is_nvidia = provider == "nvidia" or "integrate.api.nvidia.com" in base_url
     is_ant_ling = provider == "ant-ling" or "api.ant-ling.com" in base_url
+    is_deepseek = provider == "deepseek" or "deepseek.com" in base_url.lower()
     is_together_reasoning_only = is_together and model_id in TOGETHER_REASONING_ONLY_MODELS
 
     is_non_standard = (
@@ -486,7 +497,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
         or "api.x.ai" in base_url
         or is_together
         or "chutes.ai" in base_url
-        or "deepseek.com" in base_url
+        or is_deepseek
         or is_zai
         or is_moonshot
         or provider == "opencode"
@@ -498,6 +509,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
 
     use_max_tokens = (
         "chutes.ai" in base_url
+        or is_deepseek
         or is_moonshot
         or is_cloudflare_ai_gateway
         or is_together
@@ -507,7 +519,6 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
     )
 
     is_grok = provider == "xai" or "api.x.ai" in base_url
-    is_deepseek = provider == "deepseek" or "deepseek.com" in base_url
     is_openrouter_developer_role_model = is_openrouter and model_id.startswith(("anthropic/", "openai/"))
     # pi: /^~?anthropic\//
     cache_control_format = (
@@ -642,12 +653,13 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
     if model["api"] == "anthropic-messages" and is_anthropic_temperature_unsupported_model(model_id):
         merge_compat(model, {"supportsTemperature": False})
     if model["api"] == "openai-completions" and "deepseek-v4" in model_id:
-        merge_thinking_level_map(
-            model,
-            {**DEEPSEEK_V4_THINKING_LEVEL_MAP, "xhigh": "xhigh", "max": None}
-            if provider == "openrouter"
-            else dict(DEEPSEEK_V4_THINKING_LEVEL_MAP),
-        )
+        if provider == "openrouter":
+            level_map = {**DEEPSEEK_V4_THINKING_LEVEL_MAP, "xhigh": "xhigh", "max": None}
+        elif provider == "deepseek" and model_id == "deepseek-v4-flash":
+            level_map = dict(DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP)
+        else:
+            level_map = dict(DEEPSEEK_V4_THINKING_LEVEL_MAP)
+        merge_thinking_level_map(model, level_map)
     if is_google_thinking_api(model) and _GEMINI_3_PRO_RE.search(model_id.lower()):
         merge_thinking_level_map(model, {"off": None, "minimal": None, "low": "LOW", "medium": None, "high": "HIGH"})
     if is_google_thinking_api(model) and (
@@ -695,7 +707,7 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
 
 
 def apply_strict_tool_compat_metadata(model: dict[str, Any]) -> None:
-    if model["provider"] == "openai" and model["api"] == "openai-responses":
+    if model["provider"] in ("openai", "cloudflare-ai-gateway") and model["api"] == "openai-responses":
         merge_compat(model, {"supportsStrictMode": True})
     elif model["provider"] == "anthropic" and model["api"] == "anthropic-messages":
         merge_compat(model, {"supportsStrictTools": True})
@@ -733,7 +745,14 @@ def apply_openai_tool_search_metadata(model: dict[str, Any]) -> None:
     is_openai_codex = model["provider"] == "openai-codex" and model["api"] == "openai-codex-responses"
     if not (is_openai_responses or is_openai_codex) or model["id"] not in OPENAI_TOOL_SEARCH_MODEL_IDS:
         return
-    merge_compat(model, {"supportsToolSearch": True})
+    supports_additional_tools = (is_openai_responses and model["id"] in OPENAI_ADDITIONAL_TOOLS_MODEL_IDS) or (
+        is_openai_codex and model["id"] in OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS
+    )
+    compat: dict[str, Any] = {}
+    if supports_additional_tools:
+        compat["supportsAdditionalTools"] = True
+    compat["supportsToolSearch"] = True
+    merge_compat(model, compat)
 
 
 # OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
@@ -1741,7 +1760,6 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
                 "provider": "kimi-coding",
                 # Kimi For Coding's Anthropic-compatible API - SDK appends /v1/messages
                 "baseUrl": "https://api.kimi.com/coding",
-                "headers": dict(KIMI_STATIC_HEADERS),
                 "compat": compat,
                 "reasoning": is_kimi_k3 or source.get("reasoning") is True,
                 "input": _input(source),

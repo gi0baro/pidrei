@@ -74,7 +74,7 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
         if custom_prompt_has_read and skills:
             prompt += format_skills_for_prompt(skills)
 
-        prompt += f"\nCurrent working directory: {prompt_cwd}"
+        prompt += f"\nCurrent working directory: {prompt_cwd}\n"
 
         return prompt
 

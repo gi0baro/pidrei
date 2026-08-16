@@ -18,7 +18,7 @@ from typing import Any, Literal, Protocol
 
 import tonio.colored as tonio
 
-from pidrei_ai.api.constrained_sampling import resolve_json_schema_strict_sampling
+from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
 from pidrei_ai.api.transform_messages import transform_messages
@@ -62,6 +62,7 @@ from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json
+from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
@@ -345,6 +346,16 @@ def _merge_headers(*header_sources: ProviderHeaders | None) -> dict[str, str | N
     return merged
 
 
+def _merge_client_headers(model: Model, *header_sources: ProviderHeaders | None) -> dict[str, str | None]:
+    merged = _merge_headers(*header_sources)
+    if model.provider == "kimi-coding":
+        for name in list(merged.keys()):
+            if name.lower() == "user-agent":
+                del merged[name]
+        merged["User-Agent"] = get_pi_user_agent()
+    return merged
+
+
 def _has_header(headers: ProviderHeaders | None, name: str) -> bool:
     if not headers:
         return False
@@ -401,7 +412,8 @@ def _create_client(
 
     # Copilot: Bearer auth, selective betas.
     if model.provider == "github-copilot":
-        merged = _merge_headers(
+        merged = _merge_client_headers(
+            model,
             base,
             {"authorization": f"Bearer {api_key}"} if api_key else None,
             model.headers,
@@ -413,7 +425,8 @@ def _create_client(
 
     # OAuth: Bearer auth, Claude Code identity headers.
     if api_key and _is_oauth_token(api_key):
-        merged = _merge_headers(
+        merged = _merge_client_headers(
+            model,
             {
                 **base,
                 "anthropic-beta": ",".join(["claude-code-20250219", "oauth-2025-04-20", *beta_features]),
@@ -431,7 +444,8 @@ def _create_client(
     session_affinity: dict[str, str] = (
         {"x-session-affinity": session_id} if session_id and _get_compat(model).send_session_affinity_headers else {}
     )
-    merged = _merge_headers(
+    merged = _merge_client_headers(
+        model,
         base,
         {"x-api-key": api_key} if api_key else None,
         session_affinity,
@@ -955,7 +969,7 @@ def _convert_tools(
     converted: list[dict[str, Any]] = []
     for index, tool in enumerate(tools):
         strict = resolve_json_schema_strict_sampling(tool, supports_strict_tools)
-        schema = tool.parameters or {}
+        schema = get_json_schema_tool_parameters(tool, strict) or {}
         legacy_input_schema = {
             "type": "object",
             "properties": schema.get("properties") or {},

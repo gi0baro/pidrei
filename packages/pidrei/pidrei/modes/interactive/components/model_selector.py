@@ -5,11 +5,12 @@ Scoped model items are ``{"model", "thinkingLevel"?}`` records.
 
 import tonio.colored as tonio
 
-from pidrei_ai.registry import ModelsRefreshOptions, models_are_equal
+from pidrei_ai.registry import models_are_equal
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings
 from pidrei_tui._timers import Timeout
 
+from ..model_catalog_refresh import refresh_model_catalogs
 from ..model_search import get_model_selector_search_text
 from ..theme import theme
 from .dynamic_border import DynamicBorder
@@ -153,7 +154,7 @@ class ModelSelectorComponent(Container):
 
         self._refresh_timeout = Timeout(timeout_ms, on_timeout)
         try:
-            result = await self._model_runtime.refresh(ModelsRefreshOptions(cancel=self._refresh_abort_controller))
+            result = await refresh_model_catalogs(self._model_runtime, self._refresh_abort_controller)
             if self._closed:
                 return
             self._refresh_status_message = ""

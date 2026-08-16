@@ -300,3 +300,47 @@ async def test_times_out_after_repeated_slow_down_responses():
         await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
 
     assert poll_times == [DEFAULT_START_MS + 5000, DEFAULT_START_MS + 15_000]
+
+
+@pytest.mark.tonio
+async def test_limits_concurrent_model_policy_updates_during_login():
+    import threading
+
+    import tonio.colored as tonio
+
+    counter_guard = threading.Lock()
+    active_policy_requests = 0
+    max_active_policy_requests = 0
+    policy_request_count = 0
+
+    async def policy_delay_response():
+        nonlocal active_policy_requests, max_active_policy_requests, policy_request_count
+        with counter_guard:
+            policy_request_count += 1
+            active_policy_requests += 1
+            max_active_policy_requests = max(max_active_policy_requests, active_policy_requests)
+        # pi delays each policy request by 10ms of fake time; a small real
+        # sleep keeps the batch overlapping long enough to observe the cap.
+        await tonio.time.sleep(0.01)
+        with counter_guard:
+            active_policy_requests -= 1
+        return text_response("", 200)
+
+    def handler(request: OAuthRequest):
+        if request.url.endswith("/login/device/code"):
+            return json_response(device_code_body())
+        if request.url.endswith("/login/oauth/access_token"):
+            return json_response({"access_token": "ghu_refresh_token"})
+        if "/copilot_internal/v2/token" in request.url:
+            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
+        if request.url.endswith("/models"):
+            return json_response({"data": []})
+        if "/models/" in request.url and request.url.endswith("/policy"):
+            return policy_delay_response()
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    with virtual_clock(), stub_oauth_http(handler):
+        await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
+
+    assert policy_request_count > 4
+    assert max_active_policy_requests == 4

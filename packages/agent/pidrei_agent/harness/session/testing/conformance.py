@@ -28,6 +28,7 @@ from ..types import (
     LanePointer,
     LogOptions,
     MessageEntry,
+    NameFactLogItem,
     NavigationIntent,
     OperationFinishedRecord,
     OperationKind,
@@ -477,6 +478,29 @@ async def _case_facts_and_statistics(repository: SessionRepo) -> None:
     )
 
 
+async def _case_clears_session_names(repository: SessionRepo) -> None:
+    session = await repository.create(SessionCreateOptions(id="session"))
+    await session.set_name("Temporary")
+    await session.set_name(None)
+
+    assert await session.get_name() is None
+    assert await session.get_log() == [
+        NameFactLogItem(seq=1, name="Temporary"),
+        NameFactLogItem(seq=2, name=None),
+    ]
+
+    metadata = await session.get_metadata()
+    reopened = await repository.open(metadata)
+    assert await reopened.get_name() is None
+    assert await reopened.get_log() == [
+        NameFactLogItem(seq=1, name="Temporary"),
+        NameFactLogItem(seq=2, name=None),
+    ]
+
+    fork = await repository.fork(metadata, ForkOptions(), SessionCreateOptions(id="fork"))
+    assert await fork.get_name() is None
+
+
 async def _case_immutable_reads(repository: SessionRepo) -> None:
     session = await repository.create(SessionCreateOptions(id="immutable"))
     metadata = await session.get_metadata()
@@ -824,6 +848,7 @@ def create_session_backend_conformance(
             "keeps latest-value facts and computes ledger statistics across lanes",
             _case_facts_and_statistics,
         ),
+        ("queries and facts", "clears session names durably", _case_clears_session_names),
         ("validation and immutability", "returns immutable copies from reads", _case_immutable_reads),
         ("entries and lanes", "validates lane lifecycle and targets", _case_validates_lane_lifecycle),
         ("entries and lanes", "binds lane views without caching leaves", _case_binds_lane_views),

@@ -13,7 +13,6 @@ connect, reconnect, reuse, keep or drop it is here, as in pi.
 import base64
 import json
 import math
-import platform
 import re
 import threading
 import time
@@ -59,6 +58,7 @@ from pidrei_ai.utils.diagnostics import (
 )
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
 from pidrei_ai.utils.session_resources import register_session_resource_cleanup
 from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.uuid import uuidv7
@@ -703,6 +703,7 @@ def stream_simple(
 class _ResolvedCompat:
     supports_strict_mode: bool
     supports_openai_grammar_tools: bool
+    supports_additional_tools: bool
     supports_tool_search: bool
 
 
@@ -715,6 +716,7 @@ def _get_compat(model: Model) -> _ResolvedCompat:
     return _ResolvedCompat(
         supports_strict_mode=pick(compat.supports_strict_mode if compat else None, True),
         supports_openai_grammar_tools=pick(compat.supports_openai_grammar_tools if compat else None, False),
+        supports_additional_tools=pick(compat.supports_additional_tools if compat else None, False),
         supports_tool_search=pick(compat.supports_tool_search if compat else None, False),
     )
 
@@ -732,7 +734,12 @@ def build_request_body(
             context.tools, compat.supports_openai_grammar_tools
         )
 
-    immediate_tools, deferred_map = split_deferred_tools(context, compat.supports_tool_search)
+    deferred_tools_mode = (
+        "additional-tools"
+        if compat.supports_additional_tools
+        else ("tool-search" if compat.supports_tool_search else None)
+    )
+    immediate_tools, deferred_map = split_deferred_tools(context, deferred_tools_mode is not None)
     messages = convert_responses_messages(
         model,
         context,
@@ -740,6 +747,7 @@ def build_request_body(
         include_system_prompt=False,
         grammar_tool_input_properties=grammar_tool_input_properties,
         deferred_tools=deferred_map,
+        deferred_tools_mode=deferred_tools_mode,
         tool_options={
             "strict": None,
             "supports_strict_mode": compat.supports_strict_mode,
@@ -844,7 +852,7 @@ async def _process_stream(
     options: OpenAICodexResponsesOptions | None = None,
 ) -> None:
     await process_responses_stream(
-        _map_codex_events(_parse_sse(response, options.cancel if options else None)),
+        _map_codex_events(_parse_sse(response, options.cancel if options else None), output),
         output,
         stream,
         model,
@@ -878,7 +886,7 @@ def _extract_codex_event_error(event: dict) -> tuple[str | None, str | None]:
     return code, message
 
 
-async def _map_codex_events(events: AsyncIterable[dict]) -> AsyncGenerator[dict]:
+async def _map_codex_events(events: AsyncIterable[dict], output: AssistantMessage) -> AsyncGenerator[dict]:
     # This generator returns at the terminal event, abandoning its source
     # mid-yield; the source owns the HTTP body, so it is closed explicitly rather
     # than left to the GC (which cannot await — see `utils/http.finish_body`).
@@ -906,6 +914,8 @@ async def _map_codex_events(events: AsyncIterable[dict]) -> AsyncGenerator[dict]
 
             if event_type in ("response.done", "response.completed", "response.incomplete"):
                 response = event.get("response")
+                if isinstance(response, dict) and isinstance(response.get("end_turn"), bool):
+                    output.end_turn = response["end_turn"]
                 normalized_response = response
                 if isinstance(response, dict):
                     normalized_response = {**response, "status": _normalize_codex_status(response.get("status"))}
@@ -1378,6 +1388,7 @@ async def _process_websocket_stream(
             _start_websocket_output_on_first_event(
                 _map_codex_events(
                     _parse_websocket(socket, options.cancel if options else None, idle_timeout_ms),
+                    output,
                 ),
                 on_start,
             ),
@@ -1473,18 +1484,6 @@ def _extract_account_id(token: str) -> str:
         raise RuntimeError("Failed to extract accountId from token") from error
 
 
-def _codex_user_agent() -> str:
-    # pi: `pi (${os.platform()} ${os.release()}; ${os.arch()})`. Node reports
-    # "x64"/"arm64" where platform.machine() reports "x86_64"/"aarch64"; the raw
-    # Python value is sent.
-    #
-    # Deliberately still "pi", unlike the Phase 7 step 1 attribution swap: this
-    # pairs with the `originator: pi` header below, and the Codex backend may
-    # gate on known originator values. Changing both needs a live Codex account
-    # to verify — see PLAN, step 1 follow-up.
-    return f"pi ({platform.system().lower()} {platform.release()}; {platform.machine()})"
-
-
 def _build_base_codex_headers(
     init_headers: dict[str, str] | None,
     additional_headers: ProviderHeaders | None,
@@ -1500,7 +1499,7 @@ def _build_base_codex_headers(
     _set_header(headers, "Authorization", f"Bearer {token}")
     _set_header(headers, "chatgpt-account-id", account_id)
     _set_header(headers, "originator", "pi")
-    _set_header(headers, "User-Agent", _codex_user_agent())
+    _set_header(headers, "User-Agent", get_pi_user_agent())
     return headers
 
 

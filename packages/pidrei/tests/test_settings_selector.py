@@ -29,6 +29,7 @@ BASE_CONFIG = {
     "enableProviderAttribution": True,
     "enableSkillCommands": False,
     "followUpMode": "queue",
+    "fullscreenExitOutput": "transcript",
     "fullscreenScrollbar": "auto",
     "hideThinkingBlock": False,
     "httpIdleTimeoutMs": 0,
@@ -56,29 +57,28 @@ def _theme():
 
 
 @pytest.mark.tonio
-async def test_cycles_through_fullscreen_scrollbar_modes():
-    changes: list[str] = []
-
-    def on_change(mode: str) -> None:
-        changes.append(mode)
+async def test_cycles_through_fullscreen_settings():
+    exit_output_changes: list[str] = []
+    scrollbar_changes: list[str] = []
 
     async def on_cancel() -> None:
         pass
 
-    selector = SettingsSelectorComponent(
-        dict(BASE_CONFIG),
-        {
-            "onFullscreenScrollbarChange": on_change,
-            "onWarningsChange": lambda warnings: None,
-            "onCancel": on_cancel,
-        },
-    )
-    settings_list = selector.get_settings_list()
+    callbacks = {
+        "onFullscreenExitOutputChange": exit_output_changes.append,
+        "onFullscreenScrollbarChange": scrollbar_changes.append,
+        "onWarningsChange": lambda warnings: None,
+        "onCancel": on_cancel,
+    }
 
-    for character in "Fullscreen scrollbar":
-        await settings_list.handle_input(character)
-    await settings_list.handle_input("\r")
-    await settings_list.handle_input("\r")
-    await settings_list.handle_input("\r")
+    async def cycle(label: str, count: int) -> None:
+        settings_list = SettingsSelectorComponent(dict(BASE_CONFIG), callbacks).get_settings_list()
+        for character in label:
+            await settings_list.handle_input(character)
+        for _ in range(count):
+            await settings_list.handle_input("\r")
 
-    assert changes == ["always", "hidden", "auto"]
+    await cycle("Fullscreen exit output", 2)
+    assert exit_output_changes == ["resume-hint", "transcript"]
+    await cycle("Fullscreen scrollbar", 3)
+    assert scrollbar_changes == ["always", "hidden", "auto"]

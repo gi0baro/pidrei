@@ -293,7 +293,8 @@ class ExtensionBindings:
 class PromptOptions:
     """Options for AgentSession.prompt()."""
 
-    # Whether to expand file-based prompt templates (default: True)
+    # Whether to dispatch extension commands and expand skill commands and
+    # prompt templates (default: True)
     expand_prompt_templates: bool = True
     # Image attachments
     images: list[ImageContent] | None = None
@@ -1365,14 +1366,15 @@ class AgentSession:
             timestamp=_now_ms(),
         )
         deliver_as = options.get("deliver_as", options.get("deliverAs"))
+        trigger_turn = options.get("trigger_turn", options.get("triggerTurn"))
         if deliver_as == "nextTurn":
             self._pending_next_turn_messages.append(app_message)
-        elif self.is_streaming:
+        elif self.is_streaming and trigger_turn is not False:
             if deliver_as == "followUp":
                 self.agent.follow_up(app_message)
             else:
                 self.agent.steer(app_message)
-        elif options.get("trigger_turn", options.get("triggerTurn")):
+        elif trigger_turn:
             await self._run_agent_prompt(app_message)
         else:
             self.agent.state.messages.append(app_message)
@@ -1386,7 +1388,10 @@ class AgentSession:
         options: dict[str, Any] | None = None,
     ) -> None:
         """Send a user message to the agent. Always triggers a turn.
-        When streaming, options["deliver_as"] specifies how to queue."""
+
+        When streaming, options["deliver_as"] specifies how to queue. Set
+        options["expand_prompt_templates"] to dispatch extension commands and
+        expand skill commands and prompt templates (default: False)."""
         options = options or {}
         if isinstance(content, str):
             text = content
@@ -1403,12 +1408,12 @@ class AgentSession:
             if not images:
                 images = None
 
-        # Use prompt() with expand_prompt_templates=False to skip command handling
-        # and template expansion
         await self.prompt(
             text,
             PromptOptions(
-                expand_prompt_templates=False,
+                expand_prompt_templates=bool(
+                    options.get("expand_prompt_templates", options.get("expandPromptTemplates", False))
+                ),
                 streaming_behavior=options.get("deliver_as", options.get("deliverAs")),
                 images=images,
                 source="extension",
@@ -2828,17 +2833,21 @@ class AgentSession:
 
         return result
 
-    async def export_to_html(self, output_path: str | None = None) -> str:
-        """Export session to HTML; returns the path to the exported file."""
+    async def export_to_html(self, output_path: str | None = None, options: dict | None = None) -> str:
+        """Export session to HTML; returns the path to the exported file.
+
+        ``options`` mirrors pi's export presentation settings (``{"themeName"?}``)."""
         # lazy: core <-> modes import cycle (see modes/__init__.py); export_html
         # closes the same loop back through here
         from ..modes.interactive.theme import get_theme_by_name, theme
         from .export_html import create_tool_html_renderer, export_session_to_html
 
-        configured_theme_name = self.settings_manager.get_theme()
-        theme_name = (
-            configured_theme_name if configured_theme_name and await get_theme_by_name(configured_theme_name) else None
-        )
+        options = options or {}
+        theme_name = None
+        for candidate in (options.get("themeName"), self.settings_manager.get_theme()):
+            if candidate is not None and await get_theme_by_name(candidate) is not None:
+                theme_name = candidate
+                break
 
         # Create tool renderer for custom tool HTML rendering
         tool_renderer = create_tool_html_renderer(

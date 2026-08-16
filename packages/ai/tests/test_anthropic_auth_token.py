@@ -169,3 +169,35 @@ async def test_lets_explicit_request_headers_override_anthropic_auth_token():
     )
 
     assert headers["Authorization"] == "Bearer explicit-token"
+
+
+# --- Anthropic-compatible user agents (9d2ec7ff) --------------------------------
+
+
+def _kimi_coding_model() -> Model:
+    model = make_model()
+    model.id = "kimi-for-coding"
+    model.name = "Kimi For Coding"
+    model.provider = "kimi-coding"
+    model.base_url = "https://api.kimi.com/coding"
+    return model
+
+
+@pytest.mark.tonio
+async def test_enforces_the_pi_runtime_user_agent_for_kimi_coding():
+    from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
+
+    headers, _payload = await capture_request(
+        _kimi_coding_model(),
+        AnthropicOptions(api_key="kimi-key", headers={"user-agent": "custom-client"}),
+    )
+
+    user_agent_headers = [(name, value) for name, value in headers.items() if name.lower() == "user-agent"]
+    assert user_agent_headers == [("User-Agent", get_pi_user_agent())]
+
+
+@pytest.mark.tonio
+async def test_does_not_apply_the_pi_runtime_user_agent_to_anthropic():
+    headers, _payload = await capture_request(make_model(), AnthropicOptions(api_key="anthropic-key"))
+
+    assert not any(name.lower() == "user-agent" for name in headers)

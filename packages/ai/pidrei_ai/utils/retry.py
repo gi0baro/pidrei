@@ -58,6 +58,7 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
         "internal.?error",
         # Wrapper/provider text for transient upstream failures.
         "provider.?returned.?error",
+        "exceeded request buffer limit while retrying upstream",
         # Network, proxy, and transport failures.
         "network.?error",
         "connection.?error",

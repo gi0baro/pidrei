@@ -109,6 +109,7 @@ def serialize_content_block(block: Any) -> Any:
     if block_type == "toolCall":
         data = {"type": "toolCall", "id": block.id, "name": block.name, "arguments": block.arguments}
         _put(data, "thoughtSignature", block.thought_signature)
+        _put(data, "namespace", block.namespace)
         return data
     if block_type == "image":
         return {"type": "image", "data": block.data, "mimeType": block.mime_type}
@@ -133,6 +134,7 @@ def parse_content_block(data: Any) -> Any:
             name=data.get("name", ""),
             arguments=data.get("arguments") or {},
             thought_signature=data.get("thoughtSignature"),
+            namespace=data.get("namespace"),
         )
     if block_type == "image":
         return ImageContent(data=data.get("data", ""), mime_type=data.get("mimeType", ""))
@@ -181,6 +183,7 @@ def serialize_message(message: Any) -> Any:
             data["diagnostics"] = [_serialize_diagnostic(diagnostic) for diagnostic in message.diagnostics]
         _put(data, "errorMessage", message.error_message)
         _put(data, "rawStopReason", message.raw_stop_reason)
+        _put(data, "endTurn", message.end_turn)
         _put(data, "deferred", _serialize_deferred_handle(message.deferred))
         return data
     if role == "toolResult":
@@ -253,6 +256,7 @@ def parse_message(data: Any) -> Any:
             ),
             error_message=data.get("errorMessage"),
             raw_stop_reason=data.get("rawStopReason"),
+            end_turn=data.get("endTurn"),
             deferred=_parse_deferred_handle(data.get("deferred")),
         )
     if role == "toolResult":

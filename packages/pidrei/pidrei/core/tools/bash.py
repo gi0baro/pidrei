@@ -29,6 +29,7 @@ from ...utils.shell import (
     track_detached_child_pid,
     untrack_detached_child_pid,
 )
+from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .output_accumulator import OutputAccumulator
 from .render_utils import get_text_output, invalid_arg_text, str_or_none
@@ -558,6 +559,7 @@ def create_bash_tool_definition(
             list(BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]) if expose_session_environment else None
         ),
         parameters=BASH_SCHEMA,
+        constrained_sampling=get_experimental_tool_sampling(),
         execute=execute,
         render_call=render_call,
         render_result=render_result,

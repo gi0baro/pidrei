@@ -56,6 +56,7 @@ class Args:
     prompt_templates: list[str] | None = None
     no_prompt_templates: bool | None = None
     themes: list[str] | None = None
+    use_theme: str | None = None
     no_themes: bool | None = None
     no_context_files: bool | None = None
     # str for a search pattern, True for a bare --list-models
@@ -179,6 +180,13 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
             i += 1
             result.themes = result.themes or []
             result.themes.append(args[i])
+        elif arg == "--use-theme":
+            theme_name = args[i + 1] if i + 1 < len(args) else None
+            if theme_name is None or theme_name.startswith("-"):
+                result.diagnostics.append({"type": "error", "message": "--use-theme requires a theme name"})
+            else:
+                result.use_theme = theme_name
+                i += 1
         elif arg in ("--no-skills", "-ns"):
             result.no_skills = True
         elif arg in ("--no-prompt-templates", "-np"):
@@ -297,6 +305,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
   --no-prompt-templates, -np     Disable prompt template discovery and loading
   --theme <path>                 Load a theme file or directory (can be used multiple times)
+  --use-theme <name[/name]>      Set the initial interactive theme for this run
   --no-themes                    Disable theme discovery and loading
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit

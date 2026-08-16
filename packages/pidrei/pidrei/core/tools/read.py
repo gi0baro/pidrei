@@ -17,6 +17,7 @@ from ...modes.interactive.theme import get_language_from_path, highlight_code
 from ...utils.image_process import process_image
 from ...utils.mime import detect_supported_image_mime_type_from_file
 from ...utils.paths import format_path_relative_to_cwd_or_absolute
+from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .path_utils import resolve_read_path, resolve_to_cwd
 from .render_utils import get_text_output, render_tool_path, replace_tabs, str_or_none
@@ -356,6 +357,7 @@ def create_read_tool_definition(
         prompt_snippet=READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=list(READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=READ_SCHEMA,
+        constrained_sampling=get_experimental_tool_sampling(),
         execute=execute,
         render_call=render_call,
         render_result=render_result,

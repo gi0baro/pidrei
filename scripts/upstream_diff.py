@@ -174,8 +174,22 @@ DROPPED_PREFIXES = (
     ("packages/tui/test/image-test.ts", "manual demo script, not ported"),
     ("packages/tui/test/key-tester.ts", "manual demo script, not ported"),
     ("packages/tui/test/viewport-overwrite-repro.ts", "manual repro script, not ported"),
+    ("packages/tui/test/render-churn-bench.ts", "manual V8-heap-profiler benchmark, not ported"),
     ("packages/agent/test/scratch/", "manual scratch scripts, not ported"),
     ("packages/coding-agent/test/streaming-render-debug.ts", "manual debug script, not ported"),
+    # 0.84.2 drops (user-approved 2026-08-16).
+    (
+        "packages/ai/src/api/cloudflare-gateway-binding.ts",
+        "Cloudflare Workers env.AI binding shim — JS-runtime object, no pidrei consumer",
+    ),
+    (
+        "packages/ai/test/cloudflare-gateway-binding.test.ts",
+        "Cloudflare Workers env.AI binding shim — JS-runtime object, no pidrei consumer",
+    ),
+    (
+        "packages/agent/test/proxy.test.ts",
+        "server-proxied stream fn: public pi-agent API with no pidrei consumer, not ported",
+    ),
 )
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
 #: providers, so pidrei drops them; offline mirrors exist where noted in
@@ -245,6 +259,9 @@ RENAMES = {
     "packages/coding-agent/test/experimental-cli-options.test.ts": (
         "packages/pidrei/tests/test_experimental_cli_command.py"
     ),
+    # 0.84.2 additions. test-theme-colors.ts is a manual CLI tool, not a
+    # collected test; its mirror keeps the non-test_ name for the same reason.
+    "packages/coding-agent/test/test-theme-colors.ts": "packages/pidrei/tests/theme_colors_tool.py",
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -259,7 +276,10 @@ TEST_HOMES = {
     "packages/ai/test/provider-error-body-regression.test.ts": "PARITY GAP: per-adapter 403-body passthrough (4 cases) unmirrored — needs punkreq fault injection per adapter",
     "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
-    "packages/ai/test/constrained-sampling.test.ts": "PARITY GAP: api/constrained_sampling.py ported, dedicated test file unmirrored (partial coverage in adapter tests)",
+    "packages/ai/test/constrained-sampling.test.ts": (
+        "partial mirror: test_constrained_sampling.py holds the 0.84.2 strict-schema cases; "
+        "the grammar/replay cases stay covered by adapter tests and the rest is a PARITY GAP"
+    ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
     "packages/coding-agent/test/git-update.test.ts": "PARITY GAP: package_manager.py git update (force-push handling) unmirrored",
     "packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts": "partial mirror: test_agent_session_bash_persistence.py holds the 0.83.0 concurrency cases; the rest of the characterization suite is a PARITY GAP",
@@ -285,7 +305,10 @@ TEST_HOMES = {
     "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": "covered by packages/pidrei/tests/test_provider_attribution.py",
     "packages/coding-agent/test/model-runtime-test-utils.ts": "pi test infra; pidrei equivalent is packages/pidrei/tests/model_runtime_helpers.py — absorb deltas where ported tests need them",
     "packages/coding-agent/test/clipboard.test.ts": "PARITY GAP: utils/clipboard.py ported, dedicated tests unmirrored (only the extension clipboard flow is covered, in test_extensions_runner.py)",
-    "packages/ai/test/deferred-tools.test.ts": "PARITY GAP: deferred-tools flows unmirrored",
+    "packages/ai/test/deferred-tools.test.ts": (
+        "partial mirror: test_deferred_tools.py holds the 0.84.2 additional_tools cases; "
+        "the rest of the suite is a PARITY GAP"
+    ),
     "packages/ai/test/openai-completions-prompt-cache.test.ts": "PARITY GAP: openai_completions prompt-cache accounting unmirrored",
     "packages/ai/test/openai-completions-tool-result-images.test.ts": "PARITY GAP: openai_completions tool-result image handling unmirrored",
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
@@ -298,6 +321,15 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/regressions/5303-bash-output-truncation.test.ts": "PARITY GAP: bash output truncation regression unmirrored",
     "packages/coding-agent/test/suite/regressions/6999-models-json-hot-reload.test.ts": "PARITY GAP: models.json hot-reload regression unmirrored",
     "packages/coding-agent/test/http-dispatcher.test.ts": "PARITY GAP: core/http_config.py ported, dispatcher tests unmirrored",
+    # 0.84.2 additions.
+    "packages/coding-agent/test/tools-manager.test.ts": (
+        "N/A: specs ensureTool's download-status callback; pidrei's ensure_tool is lookup-only "
+        "(downloads deliberately unported — see utils/tools_manager.py docstring)"
+    ),
+    "packages/ai/test/lazy-module-load.test.ts": (
+        "N/A: Node module-loader probe asserting provider SDKs stay unloaded at import — "
+        "pidrei has no provider SDKs (native punkreq transports)"
+    ),
 }
 
 NOISE_BASENAMES = {

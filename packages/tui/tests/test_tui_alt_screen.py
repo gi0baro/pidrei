@@ -128,6 +128,22 @@ def _viewport(terminal: VirtualTerminal) -> list[str]:
     return [line.rstrip() for line in terminal.get_viewport()]
 
 
+async def _wait_for_viewport_text(terminal: VirtualTerminal, needle: str, timeout: float = 2.0) -> bool:
+    """Poll until `needle` shows in the viewport, bounded so a miss fails.
+
+    Selection copy runs as a detached task (pi: `void copySelectionToClipboard()`),
+    so its "Copied!"/"Copy failed" flash can land after the frame that
+    `wait_for_render` observed.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if any(needle in line for line in terminal.get_viewport()):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await tonio.sleep(0.005)
+
+
 @pytest.mark.tonio
 async def test_renders_a_terminal_height_viewport_and_preserves_manual_scroll_position():
     terminal = VirtualTerminal(20, 4)
@@ -405,6 +421,127 @@ async def test_supports_configurable_keyboard_viewport_navigation_with_four_rows
     await tui.stop()
 
 
+def test_searches_normalized_rendered_transcript_text_across_rows():
+    from pidrei_tui.alt_screen_search import (
+        AltScreenSearchMatch,
+        AltScreenSearchSegment,
+        find_alt_screen_search_matches,
+    )
+
+    assert find_alt_screen_search_matches(["alpha QUICK", "brown fox"], "quick brown") == [
+        AltScreenSearchMatch(
+            segments=[
+                AltScreenSearchSegment(row=0, start_col=6, end_col=11),
+                AltScreenSearchSegment(row=1, start_col=0, end_col=5),
+            ]
+        )
+    ]
+
+
+@pytest.mark.tonio
+async def test_uses_configured_styles_for_current_and_non_current_search_matches():
+    terminal = RecordingTerminal(60, 4)
+    tui = TuiAltScreen(
+        terminal,
+        None,
+        None,
+        search_match_style=lambda text: f"\x1b[41m{text}\x1b[49m",
+        search_current_match_style=lambda text: f"\x1b[42m{text}\x1b[49m",
+    )
+    tui.add_child(Text("needle first\nmiddle\nneedle second\nend", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[102;6u")
+    await terminal.send_input("needle")
+    await terminal.wait_for_render(since)
+
+    assert await terminal.wait_for_write("\x1b[42mneedle\x1b[49m")
+    assert await terminal.wait_for_write("\x1b[41mneedle\x1b[49m")
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_focus_on_close():
+    terminal = RecordingTerminal(60, 8)
+    tui = TuiAltScreen(terminal)
+    transcript_lines = []
+    for index in range(12):
+        if index == 4:
+            transcript_lines.append("line 5 needle one")
+        elif index == 9:
+            transcript_lines.append("line 10 needle two")
+        else:
+            transcript_lines.append(f"line {index + 1}")
+    transcript_text = Text("\n".join(transcript_lines), 0, 0)
+    transcript = ScrollView(transcript_text, {"follow": "end", "primary": True})
+    editor_inputs: list[str] = []
+
+    class _Editor:
+        focused = False
+
+        def render(self, _width):
+            return ["editor"]
+
+        def invalidate(self):
+            pass
+
+        async def handle_input(self, data):
+            editor_inputs.append(data)
+
+    editor = _Editor()
+    tui.set_layout_root(
+        VStack(
+            [
+                {"component": transcript, "basis": 0, "grow": 1, "minSize": 1},
+                {"component": editor, "basis": 1, "shrink": 0},
+            ]
+        )
+    )
+    tui.set_focus(editor)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[102;6u")
+    await terminal.send_input("needle")
+    await terminal.wait_for_render(since)
+    assert transcript.is_following_end is False
+    assert any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
+    assert any("line 10 needle two" in line for line in terminal.get_viewport())
+    assert editor_inputs == []
+    assert await terminal.wait_for_write("\x1b[1;7mneedle\x1b[22;27m")
+
+    since = terminal.frames
+    for _ in range(6):
+        await terminal.send_input("\x1b[<64;1;4M")
+    await terminal.wait_for_render(since)
+    assert transcript.scroll_top == 0
+    assert any("> needle" in line for line in terminal.get_viewport())
+
+    since = terminal.frames
+    await terminal.send_input("\x07")
+    await terminal.wait_for_render(since)
+    assert any("Find transcript" in line and "1/2" in line for line in terminal.get_viewport())
+    assert any("line 5 needle one" in line for line in terminal.get_viewport())
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[103;6u")
+    await terminal.wait_for_render(since)
+    assert any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
+    assert any("line 10 needle two" in line for line in terminal.get_viewport())
+
+    since = terminal.frames
+    await terminal.send_input("\x1b")
+    await terminal.send_input("x")
+    await terminal.wait_for_render(since)
+    assert not any("Find transcript" in line for line in terminal.get_viewport())
+    assert editor_inputs == ["x"]
+
+    await tui.stop()
+
+
 @pytest.mark.tonio
 async def test_scrolls_the_transcript_by_half_a_page_with_custom_bindings():
     original_keybindings = get_keybindings()
@@ -429,6 +566,37 @@ async def test_scrolls_the_transcript_by_half_a_page_with_custom_bindings():
 
         since = terminal.frames
         await terminal.send_input("\x04")
+        await terminal.wait_for_render(since)
+        assert tui.viewport_top == 20
+    finally:
+        await tui.stop()
+        set_keybindings(original_keybindings)
+
+
+@pytest.mark.tonio
+async def test_scrolls_the_transcript_by_one_line_with_custom_bindings():
+    original_keybindings = get_keybindings()
+    terminal = VirtualTerminal(20, 10)
+    tui = TuiAltScreen(terminal)
+    set_keybindings(
+        KeybindingsManager(
+            TUI_KEYBINDINGS,
+            {"tui.altScreen.lineUp": "ctrl+y", "tui.altScreen.lineDown": "ctrl+e"},
+        )
+    )
+    try:
+        tui.add_child(Text(_lines(30), 0, 0))
+        await tui.start()
+        await terminal.wait_for_render()
+        assert tui.viewport_top == 20
+
+        since = terminal.frames
+        await terminal.send_input("\x19")
+        await terminal.wait_for_render(since)
+        assert tui.viewport_top == 19
+
+        since = terminal.frames
+        await terminal.send_input("\x05")
         await terminal.wait_for_render(since)
         assert tui.viewport_top == 20
     finally:
@@ -726,7 +894,7 @@ async def test_evicts_offscreen_kitty_images_when_decoded_raster_memory_exceeds_
 
 
 @pytest.mark.tonio
-async def test_opens_an_osc8_hyperlink_on_click_but_not_on_drag():
+async def test_opens_an_osc8_hyperlink_with_specific_or_generic_release_codes_but_not_on_drag():
     terminal = RecordingTerminal(20, 3)
     opened_urls: list[str] = []
     url = "https://example.com/path?q=1"
@@ -743,10 +911,10 @@ async def test_opens_an_osc8_hyperlink_on_click_but_not_on_drag():
     await tui.start()
     await terminal.wait_for_render()
 
-    for column, row in ((2, 1), (2, 2), (2, 3)):
+    for column, row, release_button in ((2, 1, 3), (2, 2, 0), (2, 3, 0)):
         since = terminal.frames
         await terminal.send_input(f"\x1b[<0;{column};{row}M")
-        await terminal.send_input(f"\x1b[<0;{column};{row}m")
+        await terminal.send_input(f"\x1b[<{release_button};{column};{row}m")
         await terminal.wait_for_render(since)
     assert opened_urls == [url, bel_url, emoji_url]
 
@@ -761,9 +929,39 @@ async def test_opens_an_osc8_hyperlink_on_click_but_not_on_drag():
 
 
 @pytest.mark.tonio
-async def test_selects_visible_text_with_the_mouse_and_copies_it_with_osc52():
+async def test_selects_visible_text_with_the_mouse_and_copies_it_with_osc52_after_a_generic_release():
     terminal = RecordingTerminal(20, 4)
     tui = TuiAltScreen(terminal)
+    tui.add_child(Text("\x1b[1mal\x1b[0mpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<3;4;2m")
+    await terminal.wait_for_render(since)
+
+    assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
+    assert await terminal.wait_for_write("\x1b[7m")
+    assert await terminal.wait_for_write("al\x1b[0m\x1b[7mpha"), (
+        "selection inverse must be reapplied after a reset inside the selection"
+    )
+    assert await _wait_for_viewport_text(terminal, "Copied!")
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_uses_an_injected_copy_selection_handler_instead_of_osc52_and_reports_success():
+    terminal = RecordingTerminal(20, 4)
+    copied: list[str] = []
+
+    async def copy_selection(text: str) -> bool:
+        copied.append(text)
+        return True
+
+    tui = TuiAltScreen(terminal, None, None, copy_selection=copy_selection)
     tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
     await tui.start()
     await terminal.wait_for_render()
@@ -774,12 +972,37 @@ async def test_selects_visible_text_with_the_mouse_and_copies_it_with_osc52():
     await terminal.send_input("\x1b[<0;4;2m")
     await terminal.wait_for_render(since)
 
-    assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
-    assert await terminal.wait_for_write("\x1b[7m")
-    assert await terminal.wait_for_write("\x1b[7m\x1b[0m\x1b[7m"), (
-        "selection inverse must be reapplied after layout segment resets"
+    assert await _wait_for_viewport_text(terminal, "Copied!")
+    assert copied == ["alpha\nbeta"]
+    assert not terminal.writes_containing("\x1b]52;c;"), (
+        "must not emit OSC 52 when a copy_selection handler is provided"
     )
-    assert any("Copied!" in line for line in terminal.get_viewport())
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_flashes_an_error_when_the_injected_copy_selection_handler_fails():
+    terminal = RecordingTerminal(20, 4)
+
+    async def copy_selection(_text: str) -> bool:
+        return False
+
+    tui = TuiAltScreen(terminal, None, None, copy_selection=copy_selection)
+    tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await terminal.wait_for_render(since)
+
+    assert await _wait_for_viewport_text(terminal, "Copy failed")
+    assert not terminal.writes_containing("\x1b]52;c;"), (
+        "must not emit OSC 52 when a copy_selection handler is provided"
+    )
 
     await tui.stop()
 
@@ -860,15 +1083,27 @@ async def test_selects_whole_words_on_double_click_extends_word_drags_and_select
 
 
 @pytest.mark.tonio
-async def test_ignores_orphan_selection_events_and_cancels_an_active_selection_on_focus_loss():
+async def test_does_not_repaint_idle_or_zero_width_selections_on_focus_loss():
     terminal = RecordingTerminal(20, 4)
     tui = TuiAltScreen(terminal)
     tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
     await tui.start()
     await terminal.wait_for_render()
 
+    def write_count() -> int:
+        return len([event for event in terminal.events if event["type"] == "write"])
+
     def clipboard_write_count() -> int:
         return len(terminal.writes_containing("\x1b]52;c;"))
+
+    # pi asserts "no repaint" by comparing write counts after waitForRender;
+    # wait_for_render here blocks until a NEW frame, so absence is asserted
+    # after a settle sleep instead.
+    idle_write_count = write_count()
+    await terminal.send_input("\x1b[O")
+    await terminal.send_input("\x1b[I")
+    await tonio.sleep(0.1)
+    assert write_count() == idle_write_count
 
     # A completed click leaves a zero-width anchor, but later orphaned
     # drag/release events must not extend it.
@@ -880,19 +1115,84 @@ async def test_ignores_orphan_selection_events_and_cancels_an_active_selection_o
     await terminal.wait_for_render(since)
     assert clipboard_write_count() == 0
 
-    # Losing focus also cancels a press whose matching release never arrived.
+    # Losing focus after a press without a drag cancels the press without repainting.
     since = terminal.frames
-    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<0;1;3M")
+    await terminal.wait_for_render(since)
+    pressed_write_count = write_count()
     await terminal.send_input("\x1b[O")
     await terminal.send_input("\x1b[I")
+    await tonio.sleep(0.1)
+    assert write_count() == pressed_write_count
     await terminal.send_input("\x1b[<32;4;2M")
     await terminal.send_input("\x1b[<0;4;2m")
-    await terminal.wait_for_render(since)
+    await tonio.sleep(0.1)
     assert clipboard_write_count() == 0
     assert terminal.writes_containing("\x1b[?1004h")
 
     await tui.stop()
     assert terminal.writes_containing("\x1b[?1004l")
+
+
+@pytest.mark.tonio
+async def test_clears_an_active_visible_selection_on_focus_loss_and_ignores_orphan_events():
+    terminal = RecordingTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.wait_for_render(since)
+    focus_loss_event_count = len(terminal.events)
+    since = terminal.frames
+    await terminal.send_input("\x1b[O")
+    await terminal.send_input("\x1b[I")
+    await terminal.wait_for_render(since)
+    focus_loss_writes = "".join(
+        event["data"] for event in terminal.events[focus_loss_event_count:] if event["type"] == "write"
+    )
+    assert "alpha" in focus_loss_writes
+    assert "beta" in focus_loss_writes
+    assert "\x1b[7m" not in focus_loss_writes
+
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await tonio.sleep(0.1)
+    assert not terminal.writes_containing("\x1b]52;c;")
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_retains_a_completed_visible_selection_across_focus_changes():
+    terminal = RecordingTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await terminal.wait_for_render(since)
+    completed_write_count = len([event for event in terminal.events if event["type"] == "write"])
+    await terminal.send_input("\x1b[O")
+    await terminal.send_input("\x1b[I")
+    await tonio.sleep(0.1)
+    assert len([event for event in terminal.events if event["type"] == "write"]) == completed_write_count
+
+    redraw_event_count = len(terminal.events)
+    since = terminal.frames
+    await tui.render_now(True)
+    await terminal.wait_for_render(since)
+    redraw_writes = "".join(event["data"] for event in terminal.events[redraw_event_count:] if event["type"] == "write")
+    assert "alpha" in redraw_writes
+    assert "beta" in redraw_writes
+    assert "\x1b[7m" in redraw_writes
+    await tui.stop()
 
 
 @pytest.mark.tonio
@@ -1020,3 +1320,105 @@ async def test_restores_keyboard_state_before_leaving_alt_mode_and_prints_the_fu
     for word in ("first", "second", "third", "fourth", "fifth", "sixth"):
         assert word in restore_data
     assert restore_data.index("first") < restore_data.index("sixth")
+
+
+class InputOverlay:
+    def __init__(self) -> None:
+        self.focused = False
+        self.inputs: list[str] = []
+
+    async def handle_input(self, data: str) -> None:
+        self.inputs.append(data)
+
+    def render(self, _width: int) -> list[str]:
+        return ["overlay"]
+
+    def invalidate(self) -> None:
+        pass
+
+
+@pytest.mark.tonio
+async def test_gives_wheel_and_viewport_keys_to_a_focused_overlay():
+    terminal = VirtualTerminal(20, 6)
+    tui = TuiAltScreen(terminal)
+    tui.add_child(Text(_lines(12), 0, 0))
+    overlay = InputOverlay()
+    await tui.start()
+    await terminal.wait_for_render()
+    top_before = tui.viewport_top
+    handle = tui.show_overlay(overlay)
+    await terminal.wait_for_render()
+    assert overlay.focused is True
+
+    wheel = "\x1b[<64;10;3M"
+    keys = ["\x1b[5~", "\x1b[6~", "\x1bOH", "\x1bOF", wheel]
+    since = terminal.frames
+    for key in keys:
+        await terminal.send_input(key)
+    await terminal.wait_for_render(since)
+
+    assert overlay.inputs == keys
+    assert tui.viewport_top == top_before
+
+    handle.hide()
+    await terminal.wait_for_render()
+    since = terminal.frames
+    await terminal.send_input("\x1b[5~")
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top < top_before
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_keeps_viewport_scrolling_when_an_overlay_is_not_focused():
+    terminal = VirtualTerminal(20, 6)
+    tui = TuiAltScreen(terminal)
+    editor = InputOverlay()
+    tui.add_child(Text(_lines(12), 0, 0))
+    tui.set_focus(editor)
+    await tui.start()
+    await terminal.wait_for_render()
+    top_before = tui.viewport_top
+
+    hidden = tui.show_overlay(InputOverlay())
+    hidden.set_hidden(True)
+    non_capturing = InputOverlay()
+    tui.show_overlay(non_capturing, {"nonCapturing": True})
+    unfocused = InputOverlay()
+    unfocused_handle = tui.show_overlay(unfocused)
+    unfocused_handle.unfocus()
+    await terminal.wait_for_render()
+    assert non_capturing.focused is False
+    assert unfocused.focused is False
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[5~")
+    await terminal.send_input("\x1b[<64;10;3M")
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top < top_before
+    assert non_capturing.inputs == []
+    assert unfocused.inputs == []
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_keeps_viewport_scrolling_while_transcript_search_is_focused():
+    terminal = VirtualTerminal(20, 6)
+    tui = TuiAltScreen(terminal)
+    tui.add_child(Text(_lines(12), 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+    top_before = tui.viewport_top
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[102;6u")
+    await terminal.wait_for_render(since)
+    assert any("Find transcript" in line for line in terminal.get_viewport())
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[5~")
+    await terminal.send_input("\x1b[<64;1;4M")
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top < top_before
+    assert any("Find transcript" in line for line in terminal.get_viewport())
+    await tui.stop()

@@ -158,6 +158,18 @@ class TestNameFlag:
         assert result.messages == ["hello"]
 
 
+class TestUseThemeFlag:
+    def test_parses_use_theme(self):
+        result = parse_args(["--use-theme", "light"])
+        assert result.use_theme == "light"
+
+    def test_reports_when_the_theme_name_value_is_missing(self):
+        result = parse_args(["--use-theme", "--print"])
+        assert result.use_theme is None
+        assert result.print is True
+        assert result.diagnostics == [{"type": "error", "message": "--use-theme requires a theme name"}]
+
+
 class TestNoSessionFlag:
     def test_parses_no_session_flag(self):
         result = parse_args(["--no-session"])

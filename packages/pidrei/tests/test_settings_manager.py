@@ -332,19 +332,43 @@ class TestExternalEditor:
         assert SettingsManager.in_memory().get_external_editor_command() == "nano"
 
 
+class TestDefaultTools:
+    @pytest.mark.tonio
+    async def test_loads_global_defaults_and_lets_project_settings_replace_them(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"defaultTools": ["read", "bash"]})
+
+        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        assert manager.get_default_tools() == ["read", "bash"]
+
+        write_json(project_dir / ".pidrei" / "settings.json", {"defaultTools": ["grep"]})
+
+        reloaded = await SettingsManager.create(str(project_dir), str(agent_dir))
+        assert reloaded.get_default_tools() == ["grep"]
+
+    def test_preserves_an_empty_tool_list(self):
+        assert SettingsManager.in_memory({"defaultTools": []}).get_default_tools() == []
+        assert SettingsManager.in_memory().get_default_tools() is None
+
+
 class TestFullscreenScrollbar:
     @pytest.mark.tonio
-    async def test_validates_and_persists_the_fullscreen_scrollbar_mode(self, dirs):
+    async def test_validates_and_persists_fullscreen_settings(self, dirs):
         agent_dir, project_dir = dirs
         manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        assert manager.get_fullscreen_exit_output() == "transcript"
         assert manager.get_fullscreen_scrollbar() == "auto"
 
+        manager.set_fullscreen_exit_output("resume-hint")
         manager.set_fullscreen_scrollbar("hidden")
         await manager.flush()
-        assert read_json(agent_dir / "settings.json")["fullscreenScrollbar"] == "hidden"
+        saved_settings = read_json(agent_dir / "settings.json")
+        assert saved_settings["fullscreenExitOutput"] == "resume-hint"
+        assert saved_settings["fullscreenScrollbar"] == "hidden"
 
-        write_json(agent_dir / "settings.json", {"fullscreenScrollbar": "sometimes"})
+        write_json(agent_dir / "settings.json", {"fullscreenExitOutput": "nothing", "fullscreenScrollbar": "sometimes"})
         reloaded = await SettingsManager.create(str(project_dir), str(agent_dir))
+        assert reloaded.get_fullscreen_exit_output() == "transcript"
         assert reloaded.get_fullscreen_scrollbar() == "auto"
 
 

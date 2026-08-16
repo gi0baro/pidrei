@@ -73,8 +73,14 @@ the transcript's top or bottom edge auto-scrolls into off-screen content.
 | `pageDown` | `tui.altScreen.pageDown` | Scroll the transcript down by one page |
 | *(none)* | `tui.altScreen.halfPageUp` | Scroll the transcript up by half a page |
 | *(none)* | `tui.altScreen.halfPageDown` | Scroll the transcript down by half a page |
+| *(none)* | `tui.altScreen.lineUp` | Scroll the transcript up by one line |
+| *(none)* | `tui.altScreen.lineDown` | Scroll the transcript down by one line |
 | `ctrl+shift+up` | `tui.altScreen.previousPrompt` | Jump to the previous marked message |
 | `ctrl+shift+down` | `tui.altScreen.nextPrompt` | Jump to the next marked message |
+| `ctrl+shift+f` | `tui.altScreen.search` | Search the rendered transcript |
+| `enter`, `ctrl+g` | `tui.altScreen.searchNext` | Select the next search match while searching |
+| `shift+enter`, `ctrl+shift+g` | `tui.altScreen.searchPrevious` | Select the previous search match while searching |
+| `escape` | `tui.altScreen.searchClose` | Close transcript search |
 | `home` | `tui.altScreen.top` | Scroll to the beginning of the transcript |
 | `end` | `tui.altScreen.bottom` | Scroll to the transcript end and follow new output |
 

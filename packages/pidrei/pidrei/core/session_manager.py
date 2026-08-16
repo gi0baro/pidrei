@@ -56,7 +56,7 @@ from pidrei_agent.harness.session.serde import (
 )
 from pidrei_ai.utils.uuid import uuidv7
 
-from ..config import get_agent_dir as get_default_agent_dir, get_sessions_dir
+from ..config import APP_NAME, get_agent_dir as get_default_agent_dir, get_sessions_dir
 from ..utils.paths import normalize_path, resolve_path
 from .messages import (
     create_branch_summary_message,
@@ -887,7 +887,7 @@ class SessionManager:
             if not wire_entries:
                 explicit_path = self._session_file
                 if os.stat(explicit_path).st_size > 0:
-                    raise Exception(f"Session file is not a valid pidrei session: {explicit_path}")
+                    raise Exception(f"Session file is not a valid {APP_NAME} session: {explicit_path}")
                 self.new_session()
                 self._session_file = explicit_path
                 self._rewrite_file()

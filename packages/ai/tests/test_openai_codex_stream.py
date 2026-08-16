@@ -126,8 +126,9 @@ def completion_event(status: str = "completed", **response) -> dict:
     return {"type": event_type, "response": body}
 
 
-def sse_payload(status: str = "completed", include_done: bool = False) -> bytes:
-    events = [*HELLO_EVENTS, completion_event(status)]
+def sse_payload(status: str = "completed", include_done: bool = False, end_turn: bool | None = None) -> bytes:
+    extra = {} if end_turn is None else {"end_turn": end_turn}
+    events = [*HELLO_EVENTS, completion_event(status, **extra)]
     chunks = [f"data: {json.dumps(event)}" for event in events]
     if include_done:
         chunks.append("data: [DONE]")
@@ -379,6 +380,9 @@ async def test_streams_sse_responses_into_event_stream():
     assert request.headers["chatgpt-account-id"] == "acc_test"
     assert request.headers["OpenAI-Beta"] == "responses=experimental"
     assert request.headers["originator"] == "pi"
+    from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
+
+    assert request.headers["User-Agent"] == get_pi_user_agent()
     assert request.headers["accept"] == "text/event-stream"
     assert "x-api-key" not in request.headers
 
@@ -386,7 +390,9 @@ async def test_streams_sse_responses_into_event_stream():
 @pytest.mark.tonio
 async def test_completes_after_response_completed_even_when_the_sse_body_stays_open():
     client = FakeCodexClient(
-        lambda _request: FakeCodexResponse([sse_payload("completed", include_done=True)], stay_open=True)
+        lambda _request: FakeCodexResponse(
+            [sse_payload("completed", include_done=True, end_turn=False)], stay_open=True
+        )
     )
     result = await stream_codex(
         make_model(),
@@ -396,6 +402,7 @@ async def test_completes_after_response_completed_even_when_the_sse_body_stays_o
 
     assert text_of(result) == "Hello"
     assert result.stop_reason == "stop"
+    assert result.end_turn is False
 
 
 @pytest.mark.tonio
@@ -816,9 +823,9 @@ async def test_uses_exponential_backoff_across_repeated_sse_retries():
 async def test_forwards_auto_transport_from_simple_options_and_uses_cached_websocket_context():
     from pidrei_ai.types import SimpleStreamOptions
 
-    connect, sockets = responding_websocket(lambda _socket, _body: [*HELLO_EVENTS, completion_event()])
+    connect, sockets = responding_websocket(lambda _socket, _body: [*HELLO_EVENTS, completion_event(end_turn=False)])
     with stub_websocket(connect) as calls:
-        await stream_simple_codex(
+        result = await stream_simple_codex(
             make_model(),
             Context(
                 system_prompt="You are a helpful assistant.",
@@ -827,6 +834,7 @@ async def test_forwards_auto_transport_from_simple_options_and_uses_cached_webso
             SimpleStreamOptions(api_key=mock_token(), session_id="session-auto", transport="auto"),
         ).result()
 
+    assert result.end_turn is False
     assert len(sockets) == 1
     assert len(sockets[0].sent) == 1
     assert calls[0]["url"] == "wss://chatgpt.com/backend-api/codex/responses"

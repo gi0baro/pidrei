@@ -325,7 +325,12 @@ def _paint_box(box: LayoutBox, screen: list[str], total_width: int) -> None:
                 visible_rows = min(image_metadata["rows"], clip_bottom - row)
                 if visible_rows < image_metadata["rows"]:
                     line = crop_kitty_image_line(line, 0, visible_rows)
-            if is_image_line(line) and box.rect.x == 0 and box.rect.width >= total_width:
+            # Fast path: a full-width box painting onto an untouched row can use the
+            # source line reference directly. Compositing here would rebuild the row
+            # string through ANSI/grapheme segmentation every frame; padding is
+            # unnecessary because rows are written with erase-line and the final
+            # width clamp still truncates over-wide lines.
+            if box.rect.x == 0 and box.rect.width >= total_width and (is_image_line(line) or not screen[row]):
                 screen[row] = line
             else:
                 screen[row] = composite_tui_line(screen[row], line, box.rect.x, box.rect.width, total_width)

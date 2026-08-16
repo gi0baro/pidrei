@@ -30,6 +30,7 @@ class ScrollView(Container):
         self.children.append(component)
         self._follow_end = (options.get("follow") or "none") == "end"
         self._following_end = self._follow_end
+        self._follow_suppressed_at_end = False
         self.primary = options.get("primary") or False
         self.overscroll = options.get("overscroll") or "chain"
         self._current_scrollbar = options.get("scrollbar") or "hidden"
@@ -116,15 +117,30 @@ class ScrollView(Container):
         self._scrollbar_active = active
         self._mark_scrollbar_activity()
 
-    def scroll_to(self, scroll_top: int) -> None:
+    def scroll_to(self, scroll_top: int, options: dict | None = None) -> None:
+        """``options`` mirrors pi's ``ScrollViewScrollToOptions`` (``{"disableFollow"?}``).
+
+        ``disableFollow`` keeps follow-end disabled even when the target is the
+        current content end.
+        """
+        options = options or {}
         requested = math.trunc(scroll_top) if math.isfinite(scroll_top) else self._current_scroll_top
         max_scroll_top = max(0, self._content_height - self._current_viewport_height)
         nxt = max(0, min(max_scroll_top, requested))
-        if nxt == self._current_scroll_top:
+        next_follow_suppressed_at_end = options.get("disableFollow") is True and nxt == max_scroll_top
+        next_following_end = not next_follow_suppressed_at_end and self._follow_end and nxt == max_scroll_top
+        if (
+            nxt == self._current_scroll_top
+            and next_following_end == self._following_end
+            and next_follow_suppressed_at_end == self._follow_suppressed_at_end
+        ):
             return
+        moved = nxt != self._current_scroll_top
         self._current_scroll_top = nxt
-        self._following_end = self._follow_end and nxt == max_scroll_top
-        self._mark_scrollbar_activity()
+        self._following_end = next_following_end
+        self._follow_suppressed_at_end = next_follow_suppressed_at_end
+        if moved:
+            self._mark_scrollbar_activity()
         if self._request_render_callback is not None:
             self._request_render_callback()
 
@@ -137,12 +153,14 @@ class ScrollView(Container):
         start = max_scroll_top if self._following_end else self._current_scroll_top
         nxt = max(0, min(max_scroll_top, start + requested))
         moved = nxt - start
+        was_following_end = self._following_end
         self._current_scroll_top = nxt
         self._following_end = self._follow_end and nxt == max_scroll_top
+        self._follow_suppressed_at_end = False
         if moved != 0:
             self._mark_scrollbar_activity()
-            if self._request_render_callback is not None:
-                self._request_render_callback()
+        if (moved != 0 or self._following_end != was_following_end) and self._request_render_callback is not None:
+            self._request_render_callback()
         return requested - moved
 
     def scroll_to_start(self) -> None:
@@ -151,6 +169,7 @@ class ScrollView(Container):
         )
         self._current_scroll_top = 0
         self._following_end = self._follow_end and self._content_height <= self._current_viewport_height
+        self._follow_suppressed_at_end = False
         if changed:
             self._mark_scrollbar_activity()
             if self._request_render_callback is not None:
@@ -161,6 +180,7 @@ class ScrollView(Container):
         changed = self._current_scroll_top != nxt or self._following_end != self._follow_end
         self._current_scroll_top = nxt
         self._following_end = self._follow_end
+        self._follow_suppressed_at_end = False
         if changed:
             self._mark_scrollbar_activity()
             if self._request_render_callback is not None:
@@ -175,7 +195,9 @@ class ScrollView(Container):
             self._current_scroll_top = max_scroll_top
         else:
             self._current_scroll_top = max(0, min(self._current_scroll_top, max_scroll_top))
-        if self._follow_end and self._current_scroll_top == max_scroll_top:
+        if self._current_scroll_top < max_scroll_top:
+            self._follow_suppressed_at_end = False
+        if self._follow_end and self._current_scroll_top == max_scroll_top and not self._follow_suppressed_at_end:
             self._following_end = True
         if self._content_height <= self._current_viewport_height:
             self._hide_transient_scrollbar()
