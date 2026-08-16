@@ -149,6 +149,39 @@
         "max": "max"
       }
     },
+    "deepseek-v4-pro-0813": {
+      "id": "deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan-cn",
+      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "compat": {
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
+    },
     "glm-5": {
       "id": "glm-5",
       "name": "GLM-5",

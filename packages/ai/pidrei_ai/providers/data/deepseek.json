@@ -21,12 +21,13 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "maxTokensField": "max_tokens",
         "requiresReasoningContentOnAssistantMessages": true,
         "thinkingFormat": "deepseek"
       },
       "thinkingLevelMap": {
         "minimal": null,
-        "low": null,
+        "low": "low",
         "medium": null,
         "high": "high",
         "max": "max"
@@ -53,6 +54,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "maxTokensField": "max_tokens",
         "requiresReasoningContentOnAssistantMessages": true,
         "thinkingFormat": "deepseek"
       },

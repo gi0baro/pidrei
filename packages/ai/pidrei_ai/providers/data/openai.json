@@ -654,6 +654,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     },
@@ -688,6 +689,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     },
@@ -764,6 +766,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     },
@@ -807,6 +810,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     },
@@ -892,6 +896,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true,
         "supportsExplicitPromptCacheMode": true
       }
@@ -936,6 +941,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true,
         "supportsExplicitPromptCacheMode": true
       }
@@ -980,6 +986,7 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true,
         "supportsExplicitPromptCacheMode": true
       }

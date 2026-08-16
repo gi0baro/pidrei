@@ -128,6 +128,24 @@ def _viewport(terminal: VirtualTerminal) -> list[str]:
     return [line.rstrip() for line in terminal.get_viewport()]
 
 
+async def _wait_until(predicate, timeout: float = 2.0) -> bool:
+    """Poll `predicate` until true, bounded so a miss fails.
+
+    `wait_for_render(since)` returns on *a* frame, which is not necessarily the
+    frame reflecting the input just sent (the render loop is a separate
+    throttled task) — assertions on state or viewport content driven by an
+    input must poll the condition itself. Same rationale as
+    `RecordingTerminal.wait_for_write`.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if predicate():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await tonio.sleep(0.005)
+
+
 async def _wait_for_viewport_text(terminal: VirtualTerminal, needle: str, timeout: float = 2.0) -> bool:
     """Poll until `needle` shows in the viewport, bounded so a miss fails.
 
@@ -135,13 +153,10 @@ async def _wait_for_viewport_text(terminal: VirtualTerminal, needle: str, timeou
     so its "Copied!"/"Copy failed" flash can land after the frame that
     `wait_for_render` observed.
     """
-    deadline = time.monotonic() + timeout
-    while True:
-        if any(needle in line for line in terminal.get_viewport()):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        await tonio.sleep(0.005)
+    return await _wait_until(
+        lambda: any(needle in line for line in terminal.get_viewport()),
+        timeout,
+    )
 
 
 @pytest.mark.tonio
@@ -503,41 +518,37 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
     await tui.start()
     await terminal.wait_for_render()
 
-    since = terminal.frames
     await terminal.send_input("\x1b[102;6u")
     await terminal.send_input("needle")
-    await terminal.wait_for_render(since)
-    assert transcript.is_following_end is False
-    assert any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
+    assert await _wait_until(lambda: transcript.is_following_end is False)
+    assert await _wait_until(
+        lambda: any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
+    )
     assert any("line 10 needle two" in line for line in terminal.get_viewport())
     assert editor_inputs == []
     assert await terminal.wait_for_write("\x1b[1;7mneedle\x1b[22;27m")
 
-    since = terminal.frames
     for _ in range(6):
         await terminal.send_input("\x1b[<64;1;4M")
-    await terminal.wait_for_render(since)
-    assert transcript.scroll_top == 0
-    assert any("> needle" in line for line in terminal.get_viewport())
+    assert await _wait_until(lambda: transcript.scroll_top == 0)
+    assert await _wait_until(lambda: any("> needle" in line for line in terminal.get_viewport()))
 
-    since = terminal.frames
     await terminal.send_input("\x07")
-    await terminal.wait_for_render(since)
-    assert any("Find transcript" in line and "1/2" in line for line in terminal.get_viewport())
+    assert await _wait_until(
+        lambda: any("Find transcript" in line and "1/2" in line for line in terminal.get_viewport())
+    )
     assert any("line 5 needle one" in line for line in terminal.get_viewport())
 
-    since = terminal.frames
     await terminal.send_input("\x1b[103;6u")
-    await terminal.wait_for_render(since)
-    assert any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
+    assert await _wait_until(
+        lambda: any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
+    )
     assert any("line 10 needle two" in line for line in terminal.get_viewport())
 
-    since = terminal.frames
     await terminal.send_input("\x1b")
     await terminal.send_input("x")
-    await terminal.wait_for_render(since)
-    assert not any("Find transcript" in line for line in terminal.get_viewport())
-    assert editor_inputs == ["x"]
+    assert await _wait_until(lambda: not any("Find transcript" in line for line in terminal.get_viewport()))
+    assert await _wait_until(lambda: editor_inputs == ["x"])
 
     await tui.stop()
 
@@ -1178,6 +1189,20 @@ async def test_retains_a_completed_visible_selection_across_focus_changes():
     await terminal.send_input("\x1b[<32;4;2M")
     await terminal.send_input("\x1b[<0;4;2m")
     await terminal.wait_for_render(since)
+    # The release-triggered copy runs as a detached task (pi voids the
+    # promise, but its OSC 52 path is synchronous inside the handler), so
+    # drain its whole lifecycle — OSC 52 write, "Copied!" flash, flash expiry
+    # repaint — before opening the no-repaint window; any of those would
+    # otherwise land inside it as a "write".
+    assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
+    assert await _wait_for_viewport_text(terminal, "Copied!")
+    assert await _wait_until(
+        lambda: not any("Copied!" in line for line in terminal.get_viewport()),
+        timeout=3.0,
+    )
+    # One settle beat: the expiry frame we just observed is the last requested
+    # render, but its write may still be draining when the count is sampled.
+    await tonio.sleep(0.05)
     completed_write_count = len([event for event in terminal.events if event["type"] == "write"])
     await terminal.send_input("\x1b[O")
     await terminal.send_input("\x1b[I")

@@ -1816,7 +1816,7 @@
         "cacheRead": 0.022,
         "cacheWrite": 0.275
       },
-      "contextWindow": 272000,
+      "contextWindow": 1050000,
       "maxTokens": 128000,
       "compat": {
         "supportsStrictMode": true
@@ -1840,9 +1840,9 @@
         "input": 5.5,
         "output": 33,
         "cacheRead": 0.55,
-        "cacheWrite": 6.88
+        "cacheWrite": 6.875
       },
-      "contextWindow": 272000,
+      "contextWindow": 1050000,
       "maxTokens": 128000,
       "compat": {
         "supportsStrictMode": true
@@ -1868,7 +1868,7 @@
         "cacheRead": 0.22,
         "cacheWrite": 2.75
       },
-      "contextWindow": 272000,
+      "contextWindow": 1050000,
       "maxTokens": 128000,
       "compat": {
         "supportsStrictMode": true

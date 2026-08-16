@@ -121,7 +121,7 @@ async def test_vertex_disables_thinking_with_the_minimal_level_for_gemini_3_flas
 async def test_requests_thoughts_and_a_level_when_reasoning_is_enabled():
     config = await _config_for(
         google_generative_ai,
-        get_builtin_model("google", "gemini-3-pro-preview"),
+        get_builtin_model("google", "gemini-3.1-pro-preview"),
         SimpleStreamOptions(api_key="test-key", reasoning="high"),
     )
 

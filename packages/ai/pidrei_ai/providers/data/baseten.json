@@ -66,6 +66,44 @@
       "contextWindow": 262144,
       "maxTokens": 262144
     },
+    "deepseek-ai/DeepSeek-V4-Pro-0813": {
+      "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "name": "Deepseek V4 Pro 0813",
+      "api": "openai-completions",
+      "provider": "baseten",
+      "baseUrl": "https://inference.baseten.co/v1",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 1.32,
+        "output": 3.96,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "supportsUsageInStreaming": true,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": true,
+        "supportsLongCacheRetention": false,
+        "thinkingFormat": "openai"
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 262144
+    },
     "moonshotai/Kimi-K2.5": {
       "id": "moonshotai/Kimi-K2.5",
       "name": "Kimi K2.5",

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-server"
-version = "0.84.1.0"
+version = "0.84.2.0"
 description = "pidrei server package: composable session protocol server (port of pi-server)"
 requires-python = ">=3.14"
 license = "MIT"
@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "pidrei-ai==0.84.1.0",
-    "pidrei-protocol==0.84.1.0",
+    "pidrei-ai==0.84.2.0",
+    "pidrei-protocol==0.84.2.0",
     "tonio~=0.9.6",
 ]
 

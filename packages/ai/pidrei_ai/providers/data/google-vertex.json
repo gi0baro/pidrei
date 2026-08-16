@@ -229,6 +229,29 @@
         "off": null
       }
     },
+    "gemini-3.7-flash": {
+      "id": "gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "api": "google-vertex",
+      "provider": "google-vertex",
+      "baseUrl": "https://{location}-aiplatform.googleapis.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.75,
+        "output": 3.75,
+        "cacheRead": 0.075,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 65536,
+      "thinkingLevelMap": {
+        "off": null
+      }
+    },
     "gemini-flash-latest": {
       "id": "gemini-flash-latest",
       "name": "Gemini Flash Latest",

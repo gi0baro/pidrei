@@ -163,6 +163,7 @@
       },
       "compat": {
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     },
@@ -201,6 +202,7 @@
       },
       "compat": {
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     },
@@ -239,6 +241,7 @@
       },
       "compat": {
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
         "supportsToolSearch": true
       }
     }

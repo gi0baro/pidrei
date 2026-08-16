@@ -7,8 +7,6 @@ observable request headers without a mocked network layer.
 
 import time
 
-import pytest
-
 from pidrei_ai.api.openai_responses import OpenAIResponsesOptions, _create_client, build_params
 from pidrei_ai.types import Context, OpenAIResponsesCompat, UserMessage
 from tests.test_openai_responses import make_model
@@ -91,11 +89,6 @@ def test_omits_cache_affinity_headers_when_session_is_absent():
     assert "x-session-id" not in headers
 
 
-@pytest.mark.xfail(
-    reason="catalog assertion: awaiting `make models-data` regen with 75c7fd66's generator change "
-    "(0.84.2 close-out step; remove this marker there)",
-    strict=False,
-)
 def test_sets_strict_mode_explicitly_for_cloudflare_openai_responses_tools():
     from pidrei_ai.providers.all import get_builtin_model
     from pidrei_ai.types import JsonSchemaConstrainedSampling, Tool

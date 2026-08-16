@@ -6,6 +6,100 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.0] - 2026-08-16
+
+Tracks [Pi 0.84.2](https://github.com/earendil-works/pi/releases/tag/v0.84.2).
+
+### Added
+
+- Fullscreen transcript search: `Ctrl+Shift+F` opens an incremental search
+  over the transcript with match highlighting, next/previous navigation
+  (`Enter`/`Ctrl+G` and `Shift+Enter`/`Ctrl+Shift+G`), and configurable
+  search-match theme colors.
+- Experimental strict JSON-schema constrained sampling for the default
+  `read`, `bash`, `edit` and `write` tools under `PIDREI_EXPERIMENTAL=1`.
+- A fullscreen exit output setting to choose between printing the final
+  transcript and only a session resume hint.
+- The `defaultTools` setting for configuring the initial built-in tool
+  selection globally or per project.
+- `--use-theme <name[/name]>` to choose an initial per-run interactive theme
+  without changing saved settings.
+- `expandPromptTemplates` in extension `pi.send_user_message()` options for
+  explicitly dispatching commands and expanding skills and prompt templates.
+- `AssistantMessage.end_turn`, preserving OpenAI Codex's terminal `end_turn`
+  signal for diagnostics.
+- Unbound single-line transcript scrolling actions, `tui.altScreen.lineUp`
+  and `tui.altScreen.lineDown`, for fullscreen keybindings.
+
+### Changed
+
+- Kimi Coding requests send pi's runtime `User-Agent` header (deliberately
+  still named `pi`: the backend may gate on the client identity).
+- The Mistral adapter streams Chat Completions over HTTP directly instead of
+  going through the SDK-shaped transport.
+- OpenAI Responses deferred tool loading prefers message-anchored
+  `additional_tools` where supported, keeping the tool-search and top-level
+  fallbacks.
+- Fullscreen rendering paints full-width layout rows directly instead of
+  recompositing them on every frame.
+- Model catalog refreshed from models.dev and OpenRouter.
+
+### Fixed
+
+- Managed-tool resolution no longer delays TUI startup: the TUI mounts
+  first, download progress and warnings show inside it, and a prompt
+  submitted during startup is restored instead of lost.
+- Opening a model selector immediately after startup joins the in-progress
+  model catalog refresh instead of cancelling and restarting it.
+- GitHub Copilot login no longer triggers API rate limits while enabling
+  model policies; concurrent policy updates are limited.
+- Fullscreen transcript search no longer snaps back to the current match
+  during manual scrolling, and fragmented SGR mouse input no longer leaks
+  into the search query.
+- Required LaTeX arguments starting on a new line are no longer parsed as
+  empty, and LaTeX control spaces split across line endings no longer make
+  complete expressions fall back to raw source.
+- Fallback rendering for extension tool results collapses long output and
+  honors tool expansion.
+- JSON and RPC `message_update` events carry cumulative usage during
+  streaming instead of dropping it.
+- `pi.send_message(..., {"triggerTurn": False})` records the custom message
+  instead of steering an active run.
+- The `defaultTools` setting no longer drops extension and SDK custom tools
+  when selecting built-in defaults.
+- Custom system prompts no longer concatenate the current working directory
+  with later appended prompt content.
+- OpenAI Responses function and custom tool calls keep their namespaces
+  during streaming, proxying and replay.
+- Request buffer failures trigger automatic assistant retries.
+- Built-in and custom DeepSeek API models no longer send output limits
+  through an unsupported field, and DeepSeek compatibility detection works
+  for base URLs whose hostname contains uppercase letters.
+- Amazon Bedrock replay accepts tool arguments that contain empty object
+  keys, preserving all valid nested values.
+- Google Generative AI and Vertex AI responses with tool calls keep
+  output-limit and provider-error stop reasons instead of reporting normal
+  tool use.
+- Fullscreen mouse drag selection and OSC 8 link activation work in
+  terminals that report generic SGR mouse release button codes.
+- Focused fullscreen overlays receive mouse wheel and viewport scroll keys
+  such as PageUp and PageDown.
+- Split `Alt+Enter` input over SSH is no longer misread as Escape;
+  `PIDREI_TUI_ESC_TIMEOUT` tunes the lone-Escape timeout for high-latency
+  terminals.
+- Idle fullscreen sessions no longer repaint and clear text selection when
+  the terminal loses focus.
+- Fullscreen selection copy goes through the host clipboard and reports
+  failure instead of claiming success when OSC 52 is unsupported.
+
+### Not ported
+
+- `createGatewayBindingFetch()`, upstream's Cloudflare AI Gateway
+  Workers-binding adapter: a JavaScript/Workers `env.AI` shim with no Python
+  consumer.
+- The subagent example fixes and the `nanoid` dependency update: pidrei
+  ships neither upstream's examples nor its JavaScript dependency tree.
+
 ## [0.84.1.0] - 2026-08-09
 
 Tracks [Pi 0.84.1](https://github.com/earendil-works/pi/releases/tag/v0.84.1),

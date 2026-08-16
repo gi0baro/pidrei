@@ -24,7 +24,9 @@ CONTEXT = Context(messages=[UserMessage(content="hi", timestamp=1)])
 
 def _model(adapter):
     provider = "google" if adapter is google_generative_ai else "google-vertex"
-    return get_builtin_model(provider, "gemini-3-pro-preview" if provider == "google" else "gemini-3.1-pro-preview")
+    model = get_builtin_model(provider, "gemini-3.1-pro-preview")
+    assert model is not None, f"catalog no longer carries the {provider} test model; pick a current id"
+    return model
 
 
 @contextlib.contextmanager

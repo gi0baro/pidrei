@@ -6,9 +6,6 @@
       "api": "anthropic-messages",
       "provider": "kimi-coding",
       "baseUrl": "https://api.kimi.com/coding",
-      "headers": {
-        "User-Agent": "KimiCLI/1.5"
-      },
       "compat": {
         "allowEmptySignature": true,
         "forceAdaptiveThinking": true
@@ -42,9 +39,6 @@
       "api": "anthropic-messages",
       "provider": "kimi-coding",
       "baseUrl": "https://api.kimi.com/coding",
-      "headers": {
-        "User-Agent": "KimiCLI/1.5"
-      },
       "compat": {
         "forceAdaptiveThinking": true
       },
@@ -77,9 +71,6 @@
       "api": "anthropic-messages",
       "provider": "kimi-coding",
       "baseUrl": "https://api.kimi.com/coding",
-      "headers": {
-        "User-Agent": "KimiCLI/1.5"
-      },
       "compat": {
         "allowEmptySignature": true,
         "forceAdaptiveThinking": true
@@ -104,9 +95,6 @@
       "api": "anthropic-messages",
       "provider": "kimi-coding",
       "baseUrl": "https://api.kimi.com/coding",
-      "headers": {
-        "User-Agent": "KimiCLI/1.5"
-      },
       "compat": {
         "forceAdaptiveThinking": true
       },
