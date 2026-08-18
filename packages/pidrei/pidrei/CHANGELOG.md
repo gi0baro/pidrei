@@ -6,6 +6,20 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.1] - 2026-08-18
+
+PiDrei dependency updates on top of Pi 0.84.2.
+
+### Changed
+
+- tonio updated to 0.9.7, httpunk to 0.1.4 and punkreq to 0.1.4.
+
+### Fixed
+
+- A race between a full availability refresh and a concurrent login/logout
+  could republish stale provider availability, briefly reporting a provider
+  as unconfigured right after login (or configured right after logout).
+
 ## [0.84.2.0] - 2026-08-16
 
 Tracks [Pi 0.84.2](https://github.com/earendil-works/pi/releases/tag/v0.84.2).

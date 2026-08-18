@@ -161,6 +161,14 @@ class ModelRuntime:
         # from before the login. The full pass leaves these providers alone
         # instead, and the pass that owns them publishes its own merge.
         self._provider_availability_inflight: dict[str, int] = {}
+        # Guards every mutation of the availability state above (the seq
+        # counters, the inflight map, the error slot) and every
+        # read-modify-write of `_snapshot`. pi's seq guards are check-then-act
+        # sections with no await between check and publish, atomic on one
+        # loop; here passes run on different threads, so an unguarded pass can
+        # pass its seq check, lose the CPU while a credential-driven pass
+        # bumps the seq and publishes, then clobber that publish with
+        # pre-credential data. Held only across sync sections, never an await.
         self._availability_guard = threading.Lock()
         self._availability_error: str | None = None
         # Per-provider serialized credential operations (pi chains promises;
@@ -318,11 +326,12 @@ class ModelRuntime:
 
     def _update_model_snapshot(self) -> None:
         all_models = list(self._models.get_models())
-        self._snapshot = replace(
-            self._snapshot,
-            all=all_models,
-            available=[model for model in all_models if model.provider in self._snapshot.configured_providers],
-        )
+        with self._availability_guard:
+            self._snapshot = replace(
+                self._snapshot,
+                all=all_models,
+                available=[model for model in all_models if model.provider in self._snapshot.configured_providers],
+            )
 
     # -- availability ----------------------------------------------------------
 
@@ -341,88 +350,90 @@ class ModelRuntime:
         available, checks, credentials = await tonio.spawn(
             self._models.get_available(None, options), check_all(), self._credentials.list(options)
         )
-        # A newer rebuild was requested while this one was in flight; drop this
-        # result so a slow, superseded refresh cannot clobber the snapshot with
-        # stale data.
-        if seq != self._availability_refresh_seq:
-            return
-        auth = dict(checks)
-        configured_providers = {provider_id for provider_id, check in checks if check is not None}
-        stored_providers = {entry.provider_id for entry in credentials}
         all_models = list(self._models.get_models())
-        available_models = list(available)
         with self._availability_guard:
+            # A newer rebuild was requested while this one was in flight; drop
+            # this result so a slow, superseded refresh cannot clobber the
+            # snapshot with stale data.
+            if seq != self._availability_refresh_seq:
+                return
+            auth = dict(checks)
+            configured_providers = {provider_id for provider_id, check in checks if check is not None}
+            stored_providers = {entry.provider_id for entry in credentials}
+            available_models = list(available)
             inflight = frozenset(self._provider_availability_inflight)
-        if inflight:
-            # These providers belong to a credential-driven pass that has not
-            # published yet; carry their current state through untouched rather
-            # than overwrite it with this pass's reading (see the note on
-            # `_provider_availability_inflight`).
-            previous = self._snapshot
-            for provider_id in inflight:
-                auth.pop(provider_id, None)
-                configured_providers.discard(provider_id)
-                stored_providers.discard(provider_id)
-                if provider_id in previous.auth:
-                    auth[provider_id] = previous.auth[provider_id]
-                if provider_id in previous.configured_providers:
-                    configured_providers.add(provider_id)
-                if provider_id in previous.stored_providers:
-                    stored_providers.add(provider_id)
-            available_by_id = {
-                (model.provider, model.id): model
-                for model in [
-                    *[model for model in available_models if model.provider not in inflight],
-                    *[model for model in previous.available if model.provider in inflight],
+            if inflight:
+                # These providers belong to a credential-driven pass that has
+                # not published yet; carry their current state through
+                # untouched rather than overwrite it with this pass's reading
+                # (see the note on `_provider_availability_inflight`).
+                previous = self._snapshot
+                for provider_id in inflight:
+                    auth.pop(provider_id, None)
+                    configured_providers.discard(provider_id)
+                    stored_providers.discard(provider_id)
+                    if provider_id in previous.auth:
+                        auth[provider_id] = previous.auth[provider_id]
+                    if provider_id in previous.configured_providers:
+                        configured_providers.add(provider_id)
+                    if provider_id in previous.stored_providers:
+                        stored_providers.add(provider_id)
+                available_by_id = {
+                    (model.provider, model.id): model
+                    for model in [
+                        *[model for model in available_models if model.provider not in inflight],
+                        *[model for model in previous.available if model.provider in inflight],
+                    ]
+                }
+                available_models = [
+                    available_by_id[(model.provider, model.id)]
+                    for model in all_models
+                    if (model.provider, model.id) in available_by_id
                 ]
-            }
-            available_models = [
-                available_by_id[(model.provider, model.id)]
-                for model in all_models
-                if (model.provider, model.id) in available_by_id
-            ]
-        self._snapshot = _Snapshot(
-            all=all_models,
-            available=available_models,
-            configured_providers=configured_providers,
-            stored_providers=stored_providers,
-            auth=auth,
-        )
-        if error_seq == self._availability_error_seq:
-            self._availability_error = None
+            self._snapshot = _Snapshot(
+                all=all_models,
+                available=available_models,
+                configured_providers=configured_providers,
+                stored_providers=stored_providers,
+                auth=auth,
+            )
+            if error_seq == self._availability_error_seq:
+                self._availability_error = None
 
     async def _queue_availability_refresh(self, cancel: CancelToken | None = None) -> None:
-        self._availability_refresh_seq += 1
-        seq = self._availability_refresh_seq
-        # pi bumps every provider seq here so this pass supersedes any
-        # provider-scoped one still in flight. That invalidation is what
-        # `_run_availability_refresh` now expresses through
-        # `_provider_availability_inflight` instead — bumping the seq would
-        # make the in-flight pass drop its own, newer publish.
-        self._availability_error_seq += 1
-        error_seq = self._availability_error_seq
+        with self._availability_guard:
+            self._availability_refresh_seq += 1
+            seq = self._availability_refresh_seq
+            # pi bumps every provider seq here so this pass supersedes any
+            # provider-scoped one still in flight. That invalidation is what
+            # `_run_availability_refresh` now expresses through
+            # `_provider_availability_inflight` instead — bumping the seq would
+            # make the in-flight pass drop its own, newer publish.
+            self._availability_error_seq += 1
+            error_seq = self._availability_error_seq
         effective_cancel = cancel if cancel is not None else CancelToken()
         try:
             await self._run_availability_refresh(seq, error_seq, effective_cancel)
         except Exception as error:
             unwrapped = _unwrap_spawn_error(error)
-            # Only the latest requested rebuild owns the error state.
-            if error_seq == self._availability_error_seq and not effective_cancel.cancelled:
-                self._availability_error = str(unwrapped)
+            with self._availability_guard:
+                # Only the latest requested rebuild owns the error state.
+                if error_seq == self._availability_error_seq and not effective_cancel.cancelled:
+                    self._availability_error = str(unwrapped)
             raise unwrapped from error
 
     async def _refresh_provider_availability(self, provider_id: str, cancel: CancelToken) -> None:
-        # Invalidate any full availability pass that started before this credential change.
-        self._availability_refresh_seq += 1
-        provider_seq = self._provider_availability_seq.get(provider_id, 0) + 1
-        self._provider_availability_seq[provider_id] = provider_seq
-        self._availability_error_seq += 1
-        error_seq = self._availability_error_seq
-        options = AuthOperationOptions(cancel=cancel)
         with self._availability_guard:
+            # Invalidate any full availability pass that started before this credential change.
+            self._availability_refresh_seq += 1
+            provider_seq = self._provider_availability_seq.get(provider_id, 0) + 1
+            self._provider_availability_seq[provider_id] = provider_seq
+            self._availability_error_seq += 1
+            error_seq = self._availability_error_seq
             self._provider_availability_inflight[provider_id] = (
                 self._provider_availability_inflight.get(provider_id, 0) + 1
             )
+        options = AuthOperationOptions(cancel=cancel)
         try:
             available, auth, credential = await tonio.spawn(
                 self._models.get_available(provider_id, options),
@@ -430,50 +441,52 @@ class ModelRuntime:
                 self._credentials.read(provider_id, options),
             )
             cancel.raise_if_cancelled()
-            if self._provider_availability_seq.get(provider_id) != provider_seq:
-                return
-            configured_providers = set(self._snapshot.configured_providers)
-            stored_providers = set(self._snapshot.stored_providers)
-            auth_by_provider = dict(self._snapshot.auth)
-            if auth is not None:
-                configured_providers.add(provider_id)
-                auth_by_provider[provider_id] = auth
-            else:
-                configured_providers.discard(provider_id)
-                auth_by_provider.pop(provider_id, None)
-            if credential is not None:
-                stored_providers.add(provider_id)
-            else:
-                stored_providers.discard(provider_id)
             all_models = list(self._models.get_models())
-            available_by_id = {
-                (model.provider, model.id): model
-                for model in [
-                    *[model for model in self._snapshot.available if model.provider != provider_id],
-                    *available,
-                ]
-            }
-            self._snapshot = _Snapshot(
-                all=all_models,
-                available=[
-                    available_by_id[(model.provider, model.id)]
-                    for model in all_models
-                    if (model.provider, model.id) in available_by_id
-                ],
-                configured_providers=configured_providers,
-                stored_providers=stored_providers,
-                auth=auth_by_provider,
-            )
-            if error_seq == self._availability_error_seq:
-                self._availability_error = None
+            with self._availability_guard:
+                if self._provider_availability_seq.get(provider_id) != provider_seq:
+                    return
+                configured_providers = set(self._snapshot.configured_providers)
+                stored_providers = set(self._snapshot.stored_providers)
+                auth_by_provider = dict(self._snapshot.auth)
+                if auth is not None:
+                    configured_providers.add(provider_id)
+                    auth_by_provider[provider_id] = auth
+                else:
+                    configured_providers.discard(provider_id)
+                    auth_by_provider.pop(provider_id, None)
+                if credential is not None:
+                    stored_providers.add(provider_id)
+                else:
+                    stored_providers.discard(provider_id)
+                available_by_id = {
+                    (model.provider, model.id): model
+                    for model in [
+                        *[model for model in self._snapshot.available if model.provider != provider_id],
+                        *available,
+                    ]
+                }
+                self._snapshot = _Snapshot(
+                    all=all_models,
+                    available=[
+                        available_by_id[(model.provider, model.id)]
+                        for model in all_models
+                        if (model.provider, model.id) in available_by_id
+                    ],
+                    configured_providers=configured_providers,
+                    stored_providers=stored_providers,
+                    auth=auth_by_provider,
+                )
+                if error_seq == self._availability_error_seq:
+                    self._availability_error = None
         except Exception as error:
             unwrapped = _unwrap_spawn_error(error)
-            if (
-                self._provider_availability_seq.get(provider_id) == provider_seq
-                and error_seq == self._availability_error_seq
-                and not cancel.cancelled
-            ):
-                self._availability_error = str(unwrapped)
+            with self._availability_guard:
+                if (
+                    self._provider_availability_seq.get(provider_id) == provider_seq
+                    and error_seq == self._availability_error_seq
+                    and not cancel.cancelled
+                ):
+                    self._availability_error = str(unwrapped)
             raise unwrapped from error
         finally:
             with self._availability_guard:
@@ -504,18 +517,21 @@ class ModelRuntime:
         self, provider_id: str | None = None, options: AuthOperationOptions | None = None
     ) -> list[Model]:
         if provider_id:
-            self._availability_error_seq += 1
-            error_seq = self._availability_error_seq
+            with self._availability_guard:
+                self._availability_error_seq += 1
+                error_seq = self._availability_error_seq
             try:
                 available = await self._models.get_available(provider_id, options)
             except Exception as error:
                 unwrapped = _unwrap_spawn_error(error)
                 cancel = options.cancel if options is not None else None
-                if error_seq == self._availability_error_seq and (cancel is None or not cancel.cancelled):
-                    self._availability_error = str(unwrapped)
+                with self._availability_guard:
+                    if error_seq == self._availability_error_seq and (cancel is None or not cancel.cancelled):
+                        self._availability_error = str(unwrapped)
                 raise unwrapped from error
-            if error_seq == self._availability_error_seq:
-                self._availability_error = None
+            with self._availability_guard:
+                if error_seq == self._availability_error_seq:
+                    self._availability_error = None
             return available
         await self._queue_availability_refresh(options.cancel if options is not None else None)
         return self._snapshot.available
@@ -906,21 +922,22 @@ class ModelRuntime:
             self._recompose_provider(provider_id)
             self._update_model_snapshot()
             configured = configured_request_auth_status(self._config.get_provider(provider_id), effective)
-            if provider_id in self._snapshot.stored_providers or (configured is not None and configured.configured):
-                configured_providers = set(self._snapshot.configured_providers) | {provider_id}
-                auth = dict(self._snapshot.auth)
-                # Provisional entry until the async refresh lands; never clobber a real check result.
-                if not auth.get(provider_id):
-                    auth[provider_id] = AuthCheck(
-                        type="oauth" if effective.get("oauth") and not effective.get("apiKey") else "api_key",
-                        source="configured provider",
+            with self._availability_guard:
+                if provider_id in self._snapshot.stored_providers or (configured is not None and configured.configured):
+                    configured_providers = set(self._snapshot.configured_providers) | {provider_id}
+                    auth = dict(self._snapshot.auth)
+                    # Provisional entry until the async refresh lands; never clobber a real check result.
+                    if not auth.get(provider_id):
+                        auth[provider_id] = AuthCheck(
+                            type="oauth" if effective.get("oauth") and not effective.get("apiKey") else "api_key",
+                            source="configured provider",
+                        )
+                    self._snapshot = replace(
+                        self._snapshot,
+                        auth=auth,
+                        configured_providers=configured_providers,
+                        available=[model for model in self._snapshot.all if model.provider in configured_providers],
                     )
-                self._snapshot = replace(
-                    self._snapshot,
-                    auth=auth,
-                    configured_providers=configured_providers,
-                    available=[model for model in self._snapshot.all if model.provider in configured_providers],
-                )
         self._request_refresh()
 
     def unregister_provider(self, provider_id: str) -> None:
