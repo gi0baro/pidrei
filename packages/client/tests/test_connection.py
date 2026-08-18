@@ -1,6 +1,7 @@
 """Port of pi client `test/connection.test.ts`."""
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei_client import (
     PiClient,
@@ -204,13 +205,18 @@ async def test_does_not_restore_a_stale_connection_when_a_snapshot_listener_reco
     # Snapshot listeners run inside the handshake and `ClientState._notify`
     # swallows whatever they raise, so without this hook a listener that failed
     # partway is indistinguishable from one that never ran — both leave
-    # `reconnect[0]` None while `connect()` still rejects. This test failed
-    # exactly that way on a CI runner, with nothing to go on; capture the error
-    # so a repeat says which of the two happened.
+    # `reconnect[0]` None while `connect()` still rejects. Capture the error so
+    # that case names itself.
     listener_errors: list[Exception] = []
     client = PiClient(PiClientOptions(transport_factory=transport_factory, on_listener_error=listener_errors.append))
     reconnect = [None]
     reconnect_requested = [False]
+    # `client.disconnect()` inside the listener rejects the handshake, which
+    # wakes the task awaiting `connect()` on another runtime worker — in pi the
+    # rejection only delivers after the listener stack unwinds, here it races
+    # the rest of the listener (the CI flake: `reconnect[0]` still None when
+    # asserted). Publish listener completion instead of assuming pi's ordering.
+    reconnect_published = tonio.Event()
 
     def on_snapshot(snapshot):
         if reconnect_requested[0]:
@@ -218,11 +224,14 @@ async def test_does_not_restore_a_stale_connection_when_a_snapshot_listener_reco
         reconnect_requested[0] = True
         client.disconnect()
         reconnect[0] = client.reconnect()
+        reconnect_published.set()
 
     client.subscribe(on_snapshot)
 
     with pytest.raises(PiDisconnectedError):
         await client.connect()
+    # Timed so a listener that died partway still reaches the diagnostics below.
+    await reconnect_published.wait(5)
     assert listener_errors == [], f"the snapshot listener raised: {listener_errors}"
     assert reconnect_requested[0] is True, "the snapshot listener never ran"
     assert reconnect[0] is not None

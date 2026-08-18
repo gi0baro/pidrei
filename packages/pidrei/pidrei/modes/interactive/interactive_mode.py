@@ -1887,13 +1887,13 @@ class InteractiveMode:
         async def new_session_action(options=None):
             self._clear_status_indicator()
             try:
-                return await self.runtime_host.new_session(options)
+                return await self.runtime_host.new_session(**(options or {}))
             except Exception as error:
                 return await self._handle_fatal_runtime_error("Failed to create session", error)
 
         async def fork_action(entry_id, options=None):
             try:
-                result = await self.runtime_host.fork(entry_id, options)
+                result = await self.runtime_host.fork(entry_id, **(options or {}))
                 if not result["cancelled"]:
                     self.editor.set_text(result.get("selectedText") or "")
                     self.show_status("Forked to new session")

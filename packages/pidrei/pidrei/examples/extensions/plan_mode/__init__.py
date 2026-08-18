@@ -209,25 +209,26 @@ class PlanMode:
             return {
                 "message": {
                     "customType": "plan-mode-context",
-                    "content": """[PLAN MODE ACTIVE]
-    You are in plan mode - a read-only exploration mode for safe code analysis.
+                    "content": """\
+[PLAN MODE ACTIVE]
+You are in plan mode - a read-only exploration mode for safe code analysis.
 
-    Restrictions:
-    - Built-in edit and write tools are disabled
-    - Other currently active tools remain available
-    - Bash is restricted to an allowlist of read-only commands
+Restrictions:
+- Built-in edit and write tools are disabled
+- Other currently active tools remain available
+- Bash is restricted to an allowlist of read-only commands
 
-    Ask clarifying questions using the questionnaire tool.
-    Use brave-search skill via bash for web research.
+Ask clarifying questions using the questionnaire tool.
+Use brave-search skill via bash for web research.
 
-    Create a detailed numbered plan under a "Plan:" header:
+Create a detailed numbered plan under a "Plan:" header:
 
-    Plan:
-    1. First step description
-    2. Second step description
-    ...
+Plan:
+1. First step description
+2. Second step description
+...
 
-    Do NOT attempt to make changes - just describe what you would do.""",
+Do NOT attempt to make changes - just describe what you would do.""",
                     "display": False,
                 }
             }
@@ -239,13 +240,14 @@ class PlanMode:
             return {
                 "message": {
                     "customType": "plan-execution-context",
-                    "content": f"""[EXECUTING PLAN - Full tool access enabled]
+                    "content": f"""\
+[EXECUTING PLAN - Full tool access enabled]
 
-    Remaining steps:
-    {todo_list}
+Remaining steps:
+{todo_list}
 
-    Execute each step in order.
-    After completing a step, include a [DONE:n] tag in your response.""",
+Execute each step in order.
+After completing a step, include a [DONE:n] tag in your response.""",
                     "display": False,
                 }
             }
@@ -323,13 +325,14 @@ class PlanMode:
             await self.persist_state()
 
             remaining_list = "\n".join(f"{item.step}. {item.text}" for item in todo_items)
-            exec_message = f"""Execute the plan.
+            exec_message = f"""\
+Execute the plan.
 
-    Remaining steps:
-    {remaining_list}
+Remaining steps:
+{remaining_list}
 
-    Start with: {first_item.text}
-    After completing a step, include a [DONE:n] tag in your response."""
+Start with: {first_item.text}
+After completing a step, include a [DONE:n] tag in your response."""
             self.pi.send_message(plan_todo_list_message, {"deliverAs": "followUp"})
             self.pi.send_message(
                 {"customType": "plan-mode-execute", "content": exec_message, "display": True},

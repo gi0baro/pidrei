@@ -61,7 +61,7 @@ async def find_conflicts(pi, cwd: str) -> list[ConflictBlock]:
                     )
                     block_start = None
                     separator_line = None
-        except OSError:
+        except OSError, UnicodeDecodeError:
             pass
     return blocks
 

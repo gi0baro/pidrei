@@ -136,8 +136,9 @@ setting.
 Everything pidrei itself uses is importable:
 
 ```python
-from pidrei_ai.types import TextContent, ToolDefinition
-from pidrei_agent import AgentToolResult
+from pidrei.core.extensions import ToolDefinition
+from pidrei_agent.types import AgentToolResult
+from pidrei_ai.types import TextContent
 from pidrei_tui import Container, Text, SelectList
 import tonio.colored as tonio
 ```
@@ -177,6 +178,7 @@ user sends a prompt
   │   ├─► context                  (modify messages)   │
   │   ├─► before_provider_headers  (mutate headers)    │
   │   ├─► before_provider_request  (inspect/replace)   │
+  │   ├─► after_provider_response  (status/headers)    │
   │   ├─► message_start / message_update / message_end │
   │   ├─► tool_call                (block or rewrite)  │
   │   ├─► tool_result              (rewrite output)    │
@@ -202,11 +204,12 @@ user sends a prompt
 | `context` | Before each request | The message list |
 | `before_provider_headers` | Before each request | Request headers |
 | `before_provider_request` | Before each request | The payload |
+| `after_provider_response` | After each response arrives | — (inspect status/headers) |
 | `message_start` / `message_update` / `message_end` | Assistant message stream | `message_end` may rewrite |
 | `tool_call` | Before a tool runs | Block it, or rewrite arguments |
 | `tool_result` | After a tool runs | Rewrite the result |
 | `user_bash` | User ran a `!` command | — |
-| `model_change` / `thinking_level_change` | Selection changed | — |
+| `model_select` / `thinking_level_select` | Selection changed | — |
 
 Handlers that return `None` leave the event unchanged. Handlers that return a
 value replace the corresponding field — the table's "can change" column says
@@ -217,7 +220,7 @@ which. Ordering follows extension load order.
 ```python
 def extension(pi):
     async def guard(event, _ctx):
-        if event["toolName"] == "bash" and "rm -rf" in event["args"].get("command", ""):
+        if event["toolName"] == "bash" and "rm -rf" in event["input"].get("command", ""):
             return {"block": True, "reason": "refusing a destructive command"}
 
     pi.on("tool_call", guard)
@@ -330,20 +333,22 @@ A tool is a `ToolDefinition` with a JSON-schema parameter spec and an execute
 function. It must return an `AgentToolResult` — a bare dict is not accepted.
 
 ```python
-from pidrei_agent import AgentToolResult
-from pidrei_ai.types import TextContent, ToolDefinition
+from pidrei.core.extensions import ToolDefinition
+from pidrei_agent.types import AgentToolResult
+from pidrei_ai.types import TextContent
 
 
 def extension(pi):
-    async def execute(args, _ctx):
+    async def execute(_tool_call_id, params, _cancel, _on_update, _ctx):
         return AgentToolResult(
-            content=[TextContent(type="text", text=f"echo: {args['text']}")],
+            content=[TextContent(type="text", text=f"echo: {params['text']}")],
             details={},
         )
 
     pi.register_tool(
         ToolDefinition(
             name="echo",
+            label="Echo",
             description="Echo the given text back",
             parameters={
                 "type": "object",
@@ -354,6 +359,10 @@ def extension(pi):
         )
     )
 ```
+
+Execute receives `(tool_call_id, params, cancel, on_update, ctx)`: the call id,
+the validated arguments, a cancel token, a streaming-update callback, and the
+extension context.
 
 The `content` list is what the model sees. `details` is arbitrary data for your
 own renderers and is not sent to the model.

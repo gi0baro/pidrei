@@ -6,6 +6,39 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.2] - 2026-08-18
+
+PiDrei examples and extension-API fixes on top of Pi 0.84.2.
+
+### Added
+
+- All portable example extensions from upstream Pi are now ported: 70 new
+  examples under `examples/extensions/`, from the minimal `hello.py` up to
+  custom providers, overlay games, the `subagent/` orchestrator, and remote
+  tool operations over SSH. The examples README is now a themed index of all
+  74 examples. The only upstream examples not ported are the four that
+  depend on the Node ecosystem itself (doom-overlay, gondolin, sandbox,
+  with-deps).
+- The plan mode example gained the upstream README it was missing.
+
+### Fixed
+
+- Extension calls to `ctx.new_session()` and `ctx.fork()` raised a swallowed
+  `TypeError` in interactive mode, surfacing as "Failed to create session" /
+  "Failed to fork session"; both worked in print and RPC modes.
+- The plan mode example injected its plan/execution prompts with stray
+  leading whitespace on every line.
+- The merge-and-resolve example crashed on conflicted files containing
+  non-UTF-8 bytes instead of skipping them.
+- `docs/extensions.md` disagreed with the code in several places: the
+  custom-tool snippet used import paths that do not resolve, a two-argument
+  `execute` signature (the real contract is `(tool_call_id, params, cancel,
+  on_update, ctx)`), and omitted the required `label` field; the `tool_call`
+  event example read `event["args"]` where the event carries `input`; the
+  event catalogue listed `model_change`/`thinking_level_change` (session
+  entry types) instead of the actual `model_select`/`thinking_level_select`
+  events, and omitted `after_provider_response`.
+
 ## [0.84.2.1] - 2026-08-18
 
 PiDrei dependency updates on top of Pi 0.84.2.
