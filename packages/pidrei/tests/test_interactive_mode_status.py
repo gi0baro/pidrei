@@ -22,7 +22,7 @@ from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScre
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tui" / "tests"))
-from virtual_terminal import VirtualTerminal
+from virtual_terminal import VirtualTerminal, poll_until
 
 
 @pytest.fixture(autouse=True)
@@ -272,6 +272,9 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
             return overlay
 
         overlay_done = await show_extension_custom("overlay", overlay_factory, {"overlay": True})
+        # `run()` is untracked, so a render flush does not order its
+        # `set_focus` before this task — wait on the focus state itself.
+        await poll_until(lambda: overlay.focused)
         await flush_tui(ui, terminal)
         assert overlay.focused is True
 
@@ -280,6 +283,7 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
             return replacement
 
         replacement_done = await show_extension_custom("replacement", replacement_factory)
+        await poll_until(lambda: replacement.focused)
         await flush_tui(ui, terminal)
         assert replacement.focused is True
 

@@ -11,7 +11,7 @@ from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_tui.utils import visible_width
 
 from .themes import default_editor_theme
-from .virtual_terminal import VirtualTerminal
+from .virtual_terminal import VirtualTerminal, poll_until
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -2368,11 +2368,13 @@ async def test_resets_custom_trigger_characters_when_provider_changes():
 async def test_aborts_active_at_autocomplete_when_typing_continues():
     editor = Editor(create_test_tui(), default_editor_theme)
     aborts = []
+    signals = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
+        signals.append(options["signal"])
         await options["signal"].wait(0.5)
         if options["signal"].cancelled:
-            aborts.append(1)
+            aborts.append(options["signal"])
             return None
         return {"items": [{"value": "@main.ts", "label": "main.ts"}], "prefix": "@main"}
 
@@ -2382,11 +2384,16 @@ async def test_aborts_active_at_autocomplete_when_typing_continues():
     await editor.handle_input("m")
     await editor.handle_input("a")
     await editor.handle_input("i")
-    await tonio.sleep(0.25)
+    # Under load the 20ms debounce can fire between keystrokes, so how many
+    # requests started (and were aborted by the next keystroke) is not fixed.
+    # Each keystroke cancels the in-flight token synchronously, so the one
+    # uncancelled signal is the request that survived typing: wait for it,
+    # keep typing, and assert that exact request gets aborted.
+    active = await poll_until(lambda: next((signal for signal in signals if not signal.cancelled), None))
+    assert active is not None
     await editor.handle_input("n")
-    await tonio.sleep(0.05)
 
-    assert len(aborts) == 1
+    assert await poll_until(lambda: active in aborts)
 
 
 @pytest.mark.tonio

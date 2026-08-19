@@ -3,8 +3,16 @@
 `hello()` mirrors pi's shape — register the waiter, fire the send without
 awaiting it, return the response awaitable — so a caller observes the same
 ordering as the JS `void this.sendMessage(...)` prologue.
+
+pi scans the backlog and registers a waiter in one synchronous step; here the
+socket reader appends messages from another thread, so `_guard` makes
+scan-then-register atomic against append-then-notify. Without it a message
+landing in the gap is missed by both — the waiter never resolves and the
+awaiting test wedges (seen as a macOS-CI job timeout in the busy-work
+session test, whose bare `next()` follows an already-spawned request).
 """
 
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -45,6 +53,7 @@ class ProtocolTestClient:
         self._closed_deferred = Deferred()
         self._request_sequence = 0
         self._closed_value = False
+        self._guard = threading.Lock()
 
     @property
     def closed(self) -> bool:
@@ -76,13 +85,14 @@ class ProtocolTestClient:
         return self.next_from(0, predicate)
 
     def next_from(self, index: int, predicate: Callable[[ServerMessage], bool]) -> Awaitable[ServerMessage]:
-        for message in self.messages[index:]:
-            if predicate(message):
-                return resolved(message)
-        if self._closed_value:
-            return rejected(Exception("Wire client is closed"))
-        waiter = _MessageWaiter(predicate=predicate, deferred=Deferred())
-        self._waiters.add(waiter)
+        with self._guard:
+            for message in self.messages[index:]:
+                if predicate(message):
+                    return resolved(message)
+            if self._closed_value:
+                return rejected(Exception("Wire client is closed"))
+            waiter = _MessageWaiter(predicate=predicate, deferred=Deferred())
+            self._waiters.add(waiter)
         return waiter.deferred
 
     def wait_for_close(self) -> Awaitable[None]:
@@ -94,26 +104,29 @@ class ProtocolTestClient:
     def receive(self, chunk: bytes) -> None:
         try:
             for message in self._decoder.push(chunk):
-                self.messages.append(message)
-                for waiter in list(self._waiters):
-                    if not waiter.predicate(message):
-                        continue
-                    self._waiters.discard(waiter)
+                with self._guard:
+                    self.messages.append(message)
+                    matched = [waiter for waiter in self._waiters if waiter.predicate(message)]
+                    self._waiters.difference_update(matched)
+                for waiter in matched:
                     waiter.deferred.resolve(message)
         except Exception as error:
             self.fail(error)
 
     def mark_closed(self) -> None:
-        if self._closed_value:
-            return
-        self._closed_value = True
+        with self._guard:
+            if self._closed_value:
+                return
+            self._closed_value = True
         self._closed_deferred.resolve(None)
         self.fail(Exception("Wire connection closed"))
 
     def fail(self, error: Exception) -> None:
-        for waiter in list(self._waiters):
+        with self._guard:
+            waiters = list(self._waiters)
+            self._waiters.clear()
+        for waiter in waiters:
             waiter.deferred.reject(error)
-        self._waiters.clear()
 
     def _send_silenced(self, message: ClientMessage) -> None:
         sending = self.send_message(message)

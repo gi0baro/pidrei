@@ -213,6 +213,23 @@ class VirtualTerminal:
             await tonio.sleep(0.001)
 
 
+async def poll_until(check, timeout: float = 2.0):
+    """Poll `check` until it returns a truthy value and return that value.
+
+    For asynchronous effects with no completion signal (untracked spawns,
+    debounced requests, the render loop's state publish): wait on the
+    observable state itself instead of sleeping and hoping. Bounded like
+    `wait_for_render` so a condition that never holds hands the last (falsy)
+    value to the caller's assertion rather than hanging the suite.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        value = check()
+        if value or time.monotonic() >= deadline:
+            return value
+        await tonio.sleep(0.001)
+
+
 class LoggingVirtualTerminal(VirtualTerminal):
     """VirtualTerminal that records every write for assertions."""
 

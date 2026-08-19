@@ -840,9 +840,11 @@ class ModelRuntime:
     async def _drain_refresh_requests(self) -> None:
         if not self._refresh_requested:
             return  # A refresh that started after the request already ran.
-        await self.refresh(ModelsRefreshOptions(allow_network=False))
+        await self.refresh(ModelsRefreshOptions(allow_network=False), _requested_only=True)
 
-    async def refresh(self, options: ModelsRefreshOptions | None = None) -> ModelsRefreshResult:
+    async def refresh(
+        self, options: ModelsRefreshOptions | None = None, *, _requested_only: bool = False
+    ) -> ModelsRefreshResult:
         options = options if options is not None else ModelsRefreshOptions(allow_network=self._model_network_enabled)
         cancel = options.cancel
         if options.providers is not None:
@@ -865,7 +867,13 @@ class ModelRuntime:
             async with self._refresh_serial:
                 # Requests made before this run starts are satisfied by it; a
                 # request landing mid-run sets the flag again and spawns its own
-                # drain, which will run after this one releases the lock.
+                # drain, which will run after this one releases the lock. A
+                # drain that read its request before losing the lock race to a
+                # full run re-checks here: its request is already satisfied,
+                # and rebuilding again would supersede (cancel) provider
+                # refreshes that started after that run returned.
+                if _requested_only and not self._refresh_requested:
+                    return ModelsRefreshResult(aborted=False, errors={})
                 self._refresh_requested = False
                 config = await ModelConfig.load(self._models_path)
                 with self._composition_guard:

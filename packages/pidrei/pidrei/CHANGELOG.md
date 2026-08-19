@@ -6,6 +6,12 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.3] - 2026-08-19
+
+### Changed
+
+- Updated tonio to 0.9.10.
+
 ## [0.84.2.2] - 2026-08-18
 
 PiDrei examples and extension-API fixes on top of Pi 0.84.2.

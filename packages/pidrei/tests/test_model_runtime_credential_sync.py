@@ -278,6 +278,11 @@ async def test_keeps_provider_scoped_refreshes_from_superseding_unrelated_provid
     runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
     runtime.register_native_provider(ProviderDouble("one", refresh_models=refresh_one_models))
     runtime.register_native_provider(ProviderDouble("two"))
+    # Each registration spawned a detached full-refresh drain; only an
+    # unscoped refresh clears the request flag, so run one now — otherwise a
+    # lagging drain rebuilds every provider mid-test and supersedes (cancels)
+    # exactly the refresh of "one" this test observes.
+    await runtime.refresh(ModelsRefreshOptions(allow_network=False))
     await runtime.refresh(ModelsRefreshOptions(allow_network=False, providers=["one", "two"]))
     await runtime.set_runtime_api_key("one", "one-key")
     await runtime.set_runtime_api_key("two", "two-key")

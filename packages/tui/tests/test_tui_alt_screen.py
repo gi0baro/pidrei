@@ -34,7 +34,7 @@ from pidrei_tui.terminal_image import (
 )
 from pidrei_tui.tui_alt_screen import TuiAltScreen
 
-from .virtual_terminal import VirtualTerminal
+from .virtual_terminal import VirtualTerminal, poll_until
 
 
 OSC133_ZONE_START = "\x1b]133;A\x07"
@@ -920,7 +920,11 @@ async def test_opens_an_osc8_hyperlink_with_specific_or_generic_release_codes_bu
         )
     )
     await tui.start()
-    await terminal.wait_for_render()
+    # The press handler hit-tests the last *published* frame
+    # (`_previous_screen`), which lands after the terminal write — the no-arg
+    # settle-wait can lose the race against the first paint, so wait until
+    # the frame carrying the links is actually there.
+    assert await poll_until(lambda: any(url in line for line in tui._previous_screen))
 
     for column, row, release_button in ((2, 1, 3), (2, 2, 0), (2, 3, 0)):
         since = terminal.frames
