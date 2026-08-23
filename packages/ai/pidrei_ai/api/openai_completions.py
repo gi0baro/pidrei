@@ -19,8 +19,6 @@ from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, fields
 from typing import Any, Protocol
 
-import tonio.colored as tonio
-
 from pidrei_ai.api.constrained_sampling import (
     GrammarToolInputJsonBuffer,
     append_grammar_tool_input_json_delta,
@@ -1371,7 +1369,7 @@ def stream(  # noqa: C901
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    tonio.spawn.without_tracking(_run())
+    out_stream.spawn_producer(_run())
     return out_stream
 
 

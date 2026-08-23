@@ -10,8 +10,6 @@ import time
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
 
-import tonio.colored as tonio
-
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent, Model, Usage
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
@@ -57,7 +55,7 @@ def lazy_stream(
             outer.push(ErrorEvent(reason="error", error=message))
             outer.end(message)
 
-    tonio.spawn.without_tracking(_run())
+    outer.spawn_producer(_run())
     return outer
 
 

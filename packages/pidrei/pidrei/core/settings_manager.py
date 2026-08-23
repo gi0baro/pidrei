@@ -322,6 +322,10 @@ class SettingsManager:
         would be invisible to the reloaded state.
         """
         await self.flush()
+        # Two file reads (and the lock retry ladder's `time.sleep`) — pool-side.
+        await tonio.spawn_blocking(self._reload_sync)
+
+    def _reload_sync(self) -> None:
         with self._write_lock:
             global_settings, global_error = SettingsManager._try_load_from_storage(self._storage, "global")
             if global_error is None:

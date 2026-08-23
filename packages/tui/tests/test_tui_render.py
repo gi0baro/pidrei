@@ -876,3 +876,64 @@ async def test_overlay_and_cursor_changes_write_cursor_state_only_from_the_rende
 
     assert terminal.sync_cursor_calls == 0, "no task other than the render loop may write cursor bytes"
     await tui.stop()
+
+
+# Render-task hooks
+
+
+@pytest.mark.tonio
+async def test_post_before_render_runs_on_the_render_task_before_the_frame():
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = InputComponent()
+    component.lines = ["before"]
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    render_count = component.render_count
+
+    def mutate() -> None:
+        # Posted callbacks run before the frame they trigger, never in between
+        # that frame's component renders.
+        assert component.render_count == render_count
+        component.lines = ["after"]
+
+    tui.post_before_render(mutate)
+    await terminal.wait_for_render(since, timeout=1.0)
+
+    assert component.render_count > render_count
+    assert component.lines == ["after"]
+    assert any("after" in line for line in terminal.get_viewport())
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_render_error_is_handed_to_the_installed_handler():
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    failed = tonio.Event()
+    seen: list = []
+
+    async def on_error(error) -> None:
+        seen.append(error)
+        failed.set()
+
+    tui.set_render_error_handler(on_error)
+
+    def broken_render(_width):
+        raise RuntimeError("torn cache")
+
+    component.render = broken_render
+    tui.request_render()
+    await failed.wait(1.0)
+
+    assert failed.is_set()
+    assert isinstance(seen[0], RuntimeError)
+    await tui.stop()

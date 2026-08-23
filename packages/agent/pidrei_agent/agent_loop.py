@@ -6,12 +6,10 @@ LLM call boundary.
 Concurrency notes (vs pi's single JS thread):
 - The event sink is awaitable-returning (async-only callback policy);
   `agent_loop`/`agent_loop_continue` adapt `EventStream.push` through a thin
-  async wrapper. Tool `on_update` callbacks are sync (tool contract), so they
-  buffer the sink's coroutines, which are awaited in order before the tool
-  call finalizes — mirroring pi's update-promise batch. Unlike pi's
-  `Promise.resolve(emit(...))`, no part of the sink runs during `on_update`
-  itself: a JS async function executes up to its first `await` synchronously,
-  a Python coroutine does not start until awaited.
+  async wrapper. Tool `on_update` callbacks are sync (tool contract), so each
+  tool call owns an unbounded channel drained by one forwarder task: updates
+  reach the sink live and in order, and the forwarder is joined before the
+  call finalizes — pi's `Promise.resolve(emit(...))` + `Promise.all`.
 - Parallel tool execution is true parallelism: prepared calls run as tonio
   tasks. `tool_execution_end` is emitted in completion order; tool-result
   messages are persisted and emitted in assistant source order (pi's ordering
@@ -24,6 +22,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored.sync import channel
 
 from pidrei_ai.types import AssistantMessage, Context, TextContent, ToolResultMessage
 from pidrei_ai.utils.callbacks import maybe_call
@@ -84,7 +83,7 @@ def agent_loop(
         messages = await run_agent_loop(prompts, context, config, push_event, cancel, stream_fn)
         stream.end(messages)
 
-    tonio.spawn.without_tracking(run())
+    stream.spawn_producer(run())
     return stream
 
 
@@ -115,7 +114,7 @@ def agent_loop_continue(
         messages = await run_agent_loop_continue(context, config, push_event, cancel, stream_fn)
         stream.end(messages)
 
-    tonio.spawn.without_tracking(run())
+    stream.spawn_producer(run())
     return stream
 
 
@@ -628,39 +627,50 @@ async def _execute_prepared_tool_call(
     cancel: CancelToken | None,
     emit: AgentEventSink,
 ) -> _ExecutedToolCallOutcome:
-    update_results: list[Awaitable[None]] = []
+    # `on_update` is sync (tool contract). pi's `updateEvents.push(
+    # Promise.resolve(emit(...)))` starts `emit` synchronously, so updates are
+    # delivered live; a Python coroutine only runs once awaited or spawned. A
+    # per-call channel + one forwarder task gives the same thing: updates are
+    # delivered as they arrive, in order, and the forwarder is joined at
+    # settle (pi's `Promise.all(updateEvents)`).
     accepting_updates = True
+    update_sender, update_receiver = channel.unbounded()
+
+    async def forward_updates() -> None:
+        while True:
+            event = await update_receiver.receive()
+            if event is None:
+                return
+            await emit(event)
+
+    forwarder = tonio.spawn(forward_updates())
 
     def on_update(partial_result: AgentToolResult[Any]) -> None:
         if not accepting_updates:
             return
-        # `on_update` is sync (tool contract), so the sink's coroutine is
-        # buffered here and drained after execution, in order — the port of
-        # pi's `updateEvents.push(Promise.resolve(emit(...)))` + `Promise.all`.
-        update_results.append(
-            emit(
-                ToolExecutionUpdateEvent(
-                    tool_call_id=prepared.tool_call.id,
-                    tool_name=prepared.tool_call.name,
-                    args=prepared.tool_call.arguments,
-                    partial_result=partial_result,
-                )
+        update_sender.send(
+            ToolExecutionUpdateEvent(
+                tool_call_id=prepared.tool_call.id,
+                tool_name=prepared.tool_call.name,
+                args=prepared.tool_call.arguments,
+                partial_result=partial_result,
             )
         )
 
+    async def settle_updates() -> None:
+        nonlocal accepting_updates
+        accepting_updates = False
+        update_sender.send(None)
+        await forwarder
+
     try:
         result = await prepared.tool.execute(prepared.tool_call.id, prepared.args, cancel, on_update)
-        accepting_updates = False
-        for update_result in update_results:
-            await update_result
+        await settle_updates()
         return _ExecutedToolCallOutcome(result=result, is_error=False)
     except Exception as error:
-        accepting_updates = False
-        for update_result in update_results:
-            await update_result
+        if accepting_updates:
+            await settle_updates()
         return _ExecutedToolCallOutcome(result=_create_error_tool_result(str(error)), is_error=True)
-    finally:
-        accepting_updates = False
 
 
 async def _finalize_executed_tool_call(

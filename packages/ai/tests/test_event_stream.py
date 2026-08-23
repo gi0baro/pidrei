@@ -96,3 +96,28 @@ async def test_result_awaited_before_completion():
     stream.push({"type": "done", "value": 42})
 
     assert await handle == 42
+
+
+@pytest.mark.tonio
+async def test_producer_escape_ends_iteration_and_raises_from_result():
+    stream = make_stream()
+
+    async def produce():
+        stream.push({"type": "delta", "i": 0, "value": None})
+        raise KeyboardInterrupt("producer died")
+
+    stream.spawn_producer(produce())
+
+    received = [event async for event in stream]
+    assert received == [{"type": "delta", "i": 0, "value": None}]
+    with pytest.raises(KeyboardInterrupt):
+        await stream.result()
+
+
+@pytest.mark.tonio
+async def test_fail_does_not_override_a_settled_result():
+    stream = make_stream()
+    stream.push({"type": "done", "value": "final"})
+    stream.fail(RuntimeError("late"))
+
+    assert await stream.result() == "final"

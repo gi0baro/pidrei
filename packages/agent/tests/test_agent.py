@@ -355,6 +355,44 @@ async def test_should_ignore_tool_updates_after_the_tool_execution_settles():
 
 
 @pytest.mark.tonio
+async def test_should_deliver_tool_updates_while_the_tool_is_still_running():
+    update_seen = tonio.Event()
+    seen_while_running = False
+    events = []
+
+    async def execute(_tool_call_id, _params, _cancel, on_update):
+        nonlocal seen_while_running
+        on_update(AgentToolResult(content=[TextContent(text="running")], details={"status": "running"}))
+        # Blocks until the listener has observed the update: pi delivers
+        # progress live, not as a burst at tool end.
+        await update_seen.wait(1.0)
+        seen_while_running = update_seen.is_set()
+        return AgentToolResult(content=[TextContent(text="ok")], details={"status": "done"}, terminate=True)
+
+    tool = FnTool("live_tool", "Live Tool", "Emits live progress", EMPTY_SCHEMA, execute)
+
+    async def stream_fn(_model, _context, _options):
+        return done_stream(
+            create_assistant_tool_use_message([ToolCall(id="call-1", name="live_tool", arguments={})]),
+            "toolUse",
+        )
+
+    agent = Agent(initial_state=AgentInitialState(tools=[tool]), stream_fn=stream_fn)
+
+    async def listener(event, _signal):
+        events.append(event)
+        if event.type == "tool_execution_update":
+            update_seen.set()
+
+    agent.subscribe(listener)
+    await agent.prompt("run tool")
+
+    assert seen_while_running is True
+    types = [event.type for event in events]
+    assert types.index("tool_execution_update") < types.index("tool_execution_end")
+
+
+@pytest.mark.tonio
 async def test_should_ignore_a_settled_parallel_tool_update_while_another_tool_is_still_running():
     slow_started = tonio.Event()
     settled_tool_ended = tonio.Event()

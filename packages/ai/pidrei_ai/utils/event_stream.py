@@ -8,13 +8,15 @@ Differences from the TypeScript original are strictly about the runtime:
 `push()`/`end()` are thread-safe (producers may run on any tonio worker
 thread), and delivery goes through a tonio unbounded channel instead of a
 queue-plus-waiters pair. Observable behavior is unchanged, including the
-quirk that `end()` without a result leaves `result()` pending forever.
+quirk that `end()` without a result leaves `result()` pending; `fail()` /
+`spawn_producer()` exist so a producer that dies never leaves it pending.
 """
 
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
+import tonio.colored as tonio
 from tonio.colored import Event
 from tonio.colored.sync import channel
 
@@ -33,6 +35,7 @@ class EventStream[T, R]:
         self._lock = threading.Lock()
         self._done = False
         self._result: R | None = None
+        self._error: BaseException | None = None
         self._result_event = Event()
 
     def push(self, event: T) -> None:
@@ -60,6 +63,38 @@ class EventStream[T, R]:
             self._done = True
             self._sender.send(_SENTINEL)
 
+    def fail(self, error: BaseException) -> None:
+        """Terminate the stream because its producer died; `result()` raises.
+
+        In JS an unresolved promise is garbage; here a consumer parked in
+        `result()` is a worker-side waiter with no timeout, so a producer
+        failure must settle it.
+        """
+        with self._lock:
+            if not self._result_event.is_set():
+                self._error = error
+                self._result_event.set()
+            if self._done:
+                return
+            self._done = True
+            self._sender.send(_SENTINEL)
+
+    def spawn_producer(self, producer: Coroutine[Any, Any, None]) -> None:
+        """Run `producer` detached; if it escapes, fail the stream.
+
+        Every adapter already converts `Exception` into an error event; this
+        covers what they don't (`BaseException`, bugs in the handler itself).
+        """
+
+        async def _guarded() -> None:
+            try:
+                await producer
+            except BaseException as error:
+                self.fail(error)
+                raise
+
+        tonio.spawn.without_tracking(_guarded())
+
     async def __aiter__(self) -> AsyncIterator[T]:
         while True:
             item = await self._receiver.receive()
@@ -70,6 +105,8 @@ class EventStream[T, R]:
     async def result(self) -> R:
         """Resolve to the extracted result of the completing event."""
         await self._result_event.wait()
+        if self._error is not None:
+            raise self._error
         return self._result  # type: ignore[return-value]
 
 

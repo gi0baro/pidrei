@@ -7,13 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.models_store import ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions
-from pidrei_ai.utils.cancel import CancelToken
 
 from ..config import get_agent_dir
-from ..utils.abort import race_with_cancel
 from ..utils.paths import get_file_revision, normalize_path
 from .model_wire import model_to_dict, parse_model_dict
 
@@ -23,18 +22,10 @@ def _auth_options(options: ModelsStoreOperationOptions | None) -> AuthOperationO
 
 
 @dataclass(slots=True)
-class _ModelsFileReload:
-    controller: CancelToken
-    done: Any  # tonio.Event marking the reload settled
-    box: list  # single-slot result/error holder
-    readers: int = 0
-
-
-@dataclass(slots=True)
 class _ModelsFileReadState:
     data: dict[str, Any] = field(default_factory=dict)
     revision: str | None = None
-    reload: _ModelsFileReload | None = None
+    lock: sync.Lock = field(default_factory=sync.Lock)
 
 
 # Per-path map instead of pi's single shared slot — see the auth-storage
@@ -125,47 +116,17 @@ class FileModelsStore(ModelsStore):
         if revision is not None and revision == state.revision:
             return state.data
 
-        if state.reload is None:
-            controller = CancelToken()
-            reload = _ModelsFileReload(controller=controller, done=tonio.Event(), box=[])
-            state.reload = reload
-
-            async def _run_reload(reload: _ModelsFileReload = reload) -> None:
-                try:
-                    reload.box.append(
-                        (
-                            "value",
-                            await self._reload_from_storage(ModelsStoreOperationOptions(cancel=reload.controller)),
-                        )
-                    )
-                except BaseException as error:
-                    reload.box.append(("error", error))
-                finally:
-                    if state.reload is reload:
-                        state.reload = None
-                    reload.done.set()
-
-            tonio.spawn.without_tracking(_run_reload())
-
-        reload = state.reload
-        if reload is None:
-            return state.data
-        reload.readers += 1
-        try:
-
-            async def _wait(reload: _ModelsFileReload = reload) -> dict[str, Any]:
-                await reload.done.wait()
-                kind, payload = reload.box[0]
-                if kind == "error":
-                    raise payload
-                return payload
-
-            return await race_with_cancel(_wait(), cancel)
-        finally:
-            reload.readers -= 1
-            if reload.readers == 0 and state.reload is reload:
-                state.reload = None
-                reload.controller.cancel()
+        # pi dedups concurrent reloads with a shared in-flight promise; that
+        # check-then-set is not atomic on worker threads. A FIFO lock with a
+        # revision re-check gives the same "one reload per revision" result:
+        # readers queued behind the reloader see its revision and return.
+        async with state.lock:
+            if cancel is not None:
+                cancel.raise_if_cancelled()
+            revision = await tonio.spawn_blocking(get_file_revision, self._path)
+            if revision is not None and revision == state.revision:
+                return state.data
+            return await self._reload_from_storage(options)
 
     async def read(
         self, provider_id: str, options: ModelsStoreOperationOptions | None = None

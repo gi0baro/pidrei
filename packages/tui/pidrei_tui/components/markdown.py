@@ -53,36 +53,34 @@ class Markdown:
         self._options = dict(options) if options is not None else {}
         self._default_style_prefix: str | None = None
 
-        # Cache for rendered output
-        self._cached_text: str | None = None
-        self._cached_width: int | None = None
-        self._cached_lines: list[str] | None = None
+        # Cache for rendered output: one immutable (text, width, lines) tuple
+        # read once per render, so a concurrent `invalidate()` (Loader tick,
+        # agent thread, theme reload) can never be observed half-cleared.
+        self._cache: tuple[str, int, list[str]] | None = None
 
     def set_text(self, text: str) -> None:
         self._text = text
         self.invalidate()
 
     def invalidate(self) -> None:
-        self._cached_text = None
-        self._cached_width = None
-        self._cached_lines = None
+        self._cache = None
 
     def render(self, width: int) -> list[str]:
+        source_text = self._text
         # Check cache
-        if self._cached_lines is not None and self._cached_text == self._text and self._cached_width == width:
-            return self._cached_lines
+        cache = self._cache
+        if cache is not None and cache[0] == source_text and cache[1] == width:
+            return cache[2]
 
         # Calculate available width for content (subtract horizontal padding)
         content_width = max(1, width - self._padding_x * 2)
         transform = self._options.get("transform")
-        text = self._text if transform is None else transform(self._text, content_width)
+        text = source_text if transform is None else transform(source_text, content_width)
 
         # Don't render anything if there's no actual text
         if not text or text.strip() == "":
             result: list[str] = []
-            self._cached_text = self._text
-            self._cached_width = width
-            self._cached_lines = result
+            self._cache = (source_text, width, result)
             return result
 
         # Replace tabs with 3 spaces for consistent rendering
@@ -140,9 +138,7 @@ class Markdown:
         result = empty_lines + content_lines + empty_lines
 
         # Update cache
-        self._cached_text = self._text
-        self._cached_width = width
-        self._cached_lines = result
+        self._cache = (source_text, width, result)
 
         return result if result else [""]
 

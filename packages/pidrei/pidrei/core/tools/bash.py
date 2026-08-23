@@ -7,6 +7,7 @@ waitForChildProcess semantics (earendil-works/pi#5303).
 
 import math
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -239,10 +240,14 @@ class LocalBashOperations:
         activity = {"count": 0}
         readers_done = tonio.Event()
         exited = tonio.Event()
+        # stdout/stderr readers run in parallel; `on_data` (accumulator +
+        # throttle state) assumed pi's single-thread ordering.
+        chunk_lock = threading.Lock()
 
         def handle_chunk(chunk: bytes) -> None:
-            activity["count"] += 1
-            on_data(chunk)
+            with chunk_lock:
+                activity["count"] += 1
+                on_data(chunk)
 
         async def read_stream(stream) -> None:
             if stream is None:

@@ -1,15 +1,15 @@
 """Server snapshot revisions and broadcast serialization (port of pi server `snapshots.ts`).
 
-`broadcast()` mirrors pi's promise-chain queue: each call links itself behind
-the previous broadcast synchronously at call time (a sync prologue), so
-revisions are assigned and delivered in call order even though every caller
-voids the returned awaitable.
+`broadcast()` replaces pi's promise-chain queue with a lock: revision bump and
+delivery happen under it, so revisions are delivered in monotonic order even
+though every caller voids the returned awaitable.
 """
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_protocol import PROTOCOL_VERSION, ModelMetadata, ServerMessage, ServerSnapshot, SessionMetadata
 
@@ -33,7 +33,7 @@ class ServerSnapshotPublisher:
     def __init__(self, options: ServerSnapshotPublisherOptions) -> None:
         self._options = options
         self._revision = 0
-        self._broadcast_queue: Deferred | None = None
+        self._broadcast_lock = sync.Lock()
 
     @property
     def current_revision(self) -> int:
@@ -49,24 +49,21 @@ class ServerSnapshotPublisher:
         }
 
     def broadcast(self) -> Awaitable[None]:
-        previous = self._broadcast_queue
+        # pi chains broadcasts on a promise tail so revisions go out in order.
+        # Swapping a tail field is not atomic across worker threads; a lock
+        # around "bump revision + send" gives the same ordering guarantee.
         result = Deferred()
-        tail = Deferred()
 
         async def _run() -> None:
-            if previous is not None:
-                await previous.wait_silenced()
-            try:
-                await self._perform_broadcast()
-            except Exception as error:
-                self._options.report_error(error)
-                result.reject(error)
-                tail.resolve(None)
-                return
+            async with self._broadcast_lock:
+                try:
+                    await self._perform_broadcast()
+                except Exception as error:
+                    self._options.report_error(error)
+                    result.reject(error)
+                    return
             result.resolve(None)
-            tail.resolve(None)
 
-        self._broadcast_queue = tail
         tonio.spawn.without_tracking(_run())
         return result
 

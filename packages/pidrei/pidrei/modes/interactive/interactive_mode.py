@@ -542,6 +542,7 @@ class InteractiveMode:
         self._fullscreen_layout_root = None
         self.ui = create_interactive_tui_reference(lambda: self._renderer)
         self.ui.set_clear_on_shrink(self.settings_manager.get_clear_on_shrink())
+        self.ui.set_render_error_handler(self._uncaught_crash)
         self._header_container = Container()
         self._loaded_resources_container = Container()
         self._chat_container = Container()
@@ -944,6 +945,7 @@ class InteractiveMode:
             terminal=terminal,
         )
         next_ui.set_clear_on_shrink(clear_on_shrink)
+        next_ui.set_render_error_handler(self._uncaught_crash)
         next_ui.on_debug = on_debug
         if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
             next_ui.restore_render_state(self._main_screen_render_state)
@@ -1147,11 +1149,15 @@ class InteractiveMode:
         # Render initial messages AFTER showing loaded resources
         self._render_initial_messages()
 
-        # Set up theme file watcher
+        # Set up theme file watcher. The watcher fires on a `threading.Timer`
+        # thread; invalidating the whole tree from there would overlap a frame
+        # in progress, so the mutation is posted to the render task.
         def handle_theme_change() -> None:
-            self.ui.invalidate()
-            self._update_editor_border_color()
-            self.ui.request_render()
+            def apply() -> None:
+                self.ui.invalidate()
+                self._update_editor_border_color()
+
+            self.ui.post_before_render(apply)
 
         on_theme_change(handle_theme_change)
 
@@ -2113,8 +2119,7 @@ class InteractiveMode:
         if self._active_status_indicator is not None:
             self._active_status_indicator.dispose()
         self._active_status_indicator = indicator
-        self._status_container.clear()
-        self._status_container.add_child(indicator)
+        self._status_container.set_children([indicator])
 
     def _clear_status_indicator(self, kind: str | None = None) -> None:
         if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
@@ -2123,9 +2128,10 @@ class InteractiveMode:
         if self._active_status_indicator is not None:
             self._active_status_indicator.dispose()
         self._active_status_indicator = None
-        self._status_container.clear()
         if had_active_status_indicator and self._options.get("tuiMode") == "regular" and self.ui.get_clear_on_shrink():
-            self._status_container.add_child(self._idle_status)
+            self._status_container.set_children([self._idle_status])
+        else:
+            self._status_container.clear()
 
     def _set_working_visible(self, visible: bool) -> None:
         self._working_visible = visible

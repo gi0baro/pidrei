@@ -6,8 +6,6 @@ from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, fields
 from typing import Any, Protocol
 
-import tonio.colored as tonio
-
 from pidrei_ai.api.constrained_sampling import create_grammar_tool_input_properties
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.openai_prompt_cache import clamp_openai_prompt_cache_key
@@ -452,7 +450,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    tonio.spawn.without_tracking(_run())
+    out_stream.spawn_producer(_run())
     return out_stream
 
 

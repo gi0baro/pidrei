@@ -17,6 +17,7 @@ from pidrei_agent.harness.utils.truncate import DEFAULT_MAX_LINES
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.utils.cancel import CancelToken
 
+
 # Same story as test_local_env.py: the timeout path reaches a real
 # `await process.wait()`, which flakes on the GHA macOS runner.
 SKIP_ON_MACOS_CI = pytest.mark.skipif(

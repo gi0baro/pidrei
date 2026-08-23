@@ -16,10 +16,11 @@ class Text:
         self._padding_y = padding_y  # Top/bottom padding
         self._custom_bg_fn = custom_bg_fn
 
-        # Cache for rendered output
-        self._cached_text: str | None = None
-        self._cached_width: int | None = None
-        self._cached_lines: list[str] | None = None
+        # Cache for rendered output: one immutable (text, width, lines) tuple,
+        # read once per render. `invalidate()` runs from other threads (Loader
+        # ticks, the agent, theme reloads); three separate fields could be
+        # observed half-cleared and hand `None` to the render loop.
+        self._cache: tuple[str, int, list[str]] | None = None
 
     def set_text(self, text: str) -> None:
         self._text = text
@@ -30,25 +31,23 @@ class Text:
         self.invalidate()
 
     def invalidate(self) -> None:
-        self._cached_text = None
-        self._cached_width = None
-        self._cached_lines = None
+        self._cache = None
 
     def render(self, width: int) -> list[str]:
+        text = self._text
         # Check cache
-        if self._cached_lines is not None and self._cached_text == self._text and self._cached_width == width:
-            return self._cached_lines
+        cache = self._cache
+        if cache is not None and cache[0] == text and cache[1] == width:
+            return cache[2]
 
         # Don't render anything if there's no actual text
-        if not self._text or self._text.strip() == "":
+        if not text or text.strip() == "":
             result: list[str] = []
-            self._cached_text = self._text
-            self._cached_width = width
-            self._cached_lines = result
+            self._cache = (text, width, result)
             return result
 
         # Replace tabs with 3 spaces
-        normalized_text = self._text.replace("\t", "   ")
+        normalized_text = text.replace("\t", "   ")
 
         # Calculate content width (subtract left/right margins)
         content_width = max(1, width - self._padding_x * 2)
@@ -87,8 +86,6 @@ class Text:
         result = [*empty_lines, *content_lines, *empty_lines]
 
         # Update cache
-        self._cached_text = self._text
-        self._cached_width = width
-        self._cached_lines = result
+        self._cache = (text, width, result)
 
         return result if result else [""]

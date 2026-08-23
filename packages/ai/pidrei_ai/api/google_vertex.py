@@ -19,8 +19,6 @@ from dataclasses import dataclass, fields
 from typing import Any
 from urllib.parse import urlparse
 
-import tonio.colored as tonio
-
 from pidrei_ai.api.google_client import RESOURCE_SCOPE_COLLECTION, GoogleGenAI
 from pidrei_ai.api.google_shared import (
     GoogleThinkingLevel,
@@ -299,7 +297,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    tonio.spawn.without_tracking(_run())
+    out_stream.spawn_producer(_run())
     return out_stream
 
 

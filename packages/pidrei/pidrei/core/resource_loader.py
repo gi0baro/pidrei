@@ -428,7 +428,7 @@ class DefaultResourceLoader:
             theme_paths = self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
         else:
             theme_paths = self._merge_paths([*cli_enabled_themes, *enabled_themes], self._additional_theme_paths)
-        self._update_themes_from_paths(theme_paths, metadata_by_path)
+        await tonio.spawn_blocking(self._update_themes_from_paths, theme_paths, metadata_by_path)
 
         agents_files = (
             [] if self._no_context_files else await load_project_context_files(cwd=self._cwd, agent_dir=self._agent_dir)

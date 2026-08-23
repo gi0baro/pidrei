@@ -82,11 +82,12 @@ class AssistantMessageComponent(Container):
         if is_streaming is not None:
             self._is_streaming = is_streaming
 
-        # Clear content container
-        self._content_container.clear()
+        # Rebuilt per `message_update` while the render loop reads the
+        # container on another thread: build locally, publish once at the end.
+        children: list = []
 
         if any(_has_visible_content(c) for c in message.content):
-            self._content_container.add_child(Spacer(1))
+            children.append(Spacer(1))
 
         # Render content in order
         i = 0
@@ -95,7 +96,7 @@ class AssistantMessageComponent(Container):
             if content.type == "text" and content.text.strip():
                 # Assistant text messages with no background - trim the text.
                 # paddingY=0 avoids extra spacing before tool executions.
-                self._content_container.add_child(
+                children.append(
                     Markdown(
                         content.text.strip(),
                         self._output_pad,
@@ -132,7 +133,7 @@ class AssistantMessageComponent(Container):
 
                 if self._hide_thinking_block:
                     # Show one static label for each run of thinking blocks when hidden.
-                    self._content_container.add_child(
+                    children.append(
                         Text(
                             theme.italic(theme.fg("thinkingText", self._hidden_thinking_label)),
                             self._output_pad,
@@ -141,7 +142,7 @@ class AssistantMessageComponent(Container):
                     )
                 else:
                     # Render each run of thinking blocks as one Markdown section.
-                    self._content_container.add_child(
+                    children.append(
                         Markdown(
                             "\n\n".join(thinking_blocks),
                             self._output_pad,
@@ -156,7 +157,7 @@ class AssistantMessageComponent(Container):
                         )
                     )
                 if has_visible_content_after:
-                    self._content_container.add_child(Spacer(1))
+                    children.append(Spacer(1))
             i += 1
 
         # Check if incomplete/failed - show after partial content.
@@ -166,19 +167,19 @@ class AssistantMessageComponent(Container):
         has_tool_calls = any(c.type == "toolCall" for c in message.content)
         self._has_tool_calls = has_tool_calls
         if message.stop_reason == "length":
-            self._content_container.add_child(Spacer(1))
-            self._content_container.add_child(
-                Text(theme.fg("error", "Response was truncated before completion."), self._output_pad, 0)
-            )
+            children.append(Spacer(1))
+            children.append(Text(theme.fg("error", "Response was truncated before completion."), self._output_pad, 0))
         elif not has_tool_calls:
             if message.stop_reason == "aborted":
                 if message.error_message and message.error_message != "Request was aborted":
                     abort_message = message.error_message
                 else:
                     abort_message = "Operation aborted"
-                self._content_container.add_child(Spacer(1))
-                self._content_container.add_child(Text(theme.fg("error", abort_message), self._output_pad, 0))
+                children.append(Spacer(1))
+                children.append(Text(theme.fg("error", abort_message), self._output_pad, 0))
             elif message.stop_reason == "error":
                 error_msg = message.error_message or "Unknown error"
-                self._content_container.add_child(Spacer(1))
-                self._content_container.add_child(Text(theme.fg("error", f"Error: {error_msg}"), self._output_pad, 0))
+                children.append(Spacer(1))
+                children.append(Text(theme.fg("error", f"Error: {error_msg}"), self._output_pad, 0))
+
+        self._content_container.set_children(children)

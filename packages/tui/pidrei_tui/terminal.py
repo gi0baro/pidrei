@@ -48,7 +48,7 @@ import time as _time
 from typing import Any, Protocol
 
 import tonio.colored as tonio
-from tonio.colored import io as tonio_io, signals as tonio_signals
+from tonio.colored import io as tonio_io, signals as tonio_signals, sync as tonio_sync
 from tonio.colored.sync import channel as tonio_channel
 
 from ._timers import Interval, Timeout
@@ -225,6 +225,12 @@ class ProcessTerminal:
         self._saved_blocking: bool | None = None
         self._saved_output_blocking: bool | None = None
         self._input_handler = None
+        # Input reaches the handler from the stdin pump, the StdinBuffer flush
+        # timer and the negotiation flush timer — three tasks. pi's handlers
+        # (`editor.handle_input`, focus/overlay changes) never overlap on its
+        # single thread; this lock restores that until an input-owner task
+        # replaces the timers.
+        self._input_dispatch_lock = tonio_sync.Lock()
         self._resize_handler = None
         self._kitty_protocol_active = False
         self._modify_other_keys_active = False
@@ -321,7 +327,8 @@ class ProcessTerminal:
         # Re-wrap paste content with bracketed paste markers for existing editor handling
         async def on_paste(content: str) -> None:
             if self._input_handler is not None:
-                await self._input_handler(f"\x1b[200~{content}\x1b[201~")
+                async with self._input_dispatch_lock:
+                    await self._input_handler(f"\x1b[200~{content}\x1b[201~")
 
         self._stdin_buffer.on_paste(on_paste)
 
@@ -447,7 +454,8 @@ class ProcessTerminal:
             is_apple_terminal,
             is_apple_terminal and _is_native_modifier_pressed("shift"),
         )
-        await self._input_handler(input_)
+        async with self._input_dispatch_lock:
+            await self._input_handler(input_)
 
     def _enable_modify_other_keys(self) -> None:
         if self._kitty_protocol_active or self._modify_other_keys_active:

@@ -34,6 +34,11 @@ class Box:
         self.children = []
         self._invalidate_cache()
 
+    def set_children(self, children: list) -> None:
+        """Replace the children in one step (see `Container.set_children`)."""
+        self.children = list(children)
+        self._invalidate_cache()
+
     def set_bg_fn(self, bg_fn=None) -> None:
         self._bg_fn = bg_fn
         # Don't invalidate here - we'll detect bgFn changes by sampling output

@@ -233,6 +233,9 @@ class Agent:
         self._steering_queue = PendingMessageQueue(steering_mode if steering_mode is not None else "one-at-a-time")
         self._follow_up_queue = PendingMessageQueue(follow_up_mode if follow_up_mode is not None else "one-at-a-time")
         self._active_run: _ActiveRun | None = None
+        # Loop events arrive concurrently from parallel tool tasks; the state
+        # reducer in `_process_events` is a read-modify-write and needs this.
+        self._reducer_lock = threading.Lock()
 
         self.convert_to_llm = convert_to_llm if convert_to_llm is not None else default_convert_to_llm
         self.transform_context = transform_context
@@ -549,24 +552,25 @@ class Agent:
         is considered idle later, after all awaited listeners for `agent_end`
         finish and `_finish_run()` clears runtime-owned state.
         """
-        if event.type == "message_start" or event.type == "message_update":
-            self._state.streaming_message = event.message
-        elif event.type == "message_end":
-            self._state.streaming_message = None
-            self._state.messages.append(event.message)
-        elif event.type == "tool_execution_start":
-            pending_tool_calls = set(self._state.pending_tool_calls)
-            pending_tool_calls.add(event.tool_call_id)
-            self._state.pending_tool_calls = pending_tool_calls
-        elif event.type == "tool_execution_end":
-            pending_tool_calls = set(self._state.pending_tool_calls)
-            pending_tool_calls.discard(event.tool_call_id)
-            self._state.pending_tool_calls = pending_tool_calls
-        elif event.type == "turn_end":
-            if getattr(event.message, "role", None) == "assistant" and event.message.error_message:
-                self._state.error_message = event.message.error_message
-        elif event.type == "agent_end":
-            self._state.streaming_message = None
+        with self._reducer_lock:
+            if event.type == "message_start" or event.type == "message_update":
+                self._state.streaming_message = event.message
+            elif event.type == "message_end":
+                self._state.streaming_message = None
+                self._state.messages.append(event.message)
+            elif event.type == "tool_execution_start":
+                pending_tool_calls = set(self._state.pending_tool_calls)
+                pending_tool_calls.add(event.tool_call_id)
+                self._state.pending_tool_calls = pending_tool_calls
+            elif event.type == "tool_execution_end":
+                pending_tool_calls = set(self._state.pending_tool_calls)
+                pending_tool_calls.discard(event.tool_call_id)
+                self._state.pending_tool_calls = pending_tool_calls
+            elif event.type == "turn_end":
+                if getattr(event.message, "role", None) == "assistant" and event.message.error_message:
+                    self._state.error_message = event.message.error_message
+            elif event.type == "agent_end":
+                self._state.streaming_message = None
 
         run = self._active_run
         if run is None:

@@ -143,6 +143,7 @@ class FileAuthStorageBackend:
         # backoff storm, so same-process callers serialize on this chain and
         # only genuinely concurrent processes ever hit the retry ladder.
         self._async_chain: Any = None
+        self._chain_guard = threading.Lock()
 
     def _ensure_parent_dir(self) -> None:
         directory = os.path.dirname(self._auth_path)
@@ -193,9 +194,13 @@ class FileAuthStorageBackend:
         cancel = options.cancel if options is not None else None
         if cancel is not None:
             cancel.raise_if_cancelled()
-        previous = self._async_chain
         done = tonio.Event()
-        self._async_chain = done
+        # The tail swap is pi's synchronous promise chaining; on worker
+        # threads it needs a lock or two callers can link behind the same
+        # predecessor and run concurrently.
+        with self._chain_guard:
+            previous = self._async_chain
+            self._async_chain = done
 
         async def _operation() -> Any:
             try:
@@ -321,6 +326,7 @@ class InMemoryAuthStorageBackend:
         self._value: str | None = None
         # Settled marker of the last queued async operation (pi chains promises).
         self._async_chain: Any = None
+        self._chain_guard = threading.Lock()
 
     def with_lock(self, fn: Callable[[str | None], tuple[Any, str | None]]) -> Any:
         result, next_content = fn(self._value)
@@ -334,9 +340,10 @@ class InMemoryAuthStorageBackend:
         options: AuthOperationOptions | None = None,
     ) -> Any:
         cancel = options.cancel if options is not None else None
-        previous = self._async_chain
         done = tonio.Event()
-        self._async_chain = done
+        with self._chain_guard:
+            previous = self._async_chain
+            self._async_chain = done
 
         async def _operation() -> Any:
             if previous is not None:

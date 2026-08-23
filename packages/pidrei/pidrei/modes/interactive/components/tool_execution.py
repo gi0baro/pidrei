@@ -242,11 +242,13 @@ class ToolExecutionComponent(Container):
             render_container = self._self_render_container if self._get_render_shell() == "self" else self._content_box
             if isinstance(render_container, Box):
                 render_container.set_bg_fn(bg_fn)
-            render_container.clear()
+            # Rebuilt per `tool_execution_update` while the render loop reads
+            # the container: build locally, publish once with `set_children`.
+            children: list = []
 
             call_renderer = self._get_call_renderer()
             if call_renderer is None:
-                render_container.add_child(self._create_call_fallback())
+                children.append(self._create_call_fallback())
                 has_content = True
             else:
                 try:
@@ -254,11 +256,11 @@ class ToolExecutionComponent(Container):
                         self._args, theme, self._get_render_context(self._call_renderer_component)
                     )
                     self._call_renderer_component = component
-                    render_container.add_child(component)
+                    children.append(component)
                     has_content = True
                 except Exception:
                     self._call_renderer_component = None
-                    render_container.add_child(self._create_call_fallback())
+                    children.append(self._create_call_fallback())
                     has_content = True
 
             if self._result:
@@ -266,7 +268,7 @@ class ToolExecutionComponent(Container):
                 if result_renderer is None:
                     component = self._create_result_fallback()
                     if component is not None:
-                        render_container.add_child(component)
+                        children.append(component)
                         has_content = True
                 else:
                     try:
@@ -277,14 +279,15 @@ class ToolExecutionComponent(Container):
                             self._get_render_context(self._result_renderer_component),
                         )
                         self._result_renderer_component = component
-                        render_container.add_child(component)
+                        children.append(component)
                         has_content = True
                     except Exception:
                         self._result_renderer_component = None
                         component = self._create_result_fallback()
                         if component is not None:
-                            render_container.add_child(component)
+                            children.append(component)
                             has_content = True
+            render_container.set_children(children)
         else:
             self._content_text.set_custom_bg_fn(bg_fn)
             self._content_text.set_text(self._format_tool_execution())

@@ -275,7 +275,8 @@ class CombinedAutocompleteProvider:
         if path_match is None:
             return None
 
-        suggestions = self._get_file_suggestions(path_match)
+        # Directory scan + per-entry stat: pool-side, never on a worker.
+        suggestions = await tonio.spawn_blocking(self._get_file_suggestions, path_match)
         if not suggestions:
             return None
 

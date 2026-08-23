@@ -8,6 +8,7 @@ import codecs
 import os
 import secrets
 import tempfile
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -60,8 +61,15 @@ async def execute_bash_with_operations(
             temp_file.write(chunk.encode("utf-8", "replace"))
 
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    # Backends may deliver stdout and stderr from parallel readers; the
+    # decoder and rolling buffer below assume pi's single-thread ordering.
+    data_lock = threading.Lock()
 
     def on_data(data: bytes) -> None:
+        with data_lock:
+            _on_data(data)
+
+    def _on_data(data: bytes) -> None:
         nonlocal total_bytes, output_bytes
         total_bytes += len(data)
 

@@ -205,31 +205,40 @@ class LiveSessionManager:
     async def _run_operation(
         self, connection: ConnectionState, live: _LiveSession, operation: Callable[[], Awaitable[None]]
     ) -> SessionSnapshot:
-        live.operation_count += 1
+        with self._lifecycle_guard:
+            live.operation_count += 1
         try:
             await operation()
             return self._for_connection(await self._broadcast_snapshot(live), connection)
         finally:
-            live.operation_count -= 1
+            with self._lifecycle_guard:
+                live.operation_count -= 1
             self._schedule_maybe_dispose(live)
 
     async def _acquire(
         self, session_id: str, acquire_runtime: Callable[[], Awaitable[PiSessionRuntime]]
     ) -> _LiveSession:
         while True:
-            existing = self._live_sessions.get(session_id)
+            # Look up and claim under the guard: two connections opening the
+            # same id concurrently must share one runtime, not start two.
+            with self._lifecycle_guard:
+                existing = self._live_sessions.get(session_id)
+                if existing is not None:
+                    if existing.terminal:
+                        raise PiServerError("session_locked", f"Session runtime is terminating: {session_id}")
+                    if existing.disposing is None:
+                        return existing
+                    opening = None
+                else:
+                    opening = self._opening_sessions.get(session_id)
+                    if opening is None:
+                        pending = Deferred()
+                        self._opening_sessions[session_id] = pending
             if existing is not None:
-                if existing.terminal:
-                    raise PiServerError("session_locked", f"Session runtime is terminating: {session_id}")
-                if existing.disposing is not None:
-                    await existing.disposing
-                    continue
-                return existing
-            opening = self._opening_sessions.get(session_id)
+                await existing.disposing
+                continue
             if opening is not None:
                 return await opening
-            pending = Deferred()
-            self._opening_sessions[session_id] = pending
             try:
                 try:
                     live = await self._create(session_id, acquire_runtime)
@@ -239,8 +248,9 @@ class LiveSessionManager:
                 pending.resolve(live)
                 return live
             finally:
-                if self._opening_sessions.get(session_id) is pending:
-                    del self._opening_sessions[session_id]
+                with self._lifecycle_guard:
+                    if self._opening_sessions.get(session_id) is pending:
+                        del self._opening_sessions[session_id]
 
     async def _create(
         self, session_id: str, acquire_runtime: Callable[[], Awaitable[PiSessionRuntime]]

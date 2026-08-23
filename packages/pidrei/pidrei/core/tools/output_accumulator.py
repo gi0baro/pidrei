@@ -4,6 +4,7 @@ import codecs
 import os
 import secrets
 import tempfile
+import threading
 from dataclasses import replace
 
 from ...utils.temp_file_writer import TempFileWriter
@@ -49,34 +50,43 @@ class OutputAccumulator:
 
         self._temp_file_path: str | None = None
         self._temp_file: TempFileWriter | None = None
+        # stdout and stderr readers append concurrently (pi's single thread
+        # serialized them); the lock never suspends, so it is safe on workers.
+        self._lock = threading.Lock()
 
     @property
     def full_output_path(self) -> str | None:
         return self._temp_file_path
 
     def append(self, data: bytes) -> None:
-        if self._finished:
-            raise Exception("Cannot append to a finished output accumulator")
+        with self._lock:
+            if self._finished:
+                raise Exception("Cannot append to a finished output accumulator")
 
-        self._total_raw_bytes += len(data)
-        self._append_decoded_text(self._decoder.decode(data))
+            self._total_raw_bytes += len(data)
+            self._append_decoded_text(self._decoder.decode(data))
 
-        if self._temp_file is not None or self._should_use_temp_file():
-            self._ensure_temp_file()
-            if self._temp_file is not None:
-                self._temp_file.write(data)
-        elif data:
-            self._raw_chunks.append(data)
+            if self._temp_file is not None or self._should_use_temp_file():
+                self._ensure_temp_file()
+                if self._temp_file is not None:
+                    self._temp_file.write(data)
+            elif data:
+                self._raw_chunks.append(data)
 
     def finish(self) -> None:
-        if self._finished:
-            return
-        self._finished = True
-        self._append_decoded_text(self._decoder.decode(b"", True))
-        if self._should_use_temp_file():
-            self._ensure_temp_file()
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+            self._append_decoded_text(self._decoder.decode(b"", True))
+            if self._should_use_temp_file():
+                self._ensure_temp_file()
 
     def snapshot(self, *, persist_if_truncated: bool = False):
+        with self._lock:
+            return self._snapshot_locked(persist_if_truncated=persist_if_truncated)
+
+    def _snapshot_locked(self, *, persist_if_truncated: bool):
         tail_truncation = truncate_tail(self._get_snapshot_text(), max_lines=self._max_lines, max_bytes=self._max_bytes)
         truncated = self._total_lines > self._max_lines or self._total_decoded_bytes > self._max_bytes
         truncated_by = (
@@ -101,14 +111,16 @@ class OutputAccumulator:
 
     async def close_temp_file(self) -> None:
         """Drains before returning, matching pi's awaited `finish` event."""
-        if self._temp_file is None:
+        with self._lock:
+            temp_file = self._temp_file
+            self._temp_file = None
+        if temp_file is None:
             return
-        temp_file = self._temp_file
-        self._temp_file = None
         await temp_file.close()
 
     def get_last_line_bytes(self) -> int:
-        return self._current_line_bytes
+        with self._lock:
+            return self._current_line_bytes
 
     def _append_decoded_text(self, text: str) -> None:
         if not text:

@@ -281,8 +281,11 @@ class TuiBase(Container, ABC):
         self._render_force = False
         self._render_immediate = False
         self._render_force_lock = threading.Lock()
+        self._pre_render_callbacks: list = []
         self._last_render_at = 0.0
         self._render_scope = None
+        # Async callback invoked when a frame raises; see `_render_loop`.
+        self._render_error_handler = None
         self._show_hardware_cursor = os.environ.get("PIDREI_HARDWARE_CURSOR") == "1"
         # Clear empty rows when content shrinks (default: off)
         self._clear_on_shrink = os.environ.get("PIDREI_CLEAR_ON_SHRINK") == "1"
@@ -343,6 +346,14 @@ class TuiBase(Container, ABC):
 
     def get_clear_on_shrink(self) -> bool:
         return self._clear_on_shrink
+
+    def set_render_error_handler(self, handler) -> None:
+        """Install the async callback that receives a render-loop exception.
+
+        Without one, the exception propagates out of the render task (and
+        the TUI looks frozen until `stop()`), so owners should install one.
+        """
+        self._render_error_handler = handler
 
     def set_clear_on_shrink(self, enabled: bool) -> None:
         """Set whether to trigger full re-render when content shrinks.
@@ -726,7 +737,26 @@ class TuiBase(Container, ABC):
         self._render_signal.clear()
         self._render_immediate_signal.clear()
         self._last_render_at = _time.monotonic()
+        self._run_pre_render_callbacks()
         await self._do_render()
+
+    def post_before_render(self, callback) -> None:
+        """Run `callback` on the render task right before the next frame.
+
+        For mutations of the whole component tree (e.g. a theme reload's
+        `invalidate()`) that originate off the render task — running them
+        here means they never overlap a frame being rendered.
+        """
+        with self._render_force_lock:
+            self._pre_render_callbacks.append(callback)
+        self.request_render()
+
+    def _run_pre_render_callbacks(self) -> None:
+        with self._render_force_lock:
+            callbacks = self._pre_render_callbacks
+            self._pre_render_callbacks = []
+        for callback in callbacks:
+            callback()
 
     def request_render(self, force: bool = False) -> None:
         # pi calls resetRenderState() right here. That is safe on one thread
@@ -790,7 +820,22 @@ class TuiBase(Container, ABC):
             if force:
                 self._reset_render_state()
             self._last_render_at = _time.monotonic()
-            await self._do_render()
+            try:
+                self._run_pre_render_callbacks()
+                await self._do_render()
+            except Exception as error:
+                # pi crashes the process on a render throw. Here the loop is a
+                # scope child: letting the exception escape would only surface
+                # at `stop()`, leaving a frozen UI with a live agent. Hand it
+                # to the owner (interactive mode's crash handler) instead.
+                handler = self._render_error_handler
+                if handler is None:
+                    raise
+                self._stopped = True
+                # Detached on purpose: the handler typically calls `stop()`,
+                # which joins this task through the render scope.
+                tonio.spawn.without_tracking(handler(error))
+                return
             # A force that arrived after the consume above lost its signal to
             # the clear(); without this it would sit unserved until the next
             # unrelated request. Re-arming guarantees every force ends in a

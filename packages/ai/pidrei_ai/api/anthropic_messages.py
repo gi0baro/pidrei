@@ -16,8 +16,6 @@ from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, fields
 from typing import Any, Literal, Protocol
 
-import tonio.colored as tonio
-
 from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
@@ -741,7 +739,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    tonio.spawn.without_tracking(_run())
+    out_stream.spawn_producer(_run())
     return out_stream
 
 
