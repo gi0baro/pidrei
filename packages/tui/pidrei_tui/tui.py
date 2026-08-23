@@ -335,8 +335,10 @@ class TuiBase(Container, ABC):
         if self._show_hardware_cursor == enabled:
             return
         self._show_hardware_cursor = enabled
-        if not enabled:
-            self.terminal.hide_cursor()
+        # pi hides the cursor right here. Every frame ends by emitting the
+        # cursor state (`_position_hardware_cursor` / the alt-screen frame
+        # tail), so the render loop stays the only task writing terminal
+        # bytes; the requested render applies the change.
         self.request_render()
 
     def get_clear_on_shrink(self) -> bool:
@@ -498,7 +500,9 @@ class TuiBase(Container, ABC):
         # Only focus if overlay is actually visible
         if not entry.options.get("nonCapturing") and self._is_overlay_visible(entry):
             self.set_focus(component)
-        self.terminal.hide_cursor()
+        # No direct `hide_cursor()` here or in the hide paths below: the
+        # render loop emits the cursor state with every frame (see
+        # `set_show_hardware_cursor`).
         self.request_render()
 
         def hide() -> None:
@@ -510,8 +514,6 @@ class TuiBase(Container, ABC):
                 if self._focused_component is component:
                     top_visible = self._get_topmost_visible_overlay()
                     self.set_focus(top_visible.component if top_visible is not None else entry.pre_focus)
-                if not self._overlay_stack:
-                    self.terminal.hide_cursor()
                 self.request_render()
 
         def set_hidden(hidden: bool) -> None:
@@ -599,8 +601,6 @@ class TuiBase(Container, ABC):
             # Find topmost visible overlay, or fall back to pre_focus
             top_visible = self._get_topmost_visible_overlay()
             self.set_focus(top_visible.component if top_visible is not None else overlay.pre_focus)
-        if not self._overlay_stack:
-            self.terminal.hide_cursor()
         self.request_render()
 
     def has_overlay(self) -> bool:

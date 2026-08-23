@@ -82,7 +82,7 @@ async def test_uses_the_device_grant_delays_polling_and_handles_pending_and_slow
         if request.url == DEVICE_CODE_URL:
             assert request.form["client_id"] == CLIENT_ID
             assert request.form["scope"] == "openid profile email offline_access grok-cli:access api:access"
-            assert request.form["referrer"] == "pi"
+            assert request.form["referrer"] == "pidrei"
             return json_response(device_code_body())
         assert request.url == TOKEN_URL
         poll_times.append(clock.now_ms())

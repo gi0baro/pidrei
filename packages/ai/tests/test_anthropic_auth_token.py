@@ -185,7 +185,7 @@ def _kimi_coding_model() -> Model:
 
 @pytest.mark.tonio
 async def test_enforces_the_pi_runtime_user_agent_for_kimi_coding():
-    from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
+    from pidrei_ai.utils.user_agent import get_user_agent
 
     headers, _payload = await capture_request(
         _kimi_coding_model(),
@@ -193,7 +193,7 @@ async def test_enforces_the_pi_runtime_user_agent_for_kimi_coding():
     )
 
     user_agent_headers = [(name, value) for name, value in headers.items() if name.lower() == "user-agent"]
-    assert user_agent_headers == [("User-Agent", get_pi_user_agent())]
+    assert user_agent_headers == [("User-Agent", get_user_agent())]
 
 
 @pytest.mark.tonio

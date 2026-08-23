@@ -57,6 +57,7 @@ async def test_sends_a_framed_version_before_accepting_a_fragmented_server_hello
 async def test_rejects_server_data_delivered_before_sending_the_client_hello():
     close_count = 0
     send_count = 0
+    closed = tonio.Event()
 
     class _Transport:
         def send(self, chunk):
@@ -67,6 +68,7 @@ async def test_rejects_server_data_delivered_before_sending_the_client_hello():
         def close(self):
             nonlocal close_count
             close_count += 1
+            closed.set()
 
     async def transport_factory(handlers):
         handlers.on_data(
@@ -87,6 +89,11 @@ async def test_rejects_server_data_delivered_before_sending_the_client_hello():
         await client.connect()
     assert client.connection_state == "disconnected"
     assert send_count == 0
+    # The handshake is rejected while the factory is still building the
+    # transport; the client closes it once the factory hands it over, on the
+    # detached open task. pi's `expect().rejects` hops order that close before
+    # the assertion; here the rejection wakes this task in parallel with it.
+    await closed.wait(1.0)
     assert close_count == 1
 
 

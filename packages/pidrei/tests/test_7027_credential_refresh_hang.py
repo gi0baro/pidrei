@@ -10,6 +10,7 @@ from typing import ClassVar
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import sync
 
 import pidrei.modes.interactive.interactive_mode as interactive_mode_module
 from pidrei.core.auth_storage import AuthStorage
@@ -198,3 +199,88 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
         ]
     finally:
         interactive_mode_module._TimeoutCancel = original_timeout
+
+
+@pytest.mark.tonio
+async def test_a_credential_pass_overtaken_by_a_later_one_still_returns_with_its_state_live():
+    """pidrei-specific. pi drops the older of two overlapping provider
+    availability passes by seq, which on one loop can only ever drop the one
+    that started first. On this runtime the login's own pass can bump *after*
+    the unawaited tail of a refresh its recompose just cancelled, get dropped,
+    and `login()` returns before anything reflecting the credential is
+    published. Both passes are gated inside their catalog read so the first
+    is still reading when the second starts; whichever order they run in,
+    each must have its state live when it returns."""
+    provider = StalledLoginProvider(tonio.Event(), tonio.Event())
+    credentials = AuthStorage.in_memory()
+    runtime = await ModelRuntime.create(credentials=credentials, models_path=None, allow_model_network=False)
+    runtime.register_native_provider(provider)
+    # Drain the detached refresh `register_native_provider` requested, so no
+    # third pass can publish the credential behind the two under test.
+    await runtime.refresh(ModelsRefreshOptions(allow_network=False))
+    assert DYNAMIC_MODEL.id not in [model.id for model in runtime.get_available_snapshot()]
+
+    async def _store(_current):
+        return ApiKeyCredential(key="secret")
+
+    await credentials.modify(provider.id, _store)
+
+    gates = [tonio.Event(), tonio.Event()]
+    entered = [tonio.Event(), tonio.Event()]
+    # Set once the second pass can go no further while the first is held: it
+    # is either parked in its own gated read, or (with per-provider
+    # serialization) waiting for the lock the first pass holds.
+    second_parked = tonio.Event()
+    calls = 0
+    original_get_available = runtime._models.get_available
+
+    async def gated_get_available(provider_id=None, options=None):
+        nonlocal calls
+        index = min(calls, len(gates) - 1)
+        calls += 1
+        entered[index].set()
+        if index == 1:
+            second_parked.set()
+        await gates[index].wait()
+        return await original_get_available(provider_id, options)
+
+    runtime._models.get_available = gated_get_available
+
+    class ObservedLock:
+        def __init__(self) -> None:
+            self._inner = sync.Lock()
+            self._attempts = 0
+
+        async def __aenter__(self):
+            self._attempts += 1
+            if self._attempts == 2:
+                second_parked.set()
+            return await self._inner.__aenter__()
+
+        async def __aexit__(self, *args):
+            return await self._inner.__aexit__(*args)
+
+    runtime._provider_availability_locks = {provider.id: ObservedLock()}
+
+    async def run_pass(returned: tonio.Event) -> None:
+        await runtime._refresh_provider_availability(provider.id, CancelToken())
+        live = [model.id for model in runtime.get_available_snapshot()]
+        returned.set()
+        assert DYNAMIC_MODEL.id in live, "the pass returned before a snapshot with its credential state was published"
+
+    first_returned = tonio.Event()
+    second_returned = tonio.Event()
+
+    async def drive() -> None:
+        # The second pass starts only once the first is held in its read, so
+        # it is the newer of the two by construction; its own read stays held
+        # until the first has returned, so nothing else can publish for it.
+        await entered[0].wait()
+        async with tonio.scope() as scope:
+            scope.spawn(run_pass(second_returned))
+            await second_parked.wait()
+            gates[0].set()
+            await first_returned.wait()
+            gates[1].set()
+
+    await tonio.spawn(run_pass(first_returned), drive())

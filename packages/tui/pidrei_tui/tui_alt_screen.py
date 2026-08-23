@@ -1280,12 +1280,16 @@ class TuiAltScreen(TuiBase):
         else:
             buffer += "\x1b[?25l"
         buffer += END_SYNCHRONIZED_OUTPUT
+        # Publish the layout before the frame goes out: readers that wake on
+        # the write (`_get_primary_scroll_view`, input handlers keyed on the
+        # primary scroll view) must see the layout that frame was drawn from.
+        # pi assigns after the write; on one thread nothing can look between.
+        self._current_layout = next_layout
         await self.terminal.write(buffer)
 
         self._previous_screen = screen
         self._previous_screen_width = width
         self._previous_screen_height = height
-        self._current_layout = next_layout
 
     def _previous_of(self, row: int) -> str:
         """pi indexes `previousScreen[row]` past the end and gets undefined."""

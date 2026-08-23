@@ -58,9 +58,9 @@ from pidrei_ai.utils.diagnostics import (
 )
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
-from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
 from pidrei_ai.utils.session_resources import register_session_resource_cleanup
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.user_agent import ORIGINATOR, get_user_agent
 from pidrei_ai.utils.uuid import uuidv7
 
 
@@ -1498,8 +1498,8 @@ def _build_base_codex_headers(
             _set_header(headers, key, value)
     _set_header(headers, "Authorization", f"Bearer {token}")
     _set_header(headers, "chatgpt-account-id", account_id)
-    _set_header(headers, "originator", "pi")
-    _set_header(headers, "User-Agent", get_pi_user_agent())
+    _set_header(headers, "originator", ORIGINATOR)
+    _set_header(headers, "User-Agent", get_user_agent())
     return headers
 
 

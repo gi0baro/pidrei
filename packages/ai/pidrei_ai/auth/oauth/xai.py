@@ -10,6 +10,7 @@ from pidrei_ai.auth.oauth.urls import https_url
 from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_ai.utils.user_agent import CLIENT_NAME
 
 
 XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
@@ -133,7 +134,7 @@ def _credentials_from_token_response(
 async def _request_device_code(cancel: CancelToken) -> _XaiDeviceCode:
     response = await _post_form(
         XAI_DEVICE_CODE_URL,
-        {"client_id": XAI_CLIENT_ID, "scope": XAI_SCOPE, "referrer": "pi"},
+        {"client_id": XAI_CLIENT_ID, "scope": XAI_SCOPE, "referrer": CLIENT_NAME},
         cancel,
     )
     body = _response_body(response, cancel)

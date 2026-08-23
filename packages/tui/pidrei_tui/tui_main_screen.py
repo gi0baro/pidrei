@@ -566,9 +566,14 @@ class TuiMainScreen(TuiBase):
         self._previous_height = height
 
     async def _position_hardware_cursor(self, cursor_pos: dict | None, total_lines: int) -> None:
-        """Position the hardware cursor for IME candidate window."""
+        """Position the hardware cursor for IME candidate window.
+
+        Port deviation: pi ends with `terminal.showCursor()/hideCursor()` as
+        separate writes; here the cursor sequence is part of the positioning
+        buffer so the frame tail is one write from the render loop task.
+        """
         if not cursor_pos or total_lines <= 0:
-            self.terminal.hide_cursor()
+            await self.terminal.write("\x1b[?25l")
             return
 
         # Clamp cursor position to valid range
@@ -584,12 +589,6 @@ class TuiMainScreen(TuiBase):
             buffer += f"\x1b[{-row_delta}A"  # Move up
         # Move to absolute column (1-indexed)
         buffer += f"\x1b[{target_col + 1}G"
-
-        if buffer:
-            await self.terminal.write(buffer)
-
+        buffer += "\x1b[?25h" if self._show_hardware_cursor else "\x1b[?25l"
+        await self.terminal.write(buffer)
         self._hardware_cursor_row = target_row
-        if self._show_hardware_cursor:
-            self.terminal.show_cursor()
-        else:
-            self.terminal.hide_cursor()

@@ -379,10 +379,11 @@ async def test_streams_sse_responses_into_event_stream():
     assert request.headers["Authorization"] == f"Bearer {token}"
     assert request.headers["chatgpt-account-id"] == "acc_test"
     assert request.headers["OpenAI-Beta"] == "responses=experimental"
-    assert request.headers["originator"] == "pi"
-    from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
+    from pidrei_ai.utils.user_agent import ORIGINATOR, get_user_agent
 
-    assert request.headers["User-Agent"] == get_pi_user_agent()
+    assert request.headers["originator"] == ORIGINATOR
+
+    assert request.headers["User-Agent"] == get_user_agent()
     assert request.headers["accept"] == "text/event-stream"
     assert "x-api-key" not in request.headers
 

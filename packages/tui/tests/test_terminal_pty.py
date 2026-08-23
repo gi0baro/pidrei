@@ -128,3 +128,53 @@ async def test_pty_drain_input_returns_after_idle():
 
     os.close(master)
     os.close(slave)
+
+
+# output pump
+
+
+@pytest.mark.tonio
+async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
+    """pi's synchronous `stdout.write` gives it ordering and completion for
+    free; here both come from the single output pump. A sync writer
+    (`set_title`) queued before a frame must reach the fd before it, and
+    `write()` must not return until its bytes are out — on a pipe nobody is
+    reading, it has to park until the reader drains."""
+    in_r, in_w = os.pipe()
+    out_r, out_w = os.pipe()
+    os.set_blocking(out_r, False)
+    terminal = ProcessTerminal(input_fd=in_r, output_fd=out_w)
+
+    async def no_input(_data: str) -> None:
+        pass
+
+    try:
+        await terminal.start(no_input, lambda: None)
+        startup = await _read_available(out_r)
+        assert startup.endswith(b"\x1b[>7u\x1b[?u\x1b[c")
+
+        frame = "x" * (1 << 20)  # far beyond the pipe's capacity
+        done = tonio.Event()
+
+        async def write_frame() -> None:
+            await terminal.write(frame)
+            done.set()
+
+        async with tonio.scope() as scope:
+            terminal.set_title("before the frame")
+            scope.spawn(write_frame())
+            await tonio.sleep(0.05)
+            assert not done.is_set(), "write() returned while the pipe was still full"
+
+            received = b""
+            while len(received) < len(b"\x1b]0;before the frame\x07") + len(frame):
+                received += await _read_available(out_r, wait=0.001)
+            assert received.startswith(b"\x1b]0;before the frame\x07")
+            assert received[len(b"\x1b]0;before the frame\x07") :] == frame.encode()
+            await done.wait(1.0)
+            assert done.is_set(), "write() must complete once its bytes are on the wire"
+    finally:
+        await terminal.stop()
+        for fd in (in_r, in_w, out_r, out_w):
+            os.close(fd)
+    set_kitty_protocol_active(False)

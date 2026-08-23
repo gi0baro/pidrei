@@ -150,7 +150,9 @@ class ModelRuntime:
         self._snapshot = _Snapshot()
         self._availability_refresh_seq = 0
         self._availability_error_seq = 0
-        self._provider_availability_seq: dict[str, int] = {}
+        # One credential-driven availability pass per provider at a time (see
+        # `_refresh_provider_availability`).
+        self._provider_availability_locks: dict[str, sync.Lock] = {}
         # Providers with a credential-driven availability pass in flight, by
         # count (see `_refresh_provider_availability`). pi supersedes those from
         # a newer full pass by bumping their seq; that is safe on one loop,
@@ -423,11 +425,30 @@ class ModelRuntime:
             raise unwrapped from error
 
     async def _refresh_provider_availability(self, provider_id: str, cancel: CancelToken) -> None:
+        """One credential-driven availability pass for ``provider_id``.
+
+        pi drops the older of two overlapping passes by provider seq. That is
+        safe on one loop: the pass that bumps last is always the one that
+        started last, and a caller's own pass is never the dropped one unless
+        something newer has already run. Here the passes run on different
+        threads, so a login's pass could be superseded by the tail of a
+        refresh its own recompose had just cancelled — and `login()` returned
+        with the pre-credential snapshot still live, the correct publish
+        landing a moment later, unawaited. Passes are serialized per provider
+        instead: every caller returns after a publish that saw its credential
+        state, and a later pass simply publishes later.
+        """
+        with self._availability_guard:
+            lock = self._provider_availability_locks.get(provider_id)
+            if lock is None:
+                lock = self._provider_availability_locks[provider_id] = sync.Lock()
+        async with lock:
+            await self._run_provider_availability_refresh(provider_id, cancel)
+
+    async def _run_provider_availability_refresh(self, provider_id: str, cancel: CancelToken) -> None:
         with self._availability_guard:
             # Invalidate any full availability pass that started before this credential change.
             self._availability_refresh_seq += 1
-            provider_seq = self._provider_availability_seq.get(provider_id, 0) + 1
-            self._provider_availability_seq[provider_id] = provider_seq
             self._availability_error_seq += 1
             error_seq = self._availability_error_seq
             self._provider_availability_inflight[provider_id] = (
@@ -443,8 +464,6 @@ class ModelRuntime:
             cancel.raise_if_cancelled()
             all_models = list(self._models.get_models())
             with self._availability_guard:
-                if self._provider_availability_seq.get(provider_id) != provider_seq:
-                    return
                 configured_providers = set(self._snapshot.configured_providers)
                 stored_providers = set(self._snapshot.stored_providers)
                 auth_by_provider = dict(self._snapshot.auth)
@@ -481,11 +500,7 @@ class ModelRuntime:
         except Exception as error:
             unwrapped = _unwrap_spawn_error(error)
             with self._availability_guard:
-                if (
-                    self._provider_availability_seq.get(provider_id) == provider_seq
-                    and error_seq == self._availability_error_seq
-                    and not cancel.cancelled
-                ):
+                if error_seq == self._availability_error_seq and not cancel.cancelled:
                     self._availability_error = str(unwrapped)
             raise unwrapped from error
         finally:

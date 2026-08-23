@@ -6,6 +6,29 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.4] - 2026-08-23
+
+### Changed
+
+- Updated tonio to 0.9.11 (fixes a memory leak).
+- Provider-facing client identity is now pidrei's everywhere: the `User-Agent`
+  sent to Anthropic-compatible (Kimi Coding) and OpenAI Codex endpoints, the
+  Codex `originator` (requests and OAuth), and the xAI OAuth `referrer` all
+  said `pi` before.
+
+### Fixed
+
+- A provider login could return before the model snapshot reflected the new
+  credential when it overlapped a catalog refresh for the same provider:
+  the login's own availability pass was superseded by the refresh's
+  unawaited tail. Per-provider availability passes are now serialized.
+- TUI: terminal output goes through a single pump task — writers enqueue
+  whole sequences, the pump emits them in order using write readiness. This
+  removes the busy wait on a full terminal buffer, makes write ordering
+  total, paces rendering to a slow terminal, and (with cursor visibility now
+  emitted as part of each frame) means overlay open/close can no longer tear
+  a frame in flight.
+
 ## [0.84.2.3] - 2026-08-19
 
 ### Changed

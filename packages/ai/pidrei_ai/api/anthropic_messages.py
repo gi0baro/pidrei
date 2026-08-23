@@ -62,11 +62,11 @@ from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json
-from pidrei_ai.utils.pi_user_agent import get_pi_user_agent
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.user_agent import get_user_agent
 
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -352,7 +352,7 @@ def _merge_client_headers(model: Model, *header_sources: ProviderHeaders | None)
         for name in list(merged.keys()):
             if name.lower() == "user-agent":
                 del merged[name]
-        merged["User-Agent"] = get_pi_user_agent()
+        merged["User-Agent"] = get_user_agent()
     return merged
 
 

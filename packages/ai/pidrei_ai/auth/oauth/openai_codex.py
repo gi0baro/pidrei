@@ -42,6 +42,7 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_ai.utils.user_agent import ORIGINATOR
 
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -315,7 +316,7 @@ class _AuthorizationFlow:
     url: str
 
 
-def _create_authorization_flow(originator: str = "pi") -> _AuthorizationFlow:
+def _create_authorization_flow(originator: str = ORIGINATOR) -> _AuthorizationFlow:
     pkce = generate_pkce()
     state = _create_state()
     url = f"{AUTHORIZE_URL}?" + urlencode(

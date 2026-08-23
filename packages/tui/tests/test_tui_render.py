@@ -819,3 +819,60 @@ async def test_does_not_use_cursor_up_placement_for_kitty_images_taller_than_the
         )
 
         await tui.stop()
+
+
+# single-writer discipline: the render loop is the only task writing terminal
+# bytes while it runs (PLAN "cursor writes through the render loop")
+
+
+class CursorCallCountingTerminal(LoggingVirtualTerminal):
+    """Counts the sync cursor methods, which bypass the render loop's writes."""
+
+    def __init__(self, columns: int = 80, rows: int = 24) -> None:
+        super().__init__(columns, rows)
+        self.sync_cursor_calls = 0
+
+    def hide_cursor(self) -> None:
+        self.sync_cursor_calls += 1
+        super().hide_cursor()
+
+    def show_cursor(self) -> None:
+        self.sync_cursor_calls += 1
+        super().show_cursor()
+
+
+@pytest.mark.tonio
+async def test_overlay_and_cursor_changes_write_cursor_state_only_from_the_render_loop():
+    """pi hides the cursor synchronously from showOverlay/hideOverlay/
+    setShowHardwareCursor. Tasks run on several OS threads here, so those
+    bytes could land inside a frame; the cursor state is instead carried by
+    every frame's tail, written by the render loop alone."""
+    terminal = CursorCallCountingTerminal(40, 10)
+    tui = TuiMainScreen(terminal, show_hardware_cursor=True)
+    component = TestComponent()
+    component.lines = ["content"]
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+    # start() hides the cursor before the loop exists; only what follows counts.
+    terminal.sync_cursor_calls = 0
+
+    overlay = TestComponent()
+    overlay.lines = ["overlay"]
+    since = terminal.frames
+    handle = tui.show_overlay(overlay, {"width": 10})
+    await terminal.wait_for_render(since, timeout=1.0)
+    assert terminal.get_writes().endswith("\x1b[?25l"), "frame tail must carry the cursor state"
+
+    since = terminal.frames
+    handle.hide()
+    await terminal.wait_for_render(since, timeout=1.0)
+
+    since = terminal.frames
+    tui.set_show_hardware_cursor(False)
+    tui.request_render(True)  # unchanged content renders as a cursor-only write, not a frame
+    await terminal.wait_for_render(since, timeout=1.0)
+    assert terminal.get_writes().endswith("\x1b[?25l")
+
+    assert terminal.sync_cursor_calls == 0, "no task other than the render loop may write cursor bytes"
+    await tui.stop()

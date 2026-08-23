@@ -26,6 +26,12 @@ Port deviations (documented once here):
   pump, so negotiation-buffer state transitions hold a re-entrant sync lock
   (never held across an await) and timer callbacks re-check identity under
   it (clearTimeout determinism).
+- Output is a single pump task (`_output_pump`): every writer enqueues a
+  complete sequence, the pump emits them in FIFO order with `arm_w`
+  readiness. `write()` waits for its bytes to go out (backpressure for the
+  render loop); the sync methods (`set_title`, `set_progress`, cursor and
+  clear helpers, negotiation) only enqueue. pi writes `stdout` synchronously
+  from its one thread, which gives it ordering and atomicity for free.
 - Env rename: PI_TUI_WRITE_LOG → PIDREI_TUI_WRITE_LOG.
 """
 
@@ -33,6 +39,7 @@ import codecs
 import math
 import os
 import re
+import select
 import signal as signal_module
 import sys
 import termios
@@ -42,6 +49,7 @@ from typing import Any, Protocol
 
 import tonio.colored as tonio
 from tonio.colored import io as tonio_io, signals as tonio_signals
+from tonio.colored.sync import channel as tonio_channel
 
 from ._timers import Interval, Timeout
 from .keys import set_kitty_protocol_active
@@ -207,8 +215,15 @@ class ProcessTerminal:
         self._input_fd = input_fd
         self._output_fd = output_fd
         self._lock = threading.RLock()
+        # Output goes through one pump task (see `_output_pump`): writers
+        # enqueue complete sequences and the pump emits them in FIFO order.
+        self._out_tx = None
+        self._out_rx = None
+        self._out_sio = None
+        self._out_scope = None
         self._saved_termios: list | None = None
         self._saved_blocking: bool | None = None
+        self._saved_output_blocking: bool | None = None
         self._input_handler = None
         self._resize_handler = None
         self._kitty_protocol_active = False
@@ -239,13 +254,27 @@ class ProcessTerminal:
         # Save previous state and enable raw mode
         self._enter_raw_mode()
 
+        # Output pump first, so every sequence from here on is queued behind
+        # it in order. Its own scope: `stop()` drains it after the input side
+        # is torn down, and the restore sequences must reach the fd before
+        # termios is reset.
+        self._saved_output_blocking = os.get_blocking(self._output_fd)
+        os.set_blocking(self._output_fd, False)
+        self._out_sio = tonio_io.register(self._output_fd)
+        self._out_tx, self._out_rx = tonio_channel.unbounded()
+        self._out_scope = tonio.scope()
+        await self._out_scope.__aenter__()
+        self._out_scope.spawn(self._output_pump())
+
         # Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
         self._write_stdout("\x1b[?2004h")
 
         # Set up the resize watcher and input pump; the pump plays the role of
         # node's process.stdin "data" listener.
         os.set_blocking(self._input_fd, False)
-        self._sio = tonio_io.register(self._input_fd)
+        # One registration per fd: a pty test (and a caller passing the same
+        # fd for both sides) shares the output pump's.
+        self._sio = self._out_sio if self._input_fd == self._output_fd else tonio_io.register(self._input_fd)
         self._scope = tonio.scope()
         await self._scope.__aenter__()
         self._scope.spawn(self._resize_watcher())
@@ -540,22 +569,48 @@ class ProcessTerminal:
             await self._scope.__aexit__(None, None, None)
             self._scope = None
         if self._sio is not None:
-            self._sio.close()
+            if self._sio is not self._out_sio:
+                self._sio.close()
             self._sio = None
         if self._saved_blocking is not None:
             os.set_blocking(self._input_fd, self._saved_blocking)
             self._saved_blocking = None
 
+        # Every restore sequence above is queued; wait for the pump to put
+        # them on the wire, then retire it. Later writes (none expected) take
+        # the direct path in `_write_stdout`.
+        if self._out_tx is not None:
+            await self.write("")
+            self._out_tx.close()
+            self._out_tx = None
+        if self._out_scope is not None:
+            await self._out_scope.__aexit__(None, None, None)
+            self._out_scope = None
+            self._out_rx = None
+        if self._out_sio is not None:
+            self._out_sio.close()
+            self._out_sio = None
+        if self._saved_output_blocking is not None:
+            os.set_blocking(self._output_fd, self._saved_output_blocking)
+            self._saved_output_blocking = None
+
         # Restore raw mode state
         self._restore_raw_mode()
 
     async def write(self, data: str) -> None:
-        # The TTY write itself stays inline (it is not a filesystem call and pi
-        # writes it synchronously); only the opt-in debug trace log, which is a
-        # real file append, is handed to the pool.
-        self._write_stdout(data)
-        if self._write_log_path:
-            await tonio.spawn_blocking(_append_write_log, self._write_log_path, data)
+        """Queue ``data`` and return once it is on the wire.
+
+        The wait is what gives the render loop backpressure: a terminal that
+        drains slowly (SSH) paces rendering instead of piling frames up in the
+        queue. Writers that need ordering but not completion use the sync
+        `_write_stdout`.
+        """
+        if self._out_tx is None:
+            self._write_stdout(data)
+            return
+        done = tonio.Event()
+        self._out_tx.send((data, done))
+        await done.wait(None)
 
     @property
     def columns(self) -> int:
@@ -663,16 +718,71 @@ class ProcessTerminal:
         self._saved_termios = None
 
     def _write_stdout(self, data: str) -> None:
-        buffer = memoryview(data.encode("utf-8"))
+        """Queue ``data`` without waiting for it (sync; callable under `_lock`).
+
+        Before `start()` / after `stop()` there is no pump and the fd is in
+        its original blocking mode, so the bytes go straight out.
+        """
+        tx = self._out_tx
+        if tx is not None:
+            tx.send((data, None))
+            return
+        _write_all(self._output_fd, data.encode("utf-8"))
+
+    async def _output_pump(self) -> None:
+        """The only writer of the output fd while the terminal is started.
+
+        Mirror of `_input_pump` on the write side: sequences are taken off the
+        queue in order and written with `arm_w` readiness, so a full tty
+        buffer parks this task instead of blocking a worker thread, and no
+        two writers can ever interleave. pi has no counterpart — one JS thread
+        and a synchronous `stdout.write` give it both properties for free.
+        """
+        rx = self._out_rx
+        sio = self._out_sio
         fd = self._output_fd
-        while buffer:
+        log_path = self._write_log_path
+        broken = False
+        while True:
             try:
-                written = os.write(fd, buffer)
-            except BlockingIOError:
-                # stdin and stdout usually share the terminal's open file
-                # description, so the pump's O_NONBLOCK leaks onto writes.
-                _time.sleep(0.001)
-                continue
-            except InterruptedError:
-                continue
-            buffer = buffer[written:]
+                data, done = await rx.receive()
+            except BrokenPipeError:
+                return  # sender closed by stop(): queue drained
+            buffer = memoryview(data.encode("utf-8"))
+            while buffer and not broken:
+                if (waiter := sio.arm_w()) is not None:
+                    await waiter
+                    continue
+                try:
+                    written = os.write(fd, buffer)
+                except BlockingIOError:
+                    sio.consume_w()
+                    continue
+                except InterruptedError:
+                    continue
+                except OSError:
+                    # The terminal went away (EIO/EPIPE). Keep draining so no
+                    # writer waits forever; the bytes have nowhere to go.
+                    broken = True
+                    break
+                buffer = buffer[written:]
+            if log_path and data:
+                await tonio.spawn_blocking(_append_write_log, log_path, data)
+            if done is not None:
+                done.set()
+
+
+def _write_all(fd: int, payload: bytes) -> None:
+    """Direct write for the windows with no pump (before start / after stop)."""
+    buffer = memoryview(payload)
+    while buffer:
+        try:
+            written = os.write(fd, buffer)
+        except BlockingIOError:
+            # Only if the fd was inherited non-blocking; wait for room rather
+            # than spin. Never reached while the pump is up.
+            select.select([], [fd], [])
+            continue
+        except InterruptedError:
+            continue
+        buffer = buffer[written:]

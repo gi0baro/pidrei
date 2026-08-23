@@ -16,6 +16,11 @@ default-groups = ["lint", "test"]
 [tool.pytest.ini_options]
 testpaths = ["packages/*/tests"]
 addopts = "--import-mode=importlib"
+# A test that runs this long has wedged (the slowest legitimate test is ~1s).
+# pytest then dumps every thread's stack to stderr and lets the test go on,
+# so a CI job timeout still kills the run but the log says where it hung —
+# the only evidence a lost wakeup ever leaves (TONIO_BUGS #10 came from one).
+faulthandler_timeout = 30
 
 [tool.ruff]
 line-length = 120

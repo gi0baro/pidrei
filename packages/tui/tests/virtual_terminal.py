@@ -69,12 +69,19 @@ class VirtualTerminal:
 
     async def write(self, data: str) -> None:
         self._feed(data)
-        # Frame counter for wait_for_render(); see its docstring.
-        self._frames += 1
+        # Frame counter for wait_for_render(); see its docstring. Only a
+        # rendered frame counts: both renderers open one with synchronized
+        # output. The other writes — the alt-screen enter/exit sequences, the
+        # main screen's cursor positioning tail — are not frames, and a wait
+        # returning on one of them reads a screen the layout never reached
+        # (the alt-screen search test anchored on the implicit scroll view
+        # that way: `start()`'s enter sequence satisfied its first wait).
+        if "\x1b[?2026h" in data:
+            self._frames += 1
 
     @property
     def frames(self) -> int:
-        """Number of writes the TUI has made — one or more per rendered frame."""
+        """Number of frames the TUI has rendered."""
         return self._frames
 
     @property
@@ -204,8 +211,16 @@ class VirtualTerminal:
         assertion it was blocking, rather than hanging the suite.
         """
         if since is None:
-            await tonio.sleep(0.05)
-            return
+            if self._frames == 0:
+                # Nothing has been drawn yet, so the caller is waiting for the
+                # first frame `start()` requested — wait for that one rather
+                # than hoping it lands inside the settle sleep (on a slow
+                # runner it did not, and a search typed before the first
+                # layout anchored on the implicit scroll view).
+                since = 0
+            else:
+                await tonio.sleep(0.05)
+                return
         deadline = time.monotonic() + timeout
         while self._frames <= since:
             if time.monotonic() >= deadline:
