@@ -1028,10 +1028,6 @@ def _schedule_session_websocket_expiry(session_id: str, account_id: str, entry: 
     tonio.spawn.without_tracking(_expire())
 
 
-_CONNECT_TIMED_OUT = object()
-_CONNECT_CANCELLED = object()
-
-
 async def _connect_websocket(
     url: str,
     headers: dict[str, str],
@@ -1039,41 +1035,24 @@ async def _connect_websocket(
     connect_timeout_ms: float | None = None,
     env: ProviderEnv | None = None,
 ) -> Any:
-    """pi's `connectWebSocket`: connect, bounded by a deadline and the token."""
+    """pi's `connectWebSocket`: connect, bounded by a deadline.
+
+    The token needs no race here: this runs inside the scope-owned producer,
+    whose cancel unwinds the pending connect directly.
+    """
     ws_headers = {key: value for key, value in headers.items() if key.lower() != "openai-beta"}
     timeout_ms = connect_timeout_ms if connect_timeout_ms is not None else DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS
 
     if cancel is not None and cancel.cancelled:
         raise RuntimeError("Request was aborted")
 
-    async def _connect() -> Any:
-        return await websocket.connect(url, ws_headers, cancel=cancel)
-
-    if timeout_ms <= 0 and cancel is None:
-        return await _connect()
-
-    races = [_connect()]
-    if timeout_ms > 0:
-
-        async def _timed_out() -> object:
-            await tonio.time.sleep(timeout_ms / 1000)
-            return _CONNECT_TIMED_OUT
-
-        races.append(_timed_out())
-    if cancel is not None:
-
-        async def _aborted() -> object:
-            await cancel.wait()
-            return _CONNECT_CANCELLED
-
-        races.append(_aborted())
-
-    winner = await tonio.select(*races)
-    if winner is _CONNECT_TIMED_OUT:
+    connect = websocket.connect(url, ws_headers, cancel=cancel)
+    if timeout_ms <= 0:
+        return await connect
+    socket, completed = await tonio.time.timeout(connect, timeout_ms / 1000)
+    if not completed:
         raise RuntimeError(f"WebSocket connect timeout after {_format_ms(timeout_ms)}ms")
-    if winner is _CONNECT_CANCELLED:
-        raise RuntimeError("Request was aborted")
-    return winner
+    return socket
 
 
 @dataclass(slots=True)

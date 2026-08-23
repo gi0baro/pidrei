@@ -84,8 +84,37 @@ class CancelToken:
         return lambda: None
 
     def wait(self, timeout: float | None = None) -> Waiter:
-        """Awaitable resolving once the token is cancelled (for `tonio.select` races)."""
+        """Awaitable resolving once the token is cancelled (or after `timeout`)."""
         return self._event.wait(timeout)
+
+    @property
+    def never(self) -> bool:
+        """True for the shared placeholder that can never fire (`NEVER_CANCELLED`)."""
+        return False
+
+
+class _NeverCancel(CancelToken):
+    """The placeholder behind optional tokens: nobody holds it, so it never fires.
+
+    Races and subscriptions against it are skipped outright (`race_with_cancel`,
+    `combine_cancel_tokens`), which is what makes an optional token free on the
+    path that never passes one.
+    """
+
+    __slots__ = ()
+
+    @property
+    def never(self) -> bool:
+        return True
+
+    def cancel(self, reason: BaseException | None = None) -> None:
+        raise RuntimeError("NEVER_CANCELLED is a shared placeholder; create a CancelToken to cancel")
+
+    def on_cancel(self, callback: Callable[[BaseException], None]) -> Callable[[], None]:
+        return lambda: None
+
+
+NEVER_CANCELLED = _NeverCancel()
 
 
 @dataclass(slots=True)
@@ -102,7 +131,7 @@ def combine_cancel_tokens(*tokens: CancelToken | None) -> CombinedCancel:
     Call `cleanup()` when done with the combined token to detach it from the
     input tokens.
     """
-    active = [token for token in tokens if token is not None]
+    active = [token for token in tokens if token is not None and not token.never]
     if not active:
         return CombinedCancel(None, lambda: None)
     if len(active) == 1:

@@ -11,8 +11,6 @@ import re
 import time
 from typing import Any
 
-import tonio.colored as tonio
-
 from pidrei_ai.types import (
     AssistantImages,
     ImageContent,
@@ -26,8 +24,9 @@ from pidrei_ai.types import (
     UsageCost,
 )
 from pidrei_ai.utils import http
+from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.provider_retry import retry_provider_request
@@ -35,7 +34,6 @@ from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 
 
 _DATA_URL = re.compile(r"^data:([^;]+);base64,(.+)$", re.DOTALL)
-_CANCELLED = object()
 
 
 class OpenRouterImagesError(Exception):
@@ -57,31 +55,17 @@ class _OpenRouterImagesClient:
         self, params: dict[str, Any], *, timeout_ms: float | None = None, cancel: CancelToken | None = None
     ):
         # pi's SDK client rejects on an already-aborted signal before sending, and
-        # aborts an in-flight request; without this the cancelled request would
-        # still reach the provider.
-        if cancel is not None and cancel.cancelled:
-            raise AbortError("Request aborted")
-
+        # aborts an in-flight request: `run_cancellable` does both (the caller's
+        # `retry_provider_request` turns the reason into "Request aborted").
         client = http.client_for(self._url, self._env)
 
-        async def _send():
-            return await client.post(
+        async def _send() -> tuple[Any, str]:
+            response = await client.post(
                 self._url, json=params, headers=self._headers, timeout=http.request_timeout(timeout_ms)
             )
+            return response, (await response.read()).decode("utf-8", "replace")
 
-        if cancel is None:
-            response = await _send()
-        else:
-
-            async def _aborted():
-                await cancel.wait()
-                return _CANCELLED
-
-            response = await tonio.select(_send(), _aborted())
-            if response is _CANCELLED:
-                raise AbortError("Request aborted")
-
-        body = (await response.read()).decode("utf-8", "replace")
+        response, body = await run_cancellable(_send(), cancel)
         if not 200 <= response.status_code < 300:
             raise OpenRouterImagesError(response.status_code, f"{response.status_code} {body}", body=body)
         return json.loads(body), ProviderResponse(status=response.status_code, headers=dict(response.headers))

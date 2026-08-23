@@ -779,13 +779,15 @@ class AgentSession:
         elif event.type == "message_start":
             await runner.emit({"type": "message_start", "message": event.message})
         elif event.type == "message_update":
-            await runner.emit(
-                {
-                    "type": "message_update",
-                    "message": event.message,
-                    "assistantMessageEvent": event.assistant_message_event,
-                }
-            )
+            # Per token: skip the emit entirely when nobody listens.
+            if runner.has_handlers("message_update"):
+                await runner.emit(
+                    {
+                        "type": "message_update",
+                        "message": event.message,
+                        "assistantMessageEvent": event.assistant_message_event,
+                    }
+                )
         elif event.type == "message_end":
             replacement = await runner.emit_message_end({"type": "message_end", "message": event.message})
             if replacement is not None:
@@ -807,15 +809,16 @@ class AgentSession:
                 }
             )
         elif event.type == "tool_execution_update":
-            await runner.emit(
-                {
-                    "type": "tool_execution_update",
-                    "toolCallId": event.tool_call_id,
-                    "toolName": event.tool_name,
-                    "args": event.args,
-                    "partialResult": event.partial_result,
-                }
-            )
+            if runner.has_handlers("tool_execution_update"):
+                await runner.emit(
+                    {
+                        "type": "tool_execution_update",
+                        "toolCallId": event.tool_call_id,
+                        "toolName": event.tool_name,
+                        "args": event.args,
+                        "partialResult": event.partial_result,
+                    }
+                )
         elif event.type == "tool_execution_end":
             await runner.emit(
                 {

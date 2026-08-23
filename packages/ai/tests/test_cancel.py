@@ -1,7 +1,7 @@
 import pytest
 import tonio.colored as tonio
 
-from pidrei_ai.utils.cancel import AbortError, CancelToken, combine_cancel_tokens
+from pidrei_ai.utils.cancel import NEVER_CANCELLED, AbortError, CancelToken, combine_cancel_tokens
 
 
 def test_initial_state():
@@ -74,6 +74,18 @@ def test_combine_empty_and_single():
     token = CancelToken()
     combined = combine_cancel_tokens(None, token)
     assert combined.token is token
+
+
+def test_placeholder_is_transparent_to_combine_and_cannot_fire():
+    # The optional-token placeholder must behave like "no token": otherwise
+    # every combine would allocate a token and subscribe to one that never fires.
+    token = CancelToken()
+    assert combine_cancel_tokens(NEVER_CANCELLED, token).token is token
+    assert combine_cancel_tokens(NEVER_CANCELLED, None).token is None
+
+    with pytest.raises(RuntimeError):
+        NEVER_CANCELLED.cancel()
+    assert not NEVER_CANCELLED.cancelled
 
 
 def test_combine_propagates_first_cancellation():

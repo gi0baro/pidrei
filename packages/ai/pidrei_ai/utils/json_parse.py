@@ -75,10 +75,22 @@ def repair_json(json_text: str) -> str:
     return "".join(repaired)
 
 
+def _is_repairable(error: ValueError) -> bool:
+    # The decoder reports the first problem left to right, and `repair_json`
+    # only touches string contents ("Invalid control character", "Invalid
+    # \\escape", "Invalid \\uXXXX escape"). Any other first error — a truncated
+    # prefix's "Unterminated string"/"Expecting …", "Extra data" — sits before
+    # every repairable spot and survives the repair unchanged, so the O(n)
+    # Python pass is skipped: this runs once per streamed tool-argument delta.
+    return isinstance(error, json.JSONDecodeError) and error.msg.startswith("Invalid")
+
+
 def parse_json_with_repair(json_text: str) -> Any:
     try:
         return json.loads(json_text)
-    except ValueError:
+    except ValueError as error:
+        if not _is_repairable(error):
+            raise
         repaired = repair_json(json_text)
         if repaired != json_text:
             return json.loads(repaired)

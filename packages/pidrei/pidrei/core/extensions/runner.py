@@ -720,7 +720,9 @@ class ExtensionRunner:
     # -- emits -----------------------------------------------------------------
 
     async def emit(self, event: dict[str, Any]) -> Any:
-        ctx = self.create_context()
+        # Built on the first handler only: `message_update` fires per token and
+        # in the common case nobody listens.
+        ctx: _RunnerContext | None = None
         result: Any = None
         is_session_before = event.get("type") in _SESSION_BEFORE_EVENT_TYPES
 
@@ -728,6 +730,8 @@ class ExtensionRunner:
             handlers = ext.handlers.get(event.get("type"))
             if not handlers:
                 continue
+            if ctx is None:
+                ctx = self.create_context()
 
             for handler in handlers:
                 try:

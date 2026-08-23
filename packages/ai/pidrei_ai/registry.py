@@ -697,12 +697,17 @@ class Models:
             raise ModelsError("auth", f"{provider.name} does not support {type} login")
         credential = await race_with_cancel(login(_NormalizedAuthInteraction(interaction, cancel)), cancel)
 
+        # The persist is detached on purpose (pi lets a started write finish
+        # even when the caller aborts); `progress` fires on started, done or
+        # abort, whichever comes first.
         mutation_started = tonio.Event()
         mutation_done = tonio.Event()
+        progress = tonio.Event()
         mutation_box: list[tuple[str, Any]] = []
 
         async def _persist(_current: Credential | None) -> Credential | None:
             mutation_started.set()
+            progress.set()
             return credential
 
         async def _mutation() -> None:
@@ -717,24 +722,15 @@ class Models:
                 mutation_box.append(("error", error))
             finally:
                 mutation_done.set()
+                progress.set()
 
         tonio.spawn.without_tracking(_mutation())
-
-        async def _wait_started() -> str:
-            await mutation_started.wait()
-            return "started"
-
-        async def _wait_done() -> str:
-            await mutation_done.wait()
-            return "done"
-
-        async def _wait_aborted() -> str:
-            await cancel.wait()
-            return "aborted"
+        unsubscribe = cancel.on_cancel(lambda _reason: progress.set())
 
         try:
-            winner = await tonio.select(_wait_started(), _wait_done(), _wait_aborted())
-            if winner == "aborted" and not mutation_started.is_set() and not mutation_done.is_set():
+            await progress.wait()
+            unsubscribe()
+            if cancel.cancelled and not mutation_started.is_set() and not mutation_done.is_set():
                 raise cancel.reason  # type: ignore[misc]
             await mutation_done.wait()
             kind, payload = mutation_box[0]

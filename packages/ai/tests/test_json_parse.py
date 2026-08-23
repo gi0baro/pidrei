@@ -59,5 +59,11 @@ def test_streaming_partial_with_repair():
     assert parse_streaming_json('{"path":"A\\H","text":"col1\tcol2"}') == {"path": "A\\H", "text": "col1\tcol2"}
 
 
+def test_streaming_prefix_with_raw_control_character_still_repairs():
+    # A streamed delta is both truncated and (pi-style) malformed; the repair
+    # gate must not skip the repair just because the text is a prefix.
+    assert parse_streaming_json('{"path":"A\\H","text":"col1\tcol') == {"path": "A\\H", "text": "col1\tcol"}
+
+
 def test_streaming_garbage_returns_empty_dict():
     assert parse_streaming_json("not json at all") == {}

@@ -12,7 +12,6 @@ substitution vitest performs, at a seam pidrei owns.
 
 import time
 
-import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
 from pidrei_ai.utils.cancel import AbortError, CancelToken
@@ -23,31 +22,18 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-_SLEPT = object()
-_CANCELLED = object()
-
-
 async def sleep_ms(ms: float, cancel: CancelToken | None = None) -> None:
     """Sleep `ms` milliseconds, raising `AbortError` if `cancel` fires first.
 
     Callers that need pi's flow-specific cancellation message catch `AbortError`
-    and re-raise; the token is checked before sleeping so an already-cancelled
-    token never waits.
+    and re-raise. The sleep is the token's own wait with a timeout, so no
+    extra task is involved and an already-cancelled token never waits.
     """
-    if cancel is not None and cancel.cancelled:
-        raise AbortError("Operation was aborted")
     seconds = ms / 1000
     if cancel is None:
         await tonio_time.sleep(seconds)
         return
-
-    async def _timer() -> object:
-        await tonio_time.sleep(seconds)
-        return _SLEPT
-
-    async def _aborted() -> object:
-        await cancel.wait()
-        return _CANCELLED
-
-    if await tonio.select(_timer(), _aborted()) is _CANCELLED:
+    if not cancel.cancelled:
+        await cancel.wait(seconds)
+    if cancel.cancelled:
         raise AbortError("Operation was aborted")

@@ -644,6 +644,8 @@ class ModelRuntime:
             self._credential_operations[provider_id] = entry
 
         started = tonio.Event()
+        # Fires on done *or* abort, whichever comes first, without a task per branch.
+        progress = tonio.Event()
         outcome: list[tuple[str, Any]] = []
 
         async def _operation() -> None:
@@ -657,22 +659,16 @@ class ModelRuntime:
                 outcome.append(("error", error))
             finally:
                 done.set()
+                progress.set()
                 with self._credential_operations_guard:
                     if self._credential_operations.get(provider_id) is entry:
                         del self._credential_operations[provider_id]
 
         tonio.spawn.without_tracking(_operation())
-
-        async def _wait_done() -> str:
-            await done.wait()
-            return "done"
-
-        async def _wait_aborted() -> str:
-            await cancel.wait()
-            return "aborted"
-
-        winner = await tonio.select(_wait_done(), _wait_aborted())
-        if winner == "aborted" and not started.is_set() and not done.is_set():
+        unsubscribe = cancel.on_cancel(lambda _reason: progress.set())
+        await progress.wait()
+        unsubscribe()
+        if cancel.cancelled and not started.is_set() and not done.is_set():
             raise cancel.reason  # type: ignore[misc]
         await done.wait()
         kind, payload = outcome[0]

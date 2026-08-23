@@ -12,7 +12,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
 from pidrei_ai.types import AssistantMessage
@@ -128,27 +127,14 @@ class _RetrySleepAbort(Exception):
     pass
 
 
-_SLEPT = object()
-_CANCELLED = object()
-
-
 async def _sleep(ms: float, cancel: CancelToken | None) -> None:
-    if cancel is not None and cancel.cancelled:
-        raise _RetrySleepAbort()
     seconds = ms / 1000
     if cancel is None:
         await tonio_time.sleep(seconds)
         return
-
-    async def _timer() -> object:
-        await tonio_time.sleep(seconds)
-        return _SLEPT
-
-    async def _aborted() -> object:
-        await cancel.wait()
-        return _CANCELLED
-
-    if await tonio.select(_timer(), _aborted()) is _CANCELLED:
+    if not cancel.cancelled:
+        await cancel.wait(seconds)
+    if cancel.cancelled:
         raise _RetrySleepAbort()
 
 

@@ -16,7 +16,7 @@ import tonio.colored as tonio
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.utils.cancel import CancelToken
 
-from ...utils.abort import race_with_cancel
+from ...utils.abort import race_with_cancel, run_cancellable
 
 
 class _ActiveModelCatalogRefresh:
@@ -58,7 +58,7 @@ class _ModelCatalogRefreshCoordinator:
             return active.result
 
         try:
-            return await race_with_cancel(await_active(), cancel)
+            return await run_cancellable(await_active(), cancel)
         finally:
             with self._guard:
                 active.waiters -= 1

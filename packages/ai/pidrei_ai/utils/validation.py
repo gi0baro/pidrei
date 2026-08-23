@@ -22,16 +22,31 @@ from pidrei_ai.types import Tool, ToolCall
 
 
 _validator_cache: dict[str, Draft202012Validator] = {}
+# Identity front cache: `_get_validator` runs several times per tool call
+# (every union member and optional property), and serializing the schema each
+# time costs more than the validation. Entries hold the schema so its id cannot
+# be recycled while cached; the bound keeps reloaded tool sets from pinning
+# stale schemas forever.
+_identity_cache: dict[int, tuple[dict, Draft202012Validator]] = {}
+_IDENTITY_CACHE_LIMIT = 512
 _cache_guard = threading.Lock()
 
 
 def _get_validator(schema: dict) -> Draft202012Validator:
+    schema_id = id(schema)
+    with _cache_guard:
+        entry = _identity_cache.get(schema_id)
+        if entry is not None and entry[0] is schema:
+            return entry[1]
     key = json.dumps(schema, sort_keys=True, default=str)
     with _cache_guard:
         validator = _validator_cache.get(key)
         if validator is None:
             validator = Draft202012Validator(schema)
             _validator_cache[key] = validator
+        if len(_identity_cache) >= _IDENTITY_CACHE_LIMIT:
+            del _identity_cache[next(iter(_identity_cache))]
+        _identity_cache[schema_id] = (schema, validator)
         return validator
 
 

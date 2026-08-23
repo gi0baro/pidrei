@@ -6,8 +6,10 @@ retry 408/409/429/5xx and connection-level failures, respect
 `retry-after(-ms)` headers, and cap server-requested delays at
 `max_retry_delay_ms` (60s default; 0 disables the cap).
 
-The backoff sleep is interruptible: it races tonio's sleep against the
-`CancelToken` with `tonio.select`.
+The backoff sleep is interruptible: it waits on the `CancelToken` with the
+backoff as timeout, so an abort during the sleep surfaces as `AbortError`
+without racing tasks (the same cancel inside a scope-owned request unwinds
+the sleep directly).
 """
 
 import math
@@ -17,16 +19,13 @@ from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-import tonio.colored as tonio
 from tonio.colored import time as tonio_time
+from tonio.exceptions import CancelledError
 
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
 
 DEFAULT_MAX_RETRY_DELAY_MS = 60_000
-
-_SLEPT = object()
-_CANCELLED = object()
 
 
 def _create_abort_error() -> AbortError:
@@ -34,25 +33,13 @@ def _create_abort_error() -> AbortError:
 
 
 async def abortable_sleep(ms: float, cancel: CancelToken | None = None) -> None:
-    if cancel is not None and cancel.cancelled:
-        raise _create_abort_error()
-
     seconds = max(0.0, ms) / 1000
-
     if cancel is None:
         await tonio_time.sleep(seconds)
         return
-
-    async def _sleep() -> object:
-        await tonio_time.sleep(seconds)
-        return _SLEPT
-
-    async def _aborted() -> object:
-        await cancel.wait()
-        return _CANCELLED
-
-    winner = await tonio.select(_sleep(), _aborted())
-    if winner is _CANCELLED:
+    if not cancel.cancelled:
+        await cancel.wait(seconds)
+    if cancel.cancelled:
         raise _create_abort_error()
 
 
@@ -151,6 +138,8 @@ async def retry_provider_request[T](
     while True:
         try:
             return await request()
+        except CancelledError:
+            raise  # scope-owned request unwound by its owner; not ours to translate
         except BaseException as error:
             if cancel is not None and cancel.cancelled:
                 raise _create_abort_error() from error

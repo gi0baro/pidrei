@@ -16,10 +16,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
 
-import tonio.colored as tonio
-
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_ai.utils.abort import run_cancellable
+from pidrei_ai.utils.cancel import CancelToken
 
 
 @dataclass(slots=True)
@@ -55,10 +54,6 @@ class OAuthHttpResponse:
         return parsed if isinstance(parsed, dict) else None
 
 
-_RESPONSE = object()
-_CANCELLED = object()
-
-
 async def request(
     url: str,
     *,
@@ -74,12 +69,9 @@ async def request(
     `form` is sent as `application/x-www-form-urlencoded`; the caller still sets
     its own `Content-Type` header so the mirrors can assert pi's exact casing.
     """
-    if cancel is not None and cancel.cancelled:
-        raise AbortError("Operation was aborted")
-
     content = urlencode(form).encode("utf-8") if form is not None else None
 
-    async def _send() -> object:
+    async def _send() -> OAuthHttpResponse:
         client = http.shared_client()
         response = await client.request(
             method,
@@ -96,14 +88,5 @@ async def request(
             headers={name.lower(): value for name, value in response.headers.items()},
         )
 
-    if cancel is None:
-        return await _send()  # type: ignore[return-value]
-
-    async def _aborted() -> object:
-        await cancel.wait()
-        return _CANCELLED
-
-    winner = await tonio.select(_send(), _aborted())
-    if winner is _CANCELLED:
-        raise AbortError("Operation was aborted")
-    return winner  # type: ignore[return-value]
+    # The request is unwound at its current await when the token fires.
+    return await run_cancellable(_send(), cancel)
