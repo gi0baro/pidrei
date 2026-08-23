@@ -143,6 +143,10 @@ class FooterDataProvider:
         # back to resolving lazily, which is the pre-prime behaviour.
         self._git_paths: dict | None = None
         self._primed = False
+        # Bumped under the lock whenever the watchers are cleared; a watcher
+        # setup in flight (it awaits the pool) adopts its watchers only if the
+        # generation is still its own, otherwise it closes them.
+        self._watch_generation = 0
 
     async def prime(self) -> None:
         """Resolve git paths and the branch off the runtime, then start the
@@ -156,7 +160,7 @@ class FooterDataProvider:
         branch = await tonio.spawn_blocking(self._resolve_git_branch_sync)
         with self._lock:
             self._cached_branch = branch
-        self._setup_git_watcher()
+        await self._setup_git_watcher()
 
     def get_git_branch(self) -> str | None:
         """Current branch, None if not in repo, "detached" on detached HEAD."""
@@ -197,7 +201,7 @@ class FooterDataProvider:
     def set_available_provider_count(self, count: int) -> None:
         self._available_provider_count = count
 
-    def set_cwd(self, cwd: str) -> None:
+    async def set_cwd(self, cwd: str) -> None:
         with self._lock:
             if self._cwd == cwd:
                 return
@@ -207,9 +211,19 @@ class FooterDataProvider:
                 self._refresh_timer.cancel()
                 self._refresh_timer = None
             self._clear_git_watchers()
-            self._cached_branch = _UNSET
-            self._git_paths = _find_git_paths(cwd)
-            self._setup_git_watcher()
+
+        # Off the lock: both reads are filesystem I/O. The old branch stays
+        # cached until the new one is known, so a render in between shows it
+        # rather than resolving lazily against the wrong paths.
+        git_paths = await tonio.spawn_blocking(_find_git_paths, cwd)
+        branch = await tonio.spawn_blocking(self._resolve_git_branch_async, git_paths)
+        with self._lock:
+            if self._cwd != cwd or self._disposed:
+                return  # superseded by a later set_cwd
+            self._git_paths = git_paths
+            self._cached_branch = branch
+        await self._setup_git_watcher()
+        with self._lock:
             callbacks = list(self._branch_change_callbacks)
         for callback in callbacks:
             callback()
@@ -322,6 +336,7 @@ class FooterDataProvider:
         if self._git_watcher_retry_timer is not None:
             self._git_watcher_retry_timer.cancel()
             self._git_watcher_retry_timer = None
+        self._watch_generation += 1
 
     def _schedule_git_watcher_retry(self) -> None:
         if self._disposed or self._git_watcher_retry_timer is not None:
@@ -330,7 +345,7 @@ class FooterDataProvider:
         async def fire() -> None:
             with self._lock:
                 self._git_watcher_retry_timer = None
-                self._setup_git_watcher()
+            await self._setup_git_watcher()
 
         # Read the delay via the module so tests can shorten it
         self._git_watcher_retry_timer = Timeout(fs_watch.FS_WATCH_RETRY_DELAY_MS, fire)
@@ -340,71 +355,92 @@ class FooterDataProvider:
             self._clear_git_watchers()
             self._schedule_git_watcher_retry()
 
-    def _setup_git_watcher(self) -> None:
-        self._clear_git_watchers()
-        if not self._git_paths:
+    def _adopt_watcher(self, generation: int, attribute: str, watcher) -> bool:
+        """Store a freshly opened watcher unless the setup was superseded
+        (cleared or disposed) while it was being opened; then close it."""
+        with self._lock:
+            if generation == self._watch_generation and not self._disposed:
+                setattr(self, attribute, watcher)
+                return True
+        close_watcher(watcher)
+        return False
+
+    async def _setup_git_watcher(self) -> None:
+        with self._lock:
+            self._clear_git_watchers()
+            generation = self._watch_generation
+            git_paths = self._git_paths
+        if not git_paths:
             return
 
-        poll_git_head = _should_poll_git_head(self._git_paths["repoDir"])
+        poll_git_head = _should_poll_git_head(git_paths["repoDir"])
 
         def on_head_dir_event(_event_type: str, filename: str | None) -> None:
             if not filename or filename == "HEAD":
                 self._schedule_refresh()
 
+        def on_stat_change(current: dict, previous: dict) -> None:
+            if (
+                current["mtimeMs"] != previous["mtimeMs"]
+                or current["ctimeMs"] != previous["ctimeMs"]
+                or current["size"] != previous["size"]
+            ):
+                self._schedule_refresh()
+
         # Watch the directory containing HEAD, not HEAD itself. Git uses
         # atomic writes (write temp, rename over HEAD), which changes the
         # inode, and a file watch stops working after the inode changes.
-        self._head_watcher = watch_with_error_handler(
-            os.path.dirname(self._git_paths["headPath"]),
+        head_watcher = await watch_with_error_handler(
+            os.path.dirname(git_paths["headPath"]),
             on_head_dir_event,
             self._handle_git_watcher_error,
         )
+        if head_watcher is not None and not self._adopt_watcher(generation, "_head_watcher", head_watcher):
+            return
         if poll_git_head:
-            self._head_watch_file_path = self._git_paths["headPath"]
-
-            def on_head_stat(current: dict, previous: dict) -> None:
-                if (
-                    current["mtimeMs"] != previous["mtimeMs"]
-                    or current["ctimeMs"] != previous["ctimeMs"]
-                    or current["size"] != previous["size"]
-                ):
-                    self._schedule_refresh()
-
-            self._head_watch_file_listener = on_head_stat
-            watch_file(self._head_watch_file_path, 1000, on_head_stat)
-        if self._head_watcher is None and not poll_git_head:
+            head_path = git_paths["headPath"]
+            await watch_file(head_path, 1000, on_stat_change)
+            with self._lock:
+                if generation != self._watch_generation or self._disposed:
+                    unwatch_file(head_path, on_stat_change)
+                    return
+                self._head_watch_file_path = head_path
+                self._head_watch_file_listener = on_stat_change
+        if head_watcher is None and not poll_git_head:
             return
 
         # In reftable repos, branch switches update files in the reftable
         # directory instead of HEAD. Watch it separately so the footer picks
         # up those changes.
-        reftable_dir = os.path.join(self._git_paths["commonGitDir"], "reftable")
-        if os.path.exists(reftable_dir):
-            self._reftable_watcher = watch_with_error_handler(
-                reftable_dir,
-                lambda _event_type, _filename: self._schedule_refresh(),
-                self._handle_git_watcher_error,
-            )
-            if self._reftable_watcher is None:
+        reftable_dir = os.path.join(git_paths["commonGitDir"], "reftable")
+        tables_list_path = os.path.join(reftable_dir, "tables.list")
+        has_reftable, has_tables_list = await tonio.spawn_blocking(
+            lambda: (os.path.exists(reftable_dir), os.path.exists(tables_list_path))
+        )
+        if not has_reftable:
+            return
+        reftable_watcher = await watch_with_error_handler(
+            reftable_dir,
+            lambda _event_type, _filename: self._schedule_refresh(),
+            self._handle_git_watcher_error,
+        )
+        if reftable_watcher is None or not self._adopt_watcher(generation, "_reftable_watcher", reftable_watcher):
+            return
+        if not has_tables_list:
+            return
+
+        tables_list_watcher = await watch_with_error_handler(
+            tables_list_path,
+            lambda _event_type, _filename: self._schedule_refresh(),
+            self._handle_git_watcher_error,
+        )
+        if tables_list_watcher is None or not self._adopt_watcher(
+            generation, "_reftable_tables_list_watcher", tables_list_watcher
+        ):
+            return
+        await watch_file(tables_list_path, 250, on_stat_change)
+        with self._lock:
+            if generation != self._watch_generation or self._disposed:
+                unwatch_file(tables_list_path)
                 return
-
-            tables_list_path = os.path.join(reftable_dir, "tables.list")
-            if os.path.exists(tables_list_path):
-                self._reftable_tables_list_path = tables_list_path
-                self._reftable_tables_list_watcher = watch_with_error_handler(
-                    tables_list_path,
-                    lambda _event_type, _filename: self._schedule_refresh(),
-                    self._handle_git_watcher_error,
-                )
-                if self._reftable_tables_list_watcher is None:
-                    return
-
-                def on_tables_list_stat(current: dict, previous: dict) -> None:
-                    if (
-                        current["mtimeMs"] != previous["mtimeMs"]
-                        or current["ctimeMs"] != previous["ctimeMs"]
-                        or current["size"] != previous["size"]
-                    ):
-                        self._schedule_refresh()
-
-                watch_file(tables_list_path, 250, on_tables_list_stat)
+            self._reftable_tables_list_path = tables_list_path

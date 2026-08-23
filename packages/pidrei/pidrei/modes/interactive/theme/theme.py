@@ -772,9 +772,12 @@ def init_theme_sync(theme_name: str | None = None, enable_watcher: bool = False)
 
     Test fixtures run outside `tonio.run`, which is outside the never-block
     rule by construction; pytest also cannot drive an async autouse
-    fixture. Production code uses the async `init_theme`.
+    fixture. Production code uses the async `init_theme`. The watcher needs
+    the runtime (timers and the pool), so it cannot be enabled from here.
     """
     global _current_theme_name
+    if enable_watcher:
+        raise ValueError("the theme watcher needs the runtime; use init_theme")
     name = theme_name if theme_name is not None else get_default_theme()
     try:
         loaded, fallback = _load_theme_sync(name), None
@@ -783,8 +786,6 @@ def init_theme_sync(theme_name: str | None = None, enable_watcher: bool = False)
     with _theme_state_lock:
         _current_theme_name = "dark" if fallback else name
         _set_global_theme(loaded)
-        if enable_watcher and not fallback:
-            _start_theme_watcher()
 
 
 def _load_theme_sync(name: str, mode: str | None = None) -> Theme:
@@ -807,9 +808,9 @@ async def init_theme(theme_name: str | None = None, enable_watcher: bool = False
     with _theme_state_lock:
         _current_theme_name = "dark" if fallback else name
         _set_global_theme(loaded)
-        # No watcher for the fallback theme.
-        if enable_watcher and not fallback:
-            _start_theme_watcher()
+    # No watcher for the fallback theme.
+    if enable_watcher and not fallback:
+        await _start_theme_watcher()
 
 
 async def _load_theme_or_fallback(name: str) -> tuple[Theme, str | None]:
@@ -831,13 +832,12 @@ async def set_theme(name: str, enable_watcher: bool = False) -> dict:
     with _theme_state_lock:
         _current_theme_name = "dark" if error else name
         _set_global_theme(loaded)
-        # No watcher for the fallback theme.
-        if enable_watcher and not error:
-            _start_theme_watcher()
         callback = _on_theme_change_callback
-    # Outside the lock: the callback re-enters UI code.
+    # Outside the lock: the watcher start awaits, the callback re-enters UI code.
     if error:
         return {"success": False, "error": error}
+    if enable_watcher:
+        await _start_theme_watcher()
     if callback is not None:
         callback()
     return {"success": True}
@@ -858,21 +858,25 @@ def on_theme_change(callback) -> None:
     _on_theme_change_callback = callback
 
 
-def _start_theme_watcher() -> None:
+async def _start_theme_watcher() -> None:
+    """Watch the current custom theme's file. Call outside `_theme_state_lock`:
+    the baseline snapshot is filesystem I/O (pool hop), and the watcher is
+    adopted only if the theme is still the one it was started for."""
     global _theme_watcher
     stop_theme_watcher()
+    with _theme_state_lock:
+        watched_theme_name = _current_theme_name
 
     # Only watch if it's a custom theme (not built-in)
-    if not _current_theme_name or _current_theme_name in ("dark", "light"):
+    if not watched_theme_name or watched_theme_name in ("dark", "light"):
         return
 
     custom_themes_dir = get_custom_themes_dir()
-    watched_theme_name = _current_theme_name
     watched_file_name = f"{watched_theme_name}.json"
     theme_file = os.path.join(custom_themes_dir, watched_file_name)
 
     # Only watch if the file exists
-    if not os.path.exists(theme_file):
+    if not await tonio.spawn_blocking(os.path.exists, theme_file):
         return
 
     def _reload_from_disk() -> Theme | None:
@@ -930,7 +934,12 @@ def _start_theme_watcher() -> None:
             close_watcher(_theme_watcher)
             _theme_watcher = None
 
-    _theme_watcher = watch_with_error_handler(custom_themes_dir, on_watch_event, on_watch_error)
+    watcher = await watch_with_error_handler(custom_themes_dir, on_watch_event, on_watch_error)
+    with _theme_state_lock:
+        if _current_theme_name != watched_theme_name or _theme_watcher is not None:
+            close_watcher(watcher)  # the theme changed (or was re-watched) meanwhile
+            return
+        _theme_watcher = watcher
 
 
 def stop_theme_watcher() -> None:

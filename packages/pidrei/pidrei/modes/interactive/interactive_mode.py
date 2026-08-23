@@ -1972,13 +1972,13 @@ class InteractiveMode:
         if self._transcript_scroll_view is not None:
             self._transcript_scroll_view.set_scrollbar(self.settings_manager.get_fullscreen_scrollbar())
 
-    def _apply_runtime_settings(self) -> None:
+    async def _apply_runtime_settings(self) -> None:
         # pi configures the undici HTTP dispatcher here; pidrei's HTTP
         # transport is punkreq's concern (see core/http_config.py).
         self._apply_fullscreen_scrollbar_setting()
         self._footer.set_session(self.session)
         self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
-        self._footer_data_provider.set_cwd(self.session_manager.get_cwd())
+        await self._footer_data_provider.set_cwd(self.session_manager.get_cwd())
         self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
         self._output_pad = self.settings_manager.get_output_pad()
         self.ui.set_show_hardware_cursor(self.settings_manager.get_show_hardware_cursor())
@@ -2005,7 +2005,7 @@ class InteractiveMode:
         if self._unsubscribe is not None:
             self._unsubscribe()
         self._unsubscribe = None
-        self._apply_runtime_settings()
+        await self._apply_runtime_settings()
 
         if options.get("renderBeforeBind"):
             self.render_current_session_state()
@@ -5525,7 +5525,7 @@ class InteractiveMode:
                 active_header.set_expanded(self._tool_output_expanded)
             set_registered_themes(self.session.resource_loader.get_themes()["themes"])
             await self._theme_controller.apply_from_settings()
-            self._apply_runtime_settings()
+            await self._apply_runtime_settings()
             self._setup_autocomplete_provider()
             runner = self.session.extension_runner
             self._setup_extension_shortcuts(runner)

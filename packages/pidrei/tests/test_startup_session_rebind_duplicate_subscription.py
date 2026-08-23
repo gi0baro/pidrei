@@ -14,6 +14,10 @@ import tonio.colored as tonio
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 
 
+async def _async_noop() -> None:
+    pass
+
+
 @pytest.mark.tonio
 async def test_does_not_subscribe_from_the_stale_startup_rebind():
     startup_session = object()
@@ -36,7 +40,7 @@ async def test_does_not_subscribe_from_the_stale_startup_rebind():
     context = SimpleNamespace(
         session=startup_session,
         _unsubscribe=None,
-        _apply_runtime_settings=lambda: None,
+        _apply_runtime_settings=_async_noop,
         render_current_session_state=lambda: None,
         _bind_current_session_extensions=bind_current_session_extensions,
         _subscribe_to_agent=lambda: subscribe_calls.append(True),
