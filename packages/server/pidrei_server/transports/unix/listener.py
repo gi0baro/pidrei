@@ -11,6 +11,7 @@ skip is dropped (POSIX-only port); the ENOSYS/ENOTSUP tolerance stays.
 
 import errno
 import hashlib
+import socket as _stdlib_socket
 import stat as stat_module
 import sys
 import uuid
@@ -158,7 +159,10 @@ class UnixListener:
                 failure = error
         if failure is not None:
             handler.on_error(failure)
-            stream.close()
+        # The reader is the only task that closes the stream (see
+        # `UnixByteConnection._abort_stream`); this also releases the fd after
+        # a clean remote EOF.
+        stream.close()
         connection.mark_closed()
         self._connections.discard(connection)
         handler.on_close()
@@ -299,8 +303,22 @@ class UnixByteConnection:
             self._close_deferred.resolve(None)
         self._write_sender.send(_CLOSE_SENTINEL)
 
+    def _abort_stream(self) -> None:
+        """Tear the socket down from a task other than its reader.
+
+        Closing the fd here races the reader re-arming its read waiter on
+        another worker: tonio deregisters then closes, and a registration made
+        in between dies with the fd, so the reader never wakes. A full
+        shutdown keeps the fd alive, wakes the reader with EOF, and the reader
+        closes the stream (`_run_connection_reader`).
+        """
+        try:
+            self._stream.socket.shutdown(_stdlib_socket.SHUT_RDWR)
+        except OSError:
+            pass  # already closed by the reader, or the peer is gone
+
     def _force_close(self) -> None:
-        self._stream.close()
+        self._abort_stream()
         self.mark_closed()
 
     async def _run_writer(self) -> None:
@@ -317,7 +335,7 @@ class UnixByteConnection:
                         await self._stream.send_all(item.data)
                     self._stream.send_eof()
                 except Exception:
-                    self._stream.close()
+                    self._abort_stream()
                 return
             data, deferred = item
             try:

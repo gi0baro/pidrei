@@ -12,6 +12,7 @@ awaiting test wedges (seen as a macOS-CI job timeout in the busy-work
 session test, whose bare `next()` follows an already-spawned request).
 """
 
+import socket as _stdlib_socket
 import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -154,11 +155,17 @@ async def connect_unix_test_client(path: str) -> ProtocolTestClient:
     async def _close() -> None:
         # Unlike Node (allowHalfOpen: false auto-destroys on remote EOF), the
         # tonio stream must always be closed locally to release the socket.
+        # Only the reader task closes it, though: closing from here races a
+        # reader that is re-arming its read waiter on another worker (the fd
+        # goes away between deregistration and the new registration, and the
+        # waiter never fires — a wedge seen as CI job timeouts). A full
+        # shutdown keeps the fd alive, wakes the reader with EOF, and the
+        # reader closes.
         locally_closed[0] = True
         try:
-            stream.close()
-        except Exception:
-            pass
+            stream.socket.shutdown(_stdlib_socket.SHUT_RDWR)
+        except OSError:
+            pass  # already closed by the reader, or never connected
         await client.wait_for_close()
 
     client = ProtocolTestClient(WireChannel(send=_send, send_fragmented=_send_fragmented, close=_close))

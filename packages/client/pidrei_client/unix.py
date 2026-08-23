@@ -7,6 +7,7 @@ while backpressure is carried by the returned awaitables and the pending-byte
 cap. pi's win32 rejection is dropped (POSIX-only port).
 """
 
+import socket as _stdlib_socket
 import sys
 from collections.abc import Awaitable
 from dataclasses import dataclass
@@ -82,12 +83,19 @@ class UnixByteTransport:
             return
         self._closed = True
         self._write_sender.send(_CLOSE_SENTINEL)
-        self._stream.close()
+        # Only the reader task closes the stream: closing the fd here races
+        # the reader re-arming its read waiter on another worker (tonio
+        # deregisters then closes; a registration made in between dies with
+        # the fd and never wakes). A full shutdown keeps the fd alive and
+        # wakes the reader with EOF; it closes on its way out.
+        try:
+            self._stream.socket.shutdown(_stdlib_socket.SHUT_RDWR)
+        except OSError:
+            pass  # already closed by the reader, or the peer is gone
 
     def _mark_remote_terminal(self) -> None:
         self._closed = True
         self._write_sender.send(_CLOSE_SENTINEL)
-        self._stream.close()
 
     async def _run_writer(self) -> None:
         while True:
@@ -108,18 +116,22 @@ class UnixByteTransport:
 
     async def _run_reader(self, handlers: ByteTransportHandlers) -> None:
         try:
-            while True:
-                chunk = await self._stream.receive_some()
-                if self._closed:
-                    return
-                if not chunk:
-                    break
-                handlers.on_data(chunk)
-        except Exception as error:
+            try:
+                while True:
+                    chunk = await self._stream.receive_some()
+                    if self._closed:
+                        return
+                    if not chunk:
+                        break
+                    handlers.on_data(chunk)
+            except Exception as error:
+                if not self._closed:
+                    self._mark_remote_terminal()
+                    handlers.on_error(error)
+                return
             if not self._closed:
                 self._mark_remote_terminal()
-                handlers.on_error(error)
-            return
-        if not self._closed:
-            self._mark_remote_terminal()
-            handlers.on_close()
+                handlers.on_close()
+        finally:
+            # The reader owns the fd (see `close`); release it on every exit.
+            self._stream.close()
