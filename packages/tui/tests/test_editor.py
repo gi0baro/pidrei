@@ -6,6 +6,7 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_tui.autocomplete import CombinedAutocompleteProvider
+from pidrei_tui.components import editor as editor_module
 from pidrei_tui.components.editor import Editor, word_wrap_line
 from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_tui.utils import visible_width
@@ -52,6 +53,25 @@ class MockProvider:
 
 async def flush_autocomplete():
     await tonio.sleep(0.02)
+
+
+SLOW_DEBOUNCE_MS = 300
+
+
+def slow_debounce(request) -> None:
+    """Widen the autocomplete debounce for the test's lifetime.
+
+    The debounce tests assert that no query ran *between* keystrokes; with the
+    real 20 ms window that depends on how fast the runner gets from the last
+    `handle_input` to the assertion (a loaded macOS CI runner did not make it).
+    """
+    original = editor_module.ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS
+    editor_module.ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = SLOW_DEBOUNCE_MS
+    request.addfinalizer(lambda: setattr(editor_module, "ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS", original))
+
+
+async def wait_slow_debounce() -> None:
+    await tonio.sleep(SLOW_DEBOUNCE_MS / 1000 + 0.05)
 
 
 # Prompt history navigation
@@ -2214,7 +2234,8 @@ async def test_keeps_suggestions_open_when_typing_in_force_mode_tab_triggered():
 
 
 @pytest.mark.tonio
-async def test_debounces_at_autocomplete_while_typing():
+async def test_debounces_at_autocomplete_while_typing(request):
+    slow_debounce(request)
     editor = Editor(create_test_tui(), default_editor_theme)
     suggestion_calls = []
 
@@ -2233,7 +2254,7 @@ async def test_debounces_at_autocomplete_while_typing():
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
 
-    await tonio.sleep(0.05)
+    await wait_slow_debounce()
     await flush_autocomplete()
 
     assert len(suggestion_calls) == 1
@@ -2290,7 +2311,8 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
 
 
 @pytest.mark.tonio
-async def test_debounces_hash_autocomplete_while_typing():
+async def test_debounces_hash_autocomplete_while_typing(request):
+    slow_debounce(request)
     editor = Editor(create_test_tui(), default_editor_theme)
     suggestion_calls = []
 
@@ -2309,7 +2331,7 @@ async def test_debounces_hash_autocomplete_while_typing():
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
 
-    await tonio.sleep(0.05)
+    await wait_slow_debounce()
     await flush_autocomplete()
 
     assert len(suggestion_calls) == 1
@@ -2317,7 +2339,8 @@ async def test_debounces_hash_autocomplete_while_typing():
 
 
 @pytest.mark.tonio
-async def test_debounces_custom_trigger_characters_autocomplete_while_typing():
+async def test_debounces_custom_trigger_characters_autocomplete_while_typing(request):
+    slow_debounce(request)
     editor = Editor(create_test_tui(), default_editor_theme)
     suggestion_calls = []
 
@@ -2333,7 +2356,7 @@ async def test_debounces_custom_trigger_characters_autocomplete_while_typing():
     await editor.handle_input("k")
 
     assert len(suggestion_calls) == 0
-    await tonio.sleep(0.05)
+    await wait_slow_debounce()
     await flush_autocomplete()
 
     assert len(suggestion_calls) == 1
