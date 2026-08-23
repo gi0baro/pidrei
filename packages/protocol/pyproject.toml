@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-protocol"
-version = "0.84.2.4"
+version = "0.84.2.5"
 description = "Transport-neutral CBOR protocol for remote sessions of pidrei (port of pi-protocol)"
 requires-python = ">=3.14"
 license = "MIT"

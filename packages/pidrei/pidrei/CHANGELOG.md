@@ -6,6 +6,37 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.5] - 2026-08-23
+
+Runtime-layer rework: the JS promise/abort idioms kept from Pi are replaced by
+tonio-native structure. No user-visible behaviour change is intended beyond
+the performance and ordering items below.
+
+### Changed
+
+- Cancellation (Escape, `abort`) now unwinds the streaming request through
+  tonio scopes instead of polling an abort flag: one streaming request is one
+  scope, with teardown owned by the caller. The `CancelToken` API is unchanged.
+- Work that Pi fans out concurrently (model availability, provider refresh,
+  session listing, tool bodies) now runs in parallel via `tonio.map` instead
+  of sequential awaits with locks.
+- TUI input, timers and state mutations run on a single owner task, in order;
+  the per-object locks and identity re-checks that emulated the JS event loop
+  are gone. Agent events are dispatched by one ordered dispatcher.
+- Long answers render much faster: finished Markdown blocks are cached across
+  streaming updates (code highlighting happens once per block), terminal line
+  resets are memoized, footer usage totals are recomputed only when the
+  session changes, and the editor layout is cached per input state.
+- The render loop computes the next frame while the previous one is still
+  being written to the terminal; frame throttling is measured from the end of
+  a frame rather than its start, so slow terminals no longer compound delays.
+
+### Fixed
+
+- Races in the agent loop, event stream, auth/models/settings stores, bash
+  output accumulation and the assistant message component that the previous
+  lock-based emulation did not cover.
+
 ## [0.84.2.4] - 2026-08-23
 
 ### Changed
