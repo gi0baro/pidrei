@@ -9,11 +9,12 @@ from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
+from pidrei_ai.utils.tasks import gather
 from pidrei_tui import Text
 
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ..extensions.types import ToolDefinition
-from .path_utils import path_exists, resolve_to_cwd
+from .path_utils import resolve_to_cwd
 from .render_utils import get_text_output, render_tool_path, str_or_none
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .truncate import DEFAULT_MAX_BYTES, TruncationResult, format_size, truncate_head
@@ -84,7 +85,7 @@ class LsToolDetails:
 
 class LocalLsOperations:
     async def exists(self, absolute_path: str) -> bool:
-        return path_exists(absolute_path)
+        return await fs.Path(absolute_path).exists()
 
     async def is_directory(self, absolute_path: str) -> bool:
         return await fs.Path(absolute_path).is_dir()
@@ -128,21 +129,26 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
         entries.sort(key=lambda entry: entry.lower())
 
         # Format entries with directory indicators.
-        results: list[str] = []
-        entry_limit_reached = False
-        for entry in entries:
-            if len(results) >= effective_limit:
-                entry_limit_reached = True
-                break
-
+        async def classify(entry: str) -> str | None:
             full_path = os.path.join(dir_path, entry)
             try:
                 suffix = "/" if await ops.is_directory(full_path) else ""
                 if not await fs.Path(full_path).exists():
-                    continue  # Skip entries we cannot stat (broken symlinks).
-            except Exception:  # noqa: S112
-                continue  # Skip entries we cannot stat.
-            results.append(entry + suffix)
+                    return None  # Skip entries we cannot stat (broken symlinks).
+            except Exception:
+                return None  # Skip entries we cannot stat.
+            return entry + suffix
+
+        # Stat entries concurrently, one limit-sized window at a time: the
+        # limit counts listed entries, so skipped ones pull in the next window.
+        results: list[str] = []
+        position = 0
+        while position < len(entries) and len(results) < effective_limit:
+            window = entries[position : position + effective_limit - len(results)]
+            position += len(window)
+            classified = await gather(*(classify(entry) for entry in window))
+            results.extend(item for item in classified if item is not None)
+        entry_limit_reached = len(results) >= effective_limit and position < len(entries)
 
         if not results:
             return AgentToolResult(content=[TextContent(text="(empty directory)")], details=None)

@@ -11,7 +11,7 @@ from pidrei_tui import Text
 from ...modes.interactive.components.keybinding_hints import key_hint
 from ...utils.tools_manager import ensure_tool, missing_tool_message
 from ..extensions.types import ToolDefinition
-from .grep import _run_and_capture_lines
+from .grep import _run_streaming_lines
 from .path_utils import path_exists, resolve_to_cwd
 from .render_utils import get_text_output, invalid_arg_text, shorten_path, str_or_none
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
@@ -202,7 +202,13 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
                 effective_pattern = f"**/{pattern}"
         args.extend(["--", effective_pattern, search_path])
 
-        exit_code, lines, stderr = await _run_and_capture_lines(args, cancel)
+        lines: list[str] = []
+
+        def collect(line: str) -> bool:
+            lines.append(line)
+            return False
+
+        exit_code, stderr = await _run_streaming_lines(args, cancel, collect)
         _throw_if_aborted(cancel)
 
         output = "\n".join(lines)

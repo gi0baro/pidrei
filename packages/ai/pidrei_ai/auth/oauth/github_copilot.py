@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
@@ -358,9 +359,15 @@ async def _enable_all_models(token: str, enterprise_domain: str | None, cancel: 
     models = list(MODELS.get("github-copilot", []))
     if not models:  # pragma: no cover - the vendored catalog always has models
         return
-    for index in range(0, len(models), COPILOT_POLICY_CONCURRENCY):
-        batch = models[index : index + COPILOT_POLICY_CONCURRENCY]
-        await tonio.spawn(*[_enable_model(token, model.id, enterprise_domain, cancel) for model in batch])
+    # Sliding window of COPILOT_POLICY_CONCURRENCY requests: a finished slot is
+    # refilled immediately instead of waiting for the slowest of its batch.
+    window = sync.Semaphore(COPILOT_POLICY_CONCURRENCY)
+
+    async def enable(model_id: str) -> bool:
+        async with window:
+            return await _enable_model(token, model_id, enterprise_domain, cancel)
+
+    await tonio.spawn(*[enable(model.id) for model in models])
 
 
 async def _login_github_copilot(interaction: ProviderAuthInteraction) -> OAuthCredential:

@@ -36,6 +36,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model, ModelCost
+from pidrei_ai.utils.tasks import gather
 
 from .model_config import ModelConfig
 from .model_wire import cost_from_dict, cost_tiers_from_list, merge_compat, parse_compat
@@ -364,10 +365,8 @@ async def _config_context_env(
         for name in get_config_value_env_var_names(value):
             if name not in names:
                 names.append(name)
-    for name in names:
-        if env.get(name) is not None:
-            continue
-        value = await ctx.env(name)
+    missing = [name for name in names if env.get(name) is None]
+    for name, value in zip(missing, await gather(*(ctx.env(name) for name in missing)), strict=True):
         if value is not None:
             env[name] = value
     return env if env else None

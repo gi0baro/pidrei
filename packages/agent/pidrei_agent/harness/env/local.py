@@ -328,22 +328,22 @@ class LocalExecutionEnv:
         resolved = _resolve_path(self.cwd, path)
         if (aborted := _abort_result(cancel, resolved)) is not None:
             return aborted
-        try:
-            entries = await tonio.spawn_blocking(os.listdir, resolved)
-        except Exception as error:
-            return err(_to_file_error(error, resolved))
-        infos: list[FileInfo] = []
-        for entry in entries:
-            if (loop_abort := _abort_result(cancel, resolved)) is not None:
-                return loop_abort
-            entry_path = os.path.normpath(os.path.join(resolved, entry))
-            try:
-                info = _file_info_from_stat(entry_path, await tonio.spawn_blocking(os.lstat, entry_path))
+
+        # One pool hop lists and stats the whole directory: a hop per entry
+        # made a 500-entry listing cost 500 round-trips.
+        def list_and_stat() -> list[FileInfo]:
+            infos: list[FileInfo] = []
+            for entry in os.listdir(resolved):
+                entry_path = os.path.normpath(os.path.join(resolved, entry))
+                info = _file_info_from_stat(entry_path, os.lstat(entry_path))
                 if info.ok:
                     infos.append(info.value)
-            except Exception as error:
-                return err(_to_file_error(error, entry_path))
-        return ok(infos)
+            return infos
+
+        try:
+            return ok(await tonio.spawn_blocking(list_and_stat))
+        except Exception as error:
+            return err(_to_file_error(error, resolved))
 
     async def canonical_path(self, path: str, cancel: CancelToken | None = None) -> Result[str, FileError]:
         resolved = _resolve_path(self.cwd, path)

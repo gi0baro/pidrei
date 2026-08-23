@@ -28,6 +28,7 @@ from pidrei_agent.harness.compaction.compaction import (
 )
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, Usage, UsageCost, UserMessage
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
+from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.uuid import uuidv7
 
@@ -659,27 +660,11 @@ async def compact(
 
     # Generate summaries and merge into one
     if preparation.is_split_turn and preparation.turn_prefix_messages:
+        # The history and turn-prefix summaries are independent LLM calls;
+        # run them concurrently so compaction costs max, not sum.
         history_text = "No prior history."
         history_usage: Usage | None = None
-        if preparation.messages_to_summarize:
-            history_result = await generate_summary_with_usage(
-                preparation.messages_to_summarize,
-                model,
-                settings.reserve_tokens,
-                api_key,
-                headers,
-                cancel,
-                custom_instructions,
-                preparation.previous_summary,
-                thinking_level,
-                stream_fn,
-                env,
-                retry,
-                callbacks,
-            )
-            history_text = history_result.text
-            history_usage = history_result.usage
-        turn_prefix_result = await _generate_turn_prefix_summary(
+        turn_prefix_call = _generate_turn_prefix_summary(
             preparation.turn_prefix_messages,
             model,
             settings.reserve_tokens,
@@ -692,6 +677,29 @@ async def compact(
             retry,
             callbacks,
         )
+        if preparation.messages_to_summarize:
+            history_result, turn_prefix_result = await gather(
+                generate_summary_with_usage(
+                    preparation.messages_to_summarize,
+                    model,
+                    settings.reserve_tokens,
+                    api_key,
+                    headers,
+                    cancel,
+                    custom_instructions,
+                    preparation.previous_summary,
+                    thinking_level,
+                    stream_fn,
+                    env,
+                    retry,
+                    callbacks,
+                ),
+                turn_prefix_call,
+            )
+            history_text = history_result.text
+            history_usage = history_result.usage
+        else:
+            turn_prefix_result = await turn_prefix_call
         # Merge into single summary
         summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{turn_prefix_result.text}"
         summary_usage = (

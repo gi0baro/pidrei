@@ -1467,6 +1467,19 @@ class DefaultPackageManager:
         ]
         await self._resolve_package_sources(self._dedupe_packages(all_packages), accumulator, on_missing)
 
+        # Everything after the package sources is synchronous filesystem work
+        # over the one accumulator, in a fixed order (local entries, then
+        # auto-discovery, then canonicalization); one pool hop instead of ~10.
+        return await tonio.spawn_blocking(
+            self._resolve_local_and_discovered, accumulator, global_settings, project_settings
+        )
+
+    def _resolve_local_and_discovered(
+        self,
+        accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
+        global_settings: dict,
+        project_settings: dict,
+    ) -> ResolvedPaths:
         global_base_dir = self._agent_dir
         project_base_dir = os.path.join(self._cwd, CONFIG_DIR_NAME)
 
@@ -1474,16 +1487,14 @@ class DefaultPackageManager:
             target = accumulator[resource_type]
             global_entries = list(global_settings.get(resource_type) or [])
             project_entries = list(project_settings.get(resource_type) or [])
-            await tonio.spawn_blocking(
-                self._resolve_local_entries,
+            self._resolve_local_entries(
                 project_entries,
                 resource_type,
                 target,
                 PathMetadata(source="local", scope="project", origin="top-level"),
                 project_base_dir,
             )
-            await tonio.spawn_blocking(
-                self._resolve_local_entries,
+            self._resolve_local_entries(
                 global_entries,
                 resource_type,
                 target,
@@ -1491,18 +1502,10 @@ class DefaultPackageManager:
                 global_base_dir,
             )
 
-        await tonio.spawn_blocking(
-            self._add_auto_discovered_resources,
-            accumulator,
-            global_settings,
-            project_settings,
-            global_base_dir,
-            project_base_dir,
+        self._add_auto_discovered_resources(
+            accumulator, global_settings, project_settings, global_base_dir, project_base_dir
         )
-
-        # Dedupes by canonical path, so it is a `resolve()` per entry — one
-        # blocking unit for the pool rather than a syscall storm on a worker.
-        return await tonio.spawn_blocking(self._to_resolved_paths, accumulator)
+        return self._to_resolved_paths(accumulator)
 
     async def resolve_extension_sources(
         self, sources: list[str], *, local: bool = False, temporary: bool = False

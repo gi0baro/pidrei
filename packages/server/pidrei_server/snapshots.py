@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import tonio.colored as tonio
 from tonio.colored import sync
 
+from pidrei_ai.utils.tasks import gather
 from pidrei_protocol import PROTOCOL_VERSION, ModelMetadata, ServerMessage, ServerSnapshot, SessionMetadata
 
 from .connection import ConnectionState
@@ -81,5 +82,6 @@ class ServerSnapshotPublisher:
         current = await self.get(models)
         snapshot: ServerSnapshot = {**current, "revision": revision}
         envelope: ServerMessage = {"type": "event", "event": {"type": "server_snapshot", "snapshot": snapshot}}
-        for connection in ready_connections:
-            await self._options.send_message(connection, envelope)
+        # Fan out so one slow client's flush does not delay the others; each
+        # connection's writer queue keeps its own message order.
+        await gather(*(self._options.send_message(connection, envelope) for connection in ready_connections))

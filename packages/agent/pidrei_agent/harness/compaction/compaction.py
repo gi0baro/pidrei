@@ -8,6 +8,7 @@ from typing import Any
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, Usage, UsageCost, UserMessage
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
+from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.uuid import uuidv7
 
@@ -641,25 +642,11 @@ async def compact(
     """Generate compaction summary data from prepared session history."""
     settings = preparation.settings
     if preparation.is_split_turn and preparation.turn_prefix_messages:
+        # The history and turn-prefix summaries are independent LLM calls;
+        # run them concurrently so compaction costs max, not sum.
         history_text = "No prior history."
         history_usage: Usage | None = None
-        if preparation.messages_to_summarize:
-            history_result = await generate_summary_with_usage(
-                preparation.messages_to_summarize,
-                models,
-                model,
-                settings.reserve_tokens,
-                cancel,
-                custom_instructions,
-                preparation.previous_summary,
-                thinking_level,
-                retry,
-                callbacks,
-            )
-            if not history_result.ok:
-                return err(history_result.error)
-            history_text, history_usage = history_result.value
-        turn_prefix_result = await _generate_turn_prefix_summary(
+        turn_prefix_call = _generate_turn_prefix_summary(
             preparation.turn_prefix_messages,
             models,
             model,
@@ -669,6 +656,27 @@ async def compact(
             retry,
             callbacks,
         )
+        if preparation.messages_to_summarize:
+            history_result, turn_prefix_result = await gather(
+                generate_summary_with_usage(
+                    preparation.messages_to_summarize,
+                    models,
+                    model,
+                    settings.reserve_tokens,
+                    cancel,
+                    custom_instructions,
+                    preparation.previous_summary,
+                    thinking_level,
+                    retry,
+                    callbacks,
+                ),
+                turn_prefix_call,
+            )
+            if not history_result.ok:
+                return err(history_result.error)
+            history_text, history_usage = history_result.value
+        else:
+            turn_prefix_result = await turn_prefix_call
         if not turn_prefix_result.ok:
             return err(turn_prefix_result.error)
         prefix_text, prefix_usage = turn_prefix_result.value

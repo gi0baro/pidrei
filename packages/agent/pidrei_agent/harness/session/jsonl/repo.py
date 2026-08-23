@@ -11,8 +11,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 
+from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.uuid import uuidv7
 
+from ...types import FileInfo
 from ..session import Session, assert_json_serializable
 from ..types import ForkOptions, SessionError
 from .codec import metadata_from_header, parse_header
@@ -76,22 +78,29 @@ async def list_jsonl_session_metadata(
     options: JsonlSessionRepoOptions, query: JsonlSessionListOptions | None = None
 ) -> list[JsonlSessionMetadata]:
     query = query if query is not None else JsonlSessionListOptions()
-    metadata: list[JsonlSessionMetadata] = []
-    for directory in await _jsonl_session_directories(options, query.cwd):
+
+    async def read_metadata(file: FileInfo) -> JsonlSessionMetadata | None:
+        lines = file_result(
+            await options.fs.read_text_lines(file.path, max_lines=1),
+            f"Failed to read session header {file.path}",
+        )
+        first_line = lines[0] if lines else None
+        if not first_line:
+            return None
+        header_result = parse_header(first_line)
+        if not header_result.ok:
+            return None
+        return metadata_from_header(header_result.value, file.path, file.mtime_ms)
+
+    async def list_directory(directory: str) -> list[JsonlSessionMetadata | None]:
         entries = file_result(await options.fs.list_dir(directory), f"Failed to list sessions directory {directory}")
         files = [entry for entry in entries if entry.kind != "directory" and entry.name.endswith(".jsonl")]
-        for file in files:
-            lines = file_result(
-                await options.fs.read_text_lines(file.path, max_lines=1),
-                f"Failed to read session header {file.path}",
-            )
-            first_line = lines[0] if lines else None
-            if not first_line:
-                continue
-            header_result = parse_header(first_line)
-            if not header_result.ok:
-                continue
-            metadata.append(metadata_from_header(header_result.value, file.path, file.mtime_ms))
+        return await gather(*(read_metadata(file) for file in files))
+
+    # Header reads are independent; fan them out instead of one fs hop per file.
+    directories = await _jsonl_session_directories(options, query.cwd)
+    listings = await gather(*(list_directory(directory) for directory in directories))
+    metadata = [item for listing in listings for item in listing if item is not None]
     return sorted(metadata, key=lambda item: item.modified_at, reverse=True)
 
 

@@ -46,6 +46,13 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+_PARSE_CHUNK_LINES = 256
+
+
+def _parse_mutation_chunk(lines: list[str]) -> list:
+    return [parse_mutation(line) for line in lines]
+
+
 async def publish_file_atomically(
     fs: JsonlSessionRepoFileSystem,
     destination_path: str,
@@ -100,9 +107,20 @@ class JsonlSessionStorage:
             raise invalid_file(path, 1, header_result.error)
         file_info = file_result(await fs.file_info(path), f"Failed to read session metadata {path}")
         storage = JsonlSessionStorage(fs, metadata_from_header(header_result.value, path, file_info.mtime_ms))
+        # Decoding is pure and per-line, so it runs off the runtime in
+        # parallel chunks; only the in-order apply stays here.
+        mutation_lines = physical_lines[1:]
+        chunks = [
+            mutation_lines[start : start + _PARSE_CHUNK_LINES]
+            for start in range(0, len(mutation_lines), _PARSE_CHUNK_LINES)
+        ]
+        parsed = [
+            result
+            for chunk_results in await tonio.map_blocking(_parse_mutation_chunk, chunks)
+            for result in chunk_results
+        ]
         for index in range(1, len(physical_lines)):
-            line = physical_lines[index]
-            mutation_result = parse_mutation(line)
+            mutation_result = parsed[index - 1]
             if not mutation_result.ok:
                 is_torn_tail = index == len(physical_lines) - 1 and mutation_result.error.kind == "syntax"
                 if is_torn_tail:

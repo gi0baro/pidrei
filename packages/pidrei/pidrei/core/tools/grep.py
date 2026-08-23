@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -129,10 +130,14 @@ class LocalGrepOperations:
         return await fs.Path(absolute_path).read_text(encoding="utf-8", errors="replace", newline="")
 
 
-async def _run_and_capture_lines(argv: list[str], cancel) -> tuple[int | None, list[str], str]:
-    """Spawn a process and collect stdout lines and stderr text; kill on cancel."""
+async def _run_streaming_lines(argv: list[str], cancel, on_line: Callable[[str], bool]) -> tuple[int | None, str]:
+    """Spawn a process and feed stdout to `on_line` as lines arrive.
+
+    `on_line` returns True once it has seen enough; the process is then killed
+    (pi's `killedDueToLimit`) instead of being read to EOF. Also kills on
+    cancel. Returns the exit code and the captured stderr text.
+    """
     process = await tonio.open_process(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout_parts: list[bytes] = []
     stderr_parts: list[bytes] = []
 
     unsubscribe = None
@@ -141,6 +146,26 @@ async def _run_and_capture_lines(argv: list[str], cancel) -> tuple[int | None, l
             process.kill()
         else:
             unsubscribe = cancel.on_cancel(lambda _reason: process.kill())
+
+    async def read_lines(stream) -> None:
+        if stream is None:
+            return
+        pending = b""
+        try:
+            while True:
+                chunk = await stream.receive_some()
+                if not chunk:
+                    break
+                pending += chunk
+                *complete, pending = pending.split(b"\n")
+                for raw in complete:
+                    if on_line(raw.decode("utf-8", "replace")):
+                        process.kill()
+                        return
+            if pending and on_line(pending.decode("utf-8", "replace")):
+                process.kill()
+        except Exception:
+            pass
 
     async def read_all(stream, parts: list[bytes]) -> None:
         if stream is None:
@@ -155,18 +180,13 @@ async def _run_and_capture_lines(argv: list[str], cancel) -> tuple[int | None, l
             pass
 
     try:
-        await tonio.spawn(read_all(process.stdout, stdout_parts), read_all(process.stderr, stderr_parts))
+        await tonio.spawn(read_lines(process.stdout), read_all(process.stderr, stderr_parts))
         exit_code = await process.wait()
     finally:
         if unsubscribe is not None:
             unsubscribe()
 
-    stdout_text = b"".join(stdout_parts).decode("utf-8", "replace")
-    stderr_text = b"".join(stderr_parts).decode("utf-8", "replace")
-    lines = stdout_text.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    return exit_code, lines, stderr_text
+    return exit_code, b"".join(stderr_parts).decode("utf-8", "replace")
 
 
 def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefinition:
@@ -227,23 +247,20 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             args.extend(["--glob", glob])
         args.extend(["--", pattern, search_path])
 
-        exit_code, raw_lines, stderr = await _run_and_capture_lines(args, cancel)
-        if cancel is not None and cancel.cancelled:
-            raise Exception("Operation aborted")
-
-        # Collect matches from the JSON event stream, capped at the match limit.
+        # Collect matches from the JSON event stream as it arrives; at the
+        # match limit the reader kills rg rather than draining it to EOF.
         matches: list[tuple[str, int, str | None]] = []
         match_limit_reached = False
         lines_truncated = False
-        for line in raw_lines:
-            if not line.strip() or len(matches) >= effective_limit:
-                if len(matches) >= effective_limit:
-                    break
-                continue
+
+        def on_line(line: str) -> bool:
+            nonlocal match_limit_reached
+            if not line.strip():
+                return False
             try:
                 event = json.loads(line)
-            except Exception:  # noqa: S112
-                continue
+            except Exception:
+                return False
             if event.get("type") == "match":
                 data = event.get("data") or {}
                 file_path = (data.get("path") or {}).get("text")
@@ -253,7 +270,12 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
                     matches.append((file_path, line_number, line_text))
                 if len(matches) >= effective_limit:
                     match_limit_reached = True
-                    break
+                    return True
+            return False
+
+        exit_code, stderr = await _run_streaming_lines(args, cancel, on_line)
+        if cancel is not None and cancel.cancelled:
+            raise Exception("Operation aborted")
 
         if not matches:
             if exit_code not in (0, 1) and not match_limit_reached:

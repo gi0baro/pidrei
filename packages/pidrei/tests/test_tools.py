@@ -822,6 +822,27 @@ class TestGrepTool:
         assert not marker.exists()
 
 
+@pytest.mark.tonio
+async def test_streaming_lines_kills_the_process_at_the_limit():
+    # An unbounded producer: only killing it once `on_line` says "enough"
+    # (pi's killedDueToLimit) lets this return instead of reading to EOF.
+    from pidrei.core.tools.grep import _run_streaming_lines
+
+    seen: list[str] = []
+
+    def on_line(line: str) -> bool:
+        seen.append(line)
+        return len(seen) >= 3
+
+    script = (
+        "import sys\nn = 0\nwhile True:\n    n += 1\n    sys.stdout.write(f'line {n}\\n')\n    sys.stdout.flush()\n"
+    )
+    _, completed = await tonio_time.timeout(_run_streaming_lines([sys.executable, "-c", script], None, on_line), 10)
+
+    assert completed
+    assert seen[:3] == ["line 1", "line 2", "line 3"]
+
+
 @pytest.mark.skipif(not HAS_FD, reason="fd not installed")
 class TestFindTool:
     @pytest.mark.tonio

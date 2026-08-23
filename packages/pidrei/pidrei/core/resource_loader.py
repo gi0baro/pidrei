@@ -13,6 +13,8 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import fs
 
+from pidrei_ai.utils.tasks import gather
+
 from ..config import CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
 from .diagnostics import ResourceCollision, ResourceDiagnostic
@@ -392,6 +394,37 @@ class DefaultResourceLoader:
             skill_paths = self._merge_paths([*cli_enabled_skills, *enabled_skills], self._additional_skill_paths)
 
         self._last_skill_paths = skill_paths
+
+        if self._no_prompt_templates:
+            prompt_paths = self._merge_paths(cli_enabled_prompts, self._additional_prompt_template_paths)
+        else:
+            prompt_paths = self._merge_paths(
+                [*cli_enabled_prompts, *enabled_prompts], self._additional_prompt_template_paths
+            )
+        self._last_prompt_paths = prompt_paths
+
+        enabled_themes = get_enabled_paths(resolved_paths.themes)
+        cli_enabled_themes = get_enabled_paths(cli_extension_paths.themes)
+        if self._no_themes:
+            theme_paths = self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
+        else:
+            theme_paths = self._merge_paths([*cli_enabled_themes, *enabled_themes], self._additional_theme_paths)
+
+        # Only extensions feed the stages below (skill/prompt source infos);
+        # the stages themselves are independent and each writes its own
+        # fields, so they run concurrently. `metadata_by_path` is complete by
+        # now and only read from here on.
+        await gather(
+            self._load_skills_stage(skill_paths, metadata_by_path),
+            self._load_prompts_stage(prompt_paths, metadata_by_path),
+            tonio.spawn_blocking(self._update_themes_from_paths, theme_paths, metadata_by_path),
+            self._load_agents_files_stage(),
+            self._load_system_prompt_stage(),
+            self._load_append_system_prompt_stage(),
+        )
+        self._loaded = True
+
+    async def _load_skills_stage(self, skill_paths: list[str], metadata_by_path: dict[str, PathMetadata]) -> None:
         await self._update_skills_from_paths(skill_paths, metadata_by_path)
         for path in self._additional_skill_paths:
             if is_local_path(path):
@@ -403,14 +436,7 @@ class DefaultResourceLoader:
                         ResourceDiagnostic(type="error", message="Skill path does not exist", path=resolved)
                     )
 
-        if self._no_prompt_templates:
-            prompt_paths = self._merge_paths(cli_enabled_prompts, self._additional_prompt_template_paths)
-        else:
-            prompt_paths = self._merge_paths(
-                [*cli_enabled_prompts, *enabled_prompts], self._additional_prompt_template_paths
-            )
-
-        self._last_prompt_paths = prompt_paths
+    async def _load_prompts_stage(self, prompt_paths: list[str], metadata_by_path: dict[str, PathMetadata]) -> None:
         await self._update_prompts_from_paths(prompt_paths, metadata_by_path)
         for path in self._additional_prompt_template_paths:
             if is_local_path(path):
@@ -422,14 +448,7 @@ class DefaultResourceLoader:
                         ResourceDiagnostic(type="error", message="Prompt template path does not exist", path=resolved)
                     )
 
-        enabled_themes = get_enabled_paths(resolved_paths.themes)
-        cli_enabled_themes = get_enabled_paths(cli_extension_paths.themes)
-        if self._no_themes:
-            theme_paths = self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
-        else:
-            theme_paths = self._merge_paths([*cli_enabled_themes, *enabled_themes], self._additional_theme_paths)
-        await tonio.spawn_blocking(self._update_themes_from_paths, theme_paths, metadata_by_path)
-
+    async def _load_agents_files_stage(self) -> None:
         agents_files = (
             [] if self._no_context_files else await load_project_context_files(cwd=self._cwd, agent_dir=self._agent_dir)
         )
@@ -437,10 +456,11 @@ class DefaultResourceLoader:
             self._agents_files_override(agents_files) if self._agents_files_override is not None else agents_files
         )
 
+    async def _load_system_prompt_stage(self) -> None:
         system_prompt_source = (
             self._system_prompt_source
             if self._system_prompt_source is not None
-            else self._discover_system_prompt_file()
+            else await tonio.spawn_blocking(self._discover_system_prompt_file)
         )
         base_system_prompt = await _resolve_prompt_input(system_prompt_source, "system prompt")
         self._system_prompt = (
@@ -454,10 +474,11 @@ class DefaultResourceLoader:
             else None
         )
 
+    async def _load_append_system_prompt_stage(self) -> None:
         if self._append_system_prompt_source is not None:
             append_sources = self._append_system_prompt_source
         else:
-            discovered = self._discover_append_system_prompt_file()
+            discovered = await tonio.spawn_blocking(self._discover_append_system_prompt_file)
             append_sources = [discovered] if discovered is not None else []
         base_append = [
             resolved
@@ -472,7 +493,6 @@ class DefaultResourceLoader:
         self._append_system_prompt_source_paths = [
             resolve_path(source) for source in append_sources if await fs.Path(source).exists()
         ]
-        self._loaded = True
 
     # -- extension loading -------------------------------------------------------
 
