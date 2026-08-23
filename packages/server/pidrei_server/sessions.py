@@ -17,8 +17,9 @@ disposed twice after a terminal error.
 
 import threading
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
+from typing import Any
 
 import tonio.colored as tonio
 
@@ -46,7 +47,8 @@ class _LiveSession:
 class LiveSessionManagerOptions:
     service: PiServerService
     is_closing: Callable[[], bool]
-    send_message: Callable[[ConnectionState, ServerMessage], Awaitable[bool]]
+    # Sync prologue (the frame is queued at call time), coroutine result.
+    send_message: Callable[[ConnectionState, ServerMessage], Coroutine[Any, Any, bool]]
     close_connection: Callable[[ByteConnection], Awaitable[None]]
     disconnect: Callable[[ConnectionState], Awaitable[None]]
     broadcast_server_snapshot: Callable[[], None]
@@ -292,7 +294,8 @@ class LiveSessionManager:
                 "event": {"type": "session_progress", "sessionId": live.id, "progress": event.progress},
             }
             for connection in list(live.connections):
-                self._options.send_message(connection, envelope)
+                # pi: `void this.sendMessage(...)` — the frame is queued here.
+                tonio.spawn.without_tracking(self._options.send_message(connection, envelope))
         else:
             self._watch(self._broadcast_snapshot(live))
         self._schedule_maybe_dispose(live)
@@ -331,7 +334,7 @@ class LiveSessionManager:
         snapshot = await self._normalized_snapshot(live)
         envelope: ServerMessage = {"type": "event", "event": {"type": "session_snapshot", "snapshot": snapshot}}
         for connection in list(live.connections):
-            self._options.send_message(connection, envelope)
+            tonio.spawn.without_tracking(self._options.send_message(connection, envelope))
         return snapshot
 
     async def _attach(self, connection: ConnectionState, live: _LiveSession) -> None:

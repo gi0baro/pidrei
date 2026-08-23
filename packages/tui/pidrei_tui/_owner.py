@@ -1,0 +1,178 @@
+"""One task owns a mutable aggregate (concurrency audit §4.3/§4.4).
+
+No pi counterpart: pi's single JS thread is the owner of everything — input
+handlers, `setTimeout` callbacks and promise continuations never overlap.
+Here the equivalents run on different tonio tasks, so the TUI's input state
+(`StdinBuffer`, keyboard-protocol negotiation, `editor._state`, focus and
+overlays) gets one owner task instead of a lock per site:
+
+- `run(fn)` / `post(fn)` hand work to the owner; it runs serially, in order.
+- `after(delay_ms, fn)` / `every(delay_ms, fn)` are `setTimeout`/`setInterval`
+  whose fires are delivered as posted work, so a callback runs on the owner
+  too. `cancel()` is exact by construction: the cancel and the fire are
+  ordered on the same task, so a cancelled timer never runs — none of the
+  identity re-checks the detached `_timers` needed.
+- The timer tasks are children of the scope passed to `start()`, so stopping
+  the owner reaps them; nothing ticks after `close()`.
+
+An owner that was never started (a TUI that is never `start()`ed — tests)
+runs work on the caller (`run`) or a detached task (`post`, timers), which
+is what the code did before it had an owner.
+"""
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+
+import tonio.colored as tonio
+from tonio.colored.sync import channel
+
+
+type Thunk = Callable[[], Awaitable[None]]
+
+
+@dataclass(slots=True)
+class _Job:
+    fn: Thunk
+    done: tonio.Event | None = None
+    error: BaseException | None = None
+
+
+@dataclass(slots=True, eq=False)
+class TimerHandle:
+    """A scheduled fire; `cancel()` guarantees `fn` does not run afterwards."""
+
+    _wake: tonio.Event = field(default_factory=tonio.Event)
+    cancelled: bool = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+        self._wake.set()
+
+
+class OwnerTask:
+    def __init__(self, on_error: Callable[[BaseException], None] | None = None) -> None:
+        self._sender, self._receiver = channel.unbounded()
+        self._scope = None
+        self._closed = False
+        self._timers: set[TimerHandle] = set()
+        # Called with an exception escaping posted work (a timer callback,
+        # a fire-and-forget mutation). `None` lets it kill the owner.
+        self.on_error = on_error
+
+    @property
+    def started(self) -> bool:
+        return self._scope is not None and not self._closed
+
+    def start(self, scope) -> None:
+        """Run the owner loop as a child of `scope` (restartable after `close()`)."""
+        if self._closed:
+            self._sender, self._receiver = channel.unbounded()
+            self._closed = False
+        self._scope = scope
+        scope.spawn(self._consume(self._receiver))
+
+    def close(self) -> None:
+        """Stop after the work already queued; cancel every live timer."""
+        if self._closed:
+            return
+        self._closed = True
+        for handle in list(self._timers):
+            handle.cancel()
+        self._timers.clear()
+        if self._scope is not None:
+            self._sender.send(None)
+
+    def post(self, fn: Thunk) -> None:
+        """Run `fn` on the owner, fire-and-forget."""
+        if self.started:
+            self._sender.send(_Job(fn))
+        else:
+            tonio.spawn.without_tracking(fn())
+
+    async def run(self, fn: Thunk) -> None:
+        """Run `fn` on the owner and wait for it; its error surfaces here."""
+        if not self.started:
+            await fn()
+            return
+        job = _Job(fn, done=tonio.Event())
+        self._sender.send(job)
+        await job.done.wait(None)
+        if job.error is not None:
+            raise job.error
+
+    def spawn(self, coro) -> None:
+        """Run `coro` concurrently (off the owner) as a child of its scope.
+
+        For work the owner kicks off but must not wait for — a provider
+        request whose result comes back through `run`/`post`. Reaped with
+        the scope instead of outliving the TUI.
+        """
+        if self.started:
+            self._scope.spawn(coro)
+        else:
+            tonio.spawn.without_tracking(coro)
+
+    def after(self, delay_ms: float, fn: Thunk) -> TimerHandle:
+        """`setTimeout`: run `fn` on the owner after `delay_ms` unless cancelled."""
+        return self._schedule(delay_ms, fn, repeat=False)
+
+    def every(self, delay_ms: float, fn: Thunk) -> TimerHandle:
+        """`setInterval`: run `fn` on the owner every `delay_ms` until cancelled."""
+        return self._schedule(delay_ms, fn, repeat=True)
+
+    def _schedule(self, delay_ms: float, fn: Thunk, *, repeat: bool) -> TimerHandle:
+        handle = TimerHandle()
+        if self._closed:
+            handle.cancel()
+            return handle
+        self._timers.add(handle)
+        timer = self._timer(handle, delay_ms / 1000, fn, repeat)
+        if self._scope is not None:
+            self._scope.spawn(timer)
+        else:
+            tonio.spawn.without_tracking(timer)
+        return handle
+
+    async def _timer(self, handle: TimerHandle, delay_s: float, fn: Thunk, repeat: bool) -> None:
+        try:
+            while True:
+                await handle._wake.wait(delay_s)
+                if handle.cancelled:
+                    return
+                if self.started:
+                    self._sender.send(_Job(self._fire(handle, fn)))
+                elif not self._closed:
+                    await fn()
+                if not repeat:
+                    return
+        finally:
+            self._timers.discard(handle)
+
+    @staticmethod
+    def _fire(handle: TimerHandle, fn: Thunk) -> Thunk:
+        async def fire() -> None:
+            # Ordered after any `cancel()` the owner's earlier work made.
+            if not handle.cancelled:
+                await fn()
+
+        return fire
+
+    async def _consume(self, receiver) -> None:
+        while True:
+            job = await receiver.receive()
+            if job is None:
+                return
+            if job.done is None:
+                try:
+                    await job.fn()
+                except Exception as error:
+                    if self.on_error is None:
+                        raise
+                    self.on_error(error)
+                continue
+            try:
+                await job.fn()
+            except BaseException as error:
+                job.error = error
+            finally:
+                job.done.set()

@@ -8,8 +8,9 @@ Deviations:
 - Validation is hand-rolled against pi's typebox schema (same required color
   set, same error message layout) instead of a JSON-schema engine.
 - The custom-theme watcher polls (utils/fs_watch) instead of node fs.watch;
-  the 100 ms debounce reload is a ``threading.Timer`` and watcher state is
-  guarded by a module lock because callbacks fire on watcher threads.
+  its events and the 100 ms debounced reload (a ``_timers.Timeout``) run on
+  the TUI's owner task with the file read on the pool. The module lock
+  guards the theme globals against `set_theme` callers on other tasks.
 - Syntax highlighting is pygments (utils/syntax_highlight), keyed by the same
   scope names pi feeds cli-highlight.
 """
@@ -26,6 +27,7 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_tui import get_capabilities
+from pidrei_tui._timers import Timeout
 
 from ....config import get_custom_themes_dir, get_themes_dir
 from ....utils import colors as chalk
@@ -564,9 +566,7 @@ def _create_theme(theme_json: dict, mode: str | None = None, source_path: str | 
 def _load_theme_from_path_sync(theme_path: str, mode: str | None = None) -> Theme:
     """Blocking read+parse. Only for callers already off the runtime.
 
-    The theme watcher's reload runs on a `threading.Timer` daemon thread,
-    which is outside the never-block rule by construction, so it calls this
-    directly instead of reaching back into the runtime.
+    The theme watcher's reload calls this through `spawn_blocking`.
     """
     with open(theme_path, encoding="utf-8") as f:
         content = f.read()
@@ -754,7 +754,7 @@ def _set_global_theme(theme_instance: Theme) -> None:
 _theme_state_lock = threading.RLock()
 _current_theme_name: str | None = None
 _theme_watcher = None
-_theme_reload_timer: threading.Timer | None = None
+_theme_reload_timer: Timeout | None = None
 _on_theme_change_callback = None
 _registered_themes: dict = {}
 
@@ -875,40 +875,43 @@ def _start_theme_watcher() -> None:
     if not os.path.exists(theme_file):
         return
 
-    def reload_theme() -> None:
+    def _reload_from_disk() -> Theme | None:
+        # Keep the last successfully loaded theme active if the file is
+        # temporarily missing or in an invalid state while being edited.
+        if not os.path.exists(theme_file):
+            return None
+        try:
+            return _load_theme_from_path_sync(theme_file)
+        except Exception:
+            return None
+
+    async def reload_theme() -> None:
+        # On the UI owner (a `_timers.Timeout` fire); the read is a pool hop.
         global _theme_reload_timer
         with _theme_state_lock:
             _theme_reload_timer = None
-
             # Ignore stale timers after switching themes or stopping the watcher
             if _current_theme_name != watched_theme_name:
                 return
-
-            # Keep the last successfully loaded theme active if the file is
-            # temporarily missing
-            if not os.path.exists(theme_file):
+        reloaded_theme = await tonio.spawn_blocking(_reload_from_disk)
+        if reloaded_theme is None:
+            return
+        with _theme_state_lock:
+            if _current_theme_name != watched_theme_name:
                 return
-
-            try:
-                # Reload the theme from disk and refresh the registry cache
-                reloaded_theme = _load_theme_from_path_sync(theme_file)
-                _registered_themes[watched_theme_name] = reloaded_theme
-                _set_global_theme(reloaded_theme)
-                # Notify callback (to invalidate UI)
-                if _on_theme_change_callback is not None:
-                    _on_theme_change_callback()
-            except Exception:
-                # Ignore errors (file might be in invalid state while being edited)
-                pass
+            # Refresh the registry cache and notify (to invalidate UI)
+            _registered_themes[watched_theme_name] = reloaded_theme
+            _set_global_theme(reloaded_theme)
+            callback = _on_theme_change_callback
+        if callback is not None:
+            callback()
 
     def schedule_reload() -> None:
         global _theme_reload_timer
         with _theme_state_lock:
             if _theme_reload_timer is not None:
                 _theme_reload_timer.cancel()
-            _theme_reload_timer = threading.Timer(0.1, reload_theme)
-            _theme_reload_timer.daemon = True
-            _theme_reload_timer.start()
+            _theme_reload_timer = Timeout(100, reload_theme)
 
     def on_watch_event(_event_type: str, filename: str | None) -> None:
         with _theme_state_lock:

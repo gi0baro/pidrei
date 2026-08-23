@@ -22,10 +22,12 @@ Port deviations (documented once here):
 - The win32 VT-input helper and the darwin native-modifiers addon are not
   ported (POSIX-only port; native modifier addons omitted per plan) — the
   Apple Terminal Shift+Enter rewrite therefore never sees a pressed Shift.
-- Timer callbacks may fire on a different tonio worker thread than the input
-  pump, so negotiation-buffer state transitions hold a re-entrant sync lock
-  (never held across an await) and timer callbacks re-check identity under
-  it (clearTimeout determinism).
+- Input has one owner task (`input_owner`, an `OwnerTask` child of the input
+  scope): the stdin pump hands each chunk to it, the StdinBuffer flush and
+  negotiation flush timers fire on it, and it calls the input handler. That
+  is pi's single thread for the input path — no lock, and clearTimeout is
+  exact because cancel and fire are ordered on the same task. The progress
+  keepalive is the one timer driven from other tasks and keeps its lock.
 - Output is a single pump task (`_output_pump`): every writer enqueues a
   complete sequence, the pump emits them in FIFO order with `arm_w`
   readiness. `write()` waits for its bytes to go out (backpressure for the
@@ -36,6 +38,7 @@ Port deviations (documented once here):
 """
 
 import codecs
+import functools
 import math
 import os
 import re
@@ -48,10 +51,11 @@ import time as _time
 from typing import Any, Protocol
 
 import tonio.colored as tonio
-from tonio.colored import io as tonio_io, signals as tonio_signals, sync as tonio_sync
+from tonio.colored import io as tonio_io, signals as tonio_signals
 from tonio.colored.sync import channel as tonio_channel
 
-from ._timers import Interval, Timeout
+from ._owner import OwnerTask, TimerHandle
+from ._timers import Interval
 from .keys import set_kitty_protocol_active
 from .stdin_buffer import StdinBuffer
 
@@ -226,17 +230,17 @@ class ProcessTerminal:
         self._saved_output_blocking: bool | None = None
         self._input_handler = None
         # Input reaches the handler from the stdin pump, the StdinBuffer flush
-        # timer and the negotiation flush timer — three tasks. pi's handlers
+        # timer and the negotiation flush timer. pi's handlers
         # (`editor.handle_input`, focus/overlay changes) never overlap on its
-        # single thread; this lock restores that until an input-owner task
-        # replaces the timers.
-        self._input_dispatch_lock = tonio_sync.Lock()
+        # single thread; here all three feed one owner task, which also runs
+        # the handler, so nothing on the input path needs a lock.
+        self.input_owner = OwnerTask()
         self._resize_handler = None
         self._kitty_protocol_active = False
         self._modify_other_keys_active = False
         self._keyboard_protocol_pushed = False
         self._negotiation_buffer = ""
-        self._negotiation_flush_timer: Timeout | None = None
+        self._negotiation_flush_timer: TimerHandle | None = None
         self._stdin_buffer: StdinBuffer | None = None
         self._stdin_data_handler = None
         self._progress_interval: Interval | None = None
@@ -283,6 +287,7 @@ class ProcessTerminal:
         self._sio = self._out_sio if self._input_fd == self._output_fd else tonio_io.register(self._input_fd)
         self._scope = tonio.scope()
         await self._scope.__aenter__()
+        self.input_owner.start(self._scope)
         self._scope.spawn(self._resize_watcher())
 
         # Query Kitty keyboard protocol and fall back to modifyOtherKeys when DA confirms no Kitty response.
@@ -301,21 +306,19 @@ class ProcessTerminal:
         raw stdin to handle the case where the response arrives split across
         multiple events.
         """
-        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms())
+        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms(), owner=self.input_owner)
 
-        # Forward individual sequences to the input handler
+        # Forward individual sequences to the input handler (on the owner)
         async def on_data(sequence: str) -> None:
             # `deferred` carries a buffered sequence that turned out not to be a
-            # negotiation response; it must be forwarded before the current one,
-            # but only after `_lock` is released.
+            # negotiation response; it is forwarded before the current one.
             deferred: list[str] = []
-            with self._lock:
-                negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
-                if negotiation_sequence == "pending":
-                    self._schedule_negotiation_buffer_flush()
-                    consumed = True  # Wait briefly for the rest of a split Kitty response.
-                else:
-                    consumed = self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence)
+            negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
+            if negotiation_sequence == "pending":
+                self._schedule_negotiation_buffer_flush()
+                consumed = True  # Wait briefly for the rest of a split Kitty response.
+            else:
+                consumed = self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence)
 
             for buffered in deferred:
                 await self._forward_input_sequence(buffered)
@@ -327,8 +330,7 @@ class ProcessTerminal:
         # Re-wrap paste content with bracketed paste markers for existing editor handling
         async def on_paste(content: str) -> None:
             if self._input_handler is not None:
-                async with self._input_dispatch_lock:
-                    await self._input_handler(f"\x1b[200~{content}\x1b[201~")
+                await self._input_handler(f"\x1b[200~{content}\x1b[201~")
 
         self._stdin_buffer.on_paste(on_paste)
 
@@ -377,10 +379,9 @@ class ProcessTerminal:
     def _read_keyboard_protocol_negotiation_sequence(
         self, sequence: str, deferred: list[str]
     ) -> KeyboardProtocolNegotiationSequence | str | None:
-        """Runs under `_lock`. A buffered sequence that turns out not to be a
-        negotiation response is appended to `deferred` for the caller to forward
-        once the lock is released, rather than forwarded from here — forwarding
-        is async now, and this runs inside the lock."""
+        """A buffered sequence that turns out not to be a negotiation response
+        is appended to `deferred` for the caller to forward (forwarding is
+        async; this is the sync classification step)."""
         if self._negotiation_buffer:
             buffered_sequence = self._negotiation_buffer + sequence
             negotiation_sequence = parse_keyboard_protocol_negotiation_sequence(buffered_sequence)
@@ -407,12 +408,11 @@ class ProcessTerminal:
         self._negotiation_buffer = sequence
 
     def _clear_negotiation_buffer(self) -> None:
-        with self._lock:
-            self._clear_negotiation_buffer_flush_timer()
-            self._negotiation_buffer = ""
+        self._clear_negotiation_buffer_flush_timer()
+        self._negotiation_buffer = ""
 
     def _take_negotiation_buffer(self) -> str | None:
-        """Under `_lock`: claim the buffered sequence and reset the buffer."""
+        """Claim the buffered sequence and reset the buffer."""
         if not self._negotiation_buffer:
             return None
         sequence = self._negotiation_buffer
@@ -423,21 +423,15 @@ class ProcessTerminal:
     def _schedule_negotiation_buffer_flush(self) -> None:
         if not self._negotiation_buffer or self._negotiation_flush_timer is not None:
             return
-        timer: Timeout | None = None
 
         async def fire() -> None:
-            with self._lock:
-                # A clear/reschedule may have raced the firing callback past
-                # its cancellation check; only the current timer may flush.
-                if self._negotiation_flush_timer is not timer:
-                    return
-                self._negotiation_flush_timer = None
-                sequence = self._take_negotiation_buffer()
+            # On the owner: a cancelled timer never gets here.
+            self._negotiation_flush_timer = None
+            sequence = self._take_negotiation_buffer()
             if sequence is not None:
                 await self._forward_input_sequence(sequence)
 
-        timer = Timeout(KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS, fire)
-        self._negotiation_flush_timer = timer
+        self._negotiation_flush_timer = self.input_owner.after(KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS, fire)
 
     def _clear_negotiation_buffer_flush_timer(self) -> None:
         if self._negotiation_flush_timer is None:
@@ -454,8 +448,7 @@ class ProcessTerminal:
             is_apple_terminal,
             is_apple_terminal and _is_native_modifier_pressed("shift"),
         )
-        async with self._input_dispatch_lock:
-            await self._input_handler(input_)
+        await self._input_handler(input_)
 
     def _enable_modify_other_keys(self) -> None:
         if self._kitty_protocol_active or self._modify_other_keys_active:
@@ -491,7 +484,10 @@ class ProcessTerminal:
             self._last_read_time = _time.monotonic()
             data = decoder.decode(chunk)
             if data and (handler := self._stdin_data_handler) is not None:
-                await handler(data)
+                # Awaited: the kernel buffer stays the backpressure, and a
+                # chunk is fully handled before the next read — as when the
+                # pump called the handler itself.
+                await self.input_owner.run(functools.partial(handler, data))
 
     async def _resize_watcher(self) -> None:
         with tonio_signals.signal_receiver(signal_module.SIGWINCH) as receiver:
@@ -571,7 +567,9 @@ class ProcessTerminal:
 
         # Stop the pump before touching termios so buffered input (e.g.,
         # Ctrl+D) cannot be re-interpreted after raw mode is disabled (pi
-        # pauses stdin for the same reason).
+        # pauses stdin for the same reason). The owner and its timers are
+        # children of the same scope: closing it reaps them.
+        self.input_owner.close()
         if self._scope is not None:
             self._scope.cancel()
             await self._scope.__aexit__(None, None, None)

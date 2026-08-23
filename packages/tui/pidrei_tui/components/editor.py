@@ -7,9 +7,11 @@ word segmentation through ``utils.get_word_segmenter()``; both produce
 
 Async differences from pi (JS single-threaded event loop → tonio):
 
-- the autocomplete debounce timer is a ``_timers.Timeout`` (tonio task);
-- autocomplete requests run as spawned tonio tasks chained through an Event
-  (pi chains promises via ``autocompleteRequestTask``);
+- the autocomplete debounce timer and the application of a provider's
+  response run on the TUI's owner task (``tui.input_owner``), the same task
+  that runs ``handle_input`` — editor state has exactly one writer, as on
+  pi's thread; the provider call itself runs off it, one at a time (pi
+  chains promises via ``autocompleteRequestTask``; here a ``sync.Lock``);
 - the abort signal is a ``CancelToken`` (pi uses a DOM ``AbortController``).
 
 Autocomplete therefore requires the editor to live on a tonio runtime; all
@@ -21,9 +23,9 @@ import math
 import re
 
 import grapheme as grapheme_lib
-import tonio.colored as tonio
+from tonio.colored import sync
 
-from .._timers import Timeout
+from .._owner import TimerHandle
 from ..keybindings import get_keybindings
 from ..keys import decode_printable_key, matches_key
 from ..kill_ring import KillRing
@@ -278,8 +280,8 @@ class Editor:
         self._autocomplete_state: str | None = None  # "regular" | "force" | None
         self._autocomplete_prefix = ""
         self._autocomplete_abort: CancelToken | None = None
-        self._autocomplete_debounce_timer: Timeout | None = None
-        self._autocomplete_request_done = None  # tail Event of the request chain
+        self._autocomplete_debounce_timer: TimerHandle | None = None
+        self._autocomplete_request_lock = sync.Lock()  # pi: `autocompleteRequestTask` chain
         self._autocomplete_start_token = 0
         self._autocomplete_request_id = 0
 
@@ -1958,46 +1960,55 @@ class Editor:
                 self._autocomplete_debounce_timer = None
                 self._start_autocomplete_request(start_token, force=force, explicit_tab=explicit_tab)
 
-            self._autocomplete_debounce_timer = Timeout(debounce_ms, _fire)
+            self._autocomplete_debounce_timer = self._tui.input_owner.after(debounce_ms, _fire)
             return
 
         self._start_autocomplete_request(start_token, force=force, explicit_tab=explicit_tab)
 
     def _start_autocomplete_request(self, start_token: int, *, force: bool, explicit_tab: bool) -> None:
-        # pi chains request promises via `autocompleteRequestTask`; here each
-        # spawned task awaits the previous task's completion Event.
-        previous_done = self._autocomplete_request_done
-        done = tonio.Event()
-        self._autocomplete_request_done = done
+        # Runs on the UI owner (from `handle_input` or the debounce timer):
+        # the snapshot is taken here, the provider is queried off the owner,
+        # and the result is applied back on the owner. pi chains requests
+        # through `autocompleteRequestTask` so one runs at a time; the lock
+        # keeps that, and a request superseded while waiting is skipped.
+        if start_token != self._autocomplete_start_token or self._autocomplete_provider is None:
+            return
+        provider = self._autocomplete_provider
+        controller = CancelToken()
+        self._autocomplete_abort = controller
+        self._autocomplete_request_id += 1
+        request_id = self._autocomplete_request_id
+        snapshot_text = self.get_text()
+        snapshot_line = self._state["cursorLine"]
+        snapshot_col = self._state["cursorCol"]
+        lines = list(self._state["lines"])
 
         async def _request_task() -> None:
-            try:
-                if previous_done is not None:
-                    await previous_done.wait(None)
-                if start_token != self._autocomplete_start_token or self._autocomplete_provider is None:
+            async with self._autocomplete_request_lock:
+                if controller.cancelled:
                     return
+                # Async-only, matching pi's `getSuggestions` (strictly
+                # Promise-returning, in deliberate contrast to the Awaitable
+                # union pi uses for `getArgumentCompletions`).
+                suggestions = await provider.get_suggestions(
+                    lines, snapshot_line, snapshot_col, {"signal": controller, "force": force}
+                )
 
-                controller = CancelToken()
-                self._autocomplete_abort = controller
-                self._autocomplete_request_id += 1
-                request_id = self._autocomplete_request_id
-                snapshot_text = self.get_text()
-                snapshot_line = self._state["cursorLine"]
-                snapshot_col = self._state["cursorCol"]
-
-                await self._run_autocomplete_request(
+            async def apply() -> None:
+                self._apply_autocomplete_response(
                     request_id,
                     controller,
                     snapshot_text,
                     snapshot_line,
                     snapshot_col,
+                    suggestions,
                     force=force,
                     explicit_tab=explicit_tab,
                 )
-            finally:
-                done.set()
 
-        tonio.spawn.without_tracking(_request_task())
+            await self._tui.input_owner.run(apply)
+
+        self._tui.input_owner.spawn(_request_task())
 
     def _set_autocomplete_trigger_characters(self, trigger_characters: list[str]) -> None:
         nxt = [*DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS]
@@ -2019,29 +2030,20 @@ class Editor:
             return ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS
         return 0
 
-    async def _run_autocomplete_request(
+    def _apply_autocomplete_response(
         self,
         request_id: int,
         controller: CancelToken,
         snapshot_text: str,
         snapshot_line: int,
         snapshot_col: int,
+        suggestions,
         *,
         force: bool,
         explicit_tab: bool,
     ) -> None:
         if self._autocomplete_provider is None:
             return
-
-        # Async-only, matching pi's `getSuggestions` (strictly
-        # Promise-returning, in deliberate contrast to the Awaitable union pi
-        # uses for `getArgumentCompletions` in the same interface).
-        suggestions = await self._autocomplete_provider.get_suggestions(
-            self._state["lines"],
-            self._state["cursorLine"],
-            self._state["cursorCol"],
-            {"signal": controller, "force": force},
-        )
 
         if not self._is_autocomplete_request_current(
             request_id, controller, snapshot_text, snapshot_line, snapshot_col

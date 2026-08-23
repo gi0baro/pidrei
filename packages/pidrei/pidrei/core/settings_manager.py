@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 import tonio.colored as tonio
+from tonio.colored.sync import channel
 from tonio.exceptions import RuntimeNotInitializedError
 
 from ..config import CONFIG_DIR_NAME, get_agent_dir
@@ -152,10 +153,12 @@ class SettingsManager:
         self._global_settings_load_error = global_load_error
         self._project_settings_load_error = project_load_error
         self._write_lock = threading.RLock()
-        # Tail of the write chain, mirroring pi's `writeQueue` promise.
-        # `None` means nothing is pending. Guarded by `_write_lock`, which
-        # is never held across an await.
-        self._write_tail: tonio.Event | None = None
+        # pi's `writeQueue` promise chain is one writer task over an unbounded
+        # channel: writes run in enqueue order, a failed one never blocks the
+        # next, and `flush()` is a ticket that the writer sets when it reaches
+        # it. Started lazily by the first write on a runtime; `None` until
+        # then. Guarded by `_write_lock`, which is never held across an await.
+        self._writes: Any = None
         self._errors: list[SettingsError] = list(initial_errors or [])
         self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
@@ -400,21 +403,25 @@ class SettingsManager:
             self._run_write(scope, task)
             return
 
-        with self._write_lock:
-            previous, mine = self._write_tail, tonio.Event()
-            self._write_tail = mine
-        queued = self._run_queued_write(previous, mine, scope, task)
         try:
-            tonio.spawn.without_tracking(queued)
+            writes = self._ensure_writer()
         except RuntimeNotInitializedError:
             # No runtime means no worker to block, so blocking here cannot
             # violate the policy — the same boundary condition that puts
             # import-time code outside it. Reached from sync CLI paths and
             # from tests that drive the manager without `tonio.run`.
-            queued.close()
-            self._write_tail = previous
             self._run_write(scope, task)
-            mine.set()
+            return
+        writes.send((scope, task))
+
+    def _ensure_writer(self) -> Any:
+        """Return the writer's channel, starting the writer task on first use."""
+        with self._write_lock:
+            if self._writes is None:
+                sender, receiver = channel.unbounded()
+                tonio.spawn.without_tracking(self._write_loop(receiver))
+                self._writes = sender
+            return self._writes
 
     def _run_write(self, scope: SettingsScope, task: Any) -> None:
         try:
@@ -425,20 +432,20 @@ class SettingsManager:
         except Exception as error:
             self._record_error(scope, error)
 
-    async def _run_queued_write(
-        self, previous: tonio.Event | None, mine: tonio.Event, scope: SettingsScope, task: Any
-    ) -> None:
-        try:
-            if previous is not None:
-                await previous.wait()  # the `.then()`: writes stay ordered
-            if scope == "project":
-                self._assert_project_trusted_for_write()
-            await tonio.spawn_blocking(task)
-            self._clear_modified_scope(scope)
-        except Exception as error:
-            self._record_error(scope, error)
-        finally:
-            mine.set()
+    async def _write_loop(self, receiver: Any) -> None:
+        while True:
+            item = await receiver.receive()
+            if isinstance(item, tonio.Event):
+                item.set()  # a `flush()` ticket: everything before it is done
+                continue
+            scope, task = item
+            try:
+                if scope == "project":
+                    self._assert_project_trusted_for_write()
+                await tonio.spawn_blocking(task)
+                self._clear_modified_scope(scope)
+            except Exception as error:
+                self._record_error(scope, error)
 
     def _persist_scoped_settings(
         self,
@@ -510,9 +517,12 @@ class SettingsManager:
 
     async def flush(self) -> None:
         """Wait for queued writes, mirroring pi's `await this.writeQueue`."""
-        tail = self._write_tail
-        if tail is not None:
-            await tail.wait()
+        writes = self._writes
+        if writes is None:
+            return
+        ticket = tonio.Event()
+        writes.send(ticket)
+        await ticket.wait()
 
     def drain_errors(self) -> list[SettingsError]:
         drained = list(self._errors)

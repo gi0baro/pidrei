@@ -14,6 +14,7 @@ from types import EllipsisType
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.auth.context import default_provider_auth_context
@@ -334,9 +335,9 @@ class Models:
         self._refresh_generations: dict[str, int] = {}
         self._refresh_controllers: dict[str, CancelToken] = {}
         self._publication_guard = threading.Lock()
-        # Per-provider publication chains (pi chains promises; here an Event
-        # marks each link settled).
-        self._publication_chains: dict[str, tuple[Any, ...]] = {}
+        # Per-provider publication serialization (pi chains promises; here one
+        # FIFO lock per provider, created on first use).
+        self._publication_locks: dict[str, sync.Lock] = {}
 
     # -- provider collection ---------------------------------------------------
 
@@ -420,15 +421,12 @@ class Models:
         publication: ModelsPublication,
     ) -> bool:
         with self._publication_guard:
-            previous = self._publication_chains.get(provider_id)
-            done = tonio.Event()
-            entry = (done,)
-            self._publication_chains[provider_id] = entry
+            lock = self._publication_locks.get(provider_id)
+            if lock is None:
+                lock = self._publication_locks[provider_id] = sync.Lock()
 
         async def _task() -> bool:
-            if previous is not None:
-                await previous[0].wait()
-            try:
+            async with lock:
                 if cancel.cancelled or self._refresh_generations.get(provider_id) != generation:
                     return False
 
@@ -444,11 +442,6 @@ class Models:
                 if publication.update is not None:
                     publication.update()
                 return True
-            finally:
-                done.set()
-                with self._publication_guard:
-                    if self._publication_chains.get(provider_id) is entry:
-                        del self._publication_chains[provider_id]
 
         return await race_with_cancel(_task(), cancel)
 

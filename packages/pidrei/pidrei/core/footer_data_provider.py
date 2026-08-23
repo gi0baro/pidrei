@@ -1,10 +1,11 @@
 """Mirror of pi coding-agent src/core/footer-data-provider.ts.
 
-Parallelism deltas vs single-threaded pi: watcher callbacks and refresh
-timers fire on polling threads, so provider state is guarded by an RLock.
-pi's async git refresh (execFile) becomes a plain subprocess call executed on
-the debounce timer thread; the sync/async split is kept as two module-level
-seams so mirrored tests can patch and count them separately.
+Parallelism deltas vs single-threaded pi: watcher callbacks and the debounce
+/ retry timers (`pidrei_tui._timers.Timeout`) fire on the TUI's owner task;
+the RLock guards provider state against `set_cwd`/`dispose` callers on
+other tasks. pi's async git refresh (execFile) becomes a subprocess call on
+the blocking pool; the sync/async split is kept as two module-level seams so
+mirrored tests can patch and count them separately.
 """
 
 import os
@@ -14,6 +15,8 @@ import sys
 import threading
 
 import tonio.colored as tonio
+
+from pidrei_tui._timers import Timeout
 
 from ..utils import fs_watch
 from ..utils.fs_watch import close_watcher, unwatch_file, watch_file, watch_with_error_handler
@@ -65,9 +68,9 @@ def _find_git_paths(cwd: str) -> dict | None:
 
 # Sync by design, but only safe because of priming: `prime()` resolves the
 # branch through `spawn_blocking` before the first render, so the render
-# path reads the cache. The other caller is the daemon refresh thread,
-# which is not a runtime worker. An *unprimed* provider would still hit
-# the lazy fallback in `get_git_branch()` on a worker — prime it.
+# path reads the cache; the refresh path calls it on the pool too. An
+# *unprimed* provider would still hit the lazy fallback in
+# `get_git_branch()` on a worker — prime it.
 def _resolve_branch_with_git_sync(repo_dir: str) -> str | None:
     """Ask git for the current branch. None on detached HEAD or git failure."""
     try:
@@ -87,7 +90,7 @@ def _resolve_branch_with_git_sync(repo_dir: str) -> str | None:
 
 
 def _resolve_branch_with_git_async(repo_dir: str) -> str | None:
-    """The refresh-path variant (pi's execFile); runs on the debounce thread."""
+    """The refresh-path variant (pi's execFile); runs on the blocking pool."""
     return _resolve_branch_with_git_sync(repo_dir)
 
 
@@ -129,8 +132,8 @@ class FooterDataProvider:
         self._reftable_tables_list_path: str | None = None
         self._branch_change_callbacks: list = []
         self._available_provider_count = 0
-        self._refresh_timer: threading.Timer | None = None
-        self._git_watcher_retry_timer: threading.Timer | None = None
+        self._refresh_timer: Timeout | None = None
+        self._git_watcher_retry_timer: Timeout | None = None
         self._refresh_in_flight = False
         self._refresh_pending = False
         self._disposed = False
@@ -144,8 +147,8 @@ class FooterDataProvider:
     async def prime(self) -> None:
         """Resolve git paths and the branch off the runtime, then start the
         watcher. Call once from an async caller before the first render:
-        afterwards `get_git_branch()` is a pure cache read, and the daemon
-        refresh thread keeps it current."""
+        afterwards `get_git_branch()` is a pure cache read, and the watcher's
+        debounced refresh keeps it current."""
         if self._primed:
             return
         self._primed = True
@@ -153,17 +156,6 @@ class FooterDataProvider:
         branch = await tonio.spawn_blocking(self._resolve_git_branch_sync)
         with self._lock:
             self._cached_branch = branch
-        self._setup_git_watcher()
-
-    def prime_sync(self) -> None:
-        """Priming for callers with no runtime running — no worker exists to
-        block, the same boundary condition that exempts import-time code."""
-        if self._primed:
-            return
-        self._primed = True
-        self._git_paths = _find_git_paths(self._cwd)
-        with self._lock:
-            self._cached_branch = self._resolve_git_branch_sync()
         self._setup_git_watcher()
 
     def get_git_branch(self) -> str | None:
@@ -245,16 +237,14 @@ class FooterDataProvider:
                 self._refresh_pending = True
                 return
 
-            def fire() -> None:
+            async def fire() -> None:
                 with self._lock:
                     self._refresh_timer = None
-                self._refresh_git_branch_async()
+                await self._refresh_git_branch_async()
 
-            self._refresh_timer = threading.Timer(FooterDataProvider.WATCH_DEBOUNCE_MS / 1000, fire)
-            self._refresh_timer.daemon = True
-            self._refresh_timer.start()
+            self._refresh_timer = Timeout(FooterDataProvider.WATCH_DEBOUNCE_MS, fire)
 
-    def _refresh_git_branch_async(self) -> None:
+    async def _refresh_git_branch_async(self) -> None:
         with self._lock:
             if self._disposed:
                 return
@@ -266,7 +256,7 @@ class FooterDataProvider:
 
         notify = False
         try:
-            next_branch = self._resolve_git_branch_async(git_paths)
+            next_branch = await tonio.spawn_blocking(self._resolve_git_branch_async, git_paths)
             with self._lock:
                 if self._disposed:
                     return
@@ -337,15 +327,13 @@ class FooterDataProvider:
         if self._disposed or self._git_watcher_retry_timer is not None:
             return
 
-        def fire() -> None:
+        async def fire() -> None:
             with self._lock:
                 self._git_watcher_retry_timer = None
                 self._setup_git_watcher()
 
         # Read the delay via the module so tests can shorten it
-        self._git_watcher_retry_timer = threading.Timer(fs_watch.FS_WATCH_RETRY_DELAY_MS / 1000, fire)
-        self._git_watcher_retry_timer.daemon = True
-        self._git_watcher_retry_timer.start()
+        self._git_watcher_retry_timer = Timeout(fs_watch.FS_WATCH_RETRY_DELAY_MS, fire)
 
     def _handle_git_watcher_error(self) -> None:
         with self._lock:

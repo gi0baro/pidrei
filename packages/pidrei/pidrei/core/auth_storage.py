@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_ai.auth.types import (
     ApiKeyCredential,
@@ -137,13 +138,12 @@ class FileAuthStorageBackend:
         if auth_path is None:
             auth_path = os.path.join(get_agent_dir(), "auth.json")
         self._auth_path = normalize_path(auth_path)
-        # In-process queue in front of the cross-process disk lock: pi's
+        # In-process lock in front of the cross-process disk lock: pi's
         # proper-lockfile contends on disk even within one process; here the
         # 100ms+ lock backoff would turn a burst of per-provider reads into a
-        # backoff storm, so same-process callers serialize on this chain and
-        # only genuinely concurrent processes ever hit the retry ladder.
-        self._async_chain: Any = None
-        self._chain_guard = threading.Lock()
+        # backoff storm, so same-process callers serialize here and only
+        # genuinely concurrent processes ever hit the retry ladder.
+        self._async_lock = sync.Lock()
 
     def _ensure_parent_dir(self) -> None:
         directory = os.path.dirname(self._auth_path)
@@ -194,18 +194,10 @@ class FileAuthStorageBackend:
         cancel = options.cancel if options is not None else None
         if cancel is not None:
             cancel.raise_if_cancelled()
-        done = tonio.Event()
-        # The tail swap is pi's synchronous promise chaining; on worker
-        # threads it needs a lock or two callers can link behind the same
-        # predecessor and run concurrently.
-        with self._chain_guard:
-            previous = self._async_chain
-            self._async_chain = done
 
         async def _operation() -> Any:
-            try:
-                if previous is not None:
-                    await previous.wait()
+            # pi's promise chain; a failed predecessor never blocks successors.
+            async with self._async_lock:
                 if cancel is not None:
                     cancel.raise_if_cancelled()
                 await tonio.spawn_blocking(self._ensure_ready)
@@ -223,8 +215,6 @@ class FileAuthStorageBackend:
                     return result
                 finally:
                     await tonio.spawn_blocking(release)
-            finally:
-                done.set()
 
         return await race_with_cancel(_operation(), cancel)
 
@@ -324,9 +314,8 @@ class ReadOnlyAuthStorage(CredentialStore):
 class InMemoryAuthStorageBackend:
     def __init__(self):
         self._value: str | None = None
-        # Settled marker of the last queued async operation (pi chains promises).
-        self._async_chain: Any = None
-        self._chain_guard = threading.Lock()
+        # pi chains the async operations' promises; one at a time.
+        self._async_lock = sync.Lock()
 
     def with_lock(self, fn: Callable[[str | None], tuple[Any, str | None]]) -> Any:
         result, next_content = fn(self._value)
@@ -340,15 +329,9 @@ class InMemoryAuthStorageBackend:
         options: AuthOperationOptions | None = None,
     ) -> Any:
         cancel = options.cancel if options is not None else None
-        done = tonio.Event()
-        with self._chain_guard:
-            previous = self._async_chain
-            self._async_chain = done
 
         async def _operation() -> Any:
-            if previous is not None:
-                await previous.wait()
-            try:
+            async with self._async_lock:
                 if cancel is not None:
                     cancel.raise_if_cancelled()
                 result, next_content = await fn(self._value)
@@ -357,8 +340,6 @@ class InMemoryAuthStorageBackend:
                 if next_content is not None:
                     self._value = next_content
                 return result
-            finally:
-                done.set()
 
         return await race_with_cancel(_operation(), cancel)
 

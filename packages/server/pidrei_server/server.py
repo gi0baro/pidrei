@@ -11,8 +11,8 @@ byte-identical validation errors.
 """
 
 import uuid
-from collections.abc import Awaitable
-from typing import Self
+from collections.abc import Awaitable, Coroutine
+from typing import Any, Self
 
 import tonio.colored as tonio
 
@@ -290,9 +290,18 @@ class PiServer:
 
         return driven(_finish())
 
-    def _send_message(self, connection: ConnectionState, message: ServerMessage) -> Awaitable[bool]:
+    def _send_message(self, connection: ConnectionState, message: ServerMessage) -> Coroutine[Any, Any, bool]:
+        """Queue the frame now (wire ordering is decided here, synchronously)
+        and return the coroutine that waits for it to go out. Callers that
+        void the result (pi's `void this.sendMessage(...)`) spawn it; the
+        connection's writer task already holds the frame, so nothing is lost
+        if the coroutine runs later."""
+
+        async def _not_sent() -> bool:
+            return False
+
         if connection.disconnected or connection.connection.closed:
-            return resolved(False)
+            return _not_sent()
 
         async def _fail() -> bool:
             await self._close_connection(connection.connection)
@@ -303,12 +312,12 @@ class PiServer:
             frame = encode_server_message(message, FrameDecoderOptions(max_frame_length=self._max_frame_length))
         except Exception as error:
             self._report_error(error)
-            return driven(_fail())
+            return _fail()
         try:
             sending = connection.connection.send(frame)
         except Exception as error:
             self._report_error(error)
-            return driven(_fail())
+            return _fail()
 
         async def _finish() -> bool:
             try:
@@ -318,7 +327,7 @@ class PiServer:
                 return await _fail()
             return True
 
-        return driven(_finish())
+        return _finish()
 
     def _fail_protocol(self, connection: ConnectionState, error: ProtocolError) -> Awaitable[None]:
         if connection.disconnected or connection.stage == "closing" or connection.stage == "closed":

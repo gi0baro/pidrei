@@ -174,8 +174,8 @@ class ModelRuntime:
         self._availability_guard = threading.Lock()
         self._availability_error: str | None = None
         # Per-provider serialized credential operations (pi chains promises;
-        # each link is an Event marking that operation settled).
-        self._credential_operations: dict[str, Any] = {}
+        # here one FIFO lock per provider, created on first use).
+        self._credential_operations: dict[str, sync.Lock] = {}
         self._credential_operations_guard = threading.Lock()
         # pi composes providers on one event loop, so a mutation and a rebuild
         # can never interleave. Here a detached refresh rebuilds on another
@@ -638,31 +638,28 @@ class ModelRuntime:
         the queued task begins rejects with the abort reason; once the task has
         started, its result (or failure) is awaited to completion."""
         with self._credential_operations_guard:
-            previous = self._credential_operations.get(provider_id)
-            done = tonio.Event()
-            entry = (done,)
-            self._credential_operations[provider_id] = entry
+            lock = self._credential_operations.get(provider_id)
+            if lock is None:
+                # pi's per-provider promise chain; the lock is FIFO.
+                lock = self._credential_operations[provider_id] = sync.Lock()
 
         started = tonio.Event()
+        done = tonio.Event()
         # Fires on done *or* abort, whichever comes first, without a task per branch.
         progress = tonio.Event()
         outcome: list[tuple[str, Any]] = []
 
         async def _operation() -> None:
             try:
-                if previous is not None:
-                    await previous[0].wait()
-                cancel.raise_if_cancelled()
-                started.set()
-                outcome.append(("value", await task()))
+                async with lock:
+                    cancel.raise_if_cancelled()
+                    started.set()
+                    outcome.append(("value", await task()))
             except BaseException as error:
                 outcome.append(("error", error))
             finally:
                 done.set()
                 progress.set()
-                with self._credential_operations_guard:
-                    if self._credential_operations.get(provider_id) is entry:
-                        del self._credential_operations[provider_id]
 
         tonio.spawn.without_tracking(_operation())
         unsubscribe = cancel.on_cancel(lambda _reason: progress.set())

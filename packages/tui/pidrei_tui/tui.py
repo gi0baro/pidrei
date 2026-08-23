@@ -34,6 +34,7 @@ Port deviations (documented once here):
   ~/.pidrei/agent); log files pidrei-debug.log / pidrei-crash.log.
 """
 
+import functools
 import math
 import os
 import re
@@ -44,6 +45,8 @@ from typing import Any, Protocol
 
 import tonio.colored as tonio
 
+from ._owner import OwnerTask
+from ._timers import get_ui_owner, set_ui_owner
 from .keys import is_key_release, matches_key
 from .terminal_colors import (
     is_osc11_background_color_response,
@@ -286,6 +289,14 @@ class TuiBase(Container, ABC):
         self._render_scope = None
         # Async callback invoked when a frame raises; see `_render_loop`.
         self._render_error_handler = None
+        # The task that owns UI state (pi: the JS thread). A ProcessTerminal
+        # brings its own — the stdin pump and the input timers already run on
+        # it; for any other terminal the TUI runs one (`_owner_scope`) and
+        # routes the terminal's input through it. Components post work that
+        # mutates state from elsewhere (an autocomplete result, a timer) here.
+        self.input_owner: OwnerTask = getattr(terminal, "input_owner", None) or OwnerTask()
+        self.input_owner.on_error = self._handle_owner_error
+        self._owner_scope = None
         self._show_hardware_cursor = os.environ.get("PIDREI_HARDWARE_CURSOR") == "1"
         # Clear empty rows when content shrinks (default: off)
         self._clear_on_shrink = os.environ.get("PIDREI_CLEAR_ON_SHRINK") == "1"
@@ -658,7 +669,19 @@ class TuiBase(Container, ABC):
     async def start(self) -> None:
         self._stopped = False
         await self._before_terminal_start()
-        await self.terminal.start(self._handle_input, self.request_render)
+        on_input = self._handle_input
+        if getattr(self.terminal, "input_owner", None) is not self.input_owner:
+            # The terminal does not run the owner: do it here and put the
+            # terminal's input on it.
+            self._owner_scope = tonio.scope()
+            await self._owner_scope.__aenter__()
+            self.input_owner.start(self._owner_scope)
+
+            async def on_input(data: str) -> None:
+                await self.input_owner.run(functools.partial(self._handle_input, data))
+
+        await self.terminal.start(on_input, self.request_render)
+        set_ui_owner(self.input_owner)
         await self._after_terminal_start()
         self.terminal.hide_cursor()
         if self._color_scheme_notifications_enabled:
@@ -724,8 +747,28 @@ class TuiBase(Container, ABC):
             await self.terminal.write("\x1b[?2031l")
         await self._before_terminal_stop(options)
         self.terminal.show_cursor()
+        if get_ui_owner() is self.input_owner:
+            set_ui_owner(None)
         await self.terminal.stop()
+        if self._owner_scope is not None:
+            # After the terminal: its input no longer arrives, so the queued
+            # work drains and the owner's timers are reaped with the scope.
+            self.input_owner.close()
+            await self._owner_scope.__aexit__(None, None, None)
+            self._owner_scope = None
         await self._after_terminal_stop(options)
+
+    def _handle_owner_error(self, error: BaseException) -> None:
+        """Posted UI work (a timer tick, an autocomplete result) raised.
+
+        pi would crash on it; the render loop's handler gets it here too, so
+        the owner keeps serving input instead of dying with the exception
+        surfacing only at `stop()`.
+        """
+        handler = self._render_error_handler
+        if handler is None:
+            raise error
+        tonio.spawn.without_tracking(handler(error))
 
     async def render_now(self, force: bool = False) -> None:
         """Render one frame synchronously, bypassing the loop and its throttle."""

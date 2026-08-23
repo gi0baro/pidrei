@@ -10,6 +10,9 @@ Runtime mapping notes:
 - The run promise becomes a tonio `Event` awaited by `wait_for_idle()`.
 - Listener registration order is preserved with a list (JS `Set` iterates in
   insertion order; Python's doesn't).
+- pi's single thread made "listeners never overlap" free; here tool bodies run
+  in parallel and emit concurrently, so each run owns one dispatcher task
+  (`_dispatch_events`) that reduces state and awaits listeners in emit order.
 - pi's `continue()` is `continue_()` (`continue` is a Python keyword).
 """
 
@@ -20,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.colored.sync import channel
 
 from pidrei_ai.types import (
     AssistantMessage,
@@ -170,9 +174,21 @@ class PendingMessageQueue:
 
 
 @dataclass(slots=True)
+class _PendingEvent:
+    """One emitted event waiting for the run's dispatcher to observe it."""
+
+    event: AgentEvent
+    observed: tonio.Event
+    error: BaseException | None = None
+
+
+@dataclass(slots=True)
 class _ActiveRun:
     done: tonio.Event
     cancel: CancelToken
+    # Ordered feed to the run's dispatcher task (`_PendingEvent | None`;
+    # `None` closes it).
+    events: Any
 
 
 @dataclass(slots=True)
@@ -233,9 +249,6 @@ class Agent:
         self._steering_queue = PendingMessageQueue(steering_mode if steering_mode is not None else "one-at-a-time")
         self._follow_up_queue = PendingMessageQueue(follow_up_mode if follow_up_mode is not None else "one-at-a-time")
         self._active_run: _ActiveRun | None = None
-        # Loop events arrive concurrently from parallel tool tasks; the state
-        # reducer in `_process_events` is a read-modify-write and needs this.
-        self._reducer_lock = threading.Lock()
 
         self.convert_to_llm = convert_to_llm if convert_to_llm is not None else default_convert_to_llm
         self.transform_context = transform_context
@@ -506,7 +519,8 @@ class Agent:
         if self._active_run is not None:
             raise Exception("Agent is already processing.")
 
-        run = _ActiveRun(done=tonio.Event(), cancel=CancelToken())
+        sender, receiver = channel.unbounded()
+        run = _ActiveRun(done=tonio.Event(), cancel=CancelToken(), events=sender)
         self._active_run = run
 
         self._state.is_streaming = True
@@ -514,9 +528,18 @@ class Agent:
         self._state.error_message = None
 
         try:
-            await executor(run.cancel)
-        except Exception as error:
-            await self._handle_run_failure(error, run.cancel.cancelled)
+            # The dispatcher is a child of the run: it outlives every emitter
+            # (tool tasks are joined by the loop before the executor returns,
+            # and the failure events below go through it too) and is closed
+            # and joined before the run is considered idle.
+            async with tonio.scope() as scope:
+                scope.spawn(self._dispatch_events(receiver))
+                try:
+                    await executor(run.cancel)
+                except Exception as error:
+                    await self._handle_run_failure(error, run.cancel.cancelled)
+                finally:
+                    sender.send(None)
         finally:
             self._finish_run()
 
@@ -546,34 +569,67 @@ class Agent:
             run.done.set()
 
     async def _process_events(self, event: AgentEvent) -> None:
-        """Reduce internal state for a loop event, then await listeners.
+        """Hand a loop event to the run's dispatcher and wait until it is observed.
+
+        Parallel work, serialized observation: tool bodies run as parallel
+        tasks and emit concurrently, but the state reducer and the listeners
+        only ever run on the dispatcher task, one event at a time, in emit
+        order — pi's single-thread contract ("listeners never overlap"),
+        which the loop relies on when it reads state a listener set. Awaiting
+        the ticket keeps `await emit(...)` meaning "listeners have settled",
+        and a listener failure still surfaces at the emitter.
 
         `agent_end` only means no further loop events will be emitted. The run
         is considered idle later, after all awaited listeners for `agent_end`
         finish and `_finish_run()` clears runtime-owned state.
         """
-        with self._reducer_lock:
-            if event.type == "message_start" or event.type == "message_update":
-                self._state.streaming_message = event.message
-            elif event.type == "message_end":
-                self._state.streaming_message = None
-                self._state.messages.append(event.message)
-            elif event.type == "tool_execution_start":
-                pending_tool_calls = set(self._state.pending_tool_calls)
-                pending_tool_calls.add(event.tool_call_id)
-                self._state.pending_tool_calls = pending_tool_calls
-            elif event.type == "tool_execution_end":
-                pending_tool_calls = set(self._state.pending_tool_calls)
-                pending_tool_calls.discard(event.tool_call_id)
-                self._state.pending_tool_calls = pending_tool_calls
-            elif event.type == "turn_end":
-                if getattr(event.message, "role", None) == "assistant" and event.message.error_message:
-                    self._state.error_message = event.message.error_message
-            elif event.type == "agent_end":
-                self._state.streaming_message = None
-
         run = self._active_run
         if run is None:
             raise Exception("Agent listener invoked outside active run")
-        for listener in list(self._listeners):
-            await listener(event, run.cancel)
+        pending = _PendingEvent(event=event, observed=tonio.Event())
+        run.events.send(pending)
+        await pending.observed.wait()
+        if pending.error is not None:
+            raise pending.error
+
+    async def _dispatch_events(self, receiver: Any) -> None:
+        """Single consumer of a run's events: reduce state, then await listeners in order.
+
+        This is also the one consumer of the streamed `partial` message: a
+        `message_update` carries the provider's live message (§2.9 of the
+        concurrency audit — a live view, the deltas are authoritative), and
+        serializing observation here is what makes that a property of one
+        place rather than of every listener.
+        """
+        while True:
+            pending = await receiver.receive()
+            if pending is None:
+                return
+            try:
+                self._reduce(pending.event)
+                run = self._active_run
+                cancel = run.cancel if run is not None else CancelToken()
+                for listener in list(self._listeners):
+                    await listener(pending.event, cancel)
+            except BaseException as error:
+                pending.error = error
+            finally:
+                pending.observed.set()
+
+    def _reduce(self, event: AgentEvent) -> None:
+        if event.type == "message_start" or event.type == "message_update":
+            self._state.streaming_message = event.message
+        elif event.type == "message_end":
+            self._state.streaming_message = None
+            self._state.messages.append(event.message)
+        elif event.type == "tool_execution_start":
+            # Copy-on-write (pi's `new Set`): readers on other tasks may be
+            # iterating the previous set.
+            self._state.pending_tool_calls = self._state.pending_tool_calls | {event.tool_call_id}
+        elif event.type == "tool_execution_end":
+            self._state.pending_tool_calls = self._state.pending_tool_calls - {event.tool_call_id}
+        elif event.type == "turn_end":
+            if getattr(event.message, "role", None) == "assistant" and event.message.error_message:
+                self._state.error_message = event.message.error_message
+        elif event.type == "agent_end":
+            self._state.streaming_message = None

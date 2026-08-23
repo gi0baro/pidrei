@@ -23,19 +23,19 @@ Port deviations (pi is single-threaded JS):
 
 - Events: pi extends EventEmitter with "data"/"paste"; here listeners are
   registered via ``on_data``/``on_paste`` returning unsubscribe callables.
-- The flush timeout is a tonio task; under tonio's multi-threaded runtime it
-  may fire on a different worker thread than the ``process()`` caller, so all
-  state transitions hold a re-entrant sync lock (never held across an await)
-  and the timer callback re-checks its own identity under that lock to get
-  clearTimeout's determinism back.
+- The flush timeout is scheduled on an `OwnerTask` (pi: the JS thread's
+  `setTimeout`). Inside `ProcessTerminal` that is the input owner, so
+  `process()`, the flush and every listener run on one task and clearTimeout
+  is exact by construction. A buffer built without an owner (standalone, as
+  in the mirrored tests) fires on a detached timer task instead; the
+  callback's identity re-check is what keeps that mode honest.
 - Non-escape input is split per Unicode codepoint, not per UTF-16 unit, so
   astral-plane characters are never cut into surrogate halves.
 """
 
 import re
-import threading
 
-from ._timers import Timeout
+from ._owner import OwnerTask, TimerHandle
 
 
 ESC = "\x1b"
@@ -238,12 +238,17 @@ class StdinBuffer:
     high-latency Alt+key input (SSH).
     """
 
-    def __init__(self, timeout: float | None = None, escape_timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        timeout: float | None = None,
+        escape_timeout: float | None = None,
+        owner: OwnerTask | None = None,
+    ) -> None:
         self._timeout_ms = timeout if timeout is not None else DEFAULT_SEQUENCE_TIMEOUT_MS
         self._escape_timeout_ms = escape_timeout if escape_timeout is not None else DEFAULT_ESCAPE_TIMEOUT_MS
-        self._lock = threading.RLock()
+        self._owner = owner if owner is not None else OwnerTask()
         self._buffer = ""
-        self._timeout: Timeout | None = None
+        self._timeout: TimerHandle | None = None
         self._paste_mode = False
         self._paste_buffer = ""
         self._pending_kitty_printable_codepoint: int | None = None
@@ -271,17 +276,13 @@ class StdinBuffer:
     async def process(self, data: str | bytes | bytearray) -> None:
         """Parse `data` and deliver whatever it completes to the listeners.
 
-        The parse runs under `_lock`; the delivery does not. Listeners are the
-        head of the input chain and are now async (they end up persisting things
-        like label edits), so awaiting them under a threading lock would be the
-        very hazard this codebase forbids. `_process` therefore *collects*
-        emissions instead of firing them, and the lock is released before any of
-        them is delivered. Ordering across the recursive paste path is preserved
-        because every branch appends to the same list.
+        `_process` *collects* emissions (the recursive paste path appends to
+        the same list, so order is preserved) and they are delivered once the
+        parse is complete, so a listener re-entering the buffer never sees a
+        half-applied state.
         """
-        with self._lock:
-            emissions: list[tuple[str, str]] = []
-            self._process(data, emissions)
+        emissions: list[tuple[str, str]] = []
+        self._process(data, emissions)
         await self._dispatch(emissions)
 
     async def _dispatch(self, emissions: list[tuple[str, str]]) -> None:
@@ -373,29 +374,27 @@ class StdinBuffer:
             self._schedule_flush_timer()
 
     def _schedule_flush_timer(self) -> None:
-        timer: Timeout | None = None
+        timer: TimerHandle | None = None
 
         async def fire() -> None:
-            with self._lock:
-                # A process()/flush()/clear() call may have raced the firing
-                # callback past its cancellation check; only the current timer
-                # is allowed to flush.
-                if self._timeout is not timer:
-                    return
-                self._timeout = None
-                emissions: list[tuple[str, str]] = []
-                for sequence in self._flush():
-                    self._emit_data_sequence(sequence, emissions)
-            # Same rule as `process`: collected under the lock, delivered after.
+            # Only the current timer may flush (standalone mode: a detached
+            # timer can pass its cancellation check while process()/flush()
+            # replaces it; on the owner this never happens).
+            if self._timeout is not timer:
+                return
+            self._timeout = None
+            emissions: list[tuple[str, str]] = []
+            for sequence in self._flush():
+                self._emit_data_sequence(sequence, emissions)
             await self._dispatch(emissions)
 
         timeout_ms = self._escape_timeout_ms if self._buffer == ESC else self._timeout_ms
-        timer = Timeout(timeout_ms, fire)
+        timer = self._owner.after(timeout_ms, fire)
         self._timeout = timer
 
     def _emit_data_sequence(self, sequence: str, out: list[tuple[str, str]]) -> None:
-        """Under `_lock`: apply the Kitty codepoint de-duplication and queue the
-        sequence for delivery. Does not touch listeners."""
+        """Apply the Kitty codepoint de-duplication and queue the sequence for
+        delivery. Does not touch listeners."""
         raw_codepoint = ord(sequence) if len(sequence) == 1 else None
         if raw_codepoint is not None and raw_codepoint == self._pending_kitty_printable_codepoint:
             self._pending_kitty_printable_codepoint = None
@@ -405,8 +404,7 @@ class StdinBuffer:
         out.append(("data", sequence))
 
     def flush(self) -> list[str]:
-        with self._lock:
-            return self._flush()
+        return self._flush()
 
     def _flush(self) -> list[str]:
         if self._timeout is not None:
@@ -422,18 +420,16 @@ class StdinBuffer:
         return sequences
 
     def clear(self) -> None:
-        with self._lock:
-            if self._timeout is not None:
-                self._timeout.cancel()
-                self._timeout = None
-            self._buffer = ""
-            self._paste_mode = False
-            self._paste_buffer = ""
-            self._pending_kitty_printable_codepoint = None
+        if self._timeout is not None:
+            self._timeout.cancel()
+            self._timeout = None
+        self._buffer = ""
+        self._paste_mode = False
+        self._paste_buffer = ""
+        self._pending_kitty_printable_codepoint = None
 
     def get_buffer(self) -> str:
-        with self._lock:
-            return self._buffer
+        return self._buffer
 
     def destroy(self) -> None:
         self.clear()

@@ -7,12 +7,12 @@ appended to disk before it lands in the in-memory state.
 """
 
 import copy
-import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from ..state import (
     EntryMutation,
@@ -85,8 +85,7 @@ class JsonlSessionStorage:
         self._fs = fs
         self._metadata = copy.deepcopy(metadata)
         self._state = SessionState()
-        self._tail: tonio.Event | None = None
-        self._tail_guard = threading.Lock()
+        self._operations_lock = sync.Lock()
 
     @staticmethod
     async def create(fs: JsonlSessionRepoFileSystem, path: str, header: JsonlV4Header) -> JsonlSessionStorage:
@@ -158,9 +157,9 @@ class JsonlSessionStorage:
         return await JsonlSessionStorage.load(self._fs, path)
 
     async def drain(self) -> None:
-        tail = self._tail
-        if tail is not None:
-            await tail.wait()
+        # Queue behind everything enqueued so far (the lock is FIFO).
+        async with self._operations_lock:
+            pass
 
     async def get_metadata(self) -> JsonlSessionMetadata:
         return copy.deepcopy(self._metadata)
@@ -265,21 +264,11 @@ class JsonlSessionStorage:
         return copy.deepcopy(self._state.get_stats())
 
     async def _enqueue[T](self, operation: Callable[[], Awaitable[T]]) -> T:
-        # FIFO chain: operations commit in call order and a failed predecessor
-        # never blocks or fails its successors. The reservation is guarded
-        # because "no await between reading and replacing the tail" is only
-        # atomic on a single-threaded loop — tonio runs tasks on real threads,
-        # where two callers can read the same tail and then run concurrently.
-        # Same shape as `with_file_mutation_queue`'s `queues_guard`.
-        with self._tail_guard:
-            previous, mine = self._tail, tonio.Event()
-            self._tail = mine
-        try:
-            if previous is not None:
-                await previous.wait()
+        # pi's promise chain: operations commit in call order (the lock is
+        # FIFO) and a failed predecessor never blocks or fails its successors
+        # (released in the context manager's exit).
+        async with self._operations_lock:
             return await operation()
-        finally:
-            mine.set()
 
     async def _append_mutation(self, mutation: SessionMutation) -> None:
         file_result(

@@ -1,19 +1,28 @@
 """Mirror of pi coding-agent src/utils/fs-watch.ts.
 
 pi wraps node's ``fs.watch`` with error handling. Python has no stdlib
-directory-watch primitive, so the watcher is a polling daemon thread that
-snapshots entry mtimes and reports changes as ``(event_type, filename)``
-callbacks — the same listener shape pi consumers use (they debounce and
-re-read on their side, so poll granularity only affects reload latency).
+directory-watch primitive, so the watcher polls: it snapshots entry mtimes
+and reports changes as ``(event_type, filename)`` callbacks — the same
+listener shape pi consumers use (they debounce and re-read on their side,
+so poll granularity only affects reload latency).
+
+The poll is a TUI timer (`pidrei_tui._timers.Interval`): each tick runs the
+scan on the blocking pool and calls the listener on the UI owner task, the
+way node delivers watcher events on its one thread. Listeners therefore run
+where the state they touch lives (theme reload, footer refresh), and the
+watchers are reaped with the TUI's scope. A watcher needs a tonio runtime.
 """
 
 import os
-import threading
+
+import tonio.colored as tonio
+
+from pidrei_tui._timers import Interval
 
 
 FS_WATCH_RETRY_DELAY_MS = 5000
 
-_POLL_INTERVAL_SECONDS = 0.2
+_POLL_INTERVAL_MS = 200
 
 
 class FsWatcher:
@@ -26,10 +35,12 @@ class FsWatcher:
         self._is_dir = os.path.isdir(path)
         if not self._is_dir and not os.path.exists(path):
             raise OSError(f"path does not exist: {path}")
-        self._stop = threading.Event()
+        # The baseline is taken here so that every change after the watcher
+        # exists is reported (node's fs.watch has the same contract).
         self._snapshot = self._scan()
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._closed = False
+        self._scanning = False
+        self._interval = Interval(_POLL_INTERVAL_MS, self._tick)
 
     def _scan(self) -> dict:
         if not self._is_dir:
@@ -42,28 +53,36 @@ class FsWatcher:
                 continue
         return entries
 
-    def _run(self) -> None:
-        while not self._stop.wait(_POLL_INTERVAL_SECONDS):
-            try:
-                current = self._scan()
-            except OSError:
-                # Watched directory disappeared or became unreadable —
-                # mirrors the watcher "error" event path.
-                if not self._stop.is_set():
-                    self._on_error()
+    async def _tick(self) -> None:
+        if self._closed or self._scanning:
+            return  # a scan slower than the poll interval does not pile up
+        self._scanning = True
+        try:
+            current = await tonio.spawn_blocking(self._scan)
+        except OSError:
+            # Watched directory disappeared or became unreadable — mirrors
+            # the watcher "error" event path.
+            if not self._closed:
+                self.close()
+                self._on_error()
+            return
+        finally:
+            self._scanning = False
+        previous = self._snapshot
+        self._snapshot = current
+        if self._closed:
+            return
+        for name in current.keys() | previous.keys():
+            if current.get(name) == previous.get(name):
+                continue
+            event = "change" if name in current and name in previous else "rename"
+            if self._closed:
                 return
-            previous = self._snapshot
-            self._snapshot = current
-            for name in current.keys() | previous.keys():
-                if current.get(name) == previous.get(name):
-                    continue
-                event = "change" if name in current and name in previous else "rename"
-                if self._stop.is_set():
-                    return
-                self._listener(event, name)
+            self._listener(event, name)
 
     def close(self) -> None:
-        self._stop.set()
+        self._closed = True
+        self._interval.cancel()
 
 
 def close_watcher(watcher) -> None:
@@ -103,46 +122,48 @@ def _stat_record(path: str) -> dict:
 class _FileStatPoller:
     def __init__(self, path: str, interval_ms: float, listener) -> None:
         self._path = path
-        self._interval = max(interval_ms, 1) / 1000
         self.listener = listener
-        self._stop = threading.Event()
         self._previous = _stat_record(path)
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._stopped = False
+        self._polling = False
+        self._interval = Interval(max(interval_ms, 1), self._tick)
 
-    def _run(self) -> None:
-        while not self._stop.wait(self._interval):
-            current = _stat_record(self._path)
-            previous = self._previous
-            self._previous = current
-            if current != previous and not self._stop.is_set():
-                self.listener(current, previous)
+    async def _tick(self) -> None:
+        if self._stopped or self._polling:
+            return
+        self._polling = True
+        try:
+            current = await tonio.spawn_blocking(_stat_record, self._path)
+        finally:
+            self._polling = False
+        previous = self._previous
+        self._previous = current
+        if current != previous and not self._stopped:
+            self.listener(current, previous)
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stopped = True
+        self._interval.cancel()
 
 
-_file_pollers_lock = threading.Lock()
 _file_pollers: dict = {}
 
 
 def watch_file(path: str, interval_ms: float, listener) -> None:
     """node ``fs.watchFile``: poll a file's stats, call ``listener(curr, prev)``."""
-    with _file_pollers_lock:
-        _file_pollers.setdefault(path, []).append(_FileStatPoller(path, interval_ms, listener))
+    _file_pollers.setdefault(path, []).append(_FileStatPoller(path, interval_ms, listener))
 
 
 def unwatch_file(path: str, listener=None) -> None:
     """node ``fs.unwatchFile``: remove one listener, or all for the path."""
-    with _file_pollers_lock:
-        pollers = _file_pollers.get(path, [])
-        remaining = []
-        for poller in pollers:
-            if listener is None or poller.listener is listener:
-                poller.stop()
-            else:
-                remaining.append(poller)
-        if remaining:
-            _file_pollers[path] = remaining
+    pollers = _file_pollers.get(path, [])
+    remaining = []
+    for poller in pollers:
+        if listener is None or poller.listener is listener:
+            poller.stop()
         else:
-            _file_pollers.pop(path, None)
+            remaining.append(poller)
+    if remaining:
+        _file_pollers[path] = remaining
+    else:
+        _file_pollers.pop(path, None)

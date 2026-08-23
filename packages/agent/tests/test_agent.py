@@ -4,6 +4,7 @@ import time
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei_agent.agent import Agent, AgentInitialState
 from pidrei_agent.stream_fn import set_default_stream_fn
@@ -445,6 +446,64 @@ async def test_should_ignore_a_settled_parallel_tool_update_while_another_tool_i
     release_slow.set()
     await handle
     assert len([event for event in events if event.type == "tool_execution_update"]) == 0
+
+
+@pytest.mark.tonio
+async def test_listeners_never_overlap_under_parallel_tools():
+    # Tool bodies run as parallel tasks and emit concurrently; pi's single
+    # thread guaranteed listeners run one at a time. A listener that suspends
+    # mid-observation must not see a second event enter before it leaves.
+    both_started = sync.Barrier(2)
+    parked = tonio.Event()
+    release = tonio.Event()
+    in_flight = 0
+    max_in_flight = 0
+    observed: list[str] = []
+
+    def make_execute(name):
+        async def execute(_tool_call_id, _params, _cancel, on_update):
+            await both_started.wait()
+            for index in range(5):
+                on_update(AgentToolResult(content=[TextContent(text=f"{name}-{index}")], details={}))
+            return AgentToolResult(content=[TextContent(text="done")], details={}, terminate=True)
+
+        return execute
+
+    tools = [FnTool(name, name, "Emits progress", EMPTY_SCHEMA, make_execute(name)) for name in ("alpha", "beta")]
+
+    async def stream_fn(_model, _context, _options):
+        return done_stream(
+            create_assistant_tool_use_message(
+                [ToolCall(id="call-a", name="alpha", arguments={}), ToolCall(id="call-b", name="beta", arguments={})]
+            ),
+            "toolUse",
+        )
+
+    agent = Agent(initial_state=AgentInitialState(tools=tools), stream_fn=stream_fn)
+
+    async def listener(event, _signal):
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        if event.type == "tool_execution_update":
+            observed.append(event.partial_result.content[0].text)
+            if len(observed) == 1:
+                # Park inside the first observation while the other tool's
+                # updates are already queued behind it.
+                parked.set()
+                await release.wait(None)
+        in_flight -= 1
+
+    agent.subscribe(listener)
+    handle = tonio.spawn(agent.prompt("run tools"))
+    await parked.wait(None)
+    await tonio.sleep(0.02)
+    release.set()
+    await handle
+
+    assert max_in_flight == 1
+    assert sorted(observed) == sorted(f"{name}-{index}" for name in ("alpha", "beta") for index in range(5))
+    assert agent.state.pending_tool_calls == set()
 
 
 @pytest.mark.tonio
