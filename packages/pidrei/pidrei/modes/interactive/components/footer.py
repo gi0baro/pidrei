@@ -67,6 +67,7 @@ class FooterComponent:
         self._auto_compact_enabled = True
         self._session = session
         self._footer_data = footer_data
+        self._usage_cache: tuple | None = None
 
     def set_session(self, session) -> None:
         self._session = session
@@ -82,15 +83,23 @@ class FooterComponent:
         # Git watcher cleanup handled by provider
         pass
 
-    def render(self, width: int) -> list:
-        state = self._session.state
+    def _usage_totals(self):
+        """Cumulative usage from ALL session entries (not just post-compaction messages).
 
-        # Calculate cumulative usage from ALL session entries (not just
-        # post-compaction messages)
+        pi walks the entries every frame; here the walk is keyed on the
+        session manager and its entries revision, so while nothing was
+        appended a frame costs one comparison instead of O(history).
+        """
+        session_manager = self._session.session_manager
+        revision = session_manager.get_entries_revision()
+        cached = self._usage_cache
+        if cached is not None and cached[0] is session_manager and cached[1] == revision:
+            return cached[2], cached[3]
+
         usage_totals = create_usage_totals()
         latest_cache_hit_rate: float | None = None
 
-        for entry in self._session.session_manager.get_entries():
+        for entry in session_manager.get_entries():
             message = entry.get("message")
             if entry.get("type") == "message" and getattr(message, "role", None) == "assistant":
                 add_usage_to_totals(usage_totals, message.usage)
@@ -103,6 +112,14 @@ class FooterComponent:
                 add_usage_to_totals(usage_totals, message.usage)
             elif entry.get("type") in ("branch_summary", "compaction") and entry.get("usage"):
                 add_usage_to_totals(usage_totals, entry["usage"])
+
+        self._usage_cache = (session_manager, revision, usage_totals, latest_cache_hit_rate)
+        return usage_totals, latest_cache_hit_rate
+
+    def render(self, width: int) -> list:
+        state = self._session.state
+
+        usage_totals, latest_cache_hit_rate = self._usage_totals()
 
         # Calculate context usage from session (handles compaction
         # correctly). After compaction, tokens are unknown until the next LLM

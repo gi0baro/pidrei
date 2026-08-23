@@ -57,13 +57,26 @@ class Markdown:
         # read once per render, so a concurrent `invalidate()` (Loader tick,
         # agent thread, theme reload) can never be observed half-cleared.
         self._cache: tuple[str, int, list[str]] | None = None
+        # Per-block cache, keyed on the lexed token itself (plus the width and
+        # the following block's type, the only other render inputs). While a
+        # message streams the whole text is re-lexed every frame — the tail
+        # can still change what came before it (lazy continuation, reference
+        # definitions, an unclosed fence) — but every block that lexes the
+        # same renders from here instead of going through pygments and the
+        # inline styler again. Rebuilt from the blocks present on each render,
+        # so it never outgrows the current text. `set_text` keeps it;
+        # `invalidate` (theme change) drops it.
+        self._block_cache: dict[tuple[str, int, str | None], list[str]] = {}
 
     def set_text(self, text: str) -> None:
+        if text == self._text:
+            return
         self._text = text
-        self.invalidate()
+        self._cache = None
 
     def invalidate(self) -> None:
         self._cache = None
+        self._block_cache = {}
 
     def render(self, width: int) -> list[str]:
         source_text = self._text
@@ -90,42 +103,24 @@ class Markdown:
         tokens = lex(normalized_text)
         trim_partial_closing_fences(tokens)
 
-        # Convert tokens to styled terminal output
-        rendered_lines: list[str] = []
-
-        for i, token in enumerate(tokens):
-            next_token = tokens[i + 1] if i + 1 < len(tokens) else None
-            token_lines = self._render_token(token, content_width, next_token["type"] if next_token else None)
-            rendered_lines.extend(token_lines)
-
-        # Wrap lines (NO padding, NO background yet)
-        wrapped_lines: list[str] = []
-        for line in rendered_lines:
-            if is_image_line(line):
-                wrapped_lines.append(line)
-            else:
-                wrapped_lines.extend(wrap_text_with_ansi(line, content_width))
-
-        # Add margins and background to each wrapped line
-        left_margin = " " * self._padding_x
-        right_margin = " " * self._padding_x
+        # Convert tokens to styled, wrapped, padded terminal lines — block by
+        # block, so an unchanged block costs one dict lookup.
         bg_fn = self._default_text_style.get("bgColor") if self._default_text_style else None
         content_lines: list[str] = []
+        previous_blocks = self._block_cache
+        blocks: dict[tuple[str, int, str | None], list[str]] = {}
 
-        for line in wrapped_lines:
-            if is_image_line(line):
-                content_lines.append(line)
-                continue
-
-            line_with_margins = left_margin + line + right_margin
-
-            if bg_fn is not None:
-                content_lines.append(apply_background_to_line(line_with_margins, width, bg_fn))
-            else:
-                # No background - just pad to width
-                visible_len = visible_width(line_with_margins)
-                padding_needed = max(0, width - visible_len)
-                content_lines.append(line_with_margins + " " * padding_needed)
+        for i, token in enumerate(tokens):
+            next_token_type = tokens[i + 1]["type"] if i + 1 < len(tokens) else None
+            key = (repr(token), content_width, next_token_type)
+            block_lines = previous_blocks.get(key)
+            if block_lines is None:
+                block_lines = self._finish_lines(
+                    self._render_token(token, content_width, next_token_type), width, content_width, bg_fn
+                )
+            blocks[key] = block_lines
+            content_lines.extend(block_lines)
+        self._block_cache = blocks
 
         # Add top/bottom padding (empty lines)
         empty_line = " " * width
@@ -141,6 +136,26 @@ class Markdown:
         self._cache = (source_text, width, result)
 
         return result if result else [""]
+
+    def _finish_lines(self, rendered_lines: list[str], width: int, content_width: int, bg_fn) -> list[str]:
+        """Wrap one block's lines to the content width, then add margins and background."""
+        left_margin = " " * self._padding_x
+        right_margin = " " * self._padding_x
+        content_lines: list[str] = []
+
+        for rendered in rendered_lines:
+            if is_image_line(rendered):
+                content_lines.append(rendered)
+                continue
+            for line in wrap_text_with_ansi(rendered, content_width):
+                line_with_margins = left_margin + line + right_margin
+                if bg_fn is not None:
+                    content_lines.append(apply_background_to_line(line_with_margins, width, bg_fn))
+                else:
+                    # No background - just pad to width
+                    padding_needed = max(0, width - visible_width(line_with_margins))
+                    content_lines.append(line_with_margins + " " * padding_needed)
+        return content_lines
 
     def _apply_default_style(self, text: str) -> str:
         """Apply default text style to a string.

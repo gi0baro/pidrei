@@ -853,6 +853,9 @@ class SessionManager:
         self._persist = persist
         self._flushed = False
         self._file_entries: list[dict[str, Any]] = []
+        # Bumped on every change to `_file_entries`; lets per-frame readers
+        # (the footer's usage totals) key a cache without copying the list.
+        self._entries_revision = 0
         self._by_id: dict[str, dict[str, Any]] = {}
         self._labels_by_id: dict[str, str] = {}
         self._label_timestamps_by_id: dict[str, str] = {}
@@ -901,6 +904,7 @@ class SessionManager:
             self._file_entries = [
                 entry if entry.get("type") == "session" else _decode_entry(entry) for entry in wire_entries
             ]
+            self._entries_revision += 1
             if migrated:
                 self._rewrite_file()
 
@@ -929,6 +933,7 @@ class SessionManager:
             if parent_session is not None:
                 header["parentSession"] = parent_session
             self._file_entries = [header]
+            self._entries_revision += 1
             self._by_id.clear()
             self._labels_by_id.clear()
             self._label_timestamps_by_id.clear()
@@ -1030,6 +1035,7 @@ class SessionManager:
     def _append_entry_locked(self, entry: dict[str, Any]) -> None:
         """In-memory half of an append. Caller holds `_lock` and `_io_lock`."""
         self._file_entries.append(entry)
+        self._entries_revision += 1
         self._by_id[entry["id"]] = entry
         self._leaf_id = entry["id"]
 
@@ -1226,6 +1232,13 @@ class SessionManager:
         with self._lock:
             return [entry for entry in self._file_entries if entry.get("type") != "session"]
 
+    def get_entries_revision(self) -> int:
+        """A counter that changes whenever `get_entries()` would return something different.
+
+        Not in pi; for readers that run per frame and want to skip the copy.
+        """
+        return self._entries_revision
+
     def get_tree(self) -> list[SessionTreeNode]:
         """Get the session as a tree structure. A well-formed session has exactly one
         root (first entry with parentId null). Orphaned entries are also roots."""
@@ -1378,6 +1391,7 @@ class SessionManager:
                 parent_id = label_entry["id"]
 
             self._file_entries = [header, *path_without_labels, *label_entries]
+            self._entries_revision += 1
             self._session_id = new_session_id
             if self._persist:
                 self._session_file = new_session_file

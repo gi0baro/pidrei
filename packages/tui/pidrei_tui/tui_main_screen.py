@@ -271,7 +271,7 @@ class TuiMainScreen(TuiBase):
                 buffer += line
                 i += 1
             buffer += "\x1b[?2026l"  # End synchronized output
-            await self.terminal.write(buffer)
+            self._emit(buffer)
             self._cursor_row = max(0, len(new_lines) - 1)
             self._hardware_cursor_row = self._cursor_row
             # Reset max lines when clearing, otherwise track growth
@@ -391,7 +391,7 @@ class TuiMainScreen(TuiBase):
                 if move_back > 0:
                     buffer += f"\x1b[{move_back}A"
                 buffer += "\x1b[?2026l"
-                await self.terminal.write(buffer)
+                self._emit(buffer)
                 self._cursor_row = target_row
                 self._hardware_cursor_row = target_row
             await self._position_hardware_cursor(cursor_pos, len(new_lines))
@@ -546,7 +546,7 @@ class TuiMainScreen(TuiBase):
             await tonio.spawn_blocking(_write_crash_log, debug_path, debug_data)
 
         # Write entire buffer at once
-        await self.terminal.write(buffer)
+        self._emit(buffer)
 
         # Track cursor position for next render
         # cursor_row tracks end of content (for viewport calculation)
@@ -573,7 +573,7 @@ class TuiMainScreen(TuiBase):
         buffer so the frame tail is one write from the render loop task.
         """
         if not cursor_pos or total_lines <= 0:
-            await self.terminal.write("\x1b[?25l")
+            self._emit("\x1b[?25l")
             return
 
         # Clamp cursor position to valid range
@@ -590,5 +590,5 @@ class TuiMainScreen(TuiBase):
         # Move to absolute column (1-indexed)
         buffer += f"\x1b[{target_col + 1}G"
         buffer += "\x1b[?25h" if self._show_hardware_cursor else "\x1b[?25l"
-        await self.terminal.write(buffer)
+        self._emit(buffer)
         self._hardware_cursor_row = target_row

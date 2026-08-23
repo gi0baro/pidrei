@@ -255,6 +255,7 @@ class Editor:
     def __init__(self, tui, theme: dict, options: dict | None = None) -> None:
         options = options or {}
         self._state = {"lines": [""], "cursorLine": 0, "cursorCol": 0}
+        self._layout_cache: tuple[tuple, list[dict]] | None = None
 
         # Focusable interface - set by TUI when focus changes
         self.focused = False
@@ -815,6 +816,21 @@ class Editor:
         return lines[cursor_line] if cursor_line < len(lines) else ""
 
     def _layout_text(self, content_width: int) -> list[dict]:
+        # pi lays the text out on every frame. Here the frame rate is set by
+        # the rest of the UI (a spinner, a streaming answer) while the editor
+        # sits idle, so the layout is keyed on everything it reads: the lines
+        # (a tuple of the same string objects compares by identity first),
+        # the cursor and the width. The state is mutated in place, hence the
+        # comparison rather than a version.
+        key = (tuple(self._state["lines"]), self._state["cursorLine"], self._state["cursorCol"], content_width)
+        cached = self._layout_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        layout_lines = self._compute_layout(content_width)
+        self._layout_cache = (key, layout_lines)
+        return layout_lines
+
+    def _compute_layout(self, content_width: int) -> list[dict]:
         layout_lines: list[dict] = []
 
         if not self._state["lines"] or (len(self._state["lines"]) == 1 and self._state["lines"][0] == ""):

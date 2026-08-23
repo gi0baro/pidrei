@@ -14,11 +14,19 @@ Port deviations (documented once here):
 
 - Render coalescing: pi chains ``process.nextTick`` + a 16ms ``setTimeout``
   throttle; here ``start()`` spawns a single render-loop task that parks on
-  an Event, applies the same 16ms throttle against the last render time, and
-  calls ``_do_render``. ``request_render()`` stays sync (callable from input
-  handlers); ``force=True`` resets the differential state and skips the
-  throttle, and keyboard input takes the same throttle-skipping path without
-  the reset (pi cancels its render timer for both).
+  an Event, applies the same 16ms throttle against the end of the last
+  frame, and calls ``_do_render``. ``request_render()`` stays sync (callable
+  from input handlers); ``force=True`` resets the differential state and
+  skips the throttle, and keyboard input takes the same throttle-skipping
+  path without the reset (pi cancels its render timer for both).
+- Frame output is a two-stage pipeline: ``_do_render`` computes a frame and
+  hands its bytes to a writer task over a one-slot channel (``_emit``), so
+  the next frame's compute overlaps the previous frame's trip to the
+  terminal while a slow link (SSH) still paces the loop — the loop can be
+  at most one frame ahead of the wire. pi writes synchronously from the
+  same thread; the ordering that gives it is kept by routing every write
+  the renderers make through ``_emit`` and by ``render_now``/``stop``
+  draining the pipeline (``_flush_frames``) before anything else goes out.
 - ``start``/``stop`` are async (they drive the async terminal driver and the
   render-loop lifecycle). The loop exits cooperatively on ``stop()`` — no
   task abort involved.
@@ -44,6 +52,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Protocol
 
 import tonio.colored as tonio
+from tonio.colored.sync import channel
 
 from ._owner import OwnerTask
 from ._timers import get_ui_owner, set_ui_owner
@@ -286,7 +295,14 @@ class TuiBase(Container, ABC):
         self._render_force_lock = threading.Lock()
         self._pre_render_callbacks: list = []
         self._last_render_at = 0.0
+        self._line_reset_memo: dict[str, str] = {}
         self._render_scope = None
+        # Frame pipeline (see the module docstring): the sender side of the
+        # one-slot channel while the writer task runs, else None.
+        self._writer_scope = None
+        self._frames: Any = None
+        self._frame_parts: list[str] = []
+        self._frame_writer_error: BaseException | None = None
         # Async callback invoked when a frame raises; see `_render_loop`.
         self._render_error_handler = None
         # The task that owns UI state (pi: the JS thread). A ProcessTerminal
@@ -687,6 +703,11 @@ class TuiBase(Container, ABC):
         if self._color_scheme_notifications_enabled:
             await self.terminal.write("\x1b[?2031h")
         await self._query_cell_size()
+        self._frames, receiver = channel.channel(1)
+        self._frame_writer_error = None
+        self._writer_scope = tonio.scope()
+        await self._writer_scope.__aenter__()
+        self._writer_scope.spawn(self._frame_writer(receiver))
         self._render_scope = tonio.scope()
         await self._render_scope.__aenter__()
         self._render_scope.spawn(self._render_loop())
@@ -743,6 +764,13 @@ class TuiBase(Container, ABC):
         if self._render_scope is not None:
             await self._render_scope.__aexit__(None, None, None)
             self._render_scope = None
+        if self._writer_scope is not None:
+            # After the loop: what it handed over still goes out, then the
+            # writer stops and everything below writes in order behind it.
+            frames, self._frames = self._frames, None
+            await frames.send(None)
+            await self._writer_scope.__aexit__(None, None, None)
+            self._writer_scope = None
         if self._color_scheme_notifications_enabled:
             await self.terminal.write("\x1b[?2031l")
         await self._before_terminal_stop(options)
@@ -779,9 +807,68 @@ class TuiBase(Container, ABC):
             self._render_immediate = False
         self._render_signal.clear()
         self._render_immediate_signal.clear()
-        self._last_render_at = _time.monotonic()
         self._run_pre_render_callbacks()
-        await self._do_render()
+        await self._render_frame()
+        await self._flush_frames()
+
+    async def _render_frame(self) -> None:
+        """One frame: compute, hand the bytes over, stamp the throttle clock."""
+        try:
+            await self._do_render()
+        except BaseException:
+            self._frame_parts = []  # a torn frame is never written
+            raise
+        await self._send_frame()
+        # Throttle from the end of the frame (pi measures from its start) so
+        # a frame that takes longer than the interval is still followed by a
+        # pause instead of pinning the worker for as long as updates keep
+        # coming.
+        self._last_render_at = _time.monotonic()
+
+    def _emit(self, data: str) -> None:
+        """Add to the frame being rendered; it goes out as one write when `_do_render` returns."""
+        self._frame_parts.append(data)
+
+    async def _send_frame(self) -> None:
+        """Hand the finished frame to the writer; wait only while it is a frame behind."""
+        parts = self._frame_parts
+        if not parts:
+            return
+        self._frame_parts = []
+        data = "".join(parts)
+        frames = self._frames
+        if frames is None:
+            await self.terminal.write(data)
+            return
+        await frames.send(data)
+        if self._frame_writer_error is not None:
+            raise self._frame_writer_error
+
+    async def _flush_frames(self) -> None:
+        """Return once every frame handed over so far is on the wire."""
+        frames = self._frames
+        if frames is None:
+            return
+        done = tonio.Event()
+        await frames.send(done)
+        await done.wait(None)
+        if self._frame_writer_error is not None:
+            raise self._frame_writer_error
+
+    async def _frame_writer(self, receiver) -> None:
+        while True:
+            item = await receiver.receive()
+            if item is None:
+                return
+            if isinstance(item, tonio.Event):
+                item.set()
+                continue
+            if self._frame_writer_error is not None:
+                continue  # the terminal is gone; the loop learns on its next _emit
+            try:
+                await self.terminal.write(item)
+            except Exception as error:
+                self._frame_writer_error = error
 
     def post_before_render(self, callback) -> None:
         """Run `callback` on the render task right before the next frame.
@@ -862,10 +949,9 @@ class TuiBase(Container, ABC):
                 return
             if force:
                 self._reset_render_state()
-            self._last_render_at = _time.monotonic()
             try:
                 self._run_pre_render_callbacks()
-                await self._do_render()
+                await self._render_frame()
             except Exception as error:
                 # pi crashes the process on a render throw. Here the loop is a
                 # scope child: letting the exception escape would only surface
@@ -1174,10 +1260,20 @@ class TuiBase(Container, ABC):
         return result
 
     def _apply_line_resets(self, lines: list[str]) -> list[str]:
+        # Memoized across frames: a line the previous frame already
+        # normalized (almost all of them — components cache their output)
+        # is a dict hit on its cached hash instead of a regex pass. The memo
+        # is rebuilt from this frame's lines, so it holds exactly one frame.
         reset = SEGMENT_RESET
+        previous = self._line_reset_memo
+        memo: dict[str, str] = {}
         for i, line in enumerate(lines):
-            if not is_image_line(line):
-                lines[i] = normalize_terminal_output(line) + reset
+            finished = previous.get(line)
+            if finished is None:
+                finished = line if is_image_line(line) else normalize_terminal_output(line) + reset
+            memo[line] = finished
+            lines[i] = finished
+        self._line_reset_memo = memo
         return lines
 
     def _composite_line_at(

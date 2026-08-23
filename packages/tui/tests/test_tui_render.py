@@ -937,3 +937,59 @@ async def test_render_error_is_handed_to_the_installed_handler():
     assert failed.is_set()
     assert isinstance(seen[0], RuntimeError)
     await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_next_frame_is_computed_while_the_previous_one_is_still_on_the_wire():
+    # A slow terminal (SSH) must pace the loop, not serialize compute behind
+    # flush: the frame after a blocked write is rendered before that write
+    # completes, and no more than that (one-slot pipeline).
+    terminal = VirtualTerminal(40, 10)
+    release = tonio.Event()
+    blocked = tonio.Event()
+    slow_writes: list[str] = []
+    original_write = terminal.write
+
+    async def slow_write(data: str) -> None:
+        if slow_writes or release.is_set():
+            await original_write(data)
+            return
+        slow_writes.append(data)
+        blocked.set()
+        await release.wait(None)
+        await original_write(data)
+
+    tui = TuiMainScreen(terminal)
+    component = InputComponent()
+    component.lines = ["one"]
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    terminal.write = slow_write
+    seen: dict[str, tonio.Event] = {"two": tonio.Event(), "three": tonio.Event()}
+    original_render = component.render
+
+    def render(width):
+        lines = original_render(width)
+        if lines and lines[0] in seen:
+            seen[lines[0]].set()
+        return lines
+
+    component.render = render
+    component.lines = ["two"]
+    tui.request_render()
+    await blocked.wait(1.0)
+    assert blocked.is_set()
+    await seen["two"].wait(1.0)
+    # The frame holding "two" is stuck in the writer; a further frame must
+    # still be computed while it waits.
+    component.lines = ["three"]
+    tui.request_render()
+    await seen["three"].wait(1.0)
+    assert seen["three"].is_set()
+    assert not release.is_set()
+
+    release.set()
+    await tui.stop()
+    assert any("three" in line for line in terminal.get_viewport())

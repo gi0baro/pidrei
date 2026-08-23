@@ -6,7 +6,7 @@ import time
 import pytest
 
 from pidrei.modes.interactive.components import AssistantMessageComponent, UserMessageComponent
-from pidrei.modes.interactive.theme import init_theme
+from pidrei.modes.interactive.theme import get_markdown_theme, init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import AssistantMessage, TextContent, ThinkingContent, ToolCall, Usage
 
@@ -157,6 +157,29 @@ class TestAssistantMessageComponent:
         component.update_content(message, False)
         assert "partial transformed" in strip_ansi("\n".join(component.render(80)))
         assert streaming_states == [True, False]
+
+    @pytest.mark.tonio
+    async def test_streaming_updates_do_not_rerender_finished_blocks(self):
+        await init_theme("dark")
+        highlighted: list[str] = []
+
+        def highlight_code(code: str, lang: str | None) -> list[str]:
+            highlighted.append(code)
+            return code.split("\n")
+
+        markdown_theme = {**get_markdown_theme(), "highlightCode": highlight_code}
+        component = AssistantMessageComponent(None, False, markdown_theme)
+        code_block = "```python\nprint('hi')\n```"
+
+        component.update_content(create_assistant_message([TextContent(text=f"{code_block}\n\nfirst")]), True)
+        component.render(80)
+        for suffix in ("first para", "first paragraph", "first paragraph\n\nsecond"):
+            component.update_content(create_assistant_message([TextContent(text=f"{code_block}\n\n{suffix}")]), True)
+            rendered = strip_ansi("\n".join(component.render(80)))
+            assert "print('hi')" in rendered
+            assert suffix.split("\n")[-1] in rendered
+
+        assert highlighted == ["print('hi')"]
 
     @pytest.mark.tonio
     async def test_reapplies_markdown_transformers_when_available_width_changes(self):

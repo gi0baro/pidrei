@@ -39,6 +39,13 @@ class AssistantMessageComponent(Container):
         self._last_message = None
         self._has_tool_calls = False
         self._is_streaming = False
+        # The Markdown children of the last build, in order, each with the
+        # settings it was built for. pi builds fresh ones per update, which is
+        # free there (its render is a pure function of the text); here a
+        # Markdown carries a per-block render cache that only pays off if the
+        # same instance sees the next streaming update, so a slot whose
+        # settings still match is reused via `set_text`.
+        self._markdown_slots: list[tuple[tuple, Markdown]] = []
 
         # Container for text/thinking content
         self._content_container = Container()
@@ -85,6 +92,26 @@ class AssistantMessageComponent(Container):
         # Rebuilt per `message_update` while the render loop reads the
         # container on another thread: build locally, publish once at the end.
         children: list = []
+        slots = self._markdown_slots
+        new_slots: list[tuple[tuple, Markdown]] = []
+
+        def markdown(text: str, kind: str, default_text_style: dict | None) -> Markdown:
+            key = (kind, self._output_pad, self._is_streaming, id(self._markdown_theme), self._markdown_transformers)
+            index = len(new_slots)
+            if index < len(slots) and slots[index][0] == key:
+                component = slots[index][1]
+                component.set_text(text)
+            else:
+                component = Markdown(
+                    text,
+                    self._output_pad,
+                    0,
+                    self._markdown_theme,
+                    default_text_style,
+                    {"transform": create_markdown_transform(kind, self._is_streaming, self._markdown_transformers)},
+                )
+            new_slots.append((key, component))
+            return component
 
         if any(_has_visible_content(c) for c in message.content):
             children.append(Spacer(1))
@@ -96,20 +123,7 @@ class AssistantMessageComponent(Container):
             if content.type == "text" and content.text.strip():
                 # Assistant text messages with no background - trim the text.
                 # paddingY=0 avoids extra spacing before tool executions.
-                children.append(
-                    Markdown(
-                        content.text.strip(),
-                        self._output_pad,
-                        0,
-                        self._markdown_theme,
-                        None,
-                        {
-                            "transform": create_markdown_transform(
-                                "assistant", self._is_streaming, self._markdown_transformers
-                            )
-                        },
-                    )
-                )
+                children.append(markdown(content.text.strip(), "assistant", None))
             elif content.type == "thinking":
                 thinking_blocks: list = []
                 while i < len(message.content):
@@ -143,17 +157,10 @@ class AssistantMessageComponent(Container):
                 else:
                     # Render each run of thinking blocks as one Markdown section.
                     children.append(
-                        Markdown(
+                        markdown(
                             "\n\n".join(thinking_blocks),
-                            self._output_pad,
-                            0,
-                            self._markdown_theme,
+                            "assistant-thinking",
                             {"color": lambda text: theme.fg("thinkingText", text), "italic": True},
-                            {
-                                "transform": create_markdown_transform(
-                                    "assistant-thinking", self._is_streaming, self._markdown_transformers
-                                )
-                            },
                         )
                     )
                 if has_visible_content_after:
@@ -182,4 +189,5 @@ class AssistantMessageComponent(Container):
                 children.append(Spacer(1))
                 children.append(Text(theme.fg("error", f"Error: {error_msg}"), self._output_pad, 0))
 
+        self._markdown_slots = new_slots
         self._content_container.set_children(children)

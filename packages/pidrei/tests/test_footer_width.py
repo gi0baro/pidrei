@@ -4,10 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from pidrei.core.session_manager import SessionManager
 from pidrei.modes.interactive.components import FooterComponent, format_cwd_for_footer
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
-from pidrei_ai.types import Usage, UsageCost
+from pidrei_ai.types import AssistantMessage, Usage, UsageCost
 from pidrei_tui import visible_width
 
 
@@ -55,6 +56,7 @@ def create_session(
         ),
         session_manager=SimpleNamespace(
             get_entries=lambda: entries,
+            get_entries_revision=lambda: len(entries),
             get_session_name=lambda: session_name,
             get_cwd=lambda: "/tmp/project",
         ),
@@ -163,3 +165,27 @@ class TestFooterComponentWidthHandling:
         footer = FooterComponent(session, create_footer_data(1))
 
         assert "$1.234 (sub)" in strip_ansi(footer.render(120)[1])
+
+    @pytest.mark.tonio
+    async def test_usage_totals_follow_entries_appended_to_a_real_session(self):
+        # The totals are cached per frame on the session manager's entries
+        # revision; an append must show up on the next render.
+        session_manager = SessionManager.in_memory()
+        session = create_session(session_name="")
+        session.session_manager = session_manager
+        footer = FooterComponent(session, create_footer_data(1))
+
+        assert "↑" not in strip_ansi(footer.render(120)[1])
+
+        await session_manager.append_message(
+            AssistantMessage(
+                content=[],
+                api="anthropic-messages",
+                provider="anthropic",
+                model="test-model",
+                usage=_usage(input=1500, output=10, total=0.5),
+                stop_reason="stop",
+                timestamp=0,
+            )
+        )
+        assert "↑1.5k" in strip_ansi(footer.render(120)[1])

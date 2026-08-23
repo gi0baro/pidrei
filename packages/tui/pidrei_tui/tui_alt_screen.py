@@ -1285,7 +1285,7 @@ class TuiAltScreen(TuiBase):
         # primary scroll view) must see the layout that frame was drawn from.
         # pi assigns after the write; on one thread nothing can look between.
         self._current_layout = next_layout
-        await self.terminal.write(buffer)
+        self._emit(buffer)
 
         self._previous_screen = screen
         self._previous_screen_width = width
