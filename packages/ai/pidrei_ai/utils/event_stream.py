@@ -19,8 +19,10 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import Event
 from tonio.colored.sync import channel
+from tonio.exceptions import CancelledError
 
-from pidrei_ai.types import AssistantMessage, AssistantMessageEvent
+from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent
+from pidrei_ai.utils.cancel import AbortError, CancelToken
 
 
 _SENTINEL = object()
@@ -79,21 +81,79 @@ class EventStream[T, R]:
             self._done = True
             self._sender.send(_SENTINEL)
 
-    def spawn_producer(self, producer: Coroutine[Any, Any, None]) -> None:
-        """Run `producer` detached; if it escapes, fail the stream.
+    @property
+    def done(self) -> bool:
+        return self._done
 
-        Every adapter already converts `Exception` into an error event; this
-        covers what they don't (`BaseException`, bugs in the handler itself).
+    def spawn_producer(self, producer: Coroutine[Any, Any, None], cancel: CancelToken | None = None) -> None:
+        """Run `producer` as the child of a scope this stream owns.
+
+        The tonio shape of pi's "fetch with an AbortSignal": the producer's
+        awaits — request head, retry backoff, every body read — are plain
+        awaits; cancelling `cancel` cancels the scope, and the owner task,
+        which waits inside the scope for either the producer to finish or
+        the token to fire, then leaves it, which is when tonio evaluates the
+        cancellation and unwinds the child at its current suspension point.
+        Nothing is paid per chunk.
+
+        After a cancel the producer may not get to run its own error path
+        (a child parked on I/O is not resumed), so the owner terminates the
+        stream itself via `_abort` if it is still open. If the producer
+        escapes with anything else, the stream fails (`result()` raises) —
+        adapters convert `Exception` to an error event themselves; this
+        covers what they don't.
         """
+        finished = tonio.Event()
+        started = False
 
-        async def _guarded() -> None:
+        async def _child() -> None:
+            nonlocal started
+            started = True
             try:
                 await producer
+            except CancelledError:
+                raise  # the owner terminates the stream via `_abort`
             except BaseException as error:
                 self.fail(error)
                 raise
+            finally:
+                finished.set()
 
-        tonio.spawn.without_tracking(_guarded())
+        # A token that is already cancelled does not arm the scope: pi's
+        # adapters still run up to the fetch (`on_payload` included) and
+        # fail on their own cancellation checks; pre-cancelling would skip
+        # the producer entirely.
+        armed = cancel is not None and not cancel.cancelled
+
+        async def _owner() -> None:
+            unsubscribe = None
+            child = _child()
+            async with tonio.scope() as scope:
+                scope.spawn(child)
+                if armed:
+
+                    def _on_cancel(_reason: BaseException) -> None:
+                        scope.cancel()
+                        finished.set()
+
+                    unsubscribe = cancel.on_cancel(_on_cancel)
+                await finished.wait()
+            if unsubscribe is not None:
+                unsubscribe()
+            if not started:
+                # Cancelled before its first step: the scope drops the
+                # coroutine without awaiting it; close both so nothing warns.
+                child.close()
+                producer.close()
+            if armed and cancel.cancelled and not self._done:
+                self._abort(cancel)
+
+        tonio.spawn.without_tracking(_owner())
+
+    def _abort(self, cancel: CancelToken) -> None:
+        """Terminate a stream whose producer was cancelled before it could."""
+        reason = cancel.reason
+        self.fail(reason if reason is not None else AbortError("Operation was aborted"))
 
     async def __aiter__(self) -> AsyncIterator[T]:
         while True:
@@ -119,6 +179,20 @@ class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMe
 
     def __init__(self) -> None:
         super().__init__(self._event_is_complete, self._event_extract_result)
+        # The producer's in-progress message. Set by adapters as soon as it
+        # exists so a cancel that lands while the producer is parked on I/O
+        # still terminates with pi's "aborted message with partial content".
+        self.partial: AssistantMessage | None = None
+
+    def _abort(self, cancel: CancelToken) -> None:
+        message = self.partial
+        if message is None:
+            super()._abort(cancel)
+            return
+        message.stop_reason = "aborted"
+        message.error_message = "Request was aborted"
+        self.push(ErrorEvent(reason="aborted", error=message))
+        self.end()
 
     @staticmethod
     def _event_is_complete(event: AssistantMessageEvent) -> bool:

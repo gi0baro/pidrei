@@ -930,7 +930,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         # prints `RuntimeWarning: coroutine '<any name>' was never awaited` to
         # stderr, which lands inside the TUI frame. The names are arbitrary
         # (they include the abandoned user coroutine and tonio internals like
-        # `cancellable_bytes.<locals>._aborted`), so the filter covers the
+        # `select.<locals>.wrapper`), so the filter covers the
         # whole message family, unconditionally: an escape hatch for the
         # boot-smoke tests was tried and reverted — the by-design noise fired
         # during Ctrl-C teardown on a slow runner and flaked the suite. Only

@@ -10,7 +10,7 @@ whole request — a legitimately long SSE stream must not hit a total deadline.
 """
 
 import threading
-from collections.abc import AsyncGenerator, AsyncIterable, Mapping
+from collections.abc import AsyncIterable, Mapping
 from typing import Any
 
 import tonio.colored as tonio
@@ -18,7 +18,6 @@ from httpunk import Backend, H1Connection, H1Server
 from punkreq import Limits, Timeout, TimeoutException
 from punkreq.tonio import Client
 
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.http_proxy import resolve_http_proxy_url_for_target
 
 
@@ -79,45 +78,6 @@ def _no_proxy_client() -> Client:
             client = create_client(trust_env=False)
             _proxied_clients[_NO_PROXY] = client
         return client
-
-
-_STREAM_DONE = object()
-_STREAM_CANCELLED = object()
-
-
-async def cancellable_bytes(source: AsyncIterable[bytes], cancel: CancelToken | None) -> AsyncGenerator[bytes]:
-    """Yield chunks, aborting a pending read when the token cancels.
-
-    Mirrors pi's fetch-abort semantics: each chunk read races the cancel token
-    via `tonio.select`, so a hung read is genuinely interruptible and the
-    transport's cancel-safe teardown releases the connection.
-    """
-    if cancel is None:
-        async for chunk in source:
-            yield chunk
-        return
-
-    iterator = aiter(source)
-    while True:
-        if cancel.cancelled:
-            raise RuntimeError("Request was aborted")
-
-        async def _next() -> object:
-            try:
-                return await anext(iterator)
-            except StopAsyncIteration:
-                return _STREAM_DONE
-
-        async def _aborted() -> object:
-            await cancel.wait()
-            return _STREAM_CANCELLED
-
-        winner = await tonio.select(_next(), _aborted())
-        if winner is _STREAM_CANCELLED:
-            raise RuntimeError("Request was aborted")
-        if winner is _STREAM_DONE:
-            return
-        yield winner  # type: ignore[misc]
 
 
 _DRAIN_TIMEOUT_S = 1.0

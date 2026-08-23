@@ -121,3 +121,99 @@ async def test_fail_does_not_override_a_settled_result():
     stream.fail(RuntimeError("late"))
 
     assert await stream.result() == "final"
+
+
+@pytest.mark.tonio
+async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
+    from pidrei_ai.types import AssistantMessage, TextContent, Usage
+    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    stream = AssistantMessageEventStream()
+    cancel = CancelToken()
+    parked = tonio.Event()
+    partial = AssistantMessage(
+        content=[TextContent(text="so far")],
+        api="a",
+        provider="p",
+        model="m",
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=0,
+    )
+
+    async def produce():
+        stream.partial = partial
+        await parked.wait(None)  # never set: only cancellation gets us out
+
+    stream.spawn_producer(produce(), cancel)
+    await tonio.sleep(0.02)
+    cancel.cancel()
+
+    events = [event async for event in stream]
+    result = await stream.result()
+    assert [event.type for event in events] == ["error"]
+    assert events[0].reason == "aborted"
+    assert result is partial
+    assert result.stop_reason == "aborted"
+    assert result.error_message == "Request was aborted"
+    assert result.content[0].text == "so far"
+
+
+@pytest.mark.tonio
+async def test_cancel_before_the_producer_registers_a_partial_fails_the_result():
+    from pidrei_ai.utils.cancel import AbortError, CancelToken
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    stream = AssistantMessageEventStream()
+    cancel = CancelToken()
+    parked = tonio.Event()
+
+    async def produce():
+        await parked.wait(None)
+
+    stream.spawn_producer(produce(), cancel)
+    await tonio.sleep(0.02)
+    cancel.cancel()
+
+    assert [event async for event in stream] == []
+    with pytest.raises(AbortError):
+        await stream.result()
+
+
+@pytest.mark.tonio
+async def test_run_cancellable_unwinds_a_parked_operation():
+    from pidrei_ai.utils.abort import run_cancellable
+    from pidrei_ai.utils.cancel import AbortError, CancelToken
+
+    cancel = CancelToken()
+    parked = tonio.Event()
+
+    async def operation():
+        await parked.wait(None)
+        return "never"
+
+    async def cancel_soon():
+        await tonio.sleep(0.02)
+        cancel.cancel()
+
+    tonio.spawn.without_tracking(cancel_soon())
+    with pytest.raises(AbortError):
+        await run_cancellable(operation(), cancel)
+
+
+@pytest.mark.tonio
+async def test_run_cancellable_returns_the_result_and_raises_its_errors():
+    from pidrei_ai.utils.abort import run_cancellable
+    from pidrei_ai.utils.cancel import CancelToken
+
+    async def ok():
+        return 7
+
+    async def bad():
+        raise ValueError("x")
+
+    assert await run_cancellable(ok(), CancelToken()) == 7
+    assert await run_cancellable(ok(), None) == 7
+    with pytest.raises(ValueError):
+        await run_cancellable(bad(), CancelToken())

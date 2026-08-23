@@ -446,20 +446,28 @@ def _assert_successful_output(output: AssistantMessage) -> None:
         raise RuntimeError(output.error_message or "An unknown error occurred")
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _codex_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api="openai-codex-responses",
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:
-        output = AssistantMessage(
-            content=[],
-            api="openai-codex-responses",
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
         state = _StartState()
 
         try:
@@ -658,7 +666,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
@@ -682,6 +690,8 @@ def stream_simple(
     model: Model,
     context: Context,
     options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     api_key = options.api_key if options else None
     if not api_key:
@@ -693,7 +703,7 @@ def stream_simple(
 
     opts = _codex_options(base)
     opts.reasoning_effort = reasoning_effort
-    return stream(model, context, opts)
+    return stream(model, context, opts, into=into)
 
 
 # --- request building ---------------------------------------------------------
@@ -942,7 +952,7 @@ async def _parse_sse(response: CodexSSEResponseLike, cancel: CancelToken | None 
     body = response.aiter_bytes()
     ended = False
     try:
-        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+        async for sse in iterate_sse_messages(body):
             # pi skips `[DONE]` and keeps reading (unlike its other adapters,
             # which stop there); the Codex stream ends on `response.completed`.
             data = sse.data.strip()
@@ -1200,9 +1210,6 @@ def _decode_websocket_data(data: Any) -> str | None:
     return None
 
 
-_WS_IDLE_TIMED_OUT = object()
-_WS_CANCELLED = object()
-
 _WEBSOCKET_COMPLETION_TYPES = ("response.completed", "response.done", "response.incomplete")
 
 
@@ -1222,28 +1229,15 @@ async def _parse_websocket(
         if cancel is not None and cancel.cancelled:
             raise RuntimeError("Request was aborted")
 
-        races: list[Any] = [socket.receive_event()]
+        # Cancellation needs no racer: the producer is a scope child and a
+        # cancel unwinds this `await` directly (`EventStream.spawn_producer`).
         if idle_timeout_ms is not None and idle_timeout_ms > 0:
-
-            async def _idle() -> object:
-                await tonio.time.sleep(idle_timeout_ms / 1000)
-                return _WS_IDLE_TIMED_OUT
-
-            races.append(_idle())
-        if cancel is not None:
-
-            async def _aborted() -> object:
-                await cancel.wait()
-                return _WS_CANCELLED
-
-            races.append(_aborted())
-
-        event = await tonio.select(*races)
-        if event is _WS_IDLE_TIMED_OUT:
-            _close_websocket_silently(socket, 1000, "idle_timeout")
-            raise RuntimeError(f"WebSocket idle timeout after {_format_ms(idle_timeout_ms)}ms")
-        if event is _WS_CANCELLED:
-            raise RuntimeError("Request was aborted")
+            event, completed = await tonio.time.timeout(socket.receive_event(), idle_timeout_ms / 1000)
+            if not completed:
+                _close_websocket_silently(socket, 1000, "idle_timeout")
+                raise RuntimeError(f"WebSocket idle timeout after {_format_ms(idle_timeout_ms)}ms")
+        else:
+            event = await socket.receive_event()
 
         event_type = getattr(event, "type", None)
         if event_type == "message":

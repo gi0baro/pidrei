@@ -219,7 +219,7 @@ async def _iterate_completion_events(response: Any, cancel: CancelToken | None):
     body = response.aiter_bytes() if hasattr(response, "aiter_bytes") else response.iter_bytes()
     ended = False
     try:
-        async for message in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+        async for message in iterate_sse_messages(body):
             if message.data == "[DONE]":
                 ended = True
                 return
@@ -251,13 +251,20 @@ def _mistral_options(options: StreamOptions | None) -> MistralOptions:
     return MistralOptions(**values)
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _mistral_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = create_output(model)
+    out_stream.partial = output
 
     async def _run() -> None:
-        output = create_output(model)
-
         try:
             api_key = opts.api_key
             if not api_key:
@@ -292,12 +299,16 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
 def stream_simple(
-    model: Model, context: Context, options: SimpleStreamOptions | None = None
+    model: Model,
+    context: Context,
+    options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     api_key = options.api_key if options else None
     if not api_key:
@@ -315,7 +326,7 @@ def stream_simple(
     opts.reasoning_effort = (
         _map_reasoning_effort(model, reasoning) if should_use_reasoning and _uses_reasoning_effort(model) else None
     )
-    return stream(model, context, opts)
+    return stream(model, context, opts, into=into)
 
 
 def create_output(model: Model) -> AssistantMessage:

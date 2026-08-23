@@ -21,7 +21,7 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import sync
 
-from pidrei_ai.api.lazy import lazy_stream
+from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError
 from pidrei_ai.auth.types import (
     ApiKeyCredential,
@@ -792,33 +792,33 @@ class ModelRuntime:
         return provider, request_model, request_options
 
     def stream(self, model: Model, context: Context, options: StreamOptions | None = None):
-        async def setup():
+        async def setup(stream):
             provider, request_model, request_options = await self._prepare_request(model, options)
-            return provider.stream(request_model, context, request_options)
+            return call_stream_into(provider.stream, request_model, context, request_options, into=stream)
 
-        return lazy_stream(model, setup)
+        return lazy_stream(model, setup, _cancel_of(options))
 
     async def complete(self, model: Model, context: Context, options: StreamOptions | None = None):
         return await self.stream(model, context, options).result()
 
     def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
-        async def setup():
+        async def setup(stream):
             provider, request_model, request_options = await self._prepare_request(model, options)
-            return provider.stream_simple(request_model, context, request_options)
+            return call_stream_into(provider.stream_simple, request_model, context, request_options, into=stream)
 
-        return lazy_stream(model, setup)
+        return lazy_stream(model, setup, _cancel_of(options))
 
     async def complete_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return await self.stream_simple(model, context, options).result()
 
     async def fetch_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
-        async def setup():
+        async def setup(_stream):
             provider, request_model, request_options = await self._prepare_request(model, options)
             if not getattr(provider, "supports_fetch_deferred", False):
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
             return provider.fetch_deferred(request_model, handle, request_options)
 
-        return await lazy_stream(model, setup).result()
+        return await lazy_stream(model, setup, _cancel_of(options)).result()
 
     async def cancel_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None) -> None:
         provider, request_model, request_options = await self._prepare_request(model, options)

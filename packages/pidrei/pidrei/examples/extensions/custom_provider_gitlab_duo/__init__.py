@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
-from pidrei_ai.api.lazy import lazy_stream
+from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.api.openai_responses_lazy import openai_responses_api
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.pkce import generate_pkce
@@ -352,7 +352,7 @@ class _GitLabDuoApi:
         return self._delegate("stream_simple", model, context, options)
 
     def _delegate(self, method: str, model: Model, context: Context, options) -> AssistantMessageEventStream:
-        async def _setup():
+        async def _setup(stream):
             opts = options if options is not None else SimpleStreamOptions()
             gitlab_access_token = opts.api_key
             if not gitlab_access_token:
@@ -361,11 +361,11 @@ class _GitLabDuoApi:
             direct_access = await _get_direct_access_token(gitlab_access_token, opts.cancel)
             headers = {**direct_access.headers, "Authorization": f"Bearer {direct_access.token}"}
             request_options = replace(opts, api_key="gitlab-duo", headers=headers)
-            return getattr(self._inner, method)(model, context, request_options)
+            return call_stream_into(getattr(self._inner, method), model, context, request_options, into=stream)
 
         # lazy_stream turns setup failures (token exchange included) into
         # error events instead of raising out of the stream call.
-        return lazy_stream(model, _setup)
+        return lazy_stream(model, _setup, _cancel_of(options))
 
 
 # =============================================================================

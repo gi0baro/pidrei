@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+from pidrei_ai.api.lazy import call_stream_into
 from pidrei_ai.models_store import ModelsStoreEntry
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model
+from pidrei_ai.utils.abort import run_cancellable
 
 from ..config import VERSION
 from ..utils.management_http import fetch_with_retry
@@ -34,8 +36,13 @@ class CatalogResponse:
 
 
 async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> CatalogResponse:
-    response = await fetch_with_retry(url, headers=headers)
-    body = await response.read()
+    async def _request() -> Any:
+        response = await fetch_with_retry(url, headers=headers)
+        return response, await response.read()
+
+    # The refresh watchdog (`model_runtime`) cancels this token; the request
+    # is unwound wherever it is parked instead of running to completion.
+    response, body = await run_cancellable(_request(), cancel)
     return CatalogResponse(
         status=response.status_code,
         headers={name.lower(): value for name, value in response.headers.items()},
@@ -115,11 +122,15 @@ class RemoteCatalogProvider:
     def get_models(self) -> list[Model]:
         return _merge_models(self._provider.get_models(), self._dynamic_models)
 
-    def stream(self, model: Model, context: Any, options: Any = None) -> Any:
-        return self._provider.stream(model, context, options)
+    def stream(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
+        if into is None:
+            return self._provider.stream(model, context, options)
+        return call_stream_into(self._provider.stream, model, context, options, into=into)
 
-    def stream_simple(self, model: Model, context: Any, options: Any = None) -> Any:
-        return self._provider.stream_simple(model, context, options)
+    def stream_simple(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
+        if into is None:
+            return self._provider.stream_simple(model, context, options)
+        return call_stream_into(self._provider.stream_simple, model, context, options, into=into)
 
     async def refresh_models(self, context: RefreshModelsContext) -> None:
         stored = context.stored

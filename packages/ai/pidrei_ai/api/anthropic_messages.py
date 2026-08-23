@@ -464,7 +464,7 @@ async def _iterate_anthropic_events(
     body = response.aiter_bytes()
     ended = False
     try:
-        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+        async for sse in iterate_sse_messages(body):
             if sse.event == "error":
                 raise RuntimeError(sse.data)
 
@@ -520,20 +520,28 @@ def _anthropic_options(options: StreamOptions | None) -> AnthropicOptions:
     return AnthropicOptions(**values)
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _anthropic_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api=model.api,
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:
-        output = AssistantMessage(
-            content=[],
-            api=model.api,
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
         # Streaming scratch (pi keeps these on the blocks and strips them later;
         # slotted dataclasses keep them out-of-band instead).
         anthropic_index_to_content: dict[int, int] = {}
@@ -739,7 +747,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
@@ -760,6 +768,8 @@ def stream_simple(
     model: Model,
     context: Context,
     options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     _assert_request_auth(model.provider, options.api_key if options else None, options.headers if options else None)
 
@@ -772,12 +782,12 @@ def stream_simple(
         return anthropic
 
     if options is None or not options.reasoning:
-        return stream(model, context, with_thinking(thinking_enabled=False))
+        return stream(model, context, with_thinking(thinking_enabled=False), into=into)
 
     # Adaptive-thinking models take an effort level; older models take a budget.
     if _force_adaptive_thinking(model):
         effort = _map_thinking_level_to_effort(model, options.reasoning)
-        return stream(model, context, with_thinking(thinking_enabled=True, effort=effort))
+        return stream(model, context, with_thinking(thinking_enabled=True, effort=effort), into=into)
 
     # None means the caller did not request an output cap; the helper uses the
     # model cap (never coerce to 0, or thinking would swallow max_tokens).
@@ -797,6 +807,7 @@ def stream_simple(
             thinking_enabled=True,
             thinking_budget_tokens=min(thinking_budget, max(0, max_tokens - 1024)),
         ),
+        into=into,
     )
 
 

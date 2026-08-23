@@ -1,11 +1,14 @@
 """Cancellation primitives mirroring pi's `AbortSignal` semantics.
 
 pi threads `AbortSignal` tokens through every layer and checks them
-cooperatively (`signal.aborted`) after suspension points. tonio's
-`scope.cancel()` cancels *children*, not the host task, so pidrei ports the same
-explicit-token model: a `CancelToken` is checked cooperatively, and can be
-raced against pending work with `tonio.select` when hard interruption is
-needed.
+cooperatively (`signal.aborted`) after suspension points. pidrei keeps the
+token as the *edge* object (pi's API shape, checked where pi checks it); the
+*mechanism* behind it is tonio's structured cancellation: work that must be
+interruptible runs as the child of a scope whose owner waits for either
+completion or the token (`EventStream.spawn_producer`,
+`utils.abort.run_cancellable`), and the token's `on_cancel` cancels that
+scope. A cancelled child is unwound at its current suspension point and may
+not await waiters afterwards, so async teardown belongs to the owner.
 """
 
 import threading

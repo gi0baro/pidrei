@@ -164,6 +164,7 @@ class FakeCodexResponse:
         self.status = status
         self.headers = headers if headers is not None else {"content-type": "text/event-stream"}
         self.closed = False
+        self.closed_event = tonio.Event()
         self.drained = False
         self._chunks = chunks
         self._chunk_delay = chunk_delay
@@ -185,6 +186,7 @@ class FakeCodexResponse:
 
     async def close(self) -> None:
         self.closed = True
+        self.closed_event.set()
 
 
 class FakeCodexClient:
@@ -471,6 +473,10 @@ async def test_aborts_sse_body_reads_after_response_headers_arrive():
     assert result.error_message == "Request was aborted"
     assert "text_delta:one" in events
     assert "text_delta:two" not in events
+    # The aborted event is published by the stream's owner as soon as the
+    # scope is cancelled; the producer's unwinding (which closes the body)
+    # runs concurrently, so the close lands after it, not before.
+    await response.closed_event.wait(1.0)
     assert response.closed
 
 

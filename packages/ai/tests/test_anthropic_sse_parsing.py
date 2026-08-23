@@ -426,3 +426,36 @@ async def test_ignores_unknown_sse_events_after_message_stop():
     assert result.stop_reason == "stop"
     assert result.error_message is None
     assert result.content == [TextContent(text="Hello")]
+
+
+@pytest.mark.tonio
+async def test_cancel_during_time_to_first_byte_aborts_the_request():
+    """Esc while the request head is still pending: the producer is parked in
+    `client.create`, which nothing will ever answer; cancellation must end
+    the stream with an aborted message, not wait for a read timeout."""
+    import tonio.colored as tonio
+
+    from pidrei_ai.utils.cancel import CancelToken
+
+    head_pending = tonio.Event()
+
+    class StalledClient:
+        async def create(self, params, *, timeout_ms, cancel):
+            head_pending.set()
+            await tonio.Event().wait(None)  # never answered
+
+    model = get_builtin_model("anthropic", "claude-sonnet-4-5")
+    cancel = CancelToken()
+    stream = stream_anthropic(
+        model,
+        Context(messages=[UserMessage(content="hi", timestamp=1)]),
+        AnthropicOptions(api_key="k", client=StalledClient(), cancel=cancel),
+    )
+    await head_pending.wait(None)
+    cancel.cancel()
+
+    events = [event async for event in stream]
+    result = await stream.result()
+    assert [event.type for event in events] == ["error"]
+    assert result.stop_reason == "aborted"
+    assert result.error_message == "Request was aborted"

@@ -148,7 +148,7 @@ async def _iterate_events(response: OpenAIResponseLike, cancel: CancelToken | No
     body = response.aiter_bytes()
     ended = False
     try:
-        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+        async for sse in iterate_sse_messages(body):
             if sse.data == "[DONE]":
                 ended = True
                 return
@@ -375,21 +375,28 @@ def _apply_service_tier_pricing(usage: Usage, service_tier: str | None, model: M
 # --- streaming ----------------------------------------------------------------
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _responses_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api=model.api,
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:
-        output = AssistantMessage(
-            content=[],
-            api=model.api,
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
-
         try:
             api_key = None
             if opts.client is None:
@@ -450,7 +457,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
@@ -458,6 +465,8 @@ def stream_simple(
     model: Model,
     context: Context,
     options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     _get_client_api_key(model.provider, options.api_key if options else None, options.headers if options else None)
 
@@ -467,4 +476,4 @@ def stream_simple(
 
     opts = _responses_options(base)
     opts.reasoning_effort = reasoning_effort
-    return stream(model, context, opts)
+    return stream(model, context, opts, into=into)

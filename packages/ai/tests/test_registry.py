@@ -1124,3 +1124,51 @@ def test_models_error_carries_code():
     error = ModelsError("provider", "Unknown provider: x")
     assert error.code == "provider"
     assert str(error) == "Unknown provider: x"
+
+
+# -- one stream per request ----------------------------------------------------
+
+
+@pytest.mark.tonio
+async def test_adapters_produce_straight_into_the_stream_the_caller_holds():
+    """Models → Provider → LazyApi → adapter is one stream object, not a
+    chain of forwarded ones: what `Models.stream` returns is what the adapter
+    pushed into."""
+    from pidrei_ai.api.lazy import lazy_api
+
+    seen: list[AssistantMessageEventStream] = []
+
+    class _Module:
+        @staticmethod
+        def stream(model, context, options=None, *, into=None):
+            assert into is not None
+            seen.append(into)
+            message = faux_assistant_message("echo")
+            into.push(StartEvent(partial=message))
+            into.push(DoneEvent(reason="stop", message=message))
+            return into
+
+    async def load():
+        return _Module
+
+    models = create_models()
+    models.set_provider(
+        create_provider(id="test", auth=ProviderAuth(api_key=static_auth()), models=[make_model()], api=lazy_api(load))
+    )
+
+    stream = models.stream(make_model(), Context())
+    events = [event.type async for event in stream]
+
+    assert events == ["start", "done"]
+    assert seen == [stream]
+
+
+@pytest.mark.tonio
+async def test_a_provider_that_ignores_into_is_still_forwarded():
+    models, _api = make_models_with_echo()  # EchoApi returns its own stream
+
+    stream = models.stream(make_model(), Context())
+    events = [event.type async for event in stream]
+
+    assert events == ["start", "done"]
+    assert (await stream.result()).stop_reason == "stop"

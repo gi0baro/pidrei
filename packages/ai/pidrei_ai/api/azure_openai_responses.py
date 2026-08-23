@@ -166,22 +166,29 @@ def _azure_options(options: StreamOptions | None) -> AzureOpenAIResponsesOptions
     return AzureOpenAIResponsesOptions(**values)
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _azure_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api="azure-openai-responses",
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:
         deployment_name = resolve_deployment_name(model, opts)
-
-        output = AssistantMessage(
-            content=[],
-            api="azure-openai-responses",
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
 
         try:
             api_key = opts.api_key
@@ -234,12 +241,16 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
 def stream_simple(
-    model: Model, context: Context, options: SimpleStreamOptions | None = None
+    model: Model,
+    context: Context,
+    options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     api_key = options.api_key if options else None
     if not api_key:
@@ -253,7 +264,7 @@ def stream_simple(
 
     opts = _azure_options(base)
     opts.reasoning_effort = reasoning_effort
-    return stream(model, context, opts)
+    return stream(model, context, opts, into=into)
 
 
 def normalize_azure_base_url(base_url: str) -> str:

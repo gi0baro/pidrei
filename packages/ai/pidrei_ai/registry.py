@@ -15,7 +15,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_ai.api.lazy import lazy_stream
+from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.auth.context import default_provider_auth_context
 from pidrei_ai.auth.credential_store import InMemoryCredentialStore
 from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError, resolve_provider_auth
@@ -185,21 +185,44 @@ class Provider:
             return self._single
         return self._by_api.get(model.api) if self._by_api is not None else None
 
-    def _dispatch(self, model: Model, run: Callable[[Any], AssistantMessageEventStream]) -> AssistantMessageEventStream:
+    def _dispatch(
+        self,
+        model: Model,
+        method: str,
+        args: tuple[Any, ...],
+        options: Any,
+        into: AssistantMessageEventStream | None,
+    ) -> AssistantMessageEventStream:
         streams = self._api_for(model)
         if streams is None:
 
-            async def _fail() -> Any:
+            async def _fail(_stream: AssistantMessageEventStream) -> Any:
                 raise ModelsError("stream", f'Provider {self.id} has no API implementation for "{model.api}"')
 
-            return lazy_stream(model, _fail)
-        return run(streams)
+            return lazy_stream(model, _fail, _cancel_of(options), into=into)
+        if into is None:
+            return getattr(streams, method)(*args, options)
+        return call_stream_into(getattr(streams, method), *args, options, into=into)
 
-    def stream(self, model: Model, context: Context, options: StreamOptions | None = None):
-        return self._dispatch(model, lambda streams: streams.stream(model, context, options))
+    def stream(
+        self,
+        model: Model,
+        context: Context,
+        options: StreamOptions | None = None,
+        *,
+        into: AssistantMessageEventStream | None = None,
+    ):
+        return self._dispatch(model, "stream", (model, context), options, into)
 
-    def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
-        return self._dispatch(model, lambda streams: streams.stream_simple(model, context, options))
+    def stream_simple(
+        self,
+        model: Model,
+        context: Context,
+        options: SimpleStreamOptions | None = None,
+        *,
+        into: AssistantMessageEventStream | None = None,
+    ):
+        return self._dispatch(model, "stream_simple", (model, context), options, into)
 
     # -- deferred responses ----------------------------------------------------
     # pi attaches `fetchDeferred`/`cancelDeferred` to the provider object only
@@ -227,12 +250,12 @@ class Provider:
         fetch = getattr(implementation, "fetch_deferred", None) if implementation is not None else None
         if fetch is None:
 
-            async def _fail() -> Any:
+            async def _fail(_stream: AssistantMessageEventStream) -> Any:
                 raise ModelsError(
                     "provider", f'Provider {self.id} does not support deferred responses for "{model.api}"'
                 )
 
-            return lazy_stream(model, _fail)
+            return lazy_stream(model, _fail, _cancel_of(options))
         return fetch(model, handle, options)
 
     async def cancel_deferred(
@@ -781,14 +804,14 @@ class Models:
         context: Context,
         options: StreamOptions | None = None,
     ) -> AssistantMessageEventStream:
-        async def _setup():
+        async def _setup(stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             request_model, request_options = await self._apply_auth(
                 model, options if options is not None else StreamOptions()
             )
-            return provider.stream(request_model, context, request_options)
+            return call_stream_into(provider.stream, request_model, context, request_options, into=stream)
 
-        return lazy_stream(model, _setup)
+        return lazy_stream(model, _setup, _cancel_of(options))
 
     async def complete(self, model: Model, context: Context, options: StreamOptions | None = None):
         return await self.stream(model, context, options).result()
@@ -799,14 +822,14 @@ class Models:
         context: Context,
         options: SimpleStreamOptions | None = None,
     ) -> AssistantMessageEventStream:
-        async def _setup():
+        async def _setup(stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             request_model, request_options = await self._apply_auth(
                 model, options if options is not None else SimpleStreamOptions()
             )
-            return provider.stream_simple(request_model, context, request_options)
+            return call_stream_into(provider.stream_simple, request_model, context, request_options, into=stream)
 
-        return lazy_stream(model, _setup)
+        return lazy_stream(model, _setup, _cancel_of(options))
 
     async def complete_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return await self.stream_simple(model, context, options).result()
@@ -817,7 +840,7 @@ class Models:
         handle: DeferredHandle,
         options: DeferredFetchOptions | None = None,
     ) -> AssistantMessage:
-        async def _setup():
+        async def _setup(_stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             if not provider.supports_fetch_deferred:
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
@@ -826,7 +849,7 @@ class Models:
             )
             return provider.fetch_deferred(request_model, handle, request_options)
 
-        return await lazy_stream(model, _setup).result()
+        return await lazy_stream(model, _setup, _cancel_of(options)).result()
 
     async def cancel_deferred(
         self,

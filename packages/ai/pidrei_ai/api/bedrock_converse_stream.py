@@ -136,20 +136,28 @@ def _bedrock_options(options: StreamOptions | None) -> BedrockOptions:
     return BedrockOptions(**values)
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _bedrock_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api="bedrock-converse-stream",
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:
-        output = AssistantMessage(
-            content=[],
-            api="bedrock-converse-stream",
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
         blocks = output.content
         # pi tags blocks with the provider's contentBlockIndex while streaming and
         # deletes it afterwards; dataclasses have no spare slot, so the mapping
@@ -305,7 +313,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
@@ -442,20 +450,24 @@ def add_custom_headers_middleware(client: BedrockRuntimeClient, headers: dict[st
 
 
 def stream_simple(
-    model: Model, context: Context, options: SimpleStreamOptions | None = None
+    model: Model,
+    context: Context,
+    options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     base = build_base_options(model, context, options, None)
     if options is None or not options.reasoning:
         opts = _bedrock_options(base)
         opts.reasoning = None
-        return stream(model, context, opts)
+        return stream(model, context, opts, into=into)
 
     if _is_anthropic_claude_model(model):
         if _supports_adaptive_thinking(model.id, model.name):
             opts = _bedrock_options(base)
             opts.reasoning = options.reasoning
             opts.thinking_budgets = options.thinking_budgets
-            return stream(model, context, opts)
+            return stream(model, context, opts, into=into)
 
         # None means the caller did not request an output cap; let the helper use
         # the model cap. Do not coerce to 0, or the thinking budget would become
@@ -473,12 +485,12 @@ def stream_simple(
         opts.max_tokens = max_tokens
         opts.reasoning = options.reasoning
         opts.thinking_budgets = budgets
-        return stream(model, context, opts)
+        return stream(model, context, opts, into=into)
 
     opts = _bedrock_options(base)
     opts.reasoning = options.reasoning
     opts.thinking_budgets = options.thinking_budgets
-    return stream(model, context, opts)
+    return stream(model, context, opts, into=into)
 
 
 def _copy_thinking_budgets(budgets: ThinkingBudgets | None) -> ThinkingBudgets:

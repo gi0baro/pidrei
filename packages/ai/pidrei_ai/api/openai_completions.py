@@ -498,7 +498,7 @@ async def _iterate_chunks(response: OpenAIResponseLike, cancel: CancelToken | No
     body = response.aiter_bytes()
     ended = False
     try:
-        async for sse in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+        async for sse in iterate_sse_messages(body):
             if sse.event == "error":
                 raise RuntimeError(sse.data)
             if sse.data == "[DONE]":
@@ -1056,22 +1056,27 @@ def _openai_options(options: StreamOptions | None) -> OpenAICompletionsOptions:
 
 
 def stream(  # noqa: C901
-    model: Model, context: Context, options: StreamOptions | None = None
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _openai_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api=model.api,
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:  # noqa: C901
-        output = AssistantMessage(
-            content=[],
-            api=model.api,
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
-
         try:
             compat = get_compat(model)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
@@ -1369,7 +1374,7 @@ def stream(  # noqa: C901
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
@@ -1377,6 +1382,8 @@ def stream_simple(
     model: Model,
     context: Context,
     options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     _get_client_api_key(model.provider, options.api_key if options else None, options.headers if options else None)
 
@@ -1389,4 +1396,4 @@ def stream_simple(
     opts.reasoning_effort = reasoning_effort
     opts.tool_choice = tool_choice
     opts.thinking_budgets = options.thinking_budgets if options else None
-    return stream(model, context, opts)
+    return stream(model, context, opts, into=into)

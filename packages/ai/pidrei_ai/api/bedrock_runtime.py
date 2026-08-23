@@ -341,7 +341,7 @@ async def _iterate_event_stream(response: Any, cancel: CancelToken | None) -> As
     buffer = EventStreamBuffer()
     ended = False
     try:
-        async for chunk in http.cancellable_bytes(body, cancel):
+        async for chunk in body:
             buffer.add_data(chunk)
             for event in buffer:
                 decoded = _decode_event(event)

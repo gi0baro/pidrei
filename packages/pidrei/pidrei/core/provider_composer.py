@@ -19,7 +19,7 @@ consuming its body. ``api`` is required alongside it.
 from dataclasses import dataclass, replace
 from typing import Any
 
-from pidrei_ai.api.lazy import lazy_stream
+from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
@@ -613,29 +613,27 @@ class ComposedProvider:
             return False
         return any(entry.api == model.api for entry in self._base.get_models())
 
-    def _stream_with(self, model: Model, context: Any, options: Any, simple: bool) -> Any:
-        async def setup() -> Any:
+    def _stream_with(self, model: Model, context: Any, options: Any, simple: bool, into: Any) -> Any:
+        method = "stream_simple" if simple else "stream"
+
+        async def setup(stream: Any) -> Any:
             extension = self._extension
             if extension and extension.get("streamSimple") and model.api == extension.get("api"):
                 return extension["streamSimple"](model, context, options)
             if self._base is not None and self._supports_base_api(model):
-                return (
-                    self._base.stream_simple(model, context, options)
-                    if simple
-                    else self._base.stream(model, context, options)
-                )
+                return call_stream_into(getattr(self._base, method), model, context, options, into=stream)
             api = _get_api_provider(model.api)
             if api is None:
                 raise Exception(f"No API provider registered for api: {model.api}")
-            return api.stream_simple(model, context, options) if simple else api.stream(model, context, options)
+            return call_stream_into(getattr(api, method), model, context, options, into=stream)
 
-        return lazy_stream(model, setup)
+        return lazy_stream(model, setup, _cancel_of(options), into=into)
 
-    def stream(self, model: Model, context: Any, options: Any = None) -> Any:
-        return self._stream_with(model, context, options, False)
+    def stream(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
+        return self._stream_with(model, context, options, False, into)
 
-    def stream_simple(self, model: Model, context: Any, options: Any = None) -> Any:
-        return self._stream_with(model, context, options, True)
+    def stream_simple(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
+        return self._stream_with(model, context, options, True, into)
 
     # Native deferred methods pass straight through to the base provider
     # (pi: `provider.fetchDeferred = base?.fetchDeferred` conditional wiring).

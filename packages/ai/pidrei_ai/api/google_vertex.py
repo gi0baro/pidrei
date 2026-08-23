@@ -107,21 +107,28 @@ def _vertex_options(options: StreamOptions | None) -> GoogleVertexOptions:
     return GoogleVertexOptions(**values)
 
 
-def stream(model: Model, context: Context, options: StreamOptions | None = None) -> AssistantMessageEventStream:
+def stream(
+    model: Model,
+    context: Context,
+    options: StreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
+) -> AssistantMessageEventStream:
     opts = _vertex_options(options)
-    out_stream = AssistantMessageEventStream()
+    out_stream = into if into is not None else AssistantMessageEventStream()
+
+    output = AssistantMessage(
+        content=[],
+        api="google-vertex",
+        provider=model.provider,
+        model=model.id,
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=int(time.time() * 1000),
+    )
+    out_stream.partial = output
 
     async def _run() -> None:
-        output = AssistantMessage(
-            content=[],
-            api="google-vertex",
-            provider=model.provider,
-            model=model.id,
-            usage=Usage(),
-            stop_reason="pending",
-            timestamp=int(time.time() * 1000),
-        )
-
         try:
             api_key = resolve_api_key(opts)
             # Create the client using either a Vertex API key, if provided, or ADC
@@ -297,7 +304,7 @@ def stream(model: Model, context: Context, options: StreamOptions | None = None)
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 
-    out_stream.spawn_producer(_run())
+    out_stream.spawn_producer(_run(), opts.cancel)
     return out_stream
 
 
@@ -316,11 +323,15 @@ def _usage_from_metadata(metadata: dict[str, Any]) -> Usage:
 
 
 def stream_simple(
-    model: Model, context: Context, options: SimpleStreamOptions | None = None
+    model: Model,
+    context: Context,
+    options: SimpleStreamOptions | None = None,
+    *,
+    into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     base = build_base_options(model, context, options, None)
     if options is None or not options.reasoning:
-        return stream(model, context, _with_thinking(base, GoogleVertexThinking(enabled=False)))
+        return stream(model, context, _with_thinking(base, GoogleVertexThinking(enabled=False)), into=into)
 
     clamped_reasoning = clamp_thinking_level(model, options.reasoning)
     effort = "high" if clamped_reasoning == "off" else clamped_reasoning
@@ -330,6 +341,7 @@ def stream_simple(
             model,
             context,
             _with_thinking(base, GoogleVertexThinking(enabled=True, level=_get_gemini_3_thinking_level(effort, model))),
+            into=into,
         )
 
     return stream(
@@ -341,6 +353,7 @@ def stream_simple(
                 enabled=True, budget_tokens=_get_google_budget(model, effort, options.thinking_budgets)
             ),
         ),
+        into=into,
     )
 
 

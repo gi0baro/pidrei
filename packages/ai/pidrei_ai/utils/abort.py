@@ -11,6 +11,7 @@ from collections.abc import Coroutine
 from typing import Any
 
 import tonio.colored as tonio
+from tonio.exceptions import CancelledError
 
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
@@ -23,6 +24,53 @@ def operation_cancel(cancel: CancelToken | None) -> CancelToken:
 def _abort_reason(cancel: CancelToken) -> BaseException:
     reason = cancel.reason
     return reason if reason is not None else AbortError("The operation was aborted")
+
+
+async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelToken | None) -> T:
+    """Await `operation`; if `cancel` fires first, unwind it and raise the reason.
+
+    The scope-owned shape (same as `EventStream.spawn_producer`): the
+    operation runs as the child of a scope, the caller waits inside that
+    scope for either outcome, and leaving the scope after a cancel is what
+    unwinds the child at its current suspension point — a pending request
+    head, a parked read, a backoff sleep. Unlike `race_with_cancel`, the
+    abandoned operation does not keep running.
+    """
+    if cancel is None:
+        return await operation
+    if cancel.cancelled:
+        operation.close()
+        raise _abort_reason(cancel)
+
+    settled = tonio.Event()
+    outcome: list[tuple[bool, Any]] = []
+
+    async def _child() -> None:
+        try:
+            outcome.append((False, await operation))
+        except CancelledError:
+            raise  # reported as the token's reason below
+        except BaseException as error:
+            outcome.append((True, error))
+            raise
+        finally:
+            settled.set()
+
+    def _on_cancel(_reason: BaseException) -> None:
+        scope.cancel()
+        settled.set()
+
+    async with tonio.scope() as scope:
+        scope.spawn(_child())
+        unsubscribe = cancel.on_cancel(_on_cancel)
+        await settled.wait()
+    unsubscribe()
+    if not outcome:
+        raise _abort_reason(cancel)
+    failed, payload = outcome[0]
+    if failed:
+        raise payload
+    return payload
 
 
 async def race_with_cancel[T](operation: Coroutine[Any, Any, T], cancel: CancelToken) -> T:

@@ -214,7 +214,7 @@ async def _iterate_chunks(response: Any, cancel: CancelToken | None) -> AsyncGen
     body = response.iter_bytes()
     ended = False
     try:
-        async for message in iterate_sse_messages(http.cancellable_bytes(body, cancel)):
+        async for message in iterate_sse_messages(body):
             chunk = json.loads(message.data)
             if not isinstance(chunk, dict):
                 continue
