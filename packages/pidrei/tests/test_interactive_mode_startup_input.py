@@ -7,6 +7,7 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
+from pidrei_tui._owner import OwnerTask
 
 
 def _create_submit_context():
@@ -29,6 +30,12 @@ def _create_submit_context():
     )
     context._flush_pending_bash_components = lambda: context.flush_calls.append(True)
     context._handle_editor_submit = partial(InteractiveMode._handle_editor_submit, context)
+    # Editor mutations route through the owner helpers; an unstarted owner
+    # exercises their direct-call fallback.
+    context.ui = SimpleNamespace(input_owner=OwnerTask(), request_render=lambda force=False: None)
+    context._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, context)
+    context._set_editor_text = partial(InteractiveMode._set_editor_text, context)
+    context._add_editor_history = partial(InteractiveMode._add_editor_history, context)
     return context
 
 

@@ -487,7 +487,19 @@ class ProcessTerminal:
                 # Awaited: the kernel buffer stays the backpressure, and a
                 # chunk is fully handled before the next read — as when the
                 # pump called the handler itself.
-                await self.input_owner.run(functools.partial(handler, data))
+                try:
+                    await self.input_owner.run(functools.partial(handler, data))
+                except BaseException as error:
+                    # A handler exception must not kill the pump: input would
+                    # be dead for good with no crash surfacing anywhere (the
+                    # 0.84.2.5 freeze). Route it like posted owner work —
+                    # loud, through the TUI's crash handler.
+                    if isinstance(error, GeneratorExit):
+                        raise
+                    on_error = self.input_owner.on_error
+                    if on_error is None:
+                        raise
+                    on_error(error)
 
     async def _resize_watcher(self) -> None:
         with tonio_signals.signal_receiver(signal_module.SIGWINCH) as receiver:
@@ -754,26 +766,37 @@ class ProcessTerminal:
                 data, done = await rx.receive()
             except BrokenPipeError:
                 return  # sender closed by stop(): queue drained
-            buffer = memoryview(data.encode("utf-8"))
-            while buffer and not broken:
-                if (waiter := sio.arm_w()) is not None:
-                    await waiter
-                    continue
-                try:
-                    written = os.write(fd, buffer)
-                except BlockingIOError:
-                    sio.consume_w()
-                    continue
-                except InterruptedError:
-                    continue
-                except OSError:
-                    # The terminal went away (EIO/EPIPE). Keep draining so no
-                    # writer waits forever; the bytes have nowhere to go.
-                    broken = True
-                    break
-                buffer = buffer[written:]
-            if log_path and data:
-                await tonio.spawn_blocking(_append_write_log, log_path, data)
+            try:
+                buffer = memoryview(data.encode("utf-8"))
+                while buffer and not broken:
+                    if (waiter := sio.arm_w()) is not None:
+                        await waiter
+                        continue
+                    try:
+                        written = os.write(fd, buffer)
+                    except BlockingIOError:
+                        sio.consume_w()
+                        continue
+                    except InterruptedError:
+                        continue
+                    except OSError:
+                        # The terminal went away (EIO/EPIPE). Keep draining so
+                        # no writer waits forever; the bytes have nowhere to go.
+                        broken = True
+                        break
+                    buffer = buffer[written:]
+                if log_path and data:
+                    await tonio.spawn_blocking(_append_write_log, log_path, data)
+            except BaseException as error:
+                # The sole writer of the fd must survive a bad payload (e.g.
+                # an unencodable surrogate): a dead pump hangs every
+                # `terminal.write` waiter and freezes the whole UI. Report
+                # loud, keep draining, and still release this writer below.
+                if isinstance(error, GeneratorExit):
+                    raise
+                on_error = self.input_owner.on_error
+                if on_error is not None:
+                    on_error(error)
             if done is not None:
                 done.set()
 

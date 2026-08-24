@@ -9,6 +9,7 @@ The Windows npm-sibling labeling test is not ported (POSIX-only port).
 import os
 import re
 import sys
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -249,6 +250,10 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         ui=ui,
         _dispose_active_selector=lambda: None,
     )
+    # Editor mutations route through the owner helpers (started owner here:
+    # the restore lands as a posted owner job).
+    fake._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, fake)
+    fake._set_editor_text = partial(InteractiveMode._set_editor_text, fake)
 
     async def show_extension_custom(key, factory, options=None):
         done = tonio.Event()

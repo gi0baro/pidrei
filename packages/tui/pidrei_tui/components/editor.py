@@ -2000,29 +2000,42 @@ class Editor:
         lines = list(self._state["lines"])
 
         async def _request_task() -> None:
-            async with self._autocomplete_request_lock:
+            try:
+                async with self._autocomplete_request_lock:
+                    if controller.cancelled:
+                        return
+                    # Async-only, matching pi's `getSuggestions` (strictly
+                    # Promise-returning, in deliberate contrast to the Awaitable
+                    # union pi uses for `getArgumentCompletions`).
+                    suggestions = await provider.get_suggestions(
+                        lines, snapshot_line, snapshot_col, {"signal": controller, "force": force}
+                    )
+
+                async def apply() -> None:
+                    self._apply_autocomplete_response(
+                        request_id,
+                        controller,
+                        snapshot_text,
+                        snapshot_line,
+                        snapshot_col,
+                        suggestions,
+                        force=force,
+                        explicit_tab=explicit_tab,
+                    )
+
+                await self._tui.input_owner.run(apply)
+            except BaseException as error:
+                # A scope child dying unretrieved is invisible (tonio can only
+                # report it as UNHANDLED); a cancelled request may surface its
+                # cancellation as an exception and is not an error.
+                if isinstance(error, GeneratorExit):
+                    raise
                 if controller.cancelled:
                     return
-                # Async-only, matching pi's `getSuggestions` (strictly
-                # Promise-returning, in deliberate contrast to the Awaitable
-                # union pi uses for `getArgumentCompletions`).
-                suggestions = await provider.get_suggestions(
-                    lines, snapshot_line, snapshot_col, {"signal": controller, "force": force}
-                )
-
-            async def apply() -> None:
-                self._apply_autocomplete_response(
-                    request_id,
-                    controller,
-                    snapshot_text,
-                    snapshot_line,
-                    snapshot_col,
-                    suggestions,
-                    force=force,
-                    explicit_tab=explicit_tab,
-                )
-
-            await self._tui.input_owner.run(apply)
+                on_error = self._tui.input_owner.on_error
+                if on_error is None:
+                    raise
+                on_error(error)
 
         self._tui.input_owner.spawn(_request_task())
 

@@ -178,3 +178,46 @@ async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
         for fd in (in_r, in_w, out_r, out_w):
             os.close(fd)
     set_kitty_protocol_active(False)
+
+
+@pytest.mark.tonio
+async def test_pty_input_survives_a_raising_input_handler():
+    """A handler exception is routed to the owner's on_error and the pump
+    keeps reading — input must not die for good (the 0.84.2.5 freeze)."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    inputs = []
+    errors = []
+    got_error = tonio.Event()
+    got_y = tonio.Event()
+
+    async def record_input(data: str) -> None:
+        if data == "x":
+            raise RuntimeError("handler blew up")
+        inputs.append(data)
+        if data == "y":
+            got_y.set()
+
+    def on_error(error: BaseException) -> None:
+        errors.append(error)
+        got_error.set()
+
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    terminal.input_owner.on_error = on_error
+    try:
+        await terminal.start(record_input, lambda: None)
+
+        os.write(master, b"x")
+        await got_error.wait(2.0)
+        assert got_error.is_set(), "handler exception must reach input_owner.on_error"
+        assert [type(error).__name__ for error in errors] == ["RuntimeError"]
+
+        os.write(master, b"y")
+        await got_y.wait(2.0)
+        assert got_y.is_set(), "input after a handler exception must still be delivered"
+        assert inputs == ["y"]
+    finally:
+        await terminal.stop()
+        set_kitty_protocol_active(False)
+    os.close(master)
+    os.close(slave)

@@ -165,8 +165,10 @@ class OwnerTask:
             if job.done is None:
                 try:
                     await job.fn()
-                except Exception as error:
-                    if self.on_error is None:
+                except BaseException as error:
+                    # BaseException: a pyo3 PanicException escaping here would
+                    # kill the owner — input and timers — silently.
+                    if isinstance(error, GeneratorExit) or self.on_error is None:
                         raise
                     self.on_error(error)
                 continue

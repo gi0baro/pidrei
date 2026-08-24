@@ -694,7 +694,14 @@ class TuiBase(Container, ABC):
             self.input_owner.start(self._owner_scope)
 
             async def on_input(data: str) -> None:
-                await self.input_owner.run(functools.partial(self._handle_input, data))
+                try:
+                    await self.input_owner.run(functools.partial(self._handle_input, data))
+                except BaseException as error:
+                    # Mirror of the ProcessTerminal pump guard: a handler
+                    # exception must not kill the terminal's input delivery.
+                    if isinstance(error, GeneratorExit):
+                        raise
+                    self._handle_owner_error(error)
 
         await self.terminal.start(on_input, self.request_render)
         set_ui_owner(self.input_owner)
@@ -857,7 +864,10 @@ class TuiBase(Container, ABC):
 
     async def _frame_writer(self, receiver) -> None:
         while True:
-            item = await receiver.receive()
+            try:
+                item = await receiver.receive()
+            except BrokenPipeError:
+                return  # sender closed: nothing more will be handed over
             if item is None:
                 return
             if isinstance(item, tonio.Event):
@@ -867,7 +877,11 @@ class TuiBase(Container, ABC):
                 continue  # the terminal is gone; the loop learns on its next _emit
             try:
                 await self.terminal.write(item)
-            except Exception as error:
+            except BaseException as error:
+                # BaseException: a dead writer wedges the render loop on its
+                # next send; the stored error resurfaces there instead.
+                if isinstance(error, GeneratorExit):
+                    raise
                 self._frame_writer_error = error
 
     def post_before_render(self, callback) -> None:
@@ -952,11 +966,15 @@ class TuiBase(Container, ABC):
             try:
                 self._run_pre_render_callbacks()
                 await self._render_frame()
-            except Exception as error:
+            except BaseException as error:
                 # pi crashes the process on a render throw. Here the loop is a
                 # scope child: letting the exception escape would only surface
                 # at `stop()`, leaving a frozen UI with a live agent. Hand it
                 # to the owner (interactive mode's crash handler) instead.
+                # BaseException on purpose: a pyo3 PanicException is not an
+                # Exception, and missing it here is a silent render-loop death.
+                if isinstance(error, GeneratorExit):
+                    raise
                 handler = self._render_error_handler
                 if handler is None:
                     raise

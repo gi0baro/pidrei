@@ -4,11 +4,13 @@ pi calls InteractiveMode.prototype.handleCloneCommand with a fake `this`;
 here the unbound method runs against a SimpleNamespace context.
 """
 
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
 
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
+from pidrei_tui._owner import OwnerTask
 
 
 def _create_context(leaf_id, fork_calls):
@@ -31,7 +33,14 @@ def _wire_recorders(context):
     context.editor.set_text = context.editor.set_text_calls.append
     context.show_status = context.show_status_calls.append
     context.show_error = context.show_error_calls.append
-    context.ui = SimpleNamespace(request_render=lambda: context.request_render_calls.append(True))
+    context.ui = SimpleNamespace(
+        request_render=lambda: context.request_render_calls.append(True),
+        input_owner=OwnerTask(),
+    )
+    # Editor mutations route through the owner helpers; an unstarted owner
+    # exercises their direct-call fallback.
+    context._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, context)
+    context._set_editor_text = partial(InteractiveMode._set_editor_text, context)
     return context
 
 

@@ -12,6 +12,7 @@ Parallelism/async deltas vs pi's single-threaded runtime:
 
 import contextlib
 import errno
+import functools
 import json
 import os
 import posixpath
@@ -378,10 +379,14 @@ class ExtensionUIContext:
         return self._mode._show_extension_custom(factory, options)
 
     async def paste_to_editor(self, text: str) -> None:
-        await self._mode.editor.handle_input(f"\x1b[200~{text}\x1b[201~")
+        # On the input owner: extensions run on their own tasks, and editor
+        # state has one writer (§4.4). `run` falls back to a direct call when
+        # the owner is not running.
+        data = f"\x1b[200~{text}\x1b[201~"
+        await self._mode.ui.input_owner.run(functools.partial(self._mode.editor.handle_input, data))
 
     def set_editor_text(self, text: str) -> None:
-        self._mode.editor.set_text(text)
+        self._mode._set_editor_text(text)
 
     def get_editor_text(self) -> str:
         editor = self._mode.editor
@@ -1901,7 +1906,7 @@ class InteractiveMode:
             try:
                 result = await self.runtime_host.fork(entry_id, **(options or {}))
                 if not result["cancelled"]:
-                    self.editor.set_text(result.get("selectedText") or "")
+                    self._set_editor_text(result.get("selectedText") or "")
                     self.show_status("Forked to new session")
                 return {"cancelled": result["cancelled"]}
             except Exception as error:
@@ -1924,7 +1929,7 @@ class InteractiveMode:
             self._chat_container.clear()
             self._render_initial_messages()
             if result.editor_text and not self.editor.get_text().strip():
-                self.editor.set_text(result.editor_text)
+                self._set_editor_text(result.editor_text)
             self.show_status("Navigated to selected point")
             tonio.spawn.without_tracking(self._flush_compaction_queue({"willRetry": False}))
             return {"cancelled": False}
@@ -2600,7 +2605,7 @@ class InteractiveMode:
             self.editor = new_editor
         else:
             # Restore default editor with text from custom editor
-            self._default_editor.set_text(current_text)
+            self._post_editor_mutation(functools.partial(self._default_editor.set_text, current_text))
             self.editor = self._default_editor
 
         self._editor_container.add_child(self.editor)
@@ -2628,7 +2633,7 @@ class InteractiveMode:
         def restore_editor() -> None:
             self._editor_container.clear()
             self._editor_container.add_child(self.editor)
-            self.editor.set_text(saved_text)
+            self._set_editor_text(saved_text)
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
@@ -2714,7 +2719,7 @@ class InteractiveMode:
             elif self.session.is_bash_running:
                 self.session.abort_bash()
             elif self._is_bash_mode:
-                self.editor.set_text("")
+                self._set_editor_text("")
                 self._is_bash_mode = False
                 self._update_editor_border_color()
             elif not self.editor.get_text().strip():
@@ -2796,7 +2801,7 @@ class InteractiveMode:
 
                 insert = getattr(self.editor, "insert_text_at_cursor", None)
                 if insert is not None:
-                    insert(file_path)
+                    self._post_editor_mutation(functools.partial(insert, file_path))
                 self.ui.request_render()
                 return
 
@@ -2804,11 +2809,46 @@ class InteractiveMode:
             if text:
                 insert = getattr(self.editor, "insert_text_at_cursor", None)
                 if insert is not None:
-                    insert(text)
+                    self._post_editor_mutation(functools.partial(insert, text))
                 self.ui.request_render()
         except Exception:
             # Silently ignore clipboard errors (permissions etc.)
             pass
+
+    def _post_editor_mutation(self, fn) -> None:
+        """Apply an editor mutation on the input-owner task (§4.4 single-writer).
+
+        Handlers running off the owner (detached submit handlers, extension
+        actions, selector callbacks) must not touch editor state while the
+        owner is mid-keystroke — an in-place `_state` swap under a running
+        `_move_cursor` crashes it (and pi runs all of this on one thread).
+        `post` keeps this safe to call from the owner itself too (a nested
+        `run` would deadlock) at the cost of the mutation landing after any
+        already-queued keys; the posted job requests a render so the deferred
+        application always reaches the screen. Falls back to a direct call
+        when the owner is not running (tests, mode switches mid-stop).
+        """
+        owner = self.ui.input_owner
+        if not owner.started:
+            fn()
+            return
+
+        async def apply() -> None:
+            fn()
+            self.ui.request_render()
+
+        owner.post(apply)
+
+    def _set_editor_text(self, text: str) -> None:
+        self._post_editor_mutation(functools.partial(self.editor.set_text, text))
+
+    def _add_editor_history(self, text: str) -> None:
+        def apply() -> None:
+            add_to_history = getattr(self.editor, "add_to_history", None)
+            if add_to_history is not None:
+                add_to_history(text)
+
+        self._post_editor_mutation(apply)
 
     def _setup_editor_submit_handler(self) -> None:
         def on_submit(text: str) -> None:
@@ -2824,105 +2864,105 @@ class InteractiveMode:
         # Handle commands
         if text == "/settings":
             await self._show_settings_selector()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/scoped-models":
-            self.editor.set_text("")
+            self._set_editor_text("")
             self._show_models_selector()
             return
         if text == "/model" or text.startswith("/model "):
             search_term = text[7:].strip() if text.startswith("/model ") else None
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self._handle_model_command(search_term)
             return
         if text == "/export" or text.startswith("/export "):
             await self._handle_export_command(text)
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/import" or text.startswith("/import "):
             await self.handle_import_command(text)
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/share":
             await self._handle_share_command()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/copy":
             await self._handle_copy_command()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/name" or text.startswith("/name "):
             await self._handle_name_command(text)
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/session":
             self.handle_session_command()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/changelog":
             await self._handle_changelog_command()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/hotkeys":
             self._handle_hotkeys_command()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/fork":
             self._show_user_message_selector()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/clone":
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self.handle_clone_command()
             return
         if text == "/tree":
             self._show_tree_selector()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/trust":
             await self._show_trust_selector()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/login" or text.startswith("/login "):
             provider_ref = text[7:].strip() if text.startswith("/login ") else None
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self._handle_login_command(provider_ref)
             return
         if text == "/logout":
             self._show_oauth_selector("logout")
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/new":
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self._handle_clear_command()
             return
         if text == "/compact" or text.startswith("/compact "):
             custom_instructions = text[9:].strip() if text.startswith("/compact ") else None
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self.handle_compact_command(custom_instructions)
             return
         if text == "/reload":
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self._handle_reload_command()
             return
         if text == "/debug":
             self._handle_debug_command()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/arminsayshi":
             self._handle_armin_says_hi()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/dementedelves":
             self._handle_demented_elves()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/resume":
             self._show_session_selector()
-            self.editor.set_text("")
+            self._set_editor_text("")
             return
         if text == "/quit":
-            self.editor.set_text("")
+            self._set_editor_text("")
             await self.shutdown()
             return
 
@@ -2933,11 +2973,9 @@ class InteractiveMode:
             if command:
                 if self.session.is_bash_running:
                     self.show_warning("A bash command is already running. Press Esc to cancel it first.")
-                    self.editor.set_text(text)
+                    self._set_editor_text(text)
                     return
-                add_to_history = getattr(self.editor, "add_to_history", None)
-                if add_to_history is not None:
-                    add_to_history(text)
+                self._add_editor_history(text)
                 await self._handle_bash_command(command, is_excluded)
                 self._is_bash_mode = False
                 self._update_editor_border_color()
@@ -2946,10 +2984,8 @@ class InteractiveMode:
         # Queue input during compaction (extension commands run immediately)
         if self.session.is_compacting:
             if self._is_extension_command(text):
-                add_to_history = getattr(self.editor, "add_to_history", None)
-                if add_to_history is not None:
-                    add_to_history(text)
-                self.editor.set_text("")
+                self._add_editor_history(text)
+                self._set_editor_text("")
                 await self.session.prompt(text)
             else:
                 self._queue_compaction_message(text, "steer")
@@ -2959,10 +2995,8 @@ class InteractiveMode:
         # extension commands (execute immediately), prompt template
         # expansion, and queueing
         if self.session.is_streaming:
-            add_to_history = getattr(self.editor, "add_to_history", None)
-            if add_to_history is not None:
-                add_to_history(text)
-            self.editor.set_text("")
+            self._add_editor_history(text)
+            self._set_editor_text("")
             await self.session.prompt(text, PromptOptions(streaming_behavior="steer"))
             self._update_pending_messages_display()
             self.ui.request_render()
@@ -2976,9 +3010,7 @@ class InteractiveMode:
             self._on_input_callback(text)
         else:
             self._pending_user_inputs.append(text)
-        add_to_history = getattr(self.editor, "add_to_history", None)
-        if add_to_history is not None:
-            add_to_history(text)
+        self._add_editor_history(text)
 
     def _subscribe_to_agent(self) -> None:
         # pidrei emits session events synchronously; handling them inline
@@ -3405,9 +3437,7 @@ class InteractiveMode:
                     )
                     self._chat_container.add_child(user_component)
                 if options.get("populateHistory"):
-                    add_to_history = getattr(self.editor, "add_to_history", None)
-                    if add_to_history is not None:
-                        add_to_history(text_content)
+                    self._add_editor_history(text_content)
         elif role == "assistant":
             assistant_component = AssistantMessageComponent(
                 message,
@@ -3784,14 +3814,11 @@ class InteractiveMode:
         if not text:
             return
 
-        add_to_history = getattr(self.editor, "add_to_history", None)
-
         # Queue input during compaction (extension commands execute immediately)
         if self.session.is_compacting:
             if self._is_extension_command(text):
-                if add_to_history is not None:
-                    add_to_history(text)
-                self.editor.set_text("")
+                self._add_editor_history(text)
+                self._set_editor_text("")
                 await self.session.prompt(text)
             else:
                 self._queue_compaction_message(text, "followUp")
@@ -3801,15 +3828,14 @@ class InteractiveMode:
         # This handles extension commands (execute immediately), prompt
         # template expansion, and queueing
         if self.session.is_streaming:
-            if add_to_history is not None:
-                add_to_history(text)
-            self.editor.set_text("")
+            self._add_editor_history(text)
+            self._set_editor_text("")
             await self.session.prompt(text, PromptOptions(streaming_behavior="followUp"))
             self._update_pending_messages_display()
             self.ui.request_render()
         # If not streaming, Alt+Enter acts like regular Enter (trigger on_submit)
         elif self.editor.on_submit:
-            self.editor.set_text("")
+            self._set_editor_text("")
             self.editor.on_submit(text)
 
     def _handle_dequeue(self) -> None:
@@ -3897,7 +3923,7 @@ class InteractiveMode:
         try:
             result = await edit_in_external_editor({"command": editor_cmd, "content": content})
             if result["status"] == "complete":
-                self.editor.set_text(result["content"])
+                self._set_editor_text(result["content"])
         finally:
             await self.ui.start()
             self.ui.request_render(True)
@@ -3907,7 +3933,7 @@ class InteractiveMode:
     # =========================================================================
 
     def clear_editor(self) -> None:
-        self.editor.set_text("")
+        self._set_editor_text("")
         self.ui.request_render()
 
     def show_error(self, error_message: str) -> None:
@@ -4692,7 +4718,7 @@ class InteractiveMode:
                         self.ui.request_render()
                         return
 
-                    self.editor.set_text(result.get("selectedText") or "")
+                    self._set_editor_text(result.get("selectedText") or "")
                     self.show_status("Forked to new session")
                 except Exception as error:
                     self.show_error(str(error))
@@ -4723,7 +4749,7 @@ class InteractiveMode:
                 self.ui.request_render()
                 return
 
-            self.editor.set_text("")
+            self._set_editor_text("")
             self.show_status("Cloned to new session")
         except Exception as error:
             self.show_error(str(error))
@@ -4814,7 +4840,7 @@ class InteractiveMode:
                     self._chat_container.clear()
                     self._render_initial_messages()
                     if result.editor_text and not self.editor.get_text().strip():
-                        self.editor.set_text(result.editor_text)
+                        self._set_editor_text(result.editor_text)
                     self.show_status("Navigated to selected point")
                     tonio.spawn.without_tracking(self._flush_compaction_queue({"willRetry": False}))
                 except Exception as error:
