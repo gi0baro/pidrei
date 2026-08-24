@@ -6,6 +6,27 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.8] - 2026-08-24
+
+### Fixed
+
+- The remaining permanent TUI freeze (hit mostly on macOS, where the ~1KB tty
+  output queue makes the window frequent): the terminal pumps' `EAGAIN` paths
+  called `consume_r`/`consume_w`, which drop readiness unconditionally — a
+  readiness edge landing between the failed `os.read`/`os.write` and the
+  consume was eaten, and the next `arm_r`/`arm_w` parked forever on an
+  already-ready fd (edge-triggered, so no further event ever comes). A wedged
+  output pump froze the whole UI — writes, rendering and input all funnel
+  into it — with no exception for the 0.84.2.7 crash guards to catch. The
+  pumps and `FdReader`/`FdWriter` (output guard, RPC stdin) now use the
+  tick-guarded `clear_r`/`clear_w` from tonio 0.9.12, which keep readiness
+  that arrived after the last arm.
+
+### Changed
+
+- tonio requirement bumped to `~=0.9.12` (exposes `ScheduledIO.clear_r`/
+  `clear_w`).
+
 ## [0.84.2.7] - 2026-08-24
 
 ### Fixed

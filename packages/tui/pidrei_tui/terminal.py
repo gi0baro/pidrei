@@ -473,7 +473,10 @@ class ProcessTerminal:
             try:
                 chunk = os.read(fd, 65536)
             except BlockingIOError:
-                sio.consume_r()
+                # Tick-guarded: keeps a readable edge that landed between the
+                # failed read and this clear; `consume_r` would eat it and the
+                # next `arm_r` could park with input already buffered.
+                sio.clear_r()
                 continue
             except InterruptedError:
                 continue
@@ -775,7 +778,11 @@ class ProcessTerminal:
                     try:
                         written = os.write(fd, buffer)
                     except BlockingIOError:
-                        sio.consume_w()
+                        # Tick-guarded: a writable edge landing between the
+                        # failed write and this clear must survive, or the
+                        # next `arm_w` parks forever on an already-writable
+                        # fd (edge-triggered; the 0.84.2.7 macOS freeze).
+                        sio.clear_w()
                         continue
                     except InterruptedError:
                         continue

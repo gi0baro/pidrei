@@ -123,7 +123,10 @@ class FdReader:
                 try:
                     return os.read(self._fd, self._size)
                 except BlockingIOError:
-                    self._sio.consume_r()
+                    # Tick-guarded: an edge landing between the failed read
+                    # and the clear must survive, or `arm_r` parks with data
+                    # already buffered (`consume_r` would eat it).
+                    self._sio.clear_r()
                 except InterruptedError:
                     pass
         if self._handle is not None:
@@ -172,7 +175,10 @@ class FdWriter:
                 try:
                     sent += os.write(self._fd, data[sent:])
                 except BlockingIOError:
-                    self._sio.consume_w()
+                    # Tick-guarded: a writable edge landing between the failed
+                    # write and the clear must survive, or `arm_w` parks
+                    # forever on an already-writable fd (edge-triggered).
+                    self._sio.clear_w()
                 except InterruptedError:
                     pass
             return

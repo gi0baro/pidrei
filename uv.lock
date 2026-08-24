@@ -328,7 +328,7 @@ wheels = [
 
 [[package]]
 name = "pidrei"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/pidrei" }
 dependencies = [
     { name = "jsonschema" },
@@ -356,12 +356,12 @@ requires-dist = [
     { name = "pillow", specifier = "~=12.3" },
     { name = "pygments", specifier = "~=2.20" },
     { name = "pyyaml", specifier = "~=6.0" },
-    { name = "tonio", specifier = "~=0.9.11" },
+    { name = "tonio", specifier = "~=0.9.12" },
 ]
 
 [[package]]
 name = "pidrei-agent"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/agent" }
 dependencies = [
     { name = "pathspec" },
@@ -375,12 +375,12 @@ requires-dist = [
     { name = "pathspec", specifier = "~=1.1" },
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pyyaml", specifier = "~=6.0" },
-    { name = "tonio", specifier = "~=0.9.11" },
+    { name = "tonio", specifier = "~=0.9.12" },
 ]
 
 [[package]]
 name = "pidrei-ai"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/ai" }
 dependencies = [
     { name = "botocore" },
@@ -401,13 +401,13 @@ requires-dist = [
     { name = "jsonschema", specifier = "~=4.26" },
     { name = "partial-json-parser", specifier = "~=0.2.1" },
     { name = "punkreq", specifier = "~=0.1.4" },
-    { name = "tonio", specifier = "~=0.9.11" },
+    { name = "tonio", specifier = "~=0.9.12" },
     { name = "websockets", specifier = "~=16.1" },
 ]
 
 [[package]]
 name = "pidrei-client"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/client" }
 dependencies = [
     { name = "pidrei-protocol" },
@@ -417,12 +417,12 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pidrei-protocol", editable = "packages/protocol" },
-    { name = "tonio", specifier = "~=0.9.11" },
+    { name = "tonio", specifier = "~=0.9.12" },
 ]
 
 [[package]]
 name = "pidrei-protocol"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/protocol" }
 dependencies = [
     { name = "jsonschema" },
@@ -433,7 +433,7 @@ requires-dist = [{ name = "jsonschema", specifier = "~=4.26" }]
 
 [[package]]
 name = "pidrei-server"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/server" }
 dependencies = [
     { name = "pidrei-ai" },
@@ -445,12 +445,12 @@ dependencies = [
 requires-dist = [
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pidrei-protocol", editable = "packages/protocol" },
-    { name = "tonio", specifier = "~=0.9.11" },
+    { name = "tonio", specifier = "~=0.9.12" },
 ]
 
 [[package]]
 name = "pidrei-tui"
-version = "0.84.2.7"
+version = "0.84.2.8"
 source = { editable = "packages/tui" }
 dependencies = [
     { name = "grapheme" },
@@ -467,7 +467,7 @@ requires-dist = [
     { name = "jieba", specifier = "~=0.42.1" },
     { name = "linkify-it-py", specifier = "~=2.1" },
     { name = "markdown-it-py", specifier = "~=4.2" },
-    { name = "tonio", specifier = "~=0.9.11" },
+    { name = "tonio", specifier = "~=0.9.12" },
     { name = "uniseg", specifier = "~=0.10.1" },
 ]
 
@@ -741,28 +741,28 @@ wheels = [
 
 [[package]]
 name = "tonio"
-version = "0.9.11"
+version = "0.9.12"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ad/b2/a04dda542d72fd28ec632e171182835df0e5493701ef44b609cac83e03c2/tonio-0.9.11.tar.gz", hash = "sha256:af740db5957749b460518704e432622401d85c0506fa60acd668d46d5d006c95", size = 90587, upload-time = "2026-08-21T07:54:21.462Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/e4/ca7de2f58201b3853907590adc69ee3ae75518d56e4fa437322270c9cf1b/tonio-0.9.12.tar.gz", hash = "sha256:5f52b53f434313c328a0d6fa080842fbc66927805b4cd83ce62d1a4fe070b8dc", size = 90607, upload-time = "2026-08-24T14:07:59.595Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/57/45633d987fa682a9e5926a074e03d322d7d9f10acbf0deb67b2edc0290c3/tonio-0.9.11-cp314-cp314t-macosx_10_12_x86_64.whl", hash = "sha256:f7df2b93499ce55ada0b554344597ffbc517bb800d3a7b70841f0e3146e555a6", size = 387000, upload-time = "2026-08-21T07:53:57.639Z" },
-    { url = "https://files.pythonhosted.org/packages/42/67/ea70234feb4bebb40147b2e1be73a066d60c293e36eb47a42ed2a268b3f9/tonio-0.9.11-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:91317b3ef48d7616f7f050bcdffc0b51878868c5bb47cd1efdfa0e4002fd6229", size = 365835, upload-time = "2026-08-21T07:53:58.904Z" },
-    { url = "https://files.pythonhosted.org/packages/24/1d/936d625b2f643df4b6b900059320c512335a2905903d5f8435e38f0d787a/tonio-0.9.11-cp314-cp314t-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:155b59bf7c6f6c59cc01720e2498e0927bc8e7321de7954eeec938dd2da08ca5", size = 447304, upload-time = "2026-08-21T07:54:00.167Z" },
-    { url = "https://files.pythonhosted.org/packages/49/17/920a35fe12b13a7be1e5208f96b38252562b94b112fbabe20a3924f30832/tonio-0.9.11-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8015fd4070b5efbe8486907b24a6d830a234de5e42af210cf4c1b21e5c481e46", size = 408917, upload-time = "2026-08-21T07:54:02.384Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/68/ac0b7e95b85c61ce29458e391058dcb30939add556dc50fea95eb0612b46/tonio-0.9.11-cp314-cp314t-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:1a1572a72a48f3788c1e85ee7b44e3f8c67fbd9e1e055a5be7f7fe0cee875ecd", size = 419574, upload-time = "2026-08-21T07:54:03.624Z" },
-    { url = "https://files.pythonhosted.org/packages/5e/6a/da3df88ae6be31e0faec9217d0c100947a621a5bc5fb8a980b7749aa800d/tonio-0.9.11-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2dba4e9cb4b30f97c1396c7b15fb58b5d359fed333d0628be85befacb5549929", size = 424601, upload-time = "2026-08-21T07:54:04.859Z" },
-    { url = "https://files.pythonhosted.org/packages/cb/9f/62b5abde8019e2d56cc3da316b81145246985456a85f707d0ca5e136cf3b/tonio-0.9.11-cp314-cp314t-musllinux_1_1_aarch64.whl", hash = "sha256:e3bfbeb4d7eaebeff233853a4f3874be3ce7591d87d8a27dd773d3e4e6b5d1fa", size = 587491, upload-time = "2026-08-21T07:54:06.296Z" },
-    { url = "https://files.pythonhosted.org/packages/e5/f9/9a8ec96d6bcb955d6b0bf90473bddc7e23ba2dc74eaf837b8e0b82f5c53d/tonio-0.9.11-cp314-cp314t-musllinux_1_1_armv7l.whl", hash = "sha256:c72ab784daec0933e00560a1b9b3d1ab66a4ea845a5a6c0a875d0871749da310", size = 697449, upload-time = "2026-08-21T07:54:07.637Z" },
-    { url = "https://files.pythonhosted.org/packages/59/4a/edb19f19a12778b3c404b41073a5a9d026dc71de2073f265c6d8fdaa6874/tonio-0.9.11-cp314-cp314t-musllinux_1_1_x86_64.whl", hash = "sha256:6d1cd7de6665e513e9f3d20fbcb36347276cc0a91d77bb59776fc6406d2baec0", size = 638412, upload-time = "2026-08-21T07:54:08.882Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/e5/3951cfb461e3b7b228f8e289e58a9571b21e23f41cae5074d1025888a253/tonio-0.9.11-cp315-cp315t-macosx_10_12_x86_64.whl", hash = "sha256:065850fdb8fd91467206fa01af06dcfb4b54e5013b13f147f0e5bb43a33f981b", size = 386898, upload-time = "2026-08-21T07:54:10.215Z" },
-    { url = "https://files.pythonhosted.org/packages/41/1f/478faaf3d3b795c964df87535e632473c23572905a63e7c87e7753beb9b7/tonio-0.9.11-cp315-cp315t-macosx_11_0_arm64.whl", hash = "sha256:fe57551d66d0db6d245b0a4dceb7bb95502fc022b238f6054d38c4a909a6376d", size = 365670, upload-time = "2026-08-21T07:54:11.543Z" },
-    { url = "https://files.pythonhosted.org/packages/be/28/ca49a58ab0ea29e0282d74fa2b8ef2f9eeb8ecbd737c68bbc1fb549ebb21/tonio-0.9.11-cp315-cp315t-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:7682be03a94fc1e6d76d75b2c63d651e5777595f8b409ba909c3c37feb1bcd82", size = 447545, upload-time = "2026-08-21T07:54:12.859Z" },
-    { url = "https://files.pythonhosted.org/packages/03/ad/8c5d8ea42f1165d8f7621cd3781bd9042af26a1a022c3f5dd23a8d051d92/tonio-0.9.11-cp315-cp315t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:a11d8e5ba192b490fcf21841e6d7c8ae79548419ebc21f51c5aeed67aed497c6", size = 409053, upload-time = "2026-08-21T07:54:14.032Z" },
-    { url = "https://files.pythonhosted.org/packages/81/12/34c005fa0393bd028d00244cd5a36ffd61a15d943539e28b9aada7b86f33/tonio-0.9.11-cp315-cp315t-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:8a186e0f7e403ff0c505509dff317cd19d16230709b3fb11d27370d39d3a232b", size = 419769, upload-time = "2026-08-21T07:54:15.191Z" },
-    { url = "https://files.pythonhosted.org/packages/14/0b/393e038b71dad4ff11c239d8ed8ec99cbdc211d2eeb962afd26637bf631e/tonio-0.9.11-cp315-cp315t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d5ee9e848973c8a910f5e82777446d29d51925a74cf0d7ddd7c886048f6f687e", size = 424526, upload-time = "2026-08-21T07:54:16.435Z" },
-    { url = "https://files.pythonhosted.org/packages/f6/60/cfe174c39aee1dbb2ca8031bf6423a5ed7dc63db1298d915ab7c6986cfb1/tonio-0.9.11-cp315-cp315t-musllinux_1_1_aarch64.whl", hash = "sha256:90c44f679094148ff494af1505e39e838a4a7194a0b7a2502ec17e4aa61c61bc", size = 587446, upload-time = "2026-08-21T07:54:17.665Z" },
-    { url = "https://files.pythonhosted.org/packages/5b/f6/61d3cd08ad09c91b8abceadf3684c0cc579a8dc6d56e1358554b17939f68/tonio-0.9.11-cp315-cp315t-musllinux_1_1_armv7l.whl", hash = "sha256:96a7ac64e5888ee40edbab1007c6b09960be86b20dcaf58aab89768cce68e0cd", size = 697574, upload-time = "2026-08-21T07:54:18.897Z" },
-    { url = "https://files.pythonhosted.org/packages/11/6a/08a4e18e8e62c30e890260058e2cf283333e59f51737adee383e0235851d/tonio-0.9.11-cp315-cp315t-musllinux_1_1_x86_64.whl", hash = "sha256:4b3aaa36f511659781a6711aa2c606ee8f9842351bfc784546ea70e0edd4acb1", size = 638287, upload-time = "2026-08-21T07:54:20.065Z" },
+    { url = "https://files.pythonhosted.org/packages/79/c7/cb243cf30851c2a60021b705006766027f97d3dee991dab0e537c2bcbe63/tonio-0.9.12-cp314-cp314t-macosx_10_12_x86_64.whl", hash = "sha256:5fb3b978ae02775442a4f7e76978aa99166931ee7f0827bfb3aa007dbe70a43e", size = 386539, upload-time = "2026-08-24T14:07:34.735Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/44/54dda9c13d7dc5e21698e66837e89aad55bb42daf35bbf675b2407234f20/tonio-0.9.12-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:83ec4cf7648b54b4c6b6aaae57190b746bbe763ed9e4e6114d20f182ff63e5b5", size = 366458, upload-time = "2026-08-24T14:07:36.463Z" },
+    { url = "https://files.pythonhosted.org/packages/99/54/76194cc8208bf0cea21879726ec703d42c25810866a5cb5886b2e76cbfb2/tonio-0.9.12-cp314-cp314t-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:ec0add6ddecde23069e3bb173a83cc762a707058d9fba97eba498c83c969eae0", size = 447782, upload-time = "2026-08-24T14:07:37.746Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/7a/e9abf6d7f28c372fa1d6d58eb2fff2e062a6b85270f0c9eaefebc38afb35/tonio-0.9.12-cp314-cp314t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ba117610e5f6f03f68b2905a705b55acfbed666afd0685f0719ba1a1f1b15f9f", size = 408903, upload-time = "2026-08-24T14:07:39.151Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/a4/85fe901f1ec92e5df11cd0410a0d854b339d143584bf1ab7397d984a16b6/tonio-0.9.12-cp314-cp314t-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:352da592b4ffba918e6cd2e0d0f0732fe2f23ba169c0a8835ef16e8e9697385b", size = 419723, upload-time = "2026-08-24T14:07:40.464Z" },
+    { url = "https://files.pythonhosted.org/packages/05/cb/a103f4caf43d4bc4455bcfa11030c4b6aac5e1cc4f4aa190afb03d3c9a2d/tonio-0.9.12-cp314-cp314t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8469e776ab6d22208b8eb0c9f5ff3631cd032a799a81f07622cf56e382c4d9d1", size = 424731, upload-time = "2026-08-24T14:07:41.898Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/a2/fb3484e78919c8aed8c3fb10448fff7c4b41d439af7b3c1e526addb8d025/tonio-0.9.12-cp314-cp314t-musllinux_1_1_aarch64.whl", hash = "sha256:e5b52561204b4b317006eeb513b867c7e9f1b830759068e932e542e3eef6e97d", size = 587442, upload-time = "2026-08-24T14:07:43.209Z" },
+    { url = "https://files.pythonhosted.org/packages/31/fc/3b7d91aaeddb8e3c1b820974b91d6b248f8838fced298540673e7b272066/tonio-0.9.12-cp314-cp314t-musllinux_1_1_armv7l.whl", hash = "sha256:4efa17ff43b64f6df8337e1ec35587969afe2046b0012ec08339358ea3700d78", size = 697622, upload-time = "2026-08-24T14:07:44.46Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/25/a2fe735e2c4a6283d3c8f97b4ad21bb73437db90913137d4a91e041f0477/tonio-0.9.12-cp314-cp314t-musllinux_1_1_x86_64.whl", hash = "sha256:53d31f973ef1c44b2fe1cbcac23e9e47032a58b695fa18617fce3165ce506381", size = 638493, upload-time = "2026-08-24T14:07:45.972Z" },
+    { url = "https://files.pythonhosted.org/packages/40/77/d4fbff2179bb0b9550b81522b1d03efddb03b8bbd65971d0d6ede51519aa/tonio-0.9.12-cp315-cp315t-macosx_10_12_x86_64.whl", hash = "sha256:663912d14fec14ad777ce553b0b2d995992044051f284efecde5c3ade466255c", size = 386466, upload-time = "2026-08-24T14:07:47.428Z" },
+    { url = "https://files.pythonhosted.org/packages/14/06/70342d4e668fc0f07edd56c1ec4badf59db13b5b6a2b308127f7b399c4e6/tonio-0.9.12-cp315-cp315t-macosx_11_0_arm64.whl", hash = "sha256:a2d137f4712ffd52b0b40f54f5847426cd154b58d156ec0f825fab780aa42d20", size = 366399, upload-time = "2026-08-24T14:07:48.887Z" },
+    { url = "https://files.pythonhosted.org/packages/73/e6/784ece80daf35e0cd889013d64e3c059894620cb3aec1edffb132a69ae09/tonio-0.9.12-cp315-cp315t-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:c560f5c4eeac6c073e2b03f3478a12a0514eb2b08df2080656e56e3563d1494b", size = 447902, upload-time = "2026-08-24T14:07:50.329Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/b6/0a613e4162d548cd5cb7865b3a32852afaef7904eeeef9158f8eb85a2f30/tonio-0.9.12-cp315-cp315t-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5185fa991e740b5ee2195b059ca34184c34fe028597680df79d0160cdfdd89bc", size = 408841, upload-time = "2026-08-24T14:07:51.611Z" },
+    { url = "https://files.pythonhosted.org/packages/35/1c/87332699acf9b5fbb198c11a6e02f84ccb63180653318b138983f7887a2c/tonio-0.9.12-cp315-cp315t-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:fd9acf250a4e7eabf01ebf30ef7b57c1a6a56f4322a7eaca78cafdb9de681943", size = 419751, upload-time = "2026-08-24T14:07:53.052Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/8a/bc52477fa72801f8d6e8c761947d6691fcb7a14574178f0fb64506661e0f/tonio-0.9.12-cp315-cp315t-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7dddef341ae82a3f3d22c01900a4a88ca10e67819358cb61548ae5e3befed208", size = 424601, upload-time = "2026-08-24T14:07:54.386Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/2f/4d94ddc282dd17ac0ab78450bc147318381c9bae0064a7013118d6142c99/tonio-0.9.12-cp315-cp315t-musllinux_1_1_aarch64.whl", hash = "sha256:4bc2acc65752b3633f9f21152652a599992d363a58b90051c9bc746bd4ca763d", size = 587326, upload-time = "2026-08-24T14:07:55.597Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/7f/16f225e115b1c4caf970e7e809bdcb7d86e583def8693a8f5c740964e2a2/tonio-0.9.12-cp315-cp315t-musllinux_1_1_armv7l.whl", hash = "sha256:023748087b6e9183bdbd7d70c385efedeafca61669234fb74c07f545162aa5a2", size = 697698, upload-time = "2026-08-24T14:07:57.015Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/c9/38194922e51ac21c0a1df085add1ad980d97d9919c556cf8e7653ec28f66/tonio-0.9.12-cp315-cp315t-musllinux_1_1_x86_64.whl", hash = "sha256:98378178236e75fa019f57702cc3107b358cc3ef315a24d5deba12eb28161a46", size = 638340, upload-time = "2026-08-24T14:07:58.377Z" },
 ]
 
 [[package]]
