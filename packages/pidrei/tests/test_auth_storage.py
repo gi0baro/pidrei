@@ -139,6 +139,29 @@ async def test_coalesces_file_reloads_across_concurrent_readers_and_storage_inst
 
 
 @pytest.mark.tonio
+async def test_creates_new_auth_files_with_owner_only_permissions(tmp_dir):
+    auth_path = tmp_dir / "auth.json"
+    await AuthStorage.create(str(auth_path))
+
+    assert auth_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.tonio
+async def test_preserves_the_mode_of_an_existing_auth_file(tmp_dir):
+    auth_path = tmp_dir / "auth.json"
+    write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
+    auth_path.chmod(0o660)
+    storage = await AuthStorage.create(str(auth_path))
+
+    async def update(_current):
+        return ApiKeyCredential(key="new")
+
+    await storage.modify("anthropic", update)
+
+    assert auth_path.stat().st_mode & 0o777 == 0o660
+
+
+@pytest.mark.tonio
 async def test_modify_persists_a_credential_while_preserving_unrelated_external_edits(tmp_dir):
     auth_path = tmp_dir / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})

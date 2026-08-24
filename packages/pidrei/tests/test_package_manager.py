@@ -596,6 +596,44 @@ async def test_expands_positive_glob_manifest_entries_before_collecting_skills(d
     assert any("document-processor-api" in r.path and r.enabled for r in result.skills)
 
 
+@pytest.mark.tonio
+async def test_sorts_manifest_glob_matches_and_uses_exact_entries_for_dot_paths_and_symlinks(dirs):
+    package_dir = os.path.join(dirs.root, "manifest-glob-semantics-pkg")
+    extension_files_dir = os.path.join(package_dir, "extension-files")
+    linked_plugin_source = os.path.join(package_dir, "linked-plugin-source")
+    write(os.path.join(extension_files_dir, "z.py"), EXTENSION_SOURCE)
+    write(os.path.join(extension_files_dir, "a.py"), EXTENSION_SOURCE)
+    write(os.path.join(extension_files_dir, ".ignored.py"), EXTENSION_SOURCE)
+    write(os.path.join(extension_files_dir, "nested", ".hidden.py"), EXTENSION_SOURCE)
+    write(os.path.join(package_dir, "extension-groups", "group", "__init__.py"), EXTENSION_SOURCE)
+    write_skill(os.path.join(package_dir, "plugins", "local", "skills", "local-skill", "SKILL.md"), "local-skill")
+    write_skill(os.path.join(linked_plugin_source, "skills", "linked-skill", "SKILL.md"), "linked-skill")
+    os.symlink(linked_plugin_source, os.path.join(package_dir, "plugins", "linked"))
+    write_manifest(
+        package_dir,
+        {
+            "extensions": [
+                "./extension-files/*.py",
+                "./extension-files/**/.ignored.py",
+                "./extension-files/nested/.hidden.py",
+                "./extension-groups/*/",
+            ],
+            "skills": ["./plugins/*/skills", "./plugins/linked/skills"],
+        },
+    )
+
+    result = await dirs.manager.resolve_extension_sources([package_dir])
+
+    assert [os.path.relpath(resource.path, package_dir) for resource in result.extensions] == [
+        os.path.join("extension-files", "a.py"),
+        os.path.join("extension-files", "z.py"),
+        os.path.join("extension-files", "nested", ".hidden.py"),
+        os.path.join("extension-groups", "group", "__init__.py"),
+    ]
+    assert any(path.endswith(os.path.join("local-skill", "SKILL.md")) for path in paths_of(result.skills))
+    assert any(path.endswith(os.path.join("linked-skill", "SKILL.md")) for path in paths_of(result.skills))
+
+
 # -- pattern filtering in package filters ------------------------------------------
 
 

@@ -38,6 +38,10 @@ from ..utils.text import strip_bom
 from .resolve_config_value import is_command_config_value, resolve_config_value
 
 
+# The mode applies only on creation so administrator-managed modes and ACLs remain intact.
+AUTH_FILE_MODE = 0o600
+
+
 def parse_credential(raw: dict[str, Any]) -> Credential:
     """Parse one auth.json credential object into the typed credential."""
     if raw.get("type") == "oauth":
@@ -167,9 +171,9 @@ class FileAuthStorageBackend:
             return f.read()
 
     def _write(self, content: str) -> None:
-        with open(self._auth_path, "w", encoding="utf-8") as f:
+        fd = os.open(self._auth_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, AUTH_FILE_MODE)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        os.chmod(self._auth_path, 0o600)
 
     def with_lock(self, fn: Callable[[str | None], tuple[Any, str | None]]) -> Any:
         self._ensure_parent_dir()

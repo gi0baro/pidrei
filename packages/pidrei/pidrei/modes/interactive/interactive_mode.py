@@ -5793,7 +5793,12 @@ class InteractiveMode:
             await self._handle_fatal_runtime_error("Failed to import session", error)
 
     async def _handle_share_command(self) -> None:
+        """Share the session as a secret gist.
 
+        pi also tries a Radius artifact upload first and falls back to the gist
+        path; Radius is dropped surface here (see FEASIBILITY), so only the
+        gist half exists and the JSONL export that feeds Radius is not made.
+        """
         # Check if gh is available and logged in
         try:
             auth_result = await run_command(
@@ -5811,11 +5816,17 @@ class InteractiveMode:
         # Export to a temp file
         tmp_file = os.path.join(tempfile.gettempdir(), "session.html")
         try:
-            await self.session.export_to_html(tmp_file, {"themeName": theme.name})
-        except Exception as error:
-            self.show_error(f"Failed to export session: {error if str(error) else 'Unknown error'}")
-            return
+            try:
+                await self.session.export_to_html(tmp_file, {"themeName": theme.name})
+            except Exception as error:
+                self.show_error(f"Failed to export session: {error if str(error) else 'Unknown error'}")
+                return
+            await self._share_via_gist(tmp_file)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_file)
 
+    async def _share_via_gist(self, tmp_file: str) -> None:
         # Show cancellable loader, replacing the editor
         loader = BorderedLoader(self.ui, theme, "Creating gist...")
         self._editor_container.clear()
@@ -5823,21 +5834,13 @@ class InteractiveMode:
         self.ui.set_focus(loader)
         self.ui.request_render()
 
-        def restore_editor() -> None:
-            loader.dispose()
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
-            self.ui.set_focus(self.editor)
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_file)
-
         # Create a secret gist asynchronously. exec_command kills the process
         # when the cancel token fires (pi kills the spawned gh directly).
         gist_cancel = AiCancelToken()
 
         def on_abort() -> None:
             gist_cancel.cancel()
-            restore_editor()
+            self._restore_share_editor(loader)
             self.show_status("Share cancelled")
 
         loader.on_abort = on_abort
@@ -5853,7 +5856,7 @@ class InteractiveMode:
             if loader.signal.cancelled:
                 return
 
-            restore_editor()
+            self._restore_share_editor(loader)
 
             if result.code != 0:
                 error_msg = result.stderr.strip() or "Unknown error"
@@ -5871,11 +5874,22 @@ class InteractiveMode:
             # The gist URL is the share URL; a viewer link is added only when
             # one is configured (PIDREI_SHARE_VIEWER_URL).
             preview_url = get_share_viewer_url(gist_id)
-            self.show_status(f"Share URL: {preview_url}\nGist: {gist_url}" if preview_url else f"Gist: {gist_url}")
+            gist_link = hyperlink(gist_url, gist_url)
+            self.show_status(
+                f"Share URL: {hyperlink(preview_url, preview_url)}\nGist: {gist_link}"
+                if preview_url
+                else f"Gist: {gist_link}"
+            )
         except Exception as error:
             if not loader.signal.cancelled:
-                restore_editor()
+                self._restore_share_editor(loader)
                 self.show_error(f"Failed to create gist: {error if str(error) else 'Unknown error'}")
+
+    def _restore_share_editor(self, loader: BorderedLoader) -> None:
+        loader.dispose()
+        self._editor_container.clear()
+        self._editor_container.add_child(self.editor)
+        self.ui.set_focus(self.editor)
 
     async def _handle_copy_command(self, options: dict | None = None) -> None:
         options = options or {}

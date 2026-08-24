@@ -84,7 +84,14 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
     while i < len(args):
         arg = args[i]
 
-        if arg in ("--help", "-h"):
+        if arg == "--":
+            for positional_arg in args[i + 1 :]:
+                if positional_arg.startswith("@"):
+                    result.file_args.append(positional_arg[1:])
+                else:
+                    result.messages.append(positional_arg)
+            break
+        elif arg in ("--help", "-h"):
             result.help = True
         elif arg in ("--version", "-v"):
             result.version = True
@@ -265,7 +272,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
     print(f"""{bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
 {bold("Usage:")}
-  {APP_NAME} [options] [@files...] [messages...]
+  {APP_NAME} [options] [--] [@files...] [messages...]
 
 {bold("Commands:")}
   {APP_NAME} install <source> [-l]     Install extension source and add to settings
@@ -320,6 +327,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PIDREI_OFFLINE=1)
+  --                             End option parsing; treat remaining arguments as messages/files
   --help, -h                     Show this help
   --version, -v                  Show version number
 
@@ -343,6 +351,9 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
 
   # Non-interactive mode (process and exit)
   {APP_NAME} -p "List all .py files in src/"
+
+  # Prompt beginning with a dash
+  {APP_NAME} -p -- "- Summarize these points"
 
   # Multiple messages (interactive)
   {APP_NAME} "Read pyproject.toml" "What dependencies do we have?"

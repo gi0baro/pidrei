@@ -48,6 +48,18 @@ async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writ
 
 
 @pytest.mark.tonio
+async def test_preserves_the_mode_of_an_existing_models_file(tmp_dir):
+    managed_path = tmp_dir / "managed-mode.json"
+    managed_path.write_text("{}", encoding="utf-8")
+    managed_path.chmod(0o660)
+    store = FileModelsStore(str(managed_path))
+
+    await store.write("one", ModelsStoreEntry(models=[make_model("one", "m1")], checked_at=100))
+
+    assert managed_path.stat().st_mode & 0o777 == 0o660
+
+
+@pytest.mark.tonio
 async def test_persists_provider_catalogs_without_replacing_unrelated_providers(tmp_dir):
     path = str(tmp_dir / "models-store.json")
     store = FileModelsStore(path)

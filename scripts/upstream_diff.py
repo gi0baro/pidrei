@@ -199,6 +199,22 @@ DROPPED_PREFIXES = (
         ),
     ),
 )
+#: 0.84.3 additions (PORT_0.84.3.md decision 5).
+DROPPED_PREFIXES += (
+    (
+        "packages/tui/src/native-module-path.ts",
+        "native addon resolution not ported (POSIX-only; terminal.py stubs the native modifier check)",
+    ),
+    (
+        "packages/tui/test/native-module-path.test.ts",
+        "native addon resolution not ported (POSIX-only; terminal.py stubs the native modifier check)",
+    ),
+    (
+        "packages/coding-agent/src/utils/highlight-js.d.ts",
+        "TypeScript ambient declaration for highlight.js; pidrei highlights with pygments",
+    ),
+)
+
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
 #: providers, so pidrei drops them; offline mirrors exist where noted in
 #: TEST_HOMES / test docstrings.
@@ -357,6 +373,10 @@ TEST_HOMES = {
     "packages/coding-agent/test/config.test.ts": (
         "N/A: specs install-method detection and the self-update machinery, neither ported "
         "(no uv equivalent — see pidrei/config.py; config-slice decision)"
+    ),
+    "packages/coding-agent/test/package-distribution.test.ts": (
+        "N/A: asserts package.json points its executables at the JS bundle and its library "
+        "exports at modular dist output; pidrei ships wheels with no bundled interpreter"
     ),
     "packages/coding-agent/test/syntax-highlight.test.ts": (
         "N/A: engine-specific — it specs highlight.js grammar loading and HTML-span "

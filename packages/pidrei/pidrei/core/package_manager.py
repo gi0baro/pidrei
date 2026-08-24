@@ -238,6 +238,18 @@ def _has_glob_pattern(value: str) -> bool:
     return "*" in value or "?" in value
 
 
+def _expand_package_glob(pattern: str, root: str) -> list[str]:
+    """Glob entries discover visible paths; exact entries can target dot paths or symlinked trees."""
+    matches = []
+    for match in glob.glob(pattern, root_dir=root, recursive=True):
+        path = os.path.abspath(os.path.join(root, match))
+        relative = os.path.relpath(path, root)
+        if any(segment != ".." and segment.startswith(".") for segment in relative.split(os.sep)):
+            continue
+        matches.append(path)
+    return sorted(matches)
+
+
 def _get_override_patterns(entries: list[str]) -> list[str]:
     return [pattern for pattern in entries if _is_override_pattern(pattern)]
 
@@ -1233,9 +1245,7 @@ class DefaultPackageManager:
             if not _has_glob_pattern(entry):
                 resolved.append(os.path.abspath(os.path.join(root, entry)))
                 continue
-            resolved.extend(
-                os.path.abspath(os.path.join(root, match)) for match in glob.glob(entry, root_dir=root, recursive=True)
-            )
+            resolved.extend(_expand_package_glob(entry, root))
         return self._collect_files_from_paths(resolved, resource_type)
 
     def _collect_manifest_files(self, package_root: str, resource_type: str) -> list[str]:

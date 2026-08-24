@@ -5,6 +5,13 @@ scope-keyed formatters. pidrei uses pygments instead: tokens map straight to
 the same scope names pi's themes key on (keyword, string, comment, ...), so
 theme dicts translate 1:1. Tokenization differences between the two engines
 mean colors can differ per language, but the theme surface is identical.
+
+pi registers ~20 common grammars eagerly and pulls highlight.js's full
+grammar index in after startup (`loadAllHighlightLanguages`, upstream
+cec3a91c/faecac2c, kicked from interactive-mode once the first frame is
+flushed). pygments has no registry to preload — `get_lexer_by_name` imports
+a single lexer module on first use and `_lexer_cache` keeps it — so neither
+the deferral nor its startup kick has a target here.
 """
 
 from pygments import lex

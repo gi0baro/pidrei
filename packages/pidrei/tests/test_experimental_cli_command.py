@@ -87,8 +87,8 @@ def test_passes_unknown_options_file_arguments_and_the_positional_separator_to_t
     assert result.ok is True
     assert result.command.command == "pi"
     assert result.command.options.file_args == ["prompt.md"]
-    assert result.command.options.unknown_flags["unknown"] is True
-    assert result.command.options.unknown_flags["listen"] == "unix:///tmp/pi.sock"
+    assert result.command.options.messages == ["--listen", "unix:///tmp/pi.sock"]
+    assert result.command.options.unknown_flags == {"unknown": True}
 
 
 @pytest.mark.parametrize(

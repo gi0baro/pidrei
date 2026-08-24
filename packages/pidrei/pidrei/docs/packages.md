@@ -61,6 +61,11 @@ themes = ["resources/themes/"]
 Declared entries replace auto-discovery for that resource type. A directory
 containing `__init__.py` is loaded as a single package extension.
 
+Paths are relative to the package root, and entries may use glob patterns.
+Globs discover visible paths in lexical order: list dot-prefixed paths
+directly, and list the resource root directly when a glob would have to
+continue through a symlink.
+
 ## Filtering
 
 Take part of a package with a filter:
