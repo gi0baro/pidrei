@@ -383,6 +383,13 @@ class ExtensionUIContext:
         self._mode._set_extension_widget(key, content, options)
 
     def set_footer(self, factory) -> None:
+        """Set a custom footer component, or None to restore the built-in footer.
+
+        The factory receives a FooterDataProvider for data not otherwise
+        accessible: git branch and extension statuses from set_status().
+        Context usage is on `ctx.get_context_usage()`, token stats on
+        `ctx.session_manager.get_entries()`, model info on `ctx.model`.
+        """
         self._mode._set_extension_footer(factory)
 
     def set_header(self, factory) -> None:
@@ -5798,6 +5805,9 @@ class InteractiveMode:
         pi also tries a Radius artifact upload first and falls back to the gist
         path; Radius is dropped surface here (see FEASIBILITY), so only the
         gist half exists and the JSONL export that feeds Radius is not made.
+        pi later moved both halves into `modes/interactive/session-share.ts`
+        (upstream 460191cf); that file is dropped with the Radius flow, so the
+        gist half stays here and the reusable export is core/session_export.py.
         """
         # Check if gh is available and logged in
         try:

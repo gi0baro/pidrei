@@ -9,6 +9,7 @@ import math
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,7 @@ from ...modes.interactive.components.keybinding_hints import key_hint
 from ...modes.interactive.components.visual_truncate import truncate_to_visual_lines
 from ...modes.interactive.theme import theme
 from ...utils.shell import (
+    ShellConfig,
     get_shell_config,
     get_shell_env,
     kill_process_tree,
@@ -46,7 +48,7 @@ _EXIT_STDIO_GRACE_S = 0.1
 BASH_SCHEMA = {
     "type": "object",
     "properties": {
-        "command": {"type": "string", "description": "Bash command to execute"},
+        "command": {"type": "string", "description": "Shell command to execute"},
         "timeout": {"type": "number", "description": "Timeout in seconds (optional, no default timeout)"},
     },
     "required": ["command"],
@@ -118,7 +120,7 @@ def _format_duration(ms: float) -> str:
     return f"{ms / 1000:.1f}s"
 
 
-def _format_bash_call(args: dict | None) -> str:
+def _format_shell_call(args: dict | None, prompt: str) -> str:
     args = args or {}
     command = str_or_none(args.get("command"))
     timeout = args.get("timeout")
@@ -129,7 +131,7 @@ def _format_bash_call(args: dict | None) -> str:
         command_display = command
     else:
         command_display = theme.fg("toolOutput", "...")
-    return theme.fg("toolTitle", theme.bold(f"$ {command_display}")) + timeout_suffix
+    return theme.fg("toolTitle", theme.bold(f"{prompt} {command_display}")) + timeout_suffix
 
 
 def _result_details(result):
@@ -201,11 +203,12 @@ class BashSpawnContext:
     env: dict[str, str]
 
 
-class LocalBashOperations:
-    """pi's built-in local shell execution backend."""
+class LocalShellOperations:
+    """Shared process execution used by the built-in shell tools."""
 
-    def __init__(self, *, shell_path: str | None = None):
-        self._shell_path = shell_path
+    def __init__(self, shell_name: str, resolve_shell_config: Callable[[], ShellConfig]):
+        self._shell_name = shell_name
+        self._resolve_shell_config = resolve_shell_config
 
     async def exec(
         self,
@@ -220,9 +223,9 @@ class LocalBashOperations:
         timeout_ms = _resolve_timeout_ms(timeout)
         if cancel is not None and cancel.cancelled:
             raise Exception("aborted")
-        shell_config = await tonio.spawn_blocking(get_shell_config, self._shell_path)
+        shell_config = await tonio.spawn_blocking(self._resolve_shell_config)
         if not await fs.Path(cwd).exists():
-            raise Exception(f"Working directory does not exist: {cwd}\nCannot execute bash commands.")
+            raise Exception(f"Working directory does not exist: {cwd}\nCannot execute {self._shell_name} commands.")
 
         process = await tonio.open_process(
             [shell_config.shell, *shell_config.args, command],
@@ -325,9 +328,13 @@ def _format_timeout(timeout: float | None) -> str:
     return f"{timeout:g}"
 
 
-def create_local_bash_operations(*, shell_path: str | None = None) -> LocalBashOperations:
-    """Create bash operations using the built-in local shell execution backend."""
-    return LocalBashOperations(shell_path=shell_path)
+def create_local_bash_operations(*, shell_path: str | None = None) -> LocalShellOperations:
+    """Create bash operations using the built-in local shell execution backend.
+
+    This is useful for extensions that intercept user_bash and still want the
+    standard local shell behavior while wrapping or rewriting commands.
+    """
+    return LocalShellOperations("bash", lambda: get_shell_config(shell_path))
 
 
 _SESSION_ENV_VARS = (
@@ -370,8 +377,28 @@ def _resolve_spawn_context(
 BASH_UPDATE_THROTTLE_S = 0.1
 
 
-def create_bash_tool_definition(
+@dataclass(frozen=True, slots=True)
+class ShellToolConfig:
+    """What distinguishes one built-in shell tool from another.
+
+    pi added this so the bash tool and a Windows-only powershell tool could
+    share one implementation. powershell is dropped surface here (POSIX-only;
+    PORT_0.84.3.md decision 2), so bash is the only config in tree — the seam
+    is kept so the shared body stays 1:1 with upstream.
+    """
+
+    name: str
+    label: str
+    shell_name: str
+    prompt: str
+    prompt_snippet: str
+    prompt_guidelines: tuple[str, ...] | None
+    temp_file_prefix: str
+
+
+def create_shell_tool_definition(
     cwd: str,
+    config: ShellToolConfig,
     *,
     operations: Any = None,
     command_prefix: str | None = None,
@@ -386,7 +413,7 @@ def create_bash_tool_definition(
         timeout = params.get("timeout")
         resolved_command = f"{command_prefix}\n{command}" if command_prefix else command
         spawn_context = _resolve_spawn_context(resolved_command, cwd, spawn_hook, expose_session_environment, ctx)
-        output = OutputAccumulator(temp_file_prefix="pidrei-bash")
+        output = OutputAccumulator(temp_file_prefix=config.temp_file_prefix)
         state = {
             "accepting_output": True,
             "dirty": False,
@@ -521,7 +548,7 @@ def create_bash_tool_definition(
             state["startedAt"] = time.time() * 1000
             state["endedAt"] = None
         text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
-        text.set_text(_format_bash_call(args))
+        text.set_text(_format_shell_call(args, config.prompt))
         return text
 
     def render_result(result, options, _theme, context):
@@ -551,17 +578,20 @@ def create_bash_tool_definition(
         return component
 
     return ToolDefinition(
-        name="bash",
-        label="bash",
+        name=config.name,
+        label=config.label,
         description=(
-            "Execute a bash command in the current working directory. Returns stdout and stderr. "
+            f"Execute a {config.shell_name} command in the current working directory. "
+            "Returns stdout and stderr. "
             f"Output is truncated to last {DEFAULT_MAX_LINES} lines or {DEFAULT_MAX_BYTES // 1024}KB "
             "(whichever is hit first). If truncated, full output is saved to a temp file. "
             "Optionally provide a timeout in seconds."
         ),
-        prompt_snippet=BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
+        prompt_snippet=config.prompt_snippet,
         prompt_guidelines=(
-            list(BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]) if expose_session_environment else None
+            list(config.prompt_guidelines)
+            if expose_session_environment and config.prompt_guidelines is not None
+            else None
         ),
         parameters=BASH_SCHEMA,
         constrained_sampling=get_experimental_tool_sampling(),
@@ -569,6 +599,21 @@ def create_bash_tool_definition(
         render_call=render_call,
         render_result=render_result,
     )
+
+
+BASH_TOOL_CONFIG = ShellToolConfig(
+    name="bash",
+    label="bash",
+    shell_name="bash",
+    prompt="$",
+    prompt_snippet=BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
+    prompt_guidelines=BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"],
+    temp_file_prefix="pidrei-bash",
+)
+
+
+def create_bash_tool_definition(cwd: str, **options) -> ToolDefinition:
+    return create_shell_tool_definition(cwd, BASH_TOOL_CONFIG, **options)
 
 
 def create_bash_tool(cwd: str, **options) -> WrappedDefinitionTool:

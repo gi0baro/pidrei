@@ -213,6 +213,24 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/src/utils/highlight-js.d.ts",
         "TypeScript ambient declaration for highlight.js; pidrei highlights with pygments",
     ),
+    (
+        "packages/coding-agent/src/core/tools/powershell.ts",
+        (
+            "powershell tool not ported (Windows-only by construction; PORT_0.84.3.md decision 2) — "
+            "the shell-tool refactor it shares with bash did land, see core/tools/bash.py"
+        ),
+    ),
+    (
+        "packages/coding-agent/test/powershell-tool.test.ts",
+        "powershell tool not ported (Windows-only by construction; PORT_0.84.3.md decision 2)",
+    ),
+    (
+        "packages/coding-agent/src/modes/interactive/session-share.ts",
+        (
+            "Radius share flow not ported (PORT_0.84.3.md decision 1); the surviving gist half "
+            "stays inline in interactive_mode.py and the export half is core/session_export.py"
+        ),
+    ),
 )
 
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real

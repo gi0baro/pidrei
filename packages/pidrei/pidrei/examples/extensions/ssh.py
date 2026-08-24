@@ -111,7 +111,7 @@ class RemoteEditOperations:
 class RemoteBashOperations:
     """BashOperations running ssh as a local subprocess, streaming output.
 
-    pi.exec cannot stream, so this mirrors LocalBashOperations' structure on
+    pi.exec cannot stream, so this mirrors LocalShellOperations' structure on
     tonio.open_process; killing the local ssh client stands in for killing the
     remote process tree.
     """

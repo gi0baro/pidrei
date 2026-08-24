@@ -118,19 +118,22 @@ def create_extension_runtime() -> ExtensionRuntime:
 class _ExtensionEventBus:
     """`pi.events` for one extension instance: staleness-checked and tracked."""
 
-    __slots__ = ("_event_bus", "_runtime")
+    __slots__ = ("_api", "_event_bus")
 
-    def __init__(self, runtime: ExtensionRuntime, event_bus: EventBus):
-        self._runtime = runtime
+    def __init__(self, api: ExtensionAPI, event_bus: EventBus):
+        self._api = api
         self._event_bus = event_bus
 
     def emit(self, channel: str, data: Any) -> None:
-        self._runtime.assert_active()
+        self._api._assert_active()
         self._event_bus.emit(channel, data)
 
     def on(self, channel: str, handler: Any) -> Callable[[], None]:
-        self._runtime.assert_active()
-        return self._runtime.track_event_bus_subscription(self._event_bus.on(channel, handler))
+        self._api._assert_active()
+        unsubscribe = self._api._runtime.track_event_bus_subscription(self._event_bus.on(channel, handler))
+        if self._api._state == "loading":
+            self._api._loading_unsubscribers.append(unsubscribe)
+        return unsubscribe
 
 
 def _flag_value_type(value: Any) -> str:
@@ -149,18 +152,75 @@ class ExtensionAPI:
 
     Registration methods write to the Extension record; action methods
     delegate to the shared runtime, which is unbound during loading.
+
+    Shared-runtime writes a factory makes are held until it returns, then
+    applied by `_commit` or dropped by `_discard` (pi #8423: a factory that
+    threw halfway left its flag defaults and provider registrations behind).
+    pi returns those two as a separate handle so a factory cannot reach them;
+    here they are underscore-private on the API object instead.
     """
 
-    __slots__ = ("_cwd", "_extension", "_runtime", "events")
+    __slots__ = (
+        "_cwd",
+        "_extension",
+        "_loading_unsubscribers",
+        "_pending_flag_values",
+        "_pending_runtime_changes",
+        "_runtime",
+        "_state",
+        "events",
+    )
 
     def __init__(self, extension: Extension, runtime: ExtensionRuntime, cwd: str, event_bus: EventBus):
         self._extension = extension
         self._runtime = runtime
         self._cwd = cwd
+        self._state = "loading"
+        self._pending_flag_values: dict[str, Any] = {}
+        self._pending_runtime_changes: list[Callable[[], None]] = []
+        self._loading_unsubscribers: list[Callable[[], None]] = []
         #: Shared event bus for extension-to-extension communication. Wrapped so
         #: a stale ctx cannot use it and so subscriptions die with the runtime
         #: (pi #7193: a reload's old handlers kept receiving every event).
-        self.events = _ExtensionEventBus(runtime, event_bus)
+        self.events = _ExtensionEventBus(self, event_bus)
+
+    def _assert_active(self) -> None:
+        if self._state == "failed":
+            raise RuntimeError(f'Extension "{self._extension.path}" failed to load and its API is no longer active.')
+        self._runtime.assert_active()
+
+    def _apply_runtime_change(self, change: Callable[[], None]) -> None:
+        if self._state == "loading":
+            self._pending_runtime_changes.append(change)
+        else:
+            change()
+
+    def _clear_pending(self) -> None:
+        self._pending_flag_values.clear()
+        self._pending_runtime_changes.clear()
+        self._loading_unsubscribers.clear()
+
+    def _commit(self) -> None:
+        """Apply everything the factory queued, now that it returned cleanly."""
+        if self._state != "loading":
+            return
+        self._runtime.assert_active()
+        for name, value in self._pending_flag_values.items():
+            if name not in self._runtime.flag_values:
+                self._runtime.flag_values[name] = value
+        for apply in self._pending_runtime_changes:
+            apply()
+        self._state = "active"
+        self._clear_pending()
+
+    def _discard(self) -> None:
+        """Drop everything the factory queued and disable the API it captured."""
+        if self._state != "loading":
+            return
+        self._state = "failed"
+        for unsubscribe in self._loading_unsubscribers:
+            unsubscribe()
+        self._clear_pending()
 
     def _action(self, name: str) -> Callable[..., Any]:
         action = getattr(self._runtime, name, None)
@@ -171,11 +231,11 @@ class ExtensionAPI:
     # -- registration ------------------------------------------------------------
 
     def on(self, event: str, handler: Any) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.handlers.setdefault(event, []).append(handler)
 
     def register_tool(self, tool: ToolDefinition) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.tools[tool.name] = RegisteredTool(definition=tool, source_info=self._extension.source_info)
         self._runtime.refresh_tools()
 
@@ -187,7 +247,7 @@ class ExtensionAPI:
         description: str | None = None,
         get_argument_completions: Any = None,
     ) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.commands[name] = RegisteredCommand(
             name=name,
             handler=handler,
@@ -197,7 +257,7 @@ class ExtensionAPI:
         )
 
     def register_shortcut(self, shortcut: str, *, handler: Any, description: str | None = None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.shortcuts[shortcut] = ExtensionShortcut(
             shortcut=shortcut,
             handler=handler,
@@ -206,7 +266,7 @@ class ExtensionAPI:
         )
 
     def register_flag(self, name: str, *, type: str, description: str | None = None, default: Any = None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         if default is not None and _flag_value_type(default) != type:
             raise ValueError(f'Invalid default for flag "{name}": expected {type}, got {_flag_value_type(default)}')
         self._extension.flags[name] = ExtensionFlag(
@@ -217,100 +277,109 @@ class ExtensionAPI:
             default=default,
         )
         if default is not None and name not in self._runtime.flag_values:
-            self._runtime.flag_values[name] = default
+            if self._state == "loading":
+                self._pending_flag_values.setdefault(name, default)
+            else:
+                self._runtime.flag_values[name] = default
 
     def register_message_renderer(self, custom_type: str, renderer: Any) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.message_renderers[custom_type] = renderer
 
     def register_markdown_transformer(self, transformer: Any) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.markdown_transformer = transformer
 
     def register_entry_renderer(self, custom_type: str, renderer: Any) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._extension.entry_renderers[custom_type] = renderer
 
     def get_flag(self, name: str) -> Any:
-        self._runtime.assert_active()
+        self._assert_active()
         if name not in self._extension.flags:
             return None
-        return self._runtime.flag_values.get(name)
+        if name in self._runtime.flag_values:
+            return self._runtime.flag_values[name]
+        return self._pending_flag_values.get(name)
 
     # -- actions -----------------------------------------------------------------
 
     def send_message(self, message: Any, options: Any = None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._action("send_message")(message, options)
 
     def send_user_message(self, content: Any, options: Any = None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._action("send_user_message")(content, options)
 
     async def append_entry(self, custom_type: str, data: Any = None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         await self._action("append_entry")(custom_type, data)
 
     async def set_session_name(self, name: str) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         await self._action("set_session_name")(name)
 
     def get_session_name(self) -> Any:
-        self._runtime.assert_active()
+        self._assert_active()
         return self._action("get_session_name")()
 
     async def set_label(self, entry_id: str, label: str | None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         await self._action("set_label")(entry_id, label)
 
     def exec(self, command: str, args: list[str], *, cwd: str | None = None, **options: Any) -> Any:
         """Returns the coroutine, as pi returns the promise: no await here, so
         the command starts only when the extension awaits it."""
-        self._runtime.assert_active()
+        self._assert_active()
         return exec_command(command, args, cwd or self._cwd, **options)
 
     def get_active_tools(self) -> list[str]:
-        self._runtime.assert_active()
+        self._assert_active()
         return self._action("get_active_tools")()
 
     def get_all_tools(self) -> list[Any]:
-        self._runtime.assert_active()
+        self._assert_active()
         return self._action("get_all_tools")()
 
     def set_active_tools(self, tool_names: list[str]) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         self._action("set_active_tools")(tool_names)
 
     def get_commands(self) -> list[Any]:
-        self._runtime.assert_active()
+        self._assert_active()
         return self._action("get_commands")()
 
     def set_model(self, model: Any) -> Any:
-        self._runtime.assert_active()
+        self._assert_active()
         return self._action("set_model")(model)
 
     def get_thinking_level(self) -> Any:
-        self._runtime.assert_active()
+        self._assert_active()
         return self._action("get_thinking_level")()
 
     async def set_thinking_level(self, level: Any) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         await self._action("set_thinking_level")(level)
 
     # -- providers ---------------------------------------------------------------
 
     def register_provider(self, provider_or_name: Any, config: Any = None) -> None:
-        self._runtime.assert_active()
+        self._assert_active()
         if isinstance(provider_or_name, str):
             if config is None:
                 raise ValueError("Provider config is required when registering by name")
-            self._runtime.register_provider(provider_or_name, config, self._extension.path)
+            self._apply_runtime_change(
+                lambda: self._runtime.register_provider(provider_or_name, config, self._extension.path)
+            )
             return
-        self._runtime.register_native_provider(provider_or_name, self._extension.path)
+        self._apply_runtime_change(
+            lambda: self._runtime.register_native_provider(provider_or_name, self._extension.path)
+        )
 
     def unregister_provider(self, name: str) -> None:
-        self._runtime.assert_active()
-        self._runtime.unregister_provider(name, self._extension.path)
+        self._assert_active()
+        self._apply_runtime_change(lambda: self._runtime.unregister_provider(name, self._extension.path))
 
 
 # -- module loading --------------------------------------------------------------
@@ -410,6 +479,26 @@ async def _call_factory(factory: Any, api: ExtensionAPI) -> None:
         await result
 
 
+async def _initialize_extension(
+    factory: Any,
+    extension_path: str,
+    resolved_path: str,
+    cwd: str,
+    event_bus: EventBus,
+    runtime: ExtensionRuntime,
+) -> Extension:
+    extension = _create_extension(extension_path, resolved_path)
+    api = ExtensionAPI(extension, runtime, cwd, event_bus)
+    try:
+        await _call_factory(factory, api)
+        api._commit()
+    except BaseException:
+        api._discard()
+        raise
+    record_time(f"{extension_path} factory", "extensions")
+    return extension
+
+
 async def _load_extension(
     extension_path: str,
     cwd: str,
@@ -425,10 +514,7 @@ async def _load_extension(
         if factory is None:
             return None, (f"Extension does not define a valid {FACTORY_ATTRIBUTE}() factory function: {extension_path}")
 
-        extension = _create_extension(extension_path, resolved_path)
-        api = ExtensionAPI(extension, runtime, cwd, event_bus)
-        await _call_factory(factory, api)
-        record_time(f"{extension_path} factory", "extensions")
+        extension = await _initialize_extension(factory, extension_path, resolved_path, cwd, event_bus, runtime)
 
         return extension, None
     except Exception as error:
@@ -443,11 +529,7 @@ async def load_extension_from_factory(
     extension_path: str = "<inline>",
 ) -> Extension:
     """Build an Extension from an in-process factory (pi's inline extensions)."""
-    extension = _create_extension(extension_path, extension_path)
-    api = ExtensionAPI(extension, runtime, resolve_path(cwd), event_bus)
-    await _call_factory(factory, api)
-    record_time(f"{extension_path} factory", "extensions")
-    return extension
+    return await _initialize_extension(factory, extension_path, extension_path, resolve_path(cwd), event_bus, runtime)
 
 
 async def _load_extensions_internal(

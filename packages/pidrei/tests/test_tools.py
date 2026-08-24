@@ -29,8 +29,10 @@ from pidrei.core.tools import (
     create_read_tool,
     create_write_tool,
 )
-from pidrei.core.tools.bash import BashExecResult
+from pidrei.core.tools.bash import BASH_TOOL_CONFIG, BashExecResult, ShellToolConfig, create_shell_tool_definition
 from pidrei.core.tools.edit_diff import EditDiffError, compute_edits_diff
+from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.utils.cancel import CancelToken
 
 
@@ -773,6 +775,32 @@ class TestBashTool:
 
         with pytest.raises(Exception, match="Command aborted"):
             await bash.execute("test-call-abort", {"command": "sleep 5"}, cancel)
+
+    def test_shell_tool_config_drives_the_shared_definition(self, tmp_dir):
+        """pi shares one implementation between `bash` and its Windows-only
+        `powershell` tool; powershell is dropped surface (POSIX-only), so the
+        seam is exercised with a config of its own instead."""
+        config = ShellToolConfig(
+            name="shellish",
+            label="Shellish",
+            shell_name="shellish",
+            prompt=">",
+            prompt_snippet="Run shellish commands",
+            prompt_guidelines=("Prefer shellish.",),
+            temp_file_prefix="pidrei-shellish",
+        )
+        init_theme_sync("dark")
+        definition = create_shell_tool_definition(str(tmp_dir), config)
+
+        assert definition.name == "shellish"
+        assert definition.label == "Shellish"
+        assert definition.description.startswith("Execute a shellish command in the current working directory.")
+        assert definition.prompt_snippet == "Run shellish commands"
+        assert definition.prompt_guidelines == ["Prefer shellish."]
+        without_env = create_shell_tool_definition(str(tmp_dir), config, expose_session_environment=False)
+        assert without_env.prompt_guidelines is None
+        assert strip_ansi(bash_module._format_shell_call({"command": "ls"}, config.prompt)) == "> ls"
+        assert strip_ansi(bash_module._format_shell_call({"command": "ls"}, BASH_TOOL_CONFIG.prompt)) == "$ ls"
 
 
 @pytest.mark.skipif(not HAS_RG, reason="ripgrep not installed")

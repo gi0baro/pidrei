@@ -113,8 +113,9 @@ def _should_poll_git_head(repo_dir: str) -> bool:
 class FooterDataProvider:
     """Provides git branch and extension statuses.
 
-    Data not otherwise accessible to extensions; token stats and model info
-    are available via the session manager and model.
+    Data not otherwise accessible to extensions; context usage is on
+    `ctx.get_context_usage()`, token stats on `ctx.session_manager.get_entries()`,
+    model info on `ctx.model`.
     """
 
     WATCH_DEBOUNCE_MS = 500

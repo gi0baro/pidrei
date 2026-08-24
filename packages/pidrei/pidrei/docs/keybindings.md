@@ -27,6 +27,14 @@ the current bindings with `/keybindings`.
 `app.session.new`, `.tree`, `.fork` and `.resume` have no default key; bind them
 if you want them.
 
+Under WSL the Windows terminal swallows several of these chords, so the
+defaults shift there: `alt+p` cycles to the previous model, `ctrl+q` queues a
+follow-up and `alt+q` restores queued messages, `alt+v` pastes an image,
+`alt+z` undoes an edit (leaving `ctrl+z` free to suspend), and in the
+alternate screen `ctrl+f` searches while `ctrl+up`/`ctrl+down` jump between
+marked messages. Every one of them is still just a binding, so
+`keybindings.json` overrides it.
+
 ### Prompt history
 
 `up`/`down` (`tui.editor.cursorUp`/`.cursorDown`) move the cursor and browse
@@ -75,8 +83,8 @@ the transcript's top or bottom edge auto-scrolls into off-screen content.
 | *(none)* | `tui.altScreen.halfPageDown` | Scroll the transcript down by half a page |
 | *(none)* | `tui.altScreen.lineUp` | Scroll the transcript up by one line |
 | *(none)* | `tui.altScreen.lineDown` | Scroll the transcript down by one line |
-| `ctrl+shift+up` | `tui.altScreen.previousPrompt` | Jump to the previous marked message |
-| `ctrl+shift+down` | `tui.altScreen.nextPrompt` | Jump to the next marked message |
+| `ctrl+shift+up`, `ctrl+up` | `tui.altScreen.previousPrompt` | Jump to the previous marked message |
+| `ctrl+shift+down`, `ctrl+down` | `tui.altScreen.nextPrompt` | Jump to the next marked message |
 | `ctrl+shift+f` | `tui.altScreen.search` | Search the rendered transcript |
 | `enter`, `ctrl+g` | `tui.altScreen.searchNext` | Select the next search match while searching |
 | `shift+enter`, `ctrl+shift+g` | `tui.altScreen.searchPrevious` | Select the previous search match while searching |

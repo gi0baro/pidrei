@@ -108,6 +108,7 @@ _OPENAI_COMPLETIONS_COMPAT = {
         "supportsDeveloperRole": _BOOLEAN,
         "supportsReasoningEffort": _BOOLEAN,
         "supportsUsageInStreaming": _BOOLEAN,
+        "supportsFinishReason": _BOOLEAN,
         "maxTokensField": {"enum": ["max_completion_tokens", "max_tokens"]},
         "requiresToolResultName": _BOOLEAN,
         "requiresAssistantAfterToolResult": _BOOLEAN,

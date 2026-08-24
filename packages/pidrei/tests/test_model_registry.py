@@ -718,6 +718,34 @@ class TestModelOverrides:
         assert compat.open_router_routing == {"allow_fallbacks": True, "only": ["amazon-bedrock"]}
 
     @pytest.mark.tonio
+    async def test_supports_finish_reason_at_provider_and_model_levels(self, registry_env):
+        """Adapted: pi overrides openrouter's catalog; pidrei has no openrouter
+        builtin, so the two models come from a custom openai-completions provider."""
+        _tmp, models_json_path, auth_storage = registry_env
+        write_models_json(
+            models_json_path,
+            {
+                "demo": {
+                    **provider_config(
+                        "https://example.com/v1",
+                        [{"id": "sonnet-model"}, {"id": "opus-model"}],
+                        "openai-completions",
+                    ),
+                    "compat": {"supportsFinishReason": True},
+                    "modelOverrides": {"sonnet-model": {"compat": {"supportsFinishReason": False}}},
+                }
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        models = models_for_provider(registry, "demo")
+        sonnet = next(model for model in models if model.id == "sonnet-model")
+        opus = next(model for model in models if model.id == "opus-model")
+
+        assert sonnet.compat.supports_finish_reason is False
+        assert opus.compat.supports_finish_reason is True
+
+    @pytest.mark.tonio
     async def test_multiple_model_overrides_on_same_provider(self, registry_env):
         _tmp, models_json_path, auth_storage = registry_env
         first_id, second_id = ANTHROPIC_IDS[0], ANTHROPIC_IDS[1]

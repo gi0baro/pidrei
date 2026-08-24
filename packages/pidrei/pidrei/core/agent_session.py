@@ -13,7 +13,6 @@ export_to_html landed with the Phase 4 export-html slice; export_to_jsonl
 is here.
 """
 
-import json
 import os
 import re
 import threading
@@ -50,7 +49,6 @@ from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.text import content_text
 
 from ..utils.frontmatter import strip_frontmatter
-from ..utils.paths import resolve_path
 from ..utils.sleep import sleep
 from ..utils.tool_result_images import normalize_tool_result_images
 from .auth_guidance import format_no_api_key_found_message, format_no_model_selected_message
@@ -74,7 +72,7 @@ from .extensions.runner import emit_session_shutdown_event
 from .messages import BashExecutionMessage, CustomMessage
 from .model_registry import ModelRegistry
 from .prompt_templates import expand_prompt_template
-from .session_manager import CURRENT_SESSION_VERSION, get_latest_compaction_entry
+from .session_manager import get_latest_compaction_entry
 from .source_info import create_synthetic_source_info
 from .system_prompt import BuildSystemPromptOptions, build_system_prompt
 from .tools import create_all_tool_definitions, create_local_bash_operations
@@ -3096,35 +3094,9 @@ class AgentSession:
         followed by all entries on the current branch path (re-chained linear)."""
 
         # lazy: import cycle within core
-        from .session_manager import _dump_json, _entry_to_wire
+        from .session_export import export_session_to_jsonl
 
-        default_name = f"session-{_iso_now().replace(':', '-').replace('.', '-')}.jsonl"
-        file_path = resolve_path(output_path if output_path is not None else default_name, os.getcwd())
-        directory = os.path.dirname(file_path)
-        if directory and not await fs.Path(directory).exists():
-            await fs.Path(directory).mkdir(parents=True, exist_ok=True)
-
-        header = {
-            "type": "session",
-            "version": CURRENT_SESSION_VERSION,
-            "id": self.session_manager.get_session_id(),
-            "timestamp": _iso_now(),
-            "cwd": self.session_manager.get_cwd(),
-        }
-
-        branch_entries = self.session_manager.get_branch()
-        lines = [json.dumps(header, ensure_ascii=False, separators=(",", ":"))]
-
-        # Re-chain parentIds to form a linear sequence
-        prev_id: str | None = None
-        for entry in branch_entries:
-            linear = dict(entry)
-            linear["parentId"] = prev_id
-            lines.append(_dump_json(_entry_to_wire(linear)))
-            prev_id = entry["id"]
-
-        await fs.Path(file_path).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="")
-        return file_path
+        return await export_session_to_jsonl(self.session_manager, output_path)
 
     # =========================================================================
     # Utilities

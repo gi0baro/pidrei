@@ -1,13 +1,24 @@
-"""Mirror of pi coding-agent src/core/tools/index.ts."""
+"""Mirror of pi coding-agent src/core/tools/index.ts.
+
+pi's `powershell` tool (upstream 80e62761) is dropped surface: it is
+Windows-only by construction — `getPowerShellConfig` throws off win32 — and
+pidrei is POSIX-only, so `powershell` is absent from ALL_TOOL_NAMES, the
+factory tables and the SDK exports. The refactor that commit made to share one
+implementation between the two shell tools *is* ported: see `ShellToolConfig`
+and `create_shell_tool_definition` in `bash.py`.
+"""
 
 from ..extensions.types import ToolDefinition
 from .bash import (
+    BASH_TOOL_CONFIG,
     BashSpawnContext,
     BashToolDetails,
-    LocalBashOperations,
+    LocalShellOperations,
+    ShellToolConfig,
     create_bash_tool,
     create_bash_tool_definition,
     create_local_bash_operations,
+    create_shell_tool_definition,
 )
 from .edit import EditToolDetails, create_edit_tool, create_edit_tool_definition
 from .file_mutation_queue import with_file_mutation_queue
@@ -96,6 +107,7 @@ def create_all_tools(cwd: str, options: dict | None = None) -> dict[str, Wrapped
 
 __all__ = [
     "ALL_TOOL_NAMES",
+    "BASH_TOOL_CONFIG",
     "DEFAULT_MAX_BYTES",
     "DEFAULT_MAX_LINES",
     "BashSpawnContext",
@@ -103,9 +115,10 @@ __all__ = [
     "EditToolDetails",
     "FindToolDetails",
     "GrepToolDetails",
-    "LocalBashOperations",
+    "LocalShellOperations",
     "LsToolDetails",
     "ReadToolDetails",
+    "ShellToolConfig",
     "ToolDefinition",
     "TruncationResult",
     "WrappedDefinitionTool",
@@ -128,6 +141,7 @@ __all__ = [
     "create_read_only_tools",
     "create_read_tool",
     "create_read_tool_definition",
+    "create_shell_tool_definition",
     "create_tool",
     "create_tool_definition",
     "create_tool_definition_from_agent_tool",

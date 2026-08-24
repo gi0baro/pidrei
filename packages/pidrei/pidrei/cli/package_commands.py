@@ -22,6 +22,12 @@ special-casing — are not ported, and the update targets are reinterpreted:
 | `update --models`     | unchanged                                         |
 | `update --force`      | refused: it only ever forced a self-reinstall     |
 
+The same decision covers pi's installer-managed installations (upstream
+4af9d21d): staged lockfile-backed releases under `PI_MANAGED_INSTALL_ROOT`,
+their `npm ci` + smoke-test + activate sequence, the update lock and the
+staging cleanup `main.ts` runs at startup are all self-update machinery, so
+none of it is ported.
+
 Everything else — the parser's error precedence, the project-trust handling,
 the output shapes — mirrors pi.
 """

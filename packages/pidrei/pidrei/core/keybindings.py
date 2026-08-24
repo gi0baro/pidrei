@@ -2,12 +2,15 @@
 
 App-level keybinding definitions layered over the tui defaults, plus the
 legacy config-name migration and the file-backed KeybindingsManager.
-POSIX-only: pi's win32 default-key variants are not ported.
+POSIX-only: pi's native-win32 default-key variants are not ported. Its WSL
+variants are, because WSL is Linux: a Windows terminal eats the same chords
+there, and `use_windows_keybindings` is pi's detector minus the win32 arm.
 """
 
 import json
 import os
 import sys
+from collections.abc import Mapping
 
 from tonio.colored import fs
 
@@ -19,25 +22,65 @@ from ..utils.text import strip_bom
 
 _DARWIN = sys.platform == "darwin"
 
+
+def use_windows_keybindings(platform: str = sys.platform, env: Mapping[str, str] = os.environ) -> bool:
+    """Whether a Windows terminal is intercepting chords (pi #8372).
+
+    pi also returns True on native win32; that arm is dropped here. WSL is
+    detected by the interop variables rather than `WT_SESSION`, which any
+    Windows Terminal tab exports even for a plain Linux SSH session.
+    """
+    return platform == "linux" and bool(env.get("WSL_DISTRO_NAME") or env.get("WSL_INTEROP"))
+
+
+_WINDOWS_KEYBINDINGS = use_windows_keybindings()
+
 KEYBINDINGS = {
     **TUI_KEYBINDINGS,
+    "tui.editor.undo": {
+        **TUI_KEYBINDINGS["tui.editor.undo"],
+        # `ctrl+z` is pi's native-Windows default; on WSL it has to stay free
+        # for app.suspend, so WSL gets `alt+z`.
+        "defaultKeys": "alt+z" if _WINDOWS_KEYBINDINGS else "ctrl+-",
+    },
+    "tui.altScreen.previousPrompt": {
+        **TUI_KEYBINDINGS["tui.altScreen.previousPrompt"],
+        "defaultKeys": "ctrl+up" if _WINDOWS_KEYBINDINGS else ["ctrl+shift+up", "ctrl+up"],
+    },
+    "tui.altScreen.nextPrompt": {
+        **TUI_KEYBINDINGS["tui.altScreen.nextPrompt"],
+        "defaultKeys": "ctrl+down" if _WINDOWS_KEYBINDINGS else ["ctrl+shift+down", "ctrl+down"],
+    },
+    "tui.altScreen.search": {
+        **TUI_KEYBINDINGS["tui.altScreen.search"],
+        "defaultKeys": "ctrl+f" if _WINDOWS_KEYBINDINGS else "ctrl+shift+f",
+    },
     "app.interrupt": {"defaultKeys": "escape", "description": "Cancel or abort"},
     "app.clear": {"defaultKeys": "ctrl+c", "description": "Clear editor"},
     "app.exit": {"defaultKeys": "ctrl+d", "description": "Exit when editor is empty"},
     "app.suspend": {"defaultKeys": "ctrl+z", "description": "Suspend to background"},
     "app.thinking.cycle": {"defaultKeys": "shift+tab", "description": "Cycle thinking level"},
     "app.model.cycleForward": {"defaultKeys": "ctrl+p", "description": "Cycle to next model"},
-    "app.model.cycleBackward": {"defaultKeys": "shift+ctrl+p", "description": "Cycle to previous model"},
+    "app.model.cycleBackward": {
+        "defaultKeys": "alt+p" if _WINDOWS_KEYBINDINGS else "shift+ctrl+p",
+        "description": "Cycle to previous model",
+    },
     "app.model.select": {"defaultKeys": "ctrl+l", "description": "Open model selector"},
     "app.tools.expand": {"defaultKeys": "ctrl+o", "description": "Toggle tool output"},
     "app.thinking.toggle": {"defaultKeys": "ctrl+t", "description": "Toggle thinking blocks"},
     "app.session.toggleNamedFilter": {"defaultKeys": "ctrl+n", "description": "Toggle named session filter"},
     "app.editor.external": {"defaultKeys": "ctrl+g", "description": "Open external editor"},
     "app.message.copy": {"defaultKeys": "ctrl+x", "description": "Copy message to clipboard"},
-    "app.message.followUp": {"defaultKeys": "alt+enter", "description": "Queue follow-up message"},
-    "app.message.dequeue": {"defaultKeys": "alt+up", "description": "Restore queued messages"},
+    "app.message.followUp": {
+        "defaultKeys": "ctrl+q" if _WINDOWS_KEYBINDINGS else "alt+enter",
+        "description": "Queue follow-up message",
+    },
+    "app.message.dequeue": {
+        "defaultKeys": "alt+q" if _WINDOWS_KEYBINDINGS else "alt+up",
+        "description": "Restore queued messages",
+    },
     "app.clipboard.pasteImage": {
-        "defaultKeys": "ctrl+v",
+        "defaultKeys": "alt+v" if _WINDOWS_KEYBINDINGS else "ctrl+v",
         "description": "Paste image from clipboard (text fallback)",
     },
     "app.session.new": {"defaultKeys": [], "description": "Start a new session"},
