@@ -562,7 +562,7 @@ class TestBashTool:
     async def test_respects_timeout(self, tmp_dir):
         bash_tool = create_bash_tool(str(tmp_dir))
         with pytest.raises(Exception, match="timed out"):
-            await bash_tool.execute("test-call-10", {"command": "sleep 5", "timeout": 1})
+            await bash_tool.execute("test-call-10", {"command": "sleep 5", "timeout": 0.05})
 
     @pytest.mark.tonio
     async def test_includes_full_output_path_for_truncated_timeout_and_abort_errors(self, tmp_dir):

@@ -332,8 +332,9 @@ def stream_simple(
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     base = build_base_options(model, context, options, None)
+    tool_choice = options.tool_choice if options else None
     if options is None or not options.reasoning:
-        return stream(model, context, _with_thinking(base, GoogleVertexThinking(enabled=False)), into=into)
+        return stream(model, context, _with_thinking(base, GoogleVertexThinking(enabled=False), tool_choice), into=into)
 
     clamped_reasoning = clamp_thinking_level(model, options.reasoning)
     resolved_level = resolve_google_thinking_level(model, clamped_reasoning)
@@ -343,7 +344,9 @@ def stream_simple(
             model,
             context,
             _with_thinking(
-                base, GoogleVertexThinking(enabled=True, level=_get_gemini_3_thinking_level(resolved_level, model))
+                base,
+                GoogleVertexThinking(enabled=True, level=_get_gemini_3_thinking_level(resolved_level, model)),
+                tool_choice,
             ),
             into=into,
         )
@@ -356,14 +359,16 @@ def stream_simple(
             GoogleVertexThinking(
                 enabled=True, budget_tokens=_get_google_budget(model, resolved_level, options.thinking_budgets)
             ),
+            tool_choice,
         ),
         into=into,
     )
 
 
-def _with_thinking(base: StreamOptions, thinking: GoogleVertexThinking) -> GoogleVertexOptions:
+def _with_thinking(base: StreamOptions, thinking: GoogleVertexThinking, tool_choice: str | None) -> GoogleVertexOptions:
     opts = _vertex_options(base)
     opts.thinking = thinking
+    opts.tool_choice = tool_choice
     # No project/location here on purpose: `build_base_options` carries only the
     # shared `StreamOptions` fields, so `stream_simple` reaches Vertex without
     # them and `resolve_project`/`resolve_location` fall back to the environment.

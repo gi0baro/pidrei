@@ -495,7 +495,7 @@ class TestDefaultModelSelection:
         assert DEFAULT_MODEL_PER_PROVIDER["zai-coding-cn"] == "glm-5.3"
         assert DEFAULT_MODEL_PER_PROVIDER["minimax"] == "MiniMax-M2.7"
         assert DEFAULT_MODEL_PER_PROVIDER["minimax-cn"] == "MiniMax-M2.7"
-        assert DEFAULT_MODEL_PER_PROVIDER["cerebras"] == "zai-glm-4.7"
+        assert DEFAULT_MODEL_PER_PROVIDER["cerebras"] == "gpt-oss-120b"
         assert DEFAULT_MODEL_PER_PROVIDER["ant-ling"] == "Ring-2.6-1T"
 
     def test_builtin_defaults_exist_in_generated_provider_catalogs(self):

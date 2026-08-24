@@ -498,14 +498,23 @@ def stream_simple(
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     base = build_base_options(model, context, options, None)
-    if options is None or not options.reasoning:
+    tool_choice = options.tool_choice if options else None
+
+    # pi spreads `toolChoice` into `base` once; the four option builds below are
+    # this adapter's stand-in for that single spread.
+    def _opts() -> BedrockOptions:
         opts = _bedrock_options(base)
+        opts.tool_choice = tool_choice
+        return opts
+
+    if options is None or not options.reasoning:
+        opts = _opts()
         opts.reasoning = None
         return stream(model, context, opts, into=into)
 
     if _is_anthropic_claude_model(model):
         if _supports_adaptive_thinking(model.id, model.name):
-            opts = _bedrock_options(base)
+            opts = _opts()
             opts.reasoning = options.reasoning
             opts.thinking_budgets = options.thinking_budgets
             return stream(model, context, opts, into=into)
@@ -522,13 +531,13 @@ def stream_simple(
         budgets = _copy_thinking_budgets(options.thinking_budgets)
         setattr(budgets, level, min(adjusted_budget, max(0, max_tokens - 1024)))
 
-        opts = _bedrock_options(base)
+        opts = _opts()
         opts.max_tokens = max_tokens
         opts.reasoning = options.reasoning
         opts.thinking_budgets = budgets
         return stream(model, context, opts, into=into)
 
-    opts = _bedrock_options(base)
+    opts = _opts()
     opts.reasoning = options.reasoning
     opts.thinking_budgets = options.thinking_budgets
     return stream(model, context, opts, into=into)

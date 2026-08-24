@@ -322,6 +322,7 @@ def stream_simple(
     should_use_reasoning = model.reasoning and reasoning is not None
 
     opts = _mistral_options(base)
+    opts.tool_choice = options.tool_choice if options else None
     opts.prompt_mode = "reasoning" if should_use_reasoning and _uses_prompt_mode_reasoning(model) else None
     opts.reasoning_effort = (
         _map_reasoning_effort(model, reasoning) if should_use_reasoning and _uses_reasoning_effort(model) else None

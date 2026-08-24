@@ -96,6 +96,7 @@ def transport_headers(model: Model, context: Context) -> dict[str, str]:
         "test-key",
         True,
         _should_use_fine_grained_beta(model, context),
+        False,
         None,
         None,
         None,

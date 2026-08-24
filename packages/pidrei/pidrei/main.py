@@ -23,7 +23,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from .cli.args import Args, parse_args, print_help
+from .cli.args import Args, normalize_session_name, parse_args, print_help
 from .cli.auth_check import (
     AuthCheckResult,
     check_provider_auth,
@@ -679,8 +679,8 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
             print(red(str(MissingSessionCwdError(missing_session_cwd_issue))), file=sys.stderr)
             raise SystemExit(1)
     if parsed.name is not None:
-        name = parsed.name.strip()
-        if not name:
+        name = normalize_session_name(parsed.name)
+        if name is None:
             print(red("Error: --name requires a non-empty value"), file=sys.stderr)
             raise SystemExit(1)
         await session_manager.append_session_info(name)

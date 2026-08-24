@@ -2,7 +2,7 @@
 
 import pytest
 
-from pidrei.cli.args import parse_args
+from pidrei.cli.args import normalize_session_name, parse_args
 
 
 class TestVersionFlag:
@@ -146,6 +146,10 @@ class TestNameFlag:
         result = parse_args(["--name", ""])
         assert result.name == ""
 
+    def test_normalizes_display_names_and_rejects_whitespace_only_values(self):
+        assert normalize_session_name("  named session  ") == "named session"
+        assert normalize_session_name("   ") is None
+
     def test_reports_missing_value(self):
         result = parse_args(["--name"])
         assert result.diagnostics == [{"type": "error", "message": "--name requires a value"}]
@@ -173,6 +177,19 @@ class TestUseThemeFlag:
 class TestNoSessionFlag:
     def test_parses_no_session_flag(self):
         result = parse_args(["--no-session"])
+        assert result.no_session is True
+
+    def test_preserves_custom_session_ids_for_non_persisting_commands(self):
+        result = parse_args(["--session-id", "ephemeral-id", "--help"])
+        assert result.session_id == "ephemeral-id"
+        assert result.help is True
+
+        result = parse_args(["--session-id", "ephemeral-id", "--list-models"])
+        assert result.session_id == "ephemeral-id"
+        assert result.list_models is True
+
+        result = parse_args(["--session-id", "ephemeral-id", "--no-session"])
+        assert result.session_id == "ephemeral-id"
         assert result.no_session is True
 
 

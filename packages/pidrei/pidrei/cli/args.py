@@ -23,6 +23,11 @@ def is_valid_thinking_level(value: str) -> bool:
     return value in THINKING_LEVELS
 
 
+def normalize_session_name(value: str) -> str | None:
+    name = value.strip()
+    return name if name else None
+
+
 @dataclass(slots=True)
 class Args:
     provider: str | None = None

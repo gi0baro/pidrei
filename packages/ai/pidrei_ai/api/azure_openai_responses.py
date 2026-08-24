@@ -67,6 +67,7 @@ _AZURE_ROOT_PATHS = ("", "/", "/openai", "/openai/v1/responses")
 @dataclass(slots=True)
 class AzureOpenAIResponsesOptions(StreamOptions):
     reasoning_effort: str | None = None
+    tool_choice: Any = None
     reasoning_summary: str | None = None
     azure_api_version: str | None = None
     azure_resource_name: str | None = None
@@ -263,6 +264,7 @@ def stream_simple(
     reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning
 
     opts = _azure_options(base)
+    opts.tool_choice = options.tool_choice if options else None
     opts.reasoning_effort = reasoning_effort
     return stream(model, context, opts, into=into)
 
@@ -378,6 +380,8 @@ def build_params(
             supports_strict_mode=True if supports_strict is None else supports_strict,
             supports_openai_grammar_tools=supports_grammar_tools,
         )
+    if options is not None and options.tool_choice is not None:
+        params["tool_choice"] = options.tool_choice
 
     if model.reasoning:
         mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}

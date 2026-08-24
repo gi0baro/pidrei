@@ -514,7 +514,7 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
             details=make_details("single")([]),
         )
 
-    if agent_scope in ("project", "both") and confirm_project_agents and ctx.has_ui:
+    if agent_scope in ("project", "both") and confirm_project_agents and ctx.has_ui and not ctx.is_project_trusted():
         requested_agent_names = set()
         for item in params.get("chain") or []:
             requested_agent_names.add(item["agent"])

@@ -479,5 +479,6 @@ def stream_simple(
     reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning
 
     opts = _responses_options(base)
+    opts.tool_choice = options.tool_choice if options else None
     opts.reasoning_effort = reasoning_effort
     return stream(model, context, opts, into=into)

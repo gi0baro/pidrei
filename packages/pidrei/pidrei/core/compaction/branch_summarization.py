@@ -9,7 +9,7 @@ import time as time_module
 from dataclasses import dataclass
 from typing import Any
 
-from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, Usage, UserMessage
+from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, ToolCall, Usage, UserMessage
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy
 from pidrei_ai.utils.text import content_text
 
@@ -278,6 +278,8 @@ async def generate_branch_summary(
         return BranchSummaryResult(aborted=True)
     if response.stop_reason == "error":
         return BranchSummaryResult(error=response.error_message or "Summarization failed")
+    if any(isinstance(block, ToolCall) for block in response.content):
+        return BranchSummaryResult(error="Branch summarization attempted to call a tool")
 
     summary = content_text(response.content)
 

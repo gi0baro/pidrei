@@ -23,6 +23,7 @@ from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
+    AnthropicRefusalFallback,
     AssistantMessage,
     CacheRetention,
     Context,
@@ -97,6 +98,7 @@ _CC_TOOL_LOOKUP = {name.lower(): name for name in _CLAUDE_CODE_TOOLS}
 
 FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14"
 INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
+SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 _ANTHROPIC_MESSAGE_EVENTS = frozenset(
     (
@@ -241,6 +243,10 @@ class AnthropicOptions(StreamOptions):
     thinking_display: AnthropicThinkingDisplay | None = None
     # Request the interleaved-thinking beta for non-adaptive models. Default True.
     interleaved_thinking: bool | None = None
+    # Anthropic refusal fallback. When set, the request carries the server-side
+    # fallback beta and Anthropic retries eligible refusals on the configured
+    # fallback target before returning a final response.
+    refusal_fallbacks: AnthropicRefusalFallback | None = None
     # Anthropic tool choice: "auto" | "any" | "none" | {"type": "tool", "name": ...}.
     tool_choice: str | dict[str, str] | None = None
     # Pre-built client instance (test injection / alternative transports).
@@ -386,6 +392,7 @@ def _create_client(
     api_key: str | None,
     interleaved_thinking: bool,
     use_fine_grained_beta: bool,
+    use_server_side_fallback_beta: bool,
     options_headers: ProviderHeaders | None,
     dynamic_headers: dict[str, str] | None,
     session_id: str | None,
@@ -399,6 +406,8 @@ def _create_client(
         beta_features.append(FINE_GRAINED_TOOL_STREAMING_BETA)
     if needs_interleaved_beta:
         beta_features.append(INTERLEAVED_THINKING_BETA)
+    if use_server_side_fallback_beta:
+        beta_features.append(SERVER_SIDE_FALLBACK_BETA)
 
     base = {
         "accept": "application/json",
@@ -566,6 +575,7 @@ def stream(
                     api_key,
                     opts.interleaved_thinking if opts.interleaved_thinking is not None else True,
                     _should_use_fine_grained_beta(model, context),
+                    opts.refusal_fallbacks is not None,
                     opts.headers,
                     copilot_dynamic_headers,
                     cache_session_id,
@@ -600,6 +610,11 @@ def stream(
                     message = event.get("message") or {}
                     usage = message.get("usage") or {}
                     output.response_id = message.get("id")
+                    # Anthropic reports the model it actually served, which differs
+                    # from the requested one when a refusal fallback fires.
+                    served_model = message.get("model")
+                    if isinstance(served_model, str):
+                        output.model = served_model
                     # Capture initial usage so input counts survive early aborts.
                     output.usage.input = usage.get("input_tokens") or 0
                     output.usage.output = usage.get("output_tokens") or 0
@@ -777,6 +792,10 @@ def stream_simple(
 
     def with_thinking(**extra) -> AnthropicOptions:
         anthropic = _anthropic_options(base)
+        # pi threads `refusalFallbacks` through each of the three `stream()` calls
+        # below; the shared builder carries it once.
+        anthropic.refusal_fallbacks = options.refusal_fallbacks if options else None
+        anthropic.tool_choice = options.tool_choice if options else None
         for key, value in extra.items():
             setattr(anthropic, key, value)
         return anthropic
@@ -1111,5 +1130,8 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
             params["tool_choice"] = {"type": options.tool_choice}
         else:
             params["tool_choice"] = options.tool_choice
+
+    if options.refusal_fallbacks is not None:
+        params["fallbacks"] = options.refusal_fallbacks
 
     return params

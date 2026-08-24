@@ -154,6 +154,10 @@ EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = {
     "github-copilot:claude-sonnet-4",
     "github-copilot:claude-sonnet-4.5",
 }
+ANTHROPIC_ALLOWED_FALLBACK_MODELS: dict[str, list[str]] = {
+    "claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
+    "claude-opus-5": ["claude-opus-4-8"],
+}
 
 DEEPSEEK_V4_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "minimal": None,
@@ -592,6 +596,14 @@ def apply_openai_completions_compat_metadata(model: dict[str, Any]) -> None:
         del model["compat"]
 
 
+def apply_anthropic_messages_compat_metadata(model: dict[str, Any]) -> None:
+    if model["api"] != "anthropic-messages":
+        return
+    compat = get_anthropic_messages_compat(model["provider"], model["id"])
+    if compat:
+        merge_compat(model, compat)
+
+
 def supports_direct_reasoning_effort(model: dict[str, Any]) -> bool:
     if model["api"] == "anthropic-messages":
         return model.get("compat", {}).get("forceAdaptiveThinking") is True
@@ -770,6 +782,10 @@ def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any
     compat: dict[str, Any] = {}
     if f"{provider}:{model_id}" in EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS:
         compat["supportsEagerToolInputStreaming"] = False
+    if provider == "anthropic":
+        allowed_fallback_models = ANTHROPIC_ALLOWED_FALLBACK_MODELS.get(model_id)
+        if allowed_fallback_models:
+            compat["allowedFallbackModels"] = allowed_fallback_models
     if provider == "xiaomi" or provider.startswith("xiaomi-token-plan-"):
         compat["allowEmptySignature"] = True
     return compat or None
@@ -2420,6 +2436,7 @@ async def main() -> None:
     # anthropic models never take models.dev effort maps.
     for model in all_models:
         apply_openai_completions_compat_metadata(model)
+        apply_anthropic_messages_compat_metadata(model)
         apply_models_dev_reasoning_option_metadata(model, reasoning_options)
         apply_thinking_level_metadata(model)
         apply_strict_tool_compat_metadata(model)

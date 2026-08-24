@@ -313,10 +313,14 @@ async def test_scans_agents_skills_up_to_the_filesystem_root_outside_a_git_repo(
 
 
 @pytest.mark.tonio
-async def test_ignores_root_markdown_files_in_agents_skills(dirs):
+async def test_ignores_root_markdown_but_discovers_nested_markdown_in_agents_skills(dirs):
     agents_skills_dir = os.path.join(dirs.root, ".agents", "skills")
     root_skill = write_skill(os.path.join(agents_skills_dir, "root-file.md"), "root-file")
     nested_skill = write_skill(os.path.join(agents_skills_dir, "nested-skill", "SKILL.md"), "nested-skill")
+    nested_markdown_skill = write_skill(os.path.join(agents_skills_dir, "third-party", "child-skill.md"), "child-skill")
+    deeply_nested_markdown_skill = write_skill(
+        os.path.join(agents_skills_dir, "third-party", "vendor", "pack", "deep-skill.md"), "deep-skill"
+    )
     work_dir = os.path.join(dirs.root, "work")
     os.makedirs(work_dir)
 
@@ -325,6 +329,8 @@ async def test_ignores_root_markdown_files_in_agents_skills(dirs):
 
     assert find(result.skills, root_skill) is None
     assert find(result.skills, nested_skill).enabled
+    assert find(result.skills, nested_markdown_skill).enabled
+    assert find(result.skills, deeply_nested_markdown_skill).enabled
 
 
 @pytest.mark.tonio

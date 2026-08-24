@@ -420,7 +420,13 @@ def _collect_skill_entries(
         is_dir, is_file = kind
 
         rel_path = os.path.relpath(full_path, root)
-        if mode == "pi" and dir == root and is_file and entry.name.endswith(".md") and not ig.ignores(rel_path):
+        should_include_markdown_file = (
+            is_file
+            and entry.name.endswith(".md")
+            and not ig.ignores(rel_path)
+            and ((mode == "pi" and dir == root) or (mode == "agents" and dir != root))
+        )
+        if should_include_markdown_file:
             entries.append(full_path)
             continue
 

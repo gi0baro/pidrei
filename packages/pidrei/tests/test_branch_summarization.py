@@ -1,0 +1,80 @@
+"""Mirror of pi's branch-summarization.test.ts.
+
+pi's `streamFn` pushes the done event from a microtask; here the stream is
+filled before it is returned, which the awaiting `result()` handles the same
+way (see `test_compaction_summary_reasoning.py`).
+"""
+
+import time
+
+import pytest
+
+from pidrei.core.compaction import generate_branch_summary
+from pidrei_ai.providers.faux import faux_assistant_message
+from pidrei_ai.types import AssistantMessage, DoneEvent, Model, ModelCost, TextContent, ToolCall
+from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+
+MODEL = Model(
+    id="test-model",
+    name="Test Model",
+    api="anthropic-messages",
+    provider="anthropic",
+    base_url="https://api.anthropic.com",
+    reasoning=False,
+    input=["text"],
+    cost=ModelCost(),
+    context_window=200000,
+    max_tokens=8192,
+)
+
+ENTRIES = [
+    {
+        "type": "message",
+        "id": "branch-user",
+        "parentId": None,
+        "timestamp": "1970-01-01T00:00:00.001Z",
+        "message": {"role": "user", "content": "Abandoned request", "timestamp": 1},
+    }
+]
+
+
+def _response(content: list, stop_reason: str = "stop") -> AssistantMessage:
+    message = faux_assistant_message("", stop_reason=stop_reason, timestamp=int(time.time() * 1000))
+    message.content = content
+    message.api = MODEL.api
+    message.provider = MODEL.provider
+    message.model = MODEL.id
+    return message
+
+
+def _stream_fn(message: AssistantMessage) -> tuple:
+    calls: list = []
+
+    async def stream_fn(_model, _context, options=None):
+        calls.append(options)
+        stream = AssistantMessageEventStream()
+        stream.push(DoneEvent(reason="toolUse" if message.stop_reason == "toolUse" else "stop", message=message))
+        return stream
+
+    return stream_fn, calls
+
+
+@pytest.mark.tonio
+async def test_disables_tools_for_branch_summaries():
+    stream_fn, calls = _stream_fn(_response([TextContent(text="summary")]))
+
+    await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
+
+    assert len(calls) == 1
+    assert calls[0].tool_choice == "none"
+
+
+@pytest.mark.tonio
+async def test_rejects_tool_calls_from_branch_summaries():
+    tool_call = ToolCall(id="tool-call-1", name="read", arguments={"path": "README.md"})
+    stream_fn, _calls = _stream_fn(_response([tool_call], stop_reason="toolUse"))
+
+    result = await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
+
+    assert result.error == "Branch summarization attempted to call a tool"

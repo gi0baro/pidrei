@@ -319,8 +319,9 @@ def stream_simple(
         raise RuntimeError(f"No API key for provider: {model.provider}")
 
     base = build_base_options(model, context, options, api_key)
+    tool_choice = options.tool_choice if options else None
     if options is None or not options.reasoning:
-        return stream(model, context, _with_thinking(base, GoogleThinking(enabled=False)), into=into)
+        return stream(model, context, _with_thinking(base, GoogleThinking(enabled=False), tool_choice), into=into)
 
     clamped_reasoning = clamp_thinking_level(model, options.reasoning)
     resolved_level = resolve_google_thinking_level(model, clamped_reasoning)
@@ -329,7 +330,9 @@ def stream_simple(
         return stream(
             model,
             context,
-            _with_thinking(base, GoogleThinking(enabled=True, level=_get_thinking_level(resolved_level, model))),
+            _with_thinking(
+                base, GoogleThinking(enabled=True, level=_get_thinking_level(resolved_level, model)), tool_choice
+            ),
             into=into,
         )
 
@@ -341,14 +344,16 @@ def stream_simple(
             GoogleThinking(
                 enabled=True, budget_tokens=_get_google_budget(model, resolved_level, options.thinking_budgets)
             ),
+            tool_choice,
         ),
         into=into,
     )
 
 
-def _with_thinking(base: StreamOptions, thinking: GoogleThinking) -> GoogleOptions:
+def _with_thinking(base: StreamOptions, thinking: GoogleThinking, tool_choice: str | None) -> GoogleOptions:
     opts = _google_options(base)
     opts.thinking = thinking
+    opts.tool_choice = tool_choice
     return opts
 
 

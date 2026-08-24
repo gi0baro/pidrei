@@ -1409,10 +1409,9 @@ def stream_simple(
     base = build_base_options(model, context, options, options.api_key if options else None)
     clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else None
     reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning
-    tool_choice = getattr(options, "tool_choice", None)
 
     opts = _openai_options(base)
+    opts.tool_choice = options.tool_choice if options else None
     opts.reasoning_effort = reasoning_effort
-    opts.tool_choice = tool_choice
     opts.thinking_budgets = options.thinking_budgets if options else None
     return stream(model, context, opts, into=into)

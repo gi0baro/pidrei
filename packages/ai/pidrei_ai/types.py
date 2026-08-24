@@ -78,6 +78,7 @@ type ProviderId = str  # KnownProvider or any custom string
 type KnownImagesProvider = Literal["openrouter"]
 type ImagesProviderId = str  # KnownImagesProvider or any custom string
 
+type ToolChoice = Literal["auto", "none"]
 type ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 type ModelThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 # Maps pi thinking levels to provider/model-specific values; None marks a level unsupported.
@@ -427,6 +428,10 @@ class AnthropicMessagesCompat:
     # Replay empty thinking signatures as `signature: ""` instead of converting to text.
     allow_empty_signature: bool | None = None  # default False
     supports_strict_tools: bool | None = None  # default False
+    # Model ids Anthropic accepts in `fallbacks` for server-side refusal fallback.
+    # When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
+    # field for models with no permitted fallback targets.
+    allowed_fallback_models: list[str] | None = None
     # Deferred tools loaded by `tool_reference` blocks in tool results. Default True for
     # first-party Anthropic models except Haiku and pre-4.5 models; False elsewhere.
     supports_tool_references: bool | None = None
@@ -564,11 +569,21 @@ class DeferredFetchOptions(ProviderRequestOptions):
 type DeferredCancelOptions = ProviderRequestOptions
 
 
+# pi: `"default" | readonly { model: string }[]`. The array entries stay plain
+# dicts, as `deferred`'s window object does, because they go straight into the
+# request body.
+type AnthropicRefusalFallback = Literal["default"] | list[dict[str, str]]
+
+
 @dataclass(slots=True)
 class SimpleStreamOptions(StreamOptions):
     """Unified options with reasoning, passed to `stream_simple`/`complete_simple`."""
 
+    # Provider-neutral tool selection for simple requests. Default: "auto".
+    tool_choice: ToolChoice | None = None
     reasoning: ThinkingLevel | None = None
+    # Anthropic server-side fallback for eligible refusal stop reasons. Anthropic providers only.
+    refusal_fallbacks: AnthropicRefusalFallback | None = None
     # Ask a capable provider to return a durable handle and continue the request
     # asynchronously. pi: `boolean | { window?: "15m" | "1h" | "24h" }`.
     deferred: bool | dict[str, Any] | None = None

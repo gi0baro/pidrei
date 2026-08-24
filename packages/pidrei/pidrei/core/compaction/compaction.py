@@ -26,7 +26,17 @@ from pidrei_agent.harness.compaction.compaction import (
     estimate_tokens,
     should_compact,
 )
-from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, Usage, UsageCost, UserMessage
+from pidrei_ai.types import (
+    AnthropicMessagesCompat,
+    Context,
+    Model,
+    SimpleStreamOptions,
+    TextContent,
+    ToolCall,
+    Usage,
+    UsageCost,
+    UserMessage,
+)
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
 from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
@@ -66,6 +76,17 @@ __all__ = [  # re-exported shared helpers keep pi's coding-agent module surface
     "prepare_compaction",
     "should_compact",
 ]
+
+
+def _get_anthropic_summarization_fallback(model: Model) -> list[dict[str, str]] | None:
+    if model.provider != "anthropic" or model.api != "anthropic-messages":
+        return None
+
+    compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
+    allowed_fallback_models = compat.allowed_fallback_models if compat else None
+    # Use the primary permitted fallback for now. If future Anthropic models expose
+    # broader fallback behavior, this can become a user/config pick or a full chain.
+    return [{"model": allowed_fallback_models[0]}] if allowed_fallback_models else None
 
 
 @dataclass(slots=True)
@@ -396,6 +417,9 @@ def _create_summarization_options(
         env=env,
         session_id=session_id,
     )
+    refusal_fallbacks = _get_anthropic_summarization_fallback(model)
+    if refusal_fallbacks:
+        options.refusal_fallbacks = refusal_fallbacks
     if model.reasoning and thinking_level and thinking_level != "off":
         options.reasoning = thinking_level
     return options
@@ -420,6 +444,7 @@ async def complete_summarization(
         options,
         cache_retention="none",
         session_id=options.session_id if options.session_id is not None else uuidv7(),
+        tool_choice="none",
     )
     if stream_fn is None:
         raise Exception("complete_summarization requires a stream function (pi's compat registry is not ported)")
@@ -528,6 +553,8 @@ async def generate_summary_with_usage(
 
     if response.stop_reason == "error":
         raise Exception(f"Summarization failed: {response.error_message or 'Unknown error'}")
+    if any(isinstance(block, ToolCall) for block in response.content):
+        raise Exception("Summarization attempted to call a tool")
 
     return SummaryWithUsage(text=content_text(response.content), usage=response.usage)
 
@@ -797,5 +824,7 @@ async def _generate_turn_prefix_summary(
 
     if response.stop_reason == "error":
         raise Exception(f"Turn prefix summarization failed: {response.error_message or 'Unknown error'}")
+    if any(isinstance(block, ToolCall) for block in response.content):
+        raise Exception("Turn prefix summarization attempted to call a tool")
 
     return SummaryWithUsage(text=content_text(response.content), usage=response.usage)
