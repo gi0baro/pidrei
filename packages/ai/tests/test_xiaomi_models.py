@@ -10,7 +10,6 @@ DEPRECATED_MODEL_IDS = ["mimo-v2-flash", "mimo-v2-omni", "mimo-v2-pro"]
 REPLACEMENT_MODEL_IDS = ["mimo-v2.5", "mimo-v2.5-pro"]
 
 
-@pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 @pytest.mark.parametrize("provider", XIAOMI_PROVIDERS)
 def test_omits_deprecated_models(provider):
     model_ids = [model.id for model in get_builtin_models(provider)]

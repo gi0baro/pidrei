@@ -80,7 +80,9 @@ def _parse_fallback_targets(raw: list[dict[str, Any]]) -> list[AnthropicAllowedF
 
 
 # Compat fields whose catalog value is a nested object rather than a scalar.
-_COMPAT_FIELD_PARSERS = {"allowed_fallback_models": _parse_fallback_targets}
+# Shared with `pidrei.core.model_wire`, which parses the same shape out of
+# models.json and has to build the same dataclasses.
+COMPAT_FIELD_PARSERS = {"allowed_fallback_models": _parse_fallback_targets}
 
 
 def _parse_compat(api: str, raw: dict[str, Any]) -> ModelCompat:
@@ -95,7 +97,7 @@ def _parse_compat(api: str, raw: dict[str, Any]) -> ModelCompat:
             if name in _ANY_COMPAT_FIELD:
                 continue
             raise ValueError(f"Unknown {compat_class.__name__} field {key!r} in catalog data")
-        parser = _COMPAT_FIELD_PARSERS.get(name)
+        parser = COMPAT_FIELD_PARSERS.get(name)
         kwargs[name] = parser(value) if parser is not None else value
     return compat_class(**kwargs)
 

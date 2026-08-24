@@ -1,5 +1,44 @@
 {
   "openai-completions": {
+    "deepseek-ai/deepseek-v4-flash-0731": {
+      "id": "deepseek-ai/deepseek-v4-flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "api": "openai-completions",
+      "provider": "nvidia",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "headers": {
+        "NVCF-POLL-SECONDS": "3600"
+      },
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "supportsLongCacheRetention": false,
+        "requiresReasoningContentOnAssistantMessages": true,
+        "thinkingFormat": "deepseek"
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      }
+    },
     "google/gemma-3-12b-it": {
       "id": "google/gemma-3-12b-it",
       "name": "Gemma 3 12B IT",
@@ -306,9 +345,9 @@
       "contextWindow": 65536,
       "maxTokens": 65536
     },
-    "moonshotai/kimi-k2.6": {
-      "id": "moonshotai/kimi-k2.6",
-      "name": "Kimi K2.6",
+    "moonshotai/kimi-k3": {
+      "id": "moonshotai/kimi-k3",
+      "name": "Kimi K3",
       "api": "openai-completions",
       "provider": "nvidia",
       "baseUrl": "https://integrate.api.nvidia.com/v1",
@@ -334,8 +373,8 @@
         "supportsStrictMode": false,
         "supportsLongCacheRetention": false
       },
-      "contextWindow": 262144,
-      "maxTokens": 262144
+      "contextWindow": 1048576,
+      "maxTokens": 131072
     },
     "nvidia/cosmos-reason2-8b": {
       "id": "nvidia/cosmos-reason2-8b",
@@ -912,36 +951,6 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 16384
-    },
-    "z-ai/glm-5.2": {
-      "id": "z-ai/glm-5.2",
-      "name": "GLM-5.2",
-      "api": "openai-completions",
-      "provider": "nvidia",
-      "baseUrl": "https://integrate.api.nvidia.com/v1",
-      "headers": {
-        "NVCF-POLL-SECONDS": "3600"
-      },
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
-        "maxTokensField": "max_tokens",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
-      },
-      "contextWindow": 1000000,
-      "maxTokens": 131072
     }
   }
 }

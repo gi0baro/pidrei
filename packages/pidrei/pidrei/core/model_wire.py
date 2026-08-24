@@ -10,8 +10,9 @@ import re
 from dataclasses import fields
 from typing import Any
 
-from pidrei_ai.models_generated import parse_model_dict
+from pidrei_ai.models_generated import COMPAT_FIELD_PARSERS as _COMPAT_FIELD_PARSERS, parse_model_dict
 from pidrei_ai.types import (
+    AnthropicAllowedFallbackModel,
     AnthropicMessagesCompat,
     BedrockCompat,
     Model,
@@ -81,8 +82,20 @@ def parse_compat(api: str, raw: dict[str, Any] | None) -> ModelCompat | None:
     for key, value in raw.items():
         name = _snake(key)
         if name in known:
-            kwargs[name] = value
+            parser = _COMPAT_FIELD_PARSERS.get(name)
+            kwargs[name] = parser(value) if parser is not None else value
     return compat_class(**kwargs)
+
+
+def _fallback_targets_to_list(targets: list[AnthropicAllowedFallbackModel]) -> list[dict[str, Any]]:
+    return [
+        {"provider": target.provider, "model": target.model, "cost": _cost_to_dict(target.cost)} for target in targets
+    ]
+
+
+# Inverse of `models_generated._COMPAT_FIELD_PARSERS`: compat fields whose value
+# is a nested dataclass rather than a scalar, and so cannot ride the wire as-is.
+_COMPAT_FIELD_SERIALIZERS = {"allowed_fallback_models": _fallback_targets_to_list}
 
 
 def compat_to_dict(compat: ModelCompat | None) -> dict[str, Any]:
@@ -91,8 +104,10 @@ def compat_to_dict(compat: ModelCompat | None) -> dict[str, Any]:
     raw: dict[str, Any] = {}
     for field in fields(compat):
         value = getattr(compat, field.name)
-        if value is not None:
-            raw[_camel(field.name)] = value
+        if value is None:
+            continue
+        serializer = _COMPAT_FIELD_SERIALIZERS.get(field.name)
+        raw[_camel(field.name)] = serializer(value) if serializer is not None else value
     return raw
 
 

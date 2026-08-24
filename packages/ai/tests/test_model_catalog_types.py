@@ -7,12 +7,9 @@ group a model is nested under is the api it loads with, and id/provider match
 its position — is checkable at runtime, so that is what this mirror asserts.
 """
 
-import pytest
-
 from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
 
 
-@pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 def test_derives_model_api_id_and_provider_from_grouped_model_data():
     grok_45 = get_builtin_model("xai", "grok-4.5")
     assert grok_45 is not None

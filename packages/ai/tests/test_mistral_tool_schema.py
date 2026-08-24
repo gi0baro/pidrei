@@ -32,7 +32,9 @@ async def _capturing_on_payload(payload, _model):
 @pytest.mark.tonio
 async def test_tool_schemas_reach_the_payload_intact_and_strict():
     captured.clear()
-    model = get_builtin_model("mistral", "devstral-medium-latest")
+    # pi picks `devstral-medium-latest`; models.dev retired every devstral model
+    # before this catalog regen, so any live mistral-conversations model stands in.
+    model = get_builtin_model("mistral", "mistral-medium-latest")
     parameters = {
         "type": "object",
         "properties": {"nested": {"type": "object", "properties": {"value": {"type": "string"}}}},

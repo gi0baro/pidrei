@@ -48,14 +48,12 @@ def test_includes_xhigh_and_max_for_anthropic_opus_5_on_anthropic_messages_api()
     assert "max" in levels
 
 
-@pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
     grok = next(model for model in MODELS["xai"] if model.id == "grok-4.6")
 
     assert get_supported_thinking_levels(grok) == ["low", "medium", "high", "xhigh"]
 
 
-@pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 def test_includes_low_for_deepseek_v4_flash_on_opencode_go():
     flash = next(model for model in MODELS["opencode-go"] if model.id == "deepseek-v4-flash")
 

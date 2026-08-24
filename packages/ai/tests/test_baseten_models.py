@@ -85,7 +85,6 @@ async def capture_payload(model: Model, reasoning: str | None = None) -> dict:
     return captured["payload"]
 
 
-@pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 def test_registers_glm_52_as_the_default_openai_compatible_reasoning_model():
     model = get_builtin_model("baseten", "zai-org/GLM-5.2")
 

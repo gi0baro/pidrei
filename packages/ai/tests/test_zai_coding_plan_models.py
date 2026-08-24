@@ -1,15 +1,9 @@
 """Mirror of pi's zai-coding-plan-models.test.ts.
 
-Every case reads the vendored catalog, which is regenerated once at the end of
-the port — see the skip reason.
+Every case reads the vendored catalog.
 """
 
-import pytest
-
 from pidrei_ai.providers.all import get_builtin_model
-
-
-pytestmark = pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 
 
 def test_exposes_glm_4_6v_on_the_china_coding_plan_catalog():

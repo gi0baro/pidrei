@@ -6,6 +6,135 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.3.0] - 2026-08-24
+
+Tracks [Pi 0.84.3](https://github.com/earendil-works/pi/releases/tag/v0.84.3).
+
+### Added
+
+- A `/thinking` selector, searchable default choices in the model and
+  thinking selectors, and `Ctrl+S` to save the selected model as the global
+  default.
+- `session_compact_failed` extension events, exposing a compaction failure's
+  reason, retry state, source and error message to handlers.
+- Transcript usage notices for compaction and branch summaries when cache
+  miss notices are enabled.
+- Optional routing session IDs on the exported compaction summary helpers, so
+  callers can preserve provider routing without enabling prompt cache writes.
+- Provider-neutral `tool_choice` on simple stream requests, honored by every
+  adapter.
+- Automatic Anthropic server-side refusal fallback for supported first-party
+  models, priced with the model that actually answered.
+- Configurable OpenAI-compatible thinking-token budget fields for vLLM,
+  Qwen/SGLang and llama.cpp servers.
+- China-specific Z.AI Coding Plan models, including GLM-4.6V vision support
+  and API-equivalent usage cost estimates.
+- `deepseek-v4-pro-0813` in the Qwen Token Plan Individual catalog.
+- Settings diagnostics: invalid settings files are reported with their path
+  inside the TUI instead of scrolling past during startup.
+
+### Changed
+
+- **Breaking (SDK types):** the inherited `GoogleThinkingLevel` type is now
+  `GoogleApiThinkingLevel`, and `ResolvedGoogleThinkingLevel` names the
+  normalized adapter level.
+- `/model` and `/thinking` selections are session-scoped: they no longer
+  persist globally unless explicitly saved with `Ctrl+S`.
+- Built-in xAI models use the Responses API with encrypted reasoning replay,
+  and Grok 4.6 is the default xAI model.
+- The Anthropic, Azure OpenAI, Google, Mistral and OpenAI adapters send
+  pidrei's default `User-Agent` unless a caller overrides it.
+- Keybinding defaults shift under WSL, where the Windows terminal reserves
+  several chords: `alt+p` cycles to the previous model, `ctrl+q`/`alt+q`
+  queue and restore follow-ups, `alt+v` pastes an image, `alt+z` undoes an
+  edit, and fullscreen uses `ctrl+f` to search and `ctrl+up`/`ctrl+down` to
+  jump between marked messages. `ctrl+up`/`ctrl+down` also work as marked-
+  message navigation everywhere, alongside the existing `ctrl+shift` chords.
+- Compaction and branch summarization requests no longer expose tools to
+  providers.
+- Model catalog refreshed from models.dev, OpenRouter and the Vercel AI
+  Gateway.
+- The default mistral model is `mistral-medium-latest`: upstream still names
+  `devstral-medium-latest`, which models.dev retired before this refresh.
+
+### Fixed
+
+- Extension factories that fail partway through no longer leave their event
+  subscriptions, provider registrations and default flag state behind, and
+  the API object they captured is disabled.
+- `models.json` accepts the documented OpenAI-compatible
+  `compat.supportsFinishReason` provider and model override.
+- JSON and RPC `toolcall_start` events carry the tool call id and name.
+- Nested Markdown skills inside `.agents/skills/` grouping directories are
+  discovered, and root Markdown files such as `README.md` and `AGENTS.md` in
+  skill directories are no longer reported as broken skills.
+- Single-object `edit` tool inputs validate as a one-edit array, in both the
+  coding-agent and harness edit tools.
+- `pi.register_flag()` rejects default values that do not match the declared
+  flag type.
+- The default Cerebras model no longer references an unavailable Z.AI model,
+  and the Z.AI Coding Plan defaults no longer reference the removed GLM-5.1.
+- OpenAI-compatible Chat Completions reasoning replay preserves and resends
+  assistant-level `reasoning_details` verbatim and in order.
+- GitHub Copilot login no longer trips model-policy rate limits: policy
+  updates are sequential, model discovery retries once, and server retry
+  delays are honored.
+- Amazon Bedrock replays opaque redacted reasoning from non-Anthropic models,
+  and its response hooks receive the raw response headers instead of a
+  synthesized request id.
+- Z.AI Coding Plan models derive complete reasoning-effort metadata,
+  including GLM-5.3's low, high and max levels.
+- DeepSeek V4 Flash on OpenCode and OpenCode Go exposes its low thinking
+  level.
+- Azure OpenAI Responses honors `tool_choice` in provider-specific stream
+  requests.
+- Kimi usage reporting counts top-level `cached_tokens` as cache reads
+  instead of normal input tokens.
+- Google custom models honor `thinkingLevelMap`, restoring extended thinking
+  controls.
+- Writes to `auth.json` and `models-store.json` preserve
+  administrator-managed file permissions.
+- UTF-8 BOM markers no longer prevent frontmatter and user configuration
+  files from loading.
+- Repeated ambiguous truncated-response recovery is no longer mislabeled as
+  context overflow.
+- Threshold auto-compaction still runs when providers omit streaming usage
+  data.
+- Branch summary entries record the pre-navigation source leaf in `fromId`
+  instead of the navigation destination.
+- Package update checks no longer treat older registry versions as available
+  updates.
+- Hung pi.dev model catalog requests retry instead of consuming the whole
+  refresh deadline.
+- Xiaomi model catalogs no longer list shut-down MiMo V2 models.
+- llama.cpp login guidance points at `/llama` before `/model` when no local
+  models are loaded.
+- Dash-prefixed prompts are no longer parsed as options: `--` ends the option
+  list.
+- Padded text no longer exceeds narrow terminal widths, and wrapped Markdown
+  table links no longer leak color into borders and neighboring cells,
+  including tables inside blockquotes.
+- Duplicate fullscreen right-click paste in VS Code-based terminals.
+- RPC `get_available_models` serializes models whose compat carries
+  `allowedFallbackModels` instead of failing the request.
+
+### Not ported
+
+- Upstream's optional `powershell` tool: it is Windows-only by construction
+  and pidrei is POSIX-only. The refactor that lets one implementation back
+  several shell tools did land.
+- Upstream's Radius session-sharing changes (clickable links, canonical
+  artifact URL, system prompt and tool definitions in shares): Radius is
+  long-dropped surface. The JSONL session export they were built on is now
+  reusable as `core.session_export`, and `/share` still creates a gist.
+- Installer-managed updates (staged, verified, atomically activated
+  releases): pidrei has no self-update machinery.
+- The Node.js/Bun packaging work — bundled runtime and CLI entrypoints,
+  single-executable extension loading, lazy jiti/Babel, deferred
+  highlight.js grammars, Bun archive layout, and the npm dependency-tree
+  reductions. None of it has a Python analogue; pidrei highlights with
+  pygments.
+
 ## [0.84.2.8] - 2026-08-24
 
 ### Fixed

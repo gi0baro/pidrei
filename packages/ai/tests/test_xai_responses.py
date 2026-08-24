@@ -77,7 +77,6 @@ def test_excludes_retired_and_redundant_models_from_the_builtin_catalog():
         assert model_id not in ids
 
 
-@pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
 def test_routes_every_builtin_xai_model_through_responses():
     for model in get_builtin_models("xai"):
         assert model.api == "openai-responses", model.id

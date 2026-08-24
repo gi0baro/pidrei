@@ -14,7 +14,9 @@ from pidrei_ai.types import Context, UserMessage
 from tests.mistral_helpers import FakeMistralClient, sse_body
 
 
-MODEL = get_builtin_model("mistral", "devstral-medium-latest")
+# pi picks `devstral-medium-latest`; models.dev retired every devstral model
+# before this catalog regen, so any live mistral-conversations model stands in.
+MODEL = get_builtin_model("mistral", "mistral-medium-latest")
 
 
 def _create_client(finish_reason: str) -> FakeMistralClient:
