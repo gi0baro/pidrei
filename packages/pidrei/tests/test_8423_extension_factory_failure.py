@@ -1,8 +1,10 @@
 """Mirror of pi's suite/regressions/8423-extension-factory-failure.test.ts.
 
 `EventBus.emit` spawns each handler, so pi's synchronous emit-then-assert
-becomes an emit, a short drain, and a host counter proving the emit was
-delivered at all (same shape as `test_7193_event_bus_lifecycle`). pi's
+becomes an emit gated on a timed `tonio.Event` the host handler sets — a
+fixed drain would race the spawned handler on a loaded runner. Once the host
+handler has run, the `"extension": 0` negative is sound: the failing
+factory's listener registration was discarded at load failure. pi's
 second case parks the failing factory on a promise it resolves by hand; here
 the two loads run as sibling coroutines under `tonio.spawn`, gated on a
 `tonio.Event`.
@@ -27,9 +29,11 @@ async def test_discards_runtime_changes_and_disables_the_failed_api():
     captured: list = []
     counts = {"extension": 0, "host": 0}
     flag_during_load: list = []
+    host_seen = tonio.Event()
 
     async def on_host(_data) -> None:
         counts["host"] += 1
+        host_seen.set()
 
     event_bus.on("factory-failure", on_host)
 
@@ -55,7 +59,8 @@ async def test_discards_runtime_changes_and_disables_the_failed_api():
         await load_extension_from_factory(failing_factory, os.getcwd(), event_bus, runtime, "<failing>")
 
     event_bus.emit("factory-failure", None)
-    await tonio.time.sleep(0.01)
+    await host_seen.wait(2.0)
+    assert host_seen.is_set(), "host handler must observe the emit"
 
     assert flag_during_load == [True]
     assert "failed-flag" not in runtime.flag_values

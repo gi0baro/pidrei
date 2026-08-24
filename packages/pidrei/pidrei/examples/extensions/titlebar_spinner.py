@@ -5,7 +5,7 @@ working, via `ctx.ui.set_title()`.
 
 pi drives the animation with `setInterval`; here it is a cooperative tonio
 task that ticks until a cancel event is set (the same pattern as
-`pidrei_tui`'s internal timers), stopped on `agent_end` and
+`pidrei_tui`'s internal timers), stopped on `agent_settled` and
 `session_shutdown`.
 
 Start pidrei with this extension:
@@ -61,12 +61,12 @@ def extension(pi):
             return
         start_animation(ctx)
 
-    async def on_agent_end(_event, ctx) -> None:
+    async def on_agent_settled(_event, ctx) -> None:
         stop_animation(ctx)
 
     async def on_session_shutdown(_event, ctx) -> None:
         stop_animation(ctx)
 
     pi.on("agent_start", on_agent_start)
-    pi.on("agent_end", on_agent_end)
+    pi.on("agent_settled", on_agent_settled)
     pi.on("session_shutdown", on_session_shutdown)

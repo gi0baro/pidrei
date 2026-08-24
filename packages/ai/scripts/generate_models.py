@@ -877,15 +877,17 @@ def _max_tokens(source: dict[str, Any], default: int = 4096) -> int:
     return (source.get("limit") or {}).get("output") or default
 
 
-def _catalog_eligible(source: dict[str, Any]) -> bool:
-    """pi's per-entry gate on every models.dev model: tool-calling, and not deprecated.
+def _tool_capable(source: dict[str, Any]) -> bool:
+    """pi's per-entry gate on every models.dev model: tool-calling only.
 
-    pi tests both inline in its one `loadModelsDevData` loop; this file splits that
-    loop into provider groups, so the pair lives in the shared predicate each group
-    already runs. The per-provider `status == "deprecated"` checks further down stay
-    redundant here, as they are upstream.
+    Deprecated-status filtering is deliberately NOT part of this predicate: pi
+    checks `status === "deprecated"` in exactly five of its provider loops
+    (together, baseten, opencode/opencode-go, github-copilot, xiaomi), added
+    one issue at a time, and keeps deprecated models everywhere else — they
+    are usually still served. Those five checks live inline in the matching
+    provider groups below; new ones port commit by commit.
     """
-    return source.get("tool_call") is True and source.get("status") != "deprecated"
+    return source.get("tool_call") is True
 
 
 def _models_of(catalog: dict[str, Any], key: str) -> dict[str, Any]:
@@ -1016,7 +1018,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
 
     # Amazon Bedrock
     for model_id, source in _models_of(catalog, "amazon-bedrock").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         # ai21.jamba does not support tool use in streaming mode;
         # mistral-7b-instruct-v0 does not support system messages.
@@ -1043,7 +1045,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
 
     # Anthropic
     for model_id, source in _models_of(catalog, "anthropic").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         models.append(
             {
@@ -1064,7 +1066,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
     # Google (Generative AI)
     google_models = _models_of(catalog, "google")
     for model_id, entry in google_models.items():
-        if not _catalog_eligible(entry):
+        if not _tool_capable(entry):
             continue
         source = entry
         if model_id == "gemini-flash-latest":
@@ -1091,7 +1093,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
     # Claude/OpenAI MaaS models that do not use the Gemini streaming path.
     vertex_models = _models_of(catalog, "google-vertex")
     for model_id, entry in vertex_models.items():
-        if not _catalog_eligible(entry):
+        if not _tool_capable(entry):
             continue
         if not model_id.startswith("gemini-"):
             continue
@@ -1131,7 +1133,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
 
     # OpenAI
     for model_id, source in _models_of(catalog, "openai").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         # models.dev lists this alias, but it is not accepted by OpenAI APIs.
         if model_id in MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS:
@@ -1154,7 +1156,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
 
     # Groq
     for model_id, source in _models_of(catalog, "groq").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         models.append(
             {
@@ -1174,7 +1176,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
 
     # Cerebras
     for model_id, source in _models_of(catalog, "cerebras").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         models.append(
             {
@@ -1203,7 +1205,7 @@ def _load_gateway_providers(
 
     # Cloudflare Workers AI
     for model_id, source in _models_of(catalog, "cloudflare-workers-ai").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         models.append(
             {
@@ -1224,7 +1226,7 @@ def _load_gateway_providers(
 
     # Cloudflare AI Gateway
     for prefixed_id, source in _models_of(catalog, "cloudflare-ai-gateway").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         slash_index = prefixed_id.find("/")
         if slash_index == -1:
@@ -1262,7 +1264,7 @@ def _load_gateway_providers(
 
     # xAI
     for model_id, source in _models_of(catalog, "xai").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         model = {
             "id": model_id,
@@ -1289,7 +1291,7 @@ def _load_gateway_providers(
         ("zhipuai-coding-plan", "zai-coding-cn", "https://open.bigmodel.cn/api/coding/paas/v4"),
     ):
         for model_id, source in _models_of(catalog, source_key).items():
-            if not _catalog_eligible(source):
+            if not _tool_capable(source):
                 continue
             thinking_level_map = get_effort_thinking_level_map(source.get("reasoning_options") or [])
             if thinking_level_map is not None and model_id in ("glm-5.2", "glm-5.2-highspeed"):
@@ -1324,7 +1326,7 @@ def _load_gateway_providers(
 
     # Mistral
     for model_id, source in _models_of(catalog, "mistral").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         cost = source.get("cost") or {}
         # pi uses `??` here: an explicit 0 cache_read survives, only absent falls back.
@@ -1354,7 +1356,7 @@ def _load_gateway_providers(
 
     # Hugging Face
     for model_id, source in _models_of(catalog, "huggingface").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         models.append(
             {
@@ -1378,7 +1380,7 @@ def _load_gateway_providers(
 
     # NVIDIA NIM
     for model_id, source in _models_of(catalog, "nvidia").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         modalities = source.get("modalities") or {}
         if "text" not in (modalities.get("input") or []):
@@ -1417,7 +1419,7 @@ def _load_gateway_providers(
         _models_of(catalog, "together") or _models_of(catalog, "togetherai") or _models_of(catalog, "together-ai")
     )
     for model_id, source in together_models.items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         if source.get("status") == "deprecated":
             continue
@@ -1472,7 +1474,7 @@ def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorde
     models: list[dict[str, Any]] = []
 
     for model_id, source in fireworks_models.items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
 
         common = {
@@ -1624,7 +1626,7 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
         ("opencode-go", "opencode-go", "https://opencode.ai/zen/go"),
     ):
         for model_id, source in _models_of(catalog, key).items():
-            if not _catalog_eligible(source):
+            if not _tool_capable(source):
                 continue
             if source.get("status") == "deprecated":
                 continue
@@ -1696,7 +1698,7 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
 
     # GitHub Copilot
     for model_id, source in _models_of(catalog, "github-copilot").items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         if source.get("status") == "deprecated":
             continue
@@ -1750,7 +1752,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
         ("minimax-cn", "minimax-cn", "https://api.minimaxi.com/anthropic"),
     ):
         for model_id, source in _models_of(catalog, key).items():
-            if not _catalog_eligible(source):
+            if not _tool_capable(source):
                 continue
             models.append(
                 {
@@ -1774,7 +1776,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
     has_canonical_kimi_model = "kimi-for-coding" in kimi_models
     kimi_aliases = {"k2p5", "k2p6", "k2p7"}
     for model_id, source in kimi_models.items():
-        if not _catalog_eligible(source):
+        if not _tool_capable(source):
             continue
         # models.dev may expose versioned aliases (k2p5/k2p6/k2p7). Normalize them to
         # the canonical id and drop duplicates when the canonical entry exists.
@@ -1831,7 +1833,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
         ("moonshotai-cn", "moonshotai-cn", "https://api.moonshot.cn/v1"),
     ):
         for model_id, source in _models_of(catalog, key).items():
-            if not _catalog_eligible(source):
+            if not _tool_capable(source):
                 continue
             is_kimi_k3 = model_id == "kimi-k3"
             compat = dict(moonshot_compat)
@@ -1877,7 +1879,9 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
         ("xiaomi-token-plan-sgp", "xiaomi-token-plan-sgp", "https://token-plan-sgp.xiaomimimo.com/v1"),
     ):
         for model_id, source in _models_of(catalog, source_key).items():
-            if not _catalog_eligible(source):
+            if not _tool_capable(source):
+                continue
+            if source.get("status") == "deprecated":
                 continue
             models.append(
                 {
@@ -1937,7 +1941,7 @@ def _process_qwen_token_plan_models(catalog: dict[str, Any], record: _Recorder) 
     ):
         emitted_model_ids: set[str] | None = set() if allowed_model_ids is not None else None
         for model_id, source in _models_of(catalog, source_key).items():
-            if not _catalog_eligible(source):
+            if not _tool_capable(source):
                 continue
             if model_id in QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS:
                 continue

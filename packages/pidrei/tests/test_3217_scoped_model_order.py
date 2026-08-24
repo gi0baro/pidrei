@@ -1,7 +1,8 @@
 """Mirror of pi's suite/regressions/3217-scoped-model-order.test.ts.
 
 pi waits for the catalog refresh with `vi.waitFor`; here the render output is
-polled the way the other model-selector mirrors do.
+polled the way the other model-selector mirrors do — but bounded, so a broken
+refresh fails the test instead of hanging the run.
 """
 
 from types import SimpleNamespace
@@ -17,6 +18,15 @@ from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 from .harness import create_harness
+
+
+async def _wait_until(condition, timeout=2.0):
+    waited = 0.0
+    while not condition():
+        await tonio.time.sleep(0.005)
+        waited += 0.005
+        if waited >= timeout:
+            raise AssertionError("condition not reached before timeout")
 
 
 THREE_MODELS = [
@@ -85,8 +95,7 @@ async def test_preserves_scoped_model_order_in_the_model_scoped_tab(harnesses):
     def render() -> str:
         return strip_ansi("\n".join(selector.render(120)))
 
-    while f"[{model_one.provider}]" not in render() or "Model catalogs refreshed." not in render():
-        await tonio.time.sleep(0.005)
+    await _wait_until(lambda: f"[{model_one.provider}]" in render() and "Model catalogs refreshed." in render())
 
     rendered_lines = [line for line in render().split("\n") if f"[{model_one.provider}]" in line]
     ordered_ids = [line.strip().removeprefix("→").strip().split(" [")[0].strip() for line in rendered_lines[:3]]

@@ -108,7 +108,7 @@ def extension(pi):
         tonio.spawn.without_tracking(spin())
         request_render()
 
-    async def on_agent_end(_event, _ctx) -> None:
+    async def on_agent_settled(_event, _ctx) -> None:
         state["is_working"] = False
         stop_spinner()
         request_render()
@@ -165,6 +165,6 @@ def extension(pi):
         ctx.ui.set_editor_component(lambda tui, theme, keybindings: BorderStatusEditor(tui, theme, keybindings))
 
     pi.on("agent_start", on_agent_start)
-    pi.on("agent_end", on_agent_end)
+    pi.on("agent_settled", on_agent_settled)
     pi.on("session_shutdown", on_session_shutdown)
     pi.on("session_start", on_session_start)

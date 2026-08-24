@@ -30,7 +30,7 @@ def extension(pi):
             # In non-interactive mode, block by default.
             return {"block": True, "reason": "Dangerous command blocked (no UI for confirmation)"}
 
-        choice = await ctx.ui.select(f"Dangerous command:\n\n  {command}\n\nAllow?", ["Yes", "No"])
+        choice = await ctx.ui.select(f"⚠️ Dangerous command:\n\n  {command}\n\nAllow?", ["Yes", "No"])
         if choice != "Yes":
             return {"block": True, "reason": "Blocked by user"}
 

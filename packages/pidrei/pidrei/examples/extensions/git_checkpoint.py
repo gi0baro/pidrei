@@ -44,11 +44,11 @@ def extension(pi):
             await pi.exec("git", ["stash", "apply", ref])
             ctx.ui.notify("Code restored to checkpoint", "info")
 
-    async def on_agent_end(_event, _ctx) -> None:
-        # Clear checkpoints after the agent completes.
+    async def on_agent_settled(_event, _ctx) -> None:
+        # Clear checkpoints after the full agent run completes.
         checkpoints.clear()
 
     pi.on("tool_result", on_tool_result)
     pi.on("turn_start", on_turn_start)
     pi.on("session_before_fork", on_before_fork)
-    pi.on("agent_end", on_agent_end)
+    pi.on("agent_settled", on_agent_settled)

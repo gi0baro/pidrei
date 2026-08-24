@@ -28,7 +28,7 @@ from tonio.colored import fs
 
 from pidrei.config import get_agent_dir
 from pidrei.core.extensions.types import ToolDefinition
-from pidrei.core.tools import format_size, truncate_head, with_file_mutation_queue
+from pidrei.core.tools import with_file_mutation_queue
 from pidrei.core.tools.file_mutation_queue import resolve_mutation_queue_key
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -110,11 +110,10 @@ def extension(pi):
             end_line = start_line + int(limit) if limit else len(lines)
             text = "\n".join(lines[start_line:end_line])
 
-            # Basic truncation via the built-in utility (50KB / 2000 line limits)
-            truncation = truncate_head(text)
-            text = truncation.content
-            if truncation.truncated:
-                text += f"\n\n[Output truncated at {format_size(truncation.max_bytes)}]"
+            # Basic truncation (50KB limit)
+            max_bytes = 50 * 1024
+            if len(text.encode("utf-8")) > max_bytes:
+                text = f"{text[:max_bytes]}\n\n[Output truncated at 50KB]"
 
             return AgentToolResult(content=[TextContent(text=text)], details={"lines": len(lines)})
         except OSError as error:

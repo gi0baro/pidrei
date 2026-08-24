@@ -59,7 +59,10 @@ def extension(pi):
         else:
             _notify_osc777(title, body)
 
-    async def on_agent_end(_event, _ctx) -> None:
+    # `agent_end` fires after each low-level run; the agent may still retry,
+    # compact, or continue with queued follow-ups. Notify only after the full
+    # run settles.
+    async def on_agent_settled(_event, _ctx) -> None:
         await notify("Pidrei", "Ready for input")
 
-    pi.on("agent_end", on_agent_end)
+    pi.on("agent_settled", on_agent_settled)

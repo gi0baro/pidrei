@@ -26,10 +26,10 @@ Output format:
 
 Example output:
 Q: What is your preferred database?
-A:
+A:\x20
 
 Q: Should we use TypeScript or JavaScript?
-A:
+A:\x20
 
 Keep questions in the order they appeared. Be concise."""
 

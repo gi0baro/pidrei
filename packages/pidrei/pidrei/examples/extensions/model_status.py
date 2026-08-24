@@ -7,6 +7,13 @@ The payload carries `model`, `previousModel` (None on the first selection)
 and `source` — "set" for /model or `pi.set_model()`, "cycle" for keyboard
 cycling.
 
+Deviation from pi: pi puts the `prev → next (source)` line on `console.log`
+and notifies with just `Model: {id}` (suppressed when `source` is
+"restore"). pidrei's TUI runtime has no console, so that line is folded
+into the notification — and its agent session never emits a "restore"
+source ("set"/"cycle" only), so the suppression branch has nothing to
+guard.
+
 Start pidrei with this extension:
     pidrei -e ./examples/extensions/model_status.py
 """

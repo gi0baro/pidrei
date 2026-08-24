@@ -105,7 +105,7 @@ extension, so it shows the `__init__.py` layout and relative imports.
 | [`extensions/overlay_qa_tests.py`](extensions/overlay_qa_tests.py) | The whole overlay API: anchors, margins, percent positioning, stacking, `OverlayHandle` |
 | [`extensions/snake.py`](extensions/snake.py) | A game loop on `Interval`, render caching, pause/resume persisted through session entries |
 | [`extensions/space_invaders.py`](extensions/space_invaders.py) | Kitty keyboard protocol key-release handling for smooth held-key movement |
-| [`extensions/notify.py`](extensions/notify.py) | Native terminal notifications on `agent_end` via OSC 777/99 and a Windows toast |
+| [`extensions/notify.py`](extensions/notify.py) | Native terminal notifications on `agent_settled` via OSC 777/99 and a Windows toast |
 | [`extensions/mac_system_theme.py`](extensions/mac_system_theme.py) | Following the macOS system appearance with `ctx.ui.set_theme` from a polling task |
 | [`extensions/github_issue_autocomplete.py`](extensions/github_issue_autocomplete.py) | `ctx.ui.add_autocomplete_provider` and `fuzzy_filter` — `#` completes against `gh` issues |
 | [`extensions/rpc_demo.py`](extensions/rpc_demo.py) | Every RPC-forwardable UI call — dialogs, statuses, widgets, title, editor prefill |

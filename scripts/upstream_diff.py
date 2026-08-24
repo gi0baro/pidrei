@@ -7,15 +7,17 @@ construction.
 
 Every changed file is classified:
 
-- **src / test / doc** — maps to a pidrei file through PREFIX_MAP (kebab-case
-  → snake_case, `.ts` → `.py`; pi's nested test dirs flatten into our flat
-  `tests/` layout). Ports whose pidrei name diverges from the mechanical
-  mapping live in RENAMES, one hand-verified entry per divergence.
+- **src / test / doc / example** — maps to a pidrei file through PREFIX_MAP
+  (kebab-case → snake_case, `.ts` → `.py`; pi's nested test dirs flatten into
+  our flat `tests/` layout; example dirs snake-case but their non-code assets
+  — subagent prompts etc. — keep their upstream names). Ports whose pidrei
+  name diverges from the mechanical mapping live in RENAMES, one
+  hand-verified entry per divergence.
 - **dropped** — documented divergences (the radius provider, the llama.cpp
-  extension, pi's evals and storage packages). Surfaced as a one-liner, no
-  port needed.
+  extension, pi's evals and storage packages, the npm/wasm example
+  extensions). Surfaced as a one-liner, no port needed.
 - **noise** — pi-internal machinery: lockfiles, changelogs, CI, vitest
-  configs, examples. Top-level `package.json` changes in ported packages are
+  configs. Top-level `package.json` changes in ported packages are
   additionally summarized at the end: new runtime deps need a manual look.
 - **UNMAPPED** — anything else. Loud, and the exit code is 2: either a new
   upstream file class (extend the tables) or a new pi package (decide port vs
@@ -55,6 +57,10 @@ PREFIX_MAP = (
     ("packages/coding-agent/src/", "packages/pidrei/pidrei/", "src"),
     ("packages/coding-agent/test/", "packages/pidrei/tests/", "test"),
     ("packages/coding-agent/docs/", "packages/pidrei/pidrei/docs/", "doc"),
+    # Example extensions are mirrored product surface, not noise: 1d08508ef
+    # (agent_settled in the examples) was silently lost while this prefix sat
+    # in NOISE_PREFIXES. Unmirrored examples are DROPPED entries below.
+    ("packages/coding-agent/examples/", "packages/pidrei/pidrei/examples/", "example"),
     ("packages/tui/src/", "packages/tui/pidrei_tui/", "src"),
     ("packages/tui/test/", "packages/tui/tests/", "test"),
     ("packages/server/src/", "packages/server/pidrei_server/", "src"),
@@ -230,6 +236,34 @@ DROPPED_PREFIXES += (
             "Radius share flow not ported (PORT_0.84.3.md decision 1); the surviving gist half "
             "stays inline in interactive_mode.py and the export half is core/session_export.py"
         ),
+    ),
+)
+#: Example extensions with no pidrei mirror (all other examples are mirrored
+#: 1:1 and map through PREFIX_MAP — see the `example` kind).
+DROPPED_PREFIXES += (
+    (
+        "packages/coding-agent/examples/extensions/doom-overlay/",
+        "C/wasm Doom overlay demo (emscripten build), not ported",
+    ),
+    (
+        "packages/coding-agent/examples/extensions/gondolin/",
+        "Gondolin micro-VM tool routing (npm runtime dep), not ported",
+    ),
+    (
+        "packages/coding-agent/examples/extensions/sandbox/",
+        "@anthropic-ai/sandbox-runtime bash sandbox (npm runtime dep), not ported",
+    ),
+    (
+        "packages/coding-agent/examples/extensions/with-deps/",
+        "npm-dependency packaging demo; pidrei extensions have no npm",
+    ),
+    (
+        "packages/coding-agent/examples/rpc-extension-ui.ts",
+        "Node terminal UI driving RPC mode, not ported",
+    ),
+    (
+        "packages/coding-agent/examples/sdk/",
+        "pi TS-SDK example scripts, not ported",
     ),
 )
 
@@ -419,13 +453,13 @@ NOISE_BASENAMES = {
     "biome.json",
     "test.sh",
     ".npmignore",
+    ".gitignore",
 }
 NOISE_PREFIXES = (
     ".github/",
     # pi repo-local dogfood extensions/config, not product code
     ".pi/",
     "scripts/",
-    "packages/coding-agent/examples/",
     "packages/coding-agent/install-lock/",
     # pi-internal design docs, not user documentation
     "packages/agent/docs/",
@@ -485,6 +519,16 @@ def map_path(pi_path: str) -> tuple[str, str] | None:
             if base.endswith(".ts"):
                 return kind, target + snake(base[: -len(".ts")]) + ".py"
             return kind, target + base
+        if kind == "example":
+            # Mirrored examples: dirs and .ts files snake-case, but non-code
+            # assets (subagent prompts/*.md etc.) keep their upstream names.
+            parts = rest.split("/")
+            parts[:-1] = [snake(part) for part in parts[:-1]]
+            if parts[-1] == "index.ts":
+                parts[-1] = "__init__.py"
+            elif parts[-1].endswith(".ts"):
+                parts[-1] = snake(parts[-1][: -len(".ts")]) + ".py"
+            return kind, target + "/".join(parts)
         parts = [snake(part) for part in rest.split("/")]
         if parts[-1] == "index.ts":
             # package/subpackage facade convention (may be a deliberately-empty

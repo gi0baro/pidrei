@@ -106,9 +106,11 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
     latest_compaction = _compaction_entry("latest", "previous", "summary", 123, usage)
     previous_compaction = _compaction_entry("previous", None, "previous summary", 100, usage)
     flush_calls: list = []
+    flush_done = tonio.Event()
 
     async def flush_compaction_queue(options=None):
         flush_calls.append(options)
+        flush_done.set()
 
     fake = SimpleNamespace(
         _is_initialized=True,
@@ -149,8 +151,9 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
             will_retry=False,
         ),
     )
-    # The compaction queue flush is spawned; let it run.
-    await tonio.time.sleep(0.01)
+    # The compaction queue flush is spawned; wait on the fake, not a drain.
+    await flush_done.wait(2.0)
+    assert flush_done.is_set(), "spawned compaction-queue flush must run"
 
     assert fake.chat_clear_calls == [True]
     assert fake.render_entries_calls == [[previous_compaction]]
@@ -166,9 +169,11 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
 @pytest.mark.tonio
 async def test_preserves_steering_behavior_when_flushing_into_an_active_agent_run():
     prompt_calls: list = []
+    prompt_dispatched = tonio.Event()
 
     async def prompt(text, options=None):
         prompt_calls.append((text, options))
+        prompt_dispatched.set()
 
     async def steer(text):
         raise AssertionError("steer should not be used for the first prompt")
@@ -192,8 +197,9 @@ async def test_preserves_steering_behavior_when_flushing_into_an_active_agent_ru
     fake.show_error = fake.show_error_calls.append
 
     await InteractiveMode._flush_compaction_queue(fake, {"willRetry": False})
-    # The first prompt is dispatched on a spawned task; let it run.
-    await tonio.time.sleep(0.01)
+    # The first prompt is dispatched on a spawned task; wait on the fake, not a drain.
+    await prompt_dispatched.wait(2.0)
+    assert prompt_dispatched.is_set(), "spawned first prompt must be dispatched"
 
     assert prompt_calls == [("change direction", PromptOptions(streaming_behavior="steer"))]
     assert fake._compaction_queued_messages == []

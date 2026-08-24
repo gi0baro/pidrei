@@ -116,7 +116,11 @@ class PlanMode:
         self.pi.set_active_tools(self.get_plan_mode_tools(self.tools_before_plan_mode))
 
     def restore_normal_mode_tools(self) -> None:
-        self.pi.set_active_tools(self.tools_before_plan_mode or self.get_normal_mode_tools(self.pi.get_active_tools()))
+        # pi's `??`, not `or`: an *empty* pre-plan tool list restores as empty.
+        restored = self.tools_before_plan_mode
+        if restored is None:
+            restored = self.get_normal_mode_tools(self.pi.get_active_tools())
+        self.pi.set_active_tools(restored)
         self.tools_before_plan_mode = None
 
     async def persist_state(self) -> None:

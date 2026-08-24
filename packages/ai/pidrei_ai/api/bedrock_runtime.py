@@ -225,28 +225,37 @@ class BedrockRuntimeClient:
 
         It reads `~/.aws/{credentials,config}` and may reach SSO or IMDS, so it
         never runs inline; the result is cached for the client's lifetime, as the
-        SDK's own provider chain does.
+        SDK's own provider chain does. The explicit-credentials branch is on the
+        pool too: even a bare botocore *import* reads files, which is what the
+        blocking-fs detector caught on this path.
         """
         with self._credentials_guard:
             if self._credentials_resolved:
                 return self._credentials
 
-        explicit = self.config.get("credentials")
-        if isinstance(explicit, Mapping):
-            from botocore.credentials import Credentials
-
-            resolved = Credentials(
-                access_key=explicit.get("accessKeyId"),
-                secret_key=explicit.get("secretAccessKey"),
-                token=explicit.get("sessionToken"),
-            )
-        else:
-            resolved = await tonio.spawn_blocking(self._botocore_credentials)
+        resolved = await tonio.spawn_blocking(self._build_credentials)
 
         with self._credentials_guard:
             self._credentials = resolved
             self._credentials_resolved = True
         return resolved
+
+    def _build_credentials(self) -> Any:
+        # Preload the modules `_sign` imports inline, so those imports are
+        # `sys.modules` hits instead of file reads on a runtime worker.
+        import botocore.auth
+        import botocore.awsrequest  # noqa: F401
+
+        explicit = self.config.get("credentials")
+        if isinstance(explicit, Mapping):
+            from botocore.credentials import Credentials
+
+            return Credentials(
+                access_key=explicit.get("accessKeyId"),
+                secret_key=explicit.get("secretAccessKey"),
+                token=explicit.get("sessionToken"),
+            )
+        return self._botocore_credentials()
 
     def _botocore_credentials(self) -> Any:
         import botocore.session

@@ -4543,7 +4543,9 @@ class InteractiveMode:
                 await self._select_thinking_level(level, persist)
                 done()
 
-            def on_cancel() -> None:
+            # `SelectList.on_cancel` is awaited (async-only callbacks), so this
+            # must return an awaitable even though the body never suspends.
+            async def on_cancel() -> None:
                 done()
                 self.ui.request_render()
 

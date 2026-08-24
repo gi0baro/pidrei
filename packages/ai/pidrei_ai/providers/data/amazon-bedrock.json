@@ -127,6 +127,26 @@
         "supportsStrictMode": true
       }
     },
+    "anthropic.claude-opus-4-1-20250805-v1:0": {
+      "id": "anthropic.claude-opus-4-1-20250805-v1:0",
+      "name": "Claude Opus 4.1",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 15,
+        "output": 75,
+        "cacheRead": 1.5,
+        "cacheWrite": 18.75
+      },
+      "contextWindow": 200000,
+      "maxTokens": 32000
+    },
     "anthropic.claude-opus-4-5-20251101-v1:0": {
       "id": "anthropic.claude-opus-4-5-20251101-v1:0",
       "name": "Claude Opus 4.5",
@@ -2269,6 +2289,26 @@
       "compat": {
         "supportsStrictMode": true
       }
+    },
+    "us.anthropic.claude-opus-4-1-20250805-v1:0": {
+      "id": "us.anthropic.claude-opus-4-1-20250805-v1:0",
+      "name": "Claude Opus 4.1 (US)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 15,
+        "output": 75,
+        "cacheRead": 1.5,
+        "cacheWrite": 18.75
+      },
+      "contextWindow": 200000,
+      "maxTokens": 32000
     },
     "us.anthropic.claude-opus-4-5-20251101-v1:0": {
       "id": "us.anthropic.claude-opus-4-5-20251101-v1:0",
