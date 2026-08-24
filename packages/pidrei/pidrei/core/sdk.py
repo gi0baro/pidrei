@@ -192,6 +192,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             default_provider=settings_manager.get_default_provider(),
             default_model_id=settings_manager.get_default_model(),
             default_thinking_level=settings_manager.get_default_thinking_level(),
+            model_thinking_levels=settings_manager.get_all_model_thinking_levels(),
             model_runtime=model_runtime,
         )
         model = result.model
@@ -210,7 +211,9 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             default = settings_manager.get_default_thinking_level()
             thinking_level = default if default is not None else DEFAULT_THINKING_LEVEL
 
-    # Fall back to settings default
+    # Fall back to per-model override, then global default
+    if thinking_level is None and model is not None:
+        thinking_level = settings_manager.get_model_thinking_level(model.provider, model.id)
     if thinking_level is None:
         default = settings_manager.get_default_thinking_level()
         thinking_level = default if default is not None else DEFAULT_THINKING_LEVEL

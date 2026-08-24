@@ -96,6 +96,10 @@ def assistant_payload(payload: dict) -> dict | None:
     return next((message for message in payload.get("messages") or [] if message.get("role") == "assistant"), None)
 
 
+def thinking_block(message: AssistantMessage):
+    return next(block for block in message.content if block.type == "thinking")
+
+
 def tool_call_chunk_sets() -> list[list[dict]]:
     return [
         [chunk({"reasoning_details": [REASONING_DETAIL]}), tool_call_chunk(), chunk({}, "tool_calls")],
@@ -104,15 +108,16 @@ def tool_call_chunk_sets() -> list[list[dict]]:
 
 
 @pytest.mark.tonio
-async def test_preserves_reasoning_details_that_arrive_before_their_matching_tool_call():
+async def test_preserves_reasoning_details_in_the_thinking_signature():
     client = QueuedClient(tool_call_chunk_sets())
 
     assistant_message = await run_stream(client)
 
+    thinking = thinking_block(assistant_message)
+    assert (thinking.thinking, thinking.thinking_signature) == ("", json.dumps([REASONING_DETAIL]))
     tool_call = next(block for block in assistant_message.content if block.type == "toolCall")
     assert (tool_call.id, tool_call.name, tool_call.arguments) == ("call_1", "read", {"path": "README.md"})
-    assert tool_call.thought_signature == json.dumps(REASONING_DETAIL)
-    assert assistant_message.reasoning_details == [REASONING_DETAIL]
+    assert tool_call.thought_signature is None
 
     await run_stream(client, [assistant_message])
 
@@ -124,7 +129,9 @@ async def test_falls_back_to_encrypted_tool_call_signatures_for_older_stored_ass
     client = QueuedClient(tool_call_chunk_sets())
 
     assistant_message = await run_stream(client)
-    assistant_message.reasoning_details = None
+    assistant_message.content = [block for block in assistant_message.content if block.type != "thinking"]
+    tool_call = next(block for block in assistant_message.content if block.type == "toolCall")
+    tool_call.thought_signature = json.dumps(REASONING_DETAIL)
 
     await run_stream(client, [assistant_message])
 
@@ -136,7 +143,12 @@ async def test_preserves_signed_text_and_summary_reasoning_details_in_their_orig
     client = QueuedClient(
         [
             [
-                chunk({"reasoning_details": [SIGNED_REASONING_TEXT_DETAIL]}),
+                chunk(
+                    {
+                        "reasoning": SIGNED_REASONING_TEXT_DETAIL["text"],
+                        "reasoning_details": [SIGNED_REASONING_TEXT_DETAIL],
+                    }
+                ),
                 chunk({"reasoning_details": [REASONING_DETAIL, REASONING_SUMMARY_DETAIL]}),
                 tool_call_chunk(),
                 chunk({}, "tool_calls"),
@@ -147,8 +159,12 @@ async def test_preserves_signed_text_and_summary_reasoning_details_in_their_orig
 
     assistant_message = await run_stream(client)
     expected = [SIGNED_REASONING_TEXT_DETAIL, REASONING_DETAIL, REASONING_SUMMARY_DETAIL]
-    assert assistant_message.reasoning_details == expected
+    thinking = thinking_block(assistant_message)
+    assert thinking.thinking == SIGNED_REASONING_TEXT_DETAIL["text"]
+    assert thinking.thinking_signature == json.dumps(expected)
 
     await run_stream(client, [assistant_message])
 
-    assert assistant_payload(client.payloads[1])["reasoning_details"] == expected
+    payload = assistant_payload(client.payloads[1])
+    assert payload["reasoning_details"] == expected
+    assert "reasoning" not in payload

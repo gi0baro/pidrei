@@ -2,8 +2,10 @@
 
 Items are ``{"id", "label", "description"?, "currentValue", "values"?,
 "submenu"?}`` records (``submenu`` is a callable receiving the current value
-and an awaitable ``done(selected_value=None)`` callback and returning a
-component); ``theme`` is a ``{"label", "value", "description", "cursor",
+and an awaitable ``done(selected_value=None, options=None)`` callback and
+returning a component; ``options`` may carry ``{"navigateTo": item_id}`` to
+move the cursor onto another item and open its submenu once this one closes);
+``theme`` is a ``{"label", "value", "description", "cursor",
 "hint"}`` record (``label``/``value`` take ``(text, selected)``); ``options``
 mirrors ``SettingsListOptions`` (``{"enableSearch": bool}``).
 
@@ -48,12 +50,21 @@ class SettingsList:
         # Submenu state
         self._submenu_component = None
         self._submenu_item_index: int | None = None
+        self._navigate_after_close: str | None = None
 
     def update_value(self, item_id: str, new_value: str) -> None:
         """Update an item's currentValue."""
         for item in self._items:
             if item["id"] == item_id:
                 item["currentValue"] = new_value
+                return
+
+    def select_item(self, item_id: str) -> None:
+        """Move selection to the item with the given id (no-op if not found)."""
+        items = self._filtered_items if self._search_enabled else self._items
+        for index, item in enumerate(items):
+            if item["id"] == item_id:
+                self._selected_index = index
                 return
 
     def invalidate(self) -> None:
@@ -96,7 +107,7 @@ class SettingsList:
         end_index = min(start_index + self._max_visible, len(display_items))
 
         # Calculate max label width for alignment
-        max_label_width = min(30, max(visible_width(item["label"]) for item in self._items))
+        max_label_width = min(36, max(visible_width(item["label"]) for item in self._items))
 
         # Render visible items
         for i in range(start_index, end_index):
@@ -177,11 +188,13 @@ class SettingsList:
             # Open submenu, passing current value so it can pre-select correctly
             self._submenu_item_index = self._selected_index
 
-            async def done(selected_value: str | None = None) -> None:
+            async def done(selected_value: str | None = None, options: dict | None = None) -> None:
                 if selected_value is not None:
                     item["currentValue"] = selected_value
                     await self._on_change(item["id"], selected_value)
-                self._close_submenu()
+                if options is not None and options.get("navigateTo"):
+                    self._navigate_after_close = options["navigateTo"]
+                await self._close_submenu()
 
             self._submenu_component = item["submenu"](item["currentValue"], done)
         elif item.get("values"):
@@ -196,10 +209,17 @@ class SettingsList:
             item["currentValue"] = new_value
             await self._on_change(item["id"], new_value)
 
-    def _close_submenu(self) -> None:
+    async def _close_submenu(self) -> None:
         self._submenu_component = None
-        # Restore selection to the item that opened the submenu
-        if self._submenu_item_index is not None:
+        if self._navigate_after_close is not None:
+            item_id = self._navigate_after_close
+            self._navigate_after_close = None
+            self._submenu_item_index = None
+            self.select_item(item_id)
+            # Open the target item's submenu automatically
+            await self._activate_item()
+        elif self._submenu_item_index is not None:
+            # Restore selection to the item that opened the submenu
             self._selected_index = self._submenu_item_index
             self._submenu_item_index = None
 

@@ -63,7 +63,6 @@ async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_que
         selector = ModelSelectorComponent(
             fake_tui(),
             current,
-            harness.settings_manager,
             harness.session.model_runtime,
             [],
             lambda *args: None,
@@ -107,7 +106,6 @@ async def test_moves_selection_to_the_first_row_in_the_scoped_tab_when_typing_a_
         selector = ModelSelectorComponent(
             fake_tui(),
             alpha1,
-            harness.settings_manager,
             harness.session.model_runtime,
             [{"model": alpha2}, {"model": alpha3}, {"model": alpha1}],
             lambda *args: None,

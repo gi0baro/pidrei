@@ -530,13 +530,20 @@ class Markdown:
             return longest
         return min(longest, max_width)
 
-    def _wrap_cell_text(self, text: str, max_width: int) -> list[str]:
+    def _wrap_cell_text(self, text: str, max_width: int, style_prefix: str = "") -> list[str]:
         """Wrap a table cell to fit into a column.
 
         Delegates to wrap_text_with_ansi() so ANSI codes + long tokens are
         handled consistently with the rest of the renderer.
         """
-        return wrap_text_with_ansi(text, max(1, max_width))
+        lines = wrap_text_with_ansi(text, max(1, max_width))
+        result = []
+        for index, line in enumerate(lines):
+            # Reset text styles after each non-final fragment, then restore the
+            # surrounding style before padding and borders.
+            style_reset = "\x1b[22;23;24;25;27;28;29;39m" if index < len(lines) - 1 else ""
+            result.append(f"{line}{style_reset}{style_prefix}")
+        return result
 
     def _render_table(
         self,
@@ -649,7 +656,11 @@ class Markdown:
 
         # Render header with wrapping
         header_cell_lines = [
-            self._wrap_cell_text(self._render_inline_tokens(cell.get("tokens") or [], style_context), column_widths[i])
+            self._wrap_cell_text(
+                self._render_inline_tokens(cell.get("tokens") or [], style_context),
+                column_widths[i],
+                (style_context or {}).get("stylePrefix") or "",
+            )
             for i, cell in enumerate(token["header"])
         ]
         header_line_count = max(len(cell_lines) for cell_lines in header_cell_lines)
@@ -671,7 +682,9 @@ class Markdown:
         for row_index, row in enumerate(token["rows"]):
             row_cell_lines = [
                 self._wrap_cell_text(
-                    self._render_inline_tokens(cell.get("tokens") or [], style_context), column_widths[i]
+                    self._render_inline_tokens(cell.get("tokens") or [], style_context),
+                    column_widths[i],
+                    (style_context or {}).get("stylePrefix") or "",
                 )
                 for i, cell in enumerate(row)
             ]

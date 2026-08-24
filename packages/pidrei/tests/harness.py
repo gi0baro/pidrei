@@ -39,6 +39,10 @@ class Harness:
         self.temp_dir = temp_dir
         self.events = events
 
+    @property
+    def models(self) -> list:
+        return self.faux.models
+
     def get_model(self, model_id: str | None = None):
         return self.faux.get_model() if model_id is None else self.faux.get_model(model_id)
 

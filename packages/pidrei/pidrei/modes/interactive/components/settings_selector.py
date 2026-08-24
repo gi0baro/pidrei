@@ -4,15 +4,17 @@
 SettingsConfig/SettingsCallbacks interfaces.
 """
 
-from pidrei_tui import Container, SelectList, SettingsList, Spacer, Text, get_capabilities
+from pidrei_ai.registry import get_supported_thinking_levels
+from pidrei_tui import Container, SettingsList, Spacer, Text, get_capabilities
 
 from ....core.http_config import HTTP_IDLE_TIMEOUT_CHOICES, format_http_idle_timeout_ms
-from ..theme import get_select_list_theme, get_settings_list_theme, parse_auto_theme_setting, theme
+from ..theme import get_settings_list_theme, parse_auto_theme_setting, theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_display_text
+from .settings_submenu import SelectSubmenu, SteppedSubmenu
 
 
-SETTINGS_SUBMENU_SELECT_LIST_LAYOUT = {"minPrimaryColumnWidth": 12, "maxPrimaryColumnWidth": 32}
+MODEL_PICKER_LAYOUT = {"minPrimaryColumnWidth": 12, "maxPrimaryColumnWidth": 46}
 
 THINKING_DESCRIPTIONS = {
     "off": "No reasoning",
@@ -73,57 +75,24 @@ class WarningSettingsSubmenu(Container):
         await self._settings_list.handle_input(data)
 
 
-class SelectSubmenu(Container):
-    def __init__(
-        self,
-        title: str,
-        description: str,
-        options: list,
-        current_value: str,
-        on_select,
-        on_cancel,
-        on_selection_change=None,
-    ) -> None:
-        super().__init__()
+CLEAR_OVERRIDE_VALUE = "__clear__"
 
-        # Title
-        self.add_child(Text(theme.bold(theme.fg("accent", title)), 0, 0))
 
-        # Description
-        if description:
-            self.add_child(Spacer(1))
-            self.add_child(Text(theme.fg("muted", description), 0, 0))
+def _model_setting_key(model) -> str:
+    return f"{model.provider}/{model.id}"
 
-        # Spacer
-        self.add_child(Spacer(1))
 
-        # Select list
-        self._select_list = SelectList(
-            options,
-            min(len(options), 10),
-            get_select_list_theme(),
-            SETTINGS_SUBMENU_SELECT_LIST_LAYOUT,
-        )
+def _model_display_label(model) -> str:
+    return f"{model.id} [{model.provider}]"
 
-        # Pre-select current value
-        current_index = next((i for i, o in enumerate(options) if o["value"] == current_value), -1)
-        if current_index != -1:
-            self._select_list.set_selected_index(current_index)
 
-        self._select_list.on_select = lambda item: on_select(item["value"])
-        self._select_list.on_cancel = on_cancel
+def _model_thinking_overrides_summary(overrides: dict) -> str:
+    count = len(overrides)
+    return "none" if count == 0 else f"{count} configured"
 
-        if on_selection_change is not None:
-            self._select_list.on_selection_change = lambda item: on_selection_change(item["value"])
 
-        self.add_child(self._select_list)
-
-        # Hint
-        self.add_child(Spacer(1))
-        self.add_child(Text(theme.fg("dim", "  Enter to select · Esc to go back"), 0, 0))
-
-    async def handle_input(self, data: str) -> None:
-        await self._select_list.handle_input(data)
+def _model_item_label(model) -> str:
+    return f"{model.id} {theme.fg('muted', f'[{model.provider}]')}"
 
 
 def _theme_items(available_themes: list) -> list:
@@ -359,6 +328,107 @@ class ThemeSubmenu(Container):
         await self._on_done()
 
 
+def _make_model_thinking_submenu(config: dict, callbacks: dict, current_model_thinking_levels: dict):
+    """Build the "Default thinking level per model" submenu opener.
+
+    pi keeps this inline in the constructor; here it lives at module scope so
+    the constructor stays under the project's complexity budget. The mutable
+    `current_model_thinking_levels` is shared with the caller so the item's
+    summary value and the option descriptions stay in step with the edits.
+    """
+    default_model_by_value = {_model_setting_key(model): model for model in config["availableDefaultModels"]}
+    current_default_model_key = config["defaultModel"] if config["defaultModel"] in default_model_by_value else None
+    current_model_key = _model_setting_key(config["currentModel"]) if config.get("currentModel") else None
+
+    def submenu(_current_value, done):
+        def model_options(_context) -> list:
+            def sort_key(model):
+                key = _model_setting_key(model)
+                # pi's comparator returns -1/1 for the current and default
+                # models before falling back to provider order; the same
+                # ordering as a sort key, with the provider as the tiebreak.
+                rank = 0 if key == current_model_key else 1 if key == current_default_model_key else 2
+                provider = model.provider if rank == 2 else ""
+                return (rank, provider.lower(), provider)
+
+            sorted_models = sorted(config["availableDefaultModels"], key=sort_key)
+            items = [
+                {
+                    "value": _model_setting_key(model),
+                    "label": _model_item_label(model),
+                    "description": current_model_thinking_levels.get(_model_setting_key(model)),
+                }
+                for model in sorted_models
+            ]
+            if not items:
+                items.append(
+                    {
+                        "value": "__none__",
+                        "label": "No models available",
+                        "description": "Log in to a provider or configure an API key first",
+                    }
+                )
+            return items
+
+        def level_title(context) -> str:
+            model = default_model_by_value.get(context["model"])
+            target = _model_display_label(model) if model is not None else context["model"]
+            return f"Thinking Level for {target}"
+
+        def level_options(context) -> list:
+            model = default_model_by_value.get(context["model"])
+            if model is None:
+                return []
+            levels = get_supported_thinking_levels(model) if model.reasoning else ["off"]
+            items = [{"value": level, "label": level, "description": THINKING_DESCRIPTIONS[level]} for level in levels]
+            if current_model_thinking_levels.get(context["model"]) is not None:
+                items.append(
+                    {
+                        "value": CLEAR_OVERRIDE_VALUE,
+                        "label": "(clear override)",
+                        "description": f"Revert to global default ({config['thinkingLevel']})",
+                    }
+                )
+            return items
+
+        steps = [
+            {
+                "key": "model",
+                "title": "Per-Model Thinking Level",
+                "description": "Select a model to configure",
+                "options": model_options,
+                "preselect": lambda _context: current_model_key or current_default_model_key,
+                "searchable": True,
+                "layout": MODEL_PICKER_LAYOUT,
+            },
+            {
+                "key": "level",
+                "title": level_title,
+                "description": "Select default thinking level for this model",
+                "options": level_options,
+                "preselect": lambda context: current_model_thinking_levels.get(context["model"]),
+            },
+        ]
+
+        async def on_complete(selections: dict) -> None:
+            model = default_model_by_value.get(selections["model"])
+            if model is None:
+                return
+            if selections["level"] == CLEAR_OVERRIDE_VALUE:
+                await callbacks["onModelThinkingLevelRemove"](model.provider, model.id)
+                current_model_thinking_levels.pop(selections["model"], None)
+            else:
+                await callbacks["onModelThinkingLevelChange"](model.provider, model.id, selections["level"])
+                current_model_thinking_levels[selections["model"]] = selections["level"]
+
+        async def on_cancel() -> None:
+            await done(_model_thinking_overrides_summary(current_model_thinking_levels))
+
+        return SteppedSubmenu(steps, on_complete, on_cancel, {"loop": True})
+
+    return submenu
+
+
 class SettingsSelectorComponent(Container):
     """Main settings selector component."""
 
@@ -367,7 +437,10 @@ class SettingsSelectorComponent(Container):
 
         supports_images = get_capabilities()["images"]
         follow_up_key = key_display_text("app.message.followUp")
+        cycle_thinking_key = key_display_text("app.thinking.cycle")
         current_warnings = dict(config["warnings"])
+        current_model_thinking_levels = dict(config["modelThinkingLevels"])
+        model_thinking_submenu = _make_model_thinking_submenu(config, callbacks, current_model_thinking_levels)
 
         def warnings_submenu(_current_value, done):
             def on_change(warnings: dict) -> None:
@@ -376,23 +449,6 @@ class SettingsSelectorComponent(Container):
                 callbacks["onWarningsChange"](warnings)
 
             return WarningSettingsSubmenu(current_warnings, on_change, lambda: done())
-
-        def thinking_submenu(current_value, done):
-            async def on_select(value: str) -> None:
-                await callbacks["onThinkingLevelChange"](value)
-                await done(value)
-
-            return SelectSubmenu(
-                "Thinking Level",
-                "Select reasoning depth for thinking-capable models",
-                [
-                    {"value": level, "label": level, "description": THINKING_DESCRIPTIONS[level]}
-                    for level in config["availableThinkingLevels"]
-                ],
-                current_value,
-                on_select,
-                lambda: done(),
-            )
 
         def theme_submenu(current_value, done):
             return ThemeSubmenu(current_value, config["terminalTheme"], config["availableThemes"], callbacks, done)
@@ -506,11 +562,13 @@ class SettingsSelectorComponent(Container):
                 "submenu": warnings_submenu,
             },
             {
-                "id": "thinking",
-                "label": "Thinking level",
-                "description": "Reasoning depth for thinking-capable models",
-                "currentValue": config["thinkingLevel"],
-                "submenu": thinking_submenu,
+                "id": "model-thinking",
+                "label": "Default thinking level per model",
+                "description": (
+                    f"Override the default thinking level for specific models. {cycle_thinking_key} cycles in-session."
+                ),
+                "currentValue": _model_thinking_overrides_summary(current_model_thinking_levels),
+                "submenu": model_thinking_submenu,
             },
             {
                 "id": "tui-mode",

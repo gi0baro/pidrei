@@ -1,13 +1,14 @@
 """Mirror of pi coding-agent src/modes/interactive/components/model-selector.ts.
 
-Scoped model items are ``{"model", "thinkingLevel"?}`` records.
+Scoped model items are ``{"model", "thinkingLevel"?}`` records; ``default_model``
+is a ``{"provider", "id"}`` record naming the persisted default.
 """
 
 import tonio.colored as tonio
 
 from pidrei_ai.registry import models_are_equal
 from pidrei_ai.utils.cancel import CancelToken
-from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings
+from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings, matches_key
 from pidrei_tui._timers import Timeout
 
 from ..model_catalog_refresh import refresh_model_catalogs
@@ -24,22 +25,24 @@ class ModelSelectorComponent(Container):
         self,
         tui,
         current_model,
-        settings_manager,
         model_runtime,
         scoped_models: list,
         on_select,
         on_cancel,
         initial_search_input: str | None = None,
+        on_select_as_default=None,
+        default_model: dict | None = None,
     ) -> None:
         super().__init__()
 
         self._tui = tui
         self._current_model = current_model
-        self._settings_manager = settings_manager
         self._model_runtime = model_runtime
         self._scoped_models = list(scoped_models)
+        self._default_model = default_model
         self._scope = "scoped" if scoped_models else "all"
         self._on_select_callback = on_select
+        self._on_select_as_default_callback = on_select_as_default
         self._on_cancel_callback = on_cancel
 
         self._all_models: list = []
@@ -92,6 +95,12 @@ class ModelSelectorComponent(Container):
         self.add_child(self._list_container)
 
         self.add_child(Spacer(1))
+
+        # Hint
+        if self._on_select_as_default_callback is not None:
+            self.add_child(
+                Text(theme.fg("dim", "  Enter to select \u00b7 Ctrl+S to set as default \u00b7 Esc to cancel"), 0, 0)
+            )
 
         # Add bottom border
         self.add_child(DynamicBorder())
@@ -200,11 +209,25 @@ class ModelSelectorComponent(Container):
         self._refresh_abort_controller.cancel()
 
     def _sort_models(self, models: list) -> list:
+        # Sort: current model first, default model second, then by provider.
         def sort_key(item: dict):
             is_current = models_are_equal(self._current_model, item["model"])
-            return (0 if is_current else 1, item["provider"].lower(), item["provider"])
+            is_default = self._is_default_model(item["model"])
+            rank = 0 if is_current else 1 if is_default else 2
+            return (rank, item["provider"].lower(), item["provider"])
 
         return sorted(models, key=sort_key)
+
+    def _is_default_model(self, model) -> bool:
+        return (
+            self._default_model is not None
+            and self._default_model["provider"] == model.provider
+            and self._default_model["id"] == model.id
+        )
+
+    def _is_default_search(self, query: str) -> bool:
+        normalized = query.strip().lower()
+        return len(normalized) > 0 and "default".startswith(normalized)
 
     def _get_scope_text(self) -> str:
         all_text = theme.fg("accent", "all") if self._scope == "all" else theme.fg("muted", "all")
@@ -230,13 +253,24 @@ class ModelSelectorComponent(Container):
 
     def _filter_models(self, query: str) -> None:
         if query:
-            self._filtered_models = fuzzy_filter(
-                self._active_models,
-                query,
-                lambda item: get_model_selector_search_text(
+
+            def search_text(item: dict) -> str:
+                default_text = " default" if self._is_default_model(item["model"]) else ""
+                base = get_model_selector_search_text(
                     {"id": item["id"], "provider": item["provider"], "name": item["model"].name}
-                ),
-            )
+                )
+                return f"{base}{default_text}"
+
+            filtered = fuzzy_filter(self._active_models, query, search_text)
+            if self._is_default_search(query):
+                default_items = [item for item in self._active_models if self._is_default_model(item["model"])]
+                default_keys = {(item["provider"], item["id"]) for item in default_items}
+                self._filtered_models = [
+                    *default_items,
+                    *[item for item in filtered if (item["provider"], item["id"]) not in default_keys],
+                ]
+            else:
+                self._filtered_models = filtered
         else:
             self._filtered_models = self._active_models
         # When filtering by a query, move the selector to the top row so the best
@@ -263,14 +297,15 @@ class ModelSelectorComponent(Container):
             item = self._filtered_models[i]
             is_selected = i == self._selected_index
             is_current = models_are_equal(self._current_model, item["model"])
+            default_badge = theme.fg("muted", " · default") if self._is_default_model(item["model"]) else ""
 
             provider_badge = theme.fg("muted", f"[{item['provider']}]")
             checkmark = theme.fg("success", " ✓") if is_current else ""
             if is_selected:
                 prefix = theme.fg("accent", "→ ")
-                line = f"{prefix + theme.fg('accent', item['id'])} {provider_badge}{checkmark}"
+                line = f"{prefix + theme.fg('accent', item['id'])} {provider_badge}{default_badge}{checkmark}"
             else:
-                line = f"  {item['id']} {provider_badge}{checkmark}"
+                line = f"  {item['id']} {provider_badge}{default_badge}{checkmark}"
 
             rows.append(Text(line, 0, 0))
 
@@ -338,6 +373,12 @@ class ModelSelectorComponent(Container):
         elif kb.matches(key_data, "tui.select.cancel"):
             self.dispose()
             self._on_cancel_callback()
+        # Ctrl+S — select and save as default
+        elif matches_key(key_data, "ctrl+s") and self._on_select_as_default_callback is not None:
+            if 0 <= self._selected_index < len(self._filtered_models):
+                selected_model = self._filtered_models[self._selected_index]["model"]
+                self.dispose()
+                self._on_select_as_default_callback(selected_model)
         # Pass everything else to search input
         else:
             await self._search_input.handle_input(key_data)
@@ -345,8 +386,6 @@ class ModelSelectorComponent(Container):
 
     def _handle_select(self, model) -> None:
         self.dispose()
-        # Save as new default
-        self._settings_manager.set_default_model_and_provider(model.provider, model.id)
         self._on_select_callback(model)
 
     def get_search_input(self) -> Input:

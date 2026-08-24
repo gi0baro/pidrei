@@ -50,7 +50,6 @@ async def test_lists_every_catalog_that_failed_to_refresh():
         selector = ModelSelectorComponent(
             fake_tui(),
             harness.get_model(),
-            harness.settings_manager,
             harness.session.model_runtime,
             [],
             lambda *args: None,

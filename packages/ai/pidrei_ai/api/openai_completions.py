@@ -451,15 +451,37 @@ def _is_openai_reasoning_detail(detail: Any) -> bool:
             return False
 
 
-def _is_encrypted_reasoning_detail(detail: Any) -> bool:
-    return (
-        isinstance(detail, dict)
-        and detail.get("type") == "reasoning.encrypted"
-        and isinstance(detail.get("id"), str)
-        and len(detail["id"]) > 0
-        and isinstance(detail.get("data"), str)
-        and len(detail["data"]) > 0
-    )
+def _parse_openai_reasoning_details(signature: str | None) -> list[Any] | None:
+    """Decode a thinking signature that carries a whole `reasoning_details` sequence."""
+    if not signature:
+        return None
+    try:
+        parsed = json.loads(signature)
+    except ValueError:
+        return None
+    if isinstance(parsed, list) and parsed and all(_is_openai_reasoning_detail(detail) for detail in parsed):
+        return parsed
+    return None
+
+
+def _parse_legacy_encrypted_reasoning_detail(signature: str | None) -> dict[str, Any] | None:
+    """Decode a single encrypted detail left on a tool call by sessions from before
+    the whole sequence moved into the thinking signature."""
+    if not signature:
+        return None
+    try:
+        parsed = json.loads(signature)
+    except ValueError:
+        return None
+    if (
+        _is_openai_reasoning_detail(parsed)
+        and parsed.get("type") == "reasoning.encrypted"
+        and isinstance(parsed.get("id"), str)
+        and len(parsed["id"]) > 0
+        and len(parsed["data"]) > 0
+    ):
+        return parsed
+    return None
 
 
 def _resolve_cache_retention(cache_retention: CacheRetention | None, env: ProviderEnv | None) -> CacheRetention:
@@ -813,7 +835,26 @@ def convert_messages(
             ]
             assistant_text = "".join(part["text"] for part in assistant_text_parts)
 
-            non_empty_thinking = [block for block in msg.content if block.type == "thinking" and block.thinking.strip()]
+            thinking_blocks = [block for block in msg.content if block.type == "thinking"]
+            tool_calls = [block for block in msg.content if block.type == "toolCall"]
+            signed_reasoning_details = next(
+                (
+                    details
+                    for details in (
+                        _parse_openai_reasoning_details(block.thinking_signature) for block in thinking_blocks
+                    )
+                    if details is not None
+                ),
+                None,
+            )
+            legacy_reasoning_details = [
+                detail
+                for detail in (_parse_legacy_encrypted_reasoning_detail(tc.thought_signature) for tc in tool_calls)
+                if detail is not None
+            ]
+            preserved_reasoning_details = signed_reasoning_details or legacy_reasoning_details or None
+
+            non_empty_thinking = [block for block in thinking_blocks if block.thinking.strip()]
             if non_empty_thinking:
                 if compat.requires_thinking_as_text:
                     # Convert thinking blocks to plain text (no tags to avoid mimicry).
@@ -825,24 +866,16 @@ def convert_messages(
                     if assistant_text:
                         assistant_msg["content"] = assistant_text
 
-                    signature = non_empty_thinking[0].thinking_signature
-                    if model.provider == "opencode-go" and signature == "reasoning":
-                        signature = "reasoning_content"
-                    if signature in OPENAI_COMPLETIONS_REASONING_FIELDS:
-                        assistant_msg[signature] = "\n".join(block.thinking for block in non_empty_thinking)
+                    # reasoning_details is the structured alternative to a raw reasoning field.
+                    if not preserved_reasoning_details:
+                        signature = non_empty_thinking[0].thinking_signature
+                        if model.provider == "opencode-go" and signature == "reasoning":
+                            signature = "reasoning_content"
+                        if signature in OPENAI_COMPLETIONS_REASONING_FIELDS:
+                            assistant_msg[signature] = "\n".join(block.thinking for block in non_empty_thinking)
             elif assistant_text:
                 assistant_msg["content"] = assistant_text
 
-            preserved_reasoning_details = (
-                msg.reasoning_details
-                if msg.provider == model.provider
-                and msg.api == model.api
-                and msg.model == model.id
-                and msg.reasoning_details
-                else None
-            )
-
-            tool_calls = [block for block in msg.content if block.type == "toolCall"]
             if tool_calls:
                 converted_calls = []
                 for tc in tool_calls:
@@ -869,19 +902,6 @@ def convert_messages(
                             }
                         )
                 assistant_msg["tool_calls"] = converted_calls
-
-                if not preserved_reasoning_details:
-                    reasoning_details = []
-                    for tc in tool_calls:
-                        if tc.thought_signature:
-                            try:
-                                parsed = json.loads(tc.thought_signature)
-                            except ValueError:
-                                continue
-                            if _is_openai_reasoning_detail(parsed):
-                                reasoning_details.append(parsed)
-                    if reasoning_details:
-                        assistant_msg["reasoning_details"] = reasoning_details
 
             if preserved_reasoning_details:
                 assistant_msg["reasoning_details"] = preserved_reasoning_details
@@ -1215,7 +1235,6 @@ def stream(  # noqa: C901
             has_finish_reason = False
             tool_blocks_by_index: dict[int, ToolCall] = {}
             tool_blocks_by_id: dict[str, ToolCall] = {}
-            pending_reasoning_details: dict[str, str] = {}
 
             def tool_scratch(block: ToolCall) -> _ToolScratch:
                 return scratch.setdefault(id(block), _ToolScratch())
@@ -1272,13 +1291,6 @@ def stream(  # noqa: C901
                     out_stream.push(ThinkingStartEvent(content_index=content_index(thinking_block), partial=output))
                 return thinking_block
 
-            def apply_pending_reasoning_detail(block: ToolCall) -> None:
-                if not block.id:
-                    return
-                pending = pending_reasoning_details.pop(block.id, None)
-                if pending is not None:
-                    block.thought_signature = pending
-
             def ensure_tool_call_block(tool_call: dict) -> ToolCall:
                 stream_index = tool_call.get("index") if isinstance(tool_call.get("index"), int) else None
                 function = tool_call.get("function") or {}
@@ -1327,7 +1339,6 @@ def stream(  # noqa: C901
                     entry.custom_property = custom_input_property
                     entry.json_buffer = GrammarToolInputJsonBuffer()
                     entry.partial_args = None
-                apply_pending_reasoning_detail(block)
                 return block
 
             async for chunk in _iterate_chunks(response, opts.cancel):
@@ -1432,20 +1443,12 @@ def stream(  # noqa: C901
                         for detail in reasoning_details:
                             if not _is_openai_reasoning_detail(detail):
                                 continue
-                            if output.reasoning_details is None:
-                                output.reasoning_details = []
-                            # OpenRouter requires reasoning_details to be replayed unmodified and in order.
-                            output.reasoning_details.append(detail)
-
-                            # Keep the legacy encrypted tool-call attachment path for compatibility
-                            # with sessions that replay encrypted details from toolCall.thoughtSignature.
-                            if _is_encrypted_reasoning_detail(detail):
-                                serialized_detail = json.dumps(detail)
-                                matching = tool_blocks_by_id.get(detail["id"])
-                                if matching is not None:
-                                    matching.thought_signature = serialized_detail
-                                else:
-                                    pending_reasoning_details[detail["id"]] = serialized_detail
+                            block = ensure_thinking_block("")
+                            preserved_details = _parse_openai_reasoning_details(block.thinking_signature) or []
+                            preserved_details.append(detail)
+                            # Keep provider replay data in the existing signature slot. OpenRouter
+                            # requires the complete reasoning_details sequence in its original order.
+                            block.thinking_signature = json.dumps(preserved_details)
 
             for block in list(blocks):
                 finish_block(block)

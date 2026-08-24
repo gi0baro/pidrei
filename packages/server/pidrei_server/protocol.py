@@ -104,7 +104,6 @@ _assert_exact_fields(
         "model",
         "response_model",
         "response_id",
-        "reasoning_details",
         "diagnostics",
         "usage",
         "stop_reason",

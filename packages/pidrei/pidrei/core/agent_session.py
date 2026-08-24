@@ -68,7 +68,7 @@ from .compaction import (
     prepare_compaction,
     should_compact,
 )
-from .defaults import DEFAULT_THINKING_LEVEL
+from .defaults import DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS
 from .extensions import ExtensionRunner, wrap_registered_tools
 from .extensions.runner import emit_session_shutdown_event
 from .messages import BashExecutionMessage, CustomMessage
@@ -393,10 +393,6 @@ def _retry_policy_from(settings: dict[str, Any]) -> RetryPolicy:
 # ============================================================================
 # Constants
 # ============================================================================
-
-# Standard thinking levels
-_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"]
-
 
 # ============================================================================
 # AgentSession
@@ -1492,30 +1488,38 @@ class AgentSession:
             {"type": "model_select", "model": next_model, "previousModel": previous_model, "source": source}
         )
 
-    async def set_model(self, model: Model) -> None:
-        """Set model directly. Validates auth, saves to session and settings."""
+    async def set_model(self, model: Model, *, persist: bool = False) -> None:
+        """Set model directly. Validates auth and saves to the session transcript.
+
+        Persists to global defaults only when `persist` is true. pi passes a
+        `ModelMutationOptions` object here; the interface has the single
+        `persist` field and no other caller, so it stays a keyword argument.
+        """
         if await self._model_runtime.check_auth(model.provider) is None:
             raise Exception(f"No API key for {model.provider}/{model.id}")
 
         previous_model = self.model
-        thinking_level = self._get_thinking_level_for_model_switch()
+        thinking_level = self._get_thinking_level_for_model_switch(model)
         self.agent.state.model = model
         await self.session_manager.append_model_change(model.provider, model.id)
-        self.settings_manager.set_default_model_and_provider(model.provider, model.id)
+        if persist:
+            self.settings_manager.set_default_model_and_provider(model.provider, model.id)
 
-        # Re-clamp thinking level for new model's capabilities
+        # Apply thinking level for the new model.
+        # Per-model thinking level overrides take priority over the global default.
+        # Model persistence does not implicitly rewrite the global thinking default.
         await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(model, previous_model, "set")
 
-    async def cycle_model(self, direction: str = "forward") -> ModelCycleResult | None:
+    async def cycle_model(self, direction: str = "forward", *, persist: bool = False) -> ModelCycleResult | None:
         """Cycle to next/previous model. Uses scoped models (--models flag) if
         available, otherwise all available models."""
         if self._scoped_models:
-            return await self._cycle_scoped_model(direction)
-        return await self._cycle_available_model(direction)
+            return await self._cycle_scoped_model(direction, persist=persist)
+        return await self._cycle_available_model(direction, persist=persist)
 
-    async def _cycle_scoped_model(self, direction: str) -> ModelCycleResult | None:
+    async def _cycle_scoped_model(self, direction: str, *, persist: bool) -> ModelCycleResult | None:
         available_ids = {(model.provider, model.id) for model in self._model_runtime.get_available_snapshot()}
         scoped_models = [
             scoped for scoped in self._scoped_models if (scoped.model.provider, scoped.model.id) in available_ids
@@ -1531,22 +1535,26 @@ class AgentSession:
         length = len(scoped_models)
         next_index = (current_index + 1) % length if direction == "forward" else (current_index - 1 + length) % length
         next_scoped = scoped_models[next_index]
-        thinking_level = self._get_thinking_level_for_model_switch(next_scoped.thinking_level)
+        thinking_level = self._get_thinking_level_for_model_switch(next_scoped.model, next_scoped.thinking_level)
 
         # Apply model
         self.agent.state.model = next_scoped.model
         await self.session_manager.append_model_change(next_scoped.model.provider, next_scoped.model.id)
-        self.settings_manager.set_default_model_and_provider(next_scoped.model.provider, next_scoped.model.id)
+        if persist:
+            self.settings_manager.set_default_model_and_provider(next_scoped.model.provider, next_scoped.model.id)
 
-        # Apply thinking level: explicit scoped level overrides the session level,
-        # None inherits the current session preference. set_thinking_level clamps.
+        # Apply thinking level for the new model.
+        # - An explicit scoped model thinking level overrides defaults
+        # - Per-model thinking level overrides take priority over the global default
+        # set_thinking_level clamps to model capabilities.
+        # Model persistence does not implicitly rewrite the global thinking default.
         await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(next_scoped.model, current_model, "cycle")
 
         return ModelCycleResult(model=next_scoped.model, thinking_level=self.thinking_level, is_scoped=True)
 
-    async def _cycle_available_model(self, direction: str) -> ModelCycleResult | None:
+    async def _cycle_available_model(self, direction: str, *, persist: bool) -> ModelCycleResult | None:
         available_models = self._model_runtime.get_available_snapshot()
         if len(available_models) <= 1:
             return None
@@ -1560,12 +1568,14 @@ class AgentSession:
         next_index = (current_index + 1) % length if direction == "forward" else (current_index - 1 + length) % length
         next_model = available_models[next_index]
 
-        thinking_level = self._get_thinking_level_for_model_switch()
+        thinking_level = self._get_thinking_level_for_model_switch(next_model)
         self.agent.state.model = next_model
         await self.session_manager.append_model_change(next_model.provider, next_model.id)
-        self.settings_manager.set_default_model_and_provider(next_model.provider, next_model.id)
+        if persist:
+            self.settings_manager.set_default_model_and_provider(next_model.provider, next_model.id)
 
-        # Re-clamp thinking level for new model's capabilities
+        # Apply thinking level for the new model.
+        # Model persistence does not implicitly rewrite the global thinking default.
         await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(next_model, current_model, "cycle")
@@ -1576,22 +1586,27 @@ class AgentSession:
     # Thinking Level Management
     # =========================================================================
 
-    async def set_thinking_level(self, level: str) -> None:
-        """Set thinking level, clamped to model capabilities. Saves to session
-        and settings only if the level actually changes."""
+    async def set_thinking_level(self, level: str, *, persist: bool = False) -> None:
+        """Set thinking level, clamped to model capabilities.
+
+        Saves the clamped level to the session transcript only if the level
+        actually changes; persists the *requested* level to global defaults
+        only when `persist` is true.
+        """
         available_levels = self.get_available_thinking_levels()
         effective_level = level if level in available_levels else self._clamp_thinking_level(level, available_levels)
 
-        # Only persist if actually changing
+        # Only append to the session if actually changing
         previous_level = self.agent.state.thinking_level
         is_changing = effective_level != previous_level
 
         self.agent.state.thinking_level = effective_level
 
+        if persist:
+            self.settings_manager.set_default_thinking_level(level)
+
         if is_changing:
             await self.session_manager.append_thinking_level_change(effective_level)
-            if self.supports_thinking() or effective_level != "off":
-                self.settings_manager.set_default_thinking_level(effective_level)
             self._emit(ThinkingLevelChangedEvent(level=effective_level))
             tonio.spawn.without_tracking(
                 self._extension_runner.emit(
@@ -1599,7 +1614,7 @@ class AgentSession:
                 )
             )
 
-    async def cycle_thinking_level(self) -> str | None:
+    async def cycle_thinking_level(self, *, persist: bool = False) -> str | None:
         """Cycle to next thinking level. None if model doesn't support thinking."""
         if not self.supports_thinking():
             return None
@@ -1608,25 +1623,29 @@ class AgentSession:
         current_index = levels.index(self.thinking_level) if self.thinking_level in levels else -1
         next_level = levels[(current_index + 1) % len(levels)]
 
-        await self.set_thinking_level(next_level)
+        await self.set_thinking_level(next_level, persist=persist)
         return next_level
 
     def get_available_thinking_levels(self) -> list[str]:
         """Available thinking levels for the current model."""
         if self.model is None:
-            return list(_THINKING_LEVELS)
+            return list(THINKING_LEVEL_OPTIONS)
         return list(get_supported_thinking_levels(self.model))
 
     def supports_thinking(self) -> bool:
         return bool(self.model is not None and self.model.reasoning)
 
-    def _get_thinking_level_for_model_switch(self, explicit_level: str | None = None) -> str:
+    def _get_thinking_level_for_model_switch(
+        self, target_model: Model | None = None, explicit_level: str | None = None
+    ) -> str:
         if explicit_level is not None:
             return explicit_level
-        if not self.supports_thinking():
-            default = self.settings_manager.get_default_thinking_level()
-            return default if default is not None else DEFAULT_THINKING_LEVEL
-        return self.thinking_level
+        # Per-model default takes priority when switching to a model that has one
+        if target_model is not None:
+            per_model = self.settings_manager.get_model_thinking_level(target_model.provider, target_model.id)
+            if per_model is not None:
+                return per_model
+        return self.settings_manager.get_default_thinking_level() or self.thinking_level or DEFAULT_THINKING_LEVEL
 
     def _clamp_thinking_level(self, level: str, _available_levels: list[str]) -> str:
         return clamp_thinking_level(self.model, level) if self.model is not None else "off"

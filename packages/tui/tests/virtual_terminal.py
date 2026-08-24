@@ -181,14 +181,26 @@ class VirtualTerminal:
             return {"x": self._screen.cursor.x, "y": self._screen.cursor.y}
 
     def get_cell_italic(self, row: int, col: int) -> int:
-        with self._feed_lock:
-            char = self._screen.buffer[row][col]
-            return 1 if char.italics else 0
+        return 1 if self.get_cell(row, col).italics else 0
 
     def get_cell_underline(self, row: int, col: int) -> int:
+        return 1 if self.get_cell(row, col).underscore else 0
+
+    def get_cell(self, row: int, col: int):
+        """The pyte ``Char`` at (row, col).
+
+        pi reads xterm.js cell accessors (``isItalic()``, ``isFgDefault()``, …);
+        pyte exposes the same state as plain attributes — ``italics``,
+        ``underscore``, ``bold``, ``fg`` (``"default"`` or a colour name / hex
+        string). pyte has no faint/dim attribute at all, so cases that assert on
+        dim are not mirrored.
+
+        pi folds its two file-local cell readers into this one accessor; here
+        they are shared across suites, so ``get_cell_italic``/
+        ``get_cell_underline`` stay for their other callers.
+        """
         with self._feed_lock:
-            char = self._screen.buffer[row][col]
-            return 1 if char.underscore else 0
+            return self._screen.buffer[row][col]
 
     async def wait_for_render(self, since: int | None = None, timeout: float = 5.0) -> None:
         """Wait until the TUI has actually written a frame.

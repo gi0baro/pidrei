@@ -129,7 +129,7 @@ class TextContent:
 @dataclass(slots=True)
 class ThinkingContent:
     thinking: str
-    thinking_signature: str | None = None  # e.g., for OpenAI responses, the reasoning item ID
+    thinking_signature: str | None = None  # Provider-specific opaque or serialized reasoning replay data
     # When True, the thinking content was redacted by safety filters. The opaque encrypted
     # payload is stored in `thinking_signature` so it can be replayed for multi-turn continuity.
     redacted: bool = False
@@ -244,8 +244,6 @@ class AssistantMessage:
     # Concrete response model when different from the requested one (e.g. OpenRouter `auto`).
     response_model: str | None = None
     response_id: str | None = None  # Provider-specific response/message identifier
-    # Provider-specific structured reasoning details to replay verbatim on later same-model turns.
-    reasoning_details: list[Any] | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None

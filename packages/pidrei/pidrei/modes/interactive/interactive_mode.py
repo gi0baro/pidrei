@@ -77,6 +77,7 @@ from ...core.cache_stats import (
     compute_cache_waste,
     detect_cache_miss,
 )
+from ...core.defaults import DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS
 from ...core.exec import exec_command
 from ...core.footer_data_provider import FooterDataProvider
 from ...core.http_config import format_http_idle_timeout_ms
@@ -135,6 +136,7 @@ from .components import (
     SessionSelectorComponent,
     SettingsSelectorComponent,
     SkillInvocationMessageComponent,
+    ThinkingSelectorComponent,
     ToolExecutionComponent,
     TreeSelectorComponent,
     TrustSelectorComponent,
@@ -815,6 +817,19 @@ class InteractiveMode:
                 )
 
             model_command["getArgumentCompletions"] = get_model_completions
+
+        thinking_command = next((command for command in slash_commands if command["name"] == "thinking"), None)
+        if thinking_command is not None:
+
+            async def get_thinking_completions(prefix: str):
+                return _create_fuzzy_autocomplete_items(
+                    self.session.get_available_thinking_levels(),
+                    prefix,
+                    lambda level: level,
+                    lambda level: {"value": level, "label": level},
+                )
+
+            thinking_command["getArgumentCompletions"] = get_thinking_completions
 
         login_command = next((command for command in slash_commands if command["name"] == "login"), None)
         if login_command is not None:
@@ -2901,6 +2916,11 @@ class InteractiveMode:
             self._set_editor_text("")
             await self._handle_model_command(search_term)
             return
+        if text == "/thinking" or text.startswith("/thinking "):
+            search_term = text[10:].strip() if text.startswith("/thinking ") else None
+            self._set_editor_text("")
+            await self._handle_thinking_command(search_term)
+            return
         if text == "/export" or text.startswith("/export "):
             await self._handle_export_command(text)
             self._set_editor_text("")
@@ -4267,6 +4287,12 @@ class InteractiveMode:
         available_themes = await get_available_themes()
 
         def create(done):
+            default_provider = self.settings_manager.get_default_provider()
+            default_model_id = self.settings_manager.get_default_model()
+            default_model = (
+                f"{default_provider}/{default_model_id}" if default_provider and default_model_id else "not set"
+            )
+
             def on_auto_compact_change(enabled: bool) -> None:
                 self.session.set_auto_compaction_enabled(enabled)
                 self._footer.set_auto_compact_enabled(enabled)
@@ -4298,10 +4324,24 @@ class InteractiveMode:
                 self.settings_manager.set_http_idle_timeout_ms(timeout_ms)
                 self.show_status(f"HTTP idle timeout: {format_http_idle_timeout_ms(timeout_ms)}")
 
-            async def on_thinking_level_change(level: str) -> None:
-                await self.session.set_thinking_level(level)
-                self._footer.invalidate()
-                self._update_editor_border_color()
+            async def on_model_thinking_level_change(provider: str, model_id: str, level: str) -> None:
+                self.settings_manager.set_model_thinking_level(provider, model_id, level)
+                # If the override is for the current model, apply it to the session too
+                current = self.session.model
+                if current is not None and current.provider == provider and current.id == model_id:
+                    await self.session.set_thinking_level(level)
+                    self._footer.invalidate()
+                    self._update_editor_border_color()
+
+            async def on_model_thinking_level_remove(provider: str, model_id: str) -> None:
+                self.settings_manager.remove_model_thinking_level(provider, model_id)
+                # If the override was for the current model, revert to global default
+                current = self.session.model
+                if current is not None and current.provider == provider and current.id == model_id:
+                    global_default = self.settings_manager.get_default_thinking_level() or DEFAULT_THINKING_LEVEL
+                    await self.session.set_thinking_level(global_default)
+                    self._footer.invalidate()
+                    self._update_editor_border_color()
 
             def on_theme_change(theme_setting: str) -> None:
                 self.settings_manager.set_theme(theme_setting)
@@ -4380,6 +4420,9 @@ class InteractiveMode:
             selector = SettingsSelectorComponent(
                 {
                     "autoCompact": self.session.auto_compaction_enabled,
+                    "defaultModel": default_model,
+                    "currentModel": self.session.model,
+                    "availableDefaultModels": self.session.model_runtime.get_available_snapshot(),
                     "showImages": self.settings_manager.get_show_images(),
                     "imageWidthCells": self.settings_manager.get_image_width_cells(),
                     "autoResizeImages": self.settings_manager.get_image_auto_resize(),
@@ -4389,8 +4432,9 @@ class InteractiveMode:
                     "followUpMode": self.session.follow_up_mode,
                     "transport": self.settings_manager.get_transport(),
                     "httpIdleTimeoutMs": self.settings_manager.get_http_idle_timeout_ms(),
-                    "thinkingLevel": self.session.thinking_level,
-                    "availableThinkingLevels": self.session.get_available_thinking_levels(),
+                    "thinkingLevel": self.settings_manager.get_default_thinking_level() or DEFAULT_THINKING_LEVEL,
+                    "availableThinkingLevels": list(THINKING_LEVEL_OPTIONS),
+                    "modelThinkingLevels": self.settings_manager.get_all_model_thinking_levels(),
                     "currentTheme": self._theme_controller.get_theme_selection() or "dark",
                     "terminalTheme": self._theme_controller.get_terminal_theme(),
                     "availableThemes": available_themes,
@@ -4424,7 +4468,8 @@ class InteractiveMode:
                     "onFollowUpModeChange": lambda mode: self.session.set_follow_up_mode(mode),
                     "onTransportChange": on_transport_change,
                     "onHttpIdleTimeoutMsChange": on_http_idle_timeout_ms_change,
-                    "onThinkingLevelChange": on_thinking_level_change,
+                    "onModelThinkingLevelChange": on_model_thinking_level_change,
+                    "onModelThinkingLevelRemove": on_model_thinking_level_remove,
                     "onThemeChange": on_theme_change,
                     "onThemePreview": lambda theme_name: self._theme_controller.preview(theme_name),
                     "onHideThinkingBlockChange": on_hide_thinking_block_change,
@@ -4462,6 +4507,51 @@ class InteractiveMode:
 
         self._show_selector(create)
 
+    async def _handle_thinking_command(self, search_term: str | None = None) -> None:
+        available_levels = self.session.get_available_thinking_levels()
+        if not search_term:
+            self._show_thinking_selector()
+            return
+
+        normalized = search_term.strip().lower()
+        level = next((candidate for candidate in available_levels if candidate.lower() == normalized), None)
+        if level is None:
+            self.show_error(f'Unknown thinking level "{search_term}". Available levels: {", ".join(available_levels)}.')
+            return
+
+        await self._select_thinking_level(level, False)
+
+    async def _select_thinking_level(self, level: str, persist: bool) -> None:
+        try:
+            await self.session.set_thinking_level(level, persist=persist)
+            self._footer.invalidate()
+            self._update_editor_border_color()
+            self.show_status(f"Default thinking level: {level}" if persist else f"Thinking level: {level}")
+        except Exception as error:
+            self.show_error(str(error))
+
+    def _show_thinking_selector(self) -> None:
+        def create(done):
+            async def select_level(level: str, persist: bool) -> None:
+                await self._select_thinking_level(level, persist)
+                done()
+
+            def on_cancel() -> None:
+                done()
+                self.ui.request_render()
+
+            selector = ThinkingSelectorComponent(
+                self.session.thinking_level or DEFAULT_THINKING_LEVEL,
+                self.session.get_available_thinking_levels(),
+                lambda level: select_level(level, False),
+                on_cancel,
+                lambda level: select_level(level, True),
+                self.settings_manager.get_default_thinking_level() or DEFAULT_THINKING_LEVEL,
+            )
+            return {"component": selector, "focus": selector}
+
+        self._show_selector(create)
+
     async def _handle_model_command(self, search_term: str | None = None) -> None:
         if not search_term:
             self._show_model_selector()
@@ -4470,7 +4560,7 @@ class InteractiveMode:
         model = await self._find_exact_model_match(search_term)
         if model is not None:
             try:
-                await self.session.set_model(model)
+                await self.session.set_model(model, persist=False)
                 self._footer.invalidate()
                 self._update_editor_border_color()
                 self.show_status(f"Model: {model.id}")
@@ -4597,13 +4687,13 @@ class InteractiveMode:
 
     def _show_model_selector(self, initial_search_input: str | None = None) -> None:
         def create(done):
-            async def select_model(model) -> None:
+            async def select_model(model, persist: bool) -> None:
                 try:
-                    await self.session.set_model(model)
+                    await self.session.set_model(model, persist=persist)
                     self._footer.invalidate()
                     self._update_editor_border_color()
                     done()
-                    self.show_status(f"Model: {model.id}")
+                    self.show_status(f"Default model: {model.provider}/{model.id}" if persist else f"Model: {model.id}")
                     tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(model))
                     self._check_daxnuts_easter_egg(model)
                 except Exception as error:
@@ -4614,15 +4704,18 @@ class InteractiveMode:
                 done()
                 self.ui.request_render()
 
+            default_provider = self.settings_manager.get_default_provider()
+            default_model = self.settings_manager.get_default_model()
             selector = ModelSelectorComponent(
                 self.ui,
                 self.session.model,
-                self.settings_manager,
                 self.session.model_runtime,
                 self.session.scoped_models,
-                lambda model: tonio.spawn.without_tracking(select_model(model)),
+                lambda model: tonio.spawn.without_tracking(select_model(model, False)),
                 on_cancel,
                 initial_search_input,
+                lambda model: tonio.spawn.without_tracking(select_model(model, True)),
+                {"provider": default_provider, "id": default_model} if default_provider and default_model else None,
             )
             return {"component": selector, "focus": selector, "dispose": selector.dispose}
 
@@ -5307,7 +5400,7 @@ class InteractiveMode:
                     )
                 else:
                     try:
-                        await self.session.set_model(selected_model)
+                        await self.session.set_model(selected_model, persist=True)
                     except Exception as error:
                         selected_model = None
                         selection_error = (

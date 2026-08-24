@@ -425,6 +425,100 @@ def test_should_wrap_table_cells_when_table_exceeds_available_width():
     assert "Install" in all_text, "Should contain 'Install'"
 
 
+@pytest.mark.tonio
+async def test_should_not_leak_wrapped_link_styles_into_table_borders_or_plain_cells():
+    source = "| Link | Plain |\n| --- | --- |\n| [**one two three four five six**](https://example.com) | normal text |"
+
+    try:
+        for hyperlinks in (True, False):
+            set_capabilities({"images": None, "trueColor": False, "hyperlinks": hyperlinks})
+            terminal = VirtualTerminal(24, 16)
+            tui = TuiMainScreen(terminal)
+            tui.add_child(Markdown(source, 0, 0, default_markdown_theme))
+            await tui.start()
+
+            try:
+                await terminal.wait_for_render()
+                viewport = terminal.get_viewport()
+                row = next(
+                    (i for i, line in enumerate(viewport) if "one" in line and "norm" in line),
+                    -1,
+                )
+                assert row != -1, f"Missing wrapped table row: {viewport}"
+                line = viewport[row]
+                link_col = line.index("one")
+                separator_col = line.index("\u2502", link_col)
+                plain_col = line.index("norm")
+                assert link_col >= 0 and separator_col > link_col and plain_col > separator_col
+                assert terminal.get_cell(row, link_col).fg != "default"
+                assert terminal.get_cell(row, separator_col).fg == "default"
+                assert terminal.get_cell(row, plain_col).fg == "default"
+                assert terminal.get_cell(row, link_col).bold is True
+                assert terminal.get_cell(row, separator_col).bold is False
+                assert terminal.get_cell(row, plain_col).bold is False
+
+                # pi also checks that the dim URL fallback row (hyperlinks off)
+                # does not dim the separator or border. pyte has no faint/dim
+                # cell attribute, so only the colour and bold leaks above are
+                # mirrored; the fallback row is still rendered by this case.
+                if not hyperlinks:
+                    assert any("https" in viewport_line for viewport_line in viewport), (
+                        f"Missing fallback URL row: {viewport}"
+                    )
+            finally:
+                await tui.stop()
+    finally:
+        reset_capabilities_cache()
+
+
+@pytest.mark.tonio
+async def test_should_restore_the_enclosing_style_after_a_wrapped_table_link():
+    quote_color = "123456"
+    theme = {
+        **default_markdown_theme,
+        # Use a basic wrapper that does not automatically reopen itself after nested resets.
+        "quote": lambda text: f"\x1b[38;2;18;52;86m{text}\x1b[39m",
+        "link": lambda text: f"\x1b[38;2;129;162;190m{text}\x1b[39m",
+    }
+    source = (
+        "> | Link | Plain |\n> | --- | --- |\n> | [one two three four five six](https://example.com) | normal text |"
+    )
+
+    set_capabilities({"images": None, "trueColor": True, "hyperlinks": True})
+    terminal = VirtualTerminal(28, 10)
+    tui = TuiMainScreen(terminal)
+    tui.add_child(Markdown(source, 0, 0, theme))
+    await tui.start()
+
+    try:
+        await terminal.wait_for_render()
+        viewport = terminal.get_viewport()
+        row = next((i for i, line in enumerate(viewport) if "one" in line and "normal" in line), -1)
+        assert row != -1, f"Missing wrapped blockquote table row: {viewport}"
+        line = viewport[row]
+        link_col = line.index("one")
+        separator_col = line.index("\u2502", link_col)
+        plain_col = line.index("normal")
+        assert link_col >= 0 and separator_col > link_col and plain_col > separator_col
+
+        assert terminal.get_cell(row, link_col).fg != quote_color
+        assert terminal.get_cell(row, separator_col).fg == quote_color
+        assert terminal.get_cell(row, plain_col).fg == quote_color
+
+        final_row = next((i for i, line in enumerate(viewport) if "five six" in line), -1)
+        assert final_row != -1, f"Missing final wrapped link row: {viewport}"
+        final_line = viewport[final_row]
+        final_link_col = final_line.index("five six")
+        final_separator_col = final_line.index("\u2502", final_link_col)
+        final_border_col = final_line.rindex("\u2502")
+        assert final_link_col >= 0 and final_separator_col > final_link_col and final_border_col > final_separator_col
+        assert terminal.get_cell(final_row, final_separator_col).fg == quote_color
+        assert terminal.get_cell(final_row, final_border_col).fg == quote_color
+    finally:
+        await tui.stop()
+        reset_capabilities_cache()
+
+
 def test_should_wrap_long_cell_content_to_multiple_lines():
     markdown = Markdown(
         "| Header |\n| --- |\n| This is a very long cell content that should wrap |",
@@ -717,7 +811,7 @@ async def test_should_not_leak_styles_into_following_lines_when_rendered_in_tui(
 
     assert component.markdown_line_count > 0
     input_row = component.markdown_line_count
-    assert terminal.get_cell_italic(input_row, 0) == 0
+    assert terminal.get_cell(input_row, 0).italics is False
     await tui.stop()
 
 
@@ -1093,7 +1187,7 @@ async def test_should_not_leak_h1_underline_into_padding_when_inline_code_is_the
     assert content_width > 0, "Should have visible heading content"
 
     for col in range(content_width, 80):
-        assert terminal.get_cell_underline(0, col) == 0, f"Expected no underline in padding at col {col}"
+        assert terminal.get_cell(0, col).underscore is False, f"Expected no underline in padding at col {col}"
 
     await tui.stop()
 

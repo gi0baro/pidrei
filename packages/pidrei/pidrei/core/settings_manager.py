@@ -635,6 +635,29 @@ class SettingsManager:
         self._mark_modified("defaultThinkingLevel")
         self._save()
 
+    def get_model_thinking_level(self, provider: str, model_id: str) -> str | None:
+        """Per-model default thinking level override, keyed by "provider/modelId"."""
+        return (self._settings.get("modelThinkingLevels") or {}).get(f"{provider}/{model_id}")
+
+    def get_all_model_thinking_levels(self) -> dict[str, str]:
+        return dict(self._settings.get("modelThinkingLevels") or {})
+
+    def set_model_thinking_level(self, provider: str, model_id: str, level: str) -> None:
+        overrides = self._global_settings.setdefault("modelThinkingLevels", {})
+        overrides[f"{provider}/{model_id}"] = level
+        self._mark_modified("modelThinkingLevels")
+        self._save()
+
+    def remove_model_thinking_level(self, provider: str, model_id: str) -> None:
+        overrides = self._global_settings.get("modelThinkingLevels")
+        if not overrides:
+            return
+        overrides.pop(f"{provider}/{model_id}", None)
+        if not overrides:
+            del self._global_settings["modelThinkingLevels"]
+        self._mark_modified("modelThinkingLevels")
+        self._save()
+
     def get_transport(self) -> str:
         transport = self._settings.get("transport")
         return transport if transport is not None else "auto"

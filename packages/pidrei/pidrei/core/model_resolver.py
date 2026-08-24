@@ -528,6 +528,7 @@ async def find_initial_model(
     default_provider: str | None = None,
     default_model_id: str | None = None,
     default_thinking_level: str | None = None,
+    model_thinking_levels: dict[str, str] | None = None,
     model_runtime,
 ) -> InitialModelResult:
     """Find the initial model: CLI args, scoped models, saved default, then
@@ -543,14 +544,17 @@ async def find_initial_model(
 
     # 2. Use first model from scoped models (skip if continuing/resuming)
     if scoped_models and not is_continuing:
-        thinking = scoped_models[0].thinking_level or default_thinking_level or DEFAULT_THINKING_LEVEL
-        return InitialModelResult(model=scoped_models[0].model, thinking_level=thinking)
+        scoped_model = scoped_models[0]
+        per_model = (model_thinking_levels or {}).get(f"{scoped_model.model.provider}/{scoped_model.model.id}")
+        thinking = scoped_model.thinking_level or per_model or default_thinking_level or DEFAULT_THINKING_LEVEL
+        return InitialModelResult(model=scoped_model.model, thinking_level=thinking)
 
     # 3. Try saved default from settings if auth is configured.
     if default_provider and default_model_id:
         found = model_runtime.get_model(default_provider, default_model_id)
         if found is not None and model_runtime.has_configured_auth(found.provider):
-            thinking = default_thinking_level if default_thinking_level else DEFAULT_THINKING_LEVEL
+            per_model = (model_thinking_levels or {}).get(f"{default_provider}/{default_model_id}")
+            thinking = per_model or default_thinking_level or DEFAULT_THINKING_LEVEL
             return InitialModelResult(model=found, thinking_level=thinking)
 
     # 4. Try first available model with valid API key

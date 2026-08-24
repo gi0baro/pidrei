@@ -27,6 +27,7 @@ class BuiltinSlashCommand:
 BUILTIN_SLASH_COMMANDS: tuple[BuiltinSlashCommand, ...] = (
     BuiltinSlashCommand("settings", "Open settings menu"),
     BuiltinSlashCommand("model", "Select model (opens selector UI)", "<provider/model>"),
+    BuiltinSlashCommand("thinking", "Set thinking level", "<level>"),
     BuiltinSlashCommand("scoped-models", "Enable/disable models for Ctrl+P cycling"),
     BuiltinSlashCommand("export", "Export session (HTML default, or specify path: .html/.jsonl)"),
     BuiltinSlashCommand("import", "Import and resume a session from a JSONL file"),
