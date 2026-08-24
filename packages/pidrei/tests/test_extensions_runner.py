@@ -579,6 +579,20 @@ async def test_keeps_first_flag_when_two_extensions_register_the_same_name(fx):
 
 
 @pytest.mark.tonio
+async def test_rejects_default_values_that_do_not_match_the_flag_type(fx):
+    fx.write(
+        "bad-flag-default.py",
+        '\ndef extension(pi):\n    pi.register_flag("safe-mode", type="boolean", default="false")\n',
+    )
+
+    result = await discover_and_load_extensions([], fx.root, fx.root)
+
+    assert len(result.extensions) == 0
+    assert 'Invalid default for flag "safe-mode": expected boolean, got string' in result.errors[0].error
+    assert "safe-mode" not in result.runtime.flag_values
+
+
+@pytest.mark.tonio
 async def test_can_set_flag_values(fx):
     fx.write(
         "flag.py",

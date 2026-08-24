@@ -131,6 +131,17 @@ class _ExtensionEventBus:
         return self._runtime.track_event_bus_subscription(self._event_bus.on(channel, handler))
 
 
+def _flag_value_type(value: Any) -> str:
+    """JS `typeof` for a flag default, so a mismatch names the type the way pi does."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int | float):
+        return "number"
+    return type(value).__name__
+
+
 class ExtensionAPI:
     """pi's ExtensionAPI: the `pi` object an extension factory receives.
 
@@ -194,6 +205,8 @@ class ExtensionAPI:
 
     def register_flag(self, name: str, *, type: str, description: str | None = None, default: Any = None) -> None:
         self._runtime.assert_active()
+        if default is not None and _flag_value_type(default) != type:
+            raise ValueError(f'Invalid default for flag "{name}": expected {type}, got {_flag_value_type(default)}')
         self._extension.flags[name] = ExtensionFlag(
             type=type,
             description=description,

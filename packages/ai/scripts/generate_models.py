@@ -655,7 +655,7 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
     if model["api"] == "openai-completions" and "deepseek-v4" in model_id:
         if provider == "openrouter":
             level_map = {**DEEPSEEK_V4_THINKING_LEVEL_MAP, "xhigh": "xhigh", "max": None}
-        elif provider == "deepseek" and model_id == "deepseek-v4-flash":
+        elif provider in ("deepseek", "opencode", "opencode-go") and "deepseek-v4-flash" in model_id:
             level_map = dict(DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP)
         else:
             level_map = dict(DEEPSEEK_V4_THINKING_LEVEL_MAP)

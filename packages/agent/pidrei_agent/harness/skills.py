@@ -103,8 +103,9 @@ async def load_skills(env, dirs: str | list[str]) -> LoadedSkills:
     """Load skills from one or more directories.
 
     Traverses directories recursively, loads `SKILL.md` files, loads direct
-    root `.md` files as skills, honors ignore files, and returns diagnostics
-    for invalid skill files. Missing input directories are skipped.
+    root `.md` files with skill frontmatter, honors ignore files, and returns
+    diagnostics for invalid declared skill files. Missing input directories are
+    skipped.
     """
     skills: list[Skill] = []
     diagnostics: list[SkillDiagnostic] = []
@@ -277,6 +278,10 @@ async def _load_skill_from_file(
     env, file_path: str, parent_dir_name: str
 ) -> tuple[Skill | None, list[SkillDiagnostic]]:
     diagnostics: list[SkillDiagnostic] = []
+    # A file only *declares* a skill when it is named SKILL.md. Root `.md` files are
+    # discovered as candidates, so a README that neither parses nor describes a skill
+    # is skipped silently instead of being reported as broken.
+    is_declared_skill = file_path.rstrip("/").split("/")[-1] == "SKILL.md"
     raw_content = await env.read_text_file(file_path)
     if not raw_content.ok:
         diagnostics.append(SkillDiagnostic(code="read_failed", message=raw_content.error.message, path=file_path))
@@ -285,10 +290,13 @@ async def _load_skill_from_file(
     try:
         frontmatter, body = parse_frontmatter(raw_content.value)
     except Exception as error:
-        diagnostics.append(SkillDiagnostic(code="parse_failed", message=str(to_error(error)), path=file_path))
+        if is_declared_skill:
+            diagnostics.append(SkillDiagnostic(code="parse_failed", message=str(to_error(error)), path=file_path))
         return None, diagnostics
 
     description = frontmatter.get("description") if isinstance(frontmatter.get("description"), str) else None
+    if not is_declared_skill and (not description or description.strip() == ""):
+        return None, diagnostics
 
     for error in _validate_description(description):
         diagnostics.append(SkillDiagnostic(code="invalid_metadata", message=error, path=file_path))

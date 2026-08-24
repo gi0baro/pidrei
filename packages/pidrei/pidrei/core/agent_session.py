@@ -1838,10 +1838,11 @@ class AgentSession:
         # Automatic cases 1 and 2: context overflow. A length stop is recoverable when
         # output ended below the model's original desired limit, independent of the
         # configured context size or any context-clamped provider request limit.
+        context_overflow = same_model and is_context_overflow(assistant_message, context_window)
         recoverable_length = same_model and is_recoverable_length(
             assistant_message, (self.model.max_tokens if self.model is not None else 0) or 0
         )
-        if same_model and (is_context_overflow(assistant_message, context_window) or recoverable_length):
+        if context_overflow or recoverable_length:
             will_retry = assistant_message.stop_reason != "stop"
 
             # Case 2: the response completed successfully. Compact, but do not retry
@@ -1851,16 +1852,21 @@ class AgentSession:
                 return await self._run_auto_compaction("overflow", False)
 
             if self._overflow_recovery_attempted:
+                error_message = (
+                    (
+                        "Context overflow recovery failed after one compact-and-retry attempt. "
+                        "Try reducing context or switching to a larger-context model."
+                    )
+                    if context_overflow
+                    else "Truncated response recovery failed after one compact-and-retry attempt."
+                )
                 self._emit(
                     CompactionEndEvent(
                         reason="overflow",
                         result=None,
                         aborted=False,
                         will_retry=False,
-                        error_message=(
-                            "Context overflow recovery failed after one compact-and-retry attempt. "
-                            "Try reducing context or switching to a larger-context model."
-                        ),
+                        error_message=error_message,
                     )
                 )
                 return False

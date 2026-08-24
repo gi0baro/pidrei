@@ -114,3 +114,25 @@ async def test_loads_direct_markdown_children_only_from_the_root_directory():
 
     assert [skill.name for skill in result.skills] == ["skills"]
     assert result.skills[0].content == "Root content"
+
+
+@pytest.mark.tonio
+async def test_ignores_root_markdown_docs_that_do_not_declare_skills():
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    get_or_throw(await env.create_dir("skills/nested-skill", recursive=True))
+    get_or_throw(await env.write_file("skills/README.md", "# Shared skills\n\nDocumentation."))
+    get_or_throw(await env.write_file("skills/AGENTS.md", "# Agent notes\n\nDocumentation."))
+    get_or_throw(await env.write_file("skills/CLAUDE.md", "---\ndescription: [invalid\n---\n\nDocumentation."))
+    get_or_throw(await env.write_file("skills/root.md", "---\ndescription: Root skill\n---\nRoot content"))
+    get_or_throw(
+        await env.write_file(
+            "skills/nested-skill/SKILL.md",
+            "---\nname: nested-skill\ndescription: Nested skill\n---\nNested content",
+        )
+    )
+
+    result = await load_skills(env, "skills")
+
+    assert result.diagnostics == []
+    assert sorted(skill.name for skill in result.skills) == ["nested-skill", "skills"]

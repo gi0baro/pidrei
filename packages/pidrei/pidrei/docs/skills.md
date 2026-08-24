@@ -20,6 +20,11 @@ Discovery treats a directory with `SKILL.md` as a skill root and does not
 recurse further, so a skill may keep whatever supporting files it likes
 alongside. Directories without `SKILL.md` are searched recursively.
 
+Direct `.md` files at the root of a skills directory are loaded as skills too,
+but only when they carry skill frontmatter with a non-empty `description`. Other
+Markdown there — `README.md`, `AGENTS.md` — is ignored silently, even if it fails
+to parse.
+
 ## SKILL.md
 
 YAML frontmatter, then the body:

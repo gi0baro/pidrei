@@ -64,6 +64,13 @@ class EditToolDetails:
     first_changed_line: int | None = None
 
 
+def _is_single_edit_input(value: Any) -> bool:
+    """pi's `isSingleEditInput`: a bare `{oldText, newText}` sent instead of a one-element array."""
+    if not isinstance(value, dict):
+        return False
+    return isinstance(value.get("oldText"), str) and isinstance(value.get("newText"), str)
+
+
 def prepare_edit_arguments(input_value: Any) -> Any:
     if not isinstance(input_value, dict):
         return input_value
@@ -73,8 +80,12 @@ def prepare_edit_arguments(input_value: Any) -> Any:
             parsed = json.loads(args["edits"])
             if isinstance(parsed, list):
                 args["edits"] = parsed
+            elif _is_single_edit_input(parsed):
+                args["edits"] = [parsed]
         except TypeError, ValueError:
             pass
+    elif _is_single_edit_input(args.get("edits")):
+        args["edits"] = [args["edits"]]
 
     if not isinstance(args.get("oldText"), str) or not isinstance(args.get("newText"), str):
         return args

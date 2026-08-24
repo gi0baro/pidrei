@@ -6,10 +6,13 @@ which `test_agent_session_compaction.py` (built on `create_agent_session`)
 does not use.
 """
 
+from dataclasses import replace
+
 import pytest
 
 from pidrei.core.compaction import CompactionResult
 from pidrei_ai.providers.faux import faux_assistant_message
+from pidrei_ai.types import Usage
 
 from .harness import create_harness
 
@@ -100,6 +103,37 @@ async def test_stops_after_one_compact_and_retry_when_a_second_response_is_also_
     overflow_starts = [e for e in harness.events_of_type("compaction_start") if e.reason == "overflow"]
     assert len(overflow_starts) == 1
     assert harness.events_of_type("compaction_end")[-1].error_message == (
-        "Context overflow recovery failed after one compact-and-retry attempt. "
-        "Try reducing context or switching to a larger-context model."
+        "Truncated response recovery failed after one compact-and-retry attempt."
     )
+
+
+@pytest.mark.tonio
+async def test_keeps_overflow_wording_when_a_repeated_length_stop_fills_the_context_window(harnesses):
+    harness = await create_harness(models=[{"id": "faux-1", "context_window": 100, "max_tokens": 100}])
+    harnesses.append(harness)
+    session = harness.session
+    # Input truncated to fill the window, leaving no room for output: this length stop
+    # is both a context overflow and a recoverable length, and overflow wording wins.
+    length_overflow = replace(
+        faux_assistant_message("", stop_reason="length", timestamp=2**41),
+        usage=Usage(input=100),
+    )
+
+    run_calls: list[tuple[str, bool]] = []
+
+    async def run_auto_compaction_spy(reason, will_retry):
+        run_calls.append((reason, will_retry))
+        return False
+
+    session._run_auto_compaction = run_auto_compaction_spy
+
+    await session._check_compaction(length_overflow)
+    await session._check_compaction(replace(length_overflow, timestamp=2**41 + 1))
+
+    assert len(run_calls) == 1
+    assert [event.error_message for event in harness.events_of_type("compaction_end") if event.error_message] == [
+        (
+            "Context overflow recovery failed after one compact-and-retry attempt. "
+            "Try reducing context or switching to a larger-context model."
+        )
+    ]

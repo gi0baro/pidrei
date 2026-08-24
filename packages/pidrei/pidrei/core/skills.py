@@ -4,6 +4,7 @@ import os
 import stat as stat_module
 from collections.abc import Awaitable
 from dataclasses import dataclass
+from typing import Any
 
 import pathspec
 import tonio.colored as tonio
@@ -124,10 +125,10 @@ def _validate_name(name: str) -> list[str]:
     return errors
 
 
-def _validate_description(description: str | None) -> list[str]:
+def _validate_description(description: Any) -> list[str]:
     errors: list[str] = []
 
-    if not description or description.strip() == "":
+    if not isinstance(description, str) or description.strip() == "":
         errors.append("description is required")
     elif len(description) > MAX_DESCRIPTION_LENGTH:
         errors.append(f"description exceeds {MAX_DESCRIPTION_LENGTH} characters ({len(description)})")
@@ -250,45 +251,62 @@ def _load_skills_from_dir_internal(
 
 def _load_skill_from_file(file_path: str, source: str) -> tuple[Skill | None, list[ResourceDiagnostic]]:
     diagnostics: list[ResourceDiagnostic] = []
+    # A file only *declares* a skill when it is named SKILL.md. Root `.md` files are
+    # discovered as candidates, so a README that neither parses nor describes a skill
+    # is skipped silently instead of being reported as broken.
+    is_declared_skill = os.path.basename(file_path) == "SKILL.md"
 
     try:
         with open(file_path, encoding="utf-8") as f:
             raw_content = f.read()
+    except Exception as error:
+        message = str(error) or "failed to read skill file"
+        diagnostics.append(ResourceDiagnostic(type="warning", message=message, path=file_path))
+        return None, diagnostics
+
+    try:
         frontmatter, _body = parse_frontmatter(raw_content)
         if not isinstance(frontmatter, dict):
             frontmatter = {}
-        skill_dir = os.path.dirname(file_path)
-        parent_dir_name = os.path.basename(skill_dir)
-
-        description = frontmatter.get("description")
-        for error in _validate_description(description):
-            diagnostics.append(ResourceDiagnostic(type="warning", message=error, path=file_path))
-
-        # Use name from frontmatter, or fall back to parent directory name
-        name = frontmatter.get("name") or parent_dir_name
-
-        for error in _validate_name(name):
-            diagnostics.append(ResourceDiagnostic(type="warning", message=error, path=file_path))
-
-        # Still load the skill even with warnings (unless description is completely missing)
-        if not description or description.strip() == "":
-            return None, diagnostics
-
-        return (
-            Skill(
-                name=name,
-                description=description,
-                file_path=file_path,
-                base_dir=skill_dir,
-                source_info=_create_skill_source_info(file_path, skill_dir, source),
-                disable_model_invocation=frontmatter.get("disable-model-invocation") is True,
-            ),
-            diagnostics,
-        )
     except Exception as error:
-        message = str(error) or "failed to parse skill file"
-        diagnostics.append(ResourceDiagnostic(type="warning", message=message, path=file_path))
+        if is_declared_skill:
+            message = str(error) or "failed to parse skill file"
+            diagnostics.append(ResourceDiagnostic(type="warning", message=message, path=file_path))
         return None, diagnostics
+
+    description = frontmatter.get("description")
+    has_description = isinstance(description, str) and description.strip() != ""
+    if not is_declared_skill and not has_description:
+        return None, diagnostics
+
+    skill_dir = os.path.dirname(file_path)
+    parent_dir_name = os.path.basename(skill_dir)
+
+    for error in _validate_description(description):
+        diagnostics.append(ResourceDiagnostic(type="warning", message=error, path=file_path))
+
+    # Use name from frontmatter, or fall back to parent directory name
+    frontmatter_name = frontmatter.get("name") if isinstance(frontmatter.get("name"), str) else None
+    name = frontmatter_name or parent_dir_name
+
+    for error in _validate_name(name):
+        diagnostics.append(ResourceDiagnostic(type="warning", message=error, path=file_path))
+
+    # Still load the skill even with warnings, unless description is missing or empty.
+    if not has_description:
+        return None, diagnostics
+
+    return (
+        Skill(
+            name=name,
+            description=description,
+            file_path=file_path,
+            base_dir=skill_dir,
+            source_info=_create_skill_source_info(file_path, skill_dir, source),
+            disable_model_invocation=frontmatter.get("disable-model-invocation") is True,
+        ),
+        diagnostics,
+    )
 
 
 def _escape_xml(value: str) -> str:

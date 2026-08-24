@@ -255,20 +255,32 @@ class LocalEditOperations:
         await tonio.spawn_blocking(check)
 
 
+def _is_single_edit_input(value: Any) -> bool:
+    """pi's `isSingleEditInput`: a bare `{oldText, newText}` sent instead of a one-element array."""
+    if not isinstance(value, dict):
+        return False
+    return isinstance(value.get("oldText"), str) and isinstance(value.get("newText"), str)
+
+
 def prepare_edit_arguments(input: Any) -> Any:
     if not input or not isinstance(input, dict):
         return input
 
     args = dict(input)
 
-    # Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+    # Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array.
+    # Others send a single edit object instead of a one-element edits array.
     if isinstance(args.get("edits"), str):
         try:
             parsed = json.loads(args["edits"])
             if isinstance(parsed, list):
                 args["edits"] = parsed
+            elif _is_single_edit_input(parsed):
+                args["edits"] = [parsed]
         except Exception:
             pass
+    elif _is_single_edit_input(args.get("edits")):
+        args["edits"] = [args["edits"]]
 
     if not isinstance(args.get("oldText"), str) or not isinstance(args.get("newText"), str):
         return args
