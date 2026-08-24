@@ -386,6 +386,7 @@ def _create_summarization_options(
     env: dict[str, str] | None,
     cancel,
     thinking_level: str | None,
+    session_id: str | None,
 ) -> SimpleStreamOptions:
     options = SimpleStreamOptions(
         max_tokens=int(max_tokens) if max_tokens != math.inf else None,
@@ -393,6 +394,7 @@ def _create_summarization_options(
         api_key=api_key,
         headers=headers,
         env=env,
+        session_id=session_id,
     )
     if model.reasoning and thinking_level and thinking_level != "off":
         options.reasoning = thinking_level
@@ -411,9 +413,14 @@ async def complete_summarization(
     Wraps the single LLM call in retry_assistant_call so transient stream drops
     honor the configured retry policy instead of failing the whole compaction on
     the first attempt. Deterministic errors and aborts return immediately."""
-    # Summaries are standalone requests, so isolate routing and avoid cache
-    # writes that cannot be reused.
-    request_options = replace(options, cache_retention="none", session_id=uuidv7())
+    # Avoid cache writes for one-off summaries. Reuse caller-supplied routing when
+    # available; callers without a session ID, including branch summaries, receive a
+    # fresh routing ID.
+    request_options = replace(
+        options,
+        cache_retention="none",
+        session_id=options.session_id if options.session_id is not None else uuidv7(),
+    )
     if stream_fn is None:
         raise Exception("complete_summarization requires a stream function (pi's compat registry is not ported)")
 
@@ -444,6 +451,7 @@ async def generate_summary(
     env: dict[str, str] | None = None,
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Generate a summary of the conversation using the LLM.
     If previous_summary is provided, uses the update prompt to merge."""
@@ -461,6 +469,7 @@ async def generate_summary(
         env,
         retry,
         callbacks,
+        session_id,
     )
     return result.text
 
@@ -479,6 +488,7 @@ async def generate_summary_with_usage(
     env: dict[str, str] | None = None,
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
+    session_id: str | None = None,
 ) -> SummaryWithUsage:
     """Generate or update a conversation summary and return its provider usage."""
     max_tokens = min(math.floor(0.8 * reserve_tokens), model.max_tokens if model.max_tokens > 0 else math.inf)
@@ -503,7 +513,9 @@ async def generate_summary_with_usage(
         UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))
     ]
 
-    completion_options = _create_summarization_options(model, max_tokens, api_key, headers, env, cancel, thinking_level)
+    completion_options = _create_summarization_options(
+        model, max_tokens, api_key, headers, env, cancel, thinking_level, session_id
+    )
 
     response = await complete_summarization(
         model,
@@ -653,8 +665,12 @@ async def compact(
     env: dict[str, str] | None = None,
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
+    session_id: str | None = None,
 ) -> CompactionResult:
     """Generate summaries for compaction using prepared data.
+
+    `session_id` is an optional routing session ID forwarded without enabling
+    prompt caching.
     Returns CompactionResult - SessionManager adds id/parentId when saving."""
     settings = preparation.settings
 
@@ -676,6 +692,7 @@ async def compact(
             stream_fn,
             retry,
             callbacks,
+            session_id,
         )
         if preparation.messages_to_summarize:
             history_result, turn_prefix_result = await gather(
@@ -693,6 +710,7 @@ async def compact(
                     env,
                     retry,
                     callbacks,
+                    session_id,
                 ),
                 turn_prefix_call,
             )
@@ -723,6 +741,7 @@ async def compact(
             env,
             retry,
             callbacks,
+            session_id,
         )
         summary = result.text
         summary_usage = result.usage
@@ -755,6 +774,7 @@ async def _generate_turn_prefix_summary(
     stream_fn=None,
     retry: RetryPolicy | None = None,
     callbacks: RetryCallbacks | None = None,
+    session_id: str | None = None,
 ) -> SummaryWithUsage:
     """Generate a summary for a turn prefix (when splitting a turn)."""
     # Smaller budget for turn prefix
@@ -769,7 +789,7 @@ async def _generate_turn_prefix_summary(
     response = await complete_summarization(
         model,
         Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages),
-        _create_summarization_options(model, max_tokens, api_key, headers, env, cancel, thinking_level),
+        _create_summarization_options(model, max_tokens, api_key, headers, env, cancel, thinking_level, session_id),
         stream_fn,
         retry,
         callbacks,

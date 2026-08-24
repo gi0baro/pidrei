@@ -99,9 +99,11 @@ def json_response(body: Any, status: int = 200) -> oauth_http.OAuthHttpResponse:
     )
 
 
-def text_response(body: str, status: int = 200) -> oauth_http.OAuthHttpResponse:
+def text_response(body: str, status: int = 200, headers: dict[str, str] | None = None) -> oauth_http.OAuthHttpResponse:
     return oauth_http.OAuthHttpResponse(
-        status=status, body=body.encode("utf-8"), headers={"content-type": "text/plain"}
+        status=status,
+        body=body.encode("utf-8"),
+        headers={"content-type": "text/plain", **(headers or {})},
     )
 
 

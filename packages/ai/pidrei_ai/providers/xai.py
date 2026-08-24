@@ -1,9 +1,8 @@
 """Port of pi's xai provider factory (packages/ai/src/providers/xai.ts).
 
-`api` dispatches on `model.api`: openai-completions, openai-responses.
+Every built-in xAI model goes through the Responses API.
 """
 
-from pidrei_ai.api.openai_completions_lazy import openai_completions_api
 from pidrei_ai.api.openai_responses_lazy import openai_responses_api
 from pidrei_ai.auth.helpers import env_api_key_auth, lazy_oauth
 from pidrei_ai.auth.oauth.load import load_xai_oauth
@@ -27,8 +26,5 @@ def xai_provider() -> Provider:
             ),
         ),
         models=list(MODELS.get("xai", [])),
-        api={
-            "openai-completions": openai_completions_api(),
-            "openai-responses": openai_responses_api(),
-        },
+        api=openai_responses_api(),
     )

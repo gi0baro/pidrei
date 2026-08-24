@@ -7,17 +7,20 @@ derives the per-credential base URL from.
 """
 
 import base64
+import math
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import urlsplit
 
-import tonio.colored as tonio
-from tonio.colored import sync
-
 from pidrei_ai.auth.oauth import http as oauth_http
-from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
+from pidrei_ai.auth.oauth.device_code import (
+    OAuthDeviceCodePollResult,
+    abortable_sleep,
+    poll_oauth_device_code_flow,
+)
 from pidrei_ai.auth.oauth.urls import http_or_https_url
 from pidrei_ai.auth.types import (
     AuthEvent,
@@ -44,7 +47,8 @@ COPILOT_HEADERS = {
     "Copilot-Integration-Id": "vscode-chat",
 }
 COPILOT_API_VERSION = "2026-06-01"
-COPILOT_POLICY_CONCURRENCY = 4
+MAX_RETRY_AFTER_MS = 10_000
+DEFAULT_RETRY_AFTER_MS = 1_000
 MODELS_FETCH_TIMEOUT_MS = 5000
 
 
@@ -138,6 +142,29 @@ def _parse_available_copilot_model_ids(raw: Any, allow_policy_fallback: bool) ->
     return picker_ids if picker_ids or not allow_policy_fallback else policy_enabled_ids
 
 
+def _status_text(status: int) -> str:
+    """`Response.statusText` for a known status; unknown ones render empty."""
+    try:
+        return HTTPStatus(status).phrase
+    except ValueError:
+        return ""
+
+
+def _retry_after_ms(header_value: str | None) -> float:
+    """`Retry-After` seconds as milliseconds, clamped to MAX_RETRY_AFTER_MS.
+
+    Mirrors pi's `Number(...)` parse: a missing, unparseable, non-finite or
+    non-positive header falls back to DEFAULT_RETRY_AFTER_MS.
+    """
+    try:
+        seconds = float(header_value)  # type: ignore[arg-type] - None raises, as Number(null) is 0
+    except TypeError, ValueError:
+        return DEFAULT_RETRY_AFTER_MS
+    if not math.isfinite(seconds) or seconds <= 0:
+        return DEFAULT_RETRY_AFTER_MS
+    return min(seconds * 1000, MAX_RETRY_AFTER_MS)
+
+
 async def _fetch_json(
     url: str,
     *,
@@ -151,11 +178,7 @@ async def _fetch_json(
         url, method=method, headers=headers, form=form, timeout_ms=timeout_ms, cancel=cancel
     )
     if not response.ok:
-        try:
-            status_text = HTTPStatus(response.status).phrase
-        except ValueError:
-            status_text = ""
-        raise RuntimeError(f"{response.status} {status_text}: {response.text}")
+        raise RuntimeError(f"{response.status} {_status_text(response.status)}: {response.text}")
     return response.json()
 
 
@@ -166,18 +189,31 @@ async def _fetch_available_model_ids(
     # Some Individual accounts return false for every picker flag despite explicit enabled policies.
     # Limit the fallback to that endpoint so other account types keep strict picker semantics.
     allow_policy_fallback = base_url == "https://api.individual.githubcopilot.com"
-    raw = await _fetch_json(
-        f"{base_url}/models",
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {copilot_token}",
-            **COPILOT_HEADERS,
-            "X-GitHub-Api-Version": COPILOT_API_VERSION,
-        },
-        timeout_ms=MODELS_FETCH_TIMEOUT_MS,
-        cancel=cancel,
-    )
-    return _parse_available_copilot_model_ids(raw, allow_policy_fallback)
+
+    def request() -> Awaitable[oauth_http.OAuthHttpResponse]:
+        return oauth_http.request(
+            f"{base_url}/models",
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {copilot_token}",
+                **COPILOT_HEADERS,
+                "X-GitHub-Api-Version": COPILOT_API_VERSION,
+            },
+            timeout_ms=MODELS_FETCH_TIMEOUT_MS,
+            cancel=cancel,
+        )
+
+    # The login-time policy updates can drain the Copilot API rate-limit bucket, in which case
+    # this request is rejected with 429. Honor Retry-After and retry once instead of failing.
+    response = await request()
+    if response.status == HTTPStatus.TOO_MANY_REQUESTS:
+        wait_ms = _retry_after_ms(response.headers.get("retry-after"))
+        await abortable_sleep(wait_ms, cancel, "Login cancelled")
+        response = await request()
+    if not response.ok:
+        raise RuntimeError(f"{response.status} {_status_text(response.status)}: {response.text}")
+    return _parse_available_copilot_model_ids(response.json(), allow_policy_fallback)
 
 
 async def _start_device_flow(domain: str, cancel: CancelToken) -> _DeviceCodeResponse:
@@ -356,18 +392,8 @@ async def _enable_model(token: str, model_id: str, enterprise_domain: str | None
 async def _enable_all_models(token: str, enterprise_domain: str | None, cancel: CancelToken) -> None:
     """Enable every known Copilot model that may require policy acceptance, so the
     catalog is usable right after login."""
-    models = list(MODELS.get("github-copilot", []))
-    if not models:  # pragma: no cover - the vendored catalog always has models
-        return
-    # Sliding window of COPILOT_POLICY_CONCURRENCY requests: a finished slot is
-    # refilled immediately instead of waiting for the slowest of its batch.
-    window = sync.Semaphore(COPILOT_POLICY_CONCURRENCY)
-
-    async def enable(model_id: str) -> bool:
-        async with window:
-            return await _enable_model(token, model_id, enterprise_domain, cancel)
-
-    await tonio.spawn(*[enable(model.id) for model in models])
+    for model in MODELS.get("github-copilot", []):
+        await _enable_model(token, model.id, enterprise_domain, cancel)
 
 
 async def _login_github_copilot(interaction: ProviderAuthInteraction) -> OAuthCredential:

@@ -17,6 +17,7 @@ from pidrei.core.model_resolver import (
     resolve_model_scope_with_diagnostics,
 )
 from pidrei.core.settings_manager import SettingsManager
+from pidrei_ai.providers.all import get_builtin_models, get_builtin_providers
 from tests.model_runtime_helpers import make_model
 
 
@@ -490,14 +491,25 @@ class TestDefaultModelSelection:
         assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-5.5"
 
     def test_zai_minimax_cerebras_and_ant_ling_defaults_track_current_models(self):
-        assert DEFAULT_MODEL_PER_PROVIDER["zai"] == "glm-5.1"
+        assert DEFAULT_MODEL_PER_PROVIDER["zai"] == "glm-5.3"
+        assert DEFAULT_MODEL_PER_PROVIDER["zai-coding-cn"] == "glm-5.3"
         assert DEFAULT_MODEL_PER_PROVIDER["minimax"] == "MiniMax-M2.7"
         assert DEFAULT_MODEL_PER_PROVIDER["minimax-cn"] == "MiniMax-M2.7"
         assert DEFAULT_MODEL_PER_PROVIDER["cerebras"] == "zai-glm-4.7"
         assert DEFAULT_MODEL_PER_PROVIDER["ant-ling"] == "Ring-2.6-1T"
 
+    def test_builtin_defaults_exist_in_generated_provider_catalogs(self):
+        for provider in get_builtin_providers():
+            default_id = DEFAULT_MODEL_PER_PROVIDER[provider]
+            assert any(model.id == default_id for model in get_builtin_models(provider)), (
+                f"{provider} default {default_id} should exist in its generated catalog"
+            )
+
     def test_ai_gateway_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["vercel-ai-gateway"] == "zai/glm-5.1"
+
+    def test_xai_default_tracks_current_model(self):
+        assert DEFAULT_MODEL_PER_PROVIDER["xai"] == "grok-4.6"
 
     def test_qwen_token_plan_individual_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual"] == "qwen3.8-max"

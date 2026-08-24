@@ -190,6 +190,14 @@ DROPPED_PREFIXES = (
         "packages/agent/test/proxy.test.ts",
         "server-proxied stream fn: public pi-agent API with no pidrei consumer, not ported",
     ),
+    # 0.84.3 drops (PORT_0.84.3.md).
+    (
+        "packages/coding-agent/src/migrations.ts",
+        (
+            "legacy pi-version config migrations not ported (pidrei starts from a "
+            "fresh ~/.pidrei; config-slice decision)"
+        ),
+    ),
 )
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
 #: providers, so pidrei drops them; offline mirrors exist where noted in
@@ -262,6 +270,9 @@ RENAMES = {
     # 0.84.2 additions. test-theme-colors.ts is a manual CLI tool, not a
     # collected test; its mirror keeps the non-test_ name for the same reason.
     "packages/coding-agent/test/test-theme-colors.ts": "packages/pidrei/tests/theme_colors_tool.py",
+    # 0.84.3 additions. pi split its user-agent helper out under a pi-prefixed
+    # name; pidrei's has always been utils/user_agent.py.
+    "packages/ai/src/utils/pi-user-agent.ts": "packages/ai/pidrei_ai/utils/user_agent.py",
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -329,6 +340,24 @@ TEST_HOMES = {
     "packages/ai/test/lazy-module-load.test.ts": (
         "N/A: Node module-loader probe asserting provider SDKs stay unloaded at import — "
         "pidrei has no provider SDKs (native punkreq transports)"
+    ),
+    # 0.84.3 additions (PORT_0.84.3.md classifier triage).
+    "packages/coding-agent/test/compaction.test.ts": (
+        "covered by packages/agent/tests/test_compaction.py (pi's two compaction suites "
+        "mirror one pidrei module — coding-agent compaction re-exports the harness port)"
+    ),
+    "packages/coding-agent/test/session-manager/tree-traversal.test.ts": (
+        "covered by packages/pidrei/tests/test_session_manager.py (tree-traversal cases "
+        "live with the rest of the session-manager mirror)"
+    ),
+    "packages/coding-agent/test/config.test.ts": (
+        "N/A: specs install-method detection and the self-update machinery, neither ported "
+        "(no uv equivalent — see pidrei/config.py; config-slice decision)"
+    ),
+    "packages/coding-agent/test/syntax-highlight.test.ts": (
+        "N/A: engine-specific — it specs highlight.js grammar loading and HTML-span "
+        "re-rendering; pidrei highlights with pygments (see utils/syntax_highlight.py), "
+        "which has no grammar registry and emits no HTML"
     ),
 }
 

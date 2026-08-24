@@ -41,6 +41,7 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.user_agent import force_user_agent
 
 
 OPENAI_TOOL_CALL_PROVIDERS = frozenset(("openai", "openai-codex", "opencode"))
@@ -261,6 +262,9 @@ def _create_client(
 
     if options_headers:
         headers.update(options_headers)
+
+    if model.provider == "xai":
+        force_user_agent(headers)
 
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}

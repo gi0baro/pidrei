@@ -303,7 +303,7 @@ async def test_times_out_after_repeated_slow_down_responses():
 
 
 @pytest.mark.tonio
-async def test_limits_concurrent_model_policy_updates_during_login():
+async def test_enables_model_policies_sequentially_during_login():
     import threading
 
     import tonio.colored as tonio
@@ -320,7 +320,7 @@ async def test_limits_concurrent_model_policy_updates_during_login():
             active_policy_requests += 1
             max_active_policy_requests = max(max_active_policy_requests, active_policy_requests)
         # pi delays each policy request by 10ms of fake time; a small real
-        # sleep keeps the batch overlapping long enough to observe the cap.
+        # sleep keeps any overlap observable had the updates stayed batched.
         await tonio.time.sleep(0.01)
         with counter_guard:
             active_policy_requests -= 1
@@ -342,5 +342,38 @@ async def test_limits_concurrent_model_policy_updates_during_login():
     with virtual_clock(), stub_oauth_http(handler):
         await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
 
-    assert policy_request_count > 4
-    assert max_active_policy_requests == 4
+    assert policy_request_count > 1
+    assert max_active_policy_requests == 1
+
+
+@pytest.mark.tonio
+async def test_retries_get_models_once_after_a_429_honoring_retry_after():
+    models_request_count = 0
+    retry_wait_ms: list[float] = []
+
+    def handler(request: OAuthRequest):
+        nonlocal models_request_count
+        if request.url.endswith("/login/device/code"):
+            return json_response(device_code_body())
+        if request.url.endswith("/login/oauth/access_token"):
+            return json_response({"access_token": "ghu_refresh_token"})
+        if "/copilot_internal/v2/token" in request.url:
+            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
+        if request.url.endswith("/models"):
+            models_request_count += 1
+            retry_wait_ms.append(clock.now_ms())
+            if models_request_count == 1:
+                return text_response("too many requests", 429, {"retry-after": "1"})
+            return json_response({"data": [{"id": "gpt-5.4", "model_picker_enabled": True}]})
+        if "/models/" in request.url and request.url.endswith("/policy"):
+            return text_response("", 200)
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    interaction = RecordingInteraction(prompt=blank_enterprise_prompt)
+    with virtual_clock(), stub_oauth_http(handler):
+        credential = await github_copilot_oauth.login(interaction)
+
+    assert models_request_count == 2
+    assert credential.extra["availableModelIds"] == ["gpt-5.4"]
+    # The retry honored the server's Retry-After of one second.
+    assert retry_wait_ms[1] - retry_wait_ms[0] == 1000

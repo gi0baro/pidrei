@@ -278,7 +278,6 @@ OPENAI_RESPONSES_NONE_REASONING_MODELS = {
     "gpt-5.6-terra",
     "gpt-5.6-luna",
 }
-XAI_RESPONSES_MODEL_ID = "grok-4.5"
 XAI_BUILTIN_EXCLUDED_MODEL_IDS = {
     "grok-3",
     "grok-3-fast",
@@ -286,7 +285,6 @@ XAI_BUILTIN_EXCLUDED_MODEL_IDS = {
     "grok-4.20-0309-reasoning",
     "grok-code-fast-1",
 }
-XAI_RESPONSES_EFFORT_LEVEL_MAP: dict[str, str | None] = {"off": None, "minimal": None}
 XAI_RESPONSES_COMPAT: dict[str, Any] = {"supportsLongCacheRetention": False}
 
 OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS = {
@@ -626,8 +624,10 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
         and model_id in OPENAI_RESPONSES_NONE_REASONING_MODELS
     ):
         merge_thinking_level_map(model, {"off": "none"})
-    if provider == "xai" and model["api"] == "openai-responses" and model_id == XAI_RESPONSES_MODEL_ID:
-        merge_thinking_level_map(model, dict(XAI_RESPONSES_EFFORT_LEVEL_MAP))
+    # xAI models without verified effort options (e.g. grok-build-0.1) must not
+    # send the undocumented "none"/"minimal" efforts.
+    if provider == "xai" and model["api"] == "openai-responses" and "thinkingLevelMap" not in model:
+        merge_thinking_level_map(model, {"off": None, "minimal": None})
     if supports_openai_xhigh(model_id):
         merge_thinking_level_map(model, {"xhigh": "xhigh"})
     if supports_openai_max(model):
@@ -1225,16 +1225,14 @@ def _load_gateway_providers(
     for model_id, source in _models_of(catalog, "xai").items():
         if not _tool_capable(source):
             continue
-        use_responses_api = model_id == XAI_RESPONSES_MODEL_ID
         model = {
             "id": model_id,
             "name": source.get("name") or model_id,
-            "api": "openai-responses" if use_responses_api else "openai-completions",
+            "api": "openai-responses",
             "provider": "xai",
             "baseUrl": "https://api.x.ai/v1",
+            "compat": dict(XAI_RESPONSES_COMPAT),
         }
-        if use_responses_api:
-            model["compat"] = dict(XAI_RESPONSES_COMPAT)
         model |= {
             "reasoning": source.get("reasoning") is True,
             "input": _input(source),
@@ -1661,8 +1659,8 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
 
         # Claude 4.x and 5.x models route to the Anthropic Messages API.
         is_copilot_claude = _COPILOT_CLAUDE_RE.match(model_id) is not None
-        # Grok 4.5, gpt-5, oswe and MAI-Code models are only served through /responses.
-        needs_responses_api = model_id == "grok-4.5" or model_id.startswith(("gpt-5", "oswe", "mai-"))
+        # Grok, gpt-5, oswe and MAI-Code models are only served through /responses.
+        needs_responses_api = model_id.startswith(("grok-", "gpt-5", "oswe", "mai-"))
         api = (
             "anthropic-messages"
             if is_copilot_claude

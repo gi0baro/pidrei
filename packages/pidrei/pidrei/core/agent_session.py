@@ -1630,7 +1630,19 @@ class AgentSession:
     # =========================================================================
 
     async def compact(self, custom_instructions: str | None = None) -> CompactionResult:
-        """Manually compact the session context. Aborts current agent operation first."""
+        """Manually compact the session context.
+
+        This is the manual entry point used by `/compact`, RPC, and extensions. It is
+        separate from automatic threshold/overflow compaction, which enters through
+        `_check_compaction()` and `_run_auto_compaction()`. After preparation and the
+        `session_before_compact` hook, both paths call the lower-level `compact()`
+        function imported from `./compaction`, unless the hook cancels or supplies a
+        custom result.
+
+        Aborts the current agent operation first. Manual compaction never retries or
+        continues the interrupted agent turn.
+
+        `custom_instructions`: optional instructions for the compaction summary."""
         await self.abort()
         self._compaction_cancel = CancelToken()
         self._emit(CompactionStartEvent(reason="manual"))
@@ -1683,7 +1695,7 @@ class AgentSession:
                 usage = extension_compaction.usage
                 details = extension_compaction.details
             else:
-                # Generate compaction result
+                # Shared default summary generator, also used by automatic compaction.
                 result = await run_compact(
                     preparation,
                     auth["model"],
@@ -1696,6 +1708,7 @@ class AgentSession:
                     auth["env"],
                     _retry_policy_from(self.settings_manager.get_retry_settings()),
                     self._summarization_retry_callbacks({"source": "compaction", "reason": "manual"}),
+                    None,  # session_id
                 )
                 summary = result.summary
                 first_kept_entry_id = result.first_kept_entry_id
@@ -1773,12 +1786,25 @@ class AgentSession:
             self._branch_summary_cancel.cancel()
 
     async def _check_compaction(self, assistant_message: AssistantMessage, skip_aborted_check: bool = True) -> bool:
-        """Check if compaction is needed and run it. Called after agent_end and
-        before prompt submission.
+        """Dispatch automatic compaction after `agent_end` or before prompt submission.
+        Manual compaction does not call this method; it enters through `compact()`.
 
-        1. Overflow: LLM returned context overflow error - remove error message
-           from agent state, compact, auto-retry.
-        2. Threshold: context over threshold - compact, NO auto-retry."""
+        Automatic cases:
+        1. Overflow with retry: a context-overflow error or recoverable length stop;
+           remove the failed assistant message, compact, and retry the turn once.
+        2. Overflow without retry: a successful response exceeded the configured
+           context window; compact but preserve the completed response.
+        3. Threshold without retry: valid or estimated context usage crossed the
+           configured threshold; compact without retrying the completed response.
+
+        Each case calls `_run_auto_compaction()`. After preparation and the
+        `session_before_compact` hook, that method calls the lower-level `compact()`
+        function imported from `./compaction`, unless the hook cancels or supplies a
+        custom result.
+
+        `skip_aborted_check`: when False, include aborted messages (for the pre-prompt
+        check). Returns whether the post-run loop should call `agent.continue_()` for
+        overflow recovery or queued messages."""
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
         if not settings.enabled:
             return False
@@ -1809,19 +1835,18 @@ class AgentSession:
         if assistant_is_from_before_compaction:
             return False
 
-        # Case 1: Recoverable failure. Explicit/silent context overflow still uses
-        # context metadata. A length stop is recoverable when output ended below the
-        # model's original desired limit, independent of the configured context size
-        # or any context-clamped provider request limit. A successful response over
-        # the configured window should compact but must not retry: the assistant
-        # answer already completed and agent.continue_() cannot continue from an
-        # assistant message.
+        # Automatic cases 1 and 2: context overflow. A length stop is recoverable when
+        # output ended below the model's original desired limit, independent of the
+        # configured context size or any context-clamped provider request limit.
         recoverable_length = same_model and is_recoverable_length(
             assistant_message, (self.model.max_tokens if self.model is not None else 0) or 0
         )
         if same_model and (is_context_overflow(assistant_message, context_window) or recoverable_length):
             will_retry = assistant_message.stop_reason != "stop"
 
+            # Case 2: the response completed successfully. Compact, but do not retry
+            # because agent.continue_() cannot continue from a completed assistant
+            # response.
             if not will_retry:
                 return await self._run_auto_compaction("overflow", False)
 
@@ -1840,17 +1865,18 @@ class AgentSession:
                 )
                 return False
 
+            # Case 1: remove the failed or truncated message from agent state, compact,
+            # and retry once. The message remains in session history but is excluded
+            # from the retry context.
             self._overflow_recovery_attempted = True
-            # Remove the failed or truncated message from agent state. It remains in
-            # session history, but must not be included in the compact-and-retry context.
             messages = self.agent.state.messages
             if messages and getattr(messages[-1], "role", None) == "assistant":
                 self.agent.state.messages = messages[:-1]
             return await self._run_auto_compaction("overflow", will_retry)
 
-        # Case 2: Threshold. For error messages or all-zero usage messages, estimate
-        # from the last valid response so sessions hitting persistent API errors can
-        # still compact and do not reset context accounting.
+        # Case 3: threshold compaction without retry. For error messages or all-zero
+        # usage messages, estimate from the last valid response so sessions hitting
+        # persistent API errors can still compact and do not reset context accounting.
         direct_context_tokens = (
             calculate_context_tokens(assistant_message.usage) if assistant_message.usage is not None else 0
         )
@@ -1877,7 +1903,15 @@ class AgentSession:
         return False
 
     async def _run_auto_compaction(self, reason: str, will_retry: bool) -> bool:
-        """Internal: run auto-compaction with events."""
+        """Execute threshold or overflow compaction. Manual compaction uses
+        `AgentSession.compact()` instead. Both paths call the lower-level `compact()`
+        function imported from `./compaction` after preparation and extension
+        interception.
+
+        `reason`: the automatic trigger selected by `_check_compaction()`.
+        `will_retry`: whether to continue the interrupted turn after overflow
+        compaction. Returns whether the post-run loop should call
+        `agent.continue_()`."""
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
         started = False
 
@@ -1928,6 +1962,7 @@ class AgentSession:
                 usage = extension_compaction.usage
                 details = extension_compaction.details
             else:
+                # Shared default summary generator, also used by manual compaction.
                 compact_result = await run_compact(
                     preparation,
                     auth["model"],
@@ -1940,6 +1975,7 @@ class AgentSession:
                     auth["env"],
                     _retry_policy_from(self.settings_manager.get_retry_settings()),
                     self._summarization_retry_callbacks({"source": "compaction", "reason": reason}),
+                    None,  # session_id
                 )
                 summary = compact_result.summary
                 first_kept_entry_id = compact_result.first_kept_entry_id

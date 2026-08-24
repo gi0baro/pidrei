@@ -76,6 +76,7 @@ from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.user_agent import force_user_agent
 
 
 @dataclass(slots=True)
@@ -471,11 +472,26 @@ def _map_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:
 def _parse_chunk_usage(raw_usage: dict, model: Model) -> Usage:
     prompt_tokens = raw_usage.get("prompt_tokens") or 0
     prompt_details = raw_usage.get("prompt_tokens_details") or {}
-    cached = prompt_details.get("cached_tokens")
-    cache_read_tokens = cached if cached is not None else raw_usage.get("prompt_cache_hit_tokens") or 0
+    # pi's `?? ?? ??` chain: providers disagree on placement, and a present zero
+    # must win over the next candidate.
+    cache_read_tokens = next(
+        (
+            value
+            for value in (
+                prompt_details.get("cached_tokens"),
+                raw_usage.get("prompt_cache_hit_tokens"),
+                raw_usage.get("cached_tokens"),
+            )
+            if value is not None
+        ),
+        0,
+    )
     cache_write_tokens = prompt_details.get("cache_write_tokens") or 0
 
-    # cached_tokens is cache-read (hits); cache_write_tokens is a separate
+    # cached_tokens is cache-read (hits). Providers disagree on placement:
+    # OpenAI/OpenRouter use prompt_tokens_details.cached_tokens, DeepSeek uses
+    # prompt_cache_hit_tokens, and Kimi documents top-level usage.cached_tokens
+    # on the final usage chunk. cache_write_tokens is a separate
     # OpenRouter-compatible write count. Never subtract writes from reads.
     input_tokens = max(0, prompt_tokens - cache_read_tokens - cache_write_tokens)
     output_tokens = raw_usage.get("completion_tokens") or 0
@@ -543,6 +559,9 @@ def _create_client(
     # Merge options headers last so they can override defaults.
     if options_headers:
         headers.update(options_headers)
+
+    if model.provider == "xai":
+        force_user_agent(headers)
 
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
