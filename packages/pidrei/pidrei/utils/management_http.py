@@ -3,7 +3,8 @@
 pi wraps `fetch`; pidrei's management requests go through the punkreq seam
 (`utils/http.shared_client`), so the helper is a GET wrapper rather than a
 `fetch` wrapper. pi's `AbortSignal.timeout` overall budget becomes a monotonic
-deadline: each attempt is given the remaining budget as its request timeout.
+deadline: each attempt is given the remaining budget as its request timeout,
+narrowed to `attempt_timeout_ms` when the caller bounds a single attempt.
 
 pi's `formatVersionCheckError` is not ported — its only caller is the npm
 self-update planner, which pidrei does not have.
@@ -27,6 +28,7 @@ async def fetch_with_retry(
     max_retries: int = DEFAULT_MAX_RETRIES,
     retry_on_status: bool = True,
     timeout_ms: float | None = None,
+    attempt_timeout_ms: float | None = None,
 ) -> Any:
     """GET a management HTTP resource with a bounded immediate retry.
 
@@ -36,13 +38,15 @@ async def fetch_with_retry(
     semantic caller instead.
 
     When `timeout_ms` is supplied it is the overall budget shared by all
-    attempts.
+    attempts and running out of it is terminal. `attempt_timeout_ms` bounds a
+    single attempt instead, so a hung connection is abandoned and retried.
     """
     # lazy: resolved per call so the http seam stays swappable in tests
     from pidrei_ai.utils.http import RequestTimeout, request_timeout, shared_client
 
     max_retries = max(0, int(max_retries))
     deadline = None if timeout_ms is None or timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000
+    attempt_timeout_ms = None if attempt_timeout_ms is None or attempt_timeout_ms <= 0 else attempt_timeout_ms
 
     attempt = 0
     while True:
@@ -51,6 +55,8 @@ async def fetch_with_retry(
             remaining_ms = (deadline - time.monotonic()) * 1000
             if remaining_ms <= 0:
                 raise RequestTimeout(f"Timed out after {timeout_ms:.0f}ms: {url}")
+        if attempt_timeout_ms is not None:
+            remaining_ms = attempt_timeout_ms if remaining_ms is None else min(remaining_ms, attempt_timeout_ms)
 
         try:
             response = await shared_client().get(url, headers=headers, timeout=request_timeout(remaining_ms))

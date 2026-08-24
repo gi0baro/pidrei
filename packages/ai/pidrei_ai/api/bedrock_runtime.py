@@ -113,7 +113,7 @@ class MiddlewareArgs:
 
 
 class MiddlewareStack:
-    """`client.middlewareStack`, for the one step pi registers on."""
+    """`client.middlewareStack`, for the two steps pi registers on."""
 
     def __init__(self) -> None:
         self.registrations: list[MiddlewareRegistration] = []
@@ -140,6 +140,19 @@ class MiddlewareStack:
                 handler = registration.handler(handler)
         return await handler(args)
 
+    async def apply_deserialize(self, terminal: Callable, args: MiddlewareArgs) -> DeserializeOutput:
+        """Run the `deserialize`-step middleware around the transport call.
+
+        Smithy hands this step the raw HTTP response after the SDK receives it
+        and before the modelled output is consumed, so `terminal` is the send
+        itself rather than a no-op.
+        """
+        handler = terminal
+        for registration in reversed(self.registrations):
+            if registration.step == "deserialize":
+                handler = registration.handler(handler)
+        return await handler(args)
+
 
 @dataclass(slots=True)
 class ResponseMetadata:
@@ -151,6 +164,14 @@ class ResponseMetadata:
 class ConverseStreamResponse:
     metadata: ResponseMetadata
     stream: AsyncGenerator[dict[str, Any]]
+
+
+@dataclass(slots=True)
+class DeserializeOutput:
+    """What a `deserialize`-step middleware sees: the modelled output plus the raw response."""
+
+    output: ConverseStreamResponse
+    response: Any
 
 
 # Modelled stream-level exceptions, keyed by the event name Bedrock sends.
@@ -282,22 +303,30 @@ class BedrockRuntimeClient:
         else:
             await self._sign(request)
 
-        client = http.client_for(request.url)
-        response = await client.post(
-            request.url,
-            content=request.body,
-            headers=request.headers,
-            timeout=http.STREAMING_TIMEOUT,
-        )
-        if not 200 <= response.status_code < 300:
-            raw = (await response.read()).decode("utf-8", "replace")
-            raise _service_exception_from_response(response.status_code, dict(response.headers), raw)
+        async def send_request(final_args: MiddlewareArgs) -> DeserializeOutput:
+            final_request = final_args.request
+            client = http.client_for(final_request.url)
+            response = await client.post(
+                final_request.url,
+                content=final_request.body,
+                headers=final_request.headers,
+                timeout=http.STREAMING_TIMEOUT,
+            )
+            if not 200 <= response.status_code < 300:
+                raw = (await response.read()).decode("utf-8", "replace")
+                raise _service_exception_from_response(response.status_code, dict(response.headers), raw)
 
-        metadata = ResponseMetadata(
-            http_status_code=response.status_code,
-            request_id=response.headers.get("x-amzn-requestid"),
-        )
-        return ConverseStreamResponse(metadata=metadata, stream=_iterate_event_stream(response, cancel))
+            metadata = ResponseMetadata(
+                http_status_code=response.status_code,
+                request_id=response.headers.get("x-amzn-requestid"),
+            )
+            return DeserializeOutput(
+                output=ConverseStreamResponse(metadata=metadata, stream=_iterate_event_stream(response, cancel)),
+                response=response,
+            )
+
+        result = await self.middleware_stack.apply_deserialize(send_request, MiddlewareArgs(request=request))
+        return result.output
 
 
 def _without_model_id(command_input: Mapping[str, Any]) -> dict[str, Any]:

@@ -195,6 +195,7 @@ user sends a prompt
 | `session_start` | Startup, and on new/switched sessions | — |
 | `session_shutdown` | Before the process exits | Block shutdown |
 | `session_before_compact` | Before compaction runs | — |
+| `session_compact` / `session_compact_failed` | After compaction succeeds / after it fails or is aborted | — |
 | `session_before_fork` / `session_before_switch` / `session_before_tree` | Before the matching session action | — |
 | `resources_discover` | Startup and `/reload` | Add resource paths |
 | `input` | User submitted input | Transform, or handle it entirely |

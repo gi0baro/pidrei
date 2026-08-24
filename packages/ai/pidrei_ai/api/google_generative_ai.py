@@ -15,12 +15,14 @@ from typing import Any
 
 from pidrei_ai.api.google_client import GoogleGenAI
 from pidrei_ai.api.google_shared import (
-    GoogleThinkingLevel,
+    GoogleApiThinkingLevel,
+    ResolvedGoogleThinkingLevel,
     convert_messages,
     convert_tools,
     is_thinking_part,
     map_stop_reason,
     resolve_google_function_calling_mode,
+    resolve_google_thinking_level,
     retain_thought_signature,
     retry_google_request,
     supports_google_strict_tool_sampling,
@@ -69,7 +71,7 @@ _GEMINI_3_FLASH = re.compile(r"gemini-3(?:\.\d+)?-flash")
 class GoogleThinking:
     enabled: bool
     budget_tokens: int | None = None  # -1 for dynamic, 0 to disable
-    level: GoogleThinkingLevel | None = None
+    level: GoogleApiThinkingLevel | None = None
 
 
 @dataclass(slots=True)
@@ -321,13 +323,13 @@ def stream_simple(
         return stream(model, context, _with_thinking(base, GoogleThinking(enabled=False)), into=into)
 
     clamped_reasoning = clamp_thinking_level(model, options.reasoning)
-    effort = "high" if clamped_reasoning == "off" else clamped_reasoning
+    resolved_level = resolve_google_thinking_level(model, clamped_reasoning)
 
     if _is_gemini_3_pro_model(model) or _is_gemini_3_flash_model(model) or _is_gemma_4_model(model):
         return stream(
             model,
             context,
-            _with_thinking(base, GoogleThinking(enabled=True, level=_get_thinking_level(effort, model))),
+            _with_thinking(base, GoogleThinking(enabled=True, level=_get_thinking_level(resolved_level, model))),
             into=into,
         )
 
@@ -336,7 +338,9 @@ def stream_simple(
         context,
         _with_thinking(
             base,
-            GoogleThinking(enabled=True, budget_tokens=_get_google_budget(model, effort, options.thinking_budgets)),
+            GoogleThinking(
+                enabled=True, budget_tokens=_get_google_budget(model, resolved_level, options.thinking_budgets)
+            ),
         ),
         into=into,
     )
@@ -431,7 +435,7 @@ def _get_disabled_thinking_config(model: Model) -> dict[str, Any]:
     return {"thinkingBudget": 0}
 
 
-def _get_thinking_level(effort: str, model: Model) -> GoogleThinkingLevel:
+def _get_thinking_level(effort: ResolvedGoogleThinkingLevel, model: Model) -> GoogleApiThinkingLevel:
     if _is_gemini_3_pro_model(model):
         if effort in ("minimal", "low"):
             return "LOW"
@@ -451,17 +455,19 @@ def _get_thinking_level(effort: str, model: Model) -> GoogleThinkingLevel:
             return "HIGH"
 
 
-def _get_google_budget(model: Model, effort: str, custom_budgets: ThinkingBudgets | None = None) -> int:
-    if custom_budgets is not None and getattr(custom_budgets, effort, None) is not None:
-        return getattr(custom_budgets, effort)
+def _get_google_budget(
+    model: Model, level: ResolvedGoogleThinkingLevel, custom_budgets: ThinkingBudgets | None = None
+) -> int:
+    if custom_budgets is not None and getattr(custom_budgets, level, None) is not None:
+        return getattr(custom_budgets, level)
 
     if "2.5-pro" in model.id:
-        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 32768}[effort]
+        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 32768}[level]
 
     if "2.5-flash-lite" in model.id:
-        return {"minimal": 512, "low": 2048, "medium": 8192, "high": 24576}[effort]
+        return {"minimal": 512, "low": 2048, "medium": 8192, "high": 24576}[level]
 
     if "2.5-flash" in model.id:
-        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 24576}[effort]
+        return {"minimal": 128, "low": 2048, "medium": 8192, "high": 24576}[level]
 
     return -1

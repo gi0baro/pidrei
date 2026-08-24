@@ -227,6 +227,14 @@ def stream(
 
         try:
             client = BedrockRuntimeClient(config)
+            observed_raw_response = False
+
+            def _mark_observed() -> None:
+                nonlocal observed_raw_response
+                observed_raw_response = True
+
+            if opts.on_response:
+                add_response_headers_middleware(client, opts.on_response, model, _mark_observed)
             custom_headers = provider_headers_to_record(opts.headers)
             if custom_headers:
                 add_custom_headers_middleware(client, custom_headers)
@@ -259,7 +267,7 @@ def stream(
 
             response = await client.send(command, cancel=opts.cancel)
             response_request_id = _normalize_diagnostic_value(response.metadata.request_id)
-            if response.metadata.http_status_code is not None:
+            if not observed_raw_response and response.metadata.http_status_code is not None:
                 response_headers: dict[str, str] = {}
                 if response.metadata.request_id:
                     response_headers["x-amzn-requestid"] = response.metadata.request_id
@@ -447,6 +455,39 @@ def add_custom_headers_middleware(client: BedrockRuntimeClient, headers: dict[st
         return handle
 
     client.middleware_stack.add(middleware, step="build", name="pidrei-ai-custom-headers", priority="low")
+
+
+def _is_smithy_http_response(response: Any) -> bool:
+    return isinstance(getattr(response, "status_code", None), int) and getattr(response, "headers", None) is not None
+
+
+def _to_provider_response(response: Any) -> ProviderResponse | None:
+    if not _is_smithy_http_response(response):
+        return None
+    return ProviderResponse(status=response.status_code, headers=dict(response.headers))
+
+
+def add_response_headers_middleware(client, on_response, model: Model, on_observed) -> None:
+    """Report the raw response headers via a `deserialize`-step middleware.
+
+    Bedrock's modelled `metadata` only preserves selected HTTP metadata (for
+    example `request_id`), so custom gateway headers are otherwise lost before
+    callers see `on_response`. Capture the raw response at the deserialize step,
+    after it arrives but before the event stream is consumed.
+    """
+
+    def middleware(next_handler):
+        async def handle(args):
+            result = await next_handler(args)
+            provider_response = _to_provider_response(getattr(result, "response", None))
+            if provider_response is not None:
+                on_observed()
+                await maybe_call(on_response, provider_response, model)
+            return result
+
+        return handle
+
+    client.middleware_stack.add(middleware, step="deserialize", name="pidrei-ai-response-headers")
 
 
 def stream_simple(

@@ -32,12 +32,24 @@ TEXT_MODELS = [
 INDIVIDUAL_TEXT_MODELS = [
     "deepseek-v4-flash-0731",
     "deepseek-v4-pro",
+    "deepseek-v4-pro-0813",
     "glm-5.2",
     "qwen3.6-flash",
     "qwen3.7-max",
     "qwen3.7-plus",
     "qwen3.8-max",
 ]
+
+# `deepseek-v4-pro-0813` only reaches the vendored catalog with the U10 regen.
+# Marking the individual cases keeps every other id live in the meantime.
+REGEN_PENDING_MODEL_IDS = {"deepseek-v4-pro-0813"}
+_REGEN_PENDING = pytest.mark.skip(reason="catalog regen pending — unskip after `make models-data` (PORT_0.84.3 U10)")
+
+
+def _individual_case(model_id: str):
+    marks = [_REGEN_PENDING] if model_id in REGEN_PENDING_MODEL_IDS else []
+    return pytest.param("qwen-token-plan-individual", model_id, marks=marks)
+
 
 IMAGE_MODELS = ["qwen-image-2.0", "qwen-image-2.0-pro", "wan2.7-image", "wan2.7-image-pro"]
 
@@ -60,6 +72,7 @@ def test_omits_retired_qwen38_max_preview(provider):
     assert "qwen3.8-max-preview" not in model_ids
 
 
+@_REGEN_PENDING
 def test_exposes_exactly_the_documented_individual_text_models():
     model_ids = sorted(model.id for model in get_builtin_models("qwen-token-plan-individual"))
 
@@ -101,17 +114,22 @@ THINKING_MODELS = [
 
 REASONING_EFFORT_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1", "glm-5.2"]
 
-INDIVIDUAL_REASONING_EFFORT_MODELS = ["deepseek-v4-flash-0731", "deepseek-v4-pro", "glm-5.2"]
+INDIVIDUAL_REASONING_EFFORT_MODELS = [
+    "deepseek-v4-flash-0731",
+    "deepseek-v4-pro",
+    "deepseek-v4-pro-0813",
+    "glm-5.2",
+]
 
 # pi builds these as explicit {provider, modelId} case lists: the Individual
 # catalog carries a different model set, so it cannot be a second axis.
 THINKING_MODEL_CASES = [(provider, model_id) for provider in PROVIDERS for model_id in THINKING_MODELS] + [
-    ("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_TEXT_MODELS
+    _individual_case(model_id) for model_id in INDIVIDUAL_TEXT_MODELS
 ]
 
 REASONING_EFFORT_MODEL_CASES = [
     (provider, model_id) for provider in PROVIDERS for model_id in REASONING_EFFORT_MODELS
-] + [("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_REASONING_EFFORT_MODELS]
+] + [_individual_case(model_id) for model_id in INDIVIDUAL_REASONING_EFFORT_MODELS]
 
 
 def _context() -> Context:

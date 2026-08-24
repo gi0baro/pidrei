@@ -659,6 +659,27 @@ class AgentSession:
     def _emit_queue_update(self) -> None:
         self._emit(QueueUpdateEvent(steering=list(self._steering_messages), follow_up=list(self._follow_up_messages)))
 
+    async def _emit_session_compact_failed(
+        self,
+        *,
+        reason: str,
+        aborted: bool,
+        will_retry: bool,
+        from_extension: bool,
+        error_message: str | None = None,
+    ) -> None:
+        if self._extension_runner.has_handlers("session_compact_failed"):
+            await self._extension_runner.emit(
+                {
+                    "type": "session_compact_failed",
+                    "reason": reason,
+                    "errorMessage": error_message,
+                    "aborted": aborted,
+                    "willRetry": will_retry,
+                    "fromExtension": from_extension,
+                }
+            )
+
     def _get_idle_wait_event(self) -> tonio.Event:
         with self._state_guard:
             if self._idle_wait_event is None:
@@ -1646,6 +1667,7 @@ class AgentSession:
         await self.abort()
         self._compaction_cancel = CancelToken()
         self._emit(CompactionStartEvent(reason="manual"))
+        from_extension = False
 
         try:
             if self.model is None:
@@ -1665,7 +1687,6 @@ class AgentSession:
                 raise Exception("Nothing to compact (session too small)")
 
             extension_compaction: CompactionResult | None = None
-            from_extension = False
 
             if self._extension_runner.has_handlers("session_before_compact"):
                 result = await self._extension_runner.emit(
@@ -1759,6 +1780,7 @@ class AgentSession:
         except Exception as error:
             message = str(error)
             aborted = message == "Compaction cancelled" or type(error).__name__ == "AbortError"
+            error_message = None if aborted else f"Compaction failed: {message}"
             self._compaction_cancel = None
             self._emit(
                 CompactionEndEvent(
@@ -1766,8 +1788,15 @@ class AgentSession:
                     result=None,
                     aborted=aborted,
                     will_retry=False,
-                    error_message=None if aborted else f"Compaction failed: {message}",
+                    error_message=error_message,
                 )
+            )
+            await self._emit_session_compact_failed(
+                reason="manual",
+                error_message=error_message,
+                aborted=aborted,
+                will_retry=False,
+                from_extension=from_extension,
             )
             raise
         finally:
@@ -1869,6 +1898,13 @@ class AgentSession:
                         error_message=error_message,
                     )
                 )
+                await self._emit_session_compact_failed(
+                    reason="overflow",
+                    error_message=error_message,
+                    aborted=False,
+                    will_retry=False,
+                    from_extension=False,
+                )
                 return False
 
             # Case 1: remove the failed or truncated message from agent state, compact,
@@ -1920,6 +1956,7 @@ class AgentSession:
         `agent.continue_()`."""
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
         started = False
+        from_extension = False
 
         try:
             if self.model is None:
@@ -1938,7 +1975,6 @@ class AgentSession:
             started = True
 
             extension_compaction: CompactionResult | None = None
-            from_extension = False
 
             if self._extension_runner.has_handlers("session_before_compact"):
                 extension_result = await self._extension_runner.emit(
@@ -1955,6 +1991,9 @@ class AgentSession:
 
                 if isinstance(extension_result, dict) and extension_result.get("cancel"):
                     self._emit(CompactionEndEvent(reason=reason, result=None, aborted=True, will_retry=False))
+                    await self._emit_session_compact_failed(
+                        reason=reason, aborted=True, will_retry=False, from_extension=False
+                    )
                     return False
 
                 if isinstance(extension_result, dict) and extension_result.get("compaction") is not None:
@@ -1991,6 +2030,9 @@ class AgentSession:
 
             if self._auto_compaction_cancel.cancelled:
                 self._emit(CompactionEndEvent(reason=reason, result=None, aborted=True, will_retry=False))
+                await self._emit_session_compact_failed(
+                    reason=reason, aborted=True, will_retry=False, from_extension=from_extension
+                )
                 return False
 
             await self.session_manager.append_compaction(
@@ -2049,18 +2091,26 @@ class AgentSession:
         except Exception as error:
             error_message = str(error) or "compaction failed"
             if started:
+                formatted_error_message = (
+                    f"Context overflow recovery failed: {error_message}"
+                    if reason == "overflow"
+                    else f"Auto-compaction failed: {error_message}"
+                )
                 self._emit(
                     CompactionEndEvent(
                         reason=reason,
                         result=None,
                         aborted=False,
                         will_retry=False,
-                        error_message=(
-                            f"Context overflow recovery failed: {error_message}"
-                            if reason == "overflow"
-                            else f"Auto-compaction failed: {error_message}"
-                        ),
+                        error_message=formatted_error_message,
                     )
+                )
+                await self._emit_session_compact_failed(
+                    reason=reason,
+                    error_message=formatted_error_message,
+                    aborted=False,
+                    will_retry=False,
+                    from_extension=from_extension,
                 )
             return False
         finally:

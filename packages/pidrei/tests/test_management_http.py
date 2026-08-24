@@ -74,6 +74,23 @@ async def test_gives_up_after_the_retry_budget(stub_http):
 
 
 @pytest.mark.tonio
+async def test_retries_an_attempt_timeout(stub_http):
+    from pidrei_ai.utils.http import RequestTimeout
+
+    ok = _Response()
+    client = stub_http([RequestTimeout("Timed out"), ok])
+
+    response = await fetch_with_retry("https://example.test", attempt_timeout_ms=4000)
+
+    assert response is ok
+    assert client.calls == 2
+    # A hung attempt is abandoned, not charged against the next one: every
+    # attempt gets the full per-attempt bound (pi creates a fresh
+    # AbortSignal.timeout per attempt).
+    assert [timeout.read for timeout in client.timeouts] == [4.0, 4.0]
+
+
+@pytest.mark.tonio
 async def test_retries_transient_http_responses_and_returns_the_successful_response(stub_http):
     busy = _Response(503)
     ok = _Response()

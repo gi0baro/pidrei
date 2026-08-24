@@ -249,6 +249,14 @@ def _is_unknown_model(model) -> bool:
     return model is not None and model.provider == "unknown" and model.id == "unknown" and model.api == "unknown"
 
 
+def _llama_cpp_post_login_guidance(action_label: str, loaded_model_count: int) -> str:
+    return (
+        f"{action_label}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it."
+        if loaded_model_count == 0
+        else f"{action_label}. Use /model to select a loaded llama.cpp model, or /llama to manage models."
+    )
+
+
 _SAFE_SHELL_VALUE_RE = re.compile(r"[^a-zA-Z0-9_\-./~:@]")
 
 
@@ -5229,7 +5237,11 @@ class InteractiveMode:
         if _is_unknown_model(previous_model):
             available_models = self.session.model_runtime.get_available_snapshot()
             provider_models = [model for model in available_models if model.provider == provider_id]
-            if provider_id not in DEFAULT_MODEL_PER_PROVIDER:
+            # Matches LLAMA_PROVIDER_ID from pi's built-in llama extension, which pidrei does not
+            # ship; kept inline so a provider registered under that id gets the same guidance.
+            if provider_id == "llama.cpp":
+                selection_error = _llama_cpp_post_login_guidance(action_label, len(provider_models))
+            elif provider_id not in DEFAULT_MODEL_PER_PROVIDER:
                 selection_error = (
                     f'{action_label}, but no default model is configured for provider "{provider_id}". '
                     "Use /model to select a model."

@@ -25,6 +25,7 @@ from .model_wire import parse_model_dict
 
 
 DEFAULT_CATALOG_BASE_URL = "https://pi.dev"
+REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS = 4_000
 REMOTE_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000
 
 
@@ -37,7 +38,7 @@ class CatalogResponse:
 
 async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> CatalogResponse:
     async def _request() -> Any:
-        response = await fetch_with_retry(url, headers=headers)
+        response = await fetch_with_retry(url, headers=headers, attempt_timeout_ms=REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS)
         return response, await response.read()
 
     # The refresh watchdog (`model_runtime`) cancels this token; the request

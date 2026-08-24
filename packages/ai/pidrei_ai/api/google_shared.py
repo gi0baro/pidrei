@@ -20,6 +20,7 @@ from pidrei_ai.types import (
     Context,
     ImageContent,
     Model,
+    ModelThinkingLevel,
     StopReason,
     StreamOptions,
     TextContent,
@@ -29,7 +30,27 @@ from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 
 
-type GoogleThinkingLevel = Literal["THINKING_LEVEL_UNSPECIFIED", "MINIMAL", "LOW", "MEDIUM", "HIGH"]
+type GoogleApiThinkingLevel = Literal["THINKING_LEVEL_UNSPECIFIED", "MINIMAL", "LOW", "MEDIUM", "HIGH"]
+type ResolvedGoogleThinkingLevel = Literal["minimal", "low", "medium", "high"]
+
+
+def resolve_google_thinking_level(model: Model, level: ModelThinkingLevel) -> ResolvedGoogleThinkingLevel:
+    """Resolve a supported pi level or model-specific Google mapping to a standard Google level."""
+    if level == "off":
+        return "high"
+
+    level_map = model.thinking_level_map or {}
+    mapped = level_map.get(level)
+    resolved_level = mapped.lower() if isinstance(mapped, str) else level
+    if resolved_level in ("minimal", "low", "medium", "high"):
+        return resolved_level  # type: ignore[return-value]
+    # pi reports the offending mapping through JS `String()`, which spells an
+    # absent key "undefined" and an explicit null "null".
+    described = "undefined" if level not in level_map else "null" if mapped is None else mapped
+    raise Exception(
+        f"Unsupported Google thinking level mapping for {model.provider}/{model.id}: {level} -> {described}"
+    )
+
 
 # `FunctionCallingConfigMode` in the SDK; these are its wire values.
 FUNCTION_CALLING_MODE_AUTO = "AUTO"
