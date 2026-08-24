@@ -604,6 +604,31 @@ def apply_anthropic_messages_compat_metadata(model: dict[str, Any]) -> None:
         merge_compat(model, compat)
 
 
+def is_anthropic_fallback_metadata_model(model: dict[str, Any]) -> bool:
+    if model["provider"] != "anthropic" or model["api"] != "anthropic-messages":
+        return False
+    return model["id"] in ANTHROPIC_ALLOWED_FALLBACK_MODELS or any(
+        model["id"] in fallback_model_ids for fallback_model_ids in ANTHROPIC_ALLOWED_FALLBACK_MODELS.values()
+    )
+
+
+def apply_anthropic_fallback_cost_metadata(models: list[dict[str, Any]]) -> None:
+    """Copy each fallback target's own catalog pricing onto the requesting model's
+    `allowedFallbackModels` entry, so a served fallback response is priced correctly."""
+    models_by_id = {model["id"]: model for model in models}
+    for model_id, fallback_model_ids in ANTHROPIC_ALLOWED_FALLBACK_MODELS.items():
+        model = models_by_id.get(model_id)
+        allowed = (model or {}).get("compat", {}).get("allowedFallbackModels")
+        if not allowed:
+            continue
+
+        for fallback_model_id in fallback_model_ids:
+            fallback = next((target for target in allowed if target["model"] == fallback_model_id), None)
+            fallback_model = models_by_id.get(fallback_model_id)
+            if fallback is not None and fallback_model is not None:
+                fallback["cost"] = fallback_model["cost"]
+
+
 def supports_direct_reasoning_effort(model: dict[str, Any]) -> bool:
     if model["api"] == "anthropic-messages":
         return model.get("compat", {}).get("forceAdaptiveThinking") is True
@@ -785,7 +810,7 @@ def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any
     if provider == "anthropic":
         allowed_fallback_models = ANTHROPIC_ALLOWED_FALLBACK_MODELS.get(model_id)
         if allowed_fallback_models:
-            compat["allowedFallbackModels"] = allowed_fallback_models
+            compat["allowedFallbackModels"] = [{"model": fallback} for fallback in allowed_fallback_models]
     if provider == "xiaomi" or provider.startswith("xiaomi-token-plan-"):
         compat["allowEmptySignature"] = True
     return compat or None
@@ -2443,6 +2468,9 @@ async def main() -> None:
         apply_openai_grammar_tool_compat_metadata(model)
         apply_openai_tool_search_metadata(model)
         apply_openai_explicit_prompt_cache_metadata(model)
+    apply_anthropic_fallback_cost_metadata(
+        [model for model in all_models if is_anthropic_fallback_metadata_model(model)]
+    )
 
     # Group by provider, dedupe by model id (first wins), sort, group by api.
     providers: dict[str, dict[str, dict[str, Any]]] = {}

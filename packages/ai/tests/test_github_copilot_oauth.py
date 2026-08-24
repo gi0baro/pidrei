@@ -23,6 +23,7 @@ from .oauth_helpers import (
 
 
 COPILOT_TOKEN = "tid=test;exp=9999999999;proxy-ep=proxy.individual.githubcopilot.com;"
+COPILOT_MODELS_URL = "https://api.individual.githubcopilot.com/models"
 
 
 def blank_enterprise_prompt(prompt: AuthPrompt) -> str:
@@ -302,78 +303,153 @@ async def test_times_out_after_repeated_slow_down_responses():
     assert poll_times == [DEFAULT_START_MS + 5000, DEFAULT_START_MS + 15_000]
 
 
+def login_handler(models, policy=None):
+    """pi's `stubGitHubCopilotLoginFetch`: a full device-flow login whose model
+    catalog and policy responses come from the caller."""
+
+    def handler(request: OAuthRequest):
+        if request.url.endswith("/login/device/code"):
+            return json_response(device_code_body())
+        if request.url.endswith("/login/oauth/access_token"):
+            return json_response({"access_token": "ghu_refresh_token"})
+        if "/copilot_internal/v2/token" in request.url:
+            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
+        if request.url == COPILOT_MODELS_URL:
+            return models()
+        if request.url.startswith(f"{COPILOT_MODELS_URL}/") and request.url.endswith("/policy"):
+            if policy is None:
+                raise AssertionError(f"Unexpected policy request: {request.url}")
+            return policy(request.url[len(COPILOT_MODELS_URL) + 1 : -len("/policy")])
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    return handler
+
+
+def account_model(model_id: str, policy_state: str, *, tool_calls: bool = True) -> dict[str, Any]:
+    return {
+        "id": model_id,
+        "model_picker_enabled": True,
+        "policy": {"state": policy_state},
+        "capabilities": {"supports": {"tool_calls": tool_calls}},
+    }
+
+
+def throttled_response(retry_after: str):
+    return text_response('{"error": "too many requests"}', 429, {"retry-after": retry_after})
+
+
 @pytest.mark.tonio
-async def test_enables_model_policies_sequentially_during_login():
-    import threading
+async def test_does_not_retry_model_catalog_throttling_during_credential_refresh():
+    catalog_request_count = 0
 
-    import tonio.colored as tonio
+    def handler(request: OAuthRequest):
+        nonlocal catalog_request_count
+        if "/copilot_internal/v2/token" in request.url:
+            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
+        assert request.url == COPILOT_MODELS_URL
+        catalog_request_count += 1
+        return throttled_response("0")
 
-    counter_guard = threading.Lock()
-    active_policy_requests = 0
-    max_active_policy_requests = 0
-    policy_request_count = 0
+    with virtual_clock(), stub_oauth_http(handler), pytest.raises(RuntimeError, match="429"):
+        await github_copilot_oauth.refresh(
+            OAuthCredential(access="old-access-token", refresh="ghu_refresh_token", expires=0), None
+        )
 
-    async def policy_delay_response():
-        nonlocal active_policy_requests, max_active_policy_requests, policy_request_count
-        with counter_guard:
-            policy_request_count += 1
-            active_policy_requests += 1
-            max_active_policy_requests = max(max_active_policy_requests, active_policy_requests)
-        # pi delays each policy request by 10ms of fake time; a small real
-        # sleep keeps any overlap observable had the updates stayed batched.
-        await tonio.time.sleep(0.01)
-        with counter_guard:
-            active_policy_requests -= 1
+    assert catalog_request_count == 1
+
+
+@pytest.mark.tonio
+async def test_updates_only_known_tool_capable_unconfigured_account_model_policies():
+    catalog_request_count = 0
+    policy_model_ids: list[str] = []
+
+    def models():
+        nonlocal catalog_request_count
+        catalog_request_count += 1
+        return json_response(
+            {
+                "data": [
+                    account_model("gpt-4.1", "enabled"),
+                    account_model("claude-sonnet-4.5", "unconfigured"),
+                    account_model("remote-only-model", "unconfigured"),
+                    account_model("gpt-5.4", "unconfigured", tool_calls=False),
+                ]
+            }
+        )
+
+    def policy(model_id: str):
+        policy_model_ids.append(model_id)
         return text_response("", 200)
 
-    def handler(request: OAuthRequest):
-        if request.url.endswith("/login/device/code"):
-            return json_response(device_code_body())
-        if request.url.endswith("/login/oauth/access_token"):
-            return json_response({"access_token": "ghu_refresh_token"})
-        if "/copilot_internal/v2/token" in request.url:
-            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
-        if request.url.endswith("/models"):
-            return json_response({"data": []})
-        if "/models/" in request.url and request.url.endswith("/policy"):
-            return policy_delay_response()
-        raise AssertionError(f"Unexpected request URL: {request.url}")
+    with virtual_clock(), stub_oauth_http(login_handler(models, policy)):
+        credential = await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
 
-    with virtual_clock(), stub_oauth_http(handler):
-        await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
-
-    assert policy_request_count > 1
-    assert max_active_policy_requests == 1
+    assert catalog_request_count == 1
+    assert policy_model_ids == ["claude-sonnet-4.5"]
+    assert credential.extra["availableModelIds"] == ["gpt-4.1", "claude-sonnet-4.5", "remote-only-model"]
 
 
 @pytest.mark.tonio
-async def test_retries_get_models_once_after_a_429_honoring_retry_after():
-    models_request_count = 0
-    retry_wait_ms: list[float] = []
+async def test_retries_a_throttled_policy_update_after_retry_after():
+    policy_request_times: list[int] = []
 
-    def handler(request: OAuthRequest):
-        nonlocal models_request_count
-        if request.url.endswith("/login/device/code"):
-            return json_response(device_code_body())
-        if request.url.endswith("/login/oauth/access_token"):
-            return json_response({"access_token": "ghu_refresh_token"})
-        if "/copilot_internal/v2/token" in request.url:
-            return json_response({"token": COPILOT_TOKEN, "expires_at": 9999999999})
-        if request.url.endswith("/models"):
-            models_request_count += 1
-            retry_wait_ms.append(clock.now_ms())
-            if models_request_count == 1:
-                return text_response("too many requests", 429, {"retry-after": "1"})
-            return json_response({"data": [{"id": "gpt-5.4", "model_picker_enabled": True}]})
-        if "/models/" in request.url and request.url.endswith("/policy"):
-            return text_response("", 200)
-        raise AssertionError(f"Unexpected request URL: {request.url}")
+    def models():
+        return json_response({"data": [account_model("claude-sonnet-4.5", "unconfigured")]})
 
-    interaction = RecordingInteraction(prompt=blank_enterprise_prompt)
-    with virtual_clock(), stub_oauth_http(handler):
-        credential = await github_copilot_oauth.login(interaction)
+    def policy(_model_id: str):
+        policy_request_times.append(clock.now_ms())
+        return throttled_response("1") if len(policy_request_times) == 1 else text_response("", 200)
 
-    assert models_request_count == 2
-    assert credential.extra["availableModelIds"] == ["gpt-5.4"]
+    with virtual_clock(), stub_oauth_http(login_handler(models, policy)):
+        await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
+
+    assert len(policy_request_times) == 2
     # The retry honored the server's Retry-After of one second.
-    assert retry_wait_ms[1] - retry_wait_ms[0] == 1000
+    assert policy_request_times[1] - policy_request_times[0] == 1000
+
+
+@pytest.mark.tonio
+async def test_continues_policy_updates_after_a_transport_failure():
+    model_ids = ["gpt-4.1", "claude-sonnet-4.5"]
+    policy_model_ids: list[str] = []
+
+    def models():
+        return json_response({"data": [account_model(model_id, "unconfigured") for model_id in model_ids]})
+
+    def policy(model_id: str):
+        policy_model_ids.append(model_id)
+        if len(policy_model_ids) == 1:
+            raise RuntimeError("fetch failed")
+        return text_response("", 200)
+
+    with virtual_clock(), stub_oauth_http(login_handler(models, policy)):
+        await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
+
+    assert policy_model_ids == model_ids
+
+
+@pytest.mark.tonio
+async def test_stops_policy_updates_and_persists_authentication_when_the_retry_delay_exceeds_the_login_budget():
+    policy_model_ids: list[str] = []
+
+    def models():
+        return json_response(
+            {"data": [account_model(model_id, "unconfigured") for model_id in ("gpt-4.1", "claude-sonnet-4.5")]}
+        )
+
+    def policy(model_id: str):
+        policy_model_ids.append(model_id)
+        return throttled_response("5")
+
+    store = InMemoryCredentialStore()
+    models_runtime = create_models(credentials=store)
+    models_runtime.set_provider(github_copilot_provider())
+
+    with virtual_clock(), stub_oauth_http(login_handler(models, policy)):
+        credential = await models_runtime.login(
+            "github-copilot", "oauth", RecordingInteraction(prompt=blank_enterprise_prompt)
+        )
+
+    assert credential.access == COPILOT_TOKEN
+    assert policy_model_ids == ["gpt-4.1"]
+    assert await store.read("github-copilot") == credential

@@ -1,5 +1,7 @@
 """Port of pi's simple-options helpers (packages/ai/src/api/simple-options.ts)."""
 
+from collections.abc import Mapping
+
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel
 from pidrei_ai.utils.estimate import estimate_context_tokens
 
@@ -54,8 +56,31 @@ def build_base_options(
 MIN_ANSWER_TOKENS = 1024
 
 
+DEFAULT_THINKING_BUDGETS: dict[str, int] = {"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384}
+
+
 def clamp_reasoning(effort: ThinkingLevel | None) -> str | None:
     return "high" if effort in ("xhigh", "max") else effort
+
+
+def thinking_budget_for_level(
+    reasoning_level: ThinkingLevel, custom_budgets: ThinkingBudgets | Mapping[str, int] | None = None
+) -> int:
+    """pi spreads a `ThinkingBudgets` object literal over the defaults. pidrei receives
+    either the dataclass or the raw `thinkingBudgets` settings dict, so both resolve here."""
+    level = clamp_reasoning(reasoning_level)
+    if custom_budgets is not None:
+        custom = (
+            custom_budgets.get(level) if isinstance(custom_budgets, Mapping) else getattr(custom_budgets, level, None)  # type: ignore[arg-type]
+        )
+        if custom is not None:
+            return custom
+    return DEFAULT_THINKING_BUDGETS[level]  # type: ignore[index]
+
+
+def clamp_thinking_budget_to_answer_room(thinking_budget: int, ceiling: int) -> int:
+    """Cap a thinking budget so at least MIN_ANSWER_TOKENS remain under a shared response ceiling."""
+    return min(thinking_budget, max(0, ceiling - MIN_ANSWER_TOKENS))
 
 
 def adjust_max_tokens_for_thinking(
@@ -66,20 +91,12 @@ def adjust_max_tokens_for_thinking(
     custom_budgets: ThinkingBudgets | None = None,
 ) -> tuple[int, int]:
     """Returns (max_tokens, thinking_budget)."""
-    budgets = {"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384}
-    if custom_budgets is not None:
-        for level in budgets:
-            custom = getattr(custom_budgets, level)
-            if custom is not None:
-                budgets[level] = custom
-
-    level = clamp_reasoning(reasoning_level)
-    thinking_budget = budgets[level]  # type: ignore[index]
+    thinking_budget = thinking_budget_for_level(reasoning_level, custom_budgets)
     max_tokens = (
         model_max_tokens if base_max_tokens is None else min(base_max_tokens + thinking_budget, model_max_tokens)
     )
 
     if max_tokens <= thinking_budget:
-        thinking_budget = max(0, max_tokens - MIN_ANSWER_TOKENS)
+        thinking_budget = clamp_thinking_budget_to_answer_room(thinking_budget, max_tokens)
 
     return max_tokens, thinking_budget

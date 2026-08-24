@@ -59,10 +59,12 @@ async def test_sends_the_configured_budget_for_the_requested_level():
 
 
 @pytest.mark.tonio
-async def test_omits_the_budget_when_the_compat_flag_is_not_set():
+async def test_omits_the_budget_when_neither_the_field_nor_the_alias_is_set():
     model = vllm_model(OpenAICompletionsCompat(thinking_format="zai"))
     params = await capture(model, reasoning="medium", thinking_budgets={"medium": 4096})
     assert "thinking_token_budget" not in params
+    assert "thinking_budget" not in params
+    assert "thinking_budget_tokens" not in params
 
 
 @pytest.mark.tonio
@@ -90,3 +92,51 @@ async def test_leaves_room_for_the_answer_when_the_budget_meets_the_response_cei
 async def test_uses_the_caller_max_tokens_as_the_ceiling_when_it_is_lower_than_the_model_cap():
     params = await capture(vllm_model(), reasoning="high", thinking_budgets={"high": 8192}, max_tokens=4096)
     assert params["thinking_token_budget"] == 4096 - 1024
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("field", ["thinking_budget", "thinking_budget_tokens"])
+async def test_sends_the_configured_field_when_thinking_token_budget_field_is_set(field):
+    model = vllm_model(OpenAICompletionsCompat(thinking_format="qwen", thinking_token_budget_field=field))
+    params = await capture(model, reasoning="medium", thinking_budgets={"medium": 4096})
+    assert params[field] == 4096
+    assert "thinking_token_budget" not in params
+
+
+@pytest.mark.tonio
+async def test_lets_thinking_token_budget_field_win_over_the_boolean_alias():
+    model = vllm_model(
+        OpenAICompletionsCompat(
+            thinking_format="zai",
+            supports_thinking_token_budget=True,
+            thinking_token_budget_field="thinking_budget",
+        )
+    )
+    params = await capture(model, reasoning="medium", thinking_budgets={"medium": 4096})
+    assert params["thinking_budget"] == 4096
+    assert "thinking_token_budget" not in params
+
+
+def _chat_template_model() -> Model:
+    return vllm_model(
+        OpenAICompletionsCompat(
+            thinking_format="chat-template",
+            chat_template_kwargs={
+                "enable_thinking": {"$var": "thinking.enabled"},
+                "thinking_budget": {"$var": "thinking.budget"},
+            },
+        )
+    )
+
+
+@pytest.mark.tonio
+async def test_puts_the_clamped_budget_in_chat_template_kwargs_when_var_is_thinking_budget():
+    params = await capture(_chat_template_model(), reasoning="high")
+    assert params["chat_template_kwargs"] == {"enable_thinking": True, "thinking_budget": 16384 - 1024}
+    assert "thinking_token_budget" not in params
+
+
+@pytest.mark.tonio
+async def test_omits_thinking_budget_from_chat_template_kwargs_when_thinking_is_off():
+    params = await capture(_chat_template_model(), reasoning=None)
+    assert params["chat_template_kwargs"] == {"enable_thinking": False}

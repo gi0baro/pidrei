@@ -15,6 +15,7 @@ from typing import Any
 
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
+    AnthropicRefusalFallbackTarget,
     BedrockCompat,
     Model,
     ModelCompat,
@@ -69,6 +70,19 @@ def _compat_fields(compat_class: type) -> frozenset[str]:
 _ANY_COMPAT_FIELD = frozenset().union(*(_compat_fields(cls) for cls in set(_COMPAT_CLASSES.values())))
 
 
+def _parse_fallback_targets(raw: list[dict[str, Any]]) -> list[AnthropicRefusalFallbackTarget]:
+    return [
+        AnthropicRefusalFallbackTarget(
+            model=target["model"], cost=_parse_cost(target["cost"]) if "cost" in target else None
+        )
+        for target in raw
+    ]
+
+
+# Compat fields whose catalog value is a nested object rather than a scalar.
+_COMPAT_FIELD_PARSERS = {"allowed_fallback_models": _parse_fallback_targets}
+
+
 def _parse_compat(api: str, raw: dict[str, Any]) -> ModelCompat:
     compat_class = _COMPAT_CLASSES.get(api)
     if compat_class is None:
@@ -81,7 +95,8 @@ def _parse_compat(api: str, raw: dict[str, Any]) -> ModelCompat:
             if name in _ANY_COMPAT_FIELD:
                 continue
             raise ValueError(f"Unknown {compat_class.__name__} field {key!r} in catalog data")
-        kwargs[name] = value
+        parser = _COMPAT_FIELD_PARSERS.get(name)
+        kwargs[name] = parser(value) if parser is not None else value
     return compat_class(**kwargs)
 
 

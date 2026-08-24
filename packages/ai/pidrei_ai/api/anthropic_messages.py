@@ -13,7 +13,7 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator, AsyncIterable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, Protocol
 
 from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
@@ -31,6 +31,7 @@ from pidrei_ai.types import (
     ErrorEvent,
     Message,
     Model,
+    ModelCost,
     ProviderEnv,
     ProviderHeaders,
     ProviderResponse,
@@ -556,6 +557,8 @@ def stream(
         anthropic_index_to_content: dict[int, int] = {}
         partial_json: dict[int, str] = {}
 
+        usage_model = model
+
         try:
             if opts.client is not None:
                 client: AnthropicClient = opts.client
@@ -615,6 +618,8 @@ def stream(
                     served_model = message.get("model")
                     if isinstance(served_model, str):
                         output.model = served_model
+                    fallback_cost = None if output.model == model.id else _find_fallback_cost(model, opts, output.model)
+                    usage_model = replace(model, id=output.model, cost=fallback_cost) if fallback_cost else model
                     # Capture initial usage so input counts survive early aborts.
                     output.usage.input = usage.get("input_tokens") or 0
                     output.usage.output = usage.get("output_tokens") or 0
@@ -626,7 +631,7 @@ def stream(
                     output.usage.total_tokens = (
                         output.usage.input + output.usage.output + output.usage.cache_read + output.usage.cache_write
                     )
-                    calculate_cost(model, output.usage)
+                    calculate_cost(usage_model, output.usage)
                 elif event_type == "content_block_start":
                     content_block = event.get("content_block") or {}
                     block_type = content_block.get("type")
@@ -744,7 +749,7 @@ def stream(
                     output.usage.total_tokens = (
                         output.usage.input + output.usage.output + output.usage.cache_read + output.usage.cache_write
                     )
-                    calculate_cost(model, output.usage)
+                    calculate_cost(usage_model, output.usage)
 
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
@@ -1022,6 +1027,21 @@ def _convert_tools(
     return converted
 
 
+def _find_fallback_cost(model: Model, options: AnthropicOptions, served_model: str) -> ModelCost | None:
+    """Local pricing for the model Anthropic actually served, from the request's
+    fallback targets first and the model's permitted targets second."""
+    requested = options.refusal_fallbacks
+    if isinstance(requested, list):
+        for fallback in requested:
+            if fallback.model == served_model and fallback.cost is not None:
+                return fallback.cost
+    compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
+    for fallback in compat.allowed_fallback_models or [] if compat else []:
+        if fallback.model == served_model:
+            return fallback.cost
+    return None
+
+
 def _build_params(model: Model, context: Context, is_oauth_token: bool, options: AnthropicOptions) -> dict[str, Any]:
     cache_control = _get_cache_control(model, options.cache_retention, options.env)
     compat = _get_compat(model)
@@ -1132,6 +1152,10 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
             params["tool_choice"] = options.tool_choice
 
     if options.refusal_fallbacks is not None:
-        params["fallbacks"] = options.refusal_fallbacks
+        params["fallbacks"] = (
+            "default"
+            if options.refusal_fallbacks == "default"
+            else [{"model": fallback.model} for fallback in options.refusal_fallbacks]
+        )
 
     return params

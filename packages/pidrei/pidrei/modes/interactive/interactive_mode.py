@@ -209,6 +209,12 @@ def _is_custom_session_entry(item) -> bool:
     return isinstance(item, dict) and item.get("type") == "custom"
 
 
+def _is_compaction_cost_notice(item) -> bool:
+    """pi's `CompactionCostNotice` is a plain object in the render item union;
+    here it stays a dict, like the custom session entries alongside it."""
+    return isinstance(item, dict) and item.get("type") == "compaction_cost"
+
+
 _DEAD_TERMINAL_ERRNOS = {errno.EIO, errno.EPIPE, errno.ENOTCONN}
 
 
@@ -3247,8 +3253,12 @@ class InteractiveMode:
                 else:
                     self.show_status("Auto-compaction cancelled")
             elif event.result is not None:
+                entries = self.session_manager.build_context_entries()
+                if not entries or entries[0].get("type") != "compaction":
+                    raise Exception("Completed compaction is missing from the session context")
                 self._chat_container.clear()
-                self._rebuild_chat_from_messages()
+                # The latest compaction is prepended for model context; append it below at its chronological position.
+                self._render_session_entries(entries[1:])
                 self._add_message_to_chat(
                     create_compaction_summary_message(
                         event.result.summary,
@@ -3256,6 +3266,10 @@ class InteractiveMode:
                         datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
                     )
                 )
+                if event.result.usage:
+                    self._add_compaction_cost_notice(
+                        {"type": "compaction_cost", "kind": "compaction", "usage": event.result.usage}
+                    )
                 self._footer.invalidate()
             elif event.error_message:
                 if event.reason == "manual":
@@ -3482,6 +3496,9 @@ class InteractiveMode:
             if _is_custom_session_entry(item):
                 self._add_custom_entry_to_chat(item)
                 continue
+            if _is_compaction_cost_notice(item):
+                self._add_compaction_cost_notice(item)
+                continue
 
             message = item
             # Assistant messages need special handling for tool calls
@@ -3551,9 +3568,27 @@ class InteractiveMode:
         for entry in entries:
             if entry.get("type") == "custom":
                 items.append(entry)
-            else:
-                items.extend(session_entry_to_context_messages(entry))
+                continue
+            messages = session_entry_to_context_messages(entry)
+            items.extend(messages)
+            if entry.get("type") in ("compaction", "branch_summary") and entry.get("usage") and messages:
+                items.append({"type": "compaction_cost", "kind": entry["type"], "usage": entry["usage"]})
         self._render_session_items(items, options)
+
+    def _add_compaction_cost_notice(self, notice: dict) -> None:
+        """Render billing usage for a compaction or branch summary. The notice is derived
+        from persisted summary usage and is not stored as a separate session entry."""
+        if not self.settings_manager.get_show_cache_miss_notices():
+            return
+
+        usage = notice["usage"]
+        tokens = usage.input + usage.output + usage.cache_read + usage.cache_write
+        cost = f" (~${usage.cost.total:.2f})" if usage.cost.total >= 0.01 else ""
+        label = "Compaction" if notice["kind"] == "compaction" else "Branch summary"
+        self._chat_container.add_child(Spacer(1))
+        self._chat_container.add_child(
+            Text(theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
+        )
 
     def _maybe_show_cache_miss_notice(self, message) -> None:
         """Show a transcript notice for a significant prompt-cache miss.

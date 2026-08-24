@@ -21,6 +21,7 @@ from pidrei.core.compaction import (
 )
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
+    AnthropicRefusalFallbackTarget,
     AssistantMessage,
     Context,
     DoneEvent,
@@ -146,6 +147,35 @@ async def test_honors_a_caller_supplied_routing_session_without_prompt_caching()
 
 
 @pytest.mark.tonio
+async def test_preserves_the_standalone_split_turn_summary_prompt():
+    contexts: list = []
+
+    async def stream_fn(model, context, options=None):
+        contexts.append(context)
+        stream = AssistantMessageEventStream()
+        stream.push(StartEvent(partial=mock_summary_response()))
+        stream.push(DoneEvent(reason="stop", message=mock_summary_response()))
+        return stream
+
+    preparation = CompactionPreparation(
+        first_kept_entry_id="entry-keep",
+        messages_to_summarize=[],
+        turn_prefix_messages=messages(),
+        is_split_turn=True,
+        tokens_before=100,
+        file_ops=FileOperations(),
+        settings=CompactionSettings(enabled=True, reserve_tokens=2000, keep_recent_tokens=20),
+    )
+
+    await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
+
+    # pi stringifies the request messages; the port reads the text blocks directly.
+    prompt = "".join(block.text for message in contexts[0].messages for block in message.content)
+    assert "This is the PREFIX of a turn that was too large to keep" in prompt
+    assert "<conversation>" in prompt
+
+
+@pytest.mark.tonio
 async def test_rejects_tool_calls_from_conversation_summaries():
     stream_fn, _calls = recording_stream_fn(mock_tool_call_response())
 
@@ -200,13 +230,20 @@ async def test_does_not_set_reasoning_for_non_reasoning_models():
 async def test_sets_the_anthropic_refusal_fallback_from_model_metadata():
     stream_fn, calls = recording_stream_fn()
 
+    fallback_cost = ModelCost(input=5, output=25, cache_read=0.5, cache_write=6.25)
     model = create_model(
-        True, compat=AnthropicMessagesCompat(allowed_fallback_models=["claude-opus-4-8", "claude-opus-5"])
+        True,
+        compat=AnthropicMessagesCompat(
+            allowed_fallback_models=[
+                AnthropicRefusalFallbackTarget(model="claude-opus-4-8", cost=fallback_cost),
+                AnthropicRefusalFallbackTarget(model="claude-opus-5", cost=fallback_cost),
+            ]
+        ),
     )
     await generate_summary(messages(), model, 2000, "test-key", None, None, None, None, None, stream_fn)
 
     assert len(calls) == 1
-    assert calls[0].refusal_fallbacks == [{"model": "claude-opus-4-8"}]
+    assert calls[0].refusal_fallbacks == [AnthropicRefusalFallbackTarget(model="claude-opus-4-8", cost=fallback_cost)]
 
 
 @pytest.mark.tonio

@@ -139,6 +139,39 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
+    async def test_uses_the_standalone_compaction_request_context(self, tmp_dir):
+        session, _sm, _events, state = await _create_session(tmp_dir)
+
+        transform_calls: list = []
+
+        async def transform_context(messages, cancel=None):
+            transform_calls.append(messages)
+            return messages
+
+        session.agent.transform_context = transform_context
+        session.agent.session_id = "active-routing-session"
+        session.agent.transport = "websocket"
+
+        await session.prompt("What is 2+2? Reply with just the number.")
+        await session.agent.wait_for_idle()
+        transform_calls.clear()
+
+        await session.compact()
+
+        assert state["summarization_requests"]
+        request_context, request_options = state["summarization_requests"][0]
+        assert transform_calls == []
+        assert request_context.system_prompt != session.agent.state.system_prompt
+        assert request_context.tools is None
+        # pi stringifies the request messages; the port reads the text blocks directly.
+        prompt = "".join(block.text for message in request_context.messages for block in message.content)
+        assert "<conversation>" in prompt
+        assert request_options.cache_retention == "none"
+        assert request_options.session_id != "active-routing-session"
+        assert request_options.transport is None
+        session.dispose()
+
+    @pytest.mark.tonio
     async def test_maintains_valid_session_state_after_compaction(self, tmp_dir):
         session, _sm, _events, _state = await _create_session(tmp_dir)
 

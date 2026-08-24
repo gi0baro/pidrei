@@ -56,6 +56,7 @@ from ..utils.tool_result_images import normalize_tool_result_images
 from .auth_guidance import format_no_api_key_found_message, format_no_model_selected_message
 from .bash_executor import BashResult, execute_bash_with_operations
 from .compaction import (
+    CompactionPreparation,
     CompactionResult,
     CompactionSettings,
     calculate_context_tokens,
@@ -1650,6 +1651,33 @@ class AgentSession:
     # Compaction
     # =========================================================================
 
+    async def _run_default_compaction(
+        self,
+        preparation: CompactionPreparation,
+        request_model: Model,
+        api_key: str | None,
+        headers: dict[str, str] | None,
+        custom_instructions: str | None,
+        cancel,
+        env: dict[str, str] | None,
+        reason: str,
+    ) -> CompactionResult:
+        """Generate Pi's built-in compaction summary for manual and automatic compaction."""
+        return await run_compact(
+            preparation,
+            request_model,
+            api_key,
+            headers,
+            custom_instructions,
+            cancel,
+            self.thinking_level,
+            self.agent.stream_function,
+            env,
+            _retry_policy_from(self.settings_manager.get_retry_settings()),
+            self._summarization_retry_callbacks({"source": "compaction", "reason": reason}),
+            None,  # session_id
+        )
+
     async def compact(self, custom_instructions: str | None = None) -> CompactionResult:
         """Manually compact the session context.
 
@@ -1717,19 +1745,15 @@ class AgentSession:
                 details = extension_compaction.details
             else:
                 # Shared default summary generator, also used by automatic compaction.
-                result = await run_compact(
+                result = await self._run_default_compaction(
                     preparation,
                     auth["model"],
                     auth["api_key"],
                     auth["headers"],
                     custom_instructions,
                     self._compaction_cancel,
-                    self.thinking_level,
-                    self.agent.stream_function,
                     auth["env"],
-                    _retry_policy_from(self.settings_manager.get_retry_settings()),
-                    self._summarization_retry_callbacks({"source": "compaction", "reason": "manual"}),
-                    None,  # session_id
+                    "manual",
                 )
                 summary = result.summary
                 first_kept_entry_id = result.first_kept_entry_id
@@ -2008,19 +2032,15 @@ class AgentSession:
                 details = extension_compaction.details
             else:
                 # Shared default summary generator, also used by manual compaction.
-                compact_result = await run_compact(
+                compact_result = await self._run_default_compaction(
                     preparation,
                     auth["model"],
                     auth["api_key"],
                     auth["headers"],
                     None,
                     self._auto_compaction_cancel,
-                    self.thinking_level,
-                    self.agent.stream_function,
                     auth["env"],
-                    _retry_policy_from(self.settings_manager.get_retry_settings()),
-                    self._summarization_retry_callbacks({"source": "compaction", "reason": reason}),
-                    None,  # session_id
+                    reason,
                 )
                 summary = compact_result.summary
                 first_kept_entry_id = compact_result.first_kept_entry_id

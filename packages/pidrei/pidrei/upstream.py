@@ -21,7 +21,7 @@ UPSTREAM_VERSION = "0.84.2"
 #: The exact pi commit ported — by convention the commit immediately after the
 #: release tag ("Add [Unreleased] section for next cycle"). Bumped by
 #: `make upstream-bump` as each upstream delta lands.
-UPSTREAM_REF = "8af7690c4f0c41fad274620829c75a3243d07aa3"
+UPSTREAM_REF = "55b0db4d3e9075345b6509a5b488250d79e026d8"
 
 
 def short_ref() -> str:

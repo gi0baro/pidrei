@@ -16,7 +16,9 @@ is TypeScript-shaped end to end:
   resolves both inside a Bun-compiled binary and in a dev checkout. A pidrei
   extension runs in the same interpreter with the same ``sys.path``, so it just
   writes ``import pidrei_ai`` and gets the very objects the agent is using.
-  That whole block is deliberately not ported.
+  That whole block is deliberately not ported. Upstream fixes to it — such as
+  pi's `c0613289`, which extends the virtual-module branch to Node SEA hosts —
+  have no analogue here for the same reason.
 
 Everything else is pi's: the cwd+generation-keyed factory cache, the
 registration-writes-to-the-extension-object split, discovery order, and the

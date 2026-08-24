@@ -28,6 +28,7 @@ from pidrei_agent.harness.compaction.compaction import (
 )
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
+    AnthropicRefusalFallback,
     Context,
     Model,
     SimpleStreamOptions,
@@ -78,7 +79,7 @@ __all__ = [  # re-exported shared helpers keep pi's coding-agent module surface
 ]
 
 
-def _get_anthropic_summarization_fallback(model: Model) -> list[dict[str, str]] | None:
+def _get_anthropic_summarization_fallback(model: Model) -> AnthropicRefusalFallback | None:
     if model.provider != "anthropic" or model.api != "anthropic-messages":
         return None
 
@@ -86,7 +87,7 @@ def _get_anthropic_summarization_fallback(model: Model) -> list[dict[str, str]] 
     allowed_fallback_models = compat.allowed_fallback_models if compat else None
     # Use the primary permitted fallback for now. If future Anthropic models expose
     # broader fallback behavior, this can become a user/config pick or a full chain.
-    return [{"model": allowed_fallback_models[0]}] if allowed_fallback_models else None
+    return [allowed_fallback_models[0]] if allowed_fallback_models else None
 
 
 @dataclass(slots=True)
@@ -359,9 +360,7 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages."""
 
-UPDATE_SUMMARIZATION_PROMPT = """The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
-
-Update the existing structured summary with new information. RULES:
+UPDATE_SUMMARIZATION_INSTRUCTIONS = """Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
 - ADD new progress, decisions, and context from the new messages
 - UPDATE the Progress section: move items from "In Progress" to "Done" when completed
@@ -397,6 +396,18 @@ Use this EXACT format:
 - [Preserve important context, add new if needed]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages."""
+
+UPDATE_SUMMARIZATION_PROMPT = f"""The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
+
+{UPDATE_SUMMARIZATION_INSTRUCTIONS}"""
+
+
+def _build_summarization_context(prompt_text: str) -> Context:
+    """Build the provider context for a standalone summary request."""
+    return Context(
+        system_prompt=SUMMARIZATION_SYSTEM_PROMPT,
+        messages=[UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))],
+    )
 
 
 def _create_summarization_options(
@@ -534,17 +545,13 @@ async def generate_summary_with_usage(
         prompt_text += f"<previous-summary>\n{previous_summary}\n</previous-summary>\n\n"
     prompt_text += base_prompt
 
-    summarization_messages = [
-        UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))
-    ]
-
     completion_options = _create_summarization_options(
         model, max_tokens, api_key, headers, env, cancel, thinking_level, session_id
     )
 
     response = await complete_summarization(
         model,
-        Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages),
+        _build_summarization_context(prompt_text),
         completion_options,
         stream_fn,
         retry,
@@ -809,13 +816,10 @@ async def _generate_turn_prefix_summary(
     llm_messages = convert_to_llm(messages)
     conversation_text = serialize_conversation(llm_messages)
     prompt_text = f"<conversation>\n{conversation_text}\n</conversation>\n\n{TURN_PREFIX_SUMMARIZATION_PROMPT}"
-    summarization_messages = [
-        UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))
-    ]
 
     response = await complete_summarization(
         model,
-        Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages),
+        _build_summarization_context(prompt_text),
         _create_summarization_options(model, max_tokens, api_key, headers, env, cancel, thinking_level, session_id),
         stream_fn,
         retry,

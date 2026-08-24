@@ -293,6 +293,10 @@ TEST_HOMES = {
     ),
     "packages/ai/test/openai-completions-tool-choice.test.ts": "PARITY GAP: tool_choice forwarding in openai_completions.py unmirrored",
     "packages/coding-agent/test/git-update.test.ts": "PARITY GAP: package_manager.py git update (force-push handling) unmirrored",
+    "packages/coding-agent/test/suite/regressions/8237-node-sea-extension-loading.test.ts": (
+        "not ported: guards jiti virtualModules vs filesystem aliases inside a Node SEA binary; "
+        "pidrei extensions import the live modules from sys.path (loader.py docstring)"
+    ),
     "packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts": "partial mirror: test_agent_session_bash_persistence.py holds the 0.83.0 concurrency cases; the rest of the characterization suite is a PARITY GAP",
     "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": "PARITY GAP: compaction transient-retry regression unmirrored",
     "packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts": "PARITY GAP: session_start transient-UI regression unmirrored",

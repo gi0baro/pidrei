@@ -49,15 +49,16 @@ class Text:
         # Replace tabs with 3 spaces
         normalized_text = text.replace("\t", "   ")
 
-        # Calculate content width (subtract left/right margins)
-        content_width = max(1, width - self._padding_x * 2)
+        # Reduce margins when necessary so content and padding fit within the available width.
+        padding_x = min(self._padding_x, max(0, (width - 1) // 2))
+        content_width = max(1, width - padding_x * 2)
 
         # Wrap text (this preserves ANSI codes but does NOT pad)
         wrapped_lines = wrap_text_with_ansi(normalized_text, content_width)
 
         # Add margins and background to each line
-        left_margin = " " * self._padding_x
-        right_margin = " " * self._padding_x
+        left_margin = " " * padding_x
+        right_margin = " " * padding_x
         content_lines: list[str] = []
 
         for line in wrapped_lines:

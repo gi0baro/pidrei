@@ -16,8 +16,9 @@ from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oau
 from pidrei_ai.auth.oauth.urls import http_or_https_url
 from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
 from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_ai.utils.sleep import sleep
 
 
 CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
@@ -201,20 +202,11 @@ def _is_retryable_refresh_failure(status: int) -> bool:
     return status == 429 or status >= 500
 
 
-async def _sleep(ms: float, cancel: CancelToken) -> None:
-    """pi's abortable sleep rejects with the signal's reason."""
-    try:
-        await clock.sleep_ms(ms, cancel)
-    except AbortError:
-        cancel.raise_if_cancelled()
-        raise
-
-
 async def _refresh_token(oauth_host: str, refresh_token_value: str, cancel: CancelToken) -> _TokenResponse:
     last_error: Exception | None = None
     for attempt in range(REFRESH_MAX_RETRIES + 1):
         if attempt > 0:
-            await _sleep(1000 * 2 ** (attempt - 1), cancel)
+            await sleep(1000 * 2 ** (attempt - 1), cancel)
         if cancel.cancelled:
             raise RuntimeError("Kimi Code token refresh aborted")
 

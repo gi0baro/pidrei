@@ -84,6 +84,8 @@ type ModelThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xh
 # Maps pi thinking levels to provider/model-specific values; None marks a level unsupported.
 type ThinkingLevelMap = Mapping[str, str | None]
 type ChatTemplateKwargValue = str | float | bool | None | dict[str, Any]
+# Top-level request field used to cap reasoning tokens on OpenAI-compatible servers.
+type ThinkingTokenBudgetField = Literal["thinking_token_budget", "thinking_budget", "thinking_budget_tokens"]
 
 type CacheRetention = Literal["none", "short", "long"]
 type Transport = Literal["sse", "websocket", "websocket-cached", "auto"]
@@ -380,10 +382,14 @@ class OpenAICompletionsCompat:
     open_router_routing: OpenRouterRouting | None = None
     vercel_gateway_routing: VercelGatewayRouting | None = None
     zai_tool_stream: bool | None = None  # default False
-    # Whether the provider supports top-level `thinking_token_budget` to cap
-    # reasoning tokens (vLLM). Reasoning and the answer share `max_tokens` on
-    # these endpoints, so without a budget a reasoning-heavy turn can consume
-    # the whole response and emit no answer. Default: False.
+    # Top-level request field used to cap reasoning tokens from `thinking_budgets`.
+    # Reasoning and the answer share `max_tokens` on these endpoints, so without a
+    # budget a reasoning-heavy turn can consume the whole response and emit no answer.
+    # `"thinking_token_budget"` is vLLM, `"thinking_budget"` is Qwen/DashScope/SGLang,
+    # `"thinking_budget_tokens"` is llama.cpp. Off by default; not set on the generated catalog.
+    thinking_token_budget_field: ThinkingTokenBudgetField | None = None
+    # Alias for `thinking_token_budget_field="thinking_token_budget"` (vLLM).
+    # Prefer `thinking_token_budget_field`. Default: False.
     supports_thinking_token_budget: bool | None = None
     supports_openai_grammar_tools: bool | None = None  # default False
     supports_strict_mode: bool | None = None  # default True
@@ -428,10 +434,10 @@ class AnthropicMessagesCompat:
     # Replay empty thinking signatures as `signature: ""` instead of converting to text.
     allow_empty_signature: bool | None = None  # default False
     supports_strict_tools: bool | None = None  # default False
-    # Model ids Anthropic accepts in `fallbacks` for server-side refusal fallback.
+    # Models Anthropic accepts in `fallbacks` for server-side refusal fallback.
     # When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
     # field for models with no permitted fallback targets.
-    allowed_fallback_models: list[str] | None = None
+    allowed_fallback_models: list[AnthropicRefusalFallbackTarget] | None = None
     # Deferred tools loaded by `tool_reference` blocks in tool results. Default True for
     # first-party Anthropic models except Haiku and pre-4.5 models; False elsewhere.
     supports_tool_references: bool | None = None
@@ -569,10 +575,14 @@ class DeferredFetchOptions(ProviderRequestOptions):
 type DeferredCancelOptions = ProviderRequestOptions
 
 
-# pi: `"default" | readonly { model: string }[]`. The array entries stay plain
-# dicts, as `deferred`'s window object does, because they go straight into the
-# request body.
-type AnthropicRefusalFallback = Literal["default"] | list[dict[str, str]]
+@dataclass(slots=True)
+class AnthropicRefusalFallbackTarget:
+    model: str
+    # Local pricing for this fallback target. Stripped before sending the provider request.
+    cost: ModelCost | None = None
+
+
+type AnthropicRefusalFallback = Literal["default"] | list[AnthropicRefusalFallbackTarget]
 
 
 @dataclass(slots=True)
