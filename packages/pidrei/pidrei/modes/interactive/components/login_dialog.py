@@ -2,15 +2,20 @@
 
 Login dialog component - replaces the editor during OAuth login flows.
 pi's manual-input/prompt Promises become tonio-Event-backed awaitables; the
-AbortController is the tui-local CancelToken.
+AbortController is the ai-layer CancelToken because the dialog's signal is
+handed to `model_runtime.login`, which relies on the full ai token contract
+(`raise_if_cancelled`, `reason`, `never`). Escape cancels with
+`LoginCancelledError` so the abort surfaces as "Login cancelled" (which the
+interactive mode suppresses) rather than as a login failure.
 """
 
 import sys
 
 import tonio.colored as tonio
 
+from pidrei_ai.utils.cancel import CancelToken
+
 from pidrei_tui import Container, Input, Spacer, Text, get_keybindings
-from pidrei_tui.components.cancellable_loader import CancelToken
 
 from ....utils.open_browser import open_browser
 from ..theme import theme
@@ -86,7 +91,7 @@ class LoginDialogComponent(Container):
         ]
 
     def _cancel(self) -> None:
-        self._abort_controller.cancel()
+        self._abort_controller.cancel(LoginCancelledError())
         if self._input_event is not None and not self._input_event.is_set():
             self._input_error = LoginCancelledError()
             event = self._input_event

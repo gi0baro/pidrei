@@ -6,6 +6,22 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.6] - 2026-08-24
+
+### Fixed
+
+- `/login` no longer fails with `'CancelToken' object has no attribute
+  'raise_if_cancelled'`: the login dialog's abort signal is now a real
+  ai-layer `CancelToken`, and Escape aborts with a "Login cancelled" reason
+  instead of surfacing as a login failure.
+- The tui-local `CancelToken` mirror now implements the full ai token
+  contract (`reason`, `never`, `raise_if_cancelled`, reason-carrying
+  `on_cancel` callbacks), fixing the same crash for loader signals passed
+  into streaming APIs (e.g. the `qna` and `handoff` example extensions).
+- Cancellation callbacks registered by the extension selector/input UI and
+  the auth prompt race no longer raise `TypeError` when their token is
+  cancelled (they ignored the abort reason argument).
+
 ## [0.84.2.5] - 2026-08-23
 
 Runtime-layer rework: the JS promise/abort idioms kept from Pi are replaced by

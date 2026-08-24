@@ -1,10 +1,16 @@
 """Loader that can be cancelled with Escape (port of pi tui ``components/cancellable-loader.ts``).
 
 Extends Loader with a cancel token for cancelling async operations. pi uses a
-DOM ``AbortController``; pidrei's tui-local ``CancelToken`` mirrors the subset
-of ``pidrei_ai.utils.cancel.CancelToken`` consumers rely on (``cancelled``,
-``cancel()``, ``on_cancel``, ``wait``) so loader signals stay duck-type
-compatible with the ai layer without a cross-package dependency.
+DOM ``AbortController``; pidrei's tui-local ``CancelToken`` mirrors the caller
+surface of ``pidrei_ai.utils.cancel.CancelToken`` (``cancelled``, ``reason``,
+``never``, ``cancel(reason)``, ``raise_if_cancelled``, ``on_cancel``,
+``wait``) so loader signals stay duck-type compatible with the ai layer
+without a cross-package dependency. ``on_cancel`` callbacks receive the abort
+reason, exactly like the ai token — the ai layer registers
+``callback(reason)`` subscribers on caller tokens
+(``pidrei_ai.utils.abort.run_cancellable``/``race_with_cancel``).
+``tests/test_cancel_token_mirror.py`` in the pidrei package holds the two
+classes to this contract.
 
 Example::
 
@@ -21,37 +27,58 @@ from ..keybindings import get_keybindings
 from .loader import Loader
 
 
-__all__ = ["CancelToken", "CancellableLoader"]
+__all__ = ["AbortError", "CancelToken", "CancellableLoader"]
+
+
+class AbortError(Exception):
+    """Default abort reason (mirror of `pidrei_ai.utils.cancel.AbortError`)."""
 
 
 class CancelToken:
     """Minimal cancel token (see module docstring)."""
 
-    __slots__ = ("_callbacks", "_event", "_lock")
+    __slots__ = ("_callbacks", "_event", "_lock", "_reason")
 
     def __init__(self) -> None:
         self._event = Event()
         self._lock = threading.Lock()
+        self._reason: BaseException | None = None
         self._callbacks: list = []
 
     @property
     def cancelled(self) -> bool:
         return self._event.is_set()
 
-    def cancel(self) -> None:
+    @property
+    def reason(self) -> BaseException | None:
+        return self._reason
+
+    @property
+    def never(self) -> bool:
+        """Mirror of the ai token's placeholder probe; a real token can fire."""
+        return False
+
+    def cancel(self, reason: BaseException | None = None) -> None:
         """Cancel the token. Only the first call has any effect."""
         with self._lock:
             if self._event.is_set():
                 return
+            self._reason = reason if reason is not None else AbortError("Operation was aborted")
             callbacks, self._callbacks = self._callbacks, []
             self._event.set()
         for callback in callbacks:
-            callback()
+            callback(self._reason)
+
+    def raise_if_cancelled(self) -> None:
+        """Mirror of `AbortSignal.throwIfAborted`: raise `reason` when cancelled."""
+        if self._event.is_set():
+            raise self._reason  # type: ignore[misc]
 
     def on_cancel(self, callback):
         """Register a cancellation callback; returns an unsubscribe function.
 
-        If the token is already cancelled the callback is invoked immediately.
+        The callback receives the abort reason. If the token is already
+        cancelled the callback is invoked immediately.
         """
         with self._lock:
             if not self._event.is_set():
@@ -65,7 +92,7 @@ class CancelToken:
                             pass
 
                 return unsubscribe
-        callback()
+        callback(self._reason)
         return lambda: None
 
     def wait(self, timeout: float | None = None):

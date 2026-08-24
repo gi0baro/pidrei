@@ -2384,7 +2384,7 @@ class InteractiveMode:
             done.set()
 
         if signal is not None:
-            remove_abort = signal.on_cancel(lambda: settle(None))
+            remove_abort = signal.on_cancel(lambda _reason: settle(None))
 
         self._extension_selector = ExtensionSelectorComponent(
             title,
@@ -2455,7 +2455,7 @@ class InteractiveMode:
             done.set()
 
         if signal is not None:
-            remove_abort = signal.on_cancel(lambda: settle(None))
+            remove_abort = signal.on_cancel(lambda _reason: settle(None))
 
         self._extension_input = ExtensionInputComponent(
             title,
@@ -5396,7 +5396,7 @@ class InteractiveMode:
             finally:
                 settled.set()
 
-        remove_abort = cancel.on_cancel(lambda: settled.set())
+        remove_abort = cancel.on_cancel(lambda _reason: settled.set())
         tonio.spawn.without_tracking(run_response())
         try:
             await settled.wait(None)

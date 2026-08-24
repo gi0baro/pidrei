@@ -158,7 +158,7 @@ async def _walk_directory_with_fd(base_dir: str, fd_path: str, query: str, max_r
     except Exception:
         return []
 
-    def _kill() -> None:
+    def _kill(_reason: BaseException) -> None:
         if process.returncode is None:
             process.kill()
 
