@@ -6,7 +6,15 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_server.testing import TEST_MODEL, Deferred, TestServerService
-from tests.server_support import Harness
+from tests.server_support import Harness, flush
+
+
+async def settled(deferred: Deferred, what: str, timeout: float = 5.0):
+    """Await `deferred` with a bound: a wedged choreography step fails with a
+    name instead of hanging the whole CI job (seen on linux 3.14t)."""
+    value, completed = await tonio.time.timeout(deferred.wait(), timeout)
+    assert completed, f"timed out waiting for {what}"
+    return value
 
 
 MODEL = TEST_MODEL
@@ -53,23 +61,28 @@ async def test_serializes_server_snapshot_revisions(tmp_dir):
         message_index = len(client.messages)
 
         first_create = tonio.spawn(client.request({"command": "create", "name": "first"}))
-        await service.first_started
+        await settled(service.first_started, "the first broadcast to reach list_models")
         second_create = tonio.spawn(client.request({"command": "create", "name": "second"}))
-        await tonio.sleep(0)
+        # `sleep(0)` is not a guaranteed reschedule (see `flush`); give the
+        # second broadcast real turns to (wrongly) reach list_models.
+        await flush()
         assert service.started_count == 1
 
         service.first_release.resolve(None)
-        await service.second_started
+        await settled(service.second_started, "the second broadcast to reach list_models")
         service.second_release.resolve(None)
         await first_create
         await second_create
-        await client.next_from(
-            message_index,
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "server_snapshot"
-                and message["event"]["snapshot"]["revision"] == 2
+        await settled(
+            client.next_from(
+                message_index,
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "server_snapshot"
+                    and message["event"]["snapshot"]["revision"] == 2
+                ),
             ),
+            "the revision-2 server snapshot",
         )
 
         revisions = [

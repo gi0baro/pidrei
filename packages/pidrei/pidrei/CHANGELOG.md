@@ -6,6 +6,24 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.2.7] - 2026-08-24
+
+### Fixed
+
+- The random-looking permanent TUI freeze introduced in 0.84.2.5: detached
+  handlers (editor submit, follow-up, external editor, clipboard paste,
+  extension and selector actions) mutated editor state while the input owner
+  was mid-keystroke; the resulting `IndexError` killed the stdin pump and
+  input was dead for good. Editor mutations from off the owner now go through
+  the owner task (`_post_editor_mutation`), restoring the single-writer
+  contract (concurrency audit §4.4) across the coding-agent layer too.
+- Long-lived tasks no longer die silently on an exception: the stdin pump,
+  the output pump, the frame writer, the render loop, posted owner work and
+  the autocomplete request task route errors to the crash handler (and the
+  pumps keep running), instead of leaving a frozen UI with a live agent.
+  `BaseException` is caught where a pyo3 `PanicException` would otherwise
+  slip past `except Exception`.
+
 ## [0.84.2.6] - 2026-08-24
 
 ### Fixed

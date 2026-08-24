@@ -68,6 +68,10 @@ ALLOWED_SYNC_AWAITS = {
     "_load_scope",
     "_show_extension_selector",
     "_show_extension_editor",
+    # server: queues the frame synchronously (wire ordering decided at call
+    # time) and returns the coroutine that waits for it to go out. Documented
+    # at the definition.
+    "_send_message",
 }
 
 # Sync-prologue methods whose returned awaitable is a runtime-driven Deferred:
@@ -98,6 +102,11 @@ JUSTIFIED_SYNC_PORTS = {
     # because a Python coroutine cannot be awaited twice. Same shape as
     # `SettingsManager._enqueue_write`. Documented at the definition.
     "Editor._start_autocomplete_request",
+    # pi's async body queues the frame before its first await, deciding wire
+    # order at call time; the sync prologue keeps that ordering on tonio
+    # (a lazily-started coroutine would decide it at schedule time).
+    # Documented at the definition.
+    "PiServer._send_message",
 }
 
 

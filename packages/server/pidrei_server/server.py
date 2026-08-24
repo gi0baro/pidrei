@@ -187,11 +187,16 @@ class PiServer:
             finishing = self._finish_handshake(state, message)
 
             async def _drive_handshake() -> None:
+                # `handshake` must settle on every path: messages queued in
+                # `_deliver_after_handshake` park on it, and an unsettled
+                # deferred drops them silently with the connection alive.
                 try:
-                    await finishing
-                except Exception as error:
-                    await self._fail_protocol(state, self._to_protocol_error(error))
-                handshake.resolve(None)
+                    try:
+                        await finishing
+                    except Exception as error:
+                        await self._fail_protocol(state, self._to_protocol_error(error))
+                finally:
+                    handshake.resolve(None)
 
             tonio.spawn.without_tracking(_drive_handshake())
             return

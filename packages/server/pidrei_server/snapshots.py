@@ -59,9 +59,13 @@ class ServerSnapshotPublisher:
             async with self._broadcast_lock:
                 try:
                     await self._perform_broadcast()
-                except Exception as error:
+                except BaseException as error:
+                    # BaseException: `result` must settle — an unsettled
+                    # broadcast wedges any caller that awaits it.
                     self._options.report_error(error)
                     result.reject(error)
+                    if isinstance(error, GeneratorExit):
+                        raise
                     return
             result.resolve(None)
 

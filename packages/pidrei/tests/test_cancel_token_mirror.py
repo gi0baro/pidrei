@@ -20,12 +20,11 @@ import inspect
 import pytest
 import tonio.colored as tonio
 
+from pidrei.modes.interactive.components.login_dialog import LoginDialogComponent
+from pidrei.modes.interactive.theme import init_theme
 from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
 from pidrei_tui.components.cancellable_loader import CancelToken as TuiCancelToken
-
-from pidrei.modes.interactive.components.login_dialog import LoginDialogComponent
-from pidrei.modes.interactive.theme import init_theme
 
 
 class _FakeTui:

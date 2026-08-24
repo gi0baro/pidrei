@@ -14,6 +14,7 @@ import hashlib
 import socket as _stdlib_socket
 import stat as stat_module
 import sys
+import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -231,9 +232,6 @@ class UnixListener:
             pass
 
 
-_CLOSE_SENTINEL = object()
-
-
 @dataclass(slots=True, frozen=True)
 class _FinalWrite:
     data: bytes | None
@@ -243,6 +241,15 @@ class UnixByteConnection:
     """One accepted socket: ordered writer queue with a pending-byte cap.
 
     Exported only for transport-level verification (pi's `@internal`).
+
+    Every frame that makes it into the writer queue has its deferred settled:
+    `mark_closed` ends the queue by closing the sender (never by racing a
+    sentinel past an in-flight `send`), the writer drains what was queued
+    before the close, and a `send` that loses the race enqueues into a closed
+    channel, which raises and is returned as a rejection. A frame whose
+    deferred never settles wedges every `_send_message` awaiter — the
+    response flush, the broadcast fan-out, the handshake — as one silent
+    server-wide deadlock.
     """
 
     def __init__(self, stream: net.SocketStream, graceful_close_timeout_ms: int, max_pending_bytes: int) -> None:
@@ -250,6 +257,9 @@ class UnixByteConnection:
         self._graceful_close_timeout_ms = graceful_close_timeout_ms
         self._max_pending_bytes = max_pending_bytes
         self._pending_bytes = 0
+        # Guards `_pending_bytes` (+= in `send` on any task, -= on the writer:
+        # torn updates drift the counter into spurious limit disconnects).
+        self._pending_guard = threading.Lock()
         self._closed_value = False
         self._closing = False
         self._close_deferred: Deferred | None = None
@@ -270,12 +280,20 @@ class UnixByteConnection:
             return rejected(TypeError("Unix connection chunks must be bytes"))
         if self._closed_value or self._closing:
             return rejected(Exception("Unix connection is closed"))
-        if self._pending_bytes + len(chunk) > self._max_pending_bytes:
-            return rejected(Exception("Unix connection exceeded its pending byte limit"))
         data = bytes(chunk)
-        self._pending_bytes += len(data)
+        with self._pending_guard:
+            if self._pending_bytes + len(data) > self._max_pending_bytes:
+                return rejected(Exception("Unix connection exceeded its pending byte limit"))
+            self._pending_bytes += len(data)
         deferred = Deferred()
-        self._write_sender.send((data, deferred))
+        try:
+            self._write_sender.send((data, deferred))
+        except Exception:
+            # `mark_closed` closed the queue between the check above and the
+            # enqueue; the frame was never queued.
+            with self._pending_guard:
+                self._pending_bytes -= len(data)
+            return rejected(Exception("Unix connection is closed"))
         return deferred
 
     def close(self, final_chunk: bytes | None = None) -> Awaitable[None]:
@@ -289,7 +307,11 @@ class UnixByteConnection:
         deferred = Deferred()
         self._close_deferred = deferred
         self._close_timer = Timer(self._graceful_close_timeout_ms, self._force_close)
-        self._write_sender.send(_FinalWrite(final_bytes))
+        try:
+            self._write_sender.send(_FinalWrite(final_bytes))
+        except Exception:
+            # `mark_closed` won the race: the deferred is already resolved.
+            pass
         return deferred
 
     def mark_closed(self) -> None:
@@ -301,7 +323,12 @@ class UnixByteConnection:
             self._close_timer.cancel()
         if self._close_deferred is not None:
             self._close_deferred.resolve(None)
-        self._write_sender.send(_CLOSE_SENTINEL)
+        # Ends the queue after everything already enqueued; the writer drains
+        # the remainder and exits on the closed channel.
+        try:
+            self._write_sender.close()
+        except Exception:
+            pass  # already closed by a concurrent mark_closed
 
     def _abort_stream(self) -> None:
         """Tear the socket down from a task other than its reader.
@@ -323,9 +350,10 @@ class UnixByteConnection:
 
     async def _run_writer(self) -> None:
         while True:
-            item = await self._write_receiver.receive()
-            if item is _CLOSE_SENTINEL:
-                return
+            try:
+                item = await self._write_receiver.receive()
+            except BrokenPipeError:
+                return  # queue closed by mark_closed and fully drained
             if isinstance(item, _FinalWrite):
                 if self._closed_value:
                     self.mark_closed()
@@ -342,11 +370,17 @@ class UnixByteConnection:
                 if self._closed_value or self._closing:
                     raise Exception("Unix connection is closed")
                 await self._stream.send_all(data)
-            except Exception as error:
-                self._pending_bytes -= len(data)
-                deferred.reject(error)
+            except BaseException as error:
+                # BaseException: the sole writer dying without settling this
+                # deferred (or draining the queue) wedges every sender.
+                with self._pending_guard:
+                    self._pending_bytes -= len(data)
+                deferred.reject(error if isinstance(error, Exception) else Exception(repr(error)))
+                if isinstance(error, GeneratorExit):
+                    raise
                 continue
-            self._pending_bytes -= len(data)
+            with self._pending_guard:
+                self._pending_bytes -= len(data)
             deferred.resolve(None)
 
 
