@@ -134,13 +134,6 @@ NVIDIA_NIM_UNSUPPORTED_MODELS = {
     "upstage/solar-10.7b-instruct",
 }
 ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = {"glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"}
-ZAI_GLM52_THINKING_LEVEL_MAP: dict[str, str | None] = {
-    "minimal": None,
-    "low": "high",
-    "medium": "high",
-    "high": "high",
-    "max": "max",
-}
 OPENCODE_GO_GLM52_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "off": None,
     "minimal": None,
@@ -612,21 +605,22 @@ def is_anthropic_fallback_metadata_model(model: dict[str, Any]) -> bool:
     )
 
 
-def apply_anthropic_fallback_cost_metadata(models: list[dict[str, Any]]) -> None:
-    """Copy each fallback target's own catalog pricing onto the requesting model's
-    `allowedFallbackModels` entry, so a served fallback response is priced correctly."""
+def apply_anthropic_allowed_fallback_model_metadata(models: list[dict[str, Any]]) -> None:
+    """Build each requesting model's `allowedFallbackModels` from the catalog entries of
+    its permitted targets, so a served fallback response is priced correctly."""
     models_by_id = {model["id"]: model for model in models}
     for model_id, fallback_model_ids in ANTHROPIC_ALLOWED_FALLBACK_MODELS.items():
         model = models_by_id.get(model_id)
-        allowed = (model or {}).get("compat", {}).get("allowedFallbackModels")
-        if not allowed:
+        if model is None:
             continue
 
-        for fallback_model_id in fallback_model_ids:
-            fallback = next((target for target in allowed if target["model"] == fallback_model_id), None)
-            fallback_model = models_by_id.get(fallback_model_id)
-            if fallback is not None and fallback_model is not None:
-                fallback["cost"] = fallback_model["cost"]
+        allowed_fallback_models = [
+            {"provider": fallback_model["provider"], "model": fallback_model["id"], "cost": fallback_model["cost"]}
+            for fallback_model_id in fallback_model_ids
+            if (fallback_model := models_by_id.get(fallback_model_id)) is not None
+        ]
+        if allowed_fallback_models:
+            merge_compat(model, {"allowedFallbackModels": allowed_fallback_models})
 
 
 def supports_direct_reasoning_effort(model: dict[str, Any]) -> bool:
@@ -807,10 +801,6 @@ def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any
     compat: dict[str, Any] = {}
     if f"{provider}:{model_id}" in EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS:
         compat["supportsEagerToolInputStreaming"] = False
-    if provider == "anthropic":
-        allowed_fallback_models = ANTHROPIC_ALLOWED_FALLBACK_MODELS.get(model_id)
-        if allowed_fallback_models:
-            compat["allowedFallbackModels"] = [{"model": fallback} for fallback in allowed_fallback_models]
     if provider == "xiaomi" or provider.startswith("xiaomi-token-plan-"):
         compat["allowEmptySignature"] = True
     return compat or None
@@ -1301,7 +1291,9 @@ def _load_gateway_providers(
         for model_id, source in _models_of(catalog, source_key).items():
             if not _catalog_eligible(source):
                 continue
-            is_glm52 = model_id == "glm-5.2"
+            thinking_level_map = get_effort_thinking_level_map(source.get("reasoning_options") or [])
+            if thinking_level_map is not None and model_id in ("glm-5.2", "glm-5.2-highspeed"):
+                thinking_level_map["off"] = "none"
             # Coding-plan catalogs carry no prices; the PAYG catalog's are the
             # closest reference for usage estimates.
             reference_cost = (zai_payg_models.get(model_id) or {}).get("cost") or source.get("cost")
@@ -1313,10 +1305,10 @@ def _load_gateway_providers(
                 "baseUrl": base_url,
                 "reasoning": source.get("reasoning") is True,
             }
-            if is_glm52:
-                model["thinkingLevelMap"] = dict(ZAI_GLM52_THINKING_LEVEL_MAP)
+            if thinking_level_map is not None:
+                model["thinkingLevelMap"] = thinking_level_map
             compat: dict[str, Any] = {"supportsDeveloperRole": False, "thinkingFormat": "zai"}
-            if is_glm52:
+            if thinking_level_map is not None:
                 compat["supportsReasoningEffort"] = True
             if model_id not in ZAI_TOOL_STREAM_UNSUPPORTED_MODELS:
                 compat["zaiToolStream"] = True
@@ -2468,7 +2460,7 @@ async def main() -> None:
         apply_openai_grammar_tool_compat_metadata(model)
         apply_openai_tool_search_metadata(model)
         apply_openai_explicit_prompt_cache_metadata(model)
-    apply_anthropic_fallback_cost_metadata(
+    apply_anthropic_allowed_fallback_model_metadata(
         [model for model in all_models if is_anthropic_fallback_metadata_model(model)]
     )
 

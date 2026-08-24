@@ -4,6 +4,8 @@ from typing import Any, NamedTuple
 
 import yaml
 
+from .text import strip_bom
+
 
 class ParsedFrontmatter(NamedTuple):
     frontmatter: dict[str, Any]
@@ -15,7 +17,7 @@ def _normalize_newlines(value: str) -> str:
 
 
 def _extract_frontmatter(content: str) -> tuple[str | None, str]:
-    normalized = _normalize_newlines(content)
+    normalized = _normalize_newlines(strip_bom(content))
 
     if not normalized.startswith("---"):
         return None, normalized

@@ -594,12 +594,12 @@ class TestBranch:
 
 class TestBranchWithSummary:
     @pytest.mark.tonio
-    async def test_inserts_branch_summary_and_advances_leaf(self):
+    async def test_inserts_branch_summary_with_the_source_and_destination_and_advances_leaf(self):
         session = SessionManager.in_memory()
 
         id1 = await session.append_message(user_msg("1"))
         await session.append_message(assistant_msg("2"))
-        await session.append_message(user_msg("3"))
+        id3 = await session.append_message(user_msg("3"))
 
         usage = make_usage()
         summary_id = await session.branch_with_summary(id1, "Summary of abandoned work", None, False, usage)
@@ -608,6 +608,7 @@ class TestBranchWithSummary:
 
         summary_entry = next(e for e in session.get_entries() if e["type"] == "branch_summary")
         assert summary_entry["parentId"] == id1
+        assert summary_entry["fromId"] == id3
         assert summary_entry["summary"] == "Summary of abandoned work"
         assert summary_entry["usage"] == usage
 

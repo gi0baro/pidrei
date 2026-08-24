@@ -1949,18 +1949,19 @@ class AgentSession:
         if assistant_message.stop_reason == "error" or direct_context_tokens == 0:
             messages = self.agent.state.messages
             estimate = estimate_context_tokens(messages)
-            if estimate.last_usage_index is None:
-                return False  # No usage data at all
-            # Verify the usage source is post-compaction. Kept pre-compaction messages
-            # have stale usage reflecting the old (larger) context and would falsely
-            # trigger compaction right after one just finished.
-            usage_msg = messages[estimate.last_usage_index]
-            if (
-                compaction_entry is not None
-                and getattr(usage_msg, "role", None) == "assistant"
-                and usage_msg.timestamp <= _iso_to_epoch_ms(compaction_entry.get("timestamp"))
-            ):
-                return False
+            # Without provider usage, estimate.tokens is the pure message-size estimate.
+            # Only usage-backed estimates need the stale pre-compaction check.
+            if estimate.last_usage_index is not None:
+                # Verify the usage source is post-compaction. Kept pre-compaction messages
+                # have stale usage reflecting the old (larger) context and would falsely
+                # trigger compaction right after one just finished.
+                usage_msg = messages[estimate.last_usage_index]
+                if (
+                    compaction_entry is not None
+                    and getattr(usage_msg, "role", None) == "assistant"
+                    and usage_msg.timestamp <= _iso_to_epoch_ms(compaction_entry.get("timestamp"))
+                ):
+                    return False
             context_tokens = estimate.tokens
         else:
             context_tokens = direct_context_tokens

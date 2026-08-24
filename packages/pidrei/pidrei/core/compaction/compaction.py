@@ -27,8 +27,6 @@ from pidrei_agent.harness.compaction.compaction import (
     should_compact,
 )
 from pidrei_ai.types import (
-    AnthropicMessagesCompat,
-    AnthropicRefusalFallback,
     Context,
     Model,
     SimpleStreamOptions,
@@ -77,17 +75,6 @@ __all__ = [  # re-exported shared helpers keep pi's coding-agent module surface
     "prepare_compaction",
     "should_compact",
 ]
-
-
-def _get_anthropic_summarization_fallback(model: Model) -> AnthropicRefusalFallback | None:
-    if model.provider != "anthropic" or model.api != "anthropic-messages":
-        return None
-
-    compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
-    allowed_fallback_models = compat.allowed_fallback_models if compat else None
-    # Use the primary permitted fallback for now. If future Anthropic models expose
-    # broader fallback behavior, this can become a user/config pick or a full chain.
-    return [allowed_fallback_models[0]] if allowed_fallback_models else None
 
 
 @dataclass(slots=True)
@@ -428,9 +415,6 @@ def _create_summarization_options(
         env=env,
         session_id=session_id,
     )
-    refusal_fallbacks = _get_anthropic_summarization_fallback(model)
-    if refusal_fallbacks:
-        options.refusal_fallbacks = refusal_fallbacks
     if model.reasoning and thinking_level and thinking_level != "off":
         options.reasoning = thinking_level
     return options

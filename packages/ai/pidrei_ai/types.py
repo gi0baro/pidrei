@@ -244,6 +244,8 @@ class AssistantMessage:
     # Concrete response model when different from the requested one (e.g. OpenRouter `auto`).
     response_model: str | None = None
     response_id: str | None = None  # Provider-specific response/message identifier
+    # Provider-specific structured reasoning details to replay verbatim on later same-model turns.
+    reasoning_details: list[Any] | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -434,10 +436,11 @@ class AnthropicMessagesCompat:
     # Replay empty thinking signatures as `signature: ""` instead of converting to text.
     allow_empty_signature: bool | None = None  # default False
     supports_strict_tools: bool | None = None  # default False
-    # Models Anthropic accepts in `fallbacks` for server-side refusal fallback.
-    # When absent or empty, callers must omit `fallbacks`; Anthropic rejects the
-    # field for models with no permitted fallback targets.
-    allowed_fallback_models: list[AnthropicRefusalFallbackTarget] | None = None
+    # Models Anthropic accepts in `fallbacks` for server-side refusal fallback, with
+    # local pricing metadata for returned fallback responses. When absent or empty,
+    # callers must omit `fallbacks`; Anthropic rejects the field for models with no
+    # permitted fallback targets.
+    allowed_fallback_models: list[AnthropicAllowedFallbackModel] | None = None
     # Deferred tools loaded by `tool_reference` blocks in tool results. Default True for
     # first-party Anthropic models except Haiku and pre-4.5 models; False elsewhere.
     supports_tool_references: bool | None = None
@@ -576,13 +579,10 @@ type DeferredCancelOptions = ProviderRequestOptions
 
 
 @dataclass(slots=True)
-class AnthropicRefusalFallbackTarget:
+class AnthropicAllowedFallbackModel:
+    provider: str
     model: str
-    # Local pricing for this fallback target. Stripped before sending the provider request.
-    cost: ModelCost | None = None
-
-
-type AnthropicRefusalFallback = Literal["default"] | list[AnthropicRefusalFallbackTarget]
+    cost: ModelCost
 
 
 @dataclass(slots=True)
@@ -592,8 +592,6 @@ class SimpleStreamOptions(StreamOptions):
     # Provider-neutral tool selection for simple requests. Default: "auto".
     tool_choice: ToolChoice | None = None
     reasoning: ThinkingLevel | None = None
-    # Anthropic server-side fallback for eligible refusal stop reasons. Anthropic providers only.
-    refusal_fallbacks: AnthropicRefusalFallback | None = None
     # Ask a capable provider to return a durable handle and continue the request
     # asynchronously. pi: `boolean | { window?: "15m" | "1h" | "24h" }`.
     deferred: bool | dict[str, Any] | None = None

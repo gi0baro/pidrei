@@ -80,7 +80,7 @@ from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
-from pidrei_ai.utils.user_agent import force_user_agent
+from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
 @dataclass(slots=True)
@@ -422,6 +422,35 @@ def _get_tools_by_name(tools: list[Tool] | None, names) -> list[Tool]:
     return [by_name[name] for name in names if name in by_name]
 
 
+# Assistant-message fields an OpenAI-compatible server accepts reasoning text in.
+OPENAI_COMPLETIONS_REASONING_FIELDS = ("reasoning", "reasoning_content", "reasoning_text")
+
+
+def _has_valid_common_reasoning_detail_fields(detail: dict) -> bool:
+    return (
+        (detail.get("id") is None or isinstance(detail["id"], str))
+        and ("format" not in detail or isinstance(detail["format"], str))
+        and ("index" not in detail or isinstance(detail["index"], (int, float)))
+    )
+
+
+def _is_openai_reasoning_detail(detail: Any) -> bool:
+    """pi's `OpenAIReasoningDetail` union: a summary, an encrypted payload, or reasoning text."""
+    if not isinstance(detail, dict) or not _has_valid_common_reasoning_detail_fields(detail):
+        return False
+    match detail.get("type"):
+        case "reasoning.summary":
+            return isinstance(detail.get("summary"), str)
+        case "reasoning.encrypted":
+            return isinstance(detail.get("data"), str)
+        case "reasoning.text":
+            return isinstance(detail.get("text"), str) and (
+                detail.get("signature") is None or isinstance(detail["signature"], str)
+            )
+        case _:
+            return False
+
+
 def _is_encrypted_reasoning_detail(detail: Any) -> bool:
     return (
         isinstance(detail, dict)
@@ -568,9 +597,7 @@ def _create_client(
     if options_headers:
         headers.update(options_headers)
 
-    if model.provider == "xai":
-        force_user_agent(headers)
-
+    set_default_user_agent(headers)
     headers["authorization"] = f"Bearer {api_key}"
     final_headers = {key: value for key, value in headers.items() if value is not None}
     return _PunkreqOpenAIClient(model.base_url, final_headers, env)
@@ -801,10 +828,19 @@ def convert_messages(
                     signature = non_empty_thinking[0].thinking_signature
                     if model.provider == "opencode-go" and signature == "reasoning":
                         signature = "reasoning_content"
-                    if signature:
+                    if signature in OPENAI_COMPLETIONS_REASONING_FIELDS:
                         assistant_msg[signature] = "\n".join(block.thinking for block in non_empty_thinking)
             elif assistant_text:
                 assistant_msg["content"] = assistant_text
+
+            preserved_reasoning_details = (
+                msg.reasoning_details
+                if msg.provider == model.provider
+                and msg.api == model.api
+                and msg.model == model.id
+                and msg.reasoning_details
+                else None
+            )
 
             tool_calls = [block for block in msg.content if block.type == "toolCall"]
             if tool_calls:
@@ -834,15 +870,21 @@ def convert_messages(
                         )
                 assistant_msg["tool_calls"] = converted_calls
 
-                reasoning_details = []
-                for tc in tool_calls:
-                    if tc.thought_signature:
-                        try:
-                            reasoning_details.append(json.loads(tc.thought_signature))
-                        except ValueError:
-                            pass
-                if reasoning_details:
-                    assistant_msg["reasoning_details"] = reasoning_details
+                if not preserved_reasoning_details:
+                    reasoning_details = []
+                    for tc in tool_calls:
+                        if tc.thought_signature:
+                            try:
+                                parsed = json.loads(tc.thought_signature)
+                            except ValueError:
+                                continue
+                            if _is_openai_reasoning_detail(parsed):
+                                reasoning_details.append(parsed)
+                    if reasoning_details:
+                        assistant_msg["reasoning_details"] = reasoning_details
+
+            if preserved_reasoning_details:
+                assistant_msg["reasoning_details"] = preserved_reasoning_details
 
             if (
                 compat.requires_reasoning_content_on_assistant_messages
@@ -1388,6 +1430,15 @@ def stream(  # noqa: C901
                     reasoning_details = delta.get("reasoning_details")
                     if isinstance(reasoning_details, list):
                         for detail in reasoning_details:
+                            if not _is_openai_reasoning_detail(detail):
+                                continue
+                            if output.reasoning_details is None:
+                                output.reasoning_details = []
+                            # OpenRouter requires reasoning_details to be replayed unmodified and in order.
+                            output.reasoning_details.append(detail)
+
+                            # Keep the legacy encrypted tool-call attachment path for compatibility
+                            # with sessions that replay encrypted details from toolCall.thoughtSignature.
                             if _is_encrypted_reasoning_detail(detail):
                                 serialized_detail = json.dumps(detail)
                                 matching = tool_blocks_by_id.get(detail["id"])

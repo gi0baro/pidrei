@@ -68,6 +68,7 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
 API_VERSION = "v1"
@@ -418,7 +419,9 @@ def build_http_options(model: Model, options_headers: ProviderHeaders | None = N
         if base_url_includes_api_version(base_url):
             http_options["apiVersion"] = ""
 
-    headers = provider_headers_to_record({**(model.headers or {}), **(options_headers or {})})
+    merged_headers: dict[str, Any] = {**(model.headers or {}), **(options_headers or {})}
+    set_default_user_agent(merged_headers)
+    headers = provider_headers_to_record(merged_headers)
     if headers:
         http_options["headers"] = headers
 

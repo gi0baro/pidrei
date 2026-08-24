@@ -13,6 +13,7 @@ from pidrei_ai.types import TextContent
 from pidrei_tui import Box, Container, Spacer, Text
 
 from ...modes.interactive.components.diff import render_diff
+from ...utils.text import split_bom
 from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .edit_diff import (
@@ -26,7 +27,6 @@ from .edit_diff import (
     generate_unified_patch,
     normalize_to_lf,
     restore_line_endings,
-    strip_bom,
 )
 from .file_mutation_queue import resolve_mutation_queue_key, with_file_mutation_queue
 from .path_utils import resolve_to_cwd
@@ -339,7 +339,7 @@ def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
             throw_if_aborted()
 
             # Strip BOM before matching. The model will not include an invisible BOM in oldText.
-            bom, content = strip_bom(raw_content)
+            bom, content = split_bom(raw_content)
             original_ending = detect_line_ending(content)
             normalized_content = normalize_to_lf(content)
             applied = apply_edits_to_normalized_content(normalized_content, edits, path)

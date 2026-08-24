@@ -534,9 +534,12 @@ class _TerminalInputSubscription:
 
 
 class InteractiveMode:
-    """Options: ``{"migratedProviders"?, "modelFallbackMessage"?,
-    "autoTrustOnReloadCwd"?, "initialMessage"?, "initialImages"?,
-    "initialMessages"?, "verbose"?, "tuiMode"?}``."""
+    """Options: ``{"migratedProviders"?, "startupDiagnostics"?,
+    "modelFallbackMessage"?, "autoTrustOnReloadCwd"?, "initialMessage"?,
+    "initialImages"?, "initialMessages"?, "verbose"?, "tuiMode"?}``.
+
+    ``startupDiagnostics`` are the diagnostics collected before the TUI was
+    initialized, replayed into the transcript."""
 
     def __init__(self, runtime_host, options: dict | None = None) -> None:
         options = options or {}
@@ -1238,10 +1241,19 @@ class InteractiveMode:
 
         # Show startup warnings
         migrated_providers = self._options.get("migratedProviders")
+        startup_diagnostics = self._options.get("startupDiagnostics")
         model_fallback_message = self._options.get("modelFallbackMessage")
         initial_message = self._options.get("initialMessage")
         initial_images = self._options.get("initialImages")
         initial_messages = self._options.get("initialMessages")
+
+        for diagnostic in startup_diagnostics or []:
+            if diagnostic.type == "error":
+                self.show_error(diagnostic.message)
+            elif diagnostic.type == "warning":
+                self.show_warning(diagnostic.message)
+            else:
+                self.show_status(diagnostic.message)
 
         if migrated_providers:
             self.show_warning(f"Migrated credentials to auth.json: {', '.join(migrated_providers)}")

@@ -20,8 +20,6 @@ from pidrei.core.compaction import (
     generate_summary_with_usage,
 )
 from pidrei_ai.types import (
-    AnthropicMessagesCompat,
-    AnthropicRefusalFallbackTarget,
     AssistantMessage,
     Context,
     DoneEvent,
@@ -38,7 +36,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
-def create_model(reasoning: bool, max_tokens: int = 8192, compat: AnthropicMessagesCompat | None = None) -> Model:
+def create_model(reasoning: bool, max_tokens: int = 8192) -> Model:
     return Model(
         id="reasoning-model" if reasoning else "non-reasoning-model",
         name="Reasoning Model" if reasoning else "Non-reasoning Model",
@@ -50,7 +48,6 @@ def create_model(reasoning: bool, max_tokens: int = 8192, compat: AnthropicMessa
         cost=ModelCost(),
         context_window=200000,
         max_tokens=max_tokens,
-        compat=compat,
     )
 
 
@@ -226,34 +223,12 @@ async def test_does_not_set_reasoning_for_non_reasoning_models():
     assert calls[0].reasoning is None
 
 
-@pytest.mark.tonio
-async def test_sets_the_anthropic_refusal_fallback_from_model_metadata():
-    stream_fn, calls = recording_stream_fn()
-
-    fallback_cost = ModelCost(input=5, output=25, cache_read=0.5, cache_write=6.25)
-    model = create_model(
-        True,
-        compat=AnthropicMessagesCompat(
-            allowed_fallback_models=[
-                AnthropicRefusalFallbackTarget(model="claude-opus-4-8", cost=fallback_cost),
-                AnthropicRefusalFallbackTarget(model="claude-opus-5", cost=fallback_cost),
-            ]
-        ),
-    )
-    await generate_summary(messages(), model, 2000, "test-key", None, None, None, None, None, stream_fn)
-
-    assert len(calls) == 1
-    assert calls[0].refusal_fallbacks == [AnthropicRefusalFallbackTarget(model="claude-opus-4-8", cost=fallback_cost)]
-
-
-@pytest.mark.tonio
-async def test_does_not_set_the_anthropic_refusal_fallback_without_allowed_targets():
-    stream_fn, calls = recording_stream_fn()
-
-    await generate_summary(messages(), create_model(True), 2000, "test-key", None, None, None, None, None, stream_fn)
-
-    assert len(calls) == 1
-    assert calls[0].refusal_fallbacks is None
+# pi's two remaining refusal-fallback cases assert that `refusalFallbacks` is absent
+# from the summarization options. `SimpleStreamOptions` no longer declares that field
+# at all (`ed867e90` moved fallbacks onto the model's compat metadata), so here the
+# assertion could never fail; the cases are dropped instead of mirrored vacuously. The
+# compat-driven behaviour they defer to is covered by
+# packages/ai/tests/test_anthropic_fallback_usage.py.
 
 
 @pytest.mark.tonio

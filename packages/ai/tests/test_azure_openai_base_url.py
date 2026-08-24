@@ -23,6 +23,7 @@ from pidrei_ai.types import (
     Tool,
     UserMessage,
 )
+from pidrei_ai.utils.user_agent import get_user_agent
 
 
 CONTEXT = Context(messages=[UserMessage(content="hello", timestamp=1)])
@@ -221,3 +222,26 @@ async def test_builds_correct_default_url_from_azure_openai_resource_name():
 
     assert len(constructor_calls) == 1
     assert constructor_calls[0]["baseURL"] == "https://my-resource.openai.azure.com/openai/v1"
+
+
+async def capture_client_headers(headers: dict | None = None) -> dict:
+    with _stubbed_client():
+        await stream_azure(
+            model_fixture(),
+            CONTEXT,
+            AzureOpenAIResponsesOptions(
+                api_key="test-api-key", azure_base_url="https://my-resource.openai.azure.com", headers=headers
+            ),
+        ).result()
+    assert len(constructor_calls) == 1
+    return constructor_calls[0].get("defaultHeaders") or {}
+
+
+@pytest.mark.tonio
+async def test_uses_the_runtime_user_agent_by_default():
+    assert (await capture_client_headers())["User-Agent"] == get_user_agent()
+
+
+@pytest.mark.tonio
+async def test_lets_explicit_headers_override_the_default_user_agent():
+    assert (await capture_client_headers({"User-Agent": "custom-agent"}))["User-Agent"] == "custom-agent"

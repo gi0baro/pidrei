@@ -14,6 +14,7 @@ from pidrei_ai.models_store import ModelsStore, ModelsStoreEntry, ModelsStoreOpe
 
 from ..config import get_agent_dir
 from ..utils.paths import get_file_revision, normalize_path
+from ..utils.text import strip_bom
 from .model_wire import model_to_dict, parse_model_dict
 
 
@@ -92,7 +93,7 @@ class FileModelsStore(ModelsStore):
         self._read_state = _shared_models_file_read_states.setdefault(self._path, _ModelsFileReadState())
 
     def _parse(self, content: str | None) -> dict[str, Any]:
-        return json.loads(content) if content else {}
+        return json.loads(strip_bom(content)) if content else {}
 
     def _update_read_state(self, data: dict[str, Any], revision: str | None = None) -> None:
         self._read_state.data = data

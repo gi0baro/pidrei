@@ -70,6 +70,7 @@ from .core.session_cwd import (
     get_missing_session_cwd_issue,
 )
 from .core.session_manager import SessionManager, assert_valid_session_id
+from .core.settings_diagnostics import collect_settings_diagnostics, deduplicate_diagnostics
 from .core.settings_manager import SettingsManager
 from .core.timings import print_timings, reset_timings, time
 from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
@@ -122,18 +123,6 @@ async def _read_piped_stdin() -> str | None:
     finally:
         reader.close()
     return b"".join(chunks).decode("utf-8", "replace").strip() or None
-
-
-def _collect_settings_diagnostics(
-    settings_manager: SettingsManager, context: str
-) -> list[AgentSessionRuntimeDiagnostic]:
-    return [
-        AgentSessionRuntimeDiagnostic(
-            type="warning",
-            message=f"({context}, {entry.scope} settings) {entry.error}",
-        )
-        for entry in settings_manager.drain_errors()
-    ]
 
 
 def _report_diagnostics(diagnostics: list[AgentSessionRuntimeDiagnostic]) -> None:
@@ -642,7 +631,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     time("runMigrations")
 
     startup_settings_manager = await SettingsManager.create(cwd, agent_dir)
-    _report_diagnostics(_collect_settings_diagnostics(startup_settings_manager, "startup session lookup"))
+    startup_settings_diagnostics = collect_settings_diagnostics(startup_settings_manager)
 
     # Experimental first-time setup: theme choice and analytics opt-in.
     # Runs before any runtime services are created so the chosen settings
@@ -784,7 +773,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         diagnostics: list[AgentSessionRuntimeDiagnostic] = [
             *project_trust_diagnostics,
             *services.diagnostics,
-            *_collect_settings_diagnostics(settings_manager, "runtime creation"),
+            *collect_settings_diagnostics(settings_manager),
             *(
                 AgentSessionRuntimeDiagnostic(
                     type="error", message=f'Failed to load extension "{err.path}": {err.error}'
@@ -864,6 +853,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     apply_http_proxy_settings(settings_manager.get_global_settings().get("httpProxy"))
 
     if parsed.help:
+        _report_diagnostics(startup_settings_diagnostics)
         extension_flags = [
             flag for extension in resource_loader.get_extensions().extensions for flag in extension.flags.values()
         ]
@@ -871,6 +861,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         raise SystemExit(0)
 
     if parsed.list_models is not None:
+        _report_diagnostics(startup_settings_diagnostics)
         search_pattern = parsed.list_models if isinstance(parsed.list_models, str) else None
         await list_models(model_runtime, search_pattern, _timeout_cancel(15_000))
         raise SystemExit(0)
@@ -892,8 +883,11 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     # mode; migrations.ts is not ported (see module docstring).
 
     time("resolveModelScope")
-    _report_diagnostics(runtime.diagnostics)
-    if any(diagnostic.type == "error" for diagnostic in runtime.diagnostics):
+    startup_diagnostics = deduplicate_diagnostics([*startup_settings_diagnostics, *runtime.diagnostics])
+    has_runtime_errors = any(diagnostic.type == "error" for diagnostic in runtime.diagnostics)
+    if app_mode != "interactive" or has_runtime_errors:
+        _report_diagnostics(startup_diagnostics)
+    if has_runtime_errors:
         if any("Failed to load extension" in diagnostic.message for diagnostic in runtime.diagnostics):
             print(yellow(EXTENSION_LOAD_FAILURE_HINT), file=sys.stderr)
         raise SystemExit(1)
@@ -950,6 +944,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
             {
                 # migrations.ts is not ported, so there are never migrated
                 # providers to announce.
+                "startupDiagnostics": startup_diagnostics,
                 "modelFallbackMessage": runtime.model_fallback_message,
                 "autoTrustOnReloadCwd": auto_trust_on_reload_cwd,
                 "initialMessage": initial.initial_message,

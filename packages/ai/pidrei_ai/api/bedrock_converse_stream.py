@@ -95,6 +95,9 @@ from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 
 EMPTY_TEXT_PLACEHOLDER = "<empty>"
 
+# Matches the placeholder the Anthropic API path uses for redacted thinking.
+REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]"
+
 _ARN_REGION = re.compile(r"^arn:aws(?:-[a-z0-9-]+)?:bedrock:([a-z0-9-]+):")
 _STANDARD_ENDPOINT = re.compile(r"^bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?$")
 _TOOL_CALL_ID_DISALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
@@ -164,6 +167,7 @@ def stream(
         # lives beside the blocks and is simply dropped at the end.
         block_indices: dict[int, int] = {}
         partial_json: dict[int, str] = {}
+        redacted_chunks: dict[int, list[bytes]] = {}
 
         # A profile explicitly configured through pi's auth flow (the `profile`
         # option or scoped `AWS_PROFILE` on the stored credential's env) must win
@@ -288,11 +292,23 @@ def stream(
                     )
                 elif "contentBlockDelta" in item:
                     _handle_content_block_delta(
-                        item["contentBlockDelta"], blocks, block_indices, partial_json, output, out_stream
+                        item["contentBlockDelta"],
+                        blocks,
+                        block_indices,
+                        partial_json,
+                        redacted_chunks,
+                        output,
+                        out_stream,
                     )
                 elif "contentBlockStop" in item:
                     _handle_content_block_stop(
-                        item["contentBlockStop"], blocks, block_indices, partial_json, output, out_stream
+                        item["contentBlockStop"],
+                        blocks,
+                        block_indices,
+                        partial_json,
+                        redacted_chunks,
+                        output,
+                        out_stream,
                     )
                 elif "messageStop" in item:
                     output.raw_stop_reason = item["messageStop"].get("stopReason")
@@ -311,9 +327,12 @@ def stream(
             if output.stop_reason in ("error", "aborted"):
                 raise RuntimeError(output.error_message or "An unknown error occurred")
 
+            # A stream can settle without stopping every block, so finalize here too.
+            _flush_redacted_content(blocks, redacted_chunks)
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()
         except Exception as error:
+            _flush_redacted_content(blocks, redacted_chunks)
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
             output.error_message = format_bedrock_error(error)
             if output.stop_reason == "error":
@@ -567,7 +586,13 @@ def _handle_content_block_start(
 
 
 def _handle_content_block_delta(
-    event: dict, blocks: list, block_indices: dict, partial_json: dict, output: AssistantMessage, out_stream
+    event: dict,
+    blocks: list,
+    block_indices: dict,
+    partial_json: dict,
+    redacted_chunks: dict,
+    output: AssistantMessage,
+    out_stream,
 ) -> None:
     content_block_index = event.get("contentBlockIndex")
     delta = event.get("delta") or {}
@@ -609,8 +634,52 @@ def _handle_content_block_delta(
                 out_stream.push(
                     ThinkingDeltaEvent(content_index=thinking_index, delta=reasoning["text"], partial=output)
                 )
-            if reasoning.get("signature"):
+            # `thinking_signature` holds either an Anthropic signature or an opaque redacted
+            # payload, never both: mixing them would corrupt whichever arrived first.
+            if reasoning.get("signature") and not thinking_block.redacted:
                 thinking_block.thinking_signature = (thinking_block.thinking_signature or "") + reasoning["signature"]
+            if reasoning.get("redactedContent"):
+                # Encrypted reasoning from non-Anthropic models on Bedrock (e.g. OpenAI GPT-5.6).
+                # The payload is opaque, so keep it verbatim in `thinking_signature` the way the
+                # Anthropic path stores redacted thinking, and replay it on the next turn.
+                if not thinking_block.redacted:
+                    thinking_block.redacted = True
+                    thinking_block.thinking_signature = ""
+                    thinking_block.thinking += REDACTED_THINKING_PLACEHOLDER
+                    out_stream.push(
+                        ThinkingDeltaEvent(
+                            content_index=thinking_index, delta=REDACTED_THINKING_PLACEHOLDER, partial=output
+                        )
+                    )
+                redacted_chunks.setdefault(thinking_index, []).append(bytes(reasoning["redactedContent"]))
+
+
+def _flush_redacted_content(blocks: list, redacted_chunks: dict, index: int | None = None) -> None:
+    """Encode buffered encrypted reasoning into `thinking_signature` and drop the scratch
+    buffer. pi also strips the `index`/`partialJson` fields it stashes on the block itself;
+    here that scratch already lives beside the blocks, so only the redacted payload needs
+    folding back in. Runs from the terminal paths as well as `contentBlockStop`, because a
+    stream can settle without stopping each block."""
+    for position in list(redacted_chunks) if index is None else [index]:
+        chunks = redacted_chunks.pop(position, None)
+        if chunks is None:
+            continue
+        block = blocks[position]
+        if block.type == "thinking":
+            block.thinking_signature = base64.b64encode(b"".join(chunks)).decode()
+
+
+def _decode_redacted_content(signature: str | None) -> bytes | None:
+    """Decode a stored redacted payload. The AWS SDK hands the blob over as bytes, but a
+    persisted session carries it as base64. A hand-edited or externally produced session
+    can hold a signature that is not base64; drop that block instead of failing the whole
+    request."""
+    if not signature:
+        return None
+    try:
+        return base64.b64decode(signature, validate=True)
+    except ValueError:
+        return None
 
 
 def _handle_metadata(event: dict, model: Model, output: AssistantMessage) -> None:
@@ -625,7 +694,13 @@ def _handle_metadata(event: dict, model: Model, output: AssistantMessage) -> Non
 
 
 def _handle_content_block_stop(
-    event: dict, blocks: list, block_indices: dict, partial_json: dict, output: AssistantMessage, out_stream
+    event: dict,
+    blocks: list,
+    block_indices: dict,
+    partial_json: dict,
+    redacted_chunks: dict,
+    output: AssistantMessage,
+    out_stream,
 ) -> None:
     index = block_indices.pop(event.get("contentBlockIndex"), -1)
     if index < 0:
@@ -635,6 +710,7 @@ def _handle_content_block_stop(
     if block.type == "text":
         out_stream.push(TextEndEvent(content_index=index, content=block.text, partial=output))
     elif block.type == "thinking":
+        _flush_redacted_content(blocks, redacted_chunks, index)
         out_stream.push(ThinkingEndEvent(content_index=index, content=block.thinking, partial=output))
     elif block.type == "toolCall":
         block.arguments = parse_streaming_json(partial_json.pop(index, ""))
@@ -834,6 +910,13 @@ def convert_messages(
                         }
                     )
                 elif c.type == "thinking":
+                    # Encrypted reasoning is opaque: replay the stored payload as the
+                    # `redactedContent` member instead of lowering it to reasoning text.
+                    if c.redacted:
+                        redacted_content = _decode_redacted_content(c.thinking_signature)
+                        if redacted_content:
+                            content_blocks.append({"reasoningContent": {"redactedContent": redacted_content}})
+                        continue
                     thinking = sanitize_surrogates(c.thinking)
                     if thinking.strip() == "":
                         continue

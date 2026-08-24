@@ -11,6 +11,7 @@ import tonio.colored as tonio
 from ..config import CONFIG_DIR_NAME
 from ..utils.lockfile import acquire_lock_sync_with_retry
 from ..utils.paths import canonicalize_path, resolve_path
+from ..utils.text import strip_bom
 
 
 type ProjectTrustDecision = bool | None
@@ -101,7 +102,7 @@ def _read_trust_file(path: str) -> dict[str, Any]:
 
     try:
         with open(path, encoding="utf-8") as f:
-            parsed = json.load(f)
+            parsed = json.loads(strip_bom(f.read()))
     except Exception as error:
         raise Exception(f"Failed to read trust store {path}: {error}")
 

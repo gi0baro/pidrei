@@ -12,6 +12,8 @@ strings all degrade to "declares nothing" rather than raising (pi #7187).
 import tomllib
 from typing import Any
 
+from ..utils.text import strip_bom
+
 
 __all__ = ["MANIFEST_TABLE", "RESOURCE_FIELDS", "read_pidrei_manifest"]
 
@@ -22,8 +24,10 @@ RESOURCE_FIELDS = ("extensions", "skills", "prompts", "themes")
 def read_pidrei_manifest(pyproject_path: str) -> dict[str, Any] | None:
     """The `[tool.pidrei]` table (pi: the `pi` key in package.json)."""
     try:
-        with open(pyproject_path, "rb") as handle:
-            document: Any = tomllib.load(handle)
+        with open(pyproject_path, encoding="utf-8") as handle:
+            # pi parses package.json text and strips the BOM there; `tomllib` takes bytes
+            # and rejects a leading BOM outright, so the decode happens here instead.
+            document: Any = tomllib.loads(strip_bom(handle.read()))
         for key in MANIFEST_TABLE:
             document = document.get(key) if isinstance(document, dict) else None
             if not isinstance(document, dict):

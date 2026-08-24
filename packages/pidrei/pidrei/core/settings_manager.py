@@ -27,6 +27,7 @@ from tonio.exceptions import RuntimeNotInitializedError
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.lockfile import acquire_lock_sync_with_retry
 from ..utils.paths import normalize_path, resolve_path
+from ..utils.text import strip_bom
 from .http_config import DEFAULT_HTTP_IDLE_TIMEOUT_MS, parse_http_idle_timeout_ms
 
 
@@ -73,6 +74,15 @@ def _parse_timeout_setting(value: Any, setting_name: str) -> int | None:
 class SettingsError:
     scope: SettingsScope
     error: Exception
+    path: str | None = None
+
+
+# Optional settings file path per scope, for reporting storage errors.
+type SettingsPaths = dict[SettingsScope, str]
+
+
+def _to_settings_error(scope: SettingsScope, error: Exception, path: str | None = None) -> SettingsError:
+    return SettingsError(scope, error, path or None)
 
 
 class SettingsStorage(Protocol):
@@ -141,6 +151,7 @@ class SettingsManager:
         project_load_error: Exception | None = None,
         initial_errors: list[SettingsError] | None = None,
         project_trusted: bool = True,
+        settings_paths: SettingsPaths | None = None,
     ):
         self._storage = storage
         self._global_settings = initial_global
@@ -160,6 +171,7 @@ class SettingsManager:
         # then. Guarded by `_write_lock`, which is never held across an await.
         self._writes: Any = None
         self._errors: list[SettingsError] = list(initial_errors or [])
+        self._settings_paths: SettingsPaths = dict(settings_paths or {})
         self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
     # -- constructors ---------------------------------------------------------
@@ -179,19 +191,36 @@ class SettingsManager:
         """Blocking construction. Only for callers already off the runtime —
         CLI code before `tonio.run`, and pool bodies. Everything on the runtime
         awaits `create()`."""
-        storage = FileSettingsStorage(cwd, agent_dir if agent_dir is not None else get_agent_dir())
-        return SettingsManager.from_storage(storage, project_trusted=project_trusted)
+        resolved_cwd = resolve_path(cwd)
+        resolved_agent_dir = resolve_path(agent_dir if agent_dir is not None else get_agent_dir())
+        storage = FileSettingsStorage(resolved_cwd, resolved_agent_dir)
+        return SettingsManager._from_storage_with_paths(
+            storage,
+            project_trusted=project_trusted,
+            settings_paths={
+                "global": os.path.join(resolved_agent_dir, "settings.json"),
+                "project": os.path.join(resolved_cwd, CONFIG_DIR_NAME, "settings.json"),
+            },
+        )
 
     @staticmethod
     def from_storage(storage: SettingsStorage, *, project_trusted: bool = True) -> SettingsManager:
         """Create a SettingsManager from an arbitrary storage backend."""
+        return SettingsManager._from_storage_with_paths(storage, project_trusted=project_trusted)
+
+    @staticmethod
+    def _from_storage_with_paths(
+        storage: SettingsStorage, *, project_trusted: bool = True, settings_paths: SettingsPaths | None = None
+    ) -> SettingsManager:
+        """Create a manager while retaining optional file paths for reported storage errors."""
+        paths = settings_paths or {}
         global_settings, global_error = SettingsManager._try_load_from_storage(storage, "global")
         project_settings, project_error = SettingsManager._try_load_from_storage(storage, "project", project_trusted)
         initial_errors: list[SettingsError] = []
         if global_error is not None:
-            initial_errors.append(SettingsError("global", global_error))
+            initial_errors.append(_to_settings_error("global", global_error, paths.get("global")))
         if project_error is not None:
-            initial_errors.append(SettingsError("project", project_error))
+            initial_errors.append(_to_settings_error("project", project_error, paths.get("project")))
 
         return SettingsManager(
             storage,
@@ -201,6 +230,7 @@ class SettingsManager:
             project_error,
             initial_errors,
             project_trusted,
+            paths,
         )
 
     @staticmethod
@@ -226,7 +256,7 @@ class SettingsManager:
 
         if not content:
             return {}
-        settings = json.loads(content)
+        settings = json.loads(strip_bom(content))
         return SettingsManager._migrate_settings(settings)
 
     @staticmethod
@@ -376,7 +406,7 @@ class SettingsManager:
             raise Exception("Project is not trusted; refusing to write project settings")
 
     def _record_error(self, scope: SettingsScope, error: Exception) -> None:
-        self._errors.append(SettingsError(scope, error))
+        self._errors.append(_to_settings_error(scope, error, self._settings_paths.get(scope)))
 
     def _clear_modified_scope(self, scope: SettingsScope) -> None:
         if scope == "global":
@@ -455,7 +485,9 @@ class SettingsManager:
         modified_nested_fields: dict[str, set[str]],
     ) -> None:
         def persist(current: str | None) -> str:
-            current_file_settings: Settings = SettingsManager._migrate_settings(json.loads(current)) if current else {}
+            current_file_settings: Settings = (
+                SettingsManager._migrate_settings(json.loads(strip_bom(current))) if current else {}
+            )
             merged_settings = dict(current_file_settings)
             for field in modified_fields:
                 value = snapshot_settings.get(field)

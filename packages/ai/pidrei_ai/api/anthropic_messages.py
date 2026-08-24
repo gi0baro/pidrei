@@ -23,7 +23,6 @@ from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
-    AnthropicRefusalFallback,
     AssistantMessage,
     CacheRetention,
     Context,
@@ -66,7 +65,7 @@ from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
-from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
 ANTHROPIC_VERSION = "2023-06-01"
@@ -100,6 +99,12 @@ _CC_TOOL_LOOKUP = {name.lower(): name for name in _CLAUDE_CODE_TOOLS}
 FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14"
 INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
 SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+
+def _should_use_server_side_fallback_beta(model: Model) -> bool:
+    compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
+    return bool(compat and compat.allowed_fallback_models)
+
 
 _ANTHROPIC_MESSAGE_EVENTS = frozenset(
     (
@@ -244,10 +249,6 @@ class AnthropicOptions(StreamOptions):
     thinking_display: AnthropicThinkingDisplay | None = None
     # Request the interleaved-thinking beta for non-adaptive models. Default True.
     interleaved_thinking: bool | None = None
-    # Anthropic refusal fallback. When set, the request carries the server-side
-    # fallback beta and Anthropic retries eligible refusals on the configured
-    # fallback target before returning a final response.
-    refusal_fallbacks: AnthropicRefusalFallback | None = None
     # Anthropic tool choice: "auto" | "any" | "none" | {"type": "tool", "name": ...}.
     tool_choice: str | dict[str, str] | None = None
     # Pre-built client instance (test injection / alternative transports).
@@ -351,13 +352,9 @@ def _merge_headers(*header_sources: ProviderHeaders | None) -> dict[str, str | N
     return merged
 
 
-def _merge_client_headers(model: Model, *header_sources: ProviderHeaders | None) -> dict[str, str | None]:
+def _merge_client_headers(*header_sources: ProviderHeaders | None) -> dict[str, str | None]:
     merged = _merge_headers(*header_sources)
-    if model.provider == "kimi-coding":
-        for name in list(merged.keys()):
-            if name.lower() == "user-agent":
-                del merged[name]
-        merged["User-Agent"] = get_user_agent()
+    set_default_user_agent(merged)
     return merged
 
 
@@ -421,7 +418,6 @@ def _create_client(
     # Copilot: Bearer auth, selective betas.
     if model.provider == "github-copilot":
         merged = _merge_client_headers(
-            model,
             base,
             {"authorization": f"Bearer {api_key}"} if api_key else None,
             model.headers,
@@ -434,7 +430,6 @@ def _create_client(
     # OAuth: Bearer auth, Claude Code identity headers.
     if api_key and _is_oauth_token(api_key):
         merged = _merge_client_headers(
-            model,
             {
                 **base,
                 "anthropic-beta": ",".join(["claude-code-20250219", "oauth-2025-04-20", *beta_features]),
@@ -453,7 +448,6 @@ def _create_client(
         {"x-session-affinity": session_id} if session_id and _get_compat(model).send_session_affinity_headers else {}
     )
     merged = _merge_client_headers(
-        model,
         base,
         {"x-api-key": api_key} if api_key else None,
         session_affinity,
@@ -578,7 +572,7 @@ def stream(
                     api_key,
                     opts.interleaved_thinking if opts.interleaved_thinking is not None else True,
                     _should_use_fine_grained_beta(model, context),
-                    opts.refusal_fallbacks is not None,
+                    _should_use_server_side_fallback_beta(model),
                     opts.headers,
                     copilot_dynamic_headers,
                     cache_session_id,
@@ -618,7 +612,7 @@ def stream(
                     served_model = message.get("model")
                     if isinstance(served_model, str):
                         output.model = served_model
-                    fallback_cost = None if output.model == model.id else _find_fallback_cost(model, opts, output.model)
+                    fallback_cost = None if output.model == model.id else _find_fallback_cost(model, output.model)
                     usage_model = replace(model, id=output.model, cost=fallback_cost) if fallback_cost else model
                     # Capture initial usage so input counts survive early aborts.
                     output.usage.input = usage.get("input_tokens") or 0
@@ -797,9 +791,6 @@ def stream_simple(
 
     def with_thinking(**extra) -> AnthropicOptions:
         anthropic = _anthropic_options(base)
-        # pi threads `refusalFallbacks` through each of the three `stream()` calls
-        # below; the shared builder carries it once.
-        anthropic.refusal_fallbacks = options.refusal_fallbacks if options else None
         anthropic.tool_choice = options.tool_choice if options else None
         for key, value in extra.items():
             setattr(anthropic, key, value)
@@ -1027,17 +1018,11 @@ def _convert_tools(
     return converted
 
 
-def _find_fallback_cost(model: Model, options: AnthropicOptions, served_model: str) -> ModelCost | None:
-    """Local pricing for the model Anthropic actually served, from the request's
-    fallback targets first and the model's permitted targets second."""
-    requested = options.refusal_fallbacks
-    if isinstance(requested, list):
-        for fallback in requested:
-            if fallback.model == served_model and fallback.cost is not None:
-                return fallback.cost
+def _find_fallback_cost(model: Model, served_model: str) -> ModelCost | None:
+    """Local pricing for the model Anthropic actually served, from the model's permitted targets."""
     compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
     for fallback in compat.allowed_fallback_models or [] if compat else []:
-        if fallback.model == served_model:
+        if fallback.provider == model.provider and fallback.model == served_model:
             return fallback.cost
     return None
 
@@ -1151,11 +1136,8 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
         else:
             params["tool_choice"] = options.tool_choice
 
-    if options.refusal_fallbacks is not None:
-        params["fallbacks"] = (
-            "default"
-            if options.refusal_fallbacks == "default"
-            else [{"model": fallback.model} for fallback in options.refusal_fallbacks]
-        )
+    model_compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
+    if model_compat and model_compat.allowed_fallback_models:
+        params["fallbacks"] = [{"model": fallback.model} for fallback in model_compat.allowed_fallback_models]
 
     return params

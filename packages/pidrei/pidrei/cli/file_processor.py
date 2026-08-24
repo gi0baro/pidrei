@@ -13,6 +13,7 @@ from ..core.tools.path_utils import resolve_read_path
 from ..utils.colors import red
 from ..utils.image_process import process_image
 from ..utils.mime import detect_supported_image_mime_type_from_file
+from ..utils.text import strip_bom
 
 
 @dataclass(slots=True)
@@ -64,7 +65,7 @@ def process_file_arguments(file_args: list[str], *, auto_resize_images: bool = T
             # Handle text file
             try:
                 with open(absolute_path, encoding="utf-8") as handle:
-                    file_content = handle.read()
+                    file_content = strip_bom(handle.read())
                 text += f'<file name="{absolute_path}">\n{file_content}\n</file>\n'
             except Exception as error:
                 print(red(f"Error: Could not read file {absolute_path}: {error}"), file=sys.stderr)

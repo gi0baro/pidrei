@@ -17,6 +17,7 @@ from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.user_agent import get_user_agent
 from tests.anthropic_helpers import (
     PayloadCaptured,
     _recording_transport,
@@ -184,20 +185,24 @@ def _kimi_coding_model() -> Model:
 
 
 @pytest.mark.tonio
-async def test_enforces_the_pi_runtime_user_agent_for_kimi_coding():
-    from pidrei_ai.utils.user_agent import get_user_agent
+async def test_uses_the_runtime_user_agent_by_default_for_anthropic_messages_requests():
+    headers, _payload = await capture_request(make_model(), AnthropicOptions(api_key="anthropic-key"))
 
-    headers, _payload = await capture_request(
-        _kimi_coding_model(),
-        AnthropicOptions(api_key="kimi-key", headers={"user-agent": "custom-client"}),
-    )
-
-    user_agent_headers = [(name, value) for name, value in headers.items() if name.lower() == "user-agent"]
-    assert user_agent_headers == [("User-Agent", get_user_agent())]
+    assert headers["User-Agent"] == get_user_agent()
 
 
 @pytest.mark.tonio
-async def test_does_not_apply_the_pi_runtime_user_agent_to_anthropic():
-    headers, _payload = await capture_request(make_model(), AnthropicOptions(api_key="anthropic-key"))
+async def test_lets_explicit_headers_override_the_default_anthropic_messages_user_agent():
+    headers, _payload = await capture_request(
+        _kimi_coding_model(),
+        AnthropicOptions(api_key="kimi-key", headers={"User-Agent": "custom-client"}),
+    )
 
-    assert not any(name.lower() == "user-agent" for name in headers)
+    assert headers["User-Agent"] == "custom-client"
+    # pi relies on the SDK folding header names; pidrei drops the default itself, so
+    # a lowercase override must not leave a second User-Agent on the wire either.
+    lowercase, _payload = await capture_request(
+        _kimi_coding_model(),
+        AnthropicOptions(api_key="kimi-key", headers={"user-agent": "custom-client"}),
+    )
+    assert [name for name in lowercase if name.lower() == "user-agent"] == ["user-agent"]

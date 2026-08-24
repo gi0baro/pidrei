@@ -33,6 +33,7 @@ from ....config import get_custom_themes_dir, get_themes_dir
 from ....utils import colors as chalk
 from ....utils.fs_watch import close_watcher, watch_with_error_handler
 from ....utils.syntax_highlight import highlight, supports_language
+from ....utils.text import strip_bom
 
 
 # ============================================================================
@@ -423,9 +424,9 @@ def _get_builtin_themes() -> dict:
     if _BUILTIN_THEMES is None:
         themes_dir = get_themes_dir()
         with open(os.path.join(themes_dir, "dark.json"), encoding="utf-8") as f:
-            dark = json.load(f)
+            dark = json.loads(strip_bom(f.read()))
         with open(os.path.join(themes_dir, "light.json"), encoding="utf-8") as f:
-            light = json.load(f)
+            light = json.loads(strip_bom(f.read()))
         _BUILTIN_THEMES = {"dark": dark, "light": light}
     return _BUILTIN_THEMES
 
@@ -526,7 +527,7 @@ def _parse_theme_json(label: str, json_value) -> dict:
 
 def _parse_theme_json_content(label: str, content: str) -> dict:
     try:
-        json_value = json.loads(content)
+        json_value = json.loads(strip_bom(content))
     except ValueError as error:
         raise ValueError(f"Failed to parse theme {label}: {error}") from None
     return _parse_theme_json(label, json_value)

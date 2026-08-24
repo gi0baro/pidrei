@@ -61,6 +61,7 @@ from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.json_parse import parse_streaming_json
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.user_agent import get_user_agent
 
 
 MISTRAL_TOOL_CALL_ID_LENGTH = 9
@@ -118,6 +119,7 @@ async def request_mistral_stream(model: Model, payload: dict[str, Any], api_key:
 def build_mistral_headers(model: Model, api_key: str, options: MistralOptions | None = None) -> dict[str, str]:
     """pi builds a case-insensitive `Headers`; lowercase keys stand in for that."""
     headers = {
+        "user-agent": get_user_agent(),
         "accept": "text/event-stream",
         "authorization": f"Bearer {api_key}",
         "content-type": "application/json",

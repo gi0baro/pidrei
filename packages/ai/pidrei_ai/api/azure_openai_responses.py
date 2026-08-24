@@ -53,6 +53,7 @@ from pidrei_ai.utils.error_body import format_provider_error, normalize_provider
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
+from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
 DEFAULT_AZURE_API_VERSION = "v1"
@@ -325,6 +326,7 @@ def create_client(model: Model, api_key: str, options: AzureOpenAIResponsesOptio
     headers = dict(model.headers or {})
     if options is not None and options.headers:
         headers.update(options.headers)
+    set_default_user_agent(headers)
 
     base_url, api_version = resolve_azure_config(model, options)
 

@@ -63,13 +63,15 @@ async def test_persists_extension_provided_summary_usage_in_session_totals(temp_
     target_id = await session.session_manager.append_message(user_msg("first branch"))
     await session.session_manager.append_message(assistant_msg("first reply"))
     await session.session_manager.append_message(user_msg("abandoned branch work"))
-    await session.session_manager.append_message(assistant_msg("abandoned reply"))
+    source_id = await session.session_manager.append_message(assistant_msg("abandoned reply"))
 
     result = await session.navigate_tree(target_id, {"summarize": True})
     summary_entry = result.summary_entry
 
     # Session entries are wire dicts here, not objects, so the keys stay camelCase.
     assert summary_entry["type"] == "branch_summary"
+    assert summary_entry["parentId"] is None
+    assert summary_entry["fromId"] == source_id
     assert summary_entry["fromHook"] is True
     assert summary_entry["summary"] == "Summary provided by extension"
     assert summary_entry["usage"] == usage

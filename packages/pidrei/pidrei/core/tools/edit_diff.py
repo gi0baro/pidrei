@@ -18,9 +18,9 @@ from pidrei_agent.harness.tools.edit_diff import (
     generate_unified_patch,
     normalize_to_lf,
     restore_line_endings,
-    strip_bom,
 )
 
+from ...utils.text import split_bom
 from .path_utils import resolve_to_cwd
 
 
@@ -59,7 +59,7 @@ async def compute_edits_diff(path: str, edits: list[Edit], cwd: str) -> EditDiff
             return EditDiffError(error=f"Could not edit file: {path}. {_error_code_message(error)}.")
 
         # Strip BOM before matching (LLM won't include invisible BOM in oldText)
-        _bom, content = strip_bom(raw_content)
+        _bom, content = split_bom(raw_content)
         normalized_content = normalize_to_lf(content)
         applied = apply_edits_to_normalized_content(normalized_content, edits, path)
 
@@ -87,5 +87,4 @@ __all__ = [
     "generate_unified_patch",
     "normalize_to_lf",
     "restore_line_endings",
-    "strip_bom",
 ]

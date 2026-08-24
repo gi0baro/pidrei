@@ -17,6 +17,7 @@ from pidrei_ai.utils.tasks import gather
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path, is_local_path, resolve_path
+from ..utils.text import strip_bom
 from .diagnostics import ResourceCollision, ResourceDiagnostic
 from .event_bus import EventBus
 from .extensions.loader import (
@@ -70,7 +71,7 @@ def _resolve_prompt_input_sync(input: str | None, description: str) -> str | Non
     if os.path.exists(input):
         try:
             with open(input, encoding="utf-8") as f:
-                return f.read()
+                return strip_bom(f.read())
         except OSError as error:
             _warn(f"Could not read {description} file {input}: {error}")
             return input
@@ -86,7 +87,7 @@ def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
                 if not os.path.isfile(file_path):
                     continue
                 with open(file_path, encoding="utf-8") as f:
-                    return AgentsFile(path=file_path, content=f.read())
+                    return AgentsFile(path=file_path, content=strip_bom(f.read()))
             except OSError as error:
                 _warn(f"Could not read {file_path}: {error}")
     return None

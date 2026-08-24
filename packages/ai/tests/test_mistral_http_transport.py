@@ -30,6 +30,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.user_agent import get_user_agent
 from tests.mistral_helpers import FakeMistralClient, FakeMistralResponse, sse_body
 
 
@@ -117,6 +118,7 @@ async def test_serializes_sdk_style_payloads_to_the_mistral_wire_format():
     assert request["headers"]["accept"] == "text/event-stream"
     assert request["headers"]["x-affinity"] == "session-1"
     assert request["headers"]["x-custom"] == "value"
+    assert request["headers"]["user-agent"] == get_user_agent()
     assert captured_payload[0]["maxTokens"] == 123
     assert captured_payload[0]["promptMode"] == "reasoning"
     assert captured_payload[0]["promptCacheKey"] == "session-1"
@@ -326,13 +328,14 @@ async def test_honors_case_insensitive_header_overrides_and_explicit_affinity_su
             api_key="request-key",
             client=client,
             session_id="automatic-affinity",
-            headers={"authorization": None, "x-affinity": None},
+            headers={"authorization": None, "x-affinity": None, "User-Agent": "custom-agent"},
         ),
     ).result()
 
     request_headers = client.requests[0]["headers"]
     assert "authorization" not in request_headers
     assert "x-affinity" not in request_headers
+    assert request_headers["user-agent"] == "custom-agent"
 
 
 @pytest.mark.tonio

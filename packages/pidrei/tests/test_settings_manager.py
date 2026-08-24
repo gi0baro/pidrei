@@ -149,7 +149,7 @@ class TestReload:
         assert manager.get_default_model() == "claude-sonnet"
 
     @pytest.mark.tonio
-    async def test_keeps_previous_settings_when_file_is_invalid(self, dirs):
+    async def test_keeps_previous_settings_and_reports_the_file_path_when_the_file_is_invalid(self, dirs):
         agent_dir, project_dir = dirs
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"theme": "dark"})
@@ -160,6 +160,8 @@ class TestReload:
         await manager.reload()
 
         assert manager.get_theme() == "dark"
+        errors = manager.drain_errors()
+        assert [(error.scope, error.path) for error in errors] == [("global", str(settings_path))]
 
 
 class TestThemeSetting:
@@ -185,14 +187,18 @@ class TestErrorTracking:
     @pytest.mark.tonio
     async def test_collects_and_clears_load_errors_via_drain_errors(self, dirs):
         agent_dir, project_dir = dirs
-        (agent_dir / "settings.json").write_text("{ invalid global json", encoding="utf-8")
-        (project_dir / ".pidrei" / "settings.json").write_text("{ invalid project json", encoding="utf-8")
+        global_settings_path = agent_dir / "settings.json"
+        project_settings_path = project_dir / ".pidrei" / "settings.json"
+        global_settings_path.write_text("{ invalid global json", encoding="utf-8")
+        project_settings_path.write_text("{ invalid project json", encoding="utf-8")
 
         manager = await SettingsManager.create(str(project_dir), str(agent_dir))
         errors = manager.drain_errors()
 
-        assert len(errors) == 2
-        assert sorted(error.scope for error in errors) == ["global", "project"]
+        assert [(error.scope, error.path) for error in errors] == [
+            ("global", str(global_settings_path)),
+            ("project", str(project_settings_path)),
+        ]
         assert manager.drain_errors() == []
 
 

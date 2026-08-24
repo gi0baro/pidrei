@@ -14,8 +14,8 @@ from importlib import resources
 from typing import Any
 
 from pidrei_ai.types import (
+    AnthropicAllowedFallbackModel,
     AnthropicMessagesCompat,
-    AnthropicRefusalFallbackTarget,
     BedrockCompat,
     Model,
     ModelCompat,
@@ -70,10 +70,10 @@ def _compat_fields(compat_class: type) -> frozenset[str]:
 _ANY_COMPAT_FIELD = frozenset().union(*(_compat_fields(cls) for cls in set(_COMPAT_CLASSES.values())))
 
 
-def _parse_fallback_targets(raw: list[dict[str, Any]]) -> list[AnthropicRefusalFallbackTarget]:
+def _parse_fallback_targets(raw: list[dict[str, Any]]) -> list[AnthropicAllowedFallbackModel]:
     return [
-        AnthropicRefusalFallbackTarget(
-            model=target["model"], cost=_parse_cost(target["cost"]) if "cost" in target else None
+        AnthropicAllowedFallbackModel(
+            provider=target["provider"], model=target["model"], cost=_parse_cost(target["cost"])
         )
         for target in raw
     ]

@@ -1305,13 +1305,14 @@ class SessionManager:
             with self._lock:
                 if branch_from_id is not None and branch_from_id not in self._by_id:
                     raise Exception(f"Entry {branch_from_id} not found")
+                from_id = self._leaf_id if self._leaf_id is not None else "root"
                 self._leaf_id = branch_from_id
                 entry: dict[str, Any] = {
                     "type": "branch_summary",
                     "id": _generate_id(self._by_id),
                     "parentId": branch_from_id,
                     "timestamp": _iso_now(),
-                    "fromId": branch_from_id if branch_from_id is not None else "root",
+                    "fromId": from_id,
                     "summary": summary,
                 }
                 if details is not None:

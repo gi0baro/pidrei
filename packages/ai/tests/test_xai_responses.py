@@ -180,36 +180,50 @@ async def test_uses_responses_for_grok_43():
     assert params["reasoning"]["effort"] == "low"
 
 
-def test_keeps_the_transport_user_agent_for_non_xai_responses_requests():
-    model = make_model(provider="openai", base_url="https://api.openai.com/v1")
+CUSTOM_COMPLETIONS_MODEL = Model(
+    id="grok-custom",
+    name="Grok Custom",
+    api="openai-completions",
+    provider="xai",
+    base_url="https://api.x.ai/v1",
+    reasoning=False,
+    input=["text"],
+    cost=ModelCost(),
+    context_window=128000,
+    max_tokens=16384,
+)
+
+
+def completions_user_agent(headers: dict | None = None) -> str:
     context = Context(messages=[UserMessage(content="hello", timestamp=1)])
-    headers = create_responses_client(model, context, "test-token", None, None)._headers
-
-    assert not any(name.lower() == "user-agent" for name in headers)
-
-
-def test_forces_pidreis_user_agent_on_custom_xai_completions_models_over_caller_headers():
-    custom_model = Model(
-        id="grok-custom",
-        name="Grok Custom",
-        api="openai-completions",
-        provider="xai",
-        base_url="https://api.x.ai/v1",
-        reasoning=False,
-        input=["text"],
-        cost=ModelCost(),
-        context_window=128000,
-        max_tokens=16384,
-    )
-    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
-    headers = create_completions_client(
-        custom_model,
+    client_headers = create_completions_client(
+        CUSTOM_COMPLETIONS_MODEL,
         context,
         "xai-test-token",
-        {"User-Agent": "custom-agent"},
+        headers,
         None,
-        get_compat(custom_model),
+        get_compat(CUSTOM_COMPLETIONS_MODEL),
     )._headers
+    return client_headers["User-Agent"]
 
-    assert headers["User-Agent"] == get_user_agent()
-    assert "custom-agent" not in headers.values()
+
+def responses_user_agent(headers: dict | None = None) -> str:
+    model = make_model(provider="openai", base_url="https://api.openai.com/v1")
+    context = Context(messages=[UserMessage(content="hello", timestamp=1)])
+    return create_responses_client(model, context, "test-token", headers, None)._headers["User-Agent"]
+
+
+def test_uses_the_runtime_user_agent_by_default_for_responses_requests():
+    assert responses_user_agent() == get_user_agent()
+
+
+def test_lets_explicit_headers_override_the_default_responses_user_agent():
+    assert responses_user_agent({"User-Agent": "custom-agent"}) == "custom-agent"
+
+
+def test_uses_the_runtime_user_agent_by_default_for_completions_requests():
+    assert completions_user_agent() == get_user_agent()
+
+
+def test_lets_explicit_headers_override_the_default_completions_user_agent():
+    assert completions_user_agent({"User-Agent": "custom-agent"}) == "custom-agent"

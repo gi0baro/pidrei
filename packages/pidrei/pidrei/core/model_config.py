@@ -18,6 +18,7 @@ from tonio.colored import fs
 
 from ..utils.json_util import strip_json_comments
 from ..utils.paths import normalize_path
+from ..utils.text import strip_bom
 
 
 _STRING = {"type": "string"}
@@ -285,7 +286,7 @@ class ModelConfig:
             return ModelConfig({}, f"Failed to load models.json: {error}\n\nFile: {path}")
 
         try:
-            parsed = json.loads(strip_json_comments(content))
+            parsed = json.loads(strip_json_comments(strip_bom(content)))
         except Exception as error:
             return ModelConfig({}, f"Failed to parse models.json: {error}\n\nFile: {path}")
 

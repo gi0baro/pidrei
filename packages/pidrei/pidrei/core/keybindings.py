@@ -14,6 +14,7 @@ from tonio.colored import fs
 from pidrei_tui.keybindings import TUI_KEYBINDINGS, KeybindingsManager as TuiKeybindingsManager
 
 from ..config import get_agent_dir
+from ..utils.text import strip_bom
 
 
 _DARWIN = sys.platform == "darwin"
@@ -183,7 +184,7 @@ async def _load_raw_config(path: str) -> dict | None:
     if not await fs.Path(path).exists():
         return None
     try:
-        parsed = json.loads(await fs.Path(path).read_text(encoding="utf-8"))
+        parsed = json.loads(strip_bom(await fs.Path(path).read_text(encoding="utf-8")))
     except Exception:
         return None
     if not isinstance(parsed, dict):

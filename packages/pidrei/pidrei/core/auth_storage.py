@@ -34,6 +34,7 @@ from ..config import get_agent_dir
 from ..utils import lockfile
 from ..utils.abort import race_with_cancel
 from ..utils.paths import get_file_revision, normalize_path
+from ..utils.text import strip_bom
 from .resolve_config_value import is_command_config_value, resolve_config_value
 
 
@@ -234,7 +235,7 @@ class ReadOnlyAuthStorage(CredentialStore):
             return self._data
         try:
             with open(self._auth_path, encoding="utf-8") as f:
-                parsed = json.load(f)
+                parsed = json.loads(strip_bom(f.read()))
         except FileNotFoundError:
             self._data = {}
             return self._data
@@ -394,7 +395,7 @@ class AuthStorage(CredentialStore):
     def _parse_storage_data(self, content: str | None) -> dict[str, Credential]:
         if not content:
             return {}
-        return {provider: parse_credential(raw) for provider, raw in json.loads(content).items()}
+        return {provider: parse_credential(raw) for provider, raw in json.loads(strip_bom(content)).items()}
 
     def _update_read_state(self, data: dict[str, Credential], revision: str | None = None) -> None:
         self._read_state.data = data
@@ -574,7 +575,7 @@ def read_stored_credential(provider_id: str, auth_path: str | None = None) -> Cr
         auth_path = os.path.join(get_agent_dir(), "auth.json")
     try:
         with open(normalize_path(auth_path), encoding="utf-8") as f:
-            data = json.load(f)
+            data = json.loads(strip_bom(f.read()))
         raw = data.get(provider_id)
         return parse_credential(raw) if raw is not None else None
     except Exception:

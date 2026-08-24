@@ -9,6 +9,8 @@ import tempfile
 import tonio
 from tonio.colored import fs
 
+from ...utils.text import strip_bom
+
 
 async def edit_in_external_editor(options: dict) -> dict:
     """Run ``options["command"]`` on ``options["content"]`` in a temp file.
@@ -39,7 +41,7 @@ async def edit_in_external_editor(options: dict) -> dict:
         if exit_code != 0:
             return {"status": "failed"}
 
-        content = await fs.Path(file_path).read_text(encoding="utf-8")
+        content = strip_bom(await fs.Path(file_path).read_text(encoding="utf-8"))
         return {"status": "complete", "content": re.sub(r"\n$", "", content)}
     finally:
         # Cleanup is best effort.
