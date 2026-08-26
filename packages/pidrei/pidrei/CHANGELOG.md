@@ -6,6 +6,12 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.3.1] - 2026-08-26
+
+### Changed
+
+- Updated punkreq and httpunk dependencies.
+
 ## [0.84.3.0] - 2026-08-24
 
 Tracks [Pi 0.84.3](https://github.com/earendil-works/pi/releases/tag/v0.84.3).
