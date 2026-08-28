@@ -6,6 +6,19 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.3.2] - 2026-08-28
+
+### Changed
+
+- Refactored internals for multi-threading: the TUI runs as a single-task
+  island that owns all component mutation and rendering, agent events are
+  frozen into immutable snapshots at the session seam, settings/models/auth
+  and the provider registry publish atomic epoch snapshots with lock-free
+  readers, and the agent's run lifecycle and pending-message queues are folded
+  into one internal mailbox task.
+- Reworked the subagent example extension to run subagents as parallel
+  in-process agent sessions instead of `pidrei` subprocesses.
+
 ## [0.84.3.1] - 2026-08-26
 
 ### Changed
