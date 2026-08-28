@@ -1,12 +1,20 @@
 """Mirror of pi agent/test/agent.test.ts."""
 
+import os
+import tempfile
 import time
 
 import pytest
 import tonio.colored as tonio
-from tonio.colored import sync
+from tonio.colored import fs, sync
 
-from pidrei_agent.agent import Agent, AgentInitialState
+from pidrei_agent.agent import (
+    _STALL_LOG_ENV,
+    Agent,
+    AgentInitialState,
+    _ActiveRun,
+    _AgentMailbox,
+)
 from pidrei_agent.stream_fn import set_default_stream_fn
 from pidrei_agent.types import AgentTool, AgentToolResult
 from pidrei_ai.providers.all import get_builtin_model
@@ -507,6 +515,35 @@ async def test_listeners_never_overlap_under_parallel_tools():
 
 
 @pytest.mark.tonio
+async def test_dispatch_stall_meter_records_a_blocked_listener():
+    # Forced probe for the §1 gate metric (PROPER_MT_DESIGN.md step 0): with
+    # PIDREI_DISPATCH_STALL_LOG set, a listener holding the dispatcher past
+    # the ~50 ms threshold must produce a per-event stall line, and closing
+    # the run's dispatcher must append the per-type summary.
+    log_dir = await tonio.spawn_blocking(tempfile.mkdtemp, None, "pidrei-agent-stall-")
+    log_path = os.path.join(log_dir, "stalls.log")
+    os.environ[_STALL_LOG_ENV] = log_path
+    try:
+        agent = Agent(stream_fn=const_stream_fn("ok"))
+
+        async def blocked_listener(event, _signal):
+            if event.type == "message_end":
+                # The stall under test: sleep never returns early, so the
+                # observed latency is deterministically over the threshold.
+                await tonio.sleep(0.06)
+
+        agent.subscribe(blocked_listener)
+        await agent.prompt("Hello")
+    finally:
+        os.environ.pop(_STALL_LOG_ENV, None)
+
+    content = await fs.Path(log_path).read_text()
+    assert "stall message_end:" in content
+    assert "run summary" in content
+    assert "agent_end" in content
+
+
+@pytest.mark.tonio
 async def test_should_update_state_with_mutators():
     agent = Agent(stream_fn=unused_stream_fn)
 
@@ -777,3 +814,141 @@ async def test_forwards_session_id_to_stream_function_options():
 
     await agent.prompt("hello again")
     assert received_session_id == "session-def"
+
+
+# ---------------------------------------------------------------------------
+# pidrei-own: the internal agent mailbox (PROPER_MT_DESIGN.md step 4).
+# Not part of the pi mirror — pi's single thread has no admission races and
+# no mailbox ordering contract to pin.
+
+
+@pytest.mark.tonio
+async def test_mailbox_admits_exactly_one_of_many_concurrent_prompts():
+    # Atomic run admission: N prompt() calls racing from parallel tasks admit
+    # exactly one run; the rest raise "already processing". Fails on the old
+    # shape, where the None-check and the `_active_run = run` assignment were
+    # separate operations racing on worker threads.
+    contenders = 8
+    release_response = tonio.Event()
+
+    async def stream_fn(_model, _context, _options):
+        stream = AssistantMessageEventStream()
+
+        async def driver():
+            stream.push(StartEvent(partial=create_assistant_message("")))
+            await release_response.wait(None)
+            stream.push(DoneEvent(reason="stop", message=create_assistant_message("Won")))
+
+        tonio.spawn.without_tracking(driver())
+        return stream
+
+    agent = Agent(stream_fn=stream_fn)
+    starting_line = sync.Barrier(contenders)
+    errors: list[str] = []
+    losers_settled = tonio.Event()
+
+    async def contender():
+        await starting_line.wait()
+        try:
+            await agent.prompt("Race")
+        except Exception as error:
+            errors.append(str(error))
+            if len(errors) == contenders - 1:
+                losers_settled.set()
+
+    handles = [tonio.spawn(contender()) for _ in range(contenders)]
+    # The winner parks on the stream until released, so every loser has
+    # raised once this settles; a double admission hangs here (diagnose -v).
+    await losers_settled.wait(None)
+    release_response.set()
+    for handle in handles:
+        await handle
+
+    assert len(errors) == contenders - 1
+    assert all("already processing" in message for message in errors)
+    assert [getattr(m, "role", None) for m in agent.state.messages] == ["user", "assistant"]
+    assert agent.state.is_streaming is False
+
+
+@pytest.mark.tonio
+async def test_queue_operations_are_applied_in_mailbox_order():
+    # The mailbox ordering contract: enqueues and clears are fire-and-forget
+    # sends, and FIFO puts each ahead of any later query — so a sync steer()
+    # followed by an awaited has_queued_messages() always observes it
+    # (agent_session checks the queues right after agent_end handlers steer).
+    agent = Agent(stream_fn=unused_stream_fn)
+    assert await agent.has_queued_messages() is False
+
+    agent.steer(UserMessage(content="Queued steer", timestamp=int(time.time() * 1000)))
+    assert await agent.has_queued_messages() is True
+    agent.clear_steering_queue()
+    assert await agent.has_queued_messages() is False
+
+    agent.follow_up(UserMessage(content="Queued follow-up", timestamp=int(time.time() * 1000)))
+    assert await agent.has_queued_messages() is True
+    agent.clear_follow_up_queue()
+    assert await agent.has_queued_messages() is False
+
+
+@pytest.mark.tonio
+async def test_queues_lose_nothing_under_concurrent_steering_and_drains():
+    # Concurrent producers steering while a drainer pulls through the
+    # mailbox: every message is seen exactly once and per-producer FIFO order
+    # survives — the ownership guarantee the old locked queues provided.
+    producers = 8
+    per_producer = 50
+    agent = Agent(stream_fn=unused_stream_fn, steering_mode="all")
+    starting_line = sync.Barrier(producers + 1)
+    producers_done = tonio.Event()
+    drained: list[UserMessage] = []
+
+    async def producer(index: int) -> None:
+        await starting_line.wait()
+        for n in range(per_producer):
+            agent.steer(UserMessage(content=f"{index}:{n}", timestamp=0))
+            await tonio.yield_now()
+
+    async def drainer() -> None:
+        mailbox = agent._mailbox
+        # Not a wait-for-condition poll: every pass does real work (drains
+        # whatever the producers have queued so far) until they finish.
+        while not producers_done.is_set():
+            drained.extend(await mailbox.run(mailbox.steering.drain))
+            await tonio.yield_now()
+        drained.extend(await mailbox.run(mailbox.steering.drain))
+
+    producer_handles = [tonio.spawn(producer(i)) for i in range(producers)]
+    drain_handle = tonio.spawn(drainer())
+    await starting_line.wait()
+    for handle in producer_handles:
+        await handle
+    producers_done.set()
+    await drain_handle
+
+    assert await agent.has_queued_messages() is False
+    contents = [message.content for message in drained]
+    expected = [f"{i}:{n}" for i in range(producers) for n in range(per_producer)]
+    assert sorted(contents) == sorted(expected)
+    for index in range(producers):
+        own = [item for item in contents if item.startswith(f"{index}:")]
+        assert own == [f"{index}:{n}" for n in range(per_producer)]
+
+
+@pytest.mark.tonio
+async def test_mailbox_run_slot_claim_is_exclusive_until_released():
+    mailbox = _AgentMailbox("one-at-a-time", "one-at-a-time")
+    first = _ActiveRun(done=tonio.Event(), cancel=CancelToken(), events=None)
+    mailbox.claim(first)
+    assert mailbox.current is first
+
+    second = _ActiveRun(done=tonio.Event(), cancel=CancelToken(), events=None)
+    with pytest.raises(Exception, match="Agent is already processing."):
+        mailbox.claim(second)
+    assert mailbox.current is first
+
+    mailbox.release(second)  # Not the holder: must be a no-op.
+    assert mailbox.current is first
+    mailbox.release(first)
+    assert mailbox.current is None
+    mailbox.claim(second)
+    assert mailbox.current is second

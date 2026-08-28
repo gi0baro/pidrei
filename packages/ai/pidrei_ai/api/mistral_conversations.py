@@ -25,9 +25,15 @@ from typing import Any
 from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.simple_options import build_base_options
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.builders import (
+    AssistantMessageBuilder,
+    TextContentBuilder,
+    ThinkingContentBuilder,
+    ToolCallBuilder,
+    UsageBuilder,
+)
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
-    AssistantMessage,
     Context,
     DoneEvent,
     ErrorEvent,
@@ -47,11 +53,9 @@ from pidrei_ai.types import (
     ThinkingEndEvent,
     ThinkingStartEvent,
     Tool,
-    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
-    Usage,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -332,13 +336,13 @@ def stream_simple(
     return stream(model, context, opts, into=into)
 
 
-def create_output(model: Model) -> AssistantMessage:
-    return AssistantMessage(
+def create_output(model: Model) -> AssistantMessageBuilder:
+    return AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
@@ -455,7 +459,7 @@ def _get_mistral_cached_prompt_tokens(usage: dict, prompt_tokens: int) -> int:
     return min(prompt_tokens, max(0, int(cached)))
 
 
-async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream, mistral_stream) -> None:
+async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out_stream, mistral_stream) -> None:
     current_block: TextContent | ThinkingContent | None = None
     blocks = output.content
     tool_blocks_by_key: dict[str, int] = {}
@@ -472,10 +476,10 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
         elif block.type == "thinking":
             out_stream.push(ThinkingEndEvent(content_index=block_index(), content=block.thinking, partial=output))
 
-    def start_text_block(text_delta: str) -> TextContent:
+    def start_text_block(text_delta: str) -> TextContentBuilder:
         nonlocal current_block
         finish_current_block(current_block)
-        current_block = TextContent(text="")
+        current_block = TextContentBuilder(text="")
         output.content.append(current_block)
         out_stream.push(TextStartEvent(content_index=block_index(), partial=output))
         return current_block
@@ -532,7 +536,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
                         continue
                     if current_block is None or current_block.type != "thinking":
                         finish_current_block(current_block)
-                        current_block = ThinkingContent(thinking="")
+                        current_block = ThinkingContentBuilder(thinking="")
                         output.content.append(current_block)
                         out_stream.push(ThinkingStartEvent(content_index=block_index(), partial=output))
                     current_block.thinking += thinking_delta
@@ -567,7 +571,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessage, out_stream
 
             if block is None:
                 function = tool_call.get("function") or {}
-                block = ToolCall(id=call_id, name=function.get("name") or "", arguments={})
+                block = ToolCallBuilder(id=call_id, name=function.get("name") or "", arguments={})
                 output.content.append(block)
                 tool_blocks_by_key[key] = len(output.content) - 1
                 partial_args[len(output.content) - 1] = ""

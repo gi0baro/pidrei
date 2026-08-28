@@ -40,6 +40,9 @@ class ModelsStore(Protocol):
 
 
 class InMemoryModelsStore(ModelsStore):
+    # `_entries` is an immutable snapshot swapped on write (never mutated in
+    # place), so readers pin one attribute read; the deepcopies keep pi's
+    # value semantics at the API edge (PROPER_MT_DESIGN.md step 3).
     def __init__(self) -> None:
         self._entries: dict[str, ModelsStoreEntry] = {}
 
@@ -56,9 +59,11 @@ class InMemoryModelsStore(ModelsStore):
     ) -> None:
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
-        self._entries[provider_id] = copy.deepcopy(entry)
+        self._entries = {**self._entries, provider_id: copy.deepcopy(entry)}
 
     async def delete(self, provider_id: str, options: ModelsStoreOperationOptions | None = None) -> None:
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
-        self._entries.pop(provider_id, None)
+        entries = dict(self._entries)
+        entries.pop(provider_id, None)
+        self._entries = entries

@@ -12,9 +12,12 @@ import termios
 
 import pytest
 import tonio.colored as tonio
+from tonio._colored._fd import FdStream
 
+from pidrei_tui.components import Text
 from pidrei_tui.keys import set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal
+from pidrei_tui.tui_main_screen import TuiMainScreen
 
 
 async def _read_available(fd: int, wait: float = 0.05) -> bytes:
@@ -220,4 +223,109 @@ async def test_pty_input_survives_a_raising_input_handler():
         await terminal.stop()
         set_kitty_protocol_active(False)
     os.close(master)
+    os.close(slave)
+
+
+# TUI island stress: input storms while mutations stream (PROPER_MT_DESIGN
+# step 1). "Frozen" would show as the sentinel key never arriving or frames
+# going silent — the 0.84.2.5 failure mode the island makes structural.
+
+
+@pytest.mark.tonio
+async def test_pty_tui_survives_an_input_storm_with_concurrent_mutations():
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    # The test plays the terminal-emulator side of the pty through tonio's
+    # own fd stream (async send/receive on the runtime); the stream owns
+    # `master` and closes it when dropped.
+    emulator = FdStream(master)
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    tui = TuiMainScreen(terminal)
+    streamed = Text("start", 1, 0)
+
+    received: list[str] = []
+    sentinel_seen = tonio.Event()
+
+    class Sink:
+        def render(self, width):
+            return ["sink"]
+
+        def invalidate(self):
+            pass
+
+        async def handle_input(self, data):
+            received.append(data)
+            if data == "z":
+                sentinel_seen.set()
+
+    sink = Sink()
+    tui.add_child(streamed)
+    tui.add_child(sink)
+    tui.set_focus(sink)
+
+    render_errors: list[BaseException] = []
+
+    async def on_render_error(error: BaseException) -> None:
+        render_errors.append(error)
+
+    tui.set_render_error_handler(on_render_error)
+
+    stop_mutating = tonio.Event()
+    frames_flowing = tonio.Event()
+    frame_markers = [0]
+
+    async def drain_output() -> None:
+        # Keep the pty drained so the output pump can never wedge on a
+        # full buffer, and count frames (synchronized-output opens) as
+        # they arrive. Parked here at the end; the scope cancel unwinds
+        # it (§4.5 contract).
+        while True:
+            data = await emulator.receive_some()
+            if not data:
+                return
+            frame_markers[0] += data.count(b"\x1b[?2026h")
+            if frame_markers[0] > 1:
+                frames_flowing.set()
+
+    async def mutate_loop() -> None:
+        # The agent-listener shape: mutations posted to the owner from
+        # another task, each followed by a render request.
+        i = 0
+        while not stop_mutating.is_set():
+            i += 1
+
+            async def apply(i=i) -> None:
+                streamed.set_text(f"streamed content {i}")
+
+            tui.input_owner.post(apply)
+            tui.request_render()
+            await stop_mutating.wait(0.005)
+
+    try:
+        await tui.start()
+        async with tonio.scope() as scope:
+            scope.spawn(drain_output())
+            scope.spawn(mutate_loop())
+            # Reply as a Kitty-capable terminal to settle negotiation.
+            await emulator.send_all(b"\x1b[?7u")
+            # Key bursts with escape sequences split across writes,
+            # while mutations stream and frames go out.
+            for _ in range(25):
+                await emulator.send_all(b"abcd")
+                await emulator.send_all(b"\x1b[1;5")  # split escape...
+                await emulator.send_all(b"C")  # ...completed: ctrl+right
+            await emulator.send_all(b"z")  # sentinel: input still alive?
+            await sentinel_seen.wait(5.0)
+            await frames_flowing.wait(5.0)
+            stop_mutating.set()
+            scope.cancel()
+
+        assert sentinel_seen.is_set(), "input went silent under the storm"
+        assert received.count("a") == 25, "keys were lost under the storm"
+        assert render_errors == [], "rendering raised under the storm"
+        assert frames_flowing.is_set(), "frames stopped flowing"
+    finally:
+        await tui.stop()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
     os.close(slave)

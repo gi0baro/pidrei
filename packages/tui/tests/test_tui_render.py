@@ -878,11 +878,15 @@ async def test_overlay_and_cursor_changes_write_cursor_state_only_from_the_rende
     await tui.stop()
 
 
-# Render-task hooks
+# The ownership contract (the island): mutation and render are owner work
 
 
 @pytest.mark.tonio
-async def test_post_before_render_runs_on_the_render_task_before_the_frame():
+async def test_posted_mutation_lands_before_the_frame_it_requests():
+    """The island's replacement for the old `post_before_render` hook: a
+    mutation posted to the UI owner runs before the frame its
+    `request_render()` schedules, never in between that frame's component
+    renders — mutation and render are serialized on one task."""
     terminal = VirtualTerminal(40, 10)
     tui = TuiMainScreen(terminal)
     component = InputComponent()
@@ -894,18 +898,47 @@ async def test_post_before_render_runs_on_the_render_task_before_the_frame():
     since = terminal.frames
     render_count = component.render_count
 
-    def mutate() -> None:
-        # Posted callbacks run before the frame they trigger, never in between
-        # that frame's component renders.
+    async def mutate() -> None:
         assert component.render_count == render_count
         component.lines = ["after"]
+        tui.request_render()
 
-    tui.post_before_render(mutate)
+    tui.input_owner.post(mutate)
     await terminal.wait_for_render(since, timeout=1.0)
 
     assert component.render_count > render_count
     assert component.lines == ["after"]
     assert any("after" in line for line in terminal.get_viewport())
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_renders_requested_from_other_tasks_funnel_onto_the_owner():
+    """Renders requested from arbitrary tasks and input through the terminal
+    both land as owner work — frames and key effects keep flowing."""
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = InputComponent()
+    component.lines = ["initial"]
+    tui.add_child(component)
+    tui.set_focus(component)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+
+    async def request_from_elsewhere() -> None:
+        tui.request_render(True)
+
+    async with tonio.scope() as scope:
+        scope.spawn(request_from_elsewhere())
+    await terminal.wait_for_render(since, timeout=1.0)
+    assert terminal.frames > since
+
+    since = terminal.frames
+    await terminal.send_input("typed")
+    await terminal.wait_for_render(since, timeout=1.0)
+    assert component.lines == ["typed"]
     await tui.stop()
 
 

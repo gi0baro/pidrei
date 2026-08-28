@@ -4,12 +4,16 @@ Delegate tasks to specialized subagents with isolated context windows.
 
 ## Features
 
-- **Isolated context**: Each subagent runs in a separate `pidrei` process
-- **Streaming output**: See tool calls and progress as they happen
+- **Isolated context**: Each subagent runs as its own in-process agent session
+  with a fresh context window (pi's example spawns a `pi` subprocess instead;
+  on tonio, in-process sessions run genuinely in parallel and skip the
+  per-task interpreter start)
+- **Streaming output**: See tool calls, streaming text, and progress as they
+  happen
 - **Parallel streaming**: All parallel tasks stream updates simultaneously
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
-- **Abort support**: Ctrl+C propagates to kill subagent processes
+- **Abort support**: Ctrl+C aborts the subagent sessions
 
 ## Structure
 
@@ -60,7 +64,7 @@ done
 
 ## Security Model
 
-This tool executes a separate `pidrei` subprocess with a delegated system prompt and tool/model configuration.
+This tool runs an agent session with a delegated system prompt and tool/model configuration. Subagent sessions load no extensions (so a subagent cannot spawn subagents), persist nothing, and read settings from the task's working directory like a fresh `pidrei` run would.
 
 **Project-local agents** (`.pidrei/agents/*.md`) are repo-controlled prompts that can instruct the model to read files, run bash commands, etc.
 
@@ -99,7 +103,7 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 | Mode | Parameter | Description |
 |------|-----------|-------------|
 | Single | `{ agent, task }` | One agent, one task |
-| Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8, 4 concurrent) |
+| Parallel | `{ tasks: [...] }` | Multiple agents run concurrently (max 8 tasks; 4 at once by default, tunable via `concurrency`) |
 | Chain | `{ chain: [...] }` | Sequential with `{previous}` placeholder |
 
 ## Output Display
@@ -120,7 +124,7 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 - Updates as each task makes progress
 - Shows "2/3 done, 1 running" status
 - Returns each completed task's final output to the parent model, capped at 50 KB per task
-- Returns failure diagnostics from stderr/error messages when a child exits before producing output
+- Returns failure diagnostics from error messages when a task fails before producing output
 
 **Tool call formatting** (mimics built-in tools):
 - `$ command` for bash
@@ -170,9 +174,9 @@ Project agents override user agents with the same name when `agentScope: "both"`
 
 ## Error Handling
 
-- **Exit code != 0**: Tool raises with stderr/output (pidrei tools signal failure by raising)
-- **stopReason "error"**: LLM error propagated with error message
-- **stopReason "aborted"**: User abort (Ctrl+C) kills subprocess, raises
+- **stopReason "error"**: LLM error propagated with error message (pidrei tools signal failure by raising)
+- **stopReason "aborted"**: User abort (Ctrl+C) aborts the session, raises
+- **Unknown agent/model, missing cwd, no available models**: Task fails with a diagnostic message
 - **Chain mode**: Stops at first failing step, reports which step failed
 
 ## Limitations
@@ -180,4 +184,6 @@ Project agents override user agents with the same name when `agentScope: "both"`
 - Output truncated to last 10 items in collapsed view (expand to see all)
 - Parallel model-visible output is capped at 50 KB per task; full results remain in tool details
 - Agents discovered fresh on each invocation (allows editing mid-session)
-- Parallel mode limited to 8 tasks, 4 concurrent
+- Parallel mode limited to 8 tasks; 4 run at once by default (`concurrency`
+  raises or lowers that, clamped to the task cap — the sessions are cheap
+  in-process, so the cap mainly guards the provider account's rate limits)

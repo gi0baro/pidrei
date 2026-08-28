@@ -51,6 +51,13 @@ from pidrei_ai.api.simple_options import (
     clamp_reasoning,
 )
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.builders import (
+    AssistantMessageBuilder,
+    TextContentBuilder,
+    ThinkingContentBuilder,
+    ToolCallBuilder,
+    UsageBuilder,
+)
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AssistantMessage,
@@ -66,22 +73,18 @@ from pidrei_ai.types import (
     StartEvent,
     StopReason,
     StreamOptions,
-    TextContent,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
     ThinkingBudgets,
-    ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingLevel,
     ThinkingStartEvent,
     Tool,
-    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
-    Usage,
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
@@ -149,12 +152,12 @@ def stream(
     opts = _bedrock_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api="bedrock-converse-stream",
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
@@ -411,7 +414,9 @@ def _extract_bedrock_error_code(error: Any) -> str | None:
     return _normalize_diagnostic_value(name)
 
 
-def _append_bedrock_failure_diagnostic(output: AssistantMessage, error: Any, fallback_request_id: str | None) -> None:
+def _append_bedrock_failure_diagnostic(
+    output: AssistantMessageBuilder, error: Any, fallback_request_id: str | None
+) -> None:
     """Structured metadata alongside `error_message`, which stays byte-identical
     because `is_retryable_assistant_error` matches against it. Unknown fields
     are omitted, never guessed. `details` only, as the raised value's shape is
@@ -569,13 +574,13 @@ def _copy_thinking_budgets(budgets: ThinkingBudgets | None) -> ThinkingBudgets:
 
 
 def _handle_content_block_start(
-    event: dict, blocks: list, block_indices: dict, partial_json: dict, output: AssistantMessage, out_stream
+    event: dict, blocks: list, block_indices: dict, partial_json: dict, output: AssistantMessageBuilder, out_stream
 ) -> None:
     index = event.get("contentBlockIndex")
     start = event.get("start") or {}
 
     if start.get("toolUse"):
-        block = ToolCall(
+        block = ToolCallBuilder(
             id=start["toolUse"].get("toolUseId") or "", name=start["toolUse"].get("name") or "", arguments={}
         )
         output.content.append(block)
@@ -591,7 +596,7 @@ def _handle_content_block_delta(
     block_indices: dict,
     partial_json: dict,
     redacted_chunks: dict,
-    output: AssistantMessage,
+    output: AssistantMessageBuilder,
     out_stream,
 ) -> None:
     content_block_index = event.get("contentBlockIndex")
@@ -602,7 +607,7 @@ def _handle_content_block_delta(
     if delta.get("text") is not None:
         # No contentBlockStart arrives for text blocks, so create one on first delta.
         if block is None:
-            block = TextContent(text="")
+            block = TextContentBuilder(text="")
             output.content.append(block)
             index = len(blocks) - 1
             block_indices[content_block_index] = index
@@ -621,7 +626,7 @@ def _handle_content_block_delta(
         thinking_index = index
 
         if thinking_block is None:
-            thinking_block = ThinkingContent(thinking="", thinking_signature="")
+            thinking_block = ThinkingContentBuilder(thinking="", thinking_signature="")
             output.content.append(thinking_block)
             thinking_index = len(blocks) - 1
             block_indices[content_block_index] = thinking_index
@@ -682,7 +687,7 @@ def _decode_redacted_content(signature: str | None) -> bytes | None:
         return None
 
 
-def _handle_metadata(event: dict, model: Model, output: AssistantMessage) -> None:
+def _handle_metadata(event: dict, model: Model, output: AssistantMessageBuilder) -> None:
     usage = event.get("usage")
     if usage:
         output.usage.input = usage.get("inputTokens") or 0
@@ -699,7 +704,7 @@ def _handle_content_block_stop(
     block_indices: dict,
     partial_json: dict,
     redacted_chunks: dict,
-    output: AssistantMessage,
+    output: AssistantMessageBuilder,
     out_stream,
 ) -> None:
     index = block_indices.pop(event.get("contentBlockIndex"), -1)

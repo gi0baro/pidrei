@@ -36,9 +36,15 @@ from pidrei_ai.api.simple_options import (
     thinking_budget_for_level,
 )
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.builders import (
+    AssistantMessageBuilder,
+    TextContentBuilder,
+    ThinkingContentBuilder,
+    ToolCallBuilder,
+    UsageBuilder,
+)
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
-    AssistantMessage,
     CacheRetention,
     Context,
     DoneEvent,
@@ -53,21 +59,17 @@ from pidrei_ai.types import (
     StartEvent,
     StopReason,
     StreamOptions,
-    TextContent,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
     ThinkingBudgets,
-    ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingStartEvent,
     Tool,
-    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
-    Usage,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -528,7 +530,7 @@ def _map_stop_reason(reason: str | None) -> tuple[StopReason, str | None]:
     return "error", f"Provider finish_reason: {reason}"
 
 
-def _parse_chunk_usage(raw_usage: dict, model: Model) -> Usage:
+def _parse_chunk_usage(raw_usage: dict, model: Model) -> UsageBuilder:
     prompt_tokens = raw_usage.get("prompt_tokens") or 0
     prompt_details = raw_usage.get("prompt_tokens_details") or {}
     # pi's `?? ?? ??` chain: providers disagree on placement, and a present zero
@@ -555,7 +557,7 @@ def _parse_chunk_usage(raw_usage: dict, model: Model) -> Usage:
     input_tokens = max(0, prompt_tokens - cache_read_tokens - cache_write_tokens)
     output_tokens = raw_usage.get("completion_tokens") or 0
     completion_details = raw_usage.get("completion_tokens_details") or {}
-    usage = Usage(
+    usage = UsageBuilder(
         input=input_tokens,
         output=output_tokens,
         cache_read=cache_read_tokens,
@@ -1177,12 +1179,12 @@ def stream(  # noqa: C901
     opts = _openai_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
@@ -1230,23 +1232,23 @@ def stream(  # noqa: C901
                         return index
                 return -1
 
-            text_block: TextContent | None = None
-            thinking_block: ThinkingContent | None = None
+            text_block: TextContentBuilder | None = None
+            thinking_block: ThinkingContentBuilder | None = None
             has_finish_reason = False
-            tool_blocks_by_index: dict[int, ToolCall] = {}
-            tool_blocks_by_id: dict[str, ToolCall] = {}
+            tool_blocks_by_index: dict[int, ToolCallBuilder] = {}
+            tool_blocks_by_id: dict[str, ToolCallBuilder] = {}
 
-            def tool_scratch(block: ToolCall) -> _ToolScratch:
+            def tool_scratch(block: ToolCallBuilder) -> _ToolScratch:
                 return scratch.setdefault(id(block), _ToolScratch())
 
-            def get_custom_tool_call_input(block: ToolCall) -> str:
+            def get_custom_tool_call_input(block: ToolCallBuilder) -> str:
                 prop = tool_scratch(block).custom_property
                 if prop is None:
                     return ""
                 value = block.arguments.get(prop)
                 return value if isinstance(value, str) else ""
 
-            def append_custom_tool_call_input(block: ToolCall, next_input: str, close: bool) -> str | None:
+            def append_custom_tool_call_input(block: ToolCallBuilder, next_input: str, close: bool) -> str | None:
                 entry = tool_scratch(block)
                 if entry.custom_property is None or entry.json_buffer is None:
                     return None
@@ -1275,23 +1277,23 @@ def stream(  # noqa: C901
                     scratch.pop(id(block), None)
                     out_stream.push(ToolCallEndEvent(content_index=index, tool_call=block, partial=output))
 
-            def ensure_text_block() -> TextContent:
+            def ensure_text_block() -> TextContentBuilder:
                 nonlocal text_block
                 if text_block is None:
-                    text_block = TextContent(text="")
+                    text_block = TextContentBuilder(text="")
                     blocks.append(text_block)
                     out_stream.push(TextStartEvent(content_index=content_index(text_block), partial=output))
                 return text_block
 
-            def ensure_thinking_block(thinking_signature: str) -> ThinkingContent:
+            def ensure_thinking_block(thinking_signature: str) -> ThinkingContentBuilder:
                 nonlocal thinking_block
                 if thinking_block is None:
-                    thinking_block = ThinkingContent(thinking="", thinking_signature=thinking_signature)
+                    thinking_block = ThinkingContentBuilder(thinking="", thinking_signature=thinking_signature)
                     blocks.append(thinking_block)
                     out_stream.push(ThinkingStartEvent(content_index=content_index(thinking_block), partial=output))
                 return thinking_block
 
-            def ensure_tool_call_block(tool_call: dict) -> ToolCall:
+            def ensure_tool_call_block(tool_call: dict) -> ToolCallBuilder:
                 stream_index = tool_call.get("index") if isinstance(tool_call.get("index"), int) else None
                 function = tool_call.get("function") or {}
                 custom = tool_call.get("custom")
@@ -1308,7 +1310,7 @@ def stream(  # noqa: C901
                         else None
                     )
                     has_custom = custom_input_property is not None
-                    block = ToolCall(
+                    block = ToolCallBuilder(
                         id=tool_call.get("id") or "",
                         name=name,
                         arguments={custom_input_property: ""} if has_custom else {},

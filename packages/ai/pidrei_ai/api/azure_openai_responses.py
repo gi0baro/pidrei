@@ -33,9 +33,9 @@ from pidrei_ai.api.openai_responses_shared import (
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options
+from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
-    AssistantMessage,
     Context,
     DoneEvent,
     ErrorEvent,
@@ -44,7 +44,6 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
-    Usage,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -178,12 +177,12 @@ def stream(
     opts = _azure_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api="azure-openai-responses",
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )

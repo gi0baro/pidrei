@@ -1,5 +1,7 @@
 """v4 session context projection (mirror of pi agent/test/harness/session/context.test.ts)."""
 
+from dataclasses import replace
+
 from pidrei_agent.harness.session.context import (
     SessionContextBuildOptions,
     SessionModelRef,
@@ -88,9 +90,9 @@ def test_applies_caller_transforms_after_the_compaction_boundary():
 def test_projects_custom_entries_and_omits_deferred_assistant_handles():
     # The `deferred` response-handle field on AssistantMessage arrives with the
     # 0.84 ai wave; the projection only reads stop_reason.
-    deferred = assistant_message("")
-    deferred.content = []
-    deferred.stop_reason = "deferred"
+    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # so the deferred shape is built by construction instead of mutation.
+    deferred = replace(assistant_message(""), content=[], stop_reason="deferred")
     entries: list[Entry] = [
         _stamp(MessageEntry(id="user", parent_id=None, message=user_message("hello")), 1),
         _stamp(MessageEntry(id="deferred", parent_id="user", message=deferred), 2),

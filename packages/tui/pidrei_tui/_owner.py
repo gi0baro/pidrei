@@ -7,6 +7,8 @@ Here the equivalents run on different tonio tasks, so the TUI's input state
 overlays) gets one owner task instead of a lock per site:
 
 - `run(fn)` / `post(fn)` hand work to the owner; it runs serially, in order.
+  `post` always enqueues (a post before `start()` runs at start; an owner
+  that never starts never runs it — tests start one or stub the seam).
 - `after(delay_ms, fn)` / `every(delay_ms, fn)` are `setTimeout`/`setInterval`
   whose fires are delivered as posted work, so a callback runs on the owner
   too. `cancel()` is exact by construction: the cancel and the fire are
@@ -16,8 +18,8 @@ overlays) gets one owner task instead of a lock per site:
   the owner reaps them; nothing ticks after `close()`.
 
 An owner that was never started (a TUI that is never `start()`ed — tests)
-runs work on the caller (`run`) or a detached task (`post`, timers), which
-is what the code did before it had an owner.
+runs `run` work on the caller and timer fires inline; `post`ed work waits in
+the queue for a `start()` that may never come.
 """
 
 from collections.abc import Awaitable, Callable
@@ -83,11 +85,15 @@ class OwnerTask:
             self._sender.send(None)
 
     def post(self, fn: Thunk) -> None:
-        """Run `fn` on the owner, fire-and-forget."""
-        if self.started:
-            self._sender.send(_Job(fn))
-        else:
-            tonio.spawn.without_tracking(fn())
+        """Run `fn` on the owner, fire-and-forget, in post order.
+
+        Always enqueues: work posted before `start()` runs when the owner
+        starts, still in order. An owner that never starts never runs it —
+        tests drive a started owner or stub the posting seam; production
+        owners span the terminal's lifetime. After `close()` the job lands
+        behind the shutdown sentinel and is dropped with the channel.
+        """
+        self._sender.send(_Job(fn))
 
     async def run(self, fn: Thunk) -> None:
         """Run `fn` on the owner and wait for it; its error surfaces here."""

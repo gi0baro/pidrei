@@ -20,6 +20,13 @@ from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, 
 from pidrei_ai.api.github_copilot_headers import build_copilot_dynamic_headers, has_copilot_vision_input
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_max_tokens_to_context
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.builders import (
+    AssistantMessageBuilder,
+    TextContentBuilder,
+    ThinkingContentBuilder,
+    ToolCallBuilder,
+    UsageBuilder,
+)
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
@@ -38,22 +45,18 @@ from pidrei_ai.types import (
     StartEvent,
     StopReason,
     StreamOptions,
-    TextContent,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
-    ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingLevel,
     ThinkingStartEvent,
     Tool,
-    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
     ToolResultMessage,
-    Usage,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -534,12 +537,12 @@ def stream(
     opts = _anthropic_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
@@ -631,12 +634,12 @@ def stream(
                     block_type = content_block.get("type")
                     index = event.get("index")
                     if block_type == "text":
-                        blocks.append(TextContent(text=content_block.get("text") or ""))
+                        blocks.append(TextContentBuilder(text=content_block.get("text") or ""))
                         anthropic_index_to_content[index] = len(blocks) - 1
                         out_stream.push(TextStartEvent(content_index=len(blocks) - 1, partial=output))
                     elif block_type == "thinking":
                         blocks.append(
-                            ThinkingContent(
+                            ThinkingContentBuilder(
                                 thinking=content_block.get("thinking") or "",
                                 thinking_signature=content_block.get("signature") or "",
                             )
@@ -645,7 +648,7 @@ def stream(
                         out_stream.push(ThinkingStartEvent(content_index=len(blocks) - 1, partial=output))
                     elif block_type == "redacted_thinking":
                         blocks.append(
-                            ThinkingContent(
+                            ThinkingContentBuilder(
                                 thinking="[Reasoning redacted]",
                                 thinking_signature=content_block.get("data"),
                                 redacted=True,
@@ -656,7 +659,7 @@ def stream(
                     elif block_type == "tool_use":
                         name = content_block.get("name", "")
                         blocks.append(
-                            ToolCall(
+                            ToolCallBuilder(
                                 id=content_block.get("id", ""),
                                 name=_from_claude_code_name(name, context.tools) if is_oauth else name,
                                 arguments=content_block.get("input") or {},

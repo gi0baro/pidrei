@@ -20,26 +20,29 @@ from pidrei_ai.api.constrained_sampling import (
     resolve_json_schema_strict_sampling,
 )
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.builders import (
+    AssistantMessageBuilder,
+    TextContentBuilder,
+    ThinkingContentBuilder,
+    ToolCallBuilder,
+    UsageBuilder,
+)
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
     Model,
     StopReason,
-    TextContent,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
-    ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingStartEvent,
     Tool,
-    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
-    Usage,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
@@ -398,7 +401,7 @@ def _map_stop_reason(status: str | None, incomplete_reason: str | None = None) -
 
 async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
     events,
-    output: AssistantMessage,
+    output: AssistantMessageBuilder,
     stream: AssistantMessageEventStream,
     model: Model,
     *,
@@ -410,7 +413,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
     grammar_tool_input_properties = grammar_tool_input_properties or {}
     saw_terminal_response_event = False
     output_slots: dict[int, _Slot] = {}
-    reasoning_blocks_by_id: dict[str, ThinkingContent] = {}
+    reasoning_blocks_by_id: dict[str, ThinkingContentBuilder] = {}
 
     def get_slot(output_index: int, kind: str) -> _Slot | None:
         slot = output_slots.get(output_index)
@@ -441,7 +444,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
     def create_slot(output_index: int, item: dict) -> _Slot | None:
         item_type = item.get("type")
         if item_type == "reasoning":
-            block = ThinkingContent(thinking="")
+            block = ThinkingContentBuilder(thinking="")
             output.content.append(block)
             slot = _Slot(kind="thinking", block=block, content_index=len(output.content) - 1)
             output_slots[output_index] = slot
@@ -449,14 +452,14 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             return slot
         if item_type == "message":
             apply_message_phase_stop_reason(item)
-            block = TextContent(text="")
+            block = TextContentBuilder(text="")
             output.content.append(block)
             slot = _Slot(kind="text", block=block, content_index=len(output.content) - 1)
             output_slots[output_index] = slot
             stream.push(TextStartEvent(content_index=slot.content_index, partial=output))
             return slot
         if item_type == "function_call":
-            block = ToolCall(
+            block = ToolCallBuilder(
                 id=f"{item.get('call_id')}|{item.get('id')}",
                 name=item.get("name", ""),
                 arguments={},
@@ -475,7 +478,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
         if item_type == "custom_tool_call":
             input_property = grammar_tool_input_properties.get(item.get("name", ""), "input")
             input_value = item.get("input") or ""
-            block = ToolCall(
+            block = ToolCallBuilder(
                 id=f"{item.get('call_id')}|{item.get('id')}",
                 name=item.get("name", ""),
                 arguments={input_property: input_value},
@@ -523,7 +526,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             cached_tokens = input_details.get("cached_tokens") or 0
             cache_write_tokens = input_details.get("cache_write_tokens") or 0
             output_details = usage.get("output_tokens_details") or {}
-            output.usage = Usage(
+            output.usage = UsageBuilder(
                 # OpenAI includes cached and cache-write tokens in input_tokens.
                 input=max(0, (usage.get("input_tokens") or 0) - cached_tokens - cache_write_tokens),
                 output=usage.get("output_tokens") or 0,

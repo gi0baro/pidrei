@@ -8,6 +8,7 @@ Python values the serializability guard must reject (non-finite floats, sets,
 arbitrary objects, bytes, cycles, non-string keys).
 """
 
+import dataclasses
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
@@ -408,14 +409,18 @@ async def _case_immutable_open_operations(repository: SessionRepo) -> None:
 
 async def _case_facts_and_statistics(repository: SessionRepo) -> None:
     session = await repository.create(SessionCreateOptions(id="session"))
-    assistant = _create_assistant_message("answer")
-    assistant.usage = Usage(
-        input=10,
-        output=5,
-        cache_read=3,
-        cache_write=2,
-        total_tokens=20,
-        cost=UsageCost(input=1, output=2, cache_read=3, cache_write=4, total=10),
+    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # so the usage is attached by construction instead of mutation.
+    assistant = dataclasses.replace(
+        _create_assistant_message("answer"),
+        usage=Usage(
+            input=10,
+            output=5,
+            cache_read=3,
+            cache_write=2,
+            total_tokens=20,
+            cost=UsageCost(input=1, output=2, cache_read=3, cache_write=4, total=10),
+        ),
     )
     await session.append_entry(MessageEntry(id="user", message=_create_user_message("question")), "main")
     await session.append_entry(MessageEntry(id="assistant", message=assistant), "main")

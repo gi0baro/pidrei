@@ -8,7 +8,8 @@ from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     process_responses_stream,
 )
-from pidrei_ai.types import AssistantMessage, Context, Model, ModelCost, ToolCall, Usage
+from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
+from pidrei_ai.types import AssistantMessage, Context, Model, ModelCost, ToolCall
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
@@ -26,13 +27,15 @@ MODEL = Model(
 )
 
 
-def create_output() -> AssistantMessage:
-    return AssistantMessage(
+# Step 2 translation (PROPER_MT_DESIGN.md): the streamed output message is a
+# producer-private builder; pi passes its mutable message here.
+def create_output() -> AssistantMessageBuilder:
+    return AssistantMessageBuilder(
         content=[],
         api=MODEL.api,
         provider=MODEL.provider,
         model=MODEL.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )

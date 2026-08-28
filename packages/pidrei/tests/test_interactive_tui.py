@@ -234,7 +234,13 @@ def test_reserves_status_height_only_on_the_main_screen_renderer(tui_mode, expec
     mode._active_status_indicator = indicator
     mode._status_container = Container()
     mode._options = {"tuiMode": tui_mode}
-    mode.ui = type("_Ui", (), {"get_clear_on_shrink": staticmethod(lambda: True)})()
+    # post_ui applies inline like an un-started TUI (island relaxation,
+    # PROPER_MT_DESIGN step 1).
+    mode.ui = type(
+        "_Ui",
+        (),
+        {"get_clear_on_shrink": staticmethod(lambda: True), "post_ui": staticmethod(lambda fn: fn())},
+    )()
     mode._idle_status = Text("", 0, 0)
 
     mode._clear_status_indicator()

@@ -482,7 +482,7 @@ class TuiMainScreen(TuiBase):
 
                 # Terminal cleanup happens in the caller's shutdown path; pi
                 # calls the sync stop() here, but stop() is async in the port
-                # and _do_render runs inside the render loop task.
+                # and _do_render runs inside an owner render job.
                 raise Exception(
                     "\n".join(
                         [
@@ -570,7 +570,7 @@ class TuiMainScreen(TuiBase):
 
         Port deviation: pi ends with `terminal.showCursor()/hideCursor()` as
         separate writes; here the cursor sequence is part of the positioning
-        buffer so the frame tail is one write from the render loop task.
+        buffer so the frame tail is one write from the render job.
         """
         if not cursor_pos or total_lines <= 0:
             self._emit("\x1b[?25l")

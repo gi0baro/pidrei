@@ -672,8 +672,11 @@ class TestGetSessionStats:
 
         session_manager = SessionManager.in_memory()
         root_id = await session_manager.append_message(UserMessage(content="hello", timestamp=1))
-        assistant = _stats_assistant("response", 100, 2)
-        assistant.usage = replace(_stats_usage(100), cost=UsageCost(total=0.5))
+        # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — usage
+        # attached by construction instead of mutation.
+        assistant = replace(
+            _stats_assistant("response", 100, 2), usage=replace(_stats_usage(100), cost=UsageCost(total=0.5))
+        )
         await session_manager.append_message(assistant)
         await session_manager.append_message(_stats_tool_result(replace(_stats_usage(100), cost=UsageCost(total=1))))
         await session_manager.append_compaction(
@@ -744,13 +747,19 @@ class TestAutoCompactionQueue:
 
         async def summary_stream_fn(summary_model, _context, _options=None):
             stream = AssistantMessageEventStream()
+            from dataclasses import replace
+
             from pidrei_ai.providers.faux import faux_assistant_message
 
-            message = faux_assistant_message("compacted")
-            message.api = summary_model.api
-            message.provider = summary_model.provider
-            message.model = summary_model.id
-            message.usage = Usage(input=10, output=0, cache_read=0, cache_write=0, total_tokens=10, cost=UsageCost())
+            # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — shaped
+            # by construction instead of mutation.
+            message = replace(
+                faux_assistant_message("compacted"),
+                api=summary_model.api,
+                provider=summary_model.provider,
+                model=summary_model.id,
+                usage=Usage(input=10, output=0, cache_read=0, cache_write=0, total_tokens=10, cost=UsageCost()),
+            )
             stream.push(DoneEvent(reason="stop", message=message))
             return stream
 
@@ -758,6 +767,8 @@ class TestAutoCompactionQueue:
 
         from pidrei.core.messages import CustomMessage
 
+        # Translated: pi's sync hasQueuedMessages() is awaited in pidrei
+        # (agent-mailbox recipe); assertions unchanged.
         session.agent.follow_up(
             CustomMessage(
                 custom_type="test",
@@ -768,7 +779,7 @@ class TestAutoCompactionQueue:
         )
 
         assert session.pending_message_count == 0
-        assert session.agent.has_queued_messages() is True
+        assert await session.agent.has_queued_messages() is True
 
         continue_calls = {"value": 0}
 

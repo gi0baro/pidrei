@@ -7,6 +7,7 @@ point, one layer lower.
 """
 
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -64,10 +65,13 @@ def mock_summary_response() -> AssistantMessage:
 
 
 def mock_tool_call_response() -> AssistantMessage:
-    response = mock_summary_response()
-    response.content = [ToolCall(id="tool-call-1", name="read", arguments={"path": "README.md"})]
-    response.stop_reason = "toolUse"
-    return response
+    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # so the tool-call shape is built by construction instead of mutation.
+    return replace(
+        mock_summary_response(),
+        content=[ToolCall(id="tool-call-1", name="read", arguments={"path": "README.md"})],
+        stop_reason="toolUse",
+    )
 
 
 def recording_stream_fn(response: AssistantMessage | None = None) -> tuple:

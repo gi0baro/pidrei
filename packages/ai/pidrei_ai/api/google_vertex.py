@@ -34,9 +34,15 @@ from pidrei_ai.api.google_shared import (
     supports_google_strict_tool_sampling,
 )
 from pidrei_ai.api.simple_options import build_base_options
+from pidrei_ai.builders import (
+    AssistantMessageBuilder,
+    TextContentBuilder,
+    ThinkingContentBuilder,
+    ToolCallBuilder,
+    UsageBuilder,
+)
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
-    AssistantMessage,
     Context,
     DoneEvent,
     ErrorEvent,
@@ -46,21 +52,16 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
-    TextContent,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
     ThinkingBudgets,
-    ThinkingContent,
     ThinkingDeltaEvent,
     ThinkingEndEvent,
     ThinkingStartEvent,
-    ToolCall,
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
-    Usage,
-    UsageCost,
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
@@ -120,12 +121,12 @@ def stream(
     opts = _vertex_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api="google-vertex",
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
@@ -150,7 +151,7 @@ def stream(
             )
 
             out_stream.push(StartEvent(partial=output))
-            current_block: TextContent | ThinkingContent | None = None
+            current_block: TextContentBuilder | ThinkingContentBuilder | None = None
             blocks = output.content
 
             def block_index() -> int:
@@ -192,11 +193,11 @@ def stream(
                                             )
                                         )
                                 if is_thinking:
-                                    current_block = ThinkingContent(thinking="", thinking_signature=None)
+                                    current_block = ThinkingContentBuilder(thinking="", thinking_signature=None)
                                     output.content.append(current_block)
                                     out_stream.push(ThinkingStartEvent(content_index=block_index(), partial=output))
                                 else:
-                                    current_block = TextContent(text="")
+                                    current_block = TextContentBuilder(text="")
                                     output.content.append(current_block)
                                     out_stream.push(TextStartEvent(content_index=block_index(), partial=output))
                             if current_block.type == "thinking":
@@ -245,7 +246,7 @@ def stream(
                                 else provided_id
                             )
 
-                            tool_call = ToolCall(
+                            tool_call = ToolCallBuilder(
                                 id=tool_call_id,
                                 name=function_call.get("name") or "",
                                 arguments=function_call.get("args") or {},
@@ -311,17 +312,16 @@ def stream(
     return out_stream
 
 
-def _usage_from_metadata(metadata: dict[str, Any]) -> Usage:
+def _usage_from_metadata(metadata: dict[str, Any]) -> UsageBuilder:
     cached = metadata.get("cachedContentTokenCount") or 0
     thoughts = metadata.get("thoughtsTokenCount") or 0
-    return Usage(
+    return UsageBuilder(
         input=(metadata.get("promptTokenCount") or 0) - cached,
         output=(metadata.get("candidatesTokenCount") or 0) + thoughts,
         cache_read=cached,
         cache_write=0,
         reasoning=thoughts,
         total_tokens=metadata.get("totalTokenCount") or 0,
-        cost=UsageCost(),
     )
 
 

@@ -5,6 +5,7 @@ here the injected client does the same and records every request payload.
 """
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -129,9 +130,14 @@ async def test_falls_back_to_encrypted_tool_call_signatures_for_older_stored_ass
     client = QueuedClient(tool_call_chunk_sets())
 
     assistant_message = await run_stream(client)
-    assistant_message.content = [block for block in assistant_message.content if block.type != "thinking"]
-    tool_call = next(block for block in assistant_message.content if block.type == "toolCall")
-    tool_call.thought_signature = json.dumps(REASONING_DETAIL)
+    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # so the older stored shape is built by construction instead of mutation.
+    blocks = [
+        replace(block, thought_signature=json.dumps(REASONING_DETAIL)) if block.type == "toolCall" else block
+        for block in assistant_message.content
+        if block.type != "thinking"
+    ]
+    assistant_message = replace(assistant_message, content=blocks)
 
     await run_stream(client, [assistant_message])
 

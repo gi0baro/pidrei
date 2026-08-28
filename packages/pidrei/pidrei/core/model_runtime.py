@@ -69,6 +69,24 @@ class _Snapshot:
     auth: dict[str, AuthCheck | None] = field(default_factory=dict)
 
 
+@dataclass(slots=True, frozen=True)
+class _CompositionEpoch:
+    """One immutable snapshot of the provider-composition inputs, published
+    by `_publish_composition` under `_composition_guard` and pinned by
+    readers with a single attribute read (PROPER_MT_DESIGN.md step 3, the
+    §5 pattern `_Snapshot` established for availability). The working dicts
+    stay writer-private under the guard; the epoch's dicts are copies that
+    are never mutated after publication, so an operation that pins the epoch
+    can never see config from one composition pass and extension providers
+    or errors from another — and never trips over a concurrently-mutated
+    dict while iterating."""
+
+    config: ModelConfig
+    extension_providers: dict[str, ProviderConfigInput]
+    native_extension_providers: dict[str, Provider]
+    composition_errors: dict[str, str]
+
+
 def _unwrap_spawn_error(error: Exception) -> Exception:
     """tonio surfaces child failures as ExceptionGroup('SpawnExceptionGroup');
     pi's contract exposes the underlying error — unwrap single-child groups."""
@@ -201,6 +219,15 @@ class ModelRuntime:
         # it — so no run happens after an awaited refresh unless state
         # actually changed since that refresh began.
         self._refresh_requested = False
+        # Published composition epoch; see _CompositionEpoch. Seeded here so
+        # readers never observe a missing epoch, republished by every
+        # composition mutation.
+        self._composition = _CompositionEpoch(
+            config=config,
+            extension_providers={},
+            native_extension_providers={},
+            composition_errors={},
+        )
         self._models = create_models(credentials=credentials, models_store=models_store)
         self._rebuild_providers()
 
@@ -288,28 +315,42 @@ class ModelRuntime:
                 seen[provider_id] = None
         return list(seen.keys())
 
+    def _publish_composition(self) -> None:
+        """Publish an immutable epoch of the composition inputs. Callers hold
+        `_composition_guard`; the copies taken here are never mutated after
+        the rebind, so readers pin `self._composition` lock-free."""
+        self._composition = _CompositionEpoch(
+            config=self._config,
+            extension_providers=dict(self._extension_providers),
+            native_extension_providers=dict(self._native_extension_providers),
+            composition_errors=dict(self._composition_errors),
+        )
+
     def _recompose_provider(self, provider_id: str) -> None:
         with self._composition_guard:
-            base = self._native_extension_providers.get(provider_id) or self._builtins.get(provider_id)
-            extension = self._extension_providers.get(provider_id)
-            if base is None and self._config.get_provider(provider_id) is None and extension is None:
-                self._models.delete_provider(provider_id)
-                self._composition_errors.pop(provider_id, None)
-                return
-            if base is not None and self._config.get_provider(provider_id) is None and extension is None:
-                # No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
-                self._models.set_provider(base)
-                self._composition_errors.pop(provider_id, None)
-                return
             try:
-                self._models.set_provider(compose_model_provider(provider_id, base, self._config, extension))
-                self._composition_errors.pop(provider_id, None)
-            except Exception as error:
-                self._composition_errors[provider_id] = str(error)
-                if base is not None:
-                    self._models.set_provider(base)
-                else:
+                base = self._native_extension_providers.get(provider_id) or self._builtins.get(provider_id)
+                extension = self._extension_providers.get(provider_id)
+                if base is None and self._config.get_provider(provider_id) is None and extension is None:
                     self._models.delete_provider(provider_id)
+                    self._composition_errors.pop(provider_id, None)
+                    return
+                if base is not None and self._config.get_provider(provider_id) is None and extension is None:
+                    # No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
+                    self._models.set_provider(base)
+                    self._composition_errors.pop(provider_id, None)
+                    return
+                try:
+                    self._models.set_provider(compose_model_provider(provider_id, base, self._config, extension))
+                    self._composition_errors.pop(provider_id, None)
+                except Exception as error:
+                    self._composition_errors[provider_id] = str(error)
+                    if base is not None:
+                        self._models.set_provider(base)
+                    else:
+                        self._models.delete_provider(provider_id)
+            finally:
+                self._publish_composition()
 
     def _rebuild_providers(self) -> None:
         # pi clears the collection and recomposes; its event loop makes that
@@ -324,6 +365,9 @@ class ModelRuntime:
             for provider in self._models.get_providers():
                 if provider.id not in desired:
                     self._models.delete_provider(provider.id)
+            # Covers the empty-desired edge (no _recompose_provider call
+            # published the cleared error map).
+            self._publish_composition()
             self._update_model_snapshot()
 
     def _update_model_snapshot(self) -> None:
@@ -555,34 +599,41 @@ class ModelRuntime:
         return self._snapshot.available
 
     def get_error(self) -> str | None:
+        # Pinned epoch: config and composition errors come from one
+        # composition pass, and the iteration cannot race a writer's
+        # clear()/pop() (the epoch's dicts are never mutated).
+        composition = self._composition
         errors: list[str] = []
-        config_error = self._config.get_error()
+        config_error = composition.config.get_error()
         if config_error:
             errors.append(config_error)
-        for provider_id, error in self._composition_errors.items():
+        for provider_id, error in composition.composition_errors.items():
             errors.append(f'Provider "{provider_id}": {error}')
-        if self._availability_error:
-            errors.append(f"Availability refresh: {self._availability_error}")
+        availability_error = self._availability_error
+        if availability_error:
+            errors.append(f"Availability refresh: {availability_error}")
         return "\n\n".join(errors) if errors else None
 
     def get_registered_provider_config(self, provider_id: str) -> ProviderConfigInput | None:
-        return self._extension_providers.get(provider_id)
+        return self._composition.extension_providers.get(provider_id)
 
     def get_registered_provider_ids(self) -> list[str]:
+        composition = self._composition
         seen: dict[str, None] = {}
-        for provider_id in (*self._extension_providers.keys(), *self._native_extension_providers.keys()):
+        for provider_id in (*composition.extension_providers, *composition.native_extension_providers):
             seen[provider_id] = None
         return list(seen.keys())
 
     def get_registered_native_provider(self, provider_id: str) -> Provider | None:
-        return self._native_extension_providers.get(provider_id)
+        return self._composition.native_extension_providers.get(provider_id)
 
     async def get_compatibility_request_config(self, model: Model) -> CompatibilityRequestConfig:
         """Compatibility fallback for ModelRegistry when provider auth is unconfigured."""
+        composition = self._composition
         return await resolve_compatibility_request_config(
             model,
-            self._config.get_provider(model.provider),
-            self._extension_providers.get(model.provider),
+            composition.config.get_provider(model.provider),
+            composition.extension_providers.get(model.provider),
         )
 
     def is_using_oauth(self, provider_id: str) -> bool:
@@ -606,21 +657,48 @@ class ModelRuntime:
         overrides: ModelRuntimeAuthOverrides | None = None,
     ) -> AuthResult | None:
         overrides = overrides if overrides is not None else ModelRuntimeAuthOverrides()
-        resolution_overrides = AuthResolutionOverrides(
-            api_key=overrides.api_key,
-            env=overrides.env,
-            min_oauth_validity_ms=overrides.min_oauth_validity_ms,
-            cancel=overrides.cancel,
-        )
         if isinstance(provider_or_model, str):
-            return await self._models.get_auth(provider_or_model, resolution_overrides)
-        resolution = await self._models.get_auth(provider_or_model, resolution_overrides)
+            return await self._models.get_auth(
+                provider_or_model,
+                AuthResolutionOverrides(
+                    api_key=overrides.api_key,
+                    env=overrides.env,
+                    min_oauth_validity_ms=overrides.min_oauth_validity_ms,
+                    cancel=overrides.cancel,
+                ),
+            )
+        provider = self._models.get_provider(provider_or_model.provider)
+        if provider is None:
+            return None
+        return await self._get_model_auth(provider, provider_or_model, overrides)
+
+    async def _get_model_auth(
+        self,
+        provider: Provider,
+        model: Model,
+        overrides: ModelRuntimeAuthOverrides,
+    ) -> AuthResult | None:
+        """`get_auth`'s Model path against a pinned provider and one pinned
+        composition epoch: the auth resolution, the configured headers, and
+        the provider the caller will stream with cannot come from different
+        composition passes."""
+        composition = self._composition
+        resolution = await self._models.get_auth_for_provider(
+            provider,
+            model,
+            AuthResolutionOverrides(
+                api_key=overrides.api_key,
+                env=overrides.env,
+                min_oauth_validity_ms=overrides.min_oauth_validity_ms,
+                cancel=overrides.cancel,
+            ),
+        )
         if resolution is None:
             return None
         configured_headers = await resolve_configured_model_headers(
-            provider_or_model,
-            self._config.get_provider(provider_or_model.provider),
-            self._extension_providers.get(provider_or_model.provider),
+            model,
+            composition.config.get_provider(model.provider),
+            composition.extension_providers.get(model.provider),
             {**(dict(resolution.env) if resolution.env else {}), **(overrides.env or {})},
         )
         return replace(
@@ -683,7 +761,9 @@ class ModelRuntime:
         try:
             cancel.raise_if_cancelled()
             self._recompose_provider(provider_id)
-            composition_error = self._composition_errors.get(provider_id)
+            # Read from the epoch that recompose just published, not the
+            # working dict a concurrent pass may be rewriting.
+            composition_error = self._composition.composition_errors.get(provider_id)
             if composition_error:
                 raise Exception(composition_error)
             result = await self._models.refresh(
@@ -728,17 +808,21 @@ class ModelRuntime:
         return await self._credentials.list(options)
 
     def get_provider_auth_status(self, provider_id: str) -> AuthStatus:
+        # Pin both epochs once: the answer cannot mix an availability
+        # snapshot from one pass with config/extensions from another.
+        snapshot = self._snapshot
+        composition = self._composition
         if self._credentials.has_runtime_api_key(provider_id):
             return AuthStatus(configured=True, source="runtime")
-        if provider_id in self._snapshot.stored_providers:
+        if provider_id in snapshot.stored_providers:
             return AuthStatus(configured=True, source="stored")
         configured = configured_request_auth_status(
-            self._config.get_provider(provider_id),
-            self._extension_providers.get(provider_id),
+            composition.config.get_provider(provider_id),
+            composition.extension_providers.get(provider_id),
         )
         if configured is not None:
             return configured
-        check = self._snapshot.auth.get(provider_id)
+        check = snapshot.auth.get(provider_id)
         if check is not None:
             return AuthStatus(configured=True, source="environment", label=check.source)
         return AuthStatus(configured=False)
@@ -753,7 +837,10 @@ class ModelRuntime:
         provider = self._models.get_provider(model.provider)
         if provider is None:
             raise ModelsError("provider", f"Unknown provider: {model.provider}")
-        resolution = await self.get_auth(
+        # Epoch discipline: auth resolves against the provider pinned above —
+        # the one this request will stream with — not a fresh lookup.
+        resolution = await self._get_model_auth(
+            provider,
             model,
             ModelRuntimeAuthOverrides(
                 api_key=options.api_key if options is not None else None,
@@ -862,6 +949,7 @@ class ModelRuntime:
             config = await ModelConfig.load(self._models_path)
             with self._composition_guard:
                 self._config = config
+                self._publish_composition()
                 for provider_id in dict.fromkeys(options.providers):
                     self._recompose_provider(provider_id)
                 self._update_model_snapshot()

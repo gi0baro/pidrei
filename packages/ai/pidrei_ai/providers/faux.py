@@ -24,6 +24,7 @@ import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
 from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.builders import AssistantMessageBuilder, TextContentBuilder, ThinkingContentBuilder, ToolCallBuilder
 from pidrei_ai.registry import Provider, create_provider
 from pidrei_ai.types import (
     AssistantMessage,
@@ -219,7 +220,7 @@ def _split_string_by_token_size(text: str, min_token_size: int, max_token_size: 
     return chunks if chunks else [""]
 
 
-def _create_aborted_message(partial: AssistantMessage) -> AssistantMessage:
+def _create_aborted_message(partial: AssistantMessageBuilder) -> AssistantMessageBuilder:
     return replace(
         partial, stop_reason="aborted", error_message="Request was aborted", timestamp=int(time.time() * 1000)
     )
@@ -240,7 +241,7 @@ async def _stream_with_deltas(
     tokens_per_second: float | None,
     cancel,
 ) -> None:
-    partial = replace(message, content=[], stop_reason="pending")
+    partial = AssistantMessageBuilder.from_message(message, content=[], stop_reason="pending")
 
     def aborted_now() -> bool:
         return cancel is not None and cancel.cancelled
@@ -262,7 +263,7 @@ async def _stream_with_deltas(
             return
 
         if block.type == "thinking":
-            partial.content = [*partial.content, ThinkingContent(thinking="")]
+            partial.content = [*partial.content, ThinkingContentBuilder(thinking="")]
             stream.push(ThinkingStartEvent(content_index=index, partial=replace(partial)))
             for chunk in _split_string_by_token_size(block.thinking, min_token_size, max_token_size):
                 await _schedule_chunk(chunk, tokens_per_second)
@@ -275,7 +276,7 @@ async def _stream_with_deltas(
             continue
 
         if block.type == "text":
-            partial.content = [*partial.content, TextContent(text="")]
+            partial.content = [*partial.content, TextContentBuilder(text="")]
             stream.push(TextStartEvent(content_index=index, partial=replace(partial)))
             for chunk in _split_string_by_token_size(block.text, min_token_size, max_token_size):
                 await _schedule_chunk(chunk, tokens_per_second)
@@ -287,7 +288,7 @@ async def _stream_with_deltas(
             stream.push(TextEndEvent(content_index=index, content=block.text, partial=replace(partial)))
             continue
 
-        partial.content = [*partial.content, ToolCall(id=block.id, name=block.name, arguments={})]
+        partial.content = [*partial.content, ToolCallBuilder(id=block.id, name=block.name, arguments={})]
         stream.push(ToolCallStartEvent(content_index=index, partial=replace(partial)))
         arguments_json = json.dumps(block.arguments, separators=(",", ":"), ensure_ascii=False)
         for chunk in _split_string_by_token_size(arguments_json, min_token_size, max_token_size):

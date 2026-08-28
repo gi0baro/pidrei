@@ -23,6 +23,13 @@ Every changed file is classified:
   upstream file class (extend the tables) or a new pi package (decide port vs
   drop, and document the decision here).
 
+A portable file listed in DIVERGED additionally carries a diverged-region
+warning: part of its pidrei mirror deliberately diverges from pi
+(PROPER_MT_DESIGN.md), and a hunk landing in that region is translated per
+the named recipe in UPSTREAM_DELTA_PORT.md ("Diverged regions and their
+recipes") instead of ported side-by-side. Hunks outside the region port
+normally.
+
 A mapped target that does not exist is `[NEW]` for files pi added; for files
 pi *modified* it usually means pidrei renamed the module — verify and extend
 RENAMES instead of porting to the mechanical name.
@@ -343,6 +350,202 @@ RENAMES = {
     "packages/ai/src/utils/pi-user-agent.ts": "packages/ai/pidrei_ai/utils/user_agent.py",
 }
 
+#: pi file → diverged regions inside its pidrei mirror, as (recipe id, note)
+#: pairs. The file still ports through the normal mapping, but a hunk landing
+#: in the named region is translated per the recipe in UPSTREAM_DELTA_PORT.md
+#: ("Diverged regions and their recipes"), not side-by-side. Same maintenance
+#: model as RENAMES/TEST_HOMES: one hand-verified entry per divergence,
+#: extended as PROPER_MT_DESIGN.md steps land. Pattern-shaped divergences
+#: with no single upstream file (e.g. recipe `cancel-token`) live only in the
+#: runbook section.
+_FREEZE_ADAPTER_NOTE = (
+    "streamed partial is built via producer-private builders "
+    "(pidrei_ai/builders.py): construction sites use *Builder type names, "
+    "mutation lines port verbatim; new message/block fields land in both "
+    "frozen type and builder"
+)
+
+DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
+    "packages/agent/src/agent.ts": (
+        (
+            "dispatch-observe",
+            (
+                "event observation runs on a per-run dispatcher task "
+                "(_dispatch_events, with the PIDREI_DISPATCH_STALL_LOG meter); "
+                "emit/listener diffs land around it"
+            ),
+        ),
+        (
+            "freeze-at-seam",
+            (
+                "messages are frozen values: streaming_message holds per-delta "
+                "snapshots; upstream mutation of a message translates to "
+                "constructing (dataclasses.replace)"
+            ),
+        ),
+        (
+            "agent-mailbox",
+            (
+                "queue/lifecycle state (PendingMessageQueue, activeRun, "
+                "abort/signal/waitForIdle, 'already processing' admission) "
+                "is owned by the standing _AgentMailbox actor task; "
+                "hasQueuedMessages is awaited in pidrei"
+            ),
+        ),
+    ),
+    # PROPER_MT_DESIGN.md step 2 (freeze at the seam): message/content types
+    # are frozen dataclasses; producers build via builders and
+    # AssistantMessageEventStream.push() freezes at publication.
+    "packages/ai/src/types.ts": (
+        (
+            "freeze-at-seam",
+            (
+                "message/content/usage types are frozen dataclasses; a new or "
+                "changed field lands in the frozen type AND its builder mirror "
+                "(pidrei_ai/builders.py), including freeze()"
+            ),
+        ),
+    ),
+    "packages/ai/src/utils/event-stream.ts": (
+        (
+            "freeze-at-seam",
+            (
+                "AssistantMessageEventStream.push() is the publication seam "
+                "(freezes event message payloads); `partial` is the "
+                "producer-private builder and _abort handles both shapes"
+            ),
+        ),
+    ),
+    "packages/ai/src/api/anthropic-messages.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/openai-completions.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/openai-responses-shared.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/azure-openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/openai-codex-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/google-generative-ai.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/google-vertex.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/mistral-conversations.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/bedrock-converse-stream.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/providers/faux.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    # PROPER_MT_DESIGN.md step 1 (the TUI island): rendering and component
+    # mutation are UI-owner work.
+    "packages/tui/src/tui.ts": (
+        (
+            "tui-island",
+            (
+                "render scheduling is owner work (request_render posts a "
+                "coalescing _schedule_render; throttle is an owner timer; no "
+                "render loop); pi's requestRender/renderLoop diffs land there"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/modes/interactive/interactive-mode.ts": (
+        (
+            "tui-island",
+            (
+                "the session listener routes through the UI owner "
+                "(_route_event + _settle_ui_after_agent_event) and shared "
+                "UI-mutating helpers wrap their bodies in apply() + "
+                "ui.post_ui(apply); diffs inside those bodies port 1:1 "
+                "inside the closure"
+            ),
+        ),
+        (
+            "freeze-at-seam",
+            (
+                "messages are frozen values: pi mutations of a message (e.g. "
+                "the message_end abort decoration) translate to display-only "
+                "dataclasses.replace copies"
+            ),
+        ),
+    ),
+    # PROPER_MT_DESIGN.md step 3 (config epochs): config services publish
+    # immutable snapshots swapped atomically; readers pin one attribute read.
+    "packages/coding-agent/src/core/settings-manager.ts": (
+        (
+            "config-epochs",
+            (
+                "published scope dicts are immutable epochs: setter mutation "
+                "lines run inside _update_global_settings/_set_global/"
+                "_set_global_nested closures on a private copy; a new pi "
+                "setter becomes a _set_global call (or closure for multi-key "
+                "logic); compound getters pin one _settings read"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/auth-storage.ts": (
+        (
+            "config-epochs",
+            (
+                "the shared read state is an atomically-rebound "
+                "_AuthFileSnapshot (data, revision) pair; readers pin "
+                "state.snapshot — diffs touching the read cache land around "
+                "_update_read_state/_read_latest_data"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/models-store.ts": (
+        (
+            "config-epochs",
+            (
+                "file read state is an atomically-rebound _ModelsFileSnapshot "
+                "pair; the in-memory store swaps _entries on write instead of "
+                "mutating in place"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/runtime-credentials.ts": (
+        (
+            "config-epochs",
+            ("_overrides is an immutable dict swapped under the writer guard; readers take no lock"),
+        ),
+    ),
+    "packages/coding-agent/src/core/model-runtime.ts": (
+        (
+            "config-epochs",
+            (
+                "composition inputs publish as _CompositionEpoch via "
+                "_publish_composition (under _composition_guard); readers "
+                "(get_error, get_registered_*, get_provider_auth_status, "
+                "get_compatibility_request_config, _get_model_auth) pin one "
+                "epoch; _prepare_request resolves the provider once and "
+                "auths against it (_get_model_auth)"
+            ),
+        ),
+    ),
+    "packages/ai/src/models.ts": (
+        (
+            "config-epochs",
+            (
+                "the provider map swaps on write (readers lock-free); "
+                "_apply_auth takes the caller-pinned provider and "
+                "get_auth_for_provider is the pidrei-only pinned variant of "
+                "get_auth"
+            ),
+        ),
+    ),
+    "packages/ai/src/models-store.ts": (
+        (
+            "config-epochs",
+            ("the in-memory store swaps _entries on write instead of mutating in place"),
+        ),
+    ),
+    # In-process subagent example (2026-08-28): pi spawns a `pi` child process
+    # per task; pidrei runs each task as an in-process AgentSession.
+    "packages/coding-agent/examples/extensions/subagent/index.ts": (
+        (
+            "subagent-inprocess",
+            (
+                "runSingleAgent and the subprocess plumbing are an in-process "
+                "session runner (CLI flags become session options); result "
+                "dicts carry status/errorMessage instead of exitCode/stderr; "
+                "mode logic, params, and rendering port 1:1 on the renamed "
+                "fields"
+            ),
+        ),
+    ),
+}
+
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
 #: are organized by pidrei module, so several pi files map many-to-many; the
 #: note names where the changed cases go. Entries marked PARITY GAP have a
@@ -653,6 +856,8 @@ def report(pi_root: str) -> int:
                 continue
             mark = marker(status, kind, target)
             print(f"             → {target}{mark}")
+            for recipe_id, region_note in DIVERGED.get(path, ()):
+                print(f"             ⚠ diverged [{recipe_id}]: {region_note} — recipe in UPSTREAM_DELTA_PORT.md")
             if mark == "  [NEW]":
                 new_files += 1
             elif mark.startswith("  [MISSING"):

@@ -17,9 +17,10 @@ class Text:
         self._custom_bg_fn = custom_bg_fn
 
         # Cache for rendered output: one immutable (text, width, lines) tuple,
-        # read once per render. `invalidate()` runs from other threads (Loader
-        # ticks, the agent, theme reloads); three separate fields could be
-        # observed half-cleared and hand `None` to the render loop.
+        # read once per render. Mutation and render both run on the UI owner
+        # task (the ownership contract), so the single tuple is hygiene, not
+        # correctness — one publication instead of three fields that a probe
+        # could observe half-cleared.
         self._cache: tuple[str, int, list[str]] | None = None
 
     def set_text(self, text: str) -> None:

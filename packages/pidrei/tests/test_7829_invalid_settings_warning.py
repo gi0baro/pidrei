@@ -51,7 +51,9 @@ async def test_renders_startup_diagnostics_inside_the_transcript():
         _chat_container=chat_container,
         _output_pad=1,
         _version="test",
-        ui=SimpleNamespace(request_render=lambda force=False: None),
+        # post_ui applies inline like an un-started TUI (island relaxation,
+        # PROPER_MT_DESIGN step 1).
+        ui=SimpleNamespace(request_render=lambda force=False: None, post_ui=lambda fn: fn()),
         session=SimpleNamespace(model_runtime=SimpleNamespace(get_error=lambda: None)),
         _check_for_package_updates=no_updates,
         _check_tmux_keyboard_setup=noop,

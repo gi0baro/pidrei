@@ -20,6 +20,7 @@ from pidrei_ai.api.openai_responses_shared import (
     convert_responses_messages,
     process_responses_stream,
 )
+from pidrei_ai.builders import AssistantMessageBuilder, ToolCallBuilder, UsageBuilder
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
@@ -69,13 +70,15 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def make_output(model: Model) -> AssistantMessage:
-    return AssistantMessage(
+# Step 2 translation (PROPER_MT_DESIGN.md): the streamed output message is a
+# producer-private builder; pi passes its mutable message here.
+def make_output(model: Model) -> AssistantMessageBuilder:
+    return AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=now_ms(),
     )
@@ -257,10 +260,14 @@ async def test_tool_call_blocks_are_clean_at_output_item_done():
     persisted = output.content[0]
     assert persisted.type == "toolCall"
     assert persisted.arguments == {"path": "README.md", "content": "updated"}
-    assert isinstance(persisted, ToolCall)  # plain dataclass, no scratch attached
+    assert isinstance(persisted, ToolCallBuilder)  # plain dataclass, no scratch attached
 
+    # Step 2 relaxation: the seam publishes frozen snapshots, so the end event
+    # carries the frozen twin of the builder block (identity holds against the
+    # event's own partial, value equality against the builder).
     tool_call_end = next(event for event in stream.pushed if event.type == "toolcall_end")
-    assert tool_call_end.tool_call is persisted
+    assert tool_call_end.tool_call is tool_call_end.partial.content[0]
+    assert tool_call_end.tool_call == persisted.freeze()
 
 
 @pytest.mark.tonio

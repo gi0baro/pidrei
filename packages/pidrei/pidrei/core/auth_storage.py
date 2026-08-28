@@ -77,6 +77,20 @@ class _AuthFileReload:
     readers: int = 0
 
 
+@dataclass(slots=True, frozen=True)
+class _AuthFileSnapshot:
+    """One immutable (data, revision) pair, published by rebinding
+    `_AuthFileReadState.snapshot` as a unit — a reader pinning the snapshot
+    can never see the data of one reload with the revision of another
+    (PROPER_MT_DESIGN.md step 3)."""
+
+    data: dict[str, Credential]
+    revision: str | None
+
+
+_EMPTY_AUTH_SNAPSHOT = _AuthFileSnapshot(data={}, revision=None)
+
+
 @dataclass(slots=True)
 class _AuthFileReadState:
     """Read-side cache shared by every AuthStorage bound to the same file.
@@ -85,8 +99,7 @@ class _AuthFileReadState:
     Event/box pair is the established tonio equivalent), reference-counted so
     the last departing reader aborts a reload nobody is waiting for."""
 
-    data: dict[str, Credential] = field(default_factory=dict)
-    revision: str | None = None
+    snapshot: _AuthFileSnapshot = _EMPTY_AUTH_SNAPSHOT
     reload: _AuthFileReload | None = None
     guard: threading.Lock = field(default_factory=threading.Lock)
 
@@ -378,7 +391,7 @@ class AuthStorage(CredentialStore):
         normalized = normalize_path(auth_path)
         storage = AuthStorage(FileAuthStorageBackend(normalized), auth_path=normalized)
         revision = await tonio.spawn_blocking(_get_file_revision, normalized)
-        if revision is not None and revision == storage._read_state.revision:
+        if revision is not None and revision == storage._read_state.snapshot.revision:
             return storage
         await storage.reload_async()
         return storage
@@ -402,8 +415,8 @@ class AuthStorage(CredentialStore):
         return {provider: parse_credential(raw) for provider, raw in json.loads(strip_bom(content)).items()}
 
     def _update_read_state(self, data: dict[str, Credential], revision: str | None = None) -> None:
-        self._read_state.data = data
-        self._read_state.revision = revision
+        # One rebind: readers pin `snapshot` and get a consistent pair.
+        self._read_state.snapshot = _AuthFileSnapshot(data=data, revision=revision)
 
     def reload(self) -> None:
         """Reload credentials from storage.
@@ -449,11 +462,14 @@ class AuthStorage(CredentialStore):
             try:
                 return await self._reload_from_storage_async()
             except Exception:
-                return state.data
+                return state.snapshot.data
 
+        # Pin the snapshot before comparing: any interleaving with a reload
+        # then degrades to one extra reload, never to stale-data-as-fresh.
+        snapshot = state.snapshot
         revision = await tonio.spawn_blocking(_get_file_revision, self._auth_path)
-        if revision is not None and revision == state.revision:
-            return state.data
+        if revision is not None and revision == snapshot.revision:
+            return snapshot.data
 
         # Concurrent readers share one reload (a burst of per-provider reads
         # must not multiply locked reloads); each reader races only its own
@@ -498,7 +514,7 @@ class AuthStorage(CredentialStore):
             try:
                 return await _wait()
             except Exception:
-                return state.data
+                return state.snapshot.data
         finally:
             with state.guard:
                 reload.readers -= 1
@@ -527,7 +543,7 @@ class AuthStorage(CredentialStore):
         fn: Callable[[Credential | None], Awaitable[Credential | None]],
         options: AuthOperationOptions | None = None,
     ) -> Credential | None:
-        latest: list[dict[str, Credential]] = [self._read_state.data]
+        latest: list[dict[str, Credential]] = [self._read_state.snapshot.data]
         revision_box: list[str | None] = [None]
 
         async def under_lock(content: str | None) -> tuple[Credential | None, str | None]:
@@ -551,7 +567,7 @@ class AuthStorage(CredentialStore):
         return result
 
     async def delete(self, provider: str, options: AuthOperationOptions | None = None) -> None:
-        latest: list[dict[str, Credential]] = [self._read_state.data]
+        latest: list[dict[str, Credential]] = [self._read_state.snapshot.data]
 
         async def under_lock(content: str | None) -> tuple[None, str]:
             current_data = self._parse_storage_data(content)

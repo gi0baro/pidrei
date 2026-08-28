@@ -31,6 +31,7 @@ from pidrei_ai.api.openai_responses_shared import (
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options
+from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
     AssistantMessage,
@@ -456,12 +457,12 @@ def stream(
     opts = _codex_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api="openai-codex-responses",
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )
@@ -897,7 +898,7 @@ def _extract_codex_event_error(event: dict) -> tuple[str | None, str | None]:
     return code, message
 
 
-async def _map_codex_events(events: AsyncIterable[dict], output: AssistantMessage) -> AsyncGenerator[dict]:
+async def _map_codex_events(events: AsyncIterable[dict], output: AssistantMessageBuilder) -> AsyncGenerator[dict]:
     # This generator returns at the terminal event, abandoning its source
     # mid-yield; the source owns the HTTP body, so it is closed explicitly rather
     # than left to the GC (which cannot await — see `utils/http.finish_body`).

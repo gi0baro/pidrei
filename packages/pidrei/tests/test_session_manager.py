@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+from dataclasses import replace
 
 import pytest
 import tonio.colored as tonio
@@ -790,8 +791,12 @@ class TestCreateBranchedSession:
         session = await SessionManager.create(temp_dir, temp_dir)
         await session.append_message(user_msg("edit this file"))
         await session.append_message(assistant_msg("editing"))
-        message = tool_result_msg("done")
-        message.details = EditToolDetails(diff="- old\n+ new", patch="@@ -1 +1 @@", first_changed_line=1)
+        # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — details
+        # attached by construction instead of mutation.
+        message = replace(
+            tool_result_msg("done"),
+            details=EditToolDetails(diff="- old\n+ new", patch="@@ -1 +1 @@", first_changed_line=1),
+        )
         await session.append_message(message)
 
         file = session.get_session_file()

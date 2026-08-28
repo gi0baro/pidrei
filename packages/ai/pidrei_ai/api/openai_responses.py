@@ -15,9 +15,9 @@ from pidrei_ai.api.openai_responses_shared import (
     process_responses_stream,
 )
 from pidrei_ai.api.simple_options import build_base_options
+from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
-    AssistantMessage,
     CacheRetention,
     Context,
     DoneEvent,
@@ -30,7 +30,6 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
-    Usage,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -363,7 +362,7 @@ def _get_service_tier_cost_multiplier(model: Model, service_tier: str | None) ->
     return 1
 
 
-def _apply_service_tier_pricing(usage: Usage, service_tier: str | None, model: Model) -> None:
+def _apply_service_tier_pricing(usage: UsageBuilder, service_tier: str | None, model: Model) -> None:
     multiplier = _get_service_tier_cost_multiplier(model, service_tier)
     if multiplier == 1:
         return
@@ -387,12 +386,12 @@ def stream(
     opts = _responses_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
-    output = AssistantMessage(
+    output = AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
     )

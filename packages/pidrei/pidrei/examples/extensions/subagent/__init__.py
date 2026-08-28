@@ -1,14 +1,34 @@
 """Subagent tool - delegate tasks to specialized agents.
 
-Spawns a separate `pidrei` process for each subagent invocation, giving it an
-isolated context window.
+Runs each subagent as an in-process `AgentSession` with an isolated context
+window. pi's example spawns a `pi` subprocess per invocation because on a
+single-threaded runtime that is the only way subagents can make progress
+without janking the parent; on tonio, in-process sessions run genuinely in
+parallel on the runtime's threads, skip an interpreter start per task, and
+stream typed events instead of a JSONL pipe.
 
 Supports three modes:
   - Single: { agent: "name", task: "..." }
   - Parallel: { tasks: [{ agent: "name", task: "..." }, ...] }
   - Chain: { chain: [{ agent: "name", task: "... {previous} ..." }, ...] }
 
-Uses JSON mode (`--mode json`) to capture structured output from subagents.
+Deliberate divergences from pi's example (recipe `subagent-inprocess` in
+UPSTREAM_DELTA_PORT.md):
+  - No subprocess: `run_single_agent` builds a lean session (in-memory session
+    manager, no extensions/themes/prompt templates, the agent's system prompt
+    appended directly). Skipping extensions also means a subagent cannot
+    recursively spawn subagents, which the child process could when this
+    extension was installed globally.
+  - Result dicts carry `status` ("running" | "done" | "failed") and
+    `errorMessage` instead of the process-shaped `exitCode`/`stderr`.
+  - Usage is accumulated from the typed frozen messages; an unknown
+    `model:` in agent frontmatter fails the task instead of silently
+    falling back to the default model.
+  - `on_update` streams per-delta (the child process only reported at
+    message boundaries).
+The `messages` in results/details remain camelCase wire dicts: details are
+persisted with the parent session and come back as plain JSON on resume, so
+the wire shape is the one rendering format.
 
 Start pidrei with this extension:
     pidrei -e ./examples/extensions/subagent
@@ -16,22 +36,22 @@ Start pidrei with this extension:
 
 import json
 import os
-import re
-import signal as signal_module
-import subprocess
-import sys
-import tempfile
-import threading
 
 import tonio.colored as tonio
+from tonio.colored import fs
+from tonio.colored.sync import channel
 
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.extensions.types import ToolDefinition
-from pidrei.core.tools import with_file_mutation_queue
-from pidrei.core.tools.file_mutation_queue import resolve_mutation_queue_key
+from pidrei.core.json_wire import to_wire
+from pidrei.core.model_resolver import resolve_cli_model
+from pidrei.core.model_runtime import ModelRuntime
+from pidrei.core.resource_loader import DefaultResourceLoader
+from pidrei.core.sdk import CreateAgentSessionOptions, create_agent_session
+from pidrei.core.session_manager import SessionManager
+from pidrei.core.settings_manager import SettingsManager
 from pidrei.core.tools.render_utils import shorten_path
 from pidrei.modes.interactive.theme import get_markdown_theme
-from pidrei.modes.rpc.jsonl import pump_jsonl_lines
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 from pidrei_tui import Container, Markdown, Spacer, Text
@@ -126,8 +146,10 @@ def format_tool_call(tool_name: str, args: dict, theme) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Result helpers. Child messages are the raw JSON wire dicts pidrei's
-# `--mode json` stream carries, so all keys are camelCase.
+# Result helpers. Subagent messages are the same camelCase wire dicts pi's
+# example collected from the child's `--mode json` stream: details are
+# persisted with the parent session and deserialize as plain JSON, so the wire
+# shape is the one format rendering can rely on.
 # ---------------------------------------------------------------------------
 
 
@@ -145,12 +167,19 @@ def get_final_output(messages: list[dict]) -> str:
 
 
 def is_failed_result(result: dict) -> bool:
-    return result["exitCode"] != 0 or result.get("stopReason") in ("error", "aborted")
+    # pi keys this on the child's exitCode; without a process, `status` is set
+    # directly from the run outcome.
+    return result["status"] == "failed"
+
+
+def is_running_result(result: dict) -> bool:
+    # pi's example encodes "still running" as exitCode -1.
+    return result["status"] == "running"
 
 
 def get_result_output(result: dict) -> str:
     if is_failed_result(result):
-        return result.get("errorMessage") or result["stderr"] or get_final_output(result["messages"]) or "(no output)"
+        return result.get("errorMessage") or get_final_output(result["messages"]) or "(no output)"
     return get_final_output(result["messages"]) or "(no output)"
 
 
@@ -178,68 +207,52 @@ def get_display_items(messages: list[dict]) -> list[dict]:
 
 
 async def map_with_concurrency_limit(items: list, concurrency: int, fn) -> list:
+    """pi's mapWithConcurrencyLimit (a hand-rolled shared-index worker pool)
+    as a tonio work queue: every item goes on a channel sized to hold them
+    all, N consumers drain it, and the closed channel is the termination
+    signal. Results keep item order."""
     if not items:
         return []
     limit = max(1, min(concurrency, len(items)))
     results: list = [None] * len(items)
-    next_index = 0
-    guard = threading.Lock()
 
-    async def worker() -> None:
-        nonlocal next_index
+    sender, receiver = channel.unbounded()
+    for pair in enumerate(items):
+        sender.send(pair)
+    sender.close()
+
+    async def consume(_consumer_index: int) -> None:
         while True:
-            with guard:
-                index = next_index
-                next_index += 1
-            if index >= len(items):
+            try:
+                index, item = await receiver.receive()
+            except BrokenPipeError:
                 return
-            results[index] = await fn(items[index], index)
+            results[index] = await fn(item, index)
 
-    await tonio.spawn(*(worker() for _ in range(limit)))
+    await tonio.map(consume, range(limit))
     return results
 
 
 # ---------------------------------------------------------------------------
-# Subprocess plumbing
+# In-process session plumbing. pi's example builds a CLI invocation here
+# (`--mode json -p --no-session`, temp file for `--append-system-prompt`) and
+# pumps the child's stdout; the in-process equivalent builds the same
+# configuration as session options and subscribes to the session's typed
+# events.
 # ---------------------------------------------------------------------------
 
 
-def _make_prompt_file(agent_name: str) -> tuple[str, str]:
-    tmp_dir = tempfile.mkdtemp(prefix="pidrei-subagent-")
-    safe_name = re.sub(r"[^\w.-]+", "_", agent_name)
-    return tmp_dir, os.path.join(tmp_dir, f"prompt-{safe_name}.md")
-
-
-def _write_file_0600(path: str, content: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(content)
-
-
-async def write_prompt_to_temp_file(agent_name: str, prompt: str) -> tuple[str, str]:
-    tmp_dir, file_path = await tonio.spawn_blocking(_make_prompt_file, agent_name)
-    queue_key = await resolve_mutation_queue_key(file_path)
-
-    async def write() -> None:
-        await tonio.spawn_blocking(_write_file_0600, file_path, prompt)
-
-    await with_file_mutation_queue(file_path, write, queue_key=queue_key)
-    return tmp_dir, file_path
-
-
-def _cleanup_prompt_file(file_path: str, tmp_dir: str) -> None:
-    for op in (lambda: os.unlink(file_path), lambda: os.rmdir(tmp_dir)):
-        try:
-            op()
-        except OSError:
-            pass
-
-
-def get_pidrei_invocation(args: list[str]) -> list[str]:
-    """pi resolves its own binary/script; pidrei always runs on the same
-    interpreter, so `python -m pidrei` is the whole answer (the pattern the
-    RPC client uses to spawn pidrei too)."""
-    return [sys.executable, "-m", "pidrei", *args]
+def _failed_result(agent_name: str, agent_source: str, task: str, step: int | None, error_message: str) -> dict:
+    return {
+        "agent": agent_name,
+        "agentSource": agent_source,
+        "task": task,
+        "status": "failed",
+        "messages": [],
+        "errorMessage": error_message,
+        "usage": empty_usage(),
+        "step": step,
+    }
 
 
 async def run_single_agent(
@@ -258,166 +271,161 @@ async def run_single_agent(
 
     if agent is None:
         available = ", ".join(f'"{a.name}"' for a in agents) or "none"
-        return {
-            "agent": agent_name,
-            "agentSource": "unknown",
-            "task": task,
-            "exitCode": 1,
-            "messages": [],
-            "stderr": f'Unknown agent: "{agent_name}". Available agents: {available}.',
-            "usage": empty_usage(),
-            "step": step,
-        }
+        return _failed_result(
+            agent_name, "unknown", task, step, f'Unknown agent: "{agent_name}". Available agents: {available}.'
+        )
 
-    args = ["--mode", "json", "-p", "--no-session"]
+    run_cwd = cwd or default_cwd
+    if not await fs.Path(run_cwd).exists():
+        # The child process failed at spawn on a bad cwd; fail before building
+        # a session for the same effect.
+        return _failed_result(agent_name, agent.source, task, step, f"Working directory does not exist: {run_cwd}")
+
     inherits_dispatch_config = not agent.model
     model = agent.model or dispatch_defaults.get("model")
-    if model:
-        args.extend(["--model", model])
-    if inherits_dispatch_config and dispatch_defaults.get("thinkingLevel"):
-        args.extend(["--thinking", dispatch_defaults["thinkingLevel"]])
-    if agent.tools:
-        args.extend(["--tools", ",".join(agent.tools)])
 
     current_result: dict = {
         "agent": agent_name,
         "agentSource": agent.source,
         "task": task,
-        "exitCode": 0,
+        "status": "running",
         "messages": [],
-        "stderr": "",
         "usage": empty_usage(),
         "model": model,
         "step": step,
     }
 
+    # Per-delta preview of the assistant text being streamed; cleared when the
+    # message lands in `messages`. The child-process variant could only report
+    # at message boundaries.
+    streaming_preview = {"text": ""}
+
     def emit_update() -> None:
         if on_update is not None:
+            text = streaming_preview["text"] or get_final_output(current_result["messages"]) or "(running...)"
             on_update(
                 AgentToolResult(
-                    content=[TextContent(text=get_final_output(current_result["messages"]) or "(running...)")],
+                    content=[TextContent(text=text)],
                     details=make_details([current_result]),
                 )
             )
 
-    def process_line(line: str) -> None:
-        if not line.strip():
-            return
-        try:
-            event = json.loads(line)
-        except ValueError:
-            return
-        if not isinstance(event, dict):
-            return
+    def process_message_end(message) -> None:
+        # The session emits tool results as message_end events too (role
+        # "toolResult"), so one branch covers what pi splits into message_end
+        # and tool_result_end. Messages are stored as their wire dicts — the
+        # shape details keep across parent-session persistence.
+        current_result["messages"].append(to_wire(message))
 
-        # pidrei's JSON stream carries tool results as message_end events too
-        # (role "toolResult"), so one branch covers what pi splits into
-        # message_end and tool_result_end.
-        if event.get("type") == "message_end" and event.get("message"):
-            msg = event["message"]
-            current_result["messages"].append(msg)
+        if getattr(message, "role", None) == "assistant":
+            usage = current_result["usage"]
+            usage["turns"] += 1
+            msg_usage = message.usage
+            usage["input"] += msg_usage.input
+            usage["output"] += msg_usage.output
+            usage["cacheRead"] += msg_usage.cache_read
+            usage["cacheWrite"] += msg_usage.cache_write
+            usage["cost"] += msg_usage.cost.total
+            usage["contextTokens"] = msg_usage.total_tokens
+            if not current_result.get("model") and message.model:
+                current_result["model"] = message.model
+            if message.stop_reason:
+                current_result["stopReason"] = message.stop_reason
+            if message.error_message:
+                current_result["errorMessage"] = message.error_message
+        streaming_preview["text"] = ""
+        emit_update()
 
-            if msg.get("role") == "assistant":
-                usage = current_result["usage"]
-                usage["turns"] += 1
-                msg_usage = msg.get("usage")
-                if msg_usage:
-                    usage["input"] += msg_usage.get("input") or 0
-                    usage["output"] += msg_usage.get("output") or 0
-                    usage["cacheRead"] += msg_usage.get("cacheRead") or 0
-                    usage["cacheWrite"] += msg_usage.get("cacheWrite") or 0
-                    usage["cost"] += (msg_usage.get("cost") or {}).get("total") or 0
-                    usage["contextTokens"] = msg_usage.get("totalTokens") or 0
-                if not current_result.get("model") and msg.get("model"):
-                    current_result["model"] = msg["model"]
-                if msg.get("stopReason"):
-                    current_result["stopReason"] = msg["stopReason"]
-                if msg.get("errorMessage"):
-                    current_result["errorMessage"] = msg["errorMessage"]
-            emit_update()
+    def process_message_update(message) -> None:
+        for block in reversed(message.content):
+            if getattr(block, "type", None) == "text" and block.text:
+                streaming_preview["text"] = block.text
+                emit_update()
+                return
 
-    tmp_prompt_dir: str | None = None
-    tmp_prompt_path: str | None = None
+    def on_event(event) -> None:
+        event_type = getattr(event, "type", None)
+        if event_type == "message_end" and event.message is not None:
+            process_message_end(event.message)
+        elif event_type == "message_update":
+            process_message_update(event.message)
 
-    try:
-        if agent.system_prompt.strip():
-            tmp_prompt_dir, tmp_prompt_path = await write_prompt_to_temp_file(agent.name, agent.system_prompt)
-            args.extend(["--append-system-prompt", tmp_prompt_path])
+    # A lean stand-in for the child's `--mode json -p --no-session` CLI run:
+    # nothing persisted, no extensions (a subagent cannot spawn subagents), no
+    # themes or prompt templates, the agent's system prompt appended directly.
+    agent_dir = get_agent_dir()
+    settings_manager = await SettingsManager.create(run_cwd, agent_dir)
+    model_runtime = await ModelRuntime.create()
 
-        args.append(f"Task: {task}")
+    resolved_model = None
+    thinking_level = None
+    if model:
+        resolved = resolve_cli_model(cli_model=model, model_runtime=model_runtime)
+        resolved_model = resolved.model
+        if agent.model and resolved_model is None:
+            # The child ran anyway on the default model and buried the warning
+            # in stderr; failing loudly beats burning tokens on the wrong model.
+            return _failed_result(
+                agent_name, agent.source, task, step, resolved.error or f'Unknown model: "{agent.model}".'
+            )
+        if not inherits_dispatch_config and resolved.thinking_level:
+            thinking_level = resolved.thinking_level
+    if inherits_dispatch_config and dispatch_defaults.get("thinkingLevel"):
+        thinking_level = dispatch_defaults["thinkingLevel"]
 
-        process = await tonio.open_process(
-            get_pidrei_invocation(args),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=cwd or default_cwd,
+    resource_loader = DefaultResourceLoader(
+        cwd=run_cwd,
+        agent_dir=agent_dir,
+        settings_manager=settings_manager,
+        no_extensions=True,
+        no_themes=True,
+        no_prompt_templates=True,
+        append_system_prompt=[agent.system_prompt] if agent.system_prompt.strip() else None,
+    )
+    await resource_loader.reload()
+
+    created = await create_agent_session(
+        CreateAgentSessionOptions(
+            cwd=run_cwd,
+            model_runtime=model_runtime,
+            model=resolved_model,
+            thinking_level=thinking_level,
+            tools=list(agent.tools) if agent.tools else None,
+            session_manager=SessionManager.in_memory(run_cwd),
+            settings_manager=settings_manager,
+            resource_loader=resource_loader,
+        )
+    )
+    session = created.session
+    if session.model is None:
+        session.dispose()
+        return _failed_result(
+            agent_name, agent.source, task, step, created.model_fallback_message or "No models available."
         )
 
-        aborted = {"flag": False}
-        abort_requested = tonio.Event()
-        exited = tonio.Event()
+    aborted = {"flag": False}
+    unsubscribe_cancel = None
+    if cancel is not None:
 
-        async def pump_stdout() -> None:
-            try:
-                await pump_jsonl_lines(process.stdout, process_line)
-            except Exception:
-                pass
+        def on_abort(_reason) -> None:
+            aborted["flag"] = True
+            tonio.spawn.without_tracking(session.abort())
 
-        async def pump_stderr() -> None:
-            try:
-                while True:
-                    chunk = await process.stderr.receive_some()
-                    if not chunk:
-                        return
-                    current_result["stderr"] += chunk.decode("utf-8", "replace")
-            except Exception:
-                pass
+        unsubscribe_cancel = cancel.on_cancel(on_abort)
 
-        async def abort_watchdog() -> None:
-            """SIGTERM on abort; escalate to SIGKILL when the child lingers."""
-            await abort_requested.wait(None)
-            if exited.is_set():
-                return
-            try:
-                process.send_signal(signal_module.SIGTERM)
-            except Exception:
-                pass
-            await exited.wait(5.0)
-            if not exited.is_set():
-                try:
-                    process.kill()
-                except Exception:
-                    pass
-
-        watchdog_join = tonio.spawn(abort_watchdog())
-
-        unsubscribe = None
-        if cancel is not None:
-
-            def on_abort(_reason) -> None:
-                aborted["flag"] = True
-                abort_requested.set()
-
-            unsubscribe = cancel.on_cancel(on_abort)
-
-        try:
-            await tonio.spawn(pump_stdout(), pump_stderr())
-            exit_code = await process.wait()
-        finally:
-            exited.set()
-            abort_requested.set()  # release the watchdog when never aborted
-            await watchdog_join
-            if unsubscribe is not None:
-                unsubscribe()
-
-        current_result["exitCode"] = exit_code if exit_code is not None else 0
-        if aborted["flag"]:
-            raise Exception("Subagent was aborted")
-        return current_result
+    unsubscribe = session.subscribe(on_event)
+    try:
+        await session.prompt(f"Task: {task}")
     finally:
-        if tmp_prompt_path is not None and tmp_prompt_dir is not None:
-            await tonio.spawn_blocking(_cleanup_prompt_file, tmp_prompt_path, tmp_prompt_dir)
+        if unsubscribe_cancel is not None:
+            unsubscribe_cancel()
+        unsubscribe()
+        session.dispose()
+
+    if aborted["flag"]:
+        raise Exception("Subagent was aborted")
+    current_result["status"] = "failed" if current_result.get("stopReason") in ("error", "aborted") else "done"
+    return current_result
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +466,15 @@ SUBAGENT_PARAMS = {
             "type": "array",
             "items": _CHAIN_ITEM,
             "description": "Array of {agent, task} for sequential execution",
+        },
+        "concurrency": {
+            "type": "integer",
+            "description": (
+                f"How many parallel tasks run at once (parallel mode only). "
+                f"Default: {MAX_CONCURRENCY}, max: {MAX_PARALLEL_TASKS}. Raise it only when the "
+                "provider account's rate limits allow that many concurrent streams."
+            ),
+            "default": MAX_CONCURRENCY,
         },
         "agentScope": {
             "type": "string",
@@ -601,15 +618,21 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
                 details=make_details("parallel")([]),
             )
 
-        # Track all results for streaming updates; exitCode -1 = running
+        # pidrei-only: pi's fixed MAX_CONCURRENCY bounded child processes; in
+        # process the cap protects the provider quota, so callers on
+        # high-limit accounts may raise it (clamped to the task cap).
+        requested_concurrency = params.get("concurrency")
+        concurrency = requested_concurrency if isinstance(requested_concurrency, int) else MAX_CONCURRENCY
+        concurrency = max(1, min(concurrency, MAX_PARALLEL_TASKS))
+
+        # Track all results for streaming updates (pi: exitCode -1 = running)
         all_results: list[dict] = [
             {
                 "agent": t["agent"],
                 "agentSource": "unknown",
                 "task": t["task"],
-                "exitCode": -1,
+                "status": "running",
                 "messages": [],
-                "stderr": "",
                 "usage": empty_usage(),
             }
             for t in tasks
@@ -617,7 +640,7 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
 
         def emit_parallel_update() -> None:
             if on_update is not None:
-                running = sum(1 for r in all_results if r["exitCode"] == -1)
+                running = sum(1 for r in all_results if is_running_result(r))
                 done = len(all_results) - running
                 on_update(
                     AgentToolResult(
@@ -649,7 +672,7 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
             emit_parallel_update()
             return result
 
-        results = await map_with_concurrency_limit(tasks, MAX_CONCURRENCY, run_one)
+        results = await map_with_concurrency_limit(tasks, concurrency, run_one)
 
         success_count = sum(1 for r in results if not is_failed_result(r))
         summaries = []
@@ -838,7 +861,7 @@ def _render_result(result, options, theme, _context):
 
     if details["mode"] == "chain":
         results = details["results"]
-        success_count = sum(1 for r in results if r["exitCode"] == 0)
+        success_count = sum(1 for r in results if not is_failed_result(r))
         icon = theme.fg("success", "✓") if success_count == len(results) else theme.fg("error", "✗")
 
         if expanded:
@@ -855,7 +878,7 @@ def _render_result(result, options, theme, _context):
             )
 
             for r in results:
-                r_icon = theme.fg("success", "✓") if r["exitCode"] == 0 else theme.fg("error", "✗")
+                r_icon = theme.fg("error", "✗") if is_failed_result(r) else theme.fg("success", "✓")
                 display_items = get_display_items(r["messages"])
                 final_output = get_final_output(r["messages"])
 
@@ -890,7 +913,7 @@ def _render_result(result, options, theme, _context):
             + theme.fg("accent", f"{success_count}/{len(results)} steps")
         )
         for r in results:
-            r_icon = theme.fg("success", "✓") if r["exitCode"] == 0 else theme.fg("error", "✗")
+            r_icon = theme.fg("error", "✗") if is_failed_result(r) else theme.fg("success", "✓")
             display_items = get_display_items(r["messages"])
             text += f"\n\n{theme.fg('muted', f'─── Step {r.get("step")}: ')}{theme.fg('accent', r['agent'])} {r_icon}"
             if not display_items:
@@ -905,9 +928,9 @@ def _render_result(result, options, theme, _context):
 
     if details["mode"] == "parallel":
         results = details["results"]
-        running = sum(1 for r in results if r["exitCode"] == -1)
-        success_count = sum(1 for r in results if r["exitCode"] != -1 and not is_failed_result(r))
-        fail_count = sum(1 for r in results if r["exitCode"] != -1 and is_failed_result(r))
+        running = sum(1 for r in results if is_running_result(r))
+        success_count = sum(1 for r in results if not is_running_result(r) and not is_failed_result(r))
+        fail_count = sum(1 for r in results if not is_running_result(r) and is_failed_result(r))
         is_running = running > 0
         icon = (
             theme.fg("warning", "⏳")
@@ -957,7 +980,7 @@ def _render_result(result, options, theme, _context):
         for r in results:
             r_icon = (
                 theme.fg("warning", "⏳")
-                if r["exitCode"] == -1
+                if is_running_result(r)
                 else theme.fg("error", "✗")
                 if is_failed_result(r)
                 else theme.fg("success", "✓")
@@ -965,7 +988,7 @@ def _render_result(result, options, theme, _context):
             display_items = get_display_items(r["messages"])
             text += f"\n\n{theme.fg('muted', '─── ')}{theme.fg('accent', r['agent'])} {r_icon}"
             if not display_items:
-                text += f"\n{theme.fg('muted', '(running...)' if r['exitCode'] == -1 else '(no output)')}"
+                text += f"\n{theme.fg('muted', '(running...)' if is_running_result(r) else '(no output)')}"
             else:
                 text += f"\n{render_display_items(display_items, 5)}"
         if not is_running:

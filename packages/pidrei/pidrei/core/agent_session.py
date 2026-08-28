@@ -1099,7 +1099,7 @@ class AgentSession:
 
         # The agent loop drains both queues before emitting agent_end. Any messages
         # here were queued by agent_end extension handlers and need a continuation.
-        return self.agent.has_queued_messages()
+        return await self.agent.has_queued_messages()
 
     async def prompt(self, text: str, options: PromptOptions | None = None) -> None:
         """Send a prompt to the agent.
@@ -2125,7 +2125,7 @@ class AgentSession:
 
             # Auto-compaction can complete while follow-up/steering/custom messages
             # are waiting. Continue once so queued messages are delivered.
-            return self.agent.has_queued_messages()
+            return await self.agent.has_queued_messages()
         except Exception as error:
             error_message = str(error) or "compaction failed"
             if started:

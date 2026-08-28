@@ -577,11 +577,13 @@ def test_tool_result_name_field_when_required():
 def test_pipe_separated_tool_ids_are_normalized():
     model = make_model()
     call_id = "call_abc|fc_" + "x" * 10
+    from pidrei_ai.types import ToolCall
+
+    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # so the content is supplied at construction instead of assigned after.
     other_model_message = AssistantMessage(
-        content=[
-            # Cross-model so normalize_tool_call_id applies.
-            *[],
-        ],
+        # Cross-model so normalize_tool_call_id applies.
+        content=[ToolCall(id=call_id, name="tool", arguments={})],
         api="openai-responses",
         provider="other",
         model="other-model",
@@ -589,9 +591,6 @@ def test_pipe_separated_tool_ids_are_normalized():
         stop_reason="toolUse",
         timestamp=1,
     )
-    from pidrei_ai.types import ToolCall
-
-    other_model_message.content = [ToolCall(id=call_id, name="tool", arguments={})]
     context = Context(
         messages=[
             UserMessage(content="go", timestamp=1),

@@ -22,10 +22,22 @@ def _auth_options(options: ModelsStoreOperationOptions | None) -> AuthOperationO
     return AuthOperationOptions(cancel=options.cancel) if options is not None else None
 
 
+@dataclass(slots=True, frozen=True)
+class _ModelsFileSnapshot:
+    """One immutable (data, revision) pair, published by rebinding
+    `_ModelsFileReadState.snapshot` as a unit — see the auth-storage
+    counterpart (PROPER_MT_DESIGN.md step 3)."""
+
+    data: dict[str, Any]
+    revision: str | None
+
+
+_EMPTY_MODELS_SNAPSHOT = _ModelsFileSnapshot(data={}, revision=None)
+
+
 @dataclass(slots=True)
 class _ModelsFileReadState:
-    data: dict[str, Any] = field(default_factory=dict)
-    revision: str | None = None
+    snapshot: _ModelsFileSnapshot = _EMPTY_MODELS_SNAPSHOT
     lock: sync.Lock = field(default_factory=sync.Lock)
 
 
@@ -35,6 +47,9 @@ _shared_models_file_read_states: dict[str, _ModelsFileReadState] = {}
 
 
 class InMemoryCodingAgentModelsStore(ModelsStore):
+    # `_entries` is an immutable snapshot swapped on write (never mutated in
+    # place), so readers pin one attribute read; the deepcopies keep pi's
+    # value semantics at the API edge.
     def __init__(self) -> None:
         self._entries: dict[str, ModelsStoreEntry] = {}
 
@@ -51,12 +66,14 @@ class InMemoryCodingAgentModelsStore(ModelsStore):
     ) -> None:
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
-        self._entries[provider_id] = copy.deepcopy(entry)
+        self._entries = {**self._entries, provider_id: copy.deepcopy(entry)}
 
     async def delete(self, provider_id: str, options: ModelsStoreOperationOptions | None = None) -> None:
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
-        self._entries.pop(provider_id, None)
+        entries = dict(self._entries)
+        entries.pop(provider_id, None)
+        self._entries = entries
 
 
 def _entry_to_dict(entry: ModelsStoreEntry) -> dict[str, Any]:
@@ -96,8 +113,8 @@ class FileModelsStore(ModelsStore):
         return json.loads(strip_bom(content)) if content else {}
 
     def _update_read_state(self, data: dict[str, Any], revision: str | None = None) -> None:
-        self._read_state.data = data
-        self._read_state.revision = revision
+        # One rebind: readers pin `snapshot` and get a consistent pair.
+        self._read_state.snapshot = _ModelsFileSnapshot(data=data, revision=revision)
 
     async def _reload_from_storage(self, options: ModelsStoreOperationOptions | None = None) -> dict[str, Any]:
         async def under_lock(content: str | None) -> tuple[dict[str, Any], None]:
@@ -113,9 +130,12 @@ class FileModelsStore(ModelsStore):
         if cancel is not None:
             cancel.raise_if_cancelled()
         state = self._read_state
+        # Pin the snapshot before comparing (see the auth-storage note): any
+        # interleaving with a reload costs one extra reload, never staleness.
+        snapshot = state.snapshot
         revision = await tonio.spawn_blocking(get_file_revision, self._path)
-        if revision is not None and revision == state.revision:
-            return state.data
+        if revision is not None and revision == snapshot.revision:
+            return snapshot.data
 
         # pi dedups concurrent reloads with a shared in-flight promise; that
         # check-then-set is not atomic on worker threads. A FIFO lock with a
@@ -124,9 +144,10 @@ class FileModelsStore(ModelsStore):
         async with state.lock:
             if cancel is not None:
                 cancel.raise_if_cancelled()
+            snapshot = state.snapshot
             revision = await tonio.spawn_blocking(get_file_revision, self._path)
-            if revision is not None and revision == state.revision:
-                return state.data
+            if revision is not None and revision == snapshot.revision:
+                return snapshot.data
             return await self._reload_from_storage(options)
 
     async def read(

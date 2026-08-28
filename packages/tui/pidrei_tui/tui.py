@@ -6,6 +6,20 @@ renderer-independent half of the TUI. The two renderers live next door —
 main screen and scrollback) and ``tui_alt_screen.TuiAltScreen`` (an
 application-owned viewport on the alternate screen).
 
+Ownership contract (the island, PROPER_MT_DESIGN.md §4a): in a started TUI,
+**all component mutation and all rendering happen on the UI owner task**
+(``input_owner``) — the Qt-GUI-thread / Swing-EDT shape. Code running
+anywhere else hands work to it with ``post_ui()``/``input_owner.post()``
+(maybe-on-owner callers) or ``input_owner.run()`` (callers known to be
+off-owner; ``run`` from an owner job self-deadlocks). ``request_render()``
+is safe from any task — it posts. The owner spans the terminal's lifetime,
+so posted work is always consumed in production; tests exercising posted
+paths start an owner (or stub the posting seam), while direct component
+calls in unit tests need no owner at all. This contract is what makes
+the component tree safe under free-threading; publication idioms that
+remain (``set_children``, atomic cache tuples) are hygiene and efficiency,
+not correctness.
+
 Port deviations (documented once here):
 
 - pi's ``TUI`` is a structural interface implemented by both renderers; the
@@ -13,23 +27,24 @@ Port deviations (documented once here):
   the name ``TUI``. Construct a renderer, never ``TUI``.
 
 - Render coalescing: pi chains ``process.nextTick`` + a 16ms ``setTimeout``
-  throttle; here ``start()`` spawns a single render-loop task that parks on
-  an Event, applies the same 16ms throttle against the end of the last
-  frame, and calls ``_do_render``. ``request_render()`` stays sync (callable
-  from input handlers); ``force=True`` resets the differential state and
-  skips the throttle, and keyboard input takes the same throttle-skipping
-  path without the reset (pi cancels its render timer for both).
+  throttle; here rendering is owner work. ``request_render()`` stays sync
+  (callable from anywhere) and posts a coalescing schedule job to the owner;
+  the 16ms throttle against the end of the last frame is an owner timer
+  (``input_owner.after``), so its cancel is exact. ``force=True`` resets the
+  differential state and skips the throttle, and keyboard input takes the
+  same throttle-skipping path without the reset (pi cancels its render timer
+  for both).
 - Frame output is a two-stage pipeline: ``_do_render`` computes a frame and
   hands its bytes to a writer task over a one-slot channel (``_emit``), so
-  the next frame's compute overlaps the previous frame's trip to the
-  terminal while a slow link (SSH) still paces the loop — the loop can be
-  at most one frame ahead of the wire. pi writes synchronously from the
+  the next frame's compute (on the owner) overlaps the previous frame's
+  trip to the terminal while a slow link (SSH) still paces rendering — at
+  most one frame ahead of the wire. pi writes synchronously from the
   same thread; the ordering that gives it is kept by routing every write
   the renderers make through ``_emit`` and by ``render_now``/``stop``
   draining the pipeline (``_flush_frames``) before anything else goes out.
 - ``start``/``stop`` are async (they drive the async terminal driver and the
-  render-loop lifecycle). The loop exits cooperatively on ``stop()`` — no
-  task abort involved.
+  render/writer lifecycle). ``stop()`` quiesces rendering with an owner
+  barrier and drains the writer — no task abort involved.
 - ``query_terminal_background_color``/``query_terminal_color_scheme`` are
   async methods; their pending-state transitions take a sync lock because
   the input pump and the querying task may run on different tonio workers.
@@ -182,13 +197,12 @@ class Container:
     def set_children(self, children: list) -> None:
         """Replace the children in one step.
 
-        `clear()` followed by `add_child()` calls is fine on pi's single event
-        loop, where nothing can render in between. Here a component can be
-        rebuilt from a spawned task while the render loop reads it on another
-        thread, and the half-populated window renders as a component that has
-        briefly vanished. Rebuilding into a local list and publishing it with
-        one assignment closes that window: a concurrent `render` sees either
-        the old children or the new ones.
+        Correctness comes from the ownership contract (mutation and render
+        both run on the UI owner task, so a rebuild can never overlap a
+        frame). The single assignment remains as hygiene: a rebuild is one
+        publication instead of a clear-then-append window, which keeps any
+        off-contract reader (a test, a debug probe) from seeing a
+        half-populated container.
         """
         self.children = list(children)
 
@@ -200,8 +214,6 @@ class Container:
 
     def render(self, width: int) -> list[str]:
         lines: list[str] = []
-        # Bind once: `set_children` publishes a new list, so a rebuild landing
-        # mid-render cannot make this iteration see a partial one.
         for child in self.children:
             lines.extend(child.render(width))
         return lines
@@ -288,22 +300,23 @@ class TuiBase(Container, ABC):
         # forwarded to the focused component.
         self.on_debug = None
 
-        self._render_signal = tonio.Event()
-        self._render_immediate_signal = tonio.Event()
+        # Render scheduling state. Owner-confined: only owner jobs touch it
+        # (`_schedule_render`/`_render_job`), so no lock — that is the island's
+        # point. `_render_active` is the one exception: a plain flag set by
+        # `start()`/`stop()` and read anywhere to drop requests early.
+        self._render_active = False
+        self._render_scheduled = False
         self._render_force = False
-        self._render_immediate = False
-        self._render_force_lock = threading.Lock()
-        self._pre_render_callbacks: list = []
+        self._throttle_timer = None
         self._last_render_at = 0.0
         self._line_reset_memo: dict[str, str] = {}
-        self._render_scope = None
         # Frame pipeline (see the module docstring): the sender side of the
         # one-slot channel while the writer task runs, else None.
         self._writer_scope = None
         self._frames: Any = None
         self._frame_parts: list[str] = []
         self._frame_writer_error: BaseException | None = None
-        # Async callback invoked when a frame raises; see `_render_loop`.
+        # Async callback invoked when a frame raises; see `_render_job`.
         self._render_error_handler = None
         # The task that owns UI state (pi: the JS thread). A ProcessTerminal
         # brings its own — the stdin pump and the input timers already run on
@@ -367,7 +380,7 @@ class TuiBase(Container, ABC):
         self._show_hardware_cursor = enabled
         # pi hides the cursor right here. Every frame ends by emitting the
         # cursor state (`_position_hardware_cursor` / the alt-screen frame
-        # tail), so the render loop stays the only task writing terminal
+        # tail), so rendering stays the only path writing terminal
         # bytes; the requested render applies the change.
         self.request_render()
 
@@ -375,10 +388,10 @@ class TuiBase(Container, ABC):
         return self._clear_on_shrink
 
     def set_render_error_handler(self, handler) -> None:
-        """Install the async callback that receives a render-loop exception.
+        """Install the async callback that receives a rendering exception.
 
-        Without one, the exception propagates out of the render task (and
-        the TUI looks frozen until `stop()`), so owners should install one.
+        Without one, the exception propagates out of the render job into the
+        UI owner (killing input with it), so owners should install one.
         """
         self._render_error_handler = handler
 
@@ -538,8 +551,8 @@ class TuiBase(Container, ABC):
         # Only focus if overlay is actually visible
         if not entry.options.get("nonCapturing") and self._is_overlay_visible(entry):
             self.set_focus(component)
-        # No direct `hide_cursor()` here or in the hide paths below: the
-        # render loop emits the cursor state with every frame (see
+        # No direct `hide_cursor()` here or in the hide paths below:
+        # rendering emits the cursor state with every frame (see
         # `set_show_hardware_cursor`).
         self.request_render()
 
@@ -715,9 +728,14 @@ class TuiBase(Container, ABC):
         self._writer_scope = tonio.scope()
         await self._writer_scope.__aenter__()
         self._writer_scope.spawn(self._frame_writer(receiver))
-        self._render_scope = tonio.scope()
-        await self._render_scope.__aenter__()
-        self._render_scope.spawn(self._render_loop())
+        # Rendering is owner work from here on. Requests made earlier in
+        # start() were dropped by the `_render_active` gate; this final
+        # request supersedes them all with the first frame.
+        self._render_scheduled = False
+        self._render_force = False
+        self._throttle_timer = None
+        self._last_render_at = 0.0
+        self._render_active = True
         self.request_render()
 
     def add_input_listener(self, listener):
@@ -763,17 +781,29 @@ class TuiBase(Container, ABC):
 
         ``preserveScreen`` leaves the renderer's output on the terminal for
         another TUI taking the same terminal over (the runtime UI-mode switch).
+
+        Must be called from off the owner (every real caller — shutdown
+        flows, the UI-mode switch, the crash handler — is a detached or main
+        task): the barrier below waits on the owner's queue, which from an
+        owner job would deadlock.
         """
         options = options or {}
         self._stopped = True
-        self._render_immediate_signal.set()
-        self._render_signal.set()
-        if self._render_scope is not None:
-            await self._render_scope.__aexit__(None, None, None)
-            self._render_scope = None
+        self._render_active = False
+
+        # Barrier: a render job already queued (or mid-frame) finishes
+        # before the writer is told to stop, so nothing sends into a
+        # drained pipeline; jobs queued after this see `_render_active`
+        # False and no-op. A still-pending throttle timer fires into a
+        # no-op too and is reaped when the owner closes. (`run` on an owner
+        # that never started settles inline.)
+        async def _drained() -> None: ...
+
+        await self.input_owner.run(_drained)
         if self._writer_scope is not None:
-            # After the loop: what it handed over still goes out, then the
-            # writer stops and everything below writes in order behind it.
+            # After the barrier: what rendering handed over still goes out,
+            # then the writer stops and everything below writes in order
+            # behind it.
             frames, self._frames = self._frames, None
             await frames.send(None)
             await self._writer_scope.__aexit__(None, None, None)
@@ -796,7 +826,7 @@ class TuiBase(Container, ABC):
     def _handle_owner_error(self, error: BaseException) -> None:
         """Posted UI work (a timer tick, an autocomplete result) raised.
 
-        pi would crash on it; the render loop's handler gets it here too, so
+        pi would crash on it; the render error handler gets it here too, so
         the owner keeps serving input instead of dying with the exception
         surfacing only at `stop()`.
         """
@@ -806,15 +836,15 @@ class TuiBase(Container, ABC):
         tonio.spawn.without_tracking(handler(error))
 
     async def render_now(self, force: bool = False) -> None:
-        """Render one frame synchronously, bypassing the loop and its throttle."""
+        """Render one frame on the caller, bypassing the owner and the throttle.
+
+        For a TUI whose render machinery is not running (never started, or
+        already stopped — the UI-mode switch renders the regular screen this
+        way) or for owner-side callers. Off-owner calls against a *running*
+        TUI would race the owner's frames — no production path does that.
+        """
         if force:
             self._reset_render_state()
-        with self._render_force_lock:
-            self._render_force = False
-            self._render_immediate = False
-        self._render_signal.clear()
-        self._render_immediate_signal.clear()
-        self._run_pre_render_callbacks()
         await self._render_frame()
         await self._flush_frames()
 
@@ -878,117 +908,107 @@ class TuiBase(Container, ABC):
             try:
                 await self.terminal.write(item)
             except BaseException as error:
-                # BaseException: a dead writer wedges the render loop on its
-                # next send; the stored error resurfaces there instead.
+                # BaseException: a dead writer wedges the next render job on
+                # its send; the stored error resurfaces there instead.
                 if isinstance(error, GeneratorExit):
                     raise
                 self._frame_writer_error = error
 
-    def post_before_render(self, callback) -> None:
-        """Run `callback` on the render task right before the next frame.
+    def post_ui(self, fn) -> None:
+        """Run a synchronous component mutation on the UI owner task.
 
-        For mutations of the whole component tree (e.g. a theme reload's
-        `invalidate()`) that originate off the render task — running them
-        here means they never overlap a frame being rendered.
+        The ownership contract's front door for code that may be off-owner:
+        `fn` is posted (FIFO — safe from any task, including owner jobs, and
+        ordered with everything else posted). Pure adaptation over
+        `input_owner.post`; the queueing policy lives there.
         """
-        with self._render_force_lock:
-            self._pre_render_callbacks.append(callback)
-        self.request_render()
 
-    def _run_pre_render_callbacks(self) -> None:
-        with self._render_force_lock:
-            callbacks = self._pre_render_callbacks
-            self._pre_render_callbacks = []
-        for callback in callbacks:
-            callback()
+        async def apply() -> None:
+            fn()
+
+        self.input_owner.post(apply)
 
     def request_render(self, force: bool = False) -> None:
-        # pi calls resetRenderState() right here. That is safe on one thread
-        # and a data race on this runtime: `_do_render`'s tail writes the
-        # previous-frame state after the frame goes out, so a force landing in
-        # that window had its resets clobbered and the next render diffed
-        # identical lines and wrote nothing. Only the render loop calls
-        # `_reset_render_state` now; a force is just a flag it consumes.
-        if force:
-            with self._render_force_lock:
-                self._render_force = True
-                self._render_immediate = True
-            self._render_immediate_signal.set()
-        self._render_signal.set()
+        # Sync and callable from any task: it only posts. Coalescing, the
+        # throttle, and the force/diff-reset handling are owner state
+        # (`_schedule_render`); pi calls resetRenderState() right here, which
+        # is safe on one thread and was a data race against `_do_render`'s
+        # previous-frame tail on this runtime — only the render job resets.
+        if not self._render_active:
+            return
+        self.input_owner.post(functools.partial(self._schedule_render, force, force))
 
     def _request_immediate_render(self) -> None:
-        """Render on the next loop turn, skipping the throttle (not the diff).
+        """Render without the throttle (but with the diff).
 
-        pi's counterpart cancels the throttled `setTimeout`; here the throttle
-        is a wait the immediate signal cuts short.
+        pi's counterpart cancels the throttled `setTimeout`; here the pending
+        throttle timer is cancelled on the owner (exact by construction).
         """
-        with self._render_force_lock:
-            self._render_immediate = True
-        self._render_immediate_signal.set()
-        self._render_signal.set()
+        if not self._render_active:
+            return
+        self.input_owner.post(functools.partial(self._schedule_render, False, True))
 
-    async def _render_loop(self) -> None:
-        while True:
-            await self._render_signal.wait(None)
-            if self._stopped:
+    async def _schedule_render(self, force: bool, immediate: bool) -> None:
+        """Owner job: fold a render request into the schedule.
+
+        At most one `_render_job` is pending at a time (`_render_scheduled`);
+        requests coalesce into it. A non-immediate request inside the 16ms
+        window parks in an owner timer; an immediate one cancels that timer
+        and renders on the next owner turn — keyboard input never waits out
+        the throttle (mirrors the old loop's immediate-signal preemption).
+        """
+        if not self._render_active:
+            return
+        if force:
+            self._render_force = True
+        if self._render_scheduled:
+            if immediate and self._throttle_timer is not None:
+                self._throttle_timer.cancel()
+                self._throttle_timer = None
+                self.input_owner.post(self._render_job)
+            return
+        self._render_scheduled = True
+        if not immediate:
+            delay_s = _MIN_RENDER_INTERVAL_S - (_time.monotonic() - self._last_render_at)
+            if delay_s > 0:
+                self._throttle_timer = self.input_owner.after(delay_s * 1000, self._render_job)
                 return
-            with self._render_force_lock:
-                force = self._render_force
-                self._render_force = False
-                immediate = self._render_immediate
-                self._render_immediate = False
-            if not immediate:
-                elapsed = _time.monotonic() - self._last_render_at
-                delay = _MIN_RENDER_INTERVAL_S - elapsed
-                if delay > 0:
-                    # Keyboard input is latency-sensitive: an immediate request
-                    # arriving mid-throttle ends the wait instead of queueing
-                    # behind it.
-                    await self._render_immediate_signal.wait(delay)
-                    if self._stopped:
-                        return
-                    with self._render_force_lock:
-                        force = force or self._render_force
-                        self._render_force = False
-                        self._render_immediate = False
-            self._render_immediate_signal.clear()
-            # Absorb requests that arrived up to this point; requests during
-            # _do_render re-arm the loop (pi: renderRequested re-check).
-            self._render_signal.clear()
-            # stop() sets _stopped and then the render signal; if that lands
-            # between this loop's wakeup and the clear() above, the wakeup is
-            # consumed here and the next wait() would block forever with
-            # stop() stuck awaiting this task. Re-check after clearing.
-            if self._stopped:
-                return
-            if force:
-                self._reset_render_state()
-            try:
-                self._run_pre_render_callbacks()
-                await self._render_frame()
-            except BaseException as error:
-                # pi crashes the process on a render throw. Here the loop is a
-                # scope child: letting the exception escape would only surface
-                # at `stop()`, leaving a frozen UI with a live agent. Hand it
-                # to the owner (interactive mode's crash handler) instead.
-                # BaseException on purpose: a pyo3 PanicException is not an
-                # Exception, and missing it here is a silent render-loop death.
-                if isinstance(error, GeneratorExit):
-                    raise
-                handler = self._render_error_handler
-                if handler is None:
-                    raise
-                self._stopped = True
-                # Detached on purpose: the handler typically calls `stop()`,
-                # which joins this task through the render scope.
-                tonio.spawn.without_tracking(handler(error))
-                return
-            # A force that arrived after the consume above lost its signal to
-            # the clear(); without this it would sit unserved until the next
-            # unrelated request. Re-arming guarantees every force ends in a
-            # full_render, which always writes a frame.
-            if self._render_force:
-                self._render_signal.set()
+        self.input_owner.post(self._render_job)
+
+    async def _render_job(self) -> None:
+        """Owner job: one frame. Requests during the frame schedule the next.
+
+        (They post new schedule jobs behind this one — nothing renders
+        concurrently, so pi's renderRequested re-check is the owner queue
+        itself.)
+        """
+        self._throttle_timer = None
+        self._render_scheduled = False
+        if not self._render_active:
+            return
+        force = self._render_force
+        self._render_force = False
+        if force:
+            self._reset_render_state()
+        try:
+            await self._render_frame()
+        except BaseException as error:
+            # pi crashes the process on a render throw. Here the frame is an
+            # owner job: letting the exception escape would go to the owner's
+            # on_error with the render machinery still armed. Stop rendering
+            # and hand it to the installed handler (interactive mode's crash
+            # handler) instead. BaseException on purpose: a pyo3
+            # PanicException is not an Exception, and missing it here is a
+            # silent render death.
+            if isinstance(error, GeneratorExit):
+                raise
+            self._render_active = False
+            handler = self._render_error_handler
+            if handler is None:
+                raise
+            # Detached on purpose: the handler typically calls `stop()`,
+            # whose owner barrier would deadlock behind this job.
+            tonio.spawn.without_tracking(handler(error))
 
     # ------------------------------------------------------------------
     # Input handling

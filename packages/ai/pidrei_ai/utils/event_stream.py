@@ -14,6 +14,7 @@ quirk that `end()` without a result leaves `result()` pending; `fail()` /
 
 import threading
 from collections.abc import AsyncIterator, Callable, Coroutine
+from dataclasses import replace
 from typing import Any
 
 import tonio.colored as tonio
@@ -21,6 +22,7 @@ from tonio.colored import Event
 from tonio.colored.sync import channel
 from tonio.exceptions import CancelledError
 
+from pidrei_ai.builders import AssistantMessageBuilder, ToolCallBuilder
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
@@ -179,18 +181,58 @@ class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMe
 
     def __init__(self) -> None:
         super().__init__(self._event_is_complete, self._event_extract_result)
-        # The producer's in-progress message. Set by adapters as soon as it
-        # exists so a cancel that lands while the producer is parked on I/O
-        # still terminates with pi's "aborted message with partial content".
-        self.partial: AssistantMessage | None = None
+        # The producer's in-progress message *builder* — producer-private
+        # (mutable; only the producing adapter and the abort path below touch
+        # it). Set by adapters as soon as it exists so a cancel that lands
+        # while the producer is parked on I/O still terminates with pi's
+        # "aborted message with partial content". Consumers only ever see the
+        # frozen snapshots that `push()` publishes.
+        self.partial: AssistantMessageBuilder | AssistantMessage | None = None
+
+    def push(self, event: AssistantMessageEvent) -> None:
+        """Publication seam: freeze the event's message payloads, then deliver.
+
+        Every event leaves here carrying an independent frozen snapshot
+        (per-delta cadence; see PROPER_MT_DESIGN.md step 2a), so any consumer
+        on any task may hold it indefinitely. Already-frozen payloads pass
+        through untouched, so producers that push constructed
+        `AssistantMessage` values (extensions, fakes) work unchanged.
+        """
+        event_type = event.type
+        if event_type == "done":
+            if isinstance(event.message, AssistantMessageBuilder):
+                event.message = event.message.freeze()
+        elif event_type == "error":
+            if isinstance(event.error, AssistantMessageBuilder):
+                event.error = event.error.freeze()
+        else:
+            partial = event.partial
+            if isinstance(partial, AssistantMessageBuilder):
+                frozen = partial.freeze()
+                event.partial = frozen
+                if event_type == "toolcall_end":
+                    # Adapters pass the block they hold in the builder's
+                    # content; keep `event.tool_call is event.partial.
+                    # content[i]` true on the frozen side too.
+                    index = event.content_index
+                    if 0 <= index < len(frozen.content) and event.tool_call is partial.content[index]:
+                        event.tool_call = frozen.content[index]
+                    elif isinstance(event.tool_call, ToolCallBuilder):
+                        event.tool_call = event.tool_call.freeze()
+            elif event_type == "toolcall_end" and isinstance(event.tool_call, ToolCallBuilder):
+                event.tool_call = event.tool_call.freeze()
+        super().push(event)
 
     def _abort(self, cancel: CancelToken) -> None:
         message = self.partial
         if message is None:
             super()._abort(cancel)
             return
-        message.stop_reason = "aborted"
-        message.error_message = "Request was aborted"
+        if isinstance(message, AssistantMessageBuilder):
+            message.stop_reason = "aborted"
+            message.error_message = "Request was aborted"
+        else:
+            message = replace(message, stop_reason="aborted", error_message="Request was aborted")
         self.push(ErrorEvent(reason="aborted", error=message))
         self.end()
 

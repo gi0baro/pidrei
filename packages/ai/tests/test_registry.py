@@ -15,6 +15,7 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuth,
 )
+from pidrei_ai.builders import UsageBuilder
 from pidrei_ai.models_store import InMemoryModelsStore, ModelsStoreEntry
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.registry import (
@@ -37,7 +38,6 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
-    Usage,
 )
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -1042,7 +1042,9 @@ async def test_get_available_filters_unconfigured_and_applies_filter_models():
 
 def test_calculate_cost_base_rates():
     model = make_model(cost=ModelCost(input=3.0, output=15.0, cache_read=0.3, cache_write=3.75))
-    usage = Usage(input=1_000_000, output=100_000, cache_read=2_000_000, cache_write=500_000)
+    # Step 2 translation (PROPER_MT_DESIGN.md): calculate_cost is producer-side
+    # and mutates a usage *builder*; the frozen Usage is a value.
+    usage = UsageBuilder(input=1_000_000, output=100_000, cache_read=2_000_000, cache_write=500_000)
 
     cost = calculate_cost(model, usage)
     assert cost.input == pytest.approx(3.0)
@@ -1067,7 +1069,7 @@ def test_calculate_cost_applies_highest_matching_tier():
         )
     )
     # input + cacheRead + cacheWrite = 450k -> second tier applies to the whole request.
-    usage = Usage(input=250_000, output=10_000, cache_read=150_000, cache_write=50_000)
+    usage = UsageBuilder(input=250_000, output=10_000, cache_read=150_000, cache_write=50_000)
 
     cost = calculate_cost(model, usage)
     assert cost.input == pytest.approx(3.0 / 1e6 * 250_000)
@@ -1077,7 +1079,7 @@ def test_calculate_cost_applies_highest_matching_tier():
 def test_calculate_cost_1h_cache_writes_cost_double_input_rate():
     # Anthropic: 1h cache writes bill at 2x the *input* rate, not the cacheWrite rate.
     model = make_model(cost=ModelCost(input=3.0, output=15.0, cache_read=0.3, cache_write=3.75))
-    usage = Usage(cache_write=1_000, cache_write_1h=400)
+    usage = UsageBuilder(cache_write=1_000, cache_write_1h=400)
 
     cost = calculate_cost(model, usage)
     expected = (3.75 * 600 + 3.0 * 2 * 400) / 1e6

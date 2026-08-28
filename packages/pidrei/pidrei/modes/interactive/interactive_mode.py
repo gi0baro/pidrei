@@ -24,6 +24,7 @@ import tempfile
 import time
 import traceback
 import uuid
+from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -190,6 +191,18 @@ class _TimeoutCancel:
 
 def _timeout_cancel(ms: float) -> AiCancelToken:
     return _TimeoutCancel(ms).token
+
+
+async def _noop_ui_settle() -> None:
+    """Owner barrier body for `_settle_ui_after_agent_event` (allocated once)."""
+
+
+# Interactive mode's handlers run on detached tasks (submit handlers,
+# keybinding actions, extension handlers, startup checks), so every shared
+# UI-mutating helper routes its body through `self.ui.post_ui(apply)` — the
+# TUI ownership contract's front door (post, not run: safe from owner jobs
+# too, and FIFO preserves call order; `fn` keeps its own request_render()
+# calls, which post behind the mutation).
 
 
 def is_expandable(obj) -> bool:
@@ -366,9 +379,15 @@ class ExtensionUIContext:
 
     def set_working_message(self, message=None) -> None:
         mode = self._mode
-        mode._working_message = message
-        if mode._active_status_indicator is not None and mode._active_status_indicator.kind == "working":
-            mode._active_status_indicator.set_message(message if message is not None else mode._default_working_message)
+
+        def apply() -> None:
+            mode._working_message = message
+            if mode._active_status_indicator is not None and mode._active_status_indicator.kind == "working":
+                mode._active_status_indicator.set_message(
+                    message if message is not None else mode._default_working_message
+                )
+
+        mode.ui.post_ui(apply)
 
     def set_working_visible(self, visible) -> None:
         self._mode._set_working_visible(visible)
@@ -1193,15 +1212,14 @@ class InteractiveMode:
         # Render initial messages AFTER showing loaded resources
         self._render_initial_messages()
 
-        # Set up theme file watcher. The watcher fires on a `threading.Timer`
-        # thread; invalidating the whole tree from there would overlap a frame
-        # in progress, so the mutation is posted to the render task.
+        # Set up theme file watcher. The reload fires on the UI owner
+        # (`_timers.Timeout` delivers on the owner since audit step 5), so
+        # invalidating the tree here is plain owner work — it can never
+        # overlap a frame.
         def handle_theme_change() -> None:
-            def apply() -> None:
-                self.ui.invalidate()
-                self._update_editor_border_color()
-
-            self.ui.post_before_render(apply)
+            self.ui.invalidate()
+            self._update_editor_border_color()
+            self.ui.request_render()
 
         on_theme_change(handle_theme_change)
 
@@ -2083,14 +2101,17 @@ class InteractiveMode:
         hard_exit(1)
 
     def render_current_session_state(self) -> None:
-        self._loaded_resources_container.clear()
-        self._chat_container.clear()
-        self._pending_messages_container.clear()
-        self._compaction_queued_messages = []
-        self._streaming_component = None
-        self._streaming_message = None
-        self._pending_tools.clear()
-        self._render_initial_messages()
+        def apply() -> None:
+            self._loaded_resources_container.clear()
+            self._chat_container.clear()
+            self._pending_messages_container.clear()
+            self._compaction_queued_messages = []
+            self._streaming_component = None
+            self._streaming_message = None
+            self._pending_tools.clear()
+            self._render_initial_messages()
+
+        self.ui.post_ui(apply)
 
     def _get_registered_tool_definition(self, tool_name: str):
         """Get a registered tool definition by name (for custom rendering)."""
@@ -2168,56 +2189,81 @@ class InteractiveMode:
         self._footer_data_provider.set_extension_status(key, text)
         self.ui.request_render()
 
+    # The status-indicator state machine (`_active_status_indicator` and the
+    # working-message knobs) runs entirely on the UI owner: writers post
+    # (`_post_ui`), so kind-guards and set_message updates read FIFO-consistent
+    # state whether the caller is the routed agent listener, a detached
+    # command handler, or an extension task.
+
     def _show_status_indicator(self, indicator) -> None:
-        if self._active_status_indicator is not None:
-            self._active_status_indicator.dispose()
-        self._active_status_indicator = indicator
-        self._status_container.set_children([indicator])
+        def apply() -> None:
+            if self._active_status_indicator is not None:
+                self._active_status_indicator.dispose()
+            self._active_status_indicator = indicator
+            self._status_container.set_children([indicator])
+
+        self.ui.post_ui(apply)
 
     def _clear_status_indicator(self, kind: str | None = None) -> None:
-        if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
-            return
-        had_active_status_indicator = self._active_status_indicator is not None
-        if self._active_status_indicator is not None:
-            self._active_status_indicator.dispose()
-        self._active_status_indicator = None
-        if had_active_status_indicator and self._options.get("tuiMode") == "regular" and self.ui.get_clear_on_shrink():
-            self._status_container.set_children([self._idle_status])
-        else:
-            self._status_container.clear()
+        def apply() -> None:
+            if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
+                return
+            had_active_status_indicator = self._active_status_indicator is not None
+            if self._active_status_indicator is not None:
+                self._active_status_indicator.dispose()
+            self._active_status_indicator = None
+            if (
+                had_active_status_indicator
+                and self._options.get("tuiMode") == "regular"
+                and self.ui.get_clear_on_shrink()
+            ):
+                self._status_container.set_children([self._idle_status])
+            else:
+                self._status_container.clear()
+
+        self.ui.post_ui(apply)
 
     def _set_working_visible(self, visible: bool) -> None:
-        self._working_visible = visible
-        if not visible:
-            self._clear_status_indicator("working")
-            self.ui.request_render()
-            return
-        if self.session.is_streaming and (
-            self._active_status_indicator is None or self._active_status_indicator.kind != "working"
-        ):
-            self._show_status_indicator(
-                WorkingStatusIndicator(
-                    self.ui,
-                    self._working_message if self._working_message is not None else self._default_working_message,
-                    self._working_indicator_options,
+        def apply() -> None:
+            self._working_visible = visible
+            if not visible:
+                self._clear_status_indicator("working")
+                self.ui.request_render()
+                return
+            if self.session.is_streaming and (
+                self._active_status_indicator is None or self._active_status_indicator.kind != "working"
+            ):
+                self._show_status_indicator(
+                    WorkingStatusIndicator(
+                        self.ui,
+                        self._working_message if self._working_message is not None else self._default_working_message,
+                        self._working_indicator_options,
+                    )
                 )
-            )
-        self.ui.request_render()
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _set_working_indicator(self, options=None) -> None:
-        self._working_indicator_options = options
-        if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
-            self._active_status_indicator.set_indicator(options)
-        self.ui.request_render()
+        def apply() -> None:
+            self._working_indicator_options = options
+            if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
+                self._active_status_indicator.set_indicator(options)
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _set_hidden_thinking_label(self, label=None) -> None:
-        self._hidden_thinking_label = label if label is not None else self._default_hidden_thinking_label
-        for child in self._chat_container.children:
-            if isinstance(child, AssistantMessageComponent):
-                child.set_hidden_thinking_label(self._hidden_thinking_label)
-        if self._streaming_component is not None:
-            self._streaming_component.set_hidden_thinking_label(self._hidden_thinking_label)
-        self.ui.request_render()
+        def apply() -> None:
+            self._hidden_thinking_label = label if label is not None else self._default_hidden_thinking_label
+            for child in self._chat_container.children:
+                if isinstance(child, AssistantMessageComponent):
+                    child.set_hidden_thinking_label(self._hidden_thinking_label)
+            if self._streaming_component is not None:
+                self._streaming_component.set_hidden_thinking_label(self._hidden_thinking_label)
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     # Maximum total widget lines to prevent viewport overflow
     MAX_WIDGET_LINES = 10
@@ -2226,47 +2272,53 @@ class InteractiveMode:
         """Set an extension widget (list of strings or a component factory)."""
         placement = (options or {}).get("placement") or "aboveEditor"
 
-        def remove_existing(widget_map: dict) -> None:
-            existing = widget_map.get(key)
-            if existing is not None and getattr(existing, "dispose", None) is not None:
-                existing.dispose()
-            widget_map.pop(key, None)
+        def apply() -> None:
+            def remove_existing(widget_map: dict) -> None:
+                existing = widget_map.get(key)
+                if existing is not None and getattr(existing, "dispose", None) is not None:
+                    existing.dispose()
+                widget_map.pop(key, None)
 
-        remove_existing(self._extension_widgets_above)
-        remove_existing(self._extension_widgets_below)
+            remove_existing(self._extension_widgets_above)
+            remove_existing(self._extension_widgets_below)
 
-        if content is None:
+            if content is None:
+                self._render_widgets()
+                return
+
+            if isinstance(content, list):
+                # Wrap string list in a Container with Text components
+                container = Container()
+                for line in content[: InteractiveMode.MAX_WIDGET_LINES]:
+                    container.add_child(Text(line, 1, 0))
+                if len(content) > InteractiveMode.MAX_WIDGET_LINES:
+                    container.add_child(Text(theme.fg("muted", "... (widget truncated)"), 1, 0))
+                component = container
+            else:
+                # Factory function - create component
+                component = content(self.ui, theme)
+
+            target_map = self._extension_widgets_below if placement == "belowEditor" else self._extension_widgets_above
+            target_map[key] = component
             self._render_widgets()
-            return
 
-        if isinstance(content, list):
-            # Wrap string list in a Container with Text components
-            container = Container()
-            for line in content[: InteractiveMode.MAX_WIDGET_LINES]:
-                container.add_child(Text(line, 1, 0))
-            if len(content) > InteractiveMode.MAX_WIDGET_LINES:
-                container.add_child(Text(theme.fg("muted", "... (widget truncated)"), 1, 0))
-            component = container
-        else:
-            # Factory function - create component
-            component = content(self.ui, theme)
-
-        target_map = self._extension_widgets_below if placement == "belowEditor" else self._extension_widgets_above
-        target_map[key] = component
-        self._render_widgets()
+        self.ui.post_ui(apply)
 
     def _clear_extension_widgets(self) -> None:
-        for widget in self._extension_widgets_above.values():
-            dispose = getattr(widget, "dispose", None)
-            if dispose is not None:
-                dispose()
-        for widget in self._extension_widgets_below.values():
-            dispose = getattr(widget, "dispose", None)
-            if dispose is not None:
-                dispose()
-        self._extension_widgets_above.clear()
-        self._extension_widgets_below.clear()
-        self._render_widgets()
+        def apply() -> None:
+            for widget in self._extension_widgets_above.values():
+                dispose = getattr(widget, "dispose", None)
+                if dispose is not None:
+                    dispose()
+            for widget in self._extension_widgets_below.values():
+                dispose = getattr(widget, "dispose", None)
+                if dispose is not None:
+                    dispose()
+            self._extension_widgets_above.clear()
+            self._extension_widgets_below.clear()
+            self._render_widgets()
+
+        self.ui.post_ui(apply)
 
     def _reset_extension_ui(self) -> None:
         if self._extension_selector is not None:
@@ -2319,21 +2371,25 @@ class InteractiveMode:
 
     def _set_extension_footer(self, factory) -> None:
         """Set a custom footer component, or restore the built-in footer."""
-        # Dispose existing custom footer
-        if self._custom_footer is not None and getattr(self._custom_footer, "dispose", None) is not None:
-            self._custom_footer.dispose()
 
-        self._footer_container.clear()
-        if factory is not None:
-            # Create and add custom footer, passing the data provider
-            self._custom_footer = factory(self.ui, theme, self._footer_data_provider)
-            self._footer_container.add_child(self._custom_footer)
-        else:
-            # Restore built-in footer
-            self._custom_footer = None
-            self._footer_container.add_child(self._footer)
+        def apply() -> None:
+            # Dispose existing custom footer
+            if self._custom_footer is not None and getattr(self._custom_footer, "dispose", None) is not None:
+                self._custom_footer.dispose()
 
-        self.ui.request_render()
+            self._footer_container.clear()
+            if factory is not None:
+                # Create and add custom footer, passing the data provider
+                self._custom_footer = factory(self.ui, theme, self._footer_data_provider)
+                self._footer_container.add_child(self._custom_footer)
+            else:
+                # Restore built-in footer
+                self._custom_footer = None
+                self._footer_container.add_child(self._footer)
+
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _set_extension_header(self, factory) -> None:
         """Set a custom header component, or restore the built-in header."""
@@ -2342,37 +2398,40 @@ class InteractiveMode:
         if self._built_in_header is None:
             return
 
-        # Dispose existing custom header
-        if self._custom_header is not None and getattr(self._custom_header, "dispose", None) is not None:
-            self._custom_header.dispose()
+        def apply() -> None:
+            # Dispose existing custom header
+            if self._custom_header is not None and getattr(self._custom_header, "dispose", None) is not None:
+                self._custom_header.dispose()
 
-        # Find the index of the current header in the header container
-        current_header = self._custom_header if self._custom_header is not None else self._built_in_header
-        try:
-            index = self._header_container.children.index(current_header)
-        except ValueError:
-            index = -1
+            # Find the index of the current header in the header container
+            current_header = self._custom_header if self._custom_header is not None else self._built_in_header
+            try:
+                index = self._header_container.children.index(current_header)
+            except ValueError:
+                index = -1
 
-        if factory is not None:
-            # Create and add custom header
-            self._custom_header = factory(self.ui, theme)
-            if is_expandable(self._custom_header):
-                self._custom_header.set_expanded(self._tool_output_expanded)
-            if index != -1:
-                self._header_container.children[index] = self._custom_header
+            if factory is not None:
+                # Create and add custom header
+                self._custom_header = factory(self.ui, theme)
+                if is_expandable(self._custom_header):
+                    self._custom_header.set_expanded(self._tool_output_expanded)
+                if index != -1:
+                    self._header_container.children[index] = self._custom_header
+                else:
+                    # If not found (e.g. built-in header was never added), add
+                    # at the top
+                    self._header_container.children.insert(0, self._custom_header)
             else:
-                # If not found (e.g. built-in header was never added), add at
-                # the top
-                self._header_container.children.insert(0, self._custom_header)
-        else:
-            # Restore built-in header
-            self._custom_header = None
-            if is_expandable(self._built_in_header):
-                self._built_in_header.set_expanded(self._tool_output_expanded)
-            if index != -1:
-                self._header_container.children[index] = self._built_in_header
+                # Restore built-in header
+                self._custom_header = None
+                if is_expandable(self._built_in_header):
+                    self._built_in_header.set_expanded(self._tool_output_expanded)
+                if index != -1:
+                    self._header_container.children[index] = self._built_in_header
 
-        self.ui.request_render()
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _add_extension_terminal_input_listener(self, handler):
         subscription = _TerminalInputSubscription(handler, self.ui.add_input_listener(handler))
@@ -2451,11 +2510,14 @@ class InteractiveMode:
             },
         )
 
-        self._dispose_active_selector()
-        self._editor_container.clear()
-        self._editor_container.add_child(self._extension_selector)
-        self.ui.set_focus(self._extension_selector)
-        self.ui.request_render()
+        def mount(component=self._extension_selector) -> None:
+            self._dispose_active_selector()
+            self._editor_container.clear()
+            self._editor_container.add_child(component)
+            self.ui.set_focus(component)
+            self.ui.request_render()
+
+        self.ui.post_ui(mount)
 
         async def wait():
             await done.wait(None)
@@ -2464,13 +2526,16 @@ class InteractiveMode:
         return wait()
 
     def _hide_extension_selector(self) -> None:
-        if self._extension_selector is not None:
-            self._extension_selector.dispose()
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self._extension_selector = None
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+        def apply() -> None:
+            if self._extension_selector is not None:
+                self._extension_selector.dispose()
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self._extension_selector = None
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     async def _show_extension_confirm(self, title: str, message: str, opts: dict | None = None) -> bool:
         """Show a confirmation dialog for extensions."""
@@ -2518,11 +2583,14 @@ class InteractiveMode:
             {"tui": self.ui, "timeout": opts.get("timeout")},
         )
 
-        self._dispose_active_selector()
-        self._editor_container.clear()
-        self._editor_container.add_child(self._extension_input)
-        self.ui.set_focus(self._extension_input)
-        self.ui.request_render()
+        def mount(component=self._extension_input) -> None:
+            self._dispose_active_selector()
+            self._editor_container.clear()
+            self._editor_container.add_child(component)
+            self.ui.set_focus(component)
+            self.ui.request_render()
+
+        self.ui.post_ui(mount)
 
         async def wait():
             await done.wait(None)
@@ -2531,13 +2599,16 @@ class InteractiveMode:
         return wait()
 
     def _hide_extension_input(self) -> None:
-        if self._extension_input is not None:
-            self._extension_input.dispose()
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self._extension_input = None
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+        def apply() -> None:
+            if self._extension_input is not None:
+                self._extension_input.dispose()
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self._extension_input = None
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _show_extension_editor(self, title: str, prefill=None):
         """Show a multi-line editor for extensions (with Ctrl+G support)."""
@@ -2562,11 +2633,14 @@ class InteractiveMode:
             self.settings_manager.get_external_editor_command(),
         )
 
-        self._dispose_active_selector()
-        self._editor_container.clear()
-        self._editor_container.add_child(self._extension_editor)
-        self.ui.set_focus(self._extension_editor)
-        self.ui.request_render()
+        def mount(component=self._extension_editor) -> None:
+            self._dispose_active_selector()
+            self._editor_container.clear()
+            self._editor_container.add_child(component)
+            self.ui.set_focus(component)
+            self.ui.request_render()
+
+        self.ui.post_ui(mount)
 
         async def wait():
             await done.wait(None)
@@ -2575,11 +2649,14 @@ class InteractiveMode:
         return wait()
 
     def _hide_extension_editor(self) -> None:
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self._extension_editor = None
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+        def apply() -> None:
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self._extension_editor = None
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _set_custom_editor_component(self, factory) -> None:
         """Set a custom editor component from an extension.
@@ -3066,9 +3143,32 @@ class InteractiveMode:
         self._add_editor_history(text)
 
     def _subscribe_to_agent(self) -> None:
-        # pidrei emits session events synchronously; handling them inline
-        # preserves event ordering (pi awaits an async handler per event).
-        self._unsubscribe = self.session.subscribe(self._handle_event)
+        # The island contract: `_handle_event` mutates components, so it runs
+        # on the UI owner. The session's sync fan-out posts each event
+        # (`_route_event`, FIFO — order preserved); an agent-level async
+        # listener then awaits an owner barrier per agent event, so the fused
+        # emit contract ("listeners settled" ⇒ UI updated) holds by
+        # construction and the dispatch window still bounds every observation
+        # of the live streaming message. When the owner is not running the
+        # route degrades to pi's inline handling (tests, headless).
+        unsubscribe_session = self.session.subscribe(self._route_event)
+        unsubscribe_barrier = self.session.agent.subscribe(self._settle_ui_after_agent_event)
+
+        def unsubscribe() -> None:
+            unsubscribe_session()
+            unsubscribe_barrier()
+
+        self._unsubscribe = unsubscribe
+
+    def _route_event(self, event) -> None:
+        self.ui.post_ui(functools.partial(self._handle_event, event))
+
+    async def _settle_ui_after_agent_event(self, _event, _cancel=None) -> None:
+        # Owner barrier: FIFO means every event apply posted by `_route_event`
+        # during this emit has run when this returns. The dispatcher is never
+        # the owner, so `run` is safe here (post-vs-run rule); an un-started
+        # owner runs the no-op inline.
+        await self.ui.input_owner.run(_noop_ui_settle)
 
     def _handle_event(self, event) -> None:  # noqa: C901
         # pi lazily awaits init() here; pidrei always subscribes after init.
@@ -3182,7 +3282,13 @@ class InteractiveMode:
                         if retry_attempt > 0
                         else "Operation aborted"
                     )
-                    self._streaming_message.error_message = error_message
+                    # Step 2 (PROPER_MT_DESIGN.md): messages are frozen values,
+                    # so the abort decoration is a display-only copy. pi mutates
+                    # the shared message here, which also lands in the session
+                    # file; the persisted message now keeps the provider's
+                    # original error text (the rebuild path recomputes the
+                    # decoration for tools either way, mirroring pi's).
+                    self._streaming_message = dataclass_replace(self._streaming_message, error_message=error_message)
                 self._streaming_component.update_content(self._streaming_message, False)
 
                 if self._streaming_message.stop_reason in ("aborted", "error"):
@@ -3377,15 +3483,19 @@ class InteractiveMode:
 
     def _show_managed_tool_status(self, status: dict) -> None:
         """Show a managed-tool status update in the chat."""
-        if not self._managed_tool_status_started:
-            self._chat_container.add_child(Spacer(1))
-            self._managed_tool_status_started = True
-        message = f"Warning: {status['message']}" if status["type"] == "warning" else status["message"]
-        color = "warning" if status["type"] == "warning" else "dim"
-        self._chat_container.add_child(Text(theme.fg(color, message), 1, 0))
-        self._last_status_spacer = None
-        self._last_status_text = None
-        self.ui.request_render()
+
+        def apply() -> None:
+            if not self._managed_tool_status_started:
+                self._chat_container.add_child(Spacer(1))
+                self._managed_tool_status_started = True
+            message = f"Warning: {status['message']}" if status["type"] == "warning" else status["message"]
+            color = "warning" if status["type"] == "warning" else "dim"
+            self._chat_container.add_child(Text(theme.fg(color, message), 1, 0))
+            self._last_status_spacer = None
+            self._last_status_text = None
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def show_status(self, message: str) -> None:
         """Show a status message in the chat.
@@ -3393,27 +3503,31 @@ class InteractiveMode:
         Back-to-back status messages update the previous status line instead
         of appending new ones, to avoid log spam.
         """
-        children = self._chat_container.children
-        last = children[-1] if children else None
-        second_last = children[-2] if len(children) > 1 else None
 
-        if (
-            last is not None
-            and second_last is not None
-            and last is self._last_status_text
-            and second_last is self._last_status_spacer
-        ):
-            self._last_status_text.set_text(theme.fg("dim", message))
+        def apply() -> None:
+            children = self._chat_container.children
+            last = children[-1] if children else None
+            second_last = children[-2] if len(children) > 1 else None
+
+            if (
+                last is not None
+                and second_last is not None
+                and last is self._last_status_text
+                and second_last is self._last_status_spacer
+            ):
+                self._last_status_text.set_text(theme.fg("dim", message))
+                self.ui.request_render()
+                return
+
+            spacer = Spacer(1)
+            text = Text(theme.fg("dim", message), 1, 0)
+            self._chat_container.add_child(spacer)
+            self._chat_container.add_child(text)
+            self._last_status_spacer = spacer
+            self._last_status_text = text
             self.ui.request_render()
-            return
 
-        spacer = Spacer(1)
-        text = Text(theme.fg("dim", message), 1, 0)
-        self._chat_container.add_child(spacer)
-        self._chat_container.add_child(text)
-        self._last_status_spacer = spacer
-        self._last_status_text = text
-        self.ui.request_render()
+        self.ui.post_ui(apply)
 
     def _add_custom_entry_to_chat(self, entry: dict) -> None:
         renderer = self.session.extension_runner.get_entry_renderer(entry.get("customType"))
@@ -3660,16 +3774,19 @@ class InteractiveMode:
         self._chat_container.add_child(Text(text, 1, 0))
 
     def _render_initial_messages(self) -> None:
-        entries = self.session_manager.build_context_entries()
-        self._render_session_entries(entries, {"updateFooter": True, "populateHistory": True})
-        self._render_project_trust_warning_if_needed()
+        def apply() -> None:
+            entries = self.session_manager.build_context_entries()
+            self._render_session_entries(entries, {"updateFooter": True, "populateHistory": True})
+            self._render_project_trust_warning_if_needed()
 
-        # Show compaction info if session was compacted
-        all_entries = self.session_manager.get_entries()
-        compaction_count = sum(1 for entry in all_entries if entry.get("type") == "compaction")
-        if compaction_count > 0:
-            times = "1 time" if compaction_count == 1 else f"{compaction_count} times"
-            self.show_status(f"Session compacted {times}")
+            # Show compaction info if session was compacted
+            all_entries = self.session_manager.get_entries()
+            compaction_count = sum(1 for entry in all_entries if entry.get("type") == "compaction")
+            if compaction_count > 0:
+                times = "1 time" if compaction_count == 1 else f"{compaction_count} times"
+                self.show_status(f"Session compacted {times}")
+
+        self.ui.post_ui(apply)
 
     def _render_project_trust_warning_if_needed(self) -> None:
         if self.settings_manager.is_project_trusted() or not has_trust_requiring_project_resources(
@@ -3708,8 +3825,11 @@ class InteractiveMode:
         return outcome["text"]
 
     def _rebuild_chat_from_messages(self) -> None:
-        self._chat_container.clear()
-        self._render_session_entries(self.session_manager.build_context_entries())
+        def apply() -> None:
+            self._chat_container.clear()
+            self._render_session_entries(self.session_manager.build_context_entries())
+
+        self.ui.post_ui(apply)
 
     # =========================================================================
     # Key handlers
@@ -4019,14 +4139,20 @@ class InteractiveMode:
         self.ui.request_render()
 
     def show_error(self, error_message: str) -> None:
-        self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), self._output_pad, 0))
-        self.ui.request_render()
+        def apply() -> None:
+            self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), self._output_pad, 0))
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def show_warning(self, warning_message: str) -> None:
-        self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
-        self.ui.request_render()
+        def apply() -> None:
+            self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(Text(theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def show_new_version_notification(self, release: dict) -> None:
         action = theme.fg("accent", f"{APP_NAME} update")
@@ -4041,44 +4167,50 @@ class InteractiveMode:
         changelog_line = theme.fg("muted", "Release notes: ") + changelog_link
         note = (release.get("note") or "").strip()
 
-        self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
-        self._chat_container.add_child(
-            Text(f"{theme.bold(theme.fg('warning', 'Update Available'))}\n{update_instruction}", 1, 0)
-        )
-        if note:
+        def apply() -> None:
             self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self._chat_container.add_child(
-                Markdown(
-                    note,
-                    1,
-                    0,
-                    self._get_markdown_theme_with_settings(),
-                    {"color": lambda text: theme.fg("muted", text)},
-                )
+                Text(f"{theme.bold(theme.fg('warning', 'Update Available'))}\n{update_instruction}", 1, 0)
             )
-            self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(changelog_line, 1, 0))
-        self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
-        self.ui.request_render()
+            if note:
+                self._chat_container.add_child(Spacer(1))
+                self._chat_container.add_child(
+                    Markdown(
+                        note,
+                        1,
+                        0,
+                        self._get_markdown_theme_with_settings(),
+                        {"color": lambda text: theme.fg("muted", text)},
+                    )
+                )
+                self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(Text(changelog_line, 1, 0))
+            self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def show_package_update_notification(self, packages: list) -> None:
         action = theme.fg("accent", f"{APP_NAME} update --extensions")
         update_instruction = theme.fg("muted", "Package updates are available. Run ") + action
         package_lines = "\n".join(f"- {pkg}" for pkg in packages)
 
-        self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
-        self._chat_container.add_child(
-            Text(
-                f"{theme.bold(theme.fg('warning', 'Package Updates Available'))}\n{update_instruction}\n"
-                f"{theme.fg('muted', 'Packages:')}\n{package_lines}",
-                1,
-                0,
+        def apply() -> None:
+            self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
+            self._chat_container.add_child(
+                Text(
+                    f"{theme.bold(theme.fg('warning', 'Package Updates Available'))}\n{update_instruction}\n"
+                    f"{theme.fg('muted', 'Packages:')}\n{package_lines}",
+                    1,
+                    0,
+                )
             )
-        )
-        self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
-        self.ui.request_render()
+            self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
+            self.ui.request_render()
+
+        self.ui.post_ui(apply)
 
     def _get_all_queued_messages(self) -> dict:
         """Get all queued messages (read-only).
@@ -4111,21 +4243,24 @@ class InteractiveMode:
         }
 
     def _update_pending_messages_display(self) -> None:
-        self._pending_messages_container.clear()
-        queued = self._get_all_queued_messages()
-        steering_messages = queued["steering"]
-        follow_up_messages = queued["followUp"]
-        if steering_messages or follow_up_messages:
-            self._pending_messages_container.add_child(Spacer(1))
-            for message in steering_messages:
-                text = theme.fg("dim", f"Steering: {message}")
-                self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
-            for message in follow_up_messages:
-                text = theme.fg("dim", f"Follow-up: {message}")
-                self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
-            dequeue_hint = self._get_app_key_display("app.message.dequeue")
-            hint_text = theme.fg("dim", f"↳ {dequeue_hint} to edit all queued messages")
-            self._pending_messages_container.add_child(TruncatedText(hint_text, 1, 0))
+        def apply() -> None:
+            self._pending_messages_container.clear()
+            queued = self._get_all_queued_messages()
+            steering_messages = queued["steering"]
+            follow_up_messages = queued["followUp"]
+            if steering_messages or follow_up_messages:
+                self._pending_messages_container.add_child(Spacer(1))
+                for message in steering_messages:
+                    text = theme.fg("dim", f"Steering: {message}")
+                    self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
+                for message in follow_up_messages:
+                    text = theme.fg("dim", f"Follow-up: {message}")
+                    self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
+                dequeue_hint = self._get_app_key_display("app.message.dequeue")
+                hint_text = theme.fg("dim", f"↳ {dequeue_hint} to edit all queued messages")
+                self._pending_messages_container.add_child(TruncatedText(hint_text, 1, 0))
+
+        self.ui.post_ui(apply)
 
     def _restore_queued_messages_to_editor(self, options: dict | None = None) -> int:
         """options: {"abort"?, "currentText"?}"""
@@ -4242,10 +4377,14 @@ class InteractiveMode:
 
     def _flush_pending_bash_components(self) -> None:
         """Move pending bash components from pending area to chat"""
-        for component in self._pending_bash_components:
-            self._pending_messages_container.remove_child(component)
-            self._chat_container.add_child(component)
-        self._pending_bash_components = []
+
+        def apply() -> None:
+            for component in self._pending_bash_components:
+                self._pending_messages_container.remove_child(component)
+                self._chat_container.add_child(component)
+            self._pending_bash_components = []
+
+        self.ui.post_ui(apply)
 
     # =========================================================================
     # Selectors
@@ -4268,25 +4407,33 @@ class InteractiveMode:
         dispose_holder: list = [None]
 
         def done() -> None:
-            if dispose_holder[0] is not None:
-                dispose_holder[0]()
-            if self._active_selector_token is not token:
-                return
-            self._active_selector_token = None
-            self._active_selector_dispose = None
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
-            self.ui.set_focus(self.editor)
+            def apply() -> None:
+                if dispose_holder[0] is not None:
+                    dispose_holder[0]()
+                if self._active_selector_token is not token:
+                    return
+                self._active_selector_token = None
+                self._active_selector_dispose = None
+                self._editor_container.clear()
+                self._editor_container.add_child(self.editor)
+                self.ui.set_focus(self.editor)
+                self.ui.request_render()
+
+            self.ui.post_ui(apply)
 
         created = create(done)
         dispose_holder[0] = created.get("dispose")
-        self._dispose_active_selector()
-        self._active_selector_token = token
-        self._active_selector_dispose = created.get("dispose")
-        self._editor_container.clear()
-        self._editor_container.add_child(created["component"])
-        self.ui.set_focus(created["focus"])
-        self.ui.request_render()
+
+        def mount() -> None:
+            self._dispose_active_selector()
+            self._active_selector_token = token
+            self._active_selector_dispose = created.get("dispose")
+            self._editor_container.clear()
+            self._editor_container.add_child(created["component"])
+            self.ui.set_focus(created["focus"])
+            self.ui.request_render()
+
+        self.ui.post_ui(mount)
 
     async def _show_settings_selector(self) -> None:
         # Resolved before `create` runs: listing themes reads the custom-theme

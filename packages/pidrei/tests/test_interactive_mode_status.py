@@ -104,7 +104,12 @@ class TestShowStatus:
             _last_status_spacer=None,
             _last_status_text=None,
         )
-        fake.ui = SimpleNamespace(request_render=lambda force=False: fake.request_render_calls.append(force))
+        # Relaxation (island, PROPER_MT_DESIGN step 1): helpers route through
+        # ui.post_ui; the stub applies inline like an un-started TUI.
+        fake.ui = SimpleNamespace(
+            request_render=lambda force=False: fake.request_render_calls.append(force),
+            post_ui=lambda fn: fn(),
+        )
         return fake
 
     def test_coalesces_immediately_sequential_status_messages(self):
@@ -1013,7 +1018,9 @@ class TestShowManagedToolStatus:
             _last_status_spacer=None,
             _last_status_text=None,
         )
-        fake.ui = SimpleNamespace(request_render=lambda force=False: None)
+        # Relaxation (island, PROPER_MT_DESIGN step 1): helpers route through
+        # ui.post_ui; the stub applies inline like an un-started TUI.
+        fake.ui = SimpleNamespace(request_render=lambda force=False: None, post_ui=lambda fn: fn())
 
         InteractiveMode._show_managed_tool_status(fake, {"type": "info", "message": "fd downloading"})
         InteractiveMode._show_managed_tool_status(fake, {"type": "info", "message": "rg downloading"})

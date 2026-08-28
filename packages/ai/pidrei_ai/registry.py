@@ -34,6 +34,7 @@ from pidrei_ai.auth.types import (
     CredentialStore,
     ProviderAuth,
 )
+from pidrei_ai.builders import UsageBuilder, UsageCostBuilder
 from pidrei_ai.models_store import InMemoryModelsStore, ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions
 from pidrei_ai.types import (
     AssistantMessage,
@@ -47,8 +48,6 @@ from pidrei_ai.types import (
     ProviderRequestOptions,
     SimpleStreamOptions,
     StreamOptions,
-    Usage,
-    UsageCost,
 )
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
@@ -326,6 +325,9 @@ class Models:
         models_store: ModelsStore | None = None,
         auth_context: AuthContext | None = None,
     ):
+        # Immutable snapshot swapped on write (never mutated in place):
+        # readers pin one attribute read and take no lock — get_provider sits
+        # on every stream request. The guard serializes writers only.
         self._providers: dict[str, Provider] = {}
         self._providers_guard = threading.Lock()
         self._credentials = credentials if credentials is not None else InMemoryCredentialStore()
@@ -344,30 +346,29 @@ class Models:
     def set_provider(self, provider: Provider) -> None:
         self._supersede_provider_refresh(provider.id)
         with self._providers_guard:
-            self._providers[provider.id] = provider
+            self._providers = {**self._providers, provider.id: provider}
 
     def delete_provider(self, id: str) -> None:
         self._supersede_provider_refresh(id)
         with self._providers_guard:
-            self._providers.pop(id, None)
+            providers = dict(self._providers)
+            providers.pop(id, None)
+            self._providers = providers
 
     def clear_providers(self) -> None:
-        with self._providers_guard:
-            provider_ids = set(self._providers.keys())
+        provider_ids = set(self._providers.keys())
         with self._refresh_state_guard:
             provider_ids |= set(self._refresh_controllers.keys())
         for provider_id in provider_ids:
             self._supersede_provider_refresh(provider_id)
         with self._providers_guard:
-            self._providers.clear()
+            self._providers = {}
 
     def get_providers(self) -> list[Provider]:
-        with self._providers_guard:
-            return list(self._providers.values())
+        return list(self._providers.values())
 
     def get_provider(self, id: str) -> Provider | None:
-        with self._providers_guard:
-            return self._providers.get(id)
+        return self._providers.get(id)
 
     def get_models(self, provider: str | None = None) -> list[Model]:
         """Sync read of last-known models. Best-effort: a provider whose
@@ -656,11 +657,23 @@ class Models:
     ) -> AuthResult | None:
         """Resolve provider-scoped auth by provider id, or provider auth plus
         static model headers when passed a model."""
-        cancel = operation_cancel(overrides.cancel if overrides is not None else None)
         provider_id = provider_or_model if isinstance(provider_or_model, str) else provider_or_model.provider
         provider = self.get_provider(provider_id)
         if provider is None:
             return None
+        return await self.get_auth_for_provider(provider, provider_or_model, overrides)
+
+    async def get_auth_for_provider(
+        self,
+        provider: Provider,
+        provider_or_model: str | Model,
+        overrides: AuthResolutionOverrides | None = None,
+    ) -> AuthResult | None:
+        """pidrei-only epoch variant of `get_auth`: resolve auth against an
+        already-pinned provider object, so a caller that resolved the provider
+        for a request cannot get auth from a newer composition than the
+        provider it will stream with (PROPER_MT_DESIGN.md step 3)."""
+        cancel = operation_cancel(overrides.cancel if overrides is not None else None)
         merged_overrides = (
             replace(overrides, cancel=cancel) if overrides is not None else AuthResolutionOverrides(cancel=cancel)
         )
@@ -753,11 +766,14 @@ class Models:
 
     async def _apply_auth(
         self,
+        provider: Provider,
         model: Model,
         options: StreamOptions | None,
     ) -> tuple[Model, StreamOptions]:
-        self._require_provider(model)
-        resolution = await self.get_auth(
+        # Epoch discipline: auth resolves against the provider the caller
+        # pinned for this request, never a fresh (possibly newer) lookup.
+        resolution = await self.get_auth_for_provider(
+            provider,
             model,
             AuthResolutionOverrides(
                 api_key=options.api_key if options is not None else None,
@@ -796,7 +812,7 @@ class Models:
         async def _setup(stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             request_model, request_options = await self._apply_auth(
-                model, options if options is not None else StreamOptions()
+                provider, model, options if options is not None else StreamOptions()
             )
             return call_stream_into(provider.stream, request_model, context, request_options, into=stream)
 
@@ -814,7 +830,7 @@ class Models:
         async def _setup(stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             request_model, request_options = await self._apply_auth(
-                model, options if options is not None else SimpleStreamOptions()
+                provider, model, options if options is not None else SimpleStreamOptions()
             )
             return call_stream_into(provider.stream_simple, request_model, context, request_options, into=stream)
 
@@ -834,7 +850,7 @@ class Models:
             if not provider.supports_fetch_deferred:
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
             request_model, request_options = await self._apply_auth(
-                model, options if options is not None else DeferredFetchOptions()
+                provider, model, options if options is not None else DeferredFetchOptions()
             )
             return provider.fetch_deferred(request_model, handle, request_options)
 
@@ -850,7 +866,7 @@ class Models:
         if not provider.supports_cancel_deferred:
             raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
         request_model, request_options = await self._apply_auth(
-            model, options if options is not None else ProviderRequestOptions()
+            provider, model, options if options is not None else ProviderRequestOptions()
         )
         await provider.cancel_deferred(request_model, handle, request_options)
 
@@ -872,8 +888,11 @@ def has_api(model: Model, api: str) -> bool:
     return model.api == api
 
 
-def calculate_cost(model: Model, usage: Usage) -> UsageCost:
-    """Compute request cost into `usage.cost` (mutates and returns it)."""
+def calculate_cost(model: Model, usage: UsageBuilder) -> UsageCostBuilder:
+    """Compute request cost into `usage.cost` (mutates and returns it).
+
+    Producer-side only: `usage` is a builder — the frozen `Usage` on a
+    published message is a value and never passes through here."""
     input_tokens = usage.input + usage.cache_read + usage.cache_write
     rates_input = model.cost.input
     rates_output = model.cost.output

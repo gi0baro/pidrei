@@ -172,13 +172,17 @@ def parse_usage(raw_usage: dict[str, Any], model: ImagesModel) -> Usage:
     input_tokens = max(0, prompt_tokens - cache_read_tokens - cache_write_tokens)
     output_tokens = raw_usage.get("completion_tokens") or 0
 
+    cost_input = (model.cost.input / 1_000_000) * input_tokens
+    cost_output = (model.cost.output / 1_000_000) * output_tokens
+    cost_cache_read = (model.cost.cache_read / 1_000_000) * cache_read_tokens
+    cost_cache_write = (model.cost.cache_write / 1_000_000) * cache_write_tokens
     cost = UsageCost(
-        input=(model.cost.input / 1_000_000) * input_tokens,
-        output=(model.cost.output / 1_000_000) * output_tokens,
-        cache_read=(model.cost.cache_read / 1_000_000) * cache_read_tokens,
-        cache_write=(model.cost.cache_write / 1_000_000) * cache_write_tokens,
+        input=cost_input,
+        output=cost_output,
+        cache_read=cost_cache_read,
+        cache_write=cost_cache_write,
+        total=cost_input + cost_output + cost_cache_read + cost_cache_write,
     )
-    cost.total = cost.input + cost.output + cost.cache_read + cost.cache_write
 
     return Usage(
         input=input_tokens,

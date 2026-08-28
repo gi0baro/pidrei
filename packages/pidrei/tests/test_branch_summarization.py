@@ -6,6 +6,7 @@ way (see `test_compaction_summary_reasoning.py`).
 """
 
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -40,12 +41,15 @@ ENTRIES = [
 
 
 def _response(content: list, stop_reason: str = "stop") -> AssistantMessage:
-    message = faux_assistant_message("", stop_reason=stop_reason, timestamp=int(time.time() * 1000))
-    message.content = content
-    message.api = MODEL.api
-    message.provider = MODEL.provider
-    message.model = MODEL.id
-    return message
+    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # so the response shape is built by construction instead of mutation.
+    return replace(
+        faux_assistant_message("", stop_reason=stop_reason, timestamp=int(time.time() * 1000)),
+        content=content,
+        api=MODEL.api,
+        provider=MODEL.provider,
+        model=MODEL.id,
+    )
 
 
 def _stream_fn(message: AssistantMessage) -> tuple:

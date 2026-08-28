@@ -6,6 +6,16 @@ those appear in the event protocol and in serialized sessions.
 
 TypeBox tool schemas are plain JSON Schema dicts here; pi's validation/coercion
 semantics are ported separately (`utils/validation`, Phase 1).
+
+Messages and content blocks are immutable values (frozen dataclasses): once
+published they may be read from any task without coordination. Streaming
+producers build them through the mutable mirrors in `builders.py` and the
+`AssistantMessageEventStream.push()` seam freezes at publication. Two shallow
+edges, on purpose: `content`/`diagnostics` are lists (rebuilt per snapshot,
+never shared with a builder; pi's mirrored tests compare against
+list-constructed messages), and user-owned dicts (`arguments`, `details`,
+`data`) pass through by reference — producers rebind them, never mutate in
+place.
 """
 
 from collections.abc import Awaitable, Callable, Mapping
@@ -118,7 +128,7 @@ class ThinkingBudgets:
 # --- content blocks -----------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class TextContent:
     text: str
     # e.g., for OpenAI responses, message metadata (legacy id string or TextSignatureV1 JSON)
@@ -126,7 +136,7 @@ class TextContent:
     type: Literal["text"] = "text"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ThinkingContent:
     thinking: str
     thinking_signature: str | None = None  # Provider-specific opaque or serialized reasoning replay data
@@ -136,14 +146,14 @@ class ThinkingContent:
     type: Literal["thinking"] = "thinking"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ImageContent:
     data: str  # base64 encoded image data
     mime_type: str  # e.g., "image/jpeg", "image/png"
     type: Literal["image"] = "image"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ToolCall:
     id: str
     name: str
@@ -162,7 +172,7 @@ type ToolResultContent = TextContent | ImageContent
 # --- usage / cost -------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class UsageCost:
     input: float = 0.0
     output: float = 0.0
@@ -171,7 +181,7 @@ class UsageCost:
     total: float = 0.0
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class Usage:
     input: int = 0
     output: int = 0
@@ -189,7 +199,7 @@ class Usage:
 # --- diagnostics --------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class DiagnosticErrorInfo:
     message: str
     name: str | None = None
@@ -197,7 +207,7 @@ class DiagnosticErrorInfo:
     code: str | int | None = None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AssistantMessageDiagnostic:
     """Redacted provider/runtime diagnostics for failures and recoveries."""
 
@@ -210,7 +220,7 @@ class AssistantMessageDiagnostic:
 # --- messages -----------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class DeferredHandle:
     """Provider handle for a deferred (background/batch) assistant response."""
 
@@ -225,14 +235,14 @@ class DeferredHandle:
     data: Any = None
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class UserMessage:
     content: str | list[UserContent]
     timestamp: int  # Unix timestamp in milliseconds
     role: Literal["user"] = "user"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class AssistantMessage:
     content: list[AssistantContent]
     api: Api
@@ -255,7 +265,7 @@ class AssistantMessage:
     role: Literal["assistant"] = "assistant"
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class ToolResultMessage:
     tool_call_id: str
     tool_name: str

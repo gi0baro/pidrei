@@ -125,19 +125,20 @@ async def test_fail_does_not_override_a_settled_result():
 
 @pytest.mark.tonio
 async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
-    from pidrei_ai.types import AssistantMessage, TextContent, Usage
+    from pidrei_ai.builders import AssistantMessageBuilder, TextContentBuilder, UsageBuilder
+    from pidrei_ai.types import AssistantMessage
     from pidrei_ai.utils.cancel import CancelToken
     from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
     stream = AssistantMessageEventStream()
     cancel = CancelToken()
     parked = tonio.Event()
-    partial = AssistantMessage(
-        content=[TextContent(text="so far")],
+    partial = AssistantMessageBuilder(
+        content=[TextContentBuilder(text="so far")],
         api="a",
         provider="p",
         model="m",
-        usage=Usage(),
+        usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=0,
     )
@@ -154,7 +155,9 @@ async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
     result = await stream.result()
     assert [event.type for event in events] == ["error"]
     assert events[0].reason == "aborted"
-    assert result is partial
+    # The seam publishes a frozen snapshot of the producer-private builder
+    # (step 2 of PROPER_MT_DESIGN.md): value equality, not identity.
+    assert isinstance(result, AssistantMessage)
     assert result.stop_reason == "aborted"
     assert result.error_message == "Request was aborted"
     assert result.content[0].text == "so far"
@@ -179,6 +182,130 @@ async def test_cancel_before_the_producer_registers_a_partial_fails_the_result()
     assert [event async for event in stream] == []
     with pytest.raises(AbortError):
         await stream.result()
+
+
+def _seam_builder():
+    from pidrei_ai.builders import AssistantMessageBuilder, TextContentBuilder, ToolCallBuilder, UsageBuilder
+
+    return AssistantMessageBuilder(
+        content=[TextContentBuilder(text=""), ToolCallBuilder(id="call_1", name="read", arguments={})],
+        api="a",
+        provider="p",
+        model="m",
+        usage=UsageBuilder(),
+        stop_reason="pending",
+        timestamp=0,
+    )
+
+
+@pytest.mark.tonio
+async def test_push_publishes_an_independent_frozen_snapshot_per_event():
+    # The step 2 seam (PROPER_MT_DESIGN.md): every pushed event carries a
+    # frozen snapshot of the producer-private builder — later builder mutation
+    # must not be visible through an already-published event. Fails on the old
+    # shape, where `partial` was the live shared message.
+    from pidrei_ai.types import AssistantMessage, TextContent, TextDeltaEvent
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    stream = AssistantMessageEventStream()
+    builder = _seam_builder()
+    stream.partial = builder
+
+    builder.content[0].text = "hel"
+    stream.push(TextDeltaEvent(content_index=0, delta="hel", partial=builder))
+    builder.content[0].text = "hello"
+    builder.usage.output = 5
+    stream.push(TextDeltaEvent(content_index=0, delta="lo", partial=builder))
+    stream.end()
+
+    events = [event async for event in stream]
+    first, second = events
+    assert isinstance(first.partial, AssistantMessage)
+    assert isinstance(first.partial.content[0], TextContent)
+    assert first.partial is not second.partial
+    assert first.partial.content[0].text == "hel"
+    assert first.partial.usage.output == 0
+    assert second.partial.content[0].text == "hello"
+    assert second.partial.usage.output == 5
+
+
+@pytest.mark.tonio
+async def test_toolcall_end_carries_the_frozen_twin_of_its_partial_block():
+    from pidrei_ai.types import ToolCall, ToolCallEndEvent
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    stream = AssistantMessageEventStream()
+    builder = _seam_builder()
+    builder.content[1].arguments = {"path": "README.md"}
+    stream.push(ToolCallEndEvent(content_index=1, tool_call=builder.content[1], partial=builder))
+    stream.end()
+
+    (event,) = [event async for event in stream]
+    assert isinstance(event.tool_call, ToolCall)
+    assert event.tool_call is event.partial.content[1]
+    assert event.tool_call.arguments == {"path": "README.md"}
+
+
+@pytest.mark.tonio
+async def test_seam_passes_already_frozen_messages_through_untouched():
+    # Extension-authored producers push constructed frozen messages; the seam
+    # must not copy or reject them.
+    from pidrei_ai.types import AssistantMessage, DoneEvent, StartEvent, TextContent, Usage
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    message = AssistantMessage(
+        content=[TextContent(text="done")],
+        api="a",
+        provider="p",
+        model="m",
+        usage=Usage(),
+        stop_reason="stop",
+        timestamp=0,
+    )
+    stream = AssistantMessageEventStream()
+    stream.push(StartEvent(partial=message))
+    stream.push(DoneEvent(reason="stop", message=message))
+
+    events = [event async for event in stream]
+    assert events[0].partial is message
+    assert events[1].message is message
+    assert await stream.result() is message
+
+
+@pytest.mark.tonio
+async def test_abort_with_a_frozen_partial_publishes_an_aborted_copy():
+    # A custom producer may register a constructed frozen message as `partial`;
+    # the abort path must publish an aborted copy instead of mutating it.
+    from pidrei_ai.types import AssistantMessage, TextContent, Usage
+    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+
+    frozen = AssistantMessage(
+        content=[TextContent(text="so far")],
+        api="a",
+        provider="p",
+        model="m",
+        usage=Usage(),
+        stop_reason="pending",
+        timestamp=0,
+    )
+    stream = AssistantMessageEventStream()
+    cancel = CancelToken()
+    parked = tonio.Event()
+
+    async def produce():
+        stream.partial = frozen
+        await parked.wait(None)
+
+    stream.spawn_producer(produce(), cancel)
+    await tonio.sleep(0.02)
+    cancel.cancel()
+
+    result = await stream.result()
+    assert result is not frozen
+    assert result.stop_reason == "aborted"
+    assert result.error_message == "Request was aborted"
+    assert frozen.stop_reason == "pending"
 
 
 @pytest.mark.tonio
