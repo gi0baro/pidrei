@@ -29,8 +29,8 @@ time.sleep(60)
 
 
 @pytest.mark.tonio
-async def test_rejects_a_live_listener_without_unlinking_it(tmp_path):
-    harness = Harness(tmp_path)
+async def test_rejects_a_live_listener_without_unlinking_it(sock_dir):
+    harness = Harness(sock_dir)
     try:
         path = harness.socket_path()
         first = harness.make_server(path)
@@ -53,10 +53,10 @@ async def test_rejects_a_live_listener_without_unlinking_it(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_never_unlinks_a_regular_file_at_the_configured_path(tmp_path):
-    harness = Harness(tmp_path)
+async def test_never_unlinks_a_regular_file_at_the_configured_path(sock_dir):
+    harness = Harness(sock_dir)
     try:
-        path = tmp_path / "server.sock"
+        path = sock_dir / "server.sock"
         await fs.Path(path).write_text("do not remove")
         await fs.Path(path).chmod(0o640)
         server = harness.make_server(str(path))
@@ -68,8 +68,8 @@ async def test_never_unlinks_a_regular_file_at_the_configured_path(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_creates_nested_temp_parents_restricts_permissions_and_removes_its_own_socket(tmp_path):
-    harness = Harness(tmp_path)
+async def test_creates_nested_temp_parents_restricts_permissions_and_removes_its_own_socket(sock_dir):
+    harness = Harness(sock_dir)
     try:
         path = harness.socket_path(nested=True)
         server = harness.make_server(path)
@@ -86,8 +86,8 @@ async def test_creates_nested_temp_parents_restricts_permissions_and_removes_its
 
 
 @pytest.mark.tonio
-async def test_does_not_remove_a_replacement_inode_during_shutdown(tmp_path):
-    harness = Harness(tmp_path)
+async def test_does_not_remove_a_replacement_inode_during_shutdown(sock_dir):
+    harness = Harness(sock_dir)
     try:
         path = harness.socket_path()
         server = harness.make_server(path)
@@ -104,10 +104,10 @@ async def test_does_not_remove_a_replacement_inode_during_shutdown(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_removes_a_genuinely_stale_socket_before_binding(tmp_path):
-    harness = Harness(tmp_path)
+async def test_removes_a_genuinely_stale_socket_before_binding(sock_dir):
+    harness = Harness(sock_dir)
     try:
-        path = str(tmp_path / "server.sock")
+        path = str(sock_dir / "server.sock")
         child = await tonio.open_process(
             [sys.executable, "-c", _STALE_SOCKET_SERVER, path],
             stdout=subprocess.PIPE,
@@ -132,9 +132,9 @@ async def test_removes_a_genuinely_stale_socket_before_binding(tmp_path):
         await harness.close()
 
 
-def test_unix_server_preset_forwards_listener_and_server_options(tmp_path):
+def test_unix_server_preset_forwards_listener_and_server_options(sock_dir):
     server = create_unix_server(
-        TestServerService(), UnixServerOptions(path=str(tmp_path / "server.sock"), server_id="preset-1")
+        TestServerService(), UnixServerOptions(path=str(sock_dir / "server.sock"), server_id="preset-1")
     )
     assert server.id == "preset-1"
     assert server.addresses == []

@@ -3,8 +3,10 @@
 Upstream's vitest files keep module-level `servers`/`clients`/`tempDirectories`
 sets torn down in `afterEach`; here each
 test owns a `Harness` and closes it in a `finally` block instead. Socket paths
-live under the test's `tmp_path`; the listener itself creates the per-server
-subdirectories (mirroring `mkdtemp` per server upstream).
+live under the test's `sock_dir` (a deliberately short directory — see the
+conftest fixture: deep `tmp_path` paths overflow `sun_path` on macOS); the
+listener itself creates the per-server subdirectories (mirroring `mkdtemp`
+per server upstream).
 """
 
 import tonio.colored as tonio
@@ -28,15 +30,15 @@ async def flush(turns: int = 4) -> None:
 class Harness:
     """Tracks servers and wire clients for one test; close in `finally`."""
 
-    def __init__(self, tmp_path) -> None:
-        self._tmp_dir = tmp_path
+    def __init__(self, sock_dir) -> None:
+        self._sock_dir = sock_dir
         self._sequence = 0
         self.servers: list[PiServer] = []
         self.clients: list[ProtocolTestClient] = []
 
     def socket_path(self, nested: bool = False) -> str:
         self._sequence += 1
-        base = self._tmp_dir / f"srv{self._sequence}"
+        base = self._sock_dir / f"srv{self._sequence}"
         return str(base / "p" / "n" / "server.sock" if nested else base / "server.sock")
 
     def make_server(self, path: str, service: TestServerService | None = None, **overrides) -> PiServer:

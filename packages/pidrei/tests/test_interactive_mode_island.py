@@ -44,10 +44,11 @@ async def test_routed_events_apply_on_the_owner_in_order_before_the_barrier_sett
         events = [f"event-{i}" for i in range(5)]
         for event in events:
             InteractiveMode._route_event(fake, event)
-        # Nothing is applied inline on this (dispatcher-shaped) task...
-        assert fake.applied == []
+        # (No "nothing applied yet" assert here: `post` guarantees FIFO, not
+        # delayed application — the owner may legally apply an event before
+        # this task reaches the barrier.)
 
-        # ...but the awaited barrier means everything routed during the emit
+        # The awaited barrier means everything routed during the emit
         # has been applied when it returns — the fused contract.
         await InteractiveMode._settle_ui_after_agent_event(fake, None)
         assert fake.applied == events

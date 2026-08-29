@@ -56,6 +56,7 @@ from pidrei_tui import (
     set_keybindings,
     visible_width,
 )
+from pidrei_tui._owner import OwnerStopped
 
 from ...config import (
     APP_NAME,
@@ -3168,7 +3169,13 @@ class InteractiveMode:
         # during this emit has run when this returns. The dispatcher is never
         # the owner, so `run` is safe here (post-vs-run rule); an un-started
         # owner runs the no-op inline.
-        await self.ui.input_owner.run(_noop_ui_settle)
+        try:
+            await self.ui.input_owner.run(_noop_ui_settle)
+        except OwnerStopped:
+            # A stopped owner discharges the contract the other way: nothing
+            # will ever settle again, and UI death is not the dispatcher's to
+            # report (that is `on_error`'s job).
+            pass
 
     def _handle_event(self, event) -> None:  # noqa: C901
         # pi lazily awaits init() here; pidrei always subscribes after init.

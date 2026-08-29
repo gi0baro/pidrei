@@ -11,8 +11,8 @@ from tests.server_support import Harness
 
 
 @pytest.mark.tonio
-async def test_accepts_a_transport_fragmented_framed_cbor_hello(tmp_path):
-    harness = Harness(tmp_path)
+async def test_accepts_a_transport_fragmented_framed_cbor_hello(sock_dir):
+    harness = Harness(sock_dir)
     try:
         server, _ = await harness.start_server()
         client = await harness.connect(server)
@@ -26,8 +26,8 @@ async def test_accepts_a_transport_fragmented_framed_cbor_hello(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_enforces_version_and_exactly_one_first_message_hello(tmp_path):
-    harness = Harness(tmp_path)
+async def test_enforces_version_and_exactly_one_first_message_hello(sock_dir):
+    harness = Harness(sock_dir)
     try:
         server, _ = await harness.start_server()
 
@@ -55,8 +55,8 @@ async def test_enforces_version_and_exactly_one_first_message_hello(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_closes_connections_that_do_not_complete_hello_before_the_timeout(tmp_path):
-    harness = Harness(tmp_path)
+async def test_closes_connections_that_do_not_complete_hello_before_the_timeout(sock_dir):
+    harness = Harness(sock_dir)
     try:
         server, _ = await harness.start_server(handshake_timeout_ms=20)
         client = await harness.connect(server)
@@ -70,8 +70,8 @@ async def test_closes_connections_that_do_not_complete_hello_before_the_timeout(
 
 
 @pytest.mark.tonio
-async def test_keeps_the_handshake_timeout_active_until_the_server_hello_is_sent(tmp_path):
-    harness = Harness(tmp_path)
+async def test_keeps_the_handshake_timeout_active_until_the_server_hello_is_sent(sock_dir):
+    harness = Harness(sock_dir)
     try:
         service = TestServerService()
         delay = service.delay_next_list()
@@ -90,8 +90,8 @@ async def test_keeps_the_handshake_timeout_active_until_the_server_hello_is_sent
 
 
 @pytest.mark.tonio
-async def test_bounds_and_closes_malformed_or_oversized_frames(tmp_path):
-    harness = Harness(tmp_path)
+async def test_bounds_and_closes_malformed_or_oversized_frames(sock_dir):
+    harness = Harness(sock_dir)
     try:
         malformed_server, _ = await harness.start_server()
         malformed = await harness.connect(malformed_server)
@@ -118,7 +118,7 @@ async def test_bounds_and_closes_malformed_or_oversized_frames(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_catches_up_a_handshaking_client_after_a_concurrent_server_change(tmp_path):
+async def test_catches_up_a_handshaking_client_after_a_concurrent_server_change(sock_dir):
     class RacingService(TestServerService):
         def __init__(self):
             super().__init__()
@@ -134,7 +134,7 @@ async def test_catches_up_a_handshaking_client_after_a_concurrent_server_change(
             await self.release
             return sessions
 
-    harness = Harness(tmp_path)
+    harness = Harness(sock_dir)
     try:
         service = RacingService()
         service.seed("shared")
@@ -163,8 +163,8 @@ async def test_catches_up_a_handshaking_client_after_a_concurrent_server_change(
 
 
 @pytest.mark.tonio
-async def test_shares_request_event_attachment_and_disconnect_behavior(tmp_path):
-    harness = Harness(tmp_path)
+async def test_shares_request_event_attachment_and_disconnect_behavior(sock_dir):
+    harness = Harness(sock_dir)
     try:
         service = TestServerService()
         service.seed("first")
@@ -221,8 +221,8 @@ async def test_shares_request_event_attachment_and_disconnect_behavior(tmp_path)
 
 
 @pytest.mark.tonio
-async def test_disconnects_attached_clients_when_a_runtime_reports_a_terminal_error(tmp_path):
-    harness = Harness(tmp_path)
+async def test_disconnects_attached_clients_when_a_runtime_reports_a_terminal_error(sock_dir):
+    harness = Harness(sock_dir)
     try:
         service = TestServerService()
         service.seed("terminal")
@@ -252,7 +252,7 @@ async def test_disconnects_attached_clients_when_a_runtime_reports_a_terminal_er
 
 
 @pytest.mark.tonio
-async def test_does_not_expose_unexpected_service_errors_to_clients(tmp_path):
+async def test_does_not_expose_unexpected_service_errors_to_clients(sock_dir):
     class FailingService(TestServerService):
         def __init__(self):
             super().__init__()
@@ -264,7 +264,7 @@ async def test_does_not_expose_unexpected_service_errors_to_clients(tmp_path):
                 raise Exception("private service detail")
             return await super().list_sessions()
 
-    harness = Harness(tmp_path)
+    harness = Harness(sock_dir)
     try:
         errors = []
 
@@ -284,7 +284,7 @@ async def test_does_not_expose_unexpected_service_errors_to_clients(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_keeps_not_implemented_stable(tmp_path):
+async def test_keeps_not_implemented_stable(sock_dir):
     class IncompleteService(TestServerService):
         def __init__(self):
             super().__init__()
@@ -296,7 +296,7 @@ async def test_keeps_not_implemented_stable(tmp_path):
                 raise NotImplementedError()
             return await super().list_sessions()
 
-    harness = Harness(tmp_path)
+    harness = Harness(sock_dir)
     try:
         server, _ = await harness.start_server(IncompleteService())
         client = await harness.connect(server)
@@ -309,7 +309,7 @@ async def test_keeps_not_implemented_stable(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_reports_wrapped_internal_causes_without_exposing_them(tmp_path):
+async def test_reports_wrapped_internal_causes_without_exposing_them(sock_dir):
     cause = Exception("private storage detail")
     cause.__cause__ = Exception("private root cause")
 
@@ -324,7 +324,7 @@ async def test_reports_wrapped_internal_causes_without_exposing_them(tmp_path):
                 raise InternalServerError(cause)
             return await super().list_sessions()
 
-    harness = Harness(tmp_path)
+    harness = Harness(sock_dir)
     try:
         errors = []
         server, _ = await harness.start_server(WrappedFailureService(), on_error=errors.append)
@@ -341,8 +341,8 @@ async def test_reports_wrapped_internal_causes_without_exposing_them(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_can_respond_out_of_request_order_after_the_handshake(tmp_path):
-    harness = Harness(tmp_path)
+async def test_can_respond_out_of_request_order_after_the_handshake(sock_dir):
+    harness = Harness(sock_dir)
     try:
         service = TestServerService()
         service.seed("first")
@@ -375,8 +375,8 @@ async def test_can_respond_out_of_request_order_after_the_handshake(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_gracefully_closes_connections_sessions_and_listener_resources(tmp_path):
-    harness = Harness(tmp_path)
+async def test_gracefully_closes_connections_sessions_and_listener_resources(sock_dir):
+    harness = Harness(sock_dir)
     try:
         service = TestServerService()
         service.seed("first")
@@ -400,8 +400,8 @@ async def test_gracefully_closes_connections_sessions_and_listener_resources(tmp
 
 
 @pytest.mark.tonio
-async def test_unix_socket_decodes_multiple_framed_requests_from_one_raw_chunk(tmp_path):
-    harness = Harness(tmp_path)
+async def test_unix_socket_decodes_multiple_framed_requests_from_one_raw_chunk(sock_dir):
+    harness = Harness(sock_dir)
     try:
         server, _ = await harness.start_server()
         client = await harness.connect(server)

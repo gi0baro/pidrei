@@ -35,8 +35,8 @@ def test_rejects_invalid_unix_transport_options():
 
 
 @pytest.mark.tonio
-async def test_pi_client_exchanges_fragmented_framed_messages_over_a_real_unix_socket(tmp_path):
-    socket_path = str(tmp_path / "pi.sock")
+async def test_pi_client_exchanges_fragmented_framed_messages_over_a_real_unix_socket(sock_dir):
+    socket_path = str(sock_dir / "pi.sock")
     listener = await net.open_unix_listener(socket_path)
 
     async def serve():
@@ -91,8 +91,8 @@ async def test_pi_client_exchanges_fragmented_framed_messages_over_a_real_unix_s
 
 
 @pytest.mark.tonio
-async def test_bounds_pending_writes_preserves_order_and_reports_remote_end_once(tmp_path):
-    socket_path = str(tmp_path / "pi.sock")
+async def test_bounds_pending_writes_preserves_order_and_reports_remote_end_once(sock_dir):
+    socket_path = str(sock_dir / "pi.sock")
     first = b"\x01" * (2 * 1024 * 1024)
     second = b"\x02" * (2 * 1024 * 1024)
     expected_length = len(first) + len(second)
@@ -152,8 +152,8 @@ async def test_bounds_pending_writes_preserves_order_and_reports_remote_end_once
 
 
 @pytest.mark.tonio
-async def test_pi_client_rejects_a_truncated_final_frame_from_a_real_unix_socket(tmp_path):
-    socket_path = str(tmp_path / "pi.sock")
+async def test_pi_client_rejects_a_truncated_final_frame_from_a_real_unix_socket(sock_dir):
+    socket_path = str(sock_dir / "pi.sock")
     listener = await net.open_unix_listener(socket_path)
 
     async def serve():
@@ -197,8 +197,8 @@ async def test_pi_client_rejects_a_truncated_final_frame_from_a_real_unix_socket
 
 
 @pytest.mark.tonio
-async def test_rejects_connection_errors(tmp_path):
-    missing_path = str(tmp_path / "missing.sock")
+async def test_rejects_connection_errors(sock_dir):
+    missing_path = str(sock_dir / "missing.sock")
     factory = create_unix_transport_factory(UnixTransportOptions(path=missing_path))
     with pytest.raises(OSError):
         await factory(
