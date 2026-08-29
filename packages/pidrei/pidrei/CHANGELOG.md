@@ -6,6 +6,18 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.3.3] - 2026-08-29
+
+### Changed
+
+- Bumped tonio to 0.9.14.
+
+### Fixed
+
+- Terminal teardown no longer self-sends SIGWINCH to unpark the resize
+  watcher (the watcher now unwinds through scope cancellation), and the
+  watcher is only started when a resize handler is actually provided.
+
 ## [0.84.3.2] - 2026-08-28
 
 ### Changed
