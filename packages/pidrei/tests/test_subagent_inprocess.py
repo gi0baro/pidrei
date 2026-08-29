@@ -41,12 +41,11 @@ async def _create_faux_runtime(faux) -> ModelRuntime:
     return runtime
 
 
-def _patch_session_construction(request, tmp_dir, runtime) -> None:
+def _patch_session_construction(request, tmp_path, runtime) -> None:
     """Point the runner's lean session construction at hermetic state: the
     prebuilt faux runtime instead of `ModelRuntime.create()` (which would read
     the developer's real auth/models files) and a temp agent dir. Restored via
-    addfinalizer — pytest's `monkeypatch` is a yield fixture, which the tonio
-    plugin cannot wrap."""
+    addfinalizer (predates tonio 0.9.14; `monkeypatch` works now)."""
 
     async def create():
         return runtime
@@ -58,16 +57,16 @@ def _patch_session_construction(request, tmp_dir, runtime) -> None:
 
     request.addfinalizer(restore)
     subagent_module.ModelRuntime = SimpleNamespace(create=create)
-    subagent_module.get_agent_dir = lambda: str(tmp_dir / "agent-dir")
+    subagent_module.get_agent_dir = lambda: str(tmp_path / "agent-dir")
 
 
-def _agent(tmp_dir, **overrides) -> AgentConfig:
+def _agent(tmp_path, **overrides) -> AgentConfig:
     config = {
         "name": "echo",
         "description": "Test agent",
         "system_prompt": "You are a test subagent.",
         "source": "user",
-        "file_path": str(tmp_dir / "echo.md"),
+        "file_path": str(tmp_path / "echo.md"),
     }
     config.update(overrides)
     return AgentConfig(**config)
@@ -78,18 +77,18 @@ def _make_details(results: list[dict]) -> dict:
 
 
 @pytest.mark.tonio
-async def test_run_single_agent_runs_an_in_process_session(tmp_dir, request):
+async def test_run_single_agent_runs_an_in_process_session(tmp_path, request):
     faux = faux_provider()
     runtime = await _create_faux_runtime(faux)
     model = faux.get_model()
-    _patch_session_construction(request, tmp_dir, runtime)
+    _patch_session_construction(request, tmp_path, runtime)
 
     final_text = "The subagent looked around and found nothing worth reporting."
     faux.set_responses([faux_assistant_message(final_text)])
 
-    cwd = tmp_dir / "project"
+    cwd = tmp_path / "project"
     os.makedirs(cwd)
-    agent = _agent(tmp_dir)
+    agent = _agent(tmp_path)
 
     # (text, whether an assistant message had already landed) per update, read
     # at callback time because details alias the runner's mutable result dict.
@@ -137,15 +136,15 @@ async def test_run_single_agent_runs_an_in_process_session(tmp_dir, request):
 
 
 @pytest.mark.tonio
-async def test_run_single_agent_fails_on_an_unknown_frontmatter_model(tmp_dir, request):
+async def test_run_single_agent_fails_on_an_unknown_frontmatter_model(tmp_path, request):
     faux = faux_provider()
     runtime = await _create_faux_runtime(faux)
-    _patch_session_construction(request, tmp_dir, runtime)
+    _patch_session_construction(request, tmp_path, runtime)
     faux.set_responses([faux_assistant_message("never reached")])
 
-    cwd = tmp_dir / "project"
+    cwd = tmp_path / "project"
     os.makedirs(cwd)
-    agent = _agent(tmp_dir, model="no-such-provider/no-such-model")
+    agent = _agent(tmp_path, model="no-such-provider/no-such-model")
 
     result = await run_single_agent(
         str(cwd), {"model": None, "thinkingLevel": None}, [agent], "echo", "Task", None, None, None, None, _make_details
@@ -187,9 +186,9 @@ async def test_map_with_concurrency_limit_bounds_in_flight_tasks():
 
 
 @pytest.mark.tonio
-async def test_run_single_agent_reports_an_unknown_agent(tmp_dir):
+async def test_run_single_agent_reports_an_unknown_agent(tmp_path):
     result = await run_single_agent(
-        str(tmp_dir), {"model": None, "thinkingLevel": None}, [], "ghost", "Task", None, 2, None, None, _make_details
+        str(tmp_path), {"model": None, "thinkingLevel": None}, [], "ghost", "Task", None, 2, None, None, _make_details
     )
 
     assert result["status"] == "failed"

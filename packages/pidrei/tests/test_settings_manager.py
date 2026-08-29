@@ -17,9 +17,9 @@ HOME = os.path.expanduser("~")
 
 
 @pytest.fixture
-def dirs(tmp_dir):
-    agent_dir = tmp_dir / "agent"
-    project_dir = tmp_dir / "project"
+def dirs(tmp_path):
+    agent_dir = tmp_path / "agent"
+    project_dir = tmp_path / "project"
     agent_dir.mkdir(parents=True)
     (project_dir / ".pidrei").mkdir(parents=True)
     return agent_dir, project_dir

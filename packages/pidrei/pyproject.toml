@@ -27,7 +27,7 @@ dependencies = [
     "pidrei-client==0.84.3.2",
     "pidrei-protocol==0.84.3.2",
     "pidrei-tui==0.84.3.2",
-    "tonio~=0.9.12",
+    "tonio~=0.9.14",
     "pyyaml~=6.0",
     "jsonschema~=4.26",
     "pathspec~=1.1",

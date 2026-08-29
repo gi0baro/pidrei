@@ -1,9 +1,9 @@
 """Shared harness for the server test suite.
 
 Upstream's vitest files keep module-level `servers`/`clients`/`tempDirectories`
-sets torn down in `afterEach`; with the tonio plugin (no yield fixtures) each
+sets torn down in `afterEach`; here each
 test owns a `Harness` and closes it in a `finally` block instead. Socket paths
-live under the test's `tmp_dir`; the listener itself creates the per-server
+live under the test's `tmp_path`; the listener itself creates the per-server
 subdirectories (mirroring `mkdtemp` per server upstream).
 """
 
@@ -28,8 +28,8 @@ async def flush(turns: int = 4) -> None:
 class Harness:
     """Tracks servers and wire clients for one test; close in `finally`."""
 
-    def __init__(self, tmp_dir) -> None:
-        self._tmp_dir = tmp_dir
+    def __init__(self, tmp_path) -> None:
+        self._tmp_dir = tmp_path
         self._sequence = 0
         self.servers: list[PiServer] = []
         self.clients: list[ProtocolTestClient] = []

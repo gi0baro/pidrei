@@ -1,8 +1,8 @@
 """Mirror of pi coding-agent test/interactive-mode-suspend.test.ts.
 
 pi spies on process.on/once/kill and setInterval; here the module's os.kill,
-signal.signal, and tonio signal receiver are swapped by hand (the tonio
-pytest plugin cannot wrap the monkeypatch yield fixture). The pi test for the
+signal.signal, and tonio signal receiver are swapped by hand (predates
+tonio 0.9.14; `monkeypatch` works in tonio tests now). The pi test for the
 win32 status message is not ported (POSIX-only port), and Python needs no
 event-loop keep-alive timer while suspended.
 """

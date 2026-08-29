@@ -27,11 +27,11 @@ def _write_session_file(path: str, cwd: str) -> None:
 
 
 @pytest.mark.tonio
-async def test_detects_missing_session_cwd_from_persisted_sessions(tmp_dir):
-    fallback_cwd = str(tmp_dir / "fallback")
+async def test_detects_missing_session_cwd_from_persisted_sessions(tmp_path):
+    fallback_cwd = str(tmp_path / "fallback")
     os.makedirs(fallback_cwd)
     missing_cwd = os.path.join(fallback_cwd, "does-not-exist")
-    session_dir = str(tmp_dir / "session-dir")
+    session_dir = str(tmp_path / "session-dir")
     os.makedirs(session_dir)
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
@@ -46,11 +46,11 @@ async def test_detects_missing_session_cwd_from_persisted_sessions(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_supports_overriding_effective_cwd_when_opening_session(tmp_dir):
-    fallback_cwd = str(tmp_dir / "override")
+async def test_supports_overriding_effective_cwd_when_opening_session(tmp_path):
+    fallback_cwd = str(tmp_path / "override")
     os.makedirs(fallback_cwd)
     missing_cwd = os.path.join(fallback_cwd, "does-not-exist")
-    session_dir = str(tmp_dir / "override-session-dir")
+    session_dir = str(tmp_path / "override-session-dir")
     os.makedirs(session_dir)
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
@@ -61,11 +61,11 @@ async def test_supports_overriding_effective_cwd_when_opening_session(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_throws_controlled_error_before_runtime_creation_when_stored_cwd_missing(tmp_dir):
-    fallback_cwd = os.path.join(str(tmp_dir), "runtime")
+async def test_throws_controlled_error_before_runtime_creation_when_stored_cwd_missing(tmp_path):
+    fallback_cwd = os.path.join(str(tmp_path), "runtime")
     os.makedirs(fallback_cwd)
     missing_cwd = os.path.join(fallback_cwd, "does-not-exist")
-    session_dir = os.path.join(str(tmp_dir), "runtime-session-dir")
+    session_dir = os.path.join(str(tmp_path), "runtime-session-dir")
     os.makedirs(session_dir)
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)

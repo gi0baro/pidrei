@@ -3,7 +3,7 @@
 pi's constructor calls `initTheme` inline; pidrei defers file-reading theme
 initialization to `prime()` (see the controller docstring), so each test
 awaits `prime()` where pi asserts right after construction. Env stubbing uses
-in-test try/finally (tonio tests cannot take the monkeypatch yield fixture).
+in-test try/finally (predates tonio 0.9.14; `monkeypatch` works now).
 """
 
 import contextlib

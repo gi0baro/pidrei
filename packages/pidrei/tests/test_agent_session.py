@@ -87,8 +87,8 @@ class _MockRunner:
 
 class TestConcurrentPromptGuard:
     @pytest.mark.tonio
-    async def test_throws_when_prompt_called_while_streaming(self, tmp_dir):
-        session = await create_agent_session(tmp_dir, stream_fn=abortable_stream_fn)
+    async def test_throws_when_prompt_called_while_streaming(self, tmp_path):
+        session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
 
         first_prompt = tonio.spawn(session.prompt("First message"))
         await tonio.time.sleep(0.01)
@@ -106,8 +106,8 @@ class TestConcurrentPromptGuard:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_allows_steer_while_streaming(self, tmp_dir):
-        session = await create_agent_session(tmp_dir, stream_fn=abortable_stream_fn)
+    async def test_allows_steer_while_streaming(self, tmp_path):
+        session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
 
         first_prompt = tonio.spawn(session.prompt("First message"))
         await tonio.time.sleep(0.01)
@@ -123,8 +123,8 @@ class TestConcurrentPromptGuard:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_allows_follow_up_while_streaming(self, tmp_dir):
-        session = await create_agent_session(tmp_dir, stream_fn=abortable_stream_fn)
+    async def test_allows_follow_up_while_streaming(self, tmp_path):
+        session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
 
         first_prompt = tonio.spawn(session.prompt("First message"))
         await tonio.time.sleep(0.01)
@@ -140,14 +140,14 @@ class TestConcurrentPromptGuard:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_allows_prompt_after_previous_completes(self, tmp_dir):
+    async def test_allows_prompt_after_previous_completes(self, tmp_path):
         async def stream_fn(_model, _context, _options=None):
             stream = AssistantMessageEventStream()
             stream.push(StartEvent(partial=create_assistant_message("")))
             stream.push(DoneEvent(reason="stop", message=create_assistant_message("Done")))
             return stream
 
-        session = await create_agent_session(tmp_dir, stream_fn=stream_fn)
+        session = await create_agent_session(tmp_path, stream_fn=stream_fn)
 
         await session.prompt("First message")
         assert session.is_streaming is False
@@ -155,7 +155,7 @@ class TestConcurrentPromptGuard:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_waits_for_queued_agent_events_before_emitting_tool_call(self, tmp_dir):
+    async def test_waits_for_queued_agent_events_before_emitting_tool_call(self, tmp_path):
         from pidrei_agent.types import AgentTool, AgentToolResult
 
         class DummyTool(AgentTool):
@@ -192,7 +192,7 @@ class TestConcurrentPromptGuard:
             return stream
 
         session = await create_agent_session(
-            tmp_dir, stream_fn=stream_fn, tools=[tool], base_tools_override={"dummy": tool}
+            tmp_path, stream_fn=stream_fn, tools=[tool], base_tools_override={"dummy": tool}
         )
         session_manager = session.session_manager
 
@@ -214,7 +214,7 @@ class TestConcurrentPromptGuard:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_persists_message_end_events_in_order_with_slow_extension_handlers(self, tmp_dir):
+    async def test_persists_message_end_events_in_order_with_slow_extension_handlers(self, tmp_path):
         from pidrei_agent.types import AgentTool, AgentToolResult
 
         class DummyTool(AgentTool):
@@ -251,7 +251,7 @@ class TestConcurrentPromptGuard:
             return stream
 
         session = await create_agent_session(
-            tmp_dir, stream_fn=stream_fn, tools=[tool], base_tools_override={"dummy": tool}
+            tmp_path, stream_fn=stream_fn, tools=[tool], base_tools_override={"dummy": tool}
         )
         session_manager = session.session_manager
 
@@ -280,7 +280,7 @@ def _usage(total: int) -> Usage:
 
 
 class TestRetry:
-    async def _create_session(self, tmp_dir, *, fail_count=1, max_retries=3, delay_assistant_message_end_ms=0):
+    async def _create_session(self, tmp_path, *, fail_count=1, max_retries=3, delay_assistant_message_end_ms=0):
         call_count = {"value": 0}
 
         async def stream_fn(_model, _context, _options=None):
@@ -297,7 +297,7 @@ class TestRetry:
             return stream
 
         session = await create_agent_session(
-            tmp_dir,
+            tmp_path,
             stream_fn=stream_fn,
             settings_overrides={"retry": {"enabled": True, "maxRetries": max_retries, "baseDelayMs": 1}},
         )
@@ -315,8 +315,8 @@ class TestRetry:
         return session, call_count
 
     @pytest.mark.tonio
-    async def test_retries_after_transient_error_and_succeeds(self, tmp_dir):
-        session, call_count = await self._create_session(tmp_dir, fail_count=1)
+    async def test_retries_after_transient_error_and_succeeds(self, tmp_path):
+        session, call_count = await self._create_session(tmp_path, fail_count=1)
         events: list[str] = []
 
         def listener(event):
@@ -335,8 +335,8 @@ class TestRetry:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_exhausts_max_retries_and_emits_failure(self, tmp_dir):
-        session, call_count = await self._create_session(tmp_dir, fail_count=99, max_retries=2)
+    async def test_exhausts_max_retries_and_emits_failure(self, tmp_path):
+        session, call_count = await self._create_session(tmp_path, fail_count=99, max_retries=2)
         events: list[str] = []
 
         def listener(event):
@@ -357,8 +357,8 @@ class TestRetry:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_prompt_waits_for_retry_even_when_assistant_message_end_delayed(self, tmp_dir):
-        session, call_count = await self._create_session(tmp_dir, fail_count=1, delay_assistant_message_end_ms=40)
+    async def test_prompt_waits_for_retry_even_when_assistant_message_end_delayed(self, tmp_path):
+        session, call_count = await self._create_session(tmp_path, fail_count=1, delay_assistant_message_end_ms=40)
 
         await session.prompt("Test")
 
@@ -367,7 +367,7 @@ class TestRetry:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_retries_provider_network_error_failures(self, tmp_dir):
+    async def test_retries_provider_network_error_failures(self, tmp_path):
         call_count = {"value": 0}
 
         async def stream_fn(_model, _context, _options=None):
@@ -386,7 +386,7 @@ class TestRetry:
             return stream
 
         session = await create_agent_session(
-            tmp_dir,
+            tmp_path,
             stream_fn=stream_fn,
             settings_overrides={"retry": {"enabled": True, "maxRetries": 3, "baseDelayMs": 1}},
         )
@@ -408,7 +408,7 @@ class TestRetry:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_prompt_waits_for_full_agent_loop_when_retry_produces_tool_calls(self, tmp_dir):
+    async def test_prompt_waits_for_full_agent_loop_when_retry_produces_tool_calls(self, tmp_path):
         # Regression: when auto-retry fires and the retry response includes tool
         # use, session.prompt() must wait for the entire tool loop to finish.
         from pidrei_agent.types import AgentTool, AgentToolResult
@@ -453,7 +453,7 @@ class TestRetry:
             return stream
 
         session = await create_agent_session(
-            tmp_dir,
+            tmp_path,
             stream_fn=stream_fn,
             tools=[echo_tool],
             base_tools_override={"echo": echo_tool},
@@ -716,16 +716,16 @@ class TestGetSessionStats:
 
 
 class TestAutoCompactionQueue:
-    async def _create_session(self, tmp_dir):
+    async def _create_session(self, tmp_path):
         async def stream_fn(*_args, **_kwargs):
             raise Exception("unused")
 
-        session = await create_agent_session(tmp_dir, stream_fn=stream_fn)
+        session = await create_agent_session(tmp_path, stream_fn=stream_fn)
         return session, session.session_manager, session.settings_manager
 
     @pytest.mark.tonio
-    async def test_resumes_after_threshold_compaction_with_only_agent_level_queued_messages(self, tmp_dir):
-        session, session_manager, settings_manager = await self._create_session(tmp_dir)
+    async def test_resumes_after_threshold_compaction_with_only_agent_level_queued_messages(self, tmp_path):
+        session, session_manager, settings_manager = await self._create_session(tmp_path)
         settings_manager.apply_overrides({"compaction": {"keepRecentTokens": 1}})
         model = session.model
         now = now_ms()
@@ -793,8 +793,8 @@ class TestAutoCompactionQueue:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_does_not_compact_repeatedly_after_overflow_recovery_attempted(self, tmp_dir):
-        session, _session_manager, _settings = await self._create_session(tmp_dir)
+    async def test_does_not_compact_repeatedly_after_overflow_recovery_attempted(self, tmp_path):
+        session, _session_manager, _settings = await self._create_session(tmp_path)
         model = session.model
         overflow_message = AssistantMessage(
             content=[TextContent(text="")],
@@ -839,8 +839,8 @@ class TestAutoCompactionQueue:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_ignores_stale_pre_compaction_usage_on_pre_prompt_checks(self, tmp_dir):
-        session, session_manager, _settings = await self._create_session(tmp_dir)
+    async def test_ignores_stale_pre_compaction_usage_on_pre_prompt_checks(self, tmp_path):
+        session, session_manager, _settings = await self._create_session(tmp_path)
         model = session.model
         stale_assistant_timestamp = now_ms() - 10_000
         stale_assistant = AssistantMessage(
@@ -880,8 +880,8 @@ class TestAutoCompactionQueue:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_triggers_threshold_compaction_for_error_messages_using_last_successful_usage(self, tmp_dir):
-        session, _session_manager, settings_manager = await self._create_session(tmp_dir)
+    async def test_triggers_threshold_compaction_for_error_messages_using_last_successful_usage(self, tmp_path):
+        session, _session_manager, settings_manager = await self._create_session(tmp_path)
         model = session.model
 
         # A successful assistant message with token usage just over the threshold.
@@ -931,8 +931,8 @@ class TestAutoCompactionQueue:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_does_not_trigger_threshold_compaction_when_no_prior_usage_exists(self, tmp_dir):
-        session, _session_manager, _settings = await self._create_session(tmp_dir)
+    async def test_does_not_trigger_threshold_compaction_when_no_prior_usage_exists(self, tmp_path):
+        session, _session_manager, _settings = await self._create_session(tmp_path)
         model = session.model
 
         error_assistant = AssistantMessage(
@@ -964,8 +964,8 @@ class TestAutoCompactionQueue:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_does_not_trigger_threshold_compaction_with_only_kept_pre_compaction_usage(self, tmp_dir):
-        session, session_manager, _settings = await self._create_session(tmp_dir)
+    async def test_does_not_trigger_threshold_compaction_with_only_kept_pre_compaction_usage(self, tmp_path):
+        session, session_manager, _settings = await self._create_session(tmp_path)
         model = session.model
         pre_compaction_timestamp = now_ms() - 10_000
 
@@ -1021,7 +1021,7 @@ class TestAutoCompactionQueue:
 
 
 @pytest.mark.tonio
-async def test_send_user_message_can_opt_into_prompt_template_expansion(tmp_dir):
+async def test_send_user_message_can_opt_into_prompt_template_expansion(tmp_path):
     # Mirrors the 0.84.2 case pi added to its agent-session-prompt suite
     # (b987ead3); that characterization suite itself is a recorded parity gap.
     from pidrei.core.prompt_templates import PromptTemplate
@@ -1048,7 +1048,7 @@ async def test_send_user_message_can_opt_into_prompt_template_expansion(tmp_dir)
         stream.push(DoneEvent(reason="stop", message=create_assistant_message("ok")))
         return stream
 
-    session = await create_agent_session(tmp_dir, stream_fn=stream_fn, resource_loader=resource_loader)
+    session = await create_agent_session(tmp_path, stream_fn=stream_fn, resource_loader=resource_loader)
     try:
         await session.send_user_message("/review src/index.ts", {"expandPromptTemplates": True})
         assert expanded_prompts == ["Review this code: src/index.ts"]

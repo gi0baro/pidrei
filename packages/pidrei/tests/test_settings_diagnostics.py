@@ -8,13 +8,13 @@ from pidrei.core.settings_manager import SettingsManager
 
 
 @pytest.mark.tonio
-async def test_includes_the_settings_file_path_for_file_backed_storage(tmp_dir):
-    agent_dir = tmp_dir / "agent"
+async def test_includes_the_settings_file_path_for_file_backed_storage(tmp_path):
+    agent_dir = tmp_path / "agent"
     agent_dir.mkdir(parents=True)
     settings_path = agent_dir / "settings.json"
     settings_path.write_text("{", encoding="utf-8")
 
-    diagnostics = collect_settings_diagnostics(await SettingsManager.create(str(tmp_dir), str(agent_dir)))
+    diagnostics = collect_settings_diagnostics(await SettingsManager.create(str(tmp_path), str(agent_dir)))
 
     assert len(diagnostics) == 1
     assert diagnostics[0].type == "warning"

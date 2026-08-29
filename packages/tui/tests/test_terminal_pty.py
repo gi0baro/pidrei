@@ -47,7 +47,7 @@ async def test_pty_pump_negotiation_and_input_end_to_end():
 
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
     try:
-        await terminal.start(record_input, lambda: None)
+        await terminal.start(record_input, None)
 
         # Raw mode entered on the tty: echo off, canonical mode off.
         attrs = termios.tcgetattr(slave)
@@ -112,7 +112,7 @@ async def test_pty_drain_input_returns_after_idle():
 
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
     try:
-        await terminal.start(record_input, lambda: None)
+        await terminal.start(record_input, None)
         await _read_available(master)
 
         # Late input during drain is swallowed, and drain returns on idle
@@ -152,7 +152,7 @@ async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
         pass
 
     try:
-        await terminal.start(no_input, lambda: None)
+        await terminal.start(no_input, None)
         startup = await _read_available(out_r)
         assert startup.endswith(b"\x1b[>7u\x1b[?u\x1b[c")
 
@@ -208,7 +208,7 @@ async def test_pty_input_survives_a_raising_input_handler():
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
     terminal.input_owner.on_error = on_error
     try:
-        await terminal.start(record_input, lambda: None)
+        await terminal.start(record_input, None)
 
         os.write(master, b"x")
         await got_error.wait(2.0)

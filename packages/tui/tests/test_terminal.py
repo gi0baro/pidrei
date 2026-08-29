@@ -216,10 +216,10 @@ def test_writes_a_valid_osc_9_4_clear_sequence():
 
 
 @pytest.mark.tonio
-async def test_falls_back_to_columns_and_lines_env_before_default_dimensions(tmp_dir):
+async def test_falls_back_to_columns_and_lines_env_before_default_dimensions(tmp_path):
     # pi undefines process.stdout.columns/rows; a non-tty output fd is the
     # same seam here (os.get_terminal_size fails).
-    fd = os.open(str(tmp_dir / "not-a-tty"), os.O_WRONLY | os.O_CREAT, 0o600)
+    fd = os.open(str(tmp_path / "not-a-tty"), os.O_WRONLY | os.O_CREAT, 0o600)
     try:
         with env_var("COLUMNS", "123"), env_var("LINES", "45"):
             terminal = ProcessTerminal(output_fd=fd)

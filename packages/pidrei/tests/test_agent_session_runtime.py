@@ -33,7 +33,6 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 from .agent_session_helpers import create_assistant_message, create_test_resource_loader, push_done
 from .coding_session_helpers import now_ms
-from .test_tools import SKIP_ON_MACOS_CI
 
 
 def _canned_stream_simple(_model, _context, _options=None):
@@ -125,10 +124,10 @@ def _recorder(events: list):
 
 class TestRuntimeSessionLifecycleEvents:
     @pytest.mark.tonio
-    async def test_emits_before_switch_and_session_start_for_new_and_resume(self, tmp_dir):
+    async def test_emits_before_switch_and_session_start_for_new_and_resume(self, tmp_path):
         events = []
         runtime_host = await _create_runtime_host(
-            tmp_dir,
+            tmp_path,
             [
                 _extension(
                     {
@@ -173,7 +172,7 @@ class TestRuntimeSessionLifecycleEvents:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
-    async def test_settles_the_active_response_before_session_replacement(self, tmp_dir):
+    async def test_settles_the_active_response_before_session_replacement(self, tmp_path):
         from pidrei.core.agent_session import ExtensionBindings
         from pidrei.core.extensions import RegisteredTool, ToolDefinition
         from pidrei_ai.types import ToolCall
@@ -214,7 +213,7 @@ class TestRuntimeSessionLifecycleEvents:
             return stream
 
         runtime_host = await _create_runtime_host(
-            tmp_dir,
+            tmp_path,
             [Extension(path="<inline:1>", tools={"block": RegisteredTool(definition=block_tool)})],
             stream_simple,
         )
@@ -247,7 +246,7 @@ class TestRuntimeSessionLifecycleEvents:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
-    async def test_honors_session_before_switch_cancellation(self, tmp_dir):
+    async def test_honors_session_before_switch_cancellation(self, tmp_path):
         events = []
 
         async def before_switch(event, _ctx):
@@ -255,7 +254,7 @@ class TestRuntimeSessionLifecycleEvents:
             return {"cancel": True}
 
         runtime_host = await _create_runtime_host(
-            tmp_dir,
+            tmp_path,
             [
                 _extension(
                     {
@@ -279,14 +278,14 @@ class TestRuntimeSessionLifecycleEvents:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
-    async def test_runs_before_session_invalidate_after_shutdown_and_before_rebind(self, tmp_dir):
+    async def test_runs_before_session_invalidate_after_shutdown_and_before_rebind(self, tmp_path):
         phases = []
 
         async def on_shutdown(_event, _ctx):
             phases.append("session_shutdown")
 
         runtime_host = await _create_runtime_host(
-            tmp_dir,
+            tmp_path,
             [_extension({"session_shutdown": on_shutdown})],
         )
         old_session = runtime_host.session
@@ -311,7 +310,7 @@ class TestRuntimeSessionLifecycleEvents:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
-    async def test_emits_session_before_fork_and_honors_cancellation(self, tmp_dir):
+    async def test_emits_session_before_fork_and_honors_cancellation(self, tmp_path):
         events = []
         cancel_next_fork = {"value": False}
 
@@ -323,7 +322,7 @@ class TestRuntimeSessionLifecycleEvents:
             return None
 
         runtime_host = await _create_runtime_host(
-            tmp_dir,
+            tmp_path,
             [
                 _extension(
                     {
@@ -370,8 +369,8 @@ class TestRuntimeSessionLifecycleEvents:
 
 class TestForkingSuite:
     @pytest.mark.tonio
-    async def test_allows_forking_from_single_message(self, tmp_dir):
-        runtime_host = await _create_runtime_host(tmp_dir, [])
+    async def test_allows_forking_from_single_message(self, tmp_path):
+        runtime_host = await _create_runtime_host(tmp_path, [])
         session = runtime_host.session
 
         await session.prompt("Say hello")
@@ -392,8 +391,8 @@ class TestForkingSuite:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
-    async def test_supports_in_memory_forking_in_no_session_mode(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_supports_in_memory_forking_in_no_session_mode(self, tmp_path):
+        temp_dir = str(tmp_path)
         model = get_builtin_model("anthropic", "claude-sonnet-4-5")
         model_runtime = await _create_model_runtime(temp_dir)
         extensions_result = LoadExtensionsResult(runtime=ExtensionRuntime())
@@ -449,8 +448,8 @@ class TestForkingSuite:
         await runtime_host.dispose()
 
     @pytest.mark.tonio
-    async def test_forks_from_middle_of_conversation(self, tmp_dir):
-        runtime_host = await _create_runtime_host(tmp_dir, [])
+    async def test_forks_from_middle_of_conversation(self, tmp_path):
+        runtime_host = await _create_runtime_host(tmp_path, [])
         session = runtime_host.session
 
         await session.prompt("Say one")
@@ -477,11 +476,11 @@ class TestForkingSuite:
 
 class TestSdkSessionManagerDefaults:
     @pytest.mark.tonio
-    async def test_uses_agent_dir_for_default_persisted_session_path(self, tmp_dir):
+    async def test_uses_agent_dir_for_default_persisted_session_path(self, tmp_path):
         import re
 
-        cwd = os.path.join(str(tmp_dir), "project")
-        agent_dir = os.path.join(str(tmp_dir), "agent")
+        cwd = os.path.join(str(tmp_path), "project")
+        agent_dir = os.path.join(str(tmp_path), "agent")
         os.makedirs(cwd)
         os.makedirs(agent_dir)
 
@@ -500,9 +499,9 @@ class TestSdkSessionManagerDefaults:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_keeps_explicit_session_manager_override(self, tmp_dir):
-        cwd = os.path.join(str(tmp_dir), "project")
-        agent_dir = os.path.join(str(tmp_dir), "agent")
+    async def test_keeps_explicit_session_manager_override(self, tmp_path):
+        cwd = os.path.join(str(tmp_path), "project")
+        agent_dir = os.path.join(str(tmp_path), "agent")
         os.makedirs(cwd)
         os.makedirs(agent_dir)
 
@@ -519,10 +518,10 @@ class TestSdkSessionManagerDefaults:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_derives_cwd_from_explicit_session_manager_when_cwd_omitted(self, tmp_dir):
-        agent_dir = os.path.join(str(tmp_dir), "agent")
+    async def test_derives_cwd_from_explicit_session_manager_when_cwd_omitted(self, tmp_path):
+        agent_dir = os.path.join(str(tmp_path), "agent")
         os.makedirs(agent_dir)
-        session_cwd = os.path.join(str(tmp_dir), "session-project")
+        session_cwd = os.path.join(str(tmp_path), "session-project")
         os.makedirs(session_cwd)
 
         model = get_builtin_model("anthropic", "claude-sonnet-4-5")
@@ -544,11 +543,10 @@ class TestSdkSessionManagerDefaults:
 
         session.dispose()
 
-    @SKIP_ON_MACOS_CI  # reaches `await process.wait()` through the real bash tool
     @pytest.mark.tonio
-    async def test_exposes_current_session_state_to_built_in_bash_tool(self, tmp_dir):
-        cwd = os.path.join(str(tmp_dir), "project")
-        agent_dir = os.path.join(str(tmp_dir), "agent")
+    async def test_exposes_current_session_state_to_built_in_bash_tool(self, tmp_path):
+        cwd = os.path.join(str(tmp_path), "project")
+        agent_dir = os.path.join(str(tmp_path), "agent")
         os.makedirs(cwd)
         os.makedirs(agent_dir)
 
@@ -585,11 +583,11 @@ class TestSdkSessionManagerDefaults:
 
 
 @pytest.mark.tonio
-async def test_session_info_modified_uses_last_message_timestamp(tmp_dir):
+async def test_session_info_modified_uses_last_message_timestamp(tmp_path):
     """Mirrors pi test/session-info-modified-timestamp.test.ts."""
     from .coding_session_helpers import assistant_msg
 
-    file_path = os.path.join(str(tmp_dir), "session-modified.jsonl")
+    file_path = os.path.join(str(tmp_path), "session-modified.jsonl")
     header = {
         "type": "session",
         "id": "test-session",

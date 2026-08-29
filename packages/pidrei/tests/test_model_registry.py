@@ -28,13 +28,13 @@ OPENAI_IDS = [model.id for model in MODELS["openai"]]
 
 
 @pytest.fixture
-def registry_env(tmp_dir, request):
+def registry_env(tmp_path, request):
     request.addfinalizer(clear_api_key_cache)
-    models_json_path = str(tmp_dir / "models.json")
+    models_json_path = str(tmp_path / "models.json")
     # `from_storage`, not `create`: the fixture is sync and cannot await, and
-    # tmp_dir is fresh so there is no auth.json to load — same empty state.
-    auth_storage = AuthStorage.from_storage(FileAuthStorageBackend(str(tmp_dir / "auth.json")))
-    return tmp_dir, models_json_path, auth_storage
+    # tmp_path is fresh so there is no auth.json to load — same empty state.
+    auth_storage = AuthStorage.from_storage(FileAuthStorageBackend(str(tmp_path / "auth.json")))
+    return tmp_path, models_json_path, auth_storage
 
 
 def provider_config(base_url, models, api="anthropic-messages"):
@@ -1440,8 +1440,8 @@ class TestApiKeyResolution:
 class TestRequestTimeResolution:
     @pytest.mark.tonio
     async def test_command_is_executed_on_every_provider_lookup(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         command = f'!sh -c \'count=$(cat "{counter_path}"); echo $((count + 1)) > "{counter_path}"; echo "key-value"\''
@@ -1456,8 +1456,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_commands_are_re_executed_across_registry_instances(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         command = f'!sh -c \'count=$(cat "{counter_path}"); echo $((count + 1)) > "{counter_path}"; echo "key-value"\''
@@ -1486,8 +1486,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_failed_commands_are_retried(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         command = f'!sh -c \'count=$(cat "{counter_path}"); echo $((count + 1)) > "{counter_path}"; exit 1\''
@@ -1577,8 +1577,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_provider_auth_status_reports_command_api_key_values_without_executing_them(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "status-counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "status-counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         command = f"!sh -c 'echo 1 > \"{counter_path}\"; echo key-value'"
@@ -1616,8 +1616,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_get_available_does_not_execute_command_backed_api_key_resolution(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         command = f'!sh -c \'count=$(cat "{counter_path}"); echo $((count + 1)) > "{counter_path}"; echo "key-value"\''
@@ -1631,8 +1631,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_get_api_key_and_headers_resolves_auth_header_on_every_request(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        token_file = tmp_dir / "token"
+        tmp_path, models_json_path, auth_storage = registry_env
+        token_file = tmp_path / "token"
         token_file.write_text("token-1")
         token_path = to_sh_path(str(token_file))
 
@@ -1655,8 +1655,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_get_api_key_and_headers_resolves_configured_auth_exactly_once(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "auth-counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "auth-counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         command = (
@@ -1673,8 +1673,8 @@ class TestRequestTimeResolution:
 
     @pytest.mark.tonio
     async def test_stored_credentials_bypass_lower_priority_configured_auth_commands(self, registry_env):
-        tmp_dir, models_json_path, auth_storage = registry_env
-        counter_file = tmp_dir / "fallback-counter"
+        tmp_path, models_json_path, auth_storage = registry_env
+        counter_file = tmp_path / "fallback-counter"
         counter_file.write_text("0")
         counter_path = to_sh_path(str(counter_file))
         write_models_json(

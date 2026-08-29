@@ -29,8 +29,8 @@ BLOB = "https://github.com/gi0baro/pidrei/blob/v0.82.0.0"
 TREE = "https://github.com/gi0baro/pidrei/tree/v0.82.0.0"
 
 
-def write_changelog(tmp_dir, text: str) -> str:
-    path = os.path.join(tmp_dir, "CHANGELOG.md")
+def write_changelog(tmp_path, text: str) -> str:
+    path = os.path.join(tmp_path, "CHANGELOG.md")
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
     return path
@@ -88,9 +88,9 @@ def test_our_own_floating_branch_links_are_pinned_to_the_tag():
 
 
 @pytest.mark.tonio
-async def test_parses_four_segment_headers(tmp_dir):
+async def test_parses_four_segment_headers(tmp_path):
     path = write_changelog(
-        tmp_dir,
+        tmp_path,
         "# Changelog\n\n## [0.82.0.0] - 2026-07-27\n\nFirst.\n\n## [0.82.0.1] - 2026-08-01\n\nSecond.\n",
     )
 
@@ -104,17 +104,17 @@ async def test_parses_four_segment_headers(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_a_three_segment_header_is_build_zero(tmp_dir):
-    path = write_changelog(tmp_dir, "## [0.82.0] - 2026-07-27\n\nBody.\n")
+async def test_a_three_segment_header_is_build_zero(tmp_path):
+    path = write_changelog(tmp_path, "## [0.82.0] - 2026-07-27\n\nBody.\n")
 
     assert (await parse_changelog(path))[0]["build"] == 0
 
 
 @pytest.mark.tonio
-async def test_headers_without_a_version_are_skipped(tmp_dir):
+async def test_headers_without_a_version_are_skipped(tmp_path):
     """`## [Unreleased]` is the convention and must not become an entry."""
     path = write_changelog(
-        tmp_dir,
+        tmp_path,
         "# Changelog\n\n## [Unreleased]\n\n## [0.82.0.0] - 2026-07-27\n\nBody.\n",
     )
 
@@ -125,8 +125,8 @@ async def test_headers_without_a_version_are_skipped(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_a_missing_changelog_is_not_an_error(tmp_dir):
-    assert await parse_changelog(os.path.join(tmp_dir, "nope.md")) == []
+async def test_a_missing_changelog_is_not_an_error(tmp_path):
+    assert await parse_changelog(os.path.join(tmp_path, "nope.md")) == []
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +141,12 @@ def test_build_segment_breaks_the_tie():
 
 
 @pytest.mark.tonio
-async def test_new_entries_include_a_build_only_bump(tmp_dir):
+async def test_new_entries_include_a_build_only_bump(tmp_path):
     """The reason the fourth segment is parsed at all: between pi releases this
     is the only thing that changes, and it decides whether the user is shown
     what they just updated to."""
     path = write_changelog(
-        tmp_dir,
+        tmp_path,
         "## [0.82.0.0] - 2026-07-27\n\nFirst.\n\n## [0.82.0.1] - 2026-08-01\n\nSecond.\n",
     )
     entries = await parse_changelog(path)
@@ -159,9 +159,9 @@ async def test_new_entries_include_a_build_only_bump(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_a_last_version_without_a_build_segment_reads_as_zero(tmp_dir):
+async def test_a_last_version_without_a_build_segment_reads_as_zero(tmp_path):
     """Settings written before the fourth segment was parsed, or by hand."""
-    path = write_changelog(tmp_dir, "## [0.82.0.1] - 2026-08-01\n\nBody.\n")
+    path = write_changelog(tmp_path, "## [0.82.0.1] - 2026-08-01\n\nBody.\n")
 
     assert len(get_new_entries(await parse_changelog(path), "0.82.0")) == 1
 

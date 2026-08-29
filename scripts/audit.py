@@ -12,7 +12,7 @@ itself instead.
   2. bare `self.m(...)` / `m(...)` statements where the callee is `async def`
      — a coroutine created and dropped, so the work never happens.
   3. `tonio._*` imports in package source — private runtime API; anything
-     needed goes through tonio's public surface (see TONIO_BUGS.md).
+     needed goes through tonio's public surface.
   4. pi is `async` where we are `def` — the shape with something to lose in
      translation. `SettingsManager._enqueue_write` was flattened from pi's
      promise chain to an inline write, which silently changed `reload()`

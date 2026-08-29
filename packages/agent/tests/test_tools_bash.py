@@ -1,8 +1,6 @@
 """Mirror of pi agent/test/harness/tools.test.ts (bash tool portion)."""
 
-import os
 import re
-import sys
 import tempfile
 from dataclasses import dataclass
 
@@ -16,14 +14,6 @@ from pidrei_agent.harness.types import ExecutionError, ShellExecOptions, ShellEx
 from pidrei_agent.harness.utils.truncate import DEFAULT_MAX_LINES
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.utils.cancel import CancelToken
-
-
-# Same story as test_local_env.py: the timeout path reaches a real
-# `await process.wait()`, which flakes on the GHA macOS runner.
-SKIP_ON_MACOS_CI = pytest.mark.skipif(
-    sys.platform == "darwin" and bool(os.environ.get("CI")),
-    reason="TONIO_BUGS #7: tonio Process.wait() crashes intermittently on the GHA macOS runner",
-)
 
 
 def create_temp_dir() -> str:
@@ -78,7 +68,6 @@ async def test_executes_commands_and_combines_stdout_and_stderr():
     assert "err" in text_output(result)
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_reports_nonzero_exits_and_timeouts():
     context = create_context()
@@ -175,7 +164,6 @@ async def test_prepares_command_cwd_and_explicit_environment_with_the_turn_conte
     assert text_output(result) == f"ready::explicit:{canonical_workspace}"
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_supports_command_prefixes():
     context = create_context()

@@ -27,7 +27,7 @@ def test_rejects_unix_socket_paths_that_cannot_fit_in_sockaddr_un():
 
 
 @pytest.mark.tonio
-async def test_rejects_an_overlong_derived_private_unix_bind_path(tmp_dir):
+async def test_rejects_an_overlong_derived_private_unix_bind_path(tmp_path):
     max_length = 107 if sys.platform == "linux" else 103
     suffix_length = len(b"/tmp//s")
     path = f"/tmp/{'x' * (max_length - suffix_length)}/s"
@@ -38,8 +38,8 @@ async def test_rejects_an_overlong_derived_private_unix_bind_path(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_rejects_concurrent_start_calls_without_leaking_the_unix_listener(tmp_dir):
-    path = str(tmp_dir / "server.sock")
+async def test_rejects_concurrent_start_calls_without_leaking_the_unix_listener(tmp_path):
+    path = str(tmp_path / "server.sock")
     server = create_unix_server(TestServerService(), UnixServerOptions(path=path))
     starting = server.start()
     with pytest.raises(Exception, match="starting"):
@@ -91,7 +91,7 @@ def test_rejects_timeout_values_above_nodes_maximum_timer_delay():
         create_unix_server(SERVICE, UnixServerOptions(path=path, graceful_close_timeout_ms=2_147_483_648))
 
 
-def test_rejects_pending_byte_limits_smaller_than_one_maximum_frame(tmp_dir):
-    path = str(tmp_dir / "server.sock")
+def test_rejects_pending_byte_limits_smaller_than_one_maximum_frame(tmp_path):
+    path = str(tmp_path / "server.sock")
     with pytest.raises(TypeError, match="maxPendingBytes"):
         create_unix_server(SERVICE, UnixServerOptions(path=path, max_frame_length=128, max_pending_bytes=131))

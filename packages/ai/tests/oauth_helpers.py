@@ -12,7 +12,7 @@ equivalent, so each gets a pidrei-owned seam:
 - `vi.stubGlobal("fetch", ...)` → `stub_oauth_http()`, replacing the single
   request function every flow goes through.
 
-Neither uses a yield fixture, which aborts under `@pytest.mark.tonio`.
+Neither uses a yield fixture (a tonio constraint that ended with 0.9.14; kept for simplicity).
 """
 
 import contextlib

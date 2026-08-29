@@ -39,13 +39,13 @@ async def get_suggestions(provider, lines, cursor_line, cursor_col, force=False)
 
 
 @pytest.fixture
-def fd_dirs(tmp_dir):
+def fd_dirs(tmp_path):
     """Root/cwd/outside layout used by the fd @ suggestion tests."""
-    base_dir = tmp_dir / "cwd"
-    outside_dir = tmp_dir / "outside"
+    base_dir = tmp_path / "cwd"
+    outside_dir = tmp_path / "outside"
     base_dir.mkdir()
     outside_dir.mkdir()
-    return {"root": str(tmp_dir), "base": str(base_dir), "outside": str(outside_dir)}
+    return {"root": str(tmp_path), "base": str(base_dir), "outside": str(outside_dir)}
 
 
 # extractPathPrefix
@@ -395,10 +395,10 @@ async def test_applies_quoted_at_completion_without_duplicating_closing_quote(fd
 
 
 @pytest.mark.tonio
-async def test_preserves_dot_slash_prefix_when_completing_paths(tmp_dir):
-    _setup_folder(str(tmp_dir), files={"update.sh": "#!/bin/bash", "utils.ts": "export {};"})
+async def test_preserves_dot_slash_prefix_when_completing_paths(tmp_path):
+    _setup_folder(str(tmp_path), files={"update.sh": "#!/bin/bash", "utils.ts": "export {};"})
 
-    provider = CombinedAutocompleteProvider([], str(tmp_dir))
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
     line = "./up"
     result = await get_suggestions(provider, [line], 0, len(line), True)
 
@@ -408,10 +408,10 @@ async def test_preserves_dot_slash_prefix_when_completing_paths(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_preserves_dot_slash_prefix_for_directory_completions(tmp_dir):
-    _setup_folder(str(tmp_dir), dirs=["src"], files={"src/index.ts": "export {};"})
+async def test_preserves_dot_slash_prefix_for_directory_completions(tmp_path):
+    _setup_folder(str(tmp_path), dirs=["src"], files={"src/index.ts": "export {};"})
 
-    provider = CombinedAutocompleteProvider([], str(tmp_dir))
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
     line = "./sr"
     result = await get_suggestions(provider, [line], 0, len(line), True)
 
@@ -424,10 +424,10 @@ async def test_preserves_dot_slash_prefix_for_directory_completions(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_quotes_paths_with_spaces_for_direct_completion(tmp_dir):
-    _setup_folder(str(tmp_dir), dirs=["my folder"], files={"my folder/test.txt": "content"})
+async def test_quotes_paths_with_spaces_for_direct_completion(tmp_path):
+    _setup_folder(str(tmp_path), dirs=["my folder"], files={"my folder/test.txt": "content"})
 
-    provider = CombinedAutocompleteProvider([], str(tmp_dir))
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
     line = "my"
     result = await get_suggestions(provider, [line], 0, len(line), True)
 
@@ -437,16 +437,16 @@ async def test_quotes_paths_with_spaces_for_direct_completion(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_continues_completion_inside_quoted_paths(tmp_dir):
+async def test_continues_completion_inside_quoted_paths(tmp_path):
     _setup_folder(
-        str(tmp_dir),
+        str(tmp_path),
         files={
             "my folder/test.txt": "content",
             "my folder/other.txt": "content",
         },
     )
 
-    provider = CombinedAutocompleteProvider([], str(tmp_dir))
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
     line = '"my folder/"'
     result = await get_suggestions(provider, [line], 0, len(line) - 1, True)
 
@@ -457,10 +457,10 @@ async def test_continues_completion_inside_quoted_paths(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_applies_quoted_completion_without_duplicating_closing_quote(tmp_dir):
-    _setup_folder(str(tmp_dir), files={"my folder/test.txt": "content"})
+async def test_applies_quoted_completion_without_duplicating_closing_quote(tmp_path):
+    _setup_folder(str(tmp_path), files={"my folder/test.txt": "content"})
 
-    provider = CombinedAutocompleteProvider([], str(tmp_dir))
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
     line = '"my folder/te"'
     cursor_col = len(line) - 1
     result = await get_suggestions(provider, [line], 0, cursor_col, True)

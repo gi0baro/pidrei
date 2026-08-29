@@ -16,8 +16,7 @@ from pidrei.utils import fs_watch
 
 
 def _patch(request, module, name, value) -> None:
-    # `monkeypatch` (like `tmp_path`) is a yield fixture, which the tonio
-    # plugin cannot wrap; restore through a finalizer instead.
+    # Finalizer-based restore (predates tonio 0.9.14; `monkeypatch` works now).
     original = getattr(module, name)
     setattr(module, name, value)
     request.addfinalizer(lambda: setattr(module, name, original))
@@ -80,8 +79,8 @@ async def _wait(event: tonio.Event, timeout_s: float = 3.0) -> None:
 
 
 @pytest.mark.tonio
-async def test_uses_head_directly_in_a_regular_repo_from_a_nested_directory(tmp_dir, git_mock):
-    repo_dir = _create_plain_repo(tmp_dir)
+async def test_uses_head_directly_in_a_regular_repo_from_a_nested_directory(tmp_path, git_mock):
+    repo_dir = _create_plain_repo(tmp_path)
     nested_dir = repo_dir / "src" / "nested"
     nested_dir.mkdir(parents=True)
 
@@ -95,8 +94,8 @@ async def test_uses_head_directly_in_a_regular_repo_from_a_nested_directory(tmp_
 
 
 @pytest.mark.tonio
-async def test_resolves_the_branch_via_git_when_head_is_invalid_in_a_reftable_repo(tmp_dir, git_mock):
-    repo_dir = _create_plain_reftable_repo(tmp_dir)
+async def test_resolves_the_branch_via_git_when_head_is_invalid_in_a_reftable_repo(tmp_path, git_mock):
+    repo_dir = _create_plain_reftable_repo(tmp_path)
 
     provider = FooterDataProvider(str(repo_dir))
     await provider.prime()
@@ -108,8 +107,8 @@ async def test_resolves_the_branch_via_git_when_head_is_invalid_in_a_reftable_re
 
 
 @pytest.mark.tonio
-async def test_resolves_the_branch_via_git_in_a_reftable_backed_worktree(tmp_dir, git_mock):
-    fixture = _create_reftable_worktree(tmp_dir)
+async def test_resolves_the_branch_via_git_in_a_reftable_backed_worktree(tmp_path, git_mock):
+    fixture = _create_reftable_worktree(tmp_path)
 
     provider = FooterDataProvider(str(fixture["worktreeDir"]))
     await provider.prime()
@@ -120,8 +119,8 @@ async def test_resolves_the_branch_via_git_in_a_reftable_backed_worktree(tmp_dir
 
 
 @pytest.mark.tonio
-async def test_treats_an_unresolved_invalid_reftable_head_as_detached(tmp_dir, git_mock):
-    repo_dir = _create_plain_reftable_repo(tmp_dir)
+async def test_treats_an_unresolved_invalid_reftable_head_as_detached(tmp_path, git_mock):
+    repo_dir = _create_plain_reftable_repo(tmp_path)
     git_mock["resolved_branch"] = ""
 
     provider = FooterDataProvider(str(repo_dir))
@@ -133,8 +132,8 @@ async def test_treats_an_unresolved_invalid_reftable_head_as_detached(tmp_dir, g
 
 
 @pytest.mark.tonio
-async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_branch(tmp_dir, git_mock):
-    fixture = _create_reftable_worktree(tmp_dir)
+async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_branch(tmp_path, git_mock):
+    fixture = _create_reftable_worktree(tmp_path)
 
     provider = FooterDataProvider(str(fixture["worktreeDir"]))
     await provider.prime()
@@ -156,8 +155,8 @@ async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_bra
 
 
 @pytest.mark.tonio
-async def test_debounces_rapid_reftable_updates_into_a_single_async_refresh(tmp_dir, git_mock):
-    fixture = _create_reftable_worktree(tmp_dir)
+async def test_debounces_rapid_reftable_updates_into_a_single_async_refresh(tmp_path, git_mock):
+    fixture = _create_reftable_worktree(tmp_path)
 
     provider = FooterDataProvider(str(fixture["worktreeDir"]))
     await provider.prime()
@@ -179,8 +178,8 @@ async def test_debounces_rapid_reftable_updates_into_a_single_async_refresh(tmp_
 
 
 @pytest.mark.tonio
-async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp_dir, git_mock):
-    fixture = _create_reftable_worktree(tmp_dir)
+async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp_path, git_mock):
+    fixture = _create_reftable_worktree(tmp_path)
 
     provider = FooterDataProvider(str(fixture["worktreeDir"]))
     await provider.prime()
@@ -200,11 +199,11 @@ async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp
 
 
 @pytest.mark.tonio
-async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_dir, git_mock, request):
+async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_mock, request):
     # pi advances fake timers across the 5s retry delay; shorten it and
     # wait in real time instead.
     _patch(request, fs_watch, "FS_WATCH_RETRY_DELAY_MS", 100)
-    repo_dir = _create_plain_repo(tmp_dir)
+    repo_dir = _create_plain_repo(tmp_path)
 
     provider = FooterDataProvider(str(repo_dir))
     await provider.prime()

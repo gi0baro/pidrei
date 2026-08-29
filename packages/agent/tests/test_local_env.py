@@ -1,7 +1,6 @@
 """Mirror of pi agent/test/harness/nodejs-env.test.ts."""
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -13,17 +12,6 @@ from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.types import FileError, ShellExecOptions, ShellExecResult, get_or_throw
 from pidrei_agent.harness.utils.shell_output import execute_shell_with_capture
 from pidrei_ai.utils.cancel import CancelToken
-
-
-# Same gate as pidrei's TestBashTool (see TONIO_BUGS.md #7): tonio's
-# `Process.wait()` crashes intermittently on the GHA macOS runner, and the
-# failure roams across whichever process-spawning test it likes. Applied to
-# the tests that reach a real `await process.wait()`; the file-operation and
-# pre-spawn-error tests keep running on macOS CI.
-SKIP_ON_MACOS_CI = pytest.mark.skipif(
-    sys.platform == "darwin" and bool(os.environ.get("CI")),
-    reason="TONIO_BUGS #7: tonio Process.wait() crashes intermittently on the GHA macOS runner",
-)
 
 
 def create_temp_dir() -> str:
@@ -232,7 +220,6 @@ async def test_cleanup_is_best_effort():
     assert await env.cleanup() is None
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_executes_commands_in_cwd_with_env_overrides():
     root = create_temp_dir()
@@ -246,7 +233,6 @@ async def test_executes_commands_in_cwd_with_env_overrides():
     assert result == ShellExecResult(stdout=f"{os.path.realpath(root)}:ok", stderr="", exit_code=0)
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 @pytest.mark.parametrize(
     ("description", "overrides", "expected_session_file"),
@@ -282,7 +268,6 @@ async def test_applies_string_shell_environment_overrides(description, overrides
     assert result.stdout == f"{expected_session_file}|true|preserved"
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_can_replace_rather_than_inherit_the_default_shell_environment():
     root = create_temp_dir()
@@ -307,7 +292,6 @@ async def test_can_replace_rather_than_inherit_the_default_shell_environment():
             os.environ[inherited_key] = previous_inherited
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_cleanup_terminates_active_shell_processes():
     root = create_temp_dir()
@@ -324,7 +308,6 @@ async def test_cleanup_terminates_active_shell_processes():
     assert result.ok is True
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_streams_stdout_and_stderr_chunks():
     root = create_temp_dir()
@@ -353,7 +336,6 @@ async def test_reports_a_missing_working_directory_before_spawning():
     assert "Working directory does not exist" in result.error.message
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_returns_non_zero_command_exit_codes_as_successful_execution_results():
     root = create_temp_dir()
@@ -362,7 +344,6 @@ async def test_returns_non_zero_command_exit_codes_as_successful_execution_resul
     assert result == ShellExecResult(stdout="", stderr="", exit_code=7)
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_returns_timeout_errors_for_commands_exceeding_the_timeout():
     root = create_temp_dir()
@@ -372,7 +353,6 @@ async def test_returns_timeout_errors_for_commands_exceeding_the_timeout():
     assert result.error.code == "timeout"
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_returns_callback_errors_from_exec_stream_handlers():
     root = create_temp_dir()
@@ -404,7 +384,6 @@ async def test_returns_shell_unavailable_and_spawn_errors():
     assert spawn_error.error.code == "spawn_error"
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_returns_an_aborted_result_for_aborted_commands():
     root = create_temp_dir()
@@ -418,7 +397,6 @@ async def test_returns_an_aborted_result_for_aborted_commands():
     assert result.error.code == "aborted"
 
 
-@SKIP_ON_MACOS_CI
 @pytest.mark.tonio
 async def test_captures_large_shell_output_to_a_full_output_file_through_the_execution_env():
     root = create_temp_dir()

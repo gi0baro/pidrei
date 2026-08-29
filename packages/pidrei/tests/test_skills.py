@@ -21,8 +21,8 @@ def write_skill_file(path, frontmatter_lines, body="Content"):
 
 
 @pytest.fixture
-def fixtures_dir(tmp_dir):
-    root = tmp_dir / "skills"
+def fixtures_dir(tmp_path):
+    root = tmp_path / "skills"
     write_skill_file(str(root / "valid-skill" / "SKILL.md"), ["description: A valid skill for testing purposes."])
     write_skill_file(str(root / "name-mismatch" / "SKILL.md"), ["name: different-name", "description: Different name."])
     write_skill_file(
@@ -302,9 +302,9 @@ class TestFormatSkillsForPrompt:
 
 class TestLoadSkillsWithOptions:
     @pytest.mark.tonio
-    async def test_loads_from_explicit_skill_paths(self, fixtures_dir, tmp_dir):
-        empty_agent_dir = tmp_dir / "empty-agent"
-        empty_cwd = tmp_dir / "empty-cwd"
+    async def test_loads_from_explicit_skill_paths(self, fixtures_dir, tmp_path):
+        empty_agent_dir = tmp_path / "empty-agent"
+        empty_cwd = tmp_path / "empty-cwd"
         empty_agent_dir.mkdir()
         empty_cwd.mkdir()
 
@@ -319,10 +319,10 @@ class TestLoadSkillsWithOptions:
         assert result.diagnostics == []
 
     @pytest.mark.tonio
-    async def test_warns_when_skill_path_does_not_exist(self, tmp_dir):
+    async def test_warns_when_skill_path_does_not_exist(self, tmp_path):
         result = await load_skills(
-            agent_dir=str(tmp_dir / "empty-agent"),
-            cwd=str(tmp_dir / "empty-cwd"),
+            agent_dir=str(tmp_path / "empty-agent"),
+            cwd=str(tmp_path / "empty-cwd"),
             skill_paths=["/non/existent/path"],
             include_defaults=True,
         )
@@ -332,16 +332,16 @@ class TestLoadSkillsWithOptions:
 
 class TestCollisionHandling:
     @pytest.mark.tonio
-    async def test_detects_name_collisions_via_load_skills(self, tmp_dir):
-        first_dir = tmp_dir / "first" / "calendar"
-        second_dir = tmp_dir / "second" / "calendar"
+    async def test_detects_name_collisions_via_load_skills(self, tmp_path):
+        first_dir = tmp_path / "first" / "calendar"
+        second_dir = tmp_path / "second" / "calendar"
         write_skill_file(str(first_dir / "SKILL.md"), ["name: calendar", "description: First calendar."])
         write_skill_file(str(second_dir / "SKILL.md"), ["name: calendar", "description: Second calendar."])
 
         result = await load_skills(
-            agent_dir=str(tmp_dir / "empty-agent"),
-            cwd=str(tmp_dir / "empty-cwd"),
-            skill_paths=[str(tmp_dir / "first"), str(tmp_dir / "second")],
+            agent_dir=str(tmp_path / "empty-agent"),
+            cwd=str(tmp_path / "empty-cwd"),
+            skill_paths=[str(tmp_path / "first"), str(tmp_path / "second")],
             include_defaults=False,
         )
 

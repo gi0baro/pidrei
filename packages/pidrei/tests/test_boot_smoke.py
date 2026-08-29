@@ -172,9 +172,9 @@ async def _wait_for(screen: _Screen, needle: str, timeout: float) -> None:
 
 
 @pytest.mark.tonio
-async def test_interactive_mode_boots_and_completes_a_turn(tmp_dir):
-    agent_dir = tmp_dir / "agent"
-    project_dir = tmp_dir / "project"
+async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
+    agent_dir = tmp_path / "agent"
+    project_dir = tmp_path / "project"
     project_dir.mkdir(parents=True, exist_ok=True)
 
     listener = (await net.open_tcp_listeners(0, host="127.0.0.1"))[0]
@@ -194,7 +194,7 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_dir):
         env={
             **os.environ,
             ENV_AGENT_DIR: str(agent_dir),
-            "HOME": str(tmp_dir),
+            "HOME": str(tmp_path),
             "PIDREI_OFFLINE": "1",
             "TERM": "xterm-256color",
             "COLUMNS": str(COLS),
@@ -262,7 +262,7 @@ def extension(pi):
 
 
 @pytest.mark.tonio
-async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_dir):
+async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_path):
     """A real extension's `ctx.ui` calls against a real InteractiveMode.
 
     Guards the ctx.ui contract (task #86): production used to hand extensions
@@ -270,8 +270,8 @@ async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_dir):
     every unit test faked `ctx` with a SimpleNamespace — so the mismatch was
     invisible until an extension ran against the real TUI.
     """
-    agent_dir = tmp_dir / "agent"
-    project_dir = tmp_dir / "project"
+    agent_dir = tmp_path / "agent"
+    project_dir = tmp_path / "project"
     project_dir.mkdir(parents=True, exist_ok=True)
 
     listener = (await net.open_tcp_listeners(0, host="127.0.0.1"))[0]
@@ -292,7 +292,7 @@ async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_dir):
         env={
             **os.environ,
             ENV_AGENT_DIR: str(agent_dir),
-            "HOME": str(tmp_dir),
+            "HOME": str(tmp_path),
             "PIDREI_OFFLINE": "1",
             "TERM": "xterm-256color",
             "COLUMNS": str(COLS),

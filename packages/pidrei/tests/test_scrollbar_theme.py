@@ -23,55 +23,55 @@ def _load_dark_theme() -> dict:
         return json.load(handle)
 
 
-def _write_theme(tmp_dir, theme: dict) -> str:
-    theme_path = tmp_dir / f"{theme['name']}.json"
+def _write_theme(tmp_path, theme: dict) -> str:
+    theme_path = tmp_path / f"{theme['name']}.json"
     theme_path.write_text(json.dumps(theme), encoding="utf-8")
     return str(theme_path)
 
 
 @pytest.mark.tonio
-async def test_falls_back_to_selected_bg_when_scrollbar_thumb_is_omitted(tmp_dir):
+async def test_falls_back_to_selected_bg_when_scrollbar_thumb_is_omitted(tmp_path):
     theme_json = _load_dark_theme()
     theme_json["name"] = "legacy-scrollbar-theme"
     del theme_json["colors"]["scrollbarThumb"]
 
-    loaded_theme = await load_theme_from_path(_write_theme(tmp_dir, theme_json), "truecolor")
+    loaded_theme = await load_theme_from_path(_write_theme(tmp_path, theme_json), "truecolor")
 
     assert loaded_theme.get_bg_ansi("scrollbarThumb") == loaded_theme.get_bg_ansi("selectedBg")
 
 
 @pytest.mark.tonio
-async def test_uses_an_explicitly_configured_scrollbar_thumb(tmp_dir):
+async def test_uses_an_explicitly_configured_scrollbar_thumb(tmp_path):
     theme_json = _load_dark_theme()
     theme_json["name"] = "custom-scrollbar-theme"
     theme_json["colors"]["scrollbarThumb"] = "#123456"
 
-    loaded_theme = await load_theme_from_path(_write_theme(tmp_dir, theme_json), "truecolor")
+    loaded_theme = await load_theme_from_path(_write_theme(tmp_path, theme_json), "truecolor")
 
     assert loaded_theme.get_bg_ansi("scrollbarThumb") == "\x1b[48;2;18;52;86m"
 
 
 @pytest.mark.tonio
-async def test_falls_back_to_existing_selection_and_text_colors_for_search_highlights(tmp_dir):
+async def test_falls_back_to_existing_selection_and_text_colors_for_search_highlights(tmp_path):
     theme_json = _load_dark_theme()
     theme_json["name"] = "legacy-search-theme"
     del theme_json["colors"]["searchMatchBg"]
     del theme_json["colors"]["searchMatchText"]
 
-    loaded_theme = await load_theme_from_path(_write_theme(tmp_dir, theme_json), "truecolor")
+    loaded_theme = await load_theme_from_path(_write_theme(tmp_path, theme_json), "truecolor")
 
     assert loaded_theme.get_bg_ansi("searchMatchBg") == loaded_theme.get_bg_ansi("selectedBg")
     assert loaded_theme.get_fg_ansi("searchMatchText") == loaded_theme.get_fg_ansi("text")
 
 
 @pytest.mark.tonio
-async def test_uses_explicitly_configured_search_highlight_colors(tmp_dir):
+async def test_uses_explicitly_configured_search_highlight_colors(tmp_path):
     theme_json = _load_dark_theme()
     theme_json["name"] = "custom-search-theme"
     theme_json["colors"]["searchMatchBg"] = "#112233"
     theme_json["colors"]["searchMatchText"] = "#223344"
 
-    loaded_theme = await load_theme_from_path(_write_theme(tmp_dir, theme_json), "truecolor")
+    loaded_theme = await load_theme_from_path(_write_theme(tmp_path, theme_json), "truecolor")
 
     assert loaded_theme.get_bg_ansi("searchMatchBg") == "\x1b[48;2;17;34;51m"
     assert loaded_theme.get_fg_ansi("searchMatchText") == "\x1b[38;2;34;51;68m"

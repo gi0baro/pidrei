@@ -55,7 +55,7 @@ async def wait_for_refresh(selector: ModelSelectorComponent) -> None:
 
 
 @pytest.mark.tonio
-async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_query(tmp_dir):
+async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_query(tmp_path):
     harness = await create_harness(models=MODELS)
     try:
         current = harness.get_model("alpha-1")
@@ -93,7 +93,7 @@ async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_que
 
 
 @pytest.mark.tonio
-async def test_moves_selection_to_the_first_row_in_the_scoped_tab_when_typing_a_query(tmp_dir):
+async def test_moves_selection_to_the_first_row_in_the_scoped_tab_when_typing_a_query(tmp_path):
     harness = await create_harness(models=MODELS[:3])
     try:
         alpha1 = harness.get_model("alpha-1")

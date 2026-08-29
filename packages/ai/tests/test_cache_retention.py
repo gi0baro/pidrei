@@ -40,9 +40,8 @@ class PayloadCaptured(Exception):
 
 @contextmanager
 def cache_retention_env(value: str | None):
-    """In-test env handling: yield fixtures (monkeypatch) can't be used in
-    tonio-marked tests — the tonio pytest plugin interprets generator fixtures
-    as coroutines (open tonio bug). Plain return fixtures are fine."""
+    """In-test env handling via context manager (predates tonio 0.9.14, which
+    made yield fixtures like `monkeypatch` usable in tonio-marked tests)."""
     original = os.environ.get("PIDREI_CACHE_RETENTION")
     if value is None:
         os.environ.pop("PIDREI_CACHE_RETENTION", None)

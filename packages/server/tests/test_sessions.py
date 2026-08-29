@@ -28,7 +28,7 @@ async def attach(client, session_id):
 
 
 @pytest.mark.tonio
-async def test_serializes_server_snapshot_revisions(tmp_dir):
+async def test_serializes_server_snapshot_revisions(tmp_path):
     class OrderedSnapshotService(TestServerService):
         def __init__(self):
             super().__init__()
@@ -51,7 +51,7 @@ async def test_serializes_server_snapshot_revisions(tmp_dir):
                 await self.second_release
             return [MODEL]
 
-    harness = Harness(tmp_dir)
+    harness = Harness(tmp_path)
     try:
         service = OrderedSnapshotService()
         server, _ = await harness.start_server(service)
@@ -96,8 +96,8 @@ async def test_serializes_server_snapshot_revisions(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_creates_server_assigned_durable_ids_and_supports_list_attach_and_detach(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_creates_server_assigned_durable_ids_and_supports_list_attach_and_detach(tmp_path):
+    harness = Harness(tmp_path)
     try:
         server, service = await harness.start_server()
         client = await harness.connect(server)
@@ -140,7 +140,7 @@ async def test_creates_server_assigned_durable_ids_and_supports_list_attach_and_
 
 
 @pytest.mark.tonio
-async def test_preserves_backend_metadata_while_refreshing_live_session_metadata(tmp_dir):
+async def test_preserves_backend_metadata_while_refreshing_live_session_metadata(tmp_path):
     class ExtendedMetadataService(TestServerService):
         async def list_sessions(self):
             return [
@@ -148,7 +148,7 @@ async def test_preserves_backend_metadata_while_refreshing_live_session_metadata
                 for metadata in await super().list_sessions()
             ]
 
-    harness = Harness(tmp_dir)
+    harness = Harness(tmp_path)
     try:
         service = ExtendedMetadataService()
         service.seed("session-1", "Live name")
@@ -174,8 +174,8 @@ async def test_preserves_backend_metadata_while_refreshing_live_session_metadata
 
 
 @pytest.mark.tonio
-async def test_keeps_multiple_attachments_on_one_connection_independent(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_keeps_multiple_attachments_on_one_connection_independent(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed("first")
@@ -198,8 +198,8 @@ async def test_keeps_multiple_attachments_on_one_connection_independent(tmp_dir)
 
 
 @pytest.mark.tonio
-async def test_broadcasts_full_snapshots_and_progress_only_to_clients_attached_to_that_session(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_broadcasts_full_snapshots_and_progress_only_to_clients_attached_to_that_session(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed()
@@ -253,8 +253,8 @@ async def test_broadcasts_full_snapshots_and_progress_only_to_clients_attached_t
 
 
 @pytest.mark.tonio
-async def test_allows_every_attached_client_to_control_a_singleton_live_runtime(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_allows_every_attached_client_to_control_a_singleton_live_runtime(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed()
@@ -300,8 +300,8 @@ async def test_allows_every_attached_client_to_control_a_singleton_live_runtime(
 
 
 @pytest.mark.tonio
-async def test_does_not_queue_prompts_and_processes_steer_and_abort_while_a_prompt_response_is_pending(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_does_not_queue_prompts_and_processes_steer_and_abort_while_a_prompt_response_is_pending(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed()
@@ -338,8 +338,8 @@ async def test_does_not_queue_prompts_and_processes_steer_and_abort_while_a_prom
 
 
 @pytest.mark.tonio
-async def test_returns_operation_attachment_state_relative_to_the_requesting_connection(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_returns_operation_attachment_state_relative_to_the_requesting_connection(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed()
@@ -371,8 +371,8 @@ async def test_returns_operation_attachment_state_relative_to_the_requesting_con
 
 
 @pytest.mark.tonio
-async def test_keeps_busy_work_alive_after_disconnect_and_disposes_when_it_next_becomes_idle(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_keeps_busy_work_alive_after_disconnect_and_disposes_when_it_next_becomes_idle(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed()
@@ -408,8 +408,8 @@ async def test_keeps_busy_work_alive_after_disconnect_and_disposes_when_it_next_
 
 
 @pytest.mark.tonio
-async def test_restores_persisted_sessions_lazily_after_a_server_restart(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_restores_persisted_sessions_lazily_after_a_server_restart(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed()
@@ -433,12 +433,12 @@ async def test_restores_persisted_sessions_lazily_after_a_server_restart(tmp_dir
 
 
 @pytest.mark.tonio
-async def test_rejects_and_disposes_a_service_runtime_with_the_wrong_server_assigned_id(tmp_dir):
+async def test_rejects_and_disposes_a_service_runtime_with_the_wrong_server_assigned_id(tmp_path):
     class WrongIdService(TestServerService):
         async def create_session(self, options):
             return await super().create_session(replace(options, id="wrong-id"))
 
-    harness = Harness(tmp_dir)
+    harness = Harness(tmp_path)
     try:
         service = WrongIdService()
         server, _ = await harness.start_server(service)
@@ -453,8 +453,8 @@ async def test_rejects_and_disposes_a_service_runtime_with_the_wrong_server_assi
 
 
 @pytest.mark.tonio
-async def test_maps_service_lock_errors_and_rejects_control_from_unattached_clients(tmp_dir):
-    harness = Harness(tmp_dir)
+async def test_maps_service_lock_errors_and_rejects_control_from_unattached_clients(tmp_path):
+    harness = Harness(tmp_path)
     try:
         service = TestServerService()
         service.seed("locked")

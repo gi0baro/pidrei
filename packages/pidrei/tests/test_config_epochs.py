@@ -55,11 +55,11 @@ def test_runtime_credential_overrides_swap_instead_of_mutating():
 
 
 @pytest.mark.tonio
-async def test_auth_read_state_publishes_one_immutable_snapshot_per_reload(tmp_dir):
+async def test_auth_read_state_publishes_one_immutable_snapshot_per_reload(tmp_path):
     """The (data, revision) pair is one frozen object rebound wholesale: a
     reader can never combine the data of one reload with the revision of
     another, and a pinned snapshot's data never grows later entries."""
-    path = str(tmp_dir / "auth.json")
+    path = str(tmp_path / "auth.json")
     store = await AuthStorage.create(path)
 
     async def put_first(_current):

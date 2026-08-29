@@ -29,7 +29,7 @@ from pidrei.cli.package_commands import (
 
 
 @pytest.fixture
-def workspace(request, tmp_dir):
+def workspace(request, tmp_path):
     """agent dir + project dir + a local package, with cwd and env restored.
 
     `realpath`, not the raw temp dir: on macOS `/var` is a symlink to
@@ -40,7 +40,7 @@ def workspace(request, tmp_dir):
     doubled the prefix into `/private/private/var/...` and failed only on macOS
     CI. Same precedent as `test_serve_e2e.py`.
     """
-    root = os.path.realpath(str(tmp_dir))
+    root = os.path.realpath(str(tmp_path))
     agent_dir = os.path.join(root, "agent")
     project_dir = os.path.join(root, "project")
     package_dir = os.path.join(root, "package")
@@ -74,8 +74,8 @@ class Captured:
 
 @contextlib.contextmanager
 def capture():
-    """`capsys` is a yield fixture, which the tonio plugin cannot wrap (Rust
-    abort). Redirecting inside the test body has no such problem."""
+    """Redirect inside the test body (predates tonio 0.9.14, which made
+    yield fixtures like `capsys` usable in tonio tests)."""
     result = Captured()
     out, err = io.StringIO(), io.StringIO()
     try:

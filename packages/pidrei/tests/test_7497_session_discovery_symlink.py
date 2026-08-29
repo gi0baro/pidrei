@@ -15,8 +15,8 @@ from pidrei.core.session_manager import SessionManager
 
 
 @pytest.fixture
-def dirs(tmp_dir, request):
-    agent_dir = tmp_dir / "agent"
+def dirs(tmp_path, request):
+    agent_dir = tmp_path / "agent"
     sessions_dir = agent_dir / "sessions"
     sessions_dir.mkdir(parents=True)
 
@@ -30,7 +30,7 @@ def dirs(tmp_dir, request):
             os.environ[ENV_AGENT_DIR] = previous
 
     request.addfinalizer(restore)
-    return tmp_dir, sessions_dir
+    return tmp_path, sessions_dir
 
 
 def _write_session(root, directory, session_id: str) -> None:

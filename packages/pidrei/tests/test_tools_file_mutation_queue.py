@@ -12,9 +12,9 @@ from pidrei.core.tools.write import create_write_tool
 
 class TestWithFileMutationQueue:
     @pytest.mark.tonio
-    async def test_serializes_operations_for_the_same_file(self, tmp_dir):
+    async def test_serializes_operations_for_the_same_file(self, tmp_path):
         order: list[str] = []
-        path = str(tmp_dir / "file-mutation-queue-same")
+        path = str(tmp_path / "file-mutation-queue-same")
 
         async def first_op():
             order.append("first:start")
@@ -33,7 +33,7 @@ class TestWithFileMutationQueue:
         assert order == ["first:start", "first:end", "second:start", "second:end"]
 
     @pytest.mark.tonio
-    async def test_allows_different_files_to_proceed_in_parallel(self, tmp_dir):
+    async def test_allows_different_files_to_proceed_in_parallel(self, tmp_path):
         order: list[str] = []
 
         async def op_a():
@@ -47,8 +47,8 @@ class TestWithFileMutationQueue:
             order.append("b:end")
 
         await tonio.spawn(
-            with_file_mutation_queue(str(tmp_dir / "file-mutation-queue-a"), op_a),
-            with_file_mutation_queue(str(tmp_dir / "file-mutation-queue-b"), op_b),
+            with_file_mutation_queue(str(tmp_path / "file-mutation-queue-a"), op_a),
+            with_file_mutation_queue(str(tmp_path / "file-mutation-queue-b"), op_b),
         )
 
         assert order.index("a:start") < order.index("a:end")
@@ -56,9 +56,9 @@ class TestWithFileMutationQueue:
         assert order.index("b:start") < order.index("a:end")
 
     @pytest.mark.tonio
-    async def test_uses_the_same_queue_for_symlink_aliases(self, tmp_dir):
-        target_path = tmp_dir / "target.txt"
-        symlink_path = tmp_dir / "alias.txt"
+    async def test_uses_the_same_queue_for_symlink_aliases(self, tmp_path):
+        target_path = tmp_path / "target.txt"
+        symlink_path = tmp_path / "alias.txt"
         target_path.write_text("original")
         os.symlink(target_path, symlink_path)
 
@@ -81,9 +81,9 @@ class TestWithFileMutationQueue:
         assert order == ["target:start", "target:end", "alias:start", "alias:end"]
 
     @pytest.mark.tonio
-    async def test_serializes_concurrent_write_tool_calls_to_the_same_file(self, tmp_dir):
-        write_tool = create_write_tool(str(tmp_dir))
-        test_file = tmp_dir / "concurrent.txt"
+    async def test_serializes_concurrent_write_tool_calls_to_the_same_file(self, tmp_path):
+        write_tool = create_write_tool(str(tmp_path))
+        test_file = tmp_path / "concurrent.txt"
 
         await tonio.spawn(
             write_tool.execute("write-1", {"path": str(test_file), "content": "one\n" * 200}),

@@ -54,8 +54,8 @@ def env_var(name, value):
 
 
 @pytest.mark.tonio
-async def test_reads_and_resolves_stored_api_key_credentials(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_reads_and_resolves_stored_api_key_credentials(tmp_path):
+    auth_path = tmp_path / "auth.json"
     with env_var("TEST_AUTH_STORAGE_KEY", "environment-key"):
         write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "$TEST_AUTH_STORAGE_KEY"}})
         storage = await AuthStorage.create(str(auth_path))
@@ -63,8 +63,8 @@ async def test_reads_and_resolves_stored_api_key_credentials(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_resolves_command_backed_api_key_credentials(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_resolves_command_backed_api_key_credentials(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "!printf 'command-key'"}})
     storage = await AuthStorage.create(str(auth_path))
     assert await storage.read("anthropic") == ApiKeyCredential(key="command-key")
@@ -80,8 +80,8 @@ async def test_returns_oauth_credentials_unchanged():
 
 
 @pytest.mark.tonio
-async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(
         auth_path,
         {
@@ -99,8 +99,8 @@ async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tm
 
 
 @pytest.mark.tonio
-async def test_coalesces_file_reloads_across_concurrent_readers_and_storage_instances(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_coalesces_file_reloads_across_concurrent_readers_and_storage_instances(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
     first = await AuthStorage.create(str(auth_path))
     second = await AuthStorage.create(str(auth_path))
@@ -139,16 +139,16 @@ async def test_coalesces_file_reloads_across_concurrent_readers_and_storage_inst
 
 
 @pytest.mark.tonio
-async def test_creates_new_auth_files_with_owner_only_permissions(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_creates_new_auth_files_with_owner_only_permissions(tmp_path):
+    auth_path = tmp_path / "auth.json"
     await AuthStorage.create(str(auth_path))
 
     assert auth_path.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.tonio
-async def test_preserves_the_mode_of_an_existing_auth_file(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_preserves_the_mode_of_an_existing_auth_file(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
     auth_path.chmod(0o660)
     storage = await AuthStorage.create(str(auth_path))
@@ -162,8 +162,8 @@ async def test_preserves_the_mode_of_an_existing_auth_file(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_modify_persists_a_credential_while_preserving_unrelated_external_edits(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_modify_persists_a_credential_while_preserving_unrelated_external_edits(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
     storage = await AuthStorage.create(str(auth_path))
     write_auth_json(
@@ -183,8 +183,8 @@ async def test_modify_persists_a_credential_while_preserving_unrelated_external_
 
 
 @pytest.mark.tonio
-async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     storage = await AuthStorage.create(str(auth_path))
 
@@ -196,8 +196,8 @@ async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_dir)
 
 
 @pytest.mark.tonio
-async def test_serializes_concurrent_modifications(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_serializes_concurrent_modifications(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {})
     first = await AuthStorage.create(str(auth_path))
     second = await AuthStorage.create(str(auth_path))
@@ -217,8 +217,8 @@ async def test_serializes_concurrent_modifications(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_delete_removes_one_credential_while_preserving_others(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_delete_removes_one_credential_while_preserving_others(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(
         auth_path,
         {"anthropic": {"type": "api_key", "key": "anthropic-key"}, "openai": {"type": "api_key", "key": "openai-key"}},
@@ -257,8 +257,8 @@ async def test_in_memory_storage_implements_the_same_credential_store_behavior()
 
 
 @pytest.mark.tonio
-async def test_does_not_write_after_lock_acquisition_failure_and_recovers_on_retry(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_does_not_write_after_lock_acquisition_failure_and_recovers_on_retry(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     storage = await AuthStorage.create(str(auth_path))
 
@@ -289,8 +289,8 @@ async def test_does_not_write_after_lock_acquisition_failure_and_recovers_on_ret
 
 
 @pytest.mark.tonio
-async def test_pre_aborted_file_operations_do_not_create_the_backing_file_or_run_the_mutation(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_pre_aborted_file_operations_do_not_create_the_backing_file_or_run_the_mutation(tmp_path):
+    auth_path = tmp_path / "auth.json"
     backend = FileAuthStorageBackend(str(auth_path))
     controller = CancelToken()
     controller.cancel()
@@ -307,8 +307,8 @@ async def test_pre_aborted_file_operations_do_not_create_the_backing_file_or_run
 
 
 @pytest.mark.tonio
-async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mutation_later(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mutation_later(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     release = lockfile.lock_sync(str(auth_path), stale=30.0)
     backend = FileAuthStorageBackend(str(auth_path))
@@ -343,8 +343,8 @@ async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mut
 
 
 @pytest.mark.tonio
-async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_before_mutation(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_before_mutation(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     backend = FileAuthStorageBackend(str(auth_path))
     controller = CancelToken()
@@ -376,8 +376,8 @@ async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_befo
 
 
 @pytest.mark.tonio
-async def test_holds_the_file_lock_until_a_cancelled_active_callback_settles_without_committing_it(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_holds_the_file_lock_until_a_cancelled_active_callback_settles_without_committing_it(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     backend = FileAuthStorageBackend(str(auth_path))
     controller = CancelToken()
@@ -418,11 +418,11 @@ async def test_holds_the_file_lock_until_a_cancelled_active_callback_settles_wit
 
 
 @pytest.mark.tonio
-async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(tmp_dir):
+async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(tmp_path):
     """pi also asserts a single lock attempt; pidrei's coalesced shared reload
     (see `_read_latest_data`) completes detached after the release, so only
     the caller-visible semantics are asserted here."""
-    auth_path = tmp_dir / "auth.json"
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
     storage = await AuthStorage.create(str(auth_path))
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "new-value"}})
@@ -560,8 +560,8 @@ async def test_preserves_the_stored_credential_after_cancelling_an_active_refres
 
 
 @pytest.mark.tonio
-async def test_retries_a_briefly_contended_file_lock(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_retries_a_briefly_contended_file_lock(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     backend = FileAuthStorageBackend(str(auth_path))
     attempts = {"count": 0}
@@ -596,8 +596,8 @@ async def test_retries_a_briefly_contended_file_lock(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_surfaces_a_compromised_file_storage_lock(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_surfaces_a_compromised_file_storage_lock(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     backend = FileAuthStorageBackend(str(auth_path))
     calls = {"count": 0}
@@ -687,8 +687,8 @@ async def test_translates_a_credential_store_refresh_failure_and_allows_a_later_
 
 
 @pytest.mark.tonio
-async def test_does_not_overwrite_malformed_auth_files(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_does_not_overwrite_malformed_auth_files(tmp_path):
+    auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     storage = await AuthStorage.create(str(auth_path))
     auth_path.write_text("{invalid-json", encoding="utf-8")

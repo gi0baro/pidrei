@@ -6,8 +6,8 @@ from .cli_spawn_helpers import run_cli
 
 
 class TestSessionInvalidFileHandling:
-    def test_prints_a_friendly_error_and_preserves_non_session_file_content(self, tmp_dir):
-        temp_root = os.path.realpath(str(tmp_dir))
+    def test_prints_a_friendly_error_and_preserves_non_session_file_content(self, tmp_path):
+        temp_root = os.path.realpath(str(tmp_path))
         agent_dir = os.path.join(temp_root, "agent")
         project_dir = os.path.join(temp_root, "project")
         session_file = os.path.join(temp_root, "not-a-session.log")

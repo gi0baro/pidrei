@@ -14,12 +14,10 @@ from pidrei.modes.interactive.theme import (
 
 
 @pytest.fixture
-def agent_dir(tmp_dir, request):
-    """Plain-return, no yield: the theme lookups are async now, so this test
-    runs under `@pytest.mark.tonio`, which cannot wrap yield fixtures. That
-    rules out `tmp_path`/`monkeypatch`, so the env var is restored by a
-    finalizer instead."""
-    agent_dir = tmp_dir / "agent"
+def agent_dir(tmp_path, request):
+    """The env var is restored by a finalizer (predates tonio 0.9.14;
+    `monkeypatch` works in tonio tests now)."""
+    agent_dir = tmp_path / "agent"
     (agent_dir / "themes").mkdir(parents=True)
 
     previous = os.environ.get(ENV_AGENT_DIR)

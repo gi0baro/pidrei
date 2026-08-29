@@ -37,8 +37,8 @@ class TestRpcClientClone:
 
 class TestRpcClientChildProcessFailures:
     @pytest.mark.tonio
-    async def test_rejects_an_in_flight_request_when_the_child_process_exits(self, tmp_dir):
-        child_path = os.path.join(str(tmp_dir), "child.py")
+    async def test_rejects_an_in_flight_request_when_the_child_process_exits(self, tmp_path):
+        child_path = os.path.join(str(tmp_path), "child.py")
         with open(child_path, "w", encoding="utf-8") as handle:
             handle.write("import sys\nsys.stdin.readline()\nsys.exit(43)\n")
 
@@ -53,8 +53,8 @@ class TestRpcClientChildProcessFailures:
 
 class TestRpcClientEndToEnd:
     @pytest.mark.tonio
-    async def test_drives_the_spawned_cli_in_rpc_mode(self, tmp_dir):
-        temp_root = os.path.realpath(str(tmp_dir))
+    async def test_drives_the_spawned_cli_in_rpc_mode(self, tmp_path):
+        temp_root = os.path.realpath(str(tmp_path))
         agent_dir = os.path.join(temp_root, "agent")
         project_dir = os.path.join(temp_root, "project")
         os.makedirs(agent_dir, exist_ok=True)

@@ -5,7 +5,10 @@ does not supply one: when the wrapper is abandoned the child keeps running
 (measured — a `sleep 1.5` outlived a caller dropped at 0.2s), un-reaped, with
 its pipes still open. `subprocess.run(timeout=…)` kills and reaps. Porting a
 timed subprocess to tonio without this helper would trade "bounded and killed"
-for "unbounded and orphaned".
+for "unbounded and orphaned". (trio, which `tonio.run_process` credits, kills
+the child when the enclosing scope is cancelled; if `run_process` ever grows a
+`timeout=` and kill-on-abandon semantics upstream, this module can be deleted
+and call sites moved to it.)
 
 The shape: `reap()` owns `process.wait()` for the child's whole life — including
 past our return — while the caller waits on an `Event` with the deadline. So
@@ -112,7 +115,7 @@ async def run_command(
         """Owns `wait()` for the child's whole life, including past our return."""
         try:
             result["code"] = await process.wait()
-        except BaseException as error:  # e.g. TONIO_BUGS #7; surface it, don't KeyError
+        except BaseException as error:  # surface it, don't KeyError
             result["error"] = error
         finally:
             exited.set()
@@ -126,9 +129,10 @@ async def run_command(
         `escalate` runs detached, and an exception there is reported on stderr
         rather than to anyone who can act on it, so it is caught at the source.
 
-        `send_signal` also goes straight to `Popen`, deliberately: it never
-        touches tonio's `.returncode`/`.poll()`, which is what runs
-        `_close_pidfd` — the unguarded read-modify-write under TONIO_BUGS #7.
+        `send_signal` also goes straight to `Popen`, deliberately: the recycled
+        pid race above is `Popen`'s to arbitrate (its `poll()` holds the reap
+        lock), and going through tonio's `.returncode` would add nothing but
+        another layer to race against.
         """
         try:
             process.send_signal(sig)

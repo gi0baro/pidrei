@@ -10,11 +10,10 @@ from pidrei.modes.interactive.theme import get_theme_export_colors
 
 
 @pytest.fixture
-def agent_dir(tmp_dir, request):
-    """Plain-return, no yield: `get_theme_export_colors` is async now, so
-    these tests run under `@pytest.mark.tonio`, which cannot wrap yield
-    fixtures — ruling out `tmp_path`/`monkeypatch`."""
-    agent_dir = tmp_dir / "agent"
+def agent_dir(tmp_path, request):
+    """Env var restored via finalizer (predates tonio 0.9.14;
+    `monkeypatch` works in tonio tests now)."""
+    agent_dir = tmp_path / "agent"
     (agent_dir / "themes").mkdir(parents=True)
 
     previous = os.environ.get(ENV_AGENT_DIR)

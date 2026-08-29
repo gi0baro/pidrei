@@ -48,8 +48,7 @@ class _Client:
 def stub_http(request):
     """Install a fake shared_client and hand back the recorder.
 
-    Not `monkeypatch`: that is a yield fixture, which the tonio plugin cannot
-    wrap (Rust abort). Same reason as the server suite's `tmp_dir`.
+    Hand-rolled env restore (predates tonio 0.9.14; `monkeypatch` works now).
     """
     original = http_module.shared_client
     request.addfinalizer(lambda: setattr(http_module, "shared_client", original))

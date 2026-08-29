@@ -210,8 +210,8 @@ class TestSessionSelectorPathDeleteInteractions:
         await flush_promises()
 
     @pytest.mark.tonio
-    async def test_threads_sessions_when_parent_and_child_paths_use_different_symlink_aliases(self, tmp_dir):
-        paths = create_symlinked_session_paths(tmp_dir)
+    async def test_threads_sessions_when_parent_and_child_paths_use_different_symlink_aliases(self, tmp_path):
+        paths = create_symlinked_session_paths(tmp_path)
 
         sessions = [
             make_session(
@@ -260,8 +260,8 @@ class TestSessionSelectorPathDeleteInteractions:
         assert parent_one_index > child_two_index
 
     @pytest.mark.tonio
-    async def test_treats_the_current_session_as_active_across_symlink_aliases(self, tmp_dir):
-        paths = create_symlinked_session_paths(tmp_dir)
+    async def test_treats_the_current_session_as_active_across_symlink_aliases(self, tmp_path):
+        paths = create_symlinked_session_paths(tmp_path)
 
         sessions = [make_session(id="parent", path=paths["parentAliasB"], name="Parent")]
         selector = _make_selector(_loader(sessions), _loader([]), paths["parentAliasA"])

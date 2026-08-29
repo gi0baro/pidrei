@@ -42,8 +42,8 @@ async def _wait_for_invocations(operations: ControlledBashOperations, count: int
 
 
 @pytest.mark.tonio
-async def test_keeps_newer_bash_execution_tracked_when_an_older_execution_finishes(tmp_dir):
-    session = await create_agent_session(tmp_dir, stream_fn=abortable_stream_fn)
+async def test_keeps_newer_bash_execution_tracked_when_an_older_execution_finishes(tmp_path):
+    session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
     operations = ControlledBashOperations()
 
     # pi's executeBash reaches the stub exec synchronously, so invocation order
@@ -70,8 +70,8 @@ async def test_keeps_newer_bash_execution_tracked_when_an_older_execution_finish
 
 
 @pytest.mark.tonio
-async def test_aborts_all_active_bash_executions(tmp_dir):
-    session = await create_agent_session(tmp_dir, stream_fn=abortable_stream_fn)
+async def test_aborts_all_active_bash_executions(tmp_path):
+    session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
     operations = ControlledBashOperations()
 
     first_bash = tonio.spawn(session.execute_bash("first", None, {"operations": operations}))

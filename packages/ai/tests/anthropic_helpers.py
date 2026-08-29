@@ -68,7 +68,7 @@ async def capture_payload(
 
 @contextlib.contextmanager
 def _recording_transport():
-    """Record the headers the adapter builds (no yield fixtures: tonio)."""
+    """Record the headers the adapter builds (hand-rolled swap; predates tonio 0.9.14 yield-fixture support)."""
     recorded: list[dict[str, str]] = []
     original = anthropic_messages._PunkreqAnthropicClient
 

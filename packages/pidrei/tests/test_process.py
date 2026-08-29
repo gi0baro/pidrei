@@ -5,8 +5,8 @@ pi has no direct equivalent: it reaches these commands through `spawnSync` or a
 exceptions `subprocess.run` raises, and a deadline that is a *ceiling*, with the
 child dead afterwards rather than merely signalled.
 
-No yield fixtures (the tonio pytest plugin cannot wrap them), so temp dirs are
-made by hand and module state is restored in `finally`.
+Temp dirs are made by hand and module state restored in `finally` (predates
+tonio 0.9.14 yield-fixture support).
 
 **No test here asserts on elapsed time or waits a fixed margin.** The deadline
 properties are expressed structurally instead: a child that sleeps for a minute
@@ -37,12 +37,11 @@ from pidrei.utils.process import run_command
 #: set to 0.05s here, a hundredth of this — and exceeding it means the condition
 #: never came true rather than that the machine was slow.
 #:
-#: It is 5s rather than something roomier for an ugly reason, established by
-#: mutation testing: with a 30s bound, a *failing* run of the escalation test was
-#: reported as **passed** about half the time, its assertion lost while the body
-#: was apparently still running. At 5s the same mutation failed correctly every
-#: time. See TONIO_BUGS #9 — until that is understood, a wait in a test has to
-#: stay short enough to keep its own assertions alive.
+#: It is 5s rather than something roomier as plain hygiene: a wait a test never
+#: expects to exhaust should still be short enough that exhausting it fails the
+#: run promptly instead of parking the suite. (Historically load-bearing too — a
+#: runtime bug fixed in tonio 0.9.14 could silently end a run mid-wait, and 5s
+#: was what kept this file's assertions alive; the value stays on its merits.)
 _NEVER = 5.0
 
 #: Poll cadence. `interval` ticks on a fixed schedule rather than sleeping for
@@ -54,10 +53,7 @@ _POLL_S = 0.01
 #: seconds before passing (2026-08-09, both Linux jobs, right after the
 #: preceding test's PASSED line). It still passes, so the deadline contract
 #: holds; what is unclear is *why* waiting out the kill and the reap costs
-#: seconds there and 0.05s here. That matters more than the wall clock: the
-#: helpers are bounded at `_NEVER`, and TONIO_BUGS #9 showed that a wait long
-#: enough to approach that bound can lose the test's own assertions and be
-#: reported as a pass. A slow pass here is therefore not evidence of much, so
+#: seconds there and 0.05s here. A slow pass here is not evidence of much, so
 #: it buys nothing to keep paying for it on CI. The test keeps running
 #: locally, where a stall is visible and diagnosable. Remove once the CI cost
 #: is understood.

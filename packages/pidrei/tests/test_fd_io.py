@@ -5,8 +5,8 @@ primitives: a regular file goes through `fs.wrap_file`, a pipe can be driven by
 readiness or left on the pool, and in every case the descriptor comes back the
 way it was handed over — same blocking flag, still open.
 
-No yield fixtures (the tonio plugin cannot wrap them), so pipes and temp files
-are made and torn down by hand.
+Pipes and temp files are made and torn down by hand (predates tonio 0.9.14
+yield-fixture support).
 """
 
 import os
@@ -123,12 +123,6 @@ async def test_close_does_not_close_the_descriptor():
         os.close(fd)
 
 
-@pytest.mark.skip(
-    reason="HANG — TONIO_BUGS #10: the usual victim of the intermittent lost-wake wedge under full-suite load; "
-    "the file alone is green. Deselecting per run kept being forgotten; unskip only to chase the runtime bug. "
-    "Re-checked on tonio 0.9.6 (2026-08-09): still wedges — 3 of 9 full-suite runs unskipped, "
-    "and 1 of 9 with this skip in place, so the skip only lowers the rate."
-)
 @pytest.mark.tonio
 async def test_writer_fills_a_pipe_past_its_buffer_without_stalling_the_runtime():
     """A write far beyond the pipe buffer forces the `arm_w` path to actually

@@ -7,8 +7,8 @@ queued chunk has reached the stream, whichever path delivered it. A test double
 without a real fd exercises the pool path; a real pipe exercises the `arm_w`
 readiness path.
 
-No yield fixtures (the tonio pytest plugin cannot wrap them), so each test does
-its own setup/teardown around `take_over_stdout`.
+Each test does its own setup/teardown around `take_over_stdout` (predates
+tonio 0.9.14 yield-fixture support).
 """
 
 import os

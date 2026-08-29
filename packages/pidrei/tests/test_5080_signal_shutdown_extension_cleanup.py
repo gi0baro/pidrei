@@ -33,7 +33,7 @@ class ProcessExitError(Exception):
 
 @contextlib.contextmanager
 def _stubbed_exit():
-    """No yield fixtures under tonio; a context manager instead."""
+    """Context manager (predates tonio 0.9.14 yield-fixture support)."""
     original = os._exit
 
     def fake_exit(_code: int) -> None:

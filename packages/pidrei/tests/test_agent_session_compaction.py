@@ -50,11 +50,11 @@ def _make_llm_stream_fn(*, summary_text="## Goal\nSummarized work.", answer_pref
     return stream_fn, state
 
 
-async def _create_session(tmp_dir, *, in_memory=False, stream_fn=None, state=None, settings_overrides=None):
+async def _create_session(tmp_path, *, in_memory=False, stream_fn=None, state=None, settings_overrides=None):
     if stream_fn is None:
         stream_fn, state = _make_llm_stream_fn()
     session = await create_agent_session(
-        tmp_dir,
+        tmp_path,
         stream_fn=stream_fn,
         in_memory_session=in_memory,
         settings_overrides=settings_overrides or {"compaction": {"keepRecentTokens": 1}},
@@ -67,8 +67,8 @@ async def _create_session(tmp_dir, *, in_memory=False, stream_fn=None, state=Non
 
 class TestCompaction:
     @pytest.mark.tonio
-    async def test_triggers_manual_compaction_via_compact(self, tmp_dir):
-        session, _sm, _events, _state = await _create_session(tmp_dir)
+    async def test_triggers_manual_compaction_via_compact(self, tmp_path):
+        session, _sm, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("What is 2+2? Reply with just the number.")
         await session.agent.wait_for_idle()
@@ -89,7 +89,7 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_manually_compacts_with_provider_resolved_bearer_auth(self, tmp_dir):
+    async def test_manually_compacts_with_provider_resolved_bearer_auth(self, tmp_path):
         # pi asserts inside its faux responder; here the canned summarizer
         # records the summarization (context, options) and the asserts run
         # after — same observable request auth. Auto-compaction is off because
@@ -97,7 +97,7 @@ class TestCompaction:
         # directly), and keepRecentTokens=1 would auto-compact mid-seed.
         stream_fn, state = _make_llm_stream_fn(summary_text="summary with bearer auth")
         session = await create_agent_session(
-            str(tmp_dir),
+            str(tmp_path),
             stream_fn=stream_fn,
             settings_overrides={"compaction": {"enabled": False, "keepRecentTokens": 1}},
             system_prompt="You are a helpful assistant. Be concise.",
@@ -139,8 +139,8 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_uses_the_standalone_compaction_request_context(self, tmp_dir):
-        session, _sm, _events, state = await _create_session(tmp_dir)
+    async def test_uses_the_standalone_compaction_request_context(self, tmp_path):
+        session, _sm, _events, state = await _create_session(tmp_path)
 
         transform_calls: list = []
 
@@ -172,8 +172,8 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_maintains_valid_session_state_after_compaction(self, tmp_dir):
-        session, _sm, _events, _state = await _create_session(tmp_dir)
+    async def test_maintains_valid_session_state_after_compaction(self, tmp_path):
+        session, _sm, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("What is the capital of France? One word answer.")
         await session.agent.wait_for_idle()
@@ -193,8 +193,8 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_persists_compaction_to_session_file(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_persists_compaction_to_session_file(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("Say hello")
         await session.agent.wait_for_idle()
@@ -215,8 +215,8 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_works_with_no_session_mode_in_memory_only(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir, in_memory=True)
+    async def test_works_with_no_session_mode_in_memory_only(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path, in_memory=True)
 
         await session.prompt("What is 2+2? Reply with just the number.")
         await session.agent.wait_for_idle()
@@ -234,8 +234,8 @@ class TestCompaction:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_emits_compaction_events_during_manual_compaction(self, tmp_dir):
-        session, _sm, events, _state = await _create_session(tmp_dir)
+    async def test_emits_compaction_events_during_manual_compaction(self, tmp_path):
+        session, _sm, events, _state = await _create_session(tmp_path)
 
         await session.prompt("Say hello")
         await session.agent.wait_for_idle()
@@ -258,8 +258,8 @@ class TestCompaction:
 
 class TestTreeNavigation:
     @pytest.mark.tonio
-    async def test_navigates_to_user_message_and_puts_text_in_editor(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_navigates_to_user_message_and_puts_text_in_editor(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("First message")
         await session.agent.wait_for_idle()
@@ -282,8 +282,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_navigates_to_non_user_message_without_editor_text(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_navigates_to_non_user_message_without_editor_text(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("Hello")
         await session.agent.wait_for_idle()
@@ -302,8 +302,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_creates_branch_summary_when_navigating_with_summarize(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_creates_branch_summary_when_navigating_with_summarize(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("What is 2+2?")
         await session.agent.wait_for_idle()
@@ -329,8 +329,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_attaches_summary_to_correct_parent_for_nested_user_message(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_attaches_summary_to_correct_parent_for_nested_user_message(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("Message one")
         await session.agent.wait_for_idle()
@@ -364,8 +364,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_attaches_summary_to_selected_node_for_assistant_message(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_attaches_summary_to_selected_node_for_assistant_message(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("Hello")
         await session.agent.wait_for_idle()
@@ -391,7 +391,7 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_handles_abort_during_summarization(self, tmp_dir):
+    async def test_handles_abort_during_summarization(self, tmp_path):
         base_stream_fn, state = _make_llm_stream_fn()
 
         async def stream_fn(model, context, options=None):
@@ -414,7 +414,7 @@ class TestTreeNavigation:
                 return stream
             return await base_stream_fn(model, context, options)
 
-        session, session_manager, _events, _state = await _create_session(tmp_dir, stream_fn=stream_fn, state=state)
+        session, session_manager, _events, _state = await _create_session(tmp_path, stream_fn=stream_fn, state=state)
 
         await session.prompt("Tell me about something")
         await session.agent.wait_for_idle()
@@ -448,8 +448,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_does_not_create_summary_when_navigating_without_summarize(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_does_not_create_summary_when_navigating_without_summarize(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("First")
         await session.agent.wait_for_idle()
@@ -468,8 +468,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_handles_navigation_to_same_position_noop(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir)
+    async def test_handles_navigation_to_same_position_noop(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path)
 
         await session.prompt("Hello")
         await session.agent.wait_for_idle()
@@ -486,9 +486,9 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_supports_custom_summarization_instructions(self, tmp_dir):
+    async def test_supports_custom_summarization_instructions(self, tmp_path):
         stream_fn, state = _make_llm_stream_fn()
-        session, session_manager, _events, state = await _create_session(tmp_dir, stream_fn=stream_fn, state=state)
+        session, session_manager, _events, state = await _create_session(tmp_path, stream_fn=stream_fn, state=state)
 
         await session.prompt("What is TypeScript?")
         await session.agent.wait_for_idle()
@@ -508,8 +508,8 @@ class TestTreeNavigation:
         session.dispose()
 
     @pytest.mark.tonio
-    async def test_navigates_between_branches_correctly(self, tmp_dir):
-        session, session_manager, _events, _state = await _create_session(tmp_dir, settings_overrides={})
+    async def test_navigates_between_branches_correctly(self, tmp_path):
+        session, session_manager, _events, _state = await _create_session(tmp_path, settings_overrides={})
 
         await session.prompt("Main branch start")
         await session.agent.wait_for_idle()

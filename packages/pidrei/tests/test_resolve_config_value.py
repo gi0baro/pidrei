@@ -4,9 +4,9 @@ pi's final test ("uses stdin when the configured Windows shell requires it")
 exercises the win32 configured-shell path, which is not ported.
 
 Resolution is async now (a `!cmd` runs through `utils.process.run_command`
-rather than a blocking-pool thread), so these are tonio tests — which rules out
-`monkeypatch` and `tmp_path`, both yield fixtures the plugin cannot wrap. Env
-vars and temp directories are therefore managed by hand.
+rather than a blocking-pool thread), so these are tonio tests. Env
+vars and temp directories are managed by hand (predates tonio 0.9.14;
+`monkeypatch`/`tmp_path` work in tonio tests now).
 """
 
 import os

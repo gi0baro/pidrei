@@ -342,7 +342,7 @@ def reset_codex_state() -> None:
 
 @pytest.fixture(autouse=True)
 def _codex_state(request):
-    # A finalizer, not a yield fixture: yield fixtures abort under @pytest.mark.tonio.
+    # A finalizer (predates tonio 0.9.14 yield-fixture support; equivalent either way).
     reset_codex_state()
     request.addfinalizer(reset_codex_state)
 

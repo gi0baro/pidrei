@@ -23,12 +23,11 @@ from tests.model_runtime_helpers import make_model
 
 
 @pytest.fixture
-def models_json(tmp_dir):
-    """`tmp_dir`, not `tmp_path`: the latter is a yield fixture, which the tonio
-    plugin cannot wrap (Rust abort). See conftest."""
+def models_json(tmp_path):
+    """Standard `tmp_path` (the pre-tonio-0.9.14 yield-fixture ban is gone)."""
 
     def write(config: dict) -> str:
-        path = os.path.join(str(tmp_dir), "models.json")
+        path = os.path.join(str(tmp_path), "models.json")
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(config, handle)
         return path

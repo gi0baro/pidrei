@@ -34,8 +34,8 @@ def _read_session_info_names(session_file: str) -> list[str]:
     return [entry.get("name", "") for entry in entries if entry.get("type") == "session_info"]
 
 
-def _setup(tmp_dir) -> dict[str, str]:
-    temp_root = os.path.realpath(str(tmp_dir))
+def _setup(tmp_path) -> dict[str, str]:
+    temp_root = os.path.realpath(str(tmp_path))
     dirs = {
         "agent_dir": os.path.join(temp_root, "agent"),
         "project_dir": os.path.join(temp_root, "project"),
@@ -48,8 +48,8 @@ def _setup(tmp_dir) -> dict[str, str]:
 
 
 class TestStartupSessionName:
-    def test_sets_name_on_the_selected_session_before_runtime_model_validation(self, tmp_dir):
-        dirs = _setup(tmp_dir)
+    def test_sets_name_on_the_selected_session_before_runtime_model_validation(self, tmp_path):
+        dirs = _setup(tmp_path)
         result = run_cli(
             [
                 "--session",
@@ -68,8 +68,8 @@ class TestStartupSessionName:
         assert result.code == 1
         assert _read_session_info_names(dirs["session_file"]) == ["CLI Named Session"]
 
-    def test_rejects_empty_name_values_without_appending_session_metadata(self, tmp_dir):
-        dirs = _setup(tmp_dir)
+    def test_rejects_empty_name_values_without_appending_session_metadata(self, tmp_path):
+        dirs = _setup(tmp_path)
         result = run_cli(
             ["--session", dirs["session_file"], "--name", "   ", "--model", "missing-model", "-p", "hi"],
             cwd=dirs["project_dir"],

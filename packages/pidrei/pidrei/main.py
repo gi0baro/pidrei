@@ -918,6 +918,8 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         print_timings()
         await run_rpc_mode(runtime)
     elif app_mode == "interactive":
+        # Permanent by tonio's design (its author ruled unstarted coroutines
+        # unreachable for cleanup — do not wait for an upstream fix):
         # tonio abandons coroutines by design in several places — `select`
         # never starts the losing competitors' wrappers, `Scope` teardown and
         # `time.timeout` drop what they cancel — and CPython's finalizer then

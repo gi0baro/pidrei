@@ -13,8 +13,8 @@ from tests.model_runtime_helpers import make_model
 
 
 @pytest.mark.tonio
-async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writing_later(tmp_dir):
-    path = str(tmp_dir / "models-store.json")
+async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writing_later(tmp_path):
+    path = str(tmp_path / "models-store.json")
     entry_one = ModelsStoreEntry(models=[make_model("one", "existing")])
     store = FileModelsStore(path)
     await store.write("one", entry_one)
@@ -42,14 +42,14 @@ async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writ
     release()
     await tonio.time.sleep(0.15)
 
-    stored = json.loads((tmp_dir / "models-store.json").read_text(encoding="utf-8"))
+    stored = json.loads((tmp_path / "models-store.json").read_text(encoding="utf-8"))
     assert "one" in stored
     assert "two" not in stored
 
 
 @pytest.mark.tonio
-async def test_preserves_the_mode_of_an_existing_models_file(tmp_dir):
-    managed_path = tmp_dir / "managed-mode.json"
+async def test_preserves_the_mode_of_an_existing_models_file(tmp_path):
+    managed_path = tmp_path / "managed-mode.json"
     managed_path.write_text("{}", encoding="utf-8")
     managed_path.chmod(0o660)
     store = FileModelsStore(str(managed_path))
@@ -60,8 +60,8 @@ async def test_preserves_the_mode_of_an_existing_models_file(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_persists_provider_catalogs_without_replacing_unrelated_providers(tmp_dir):
-    path = str(tmp_dir / "models-store.json")
+async def test_persists_provider_catalogs_without_replacing_unrelated_providers(tmp_path):
+    path = str(tmp_path / "models-store.json")
     store = FileModelsStore(path)
 
     await store.write("one", ModelsStoreEntry(models=[make_model("one", "m1")], checked_at=100))

@@ -724,8 +724,8 @@ class TestCreateBranchedSession:
         assert [e["id"] for e in entries] == [id1, id2, id4, id5]
 
     @pytest.mark.tonio
-    async def test_does_not_duplicate_entries_when_forking_from_first_user_message(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_does_not_duplicate_entries_when_forking_from_first_user_message(self, tmp_path):
+        temp_dir = str(tmp_path)
         session = await SessionManager.create(temp_dir, temp_dir)
         id1 = await session.append_message(user_msg("first question"))
         await session.append_message(assistant_msg("first answer"))
@@ -757,8 +757,8 @@ class TestCreateBranchedSession:
         assert len(set(entry_ids)) == len(entry_ids)
 
     @pytest.mark.tonio
-    async def test_preserves_tool_and_summary_usage_across_file_backed_reload(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_preserves_tool_and_summary_usage_across_file_backed_reload(self, tmp_path):
+        temp_dir = str(tmp_path)
         session = await SessionManager.create(temp_dir, temp_dir)
         root_id = await session.append_message(user_msg("question"))
         await session.append_message(assistant_msg("answer"))
@@ -781,13 +781,13 @@ class TestCreateBranchedSession:
         assert tool_entry["message"].usage == usage
 
     @pytest.mark.tonio
-    async def test_persists_dataclass_tool_details_to_file_backed_sessions(self, tmp_dir):
+    async def test_persists_dataclass_tool_details_to_file_backed_sessions(self, tmp_path):
         # Regression: the interactive edit tool returns an `EditToolDetails`
         # dataclass; file-backed persistence used to hand it to `json.dumps`
         # raw ("Object of type EditToolDetails is not JSON serializable"),
         # which only surfaced outside the in-memory sessions tests use. It
         # must land as pi's plain camelCase object and reload as a dict.
-        temp_dir = str(tmp_dir)
+        temp_dir = str(tmp_path)
         session = await SessionManager.create(temp_dir, temp_dir)
         await session.append_message(user_msg("edit this file"))
         await session.append_message(assistant_msg("editing"))
@@ -817,7 +817,7 @@ class TestCreateBranchedSession:
         assert tool_entry["message"].details == {"diff": "- old\n+ new", "patch": "@@ -1 +1 @@", "firstChangedLine": 1}
 
     @pytest.mark.tonio
-    async def test_persists_dataclass_extension_payloads_to_file_backed_sessions(self, tmp_dir):
+    async def test_persists_dataclass_extension_payloads_to_file_backed_sessions(self, tmp_path):
         # Same family as the EditToolDetails regression: extension-provided
         # custom-entry `data`, custom-message `details` and content blocks are
         # `Any` and may arrive as dataclasses; they must land as pi's plain
@@ -831,7 +831,7 @@ class TestCreateBranchedSession:
             plan_name: str
             step_count: int
 
-        temp_dir = str(tmp_dir)
+        temp_dir = str(tmp_path)
         session = await SessionManager.create(temp_dir, temp_dir)
         await session.append_message(user_msg("go"))
         await session.append_message(assistant_msg("ok"))
@@ -855,8 +855,8 @@ class TestCreateBranchedSession:
         assert custom_message["details"] == {"planName": "plan", "stepCount": 3}
 
     @pytest.mark.tonio
-    async def test_writes_file_immediately_when_forking_from_point_with_assistant(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_writes_file_immediately_when_forking_from_point_with_assistant(self, tmp_path):
+        temp_dir = str(tmp_path)
         session = await SessionManager.create(temp_dir, temp_dir)
         await session.append_message(user_msg("first question"))
         id2 = await session.append_message(assistant_msg("first answer"))
@@ -1019,8 +1019,8 @@ class TestCustomSessionId:
         assert session.get_header()["id"] == session.get_session_id()
 
     @pytest.mark.tonio
-    async def test_uses_provided_id_when_creating_persisted_session(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_uses_provided_id_when_creating_persisted_session(self, tmp_path):
+        temp_dir = str(tmp_path)
         session = await SessionManager.create(temp_dir, temp_dir, {"id": "created-session-id"})
 
         assert session.get_session_id() == "created-session-id"
@@ -1044,8 +1044,8 @@ class TestCustomSessionId:
         assert session.get_header()["id"] == session.get_session_id()
 
     @pytest.mark.tonio
-    async def test_generates_uuidv7_when_forking_from_session_file(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_generates_uuidv7_when_forking_from_session_file(self, tmp_path):
+        temp_dir = str(tmp_path)
         source_path = os.path.join(temp_dir, "source.jsonl")
         lines = [
             json.dumps(
@@ -1093,8 +1093,8 @@ class TestCustomSessionId:
         assert header["parentSession"] == source_path
 
     @pytest.mark.tonio
-    async def test_uses_provided_id_when_forking_from_session_file(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_uses_provided_id_when_forking_from_session_file(self, tmp_path):
+        temp_dir = str(tmp_path)
         source_path = os.path.join(temp_dir, "source.jsonl")
         with open(source_path, "w", encoding="utf-8") as handle:
             handle.write(
@@ -1188,8 +1188,8 @@ class TestLoadEntriesFromFile:
         ids=["leading-blank-lines", "leading-malformed-lines", "multi-buffer-header"],
     )
     @pytest.mark.tonio
-    async def test_reads_cwd_from_session_headers(self, tmp_dir, prefix, session_id):
-        temp_dir = str(tmp_dir)
+    async def test_reads_cwd_from_session_headers(self, tmp_path, prefix, session_id):
+        temp_dir = str(tmp_path)
         file = os.path.join(temp_dir, "header.jsonl")
         stored_cwd = os.path.join(temp_dir, "stored-project")
         _write_session_header(file, stored_cwd, session_id, prefix)
@@ -1199,8 +1199,8 @@ class TestLoadEntriesFromFile:
         assert session_manager.get_cwd() == stored_cwd
 
     @pytest.mark.tonio
-    async def test_opens_compatible_sessions_beyond_discovery_scan_limit(self, tmp_dir):
-        temp_dir = str(tmp_dir)
+    async def test_opens_compatible_sessions_beyond_discovery_scan_limit(self, tmp_path):
+        temp_dir = str(tmp_path)
         stored_cwd = os.path.join(temp_dir, "stored-project")
         override_cwd = os.path.join(temp_dir, "override-project")
         cases = [
@@ -1217,11 +1217,11 @@ class TestLoadEntriesFromFile:
                 assert session_manager.get_cwd() == (cwd_override if cwd_override is not None else stored_cwd)
 
     @pytest.mark.tonio
-    async def test_opens_session_files_with_many_chunks(self, tmp_dir):
+    async def test_opens_session_files_with_many_chunks(self, tmp_path):
         # pi's mirror writes past Node's max string length to prove chunked
         # reading; Python has no string cap, so a multi-buffer sparse file
         # exercises the same chunked line-splitting path at reduced cost.
-        temp_dir = str(tmp_dir)
+        temp_dir = str(tmp_path)
         file = os.path.join(temp_dir, "large.jsonl")
         with open(file, "w") as handle:
             handle.write('{"type":"session","version":3,"id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
@@ -1320,34 +1320,34 @@ async def _create_persisted_session(cwd: str, session_dir: str, label: str) -> s
 
 
 @pytest.mark.tonio
-async def test_scopes_current_folder_apis_by_cwd_while_listing_all_flat_sessions(tmp_dir):
-    tmp_dir = str(tmp_dir)
-    project_a = os.path.join(tmp_dir, "project-a")
-    project_b = os.path.join(tmp_dir, "project-b")
+async def test_scopes_current_folder_apis_by_cwd_while_listing_all_flat_sessions(tmp_path):
+    tmp_path = str(tmp_path)
+    project_a = os.path.join(tmp_path, "project-a")
+    project_b = os.path.join(tmp_path, "project-b")
     os.makedirs(project_a)
     os.makedirs(project_b)
 
-    session_a = await _create_persisted_session(project_a, tmp_dir, "from A")
+    session_a = await _create_persisted_session(project_a, tmp_path, "from A")
     await tonio.time.sleep(0.01)
-    session_b = await _create_persisted_session(project_b, tmp_dir, "from B")
+    session_b = await _create_persisted_session(project_b, tmp_path, "from B")
 
-    current_a = await SessionManager.list(project_a, tmp_dir)
+    current_a = await SessionManager.list(project_a, tmp_path)
     assert [session.path for session in current_a] == [session_a]
 
-    all_sessions = await SessionManager.list_all(tmp_dir)
+    all_sessions = await SessionManager.list_all(tmp_path)
     assert {session.path for session in all_sessions} == {session_a, session_b}
 
-    continued_a = await SessionManager.continue_recent(project_a, tmp_dir)
+    continued_a = await SessionManager.continue_recent(project_a, tmp_path)
     assert continued_a.get_session_file() == session_a
 
 
 class TestSetSessionFileCorrupted:
     @pytest.mark.tonio
-    async def test_truncates_and_rewrites_empty_file_with_valid_header(self, tmp_dir):
-        empty_file = os.path.join(str(tmp_dir), "empty.jsonl")
+    async def test_truncates_and_rewrites_empty_file_with_valid_header(self, tmp_path):
+        empty_file = os.path.join(str(tmp_path), "empty.jsonl")
         open(empty_file, "w").close()
 
-        sm = await SessionManager.open(empty_file, str(tmp_dir))
+        sm = await SessionManager.open(empty_file, str(tmp_path))
 
         assert sm.get_session_id()
         assert sm.get_header() is not None
@@ -1361,8 +1361,8 @@ class TestSetSessionFileCorrupted:
         assert header["id"] == sm.get_session_id()
 
     @pytest.mark.tonio
-    async def test_throws_and_preserves_non_empty_file_without_valid_header(self, tmp_dir):
-        no_header_file = os.path.join(str(tmp_dir), "no-header.jsonl")
+    async def test_throws_and_preserves_non_empty_file_without_valid_header(self, tmp_path):
+        no_header_file = os.path.join(str(tmp_path), "no-header.jsonl")
         original_content = (
             '{"type":"message","id":"abc","parentId":"orphaned","timestamp":"2025-01-01T00:00:00Z",'
             '"message":{"role":"assistant","content":"test"}}\n'
@@ -1371,39 +1371,39 @@ class TestSetSessionFileCorrupted:
             handle.write(original_content)
 
         with pytest.raises(Exception, match="Session file is not a valid pidrei session"):
-            await SessionManager.open(no_header_file, str(tmp_dir))
+            await SessionManager.open(no_header_file, str(tmp_path))
         with open(no_header_file, encoding="utf-8") as handle:
             assert handle.read() == original_content
 
     @pytest.mark.tonio
-    async def test_throws_and_preserves_non_session_jsonl_files(self, tmp_dir):
-        non_session_file = os.path.join(str(tmp_dir), "not-a-session.log")
+    async def test_throws_and_preserves_non_session_jsonl_files(self, tmp_path):
+        non_session_file = os.path.join(str(tmp_path), "not-a-session.log")
         original_content = '{"type":"event","data":"not a session"}\n'
         with open(non_session_file, "w") as handle:
             handle.write(original_content)
 
         with pytest.raises(Exception, match="Session file is not a valid pidrei session"):
-            await SessionManager.open(non_session_file, str(tmp_dir))
+            await SessionManager.open(non_session_file, str(tmp_path))
         with open(non_session_file, encoding="utf-8") as handle:
             assert handle.read() == original_content
 
     @pytest.mark.tonio
-    async def test_preserves_explicit_session_file_path_when_recovering(self, tmp_dir):
-        explicit_path = os.path.join(str(tmp_dir), "my-session.jsonl")
+    async def test_preserves_explicit_session_file_path_when_recovering(self, tmp_path):
+        explicit_path = os.path.join(str(tmp_path), "my-session.jsonl")
         open(explicit_path, "w").close()
 
-        sm = await SessionManager.open(explicit_path, str(tmp_dir))
+        sm = await SessionManager.open(explicit_path, str(tmp_path))
         assert sm.get_session_file() == explicit_path
 
     @pytest.mark.tonio
-    async def test_subsequent_loads_of_initialized_empty_file_work(self, tmp_dir):
-        empty_file = os.path.join(str(tmp_dir), "empty.jsonl")
+    async def test_subsequent_loads_of_initialized_empty_file_work(self, tmp_path):
+        empty_file = os.path.join(str(tmp_path), "empty.jsonl")
         open(empty_file, "w").close()
 
-        sm1 = await SessionManager.open(empty_file, str(tmp_dir))
+        sm1 = await SessionManager.open(empty_file, str(tmp_path))
         session_id = sm1.get_session_id()
 
-        sm2 = await SessionManager.open(empty_file, str(tmp_dir))
+        sm2 = await SessionManager.open(empty_file, str(tmp_path))
         assert sm2.get_session_id() == session_id
         assert sm2.get_header()["type"] == "session"
 

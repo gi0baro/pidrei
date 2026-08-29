@@ -13,15 +13,15 @@ BOM = "﻿"
 
 
 @pytest.mark.tonio
-async def test_loads_frontmatter_and_settings_with_a_leading_bom(tmp_dir):
+async def test_loads_frontmatter_and_settings_with_a_leading_bom(tmp_path):
     assert split_bom(f"{BOM}content") == (BOM, "content")
     document = "---\nname: demo\ndescription: Test\n---\nBody"
     parsed = parse_frontmatter(f"{BOM}{document}")
     assert parsed.frontmatter == {"name": "demo", "description": "Test"}
     assert parsed.body == "Body"
 
-    agent_dir = tmp_dir / "agent"
-    project_dir = tmp_dir / "project"
+    agent_dir = tmp_path / "agent"
+    project_dir = tmp_path / "project"
     (project_dir / ".pidrei").mkdir(parents=True)
     agent_dir.mkdir(parents=True)
     global_settings_path = agent_dir / "settings.json"

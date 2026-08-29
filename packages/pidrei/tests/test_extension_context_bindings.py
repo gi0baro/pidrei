@@ -30,7 +30,7 @@ async def _stream_fn(_model, _context, options=None) -> AssistantMessageEventStr
 
 @contextlib.contextmanager
 def _recording_bind_core():
-    """Capture the dicts the session binds (no yield fixtures: tonio)."""
+    """Capture the dicts the session binds (hand-rolled; predates tonio 0.9.14 yield-fixture support)."""
     captured: dict[str, dict] = {}
     original = ExtensionRunner.bind_core
 
@@ -67,9 +67,9 @@ def _zero_argument_entries(entries: dict) -> dict:
 
 
 @pytest.mark.tonio
-async def test_every_zero_argument_extension_context_entry_returns_a_value(tmp_dir):
+async def test_every_zero_argument_extension_context_entry_returns_a_value(tmp_path):
     with _recording_bind_core() as captured:
-        await create_agent_session(tmp_dir, stream_fn=_stream_fn)
+        await create_agent_session(tmp_path, stream_fn=_stream_fn)
 
     assert captured, "AgentSession must bind the extension core"
     context_actions = captured["context_actions"]
@@ -83,9 +83,9 @@ async def test_every_zero_argument_extension_context_entry_returns_a_value(tmp_d
 
 
 @pytest.mark.tonio
-async def test_every_zero_argument_extension_action_returns_a_value(tmp_dir):
+async def test_every_zero_argument_extension_action_returns_a_value(tmp_path):
     with _recording_bind_core() as captured:
-        await create_agent_session(tmp_dir, stream_fn=_stream_fn)
+        await create_agent_session(tmp_path, stream_fn=_stream_fn)
 
     for name, entry in _zero_argument_entries(captured["actions"]).items():
         result = entry()
@@ -93,9 +93,9 @@ async def test_every_zero_argument_extension_action_returns_a_value(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_every_extension_context_read_accessor_resolves(tmp_dir):
+async def test_every_extension_context_read_accessor_resolves(tmp_path):
     """The same seam from the extension's side: the context object's accessors."""
-    session = await create_agent_session(tmp_dir, stream_fn=_stream_fn)
+    session = await create_agent_session(tmp_path, stream_fn=_stream_fn)
     context = session._extension_runner.create_command_context()
 
     properties = [

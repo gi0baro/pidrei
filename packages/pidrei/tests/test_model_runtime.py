@@ -448,13 +448,13 @@ class TestExtensionProviderModelLifecycle:
         assert registry.get_provider("extension-native") is None
 
     @pytest.mark.tonio
-    async def test_preserves_native_deferred_methods_through_provider_overlays(self, tmp_dir):
+    async def test_preserves_native_deferred_methods_through_provider_overlays(self, tmp_path):
         import json
 
         from pidrei_ai.types import DeferredHandle, DoneEvent, StartEvent, Usage
         from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
-        models_path = tmp_dir / "models.json"
+        models_path = tmp_path / "models.json"
         models_path.write_text(
             json.dumps({"providers": {"extension-native-deferred": {"baseUrl": "https://overlay.test/v1"}}}),
             encoding="utf-8",
@@ -547,10 +547,10 @@ class TestExtensionProviderModelLifecycle:
         assert fetched["cancel_options"].headers == {"X-Transformed": "cancel"}
 
     @pytest.mark.tonio
-    async def test_applies_models_json_overrides_above_native_providers(self, tmp_dir):
+    async def test_applies_models_json_overrides_above_native_providers(self, tmp_path):
         import json
 
-        models_path = tmp_dir / "models.json"
+        models_path = tmp_path / "models.json"
         models_path.write_text(
             json.dumps({"providers": {"extension-native": {"modelOverrides": {"native": {"contextWindow": 4242}}}}}),
             encoding="utf-8",

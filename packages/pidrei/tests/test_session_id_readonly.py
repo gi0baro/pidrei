@@ -40,10 +40,10 @@ def _write_session(session_dir: str, cwd: str, session_id: str) -> None:
 
 
 class _Dirs:
-    def __init__(self, tmp_dir):
+    def __init__(self, tmp_path):
         # realpath: session cwd filtering compares paths textually, so the
         # fixture must use physical paths (pi has the same macOS note).
-        temp_root = os.path.realpath(str(tmp_dir))
+        temp_root = os.path.realpath(str(tmp_path))
         self.agent_dir = os.path.join(temp_root, "agent")
         self.project_dir = os.path.join(temp_root, "project")
         self.session_dir = os.path.join(temp_root, "sessions")
@@ -52,15 +52,15 @@ class _Dirs:
 
 
 class TestSessionIdReadOnlyCommands:
-    def test_does_not_reserve_a_session_for_help(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_does_not_reserve_a_session_for_help(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         result = run_cli(["--session-id", "read-only-help", "--help"], cwd=dirs.project_dir, agent_dir=dirs.agent_dir)
 
         assert result.code == 0
         assert not _has_session_with_id(os.path.join(dirs.agent_dir, "sessions"), "read-only-help")
 
-    def test_allows_no_session_with_session_id(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_allows_no_session_with_session_id(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         result = run_cli(
             ["--no-session", "--session-id", "ephemeral-id", "--help"],
             cwd=dirs.project_dir,
@@ -70,8 +70,8 @@ class TestSessionIdReadOnlyCommands:
         assert result.code == 0
         assert not _has_session_with_id(os.path.join(dirs.agent_dir, "sessions"), "ephemeral-id")
 
-    def test_does_not_reserve_a_session_for_list_models(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_does_not_reserve_a_session_for_list_models(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         result = run_cli(
             ["--session-id", "read-only-models", "--list-models"],
             cwd=dirs.project_dir,
@@ -81,8 +81,8 @@ class TestSessionIdReadOnlyCommands:
         assert result.code == 0
         assert not _has_session_with_id(os.path.join(dirs.agent_dir, "sessions"), "read-only-models")
 
-    def test_warns_when_a_missing_session_id_creates_a_new_session(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_warns_when_a_missing_session_id_creates_a_new_session(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         result = run_cli(
             [
                 "--session-dir",
@@ -104,8 +104,8 @@ class TestSessionIdReadOnlyCommands:
             "creating a new session with that id." in result.stderr
         )
 
-    def test_does_not_warn_when_session_id_opens_an_existing_session(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_does_not_warn_when_session_id_opens_an_existing_session(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         os.makedirs(dirs.session_dir, exist_ok=True)
         _write_session(dirs.session_dir, dirs.project_dir, "existing-session-id")
         result = run_cli(
@@ -126,8 +126,8 @@ class TestSessionIdReadOnlyCommands:
         assert result.code == 1
         assert "No project session found with id 'existing-session-id'" not in result.stderr
 
-    def test_rejects_an_existing_fork_target_session_id(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_rejects_an_existing_fork_target_session_id(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         os.makedirs(dirs.session_dir, exist_ok=True)
         _write_session(dirs.session_dir, dirs.project_dir, "source-id")
         _write_session(dirs.session_dir, dirs.project_dir, "existing-id")
@@ -142,8 +142,8 @@ class TestSessionIdReadOnlyCommands:
 
 
 class TestSessionIdValidation:
-    def test_rejects_ids_invalid_under_session_manager_rules_without_stack_traces(self, tmp_dir):
-        dirs = _Dirs(tmp_dir)
+    def test_rejects_ids_invalid_under_session_manager_rules_without_stack_traces(self, tmp_path):
+        dirs = _Dirs(tmp_path)
         for session_id in ["-bad", "bad id"]:
             result = run_cli(["--session-id", session_id, "-p", "hi"], cwd=dirs.project_dir, agent_dir=dirs.agent_dir)
 

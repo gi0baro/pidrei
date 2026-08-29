@@ -27,7 +27,7 @@ class _FakeTui:
 @contextlib.contextmanager
 def mock_open_browser():
     """pi's `vi.mock(openBrowser)`: record instead of launching. Manual swap —
-    no monkeypatch fixture under the tonio mark (yield fixture)."""
+    hand-rolled swap predating tonio 0.9.14 yield-fixture support."""
     opened: list[str] = []
     original = login_dialog_module.open_browser
     login_dialog_module.open_browser = opened.append

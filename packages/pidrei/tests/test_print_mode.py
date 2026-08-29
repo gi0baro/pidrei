@@ -1,9 +1,8 @@
 """Mirrors pi coding-agent test/print-mode.test.ts.
 
 pi mocks output via vi.spyOn(console.error) and fake runtime hosts; here
-the output-guard functions are swapped on the module (no monkeypatch
-fixture: the tonio pytest plugin cannot wrap yield fixtures) and stderr is
-captured by hand.
+the output-guard functions are swapped on the module and stderr is
+captured by hand (predates tonio 0.9.14; `monkeypatch`/`capsys` work now).
 """
 
 import contextlib

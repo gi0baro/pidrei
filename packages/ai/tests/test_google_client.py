@@ -192,8 +192,8 @@ async def test_an_api_key_travels_in_the_goog_api_key_header():
 def _stub_token(fake):
     """Replace the ADC token fetch.
 
-    Deliberately not `monkeypatch`: it is a yield fixture, and those abort the
-    tonio runtime rather than failing (see PLAN.md Phase 4 notes).
+    Hand-rolled swap (predates tonio 0.9.14; `monkeypatch` works in tonio
+    tests now).
     """
     original = google_client.get_access_token
     google_client.get_access_token = fake

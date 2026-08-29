@@ -43,14 +43,14 @@ def skill_md(name: str, description: str) -> str:
 
 
 @pytest.fixture
-def dirs(tmp_dir):
-    agent_dir = tmp_dir / "agent"
-    cwd = tmp_dir / "project"
-    home = tmp_dir / "home"
+def dirs(tmp_path):
+    agent_dir = tmp_path / "agent"
+    cwd = tmp_path / "project"
+    home = tmp_path / "home"
     agent_dir.mkdir(parents=True)
     cwd.mkdir(parents=True)
     home.mkdir(parents=True)
-    return tmp_dir, agent_dir, cwd, home
+    return tmp_path, agent_dir, cwd, home
 
 
 class TestReload:
@@ -192,7 +192,7 @@ class TestReload:
         (cwd / "AGENTS.override.md").mkdir()
         (cwd / "AGENTS.md").mkdir()
         write(cwd / "CLAUDE.md", "Fallback instructions")
-        # No monkeypatch fixture under the tonio mark (yield fixture); swap by hand.
+        # Hand swap (predates tonio 0.9.14; `monkeypatch` works in tonio tests now).
         warnings = []
         original_warn = resource_loader._warn
         resource_loader._warn = warnings.append

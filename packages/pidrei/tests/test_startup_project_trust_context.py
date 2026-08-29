@@ -22,7 +22,7 @@ from pidrei.cli.project_trust import CreateProjectTrustContextOptions, create_pr
 
 @contextlib.contextmanager
 def _recording_startup_ui(selector_result=None, input_result=None):
-    """Swap the startup TUI helpers for recorders (no yield fixtures: tonio)."""
+    """Swap the startup TUI helpers for recorders (hand-rolled; predates tonio 0.9.14 yield-fixture support)."""
     calls: list[tuple] = []
 
     async def fake_selector(settings_manager, title, options):

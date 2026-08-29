@@ -19,9 +19,12 @@ functions `open_remote_session` / `create_remote_session`.
 operation: a watcher mirrors the operation's outcome into it, and `dispose()`
 rejects every outstanding race synchronously (pi's resolved dispose signal).
 The losing operation keeps running as its own task, exactly like an unsettled
-promise losing a JS race. (`tonio.select` would fit but leaks a
-never-awaited-coroutine warning when it cancels a branch that has not started
-yet — see TONIO_BUGS.md.) `AggregateError` maps to `ExceptionGroup` with pi's
+promise losing a JS race. (`tonio.select` would fit but must not be used here,
+permanently: a branch cancelled before it first runs leaves a never-awaited
+coroutine — by tonio's design, per its author, unstarted wrappers cannot be
+reached to be closed — and dispose() loses this race exactly that way. Any
+race a branch can lose before first being scheduled gets this `Deferred`
+fan-out, not `select`.) `AggregateError` maps to `ExceptionGroup` with pi's
 messages.
 
 Lifecycle states are identity-compared (`eq=False`), mirroring pi's object

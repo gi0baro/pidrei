@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "tonio~=0.9.12",
+    "tonio~=0.9.14",
     "punkreq~=0.2.0",
     # punkreq's own transport, declared directly because the OAuth callback
     # servers use its server-side HTTP/1 connection (utils/http.py).

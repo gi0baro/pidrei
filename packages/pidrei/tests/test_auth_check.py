@@ -108,8 +108,8 @@ async def test_reports_an_unknown_provider_as_not_ready():
 
 
 @pytest.mark.tonio
-async def test_does_not_treat_an_unresolved_stored_environment_reference_as_configured(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_does_not_treat_an_unresolved_stored_environment_reference_as_configured(tmp_path):
+    auth_path = tmp_path / "auth.json"
     auth_path.write_text(
         json.dumps({"openai": {"type": "api_key", "key": "$MISSING_AUTH_CHECK_KEY"}}), encoding="utf-8"
     )
@@ -121,8 +121,8 @@ async def test_does_not_treat_an_unresolved_stored_environment_reference_as_conf
 
 
 @pytest.mark.tonio
-async def test_reports_malformed_auth_state_as_invalid(tmp_dir):
-    auth_path = tmp_dir / "auth.json"
+async def test_reports_malformed_auth_state_as_invalid(tmp_path):
+    auth_path = tmp_path / "auth.json"
     auth_path.write_text("{invalid-json", encoding="utf-8")
     runtime = await create_runtime(ReadOnlyAuthStorage(str(auth_path)))
 
@@ -132,15 +132,15 @@ async def test_reports_malformed_auth_state_as_invalid(tmp_dir):
 
 
 @pytest.mark.tonio
-async def test_does_not_create_an_auth_file_or_its_parent_directory(tmp_dir):
-    auth_path = tmp_dir / "agent" / "auth.json"
+async def test_does_not_create_an_auth_file_or_its_parent_directory(tmp_path):
+    auth_path = tmp_path / "agent" / "auth.json"
     runtime = await create_runtime(ReadOnlyAuthStorage(str(auth_path)))
 
     result = await check_provider_auth(parse_args(["--provider", "openai"]), runtime)
     assert result.status == "not_ready"
     assert result.reason == "credentials_not_configured"
     assert not auth_path.exists()
-    assert not (tmp_dir / "agent").exists()
+    assert not (tmp_path / "agent").exists()
 
 
 def test_accepts_optional_json_output_credential_output_and_no_refresh():

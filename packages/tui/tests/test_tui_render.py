@@ -103,17 +103,17 @@ async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
 
 
 @pytest.mark.tonio
-async def test_writes_redraw_logs_to_the_provided_directory(tmp_dir):
+async def test_writes_redraw_logs_to_the_provided_directory(tmp_path):
     with env_var("PIDREI_DEBUG_REDRAW", "1"):
         terminal = VirtualTerminal(40, 10)
-        tui = TuiMainScreen(terminal, None, str(tmp_dir))
+        tui = TuiMainScreen(terminal, None, str(tmp_path))
         component = TestComponent()
         tui.add_child(component)
         component.lines = ["test"]
         await tui.start()
         await terminal.wait_for_render()
 
-        with open(os.path.join(str(tmp_dir), "pidrei-debug.log"), encoding="utf-8") as log_file:
+        with open(os.path.join(str(tmp_path), "pidrei-debug.log"), encoding="utf-8") as log_file:
             assert "fullRender: first render" in log_file.read()
         await tui.stop()
 

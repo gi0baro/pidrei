@@ -288,7 +288,10 @@ class ProcessTerminal:
         self._scope = tonio.scope()
         await self._scope.__aenter__()
         self.input_owner.start(self._scope)
-        self._scope.spawn(self._resize_watcher())
+        if self._resize_handler is not None:
+            # `None` means the caller has no interest in resize events (tests
+            # exercising the pumps); skip the SIGWINCH machinery entirely.
+            self._scope.spawn(self._resize_watcher())
 
         # Query Kitty keyboard protocol and fall back to modifyOtherKeys when DA confirms no Kitty response.
         # See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
@@ -571,14 +574,12 @@ class ProcessTerminal:
         # Remove event handlers
         self._stdin_data_handler = None
         self._input_handler = None
-        if self._resize_handler is not None:
-            self._resize_handler = None
-            # Nudge the resize watcher so it exits through the signal
-            # receiver's cleanup instead of being aborted mid-park (best
-            # effort: an abort would leak the SIGWINCH registration until the
-            # process exits).
-            os.kill(os.getpid(), signal_module.SIGWINCH)
-            await tonio.yield_now()
+        # No nudge needed for the resize watcher: the scope cancel below
+        # unwinds it through `signal_receiver.__exit__` (sync `with` cleanup
+        # runs on cancellation), which removes the SIGWINCH registration. A
+        # self-sent SIGWINCH here would also blow up any runtime that is not
+        # listening for signals (the pytest runtime, by design).
+        self._resize_handler = None
 
         # Stop the pump before touching termios so buffered input (e.g.,
         # Ctrl+D) cannot be re-interpreted after raw mode is disabled (pi

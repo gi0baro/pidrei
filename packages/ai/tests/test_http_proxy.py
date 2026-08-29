@@ -2,7 +2,7 @@
 
 pi mutates `process.env` and restores it in `afterEach`; these tests pass the
 process-env half through a context manager instead, so nothing leaks between
-tests and no yield fixture is involved (tonio).
+tests (predates tonio 0.9.14; `monkeypatch` works in tonio tests now).
 """
 
 import contextlib

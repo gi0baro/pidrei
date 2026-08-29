@@ -54,7 +54,7 @@ def write(path: str, content: str) -> str:
 
 
 class _Temp:
-    """No yield fixtures under tonio; the suite makes its own temp dir."""
+    """Suite-managed temp dir (predates tonio 0.9.14 yield-fixture support)."""
 
     def __init__(self) -> None:
         self.root = tempfile.mkdtemp(prefix="pidrei-ext-test-")
