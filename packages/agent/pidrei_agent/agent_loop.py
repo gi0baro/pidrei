@@ -47,7 +47,6 @@ from .types import (
     MessageStartEvent,
     MessageUpdateEvent,
     PrepareNextTurnContext,
-    ShouldStopAfterTurnContext,
     StreamFn,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -194,7 +193,7 @@ async def _run_loop(
     """Main loop logic shared by `agent_loop` and `agent_loop_continue`."""
     current_context = initial_context
     config = initial_config
-    first_turn = True
+    last_completed_turn: PrepareNextTurnContext | None = None
     # Check for steering messages at start (user may have typed while waiting).
     pending_messages: list[AgentMessage] = []
     if config.get_steering_messages is not None:
@@ -206,10 +205,31 @@ async def _run_loop(
 
         # Inner loop: process tool calls and steering messages.
         while has_more_tool_calls or pending_messages:
-            if not first_turn:
+            if last_completed_turn is not None:
+                next_turn_snapshot = await maybe_call(config.prepare_next_turn, last_completed_turn)
+                if next_turn_snapshot:
+                    current_context = (
+                        next_turn_snapshot.context if next_turn_snapshot.context is not None else current_context
+                    )
+                    config = replace(
+                        config,
+                        model=next_turn_snapshot.model if next_turn_snapshot.model is not None else config.model,
+                        reasoning=(
+                            config.reasoning
+                            if next_turn_snapshot.thinking_level is None
+                            else (
+                                None
+                                if next_turn_snapshot.thinking_level == "off"
+                                else next_turn_snapshot.thinking_level
+                            )
+                        ),
+                    )
+                # Preparation can be long-running (for example, compaction). Pick up steering
+                # queued while it ran. Only poll again if the earlier poll returned nothing;
+                # otherwise one-at-a-time mode would deliver two messages in this turn.
+                if not pending_messages and config.get_steering_messages is not None:
+                    pending_messages = (await config.get_steering_messages()) or []
                 await emit(TurnStartEvent())
-            else:
-                first_turn = False
 
             # Process pending messages (inject before next assistant response).
             if pending_messages:
@@ -252,36 +272,14 @@ async def _run_loop(
 
             await emit(TurnEndEvent(message=message, tool_results=tool_results))
 
-            next_turn_context = PrepareNextTurnContext(
+            last_completed_turn = PrepareNextTurnContext(
                 message=message,
                 tool_results=tool_results,
                 context=current_context,
                 new_messages=new_messages,
             )
-            next_turn_snapshot = await maybe_call(config.prepare_next_turn, next_turn_context)
-            if next_turn_snapshot:
-                current_context = (
-                    next_turn_snapshot.context if next_turn_snapshot.context is not None else current_context
-                )
-                config = replace(
-                    config,
-                    model=next_turn_snapshot.model if next_turn_snapshot.model is not None else config.model,
-                    reasoning=(
-                        config.reasoning
-                        if next_turn_snapshot.thinking_level is None
-                        else (None if next_turn_snapshot.thinking_level == "off" else next_turn_snapshot.thinking_level)
-                    ),
-                )
 
-            if await maybe_call(
-                config.should_stop_after_turn,
-                ShouldStopAfterTurnContext(
-                    message=message,
-                    tool_results=tool_results,
-                    context=current_context,
-                    new_messages=new_messages,
-                ),
-            ):
+            if await maybe_call(config.should_stop_after_turn, last_completed_turn):
                 await emit(AgentEndEvent(messages=new_messages))
                 return
 

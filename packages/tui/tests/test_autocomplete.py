@@ -238,6 +238,41 @@ async def test_scopes_fuzzy_search_to_relative_directories_and_searches_recursiv
 
 @requires_fd
 @pytest.mark.tonio
+async def test_ranks_shallower_same_score_at_matches_before_deeper_matches(fd_dirs):
+    _setup_folder(
+        fd_dirs["base"],
+        dirs=["scope/aaa/venv/lib/python3.12/site-packages/pkg/core/profile", "scope/projects"],
+    )
+
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    line = "@scope/pro"
+    result = await get_suggestions(provider, [line], 0, len(line))
+
+    values = [item["value"] for item in result["items"]]
+    assert values[0] == "@scope/projects/"
+    assert "@scope/aaa/venv/lib/python3.12/site-packages/pkg/core/profile/" in values
+
+
+@requires_fd
+@pytest.mark.tonio
+async def test_includes_scoped_direct_children_when_recursive_at_matches_are_flooded(fd_dirs):
+    flooded_dirs = [
+        f"scope/a{index + 1:03d}/venv/lib/python3.12/site-packages/pkg/core/profile" for index in range(250)
+    ]
+    _setup_folder(fd_dirs["base"], dirs=["scope/projects", *flooded_dirs])
+
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    line = "@scope/pro"
+    result = await get_suggestions(provider, [line], 0, len(line))
+
+    values = [item["value"] for item in result["items"]]
+    assert values[0] == "@scope/projects/"
+    # Should keep deep fuzzy matches after direct children
+    assert any("/profile/" in value for value in values)
+
+
+@requires_fd
+@pytest.mark.tonio
 async def test_quotes_paths_with_spaces_for_at_suggestions(fd_dirs):
     _setup_folder(fd_dirs["base"], dirs=["my folder"], files={"my folder/test.txt": "content"})
 

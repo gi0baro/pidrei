@@ -592,6 +592,13 @@ class SettingsSelectorComponent(Container):
                 "values": ["auto", "always", "hidden"],
             },
             {
+                "id": "fullscreen-copy-on-select",
+                "label": "Fullscreen copy on select",
+                "description": "Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X",
+                "currentValue": "true" if config["fullscreenCopyOnSelect"] else "false",
+                "values": ["true", "false"],
+            },
+            {
                 "id": "theme",
                 "label": "Theme",
                 "description": "Color theme for the interface",
@@ -802,6 +809,8 @@ class SettingsSelectorComponent(Container):
                 callbacks["onFullscreenExitOutputChange"](new_value)
             elif item_id == "fullscreen-scrollbar":
                 callbacks["onFullscreenScrollbarChange"](new_value)
+            elif item_id == "fullscreen-copy-on-select":
+                callbacks["onFullscreenCopyOnSelectChange"](new_value == "true")
             elif item_id == "theme":
                 callbacks["onThemeChange"](new_value)
 

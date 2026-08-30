@@ -950,6 +950,15 @@ class SettingsManager:
     def get_thinking_budgets(self) -> dict[str, Any] | None:
         return self._settings.get("thinkingBudgets")
 
+    def get_terminal_capability_overrides(self) -> dict[str, Any]:
+        terminal = self._settings.get("terminal") or {}
+        images = terminal.get("images")
+        return {
+            **({"images": images} if images in ("kitty", "iterm2") else {"images": None} if images is False else {}),
+            **({"trueColor": terminal["trueColor"]} if isinstance(terminal.get("trueColor"), bool) else {}),
+            **({"hyperlinks": terminal["hyperlinks"]} if isinstance(terminal.get("hyperlinks"), bool) else {}),
+        }
+
     def get_show_images(self) -> bool:
         show = (self._settings.get("terminal") or {}).get("showImages")
         return show if show is not None else True
@@ -995,6 +1004,13 @@ class SettingsManager:
 
     def set_fullscreen_scrollbar(self, mode: str) -> None:
         self._set_global("fullscreenScrollbar", mode)
+
+    def get_fullscreen_copy_on_select(self) -> bool:
+        enabled = self._settings.get("fullscreenCopyOnSelect")
+        return enabled if enabled is not None else True
+
+    def set_fullscreen_copy_on_select(self, enabled: bool) -> None:
+        self._set_global("fullscreenCopyOnSelect", enabled)
 
     def get_image_auto_resize(self) -> bool:
         auto_resize = (self._settings.get("images") or {}).get("autoResize")

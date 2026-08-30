@@ -311,6 +311,8 @@ RENAMES = {
     "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
     "packages/agent/test/harness/session-test-utils.ts": "packages/agent/tests/session_helpers.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",
+    # 0.84.4: consolidated into generate_models.py like its models-dev sibling.
+    "packages/ai/scripts/openrouter-reasoning-options.ts": "packages/ai/scripts/generate_models.py",
     "packages/ai/src/models.generated.ts": "packages/ai/pidrei_ai/models_generated.py",
     "packages/ai/src/image-models.generated.ts": "packages/ai/pidrei_ai/image_models_generated.py",
     "packages/coding-agent/src/cli.ts": "packages/pidrei/pidrei/__main__.py",
@@ -637,6 +639,11 @@ TEST_HOMES = {
         "N/A: engine-specific — it specs highlight.js grammar loading and HTML-span "
         "re-rendering; pidrei highlights with pygments (see utils/syntax_highlight.py), "
         "which has no grammar registry and emits no HTML"
+    ),
+    # 0.84.4 additions.
+    "packages/coding-agent/test/session-manager/file-operations.test.ts": (
+        "covered by packages/pidrei/tests/test_session_manager.py (file-operations cases "
+        "live with the rest of the session-manager mirror)"
     ),
 }
 

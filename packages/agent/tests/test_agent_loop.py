@@ -775,10 +775,12 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
     context = AgentContext(system_prompt="first prompt", messages=[], tools=[tool])
     converted_second_turn_system_prompt = ""
+    prepare_calls = 0
     prepared = False
 
     async def prepare_next_turn(ctx):
-        nonlocal prepared
+        nonlocal prepare_calls, prepared
+        prepare_calls += 1
         if prepared:
             return None
         prepared = True
@@ -813,6 +815,7 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
         pass
 
     assert llm_calls == 2
+    assert prepare_calls == 1
     assert converted_second_turn_system_prompt == "second prompt"
 
 

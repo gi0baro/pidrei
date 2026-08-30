@@ -218,6 +218,11 @@ class RpcClient:
         """Abort current operation."""
         await self._send({"type": "abort"})
 
+    async def clear_queue(self) -> dict[str, list[str]]:
+        """Clear queued steering and follow-up messages, returning their text."""
+        response = await self._send({"type": "clear_queue"})
+        return self._get_data(response)
+
     async def new_session(self, parent_session: str | None = None) -> dict[str, Any]:
         """Start a new session, optionally with parent tracking."""
         response = await self._send({"type": "new_session", "parentSession": parent_session})

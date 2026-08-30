@@ -53,6 +53,7 @@ from pidrei_tui import (
     hyperlink,
     is_viewport_tui,
     matches_key,
+    set_capability_overrides,
     set_keybindings,
     visible_width,
 )
@@ -478,7 +479,14 @@ class ExtensionUIContext:
         self._mode.set_tools_expanded(expanded)
 
 
-def create_interactive_tui(*, tui_mode: str, show_hardware_cursor: bool, log_directory: str, terminal=None) -> TUI:
+def create_interactive_tui(
+    *,
+    tui_mode: str,
+    show_hardware_cursor: bool,
+    log_directory: str,
+    terminal=None,
+    fullscreen_copy_on_select: bool | None = None,
+) -> TUI:
     """Composition root for selecting the interactive terminal renderer."""
     terminal = terminal if terminal is not None else ProcessTerminal()
     if tui_mode == "fullscreen":
@@ -500,6 +508,7 @@ def create_interactive_tui(*, tui_mode: str, show_hardware_cursor: bool, log_dir
             search_match_style=lambda text: theme.underline(style_search_match(text)),
             search_current_match_style=lambda text: theme.bold(theme.inverse(style_search_match(text))),
             open_url=open_browser,
+            copy_on_select=fullscreen_copy_on_select,
             copy_selection=copy_selection,
         )
     return TuiMainScreen(terminal, show_hardware_cursor, log_directory)
@@ -573,6 +582,7 @@ class InteractiveMode:
     def __init__(self, runtime_host, options: dict | None = None) -> None:
         options = options or {}
         self.runtime_host = runtime_host
+        set_capability_overrides(self.settings_manager.get_terminal_capability_overrides())
         tui_mode = options.get("tuiMode") or self.settings_manager.get_tui_mode()
         self._options = {**options, "tuiMode": tui_mode}
         self._auto_trust_on_reload_cwd = options.get("autoTrustOnReloadCwd")
@@ -588,6 +598,7 @@ class InteractiveMode:
             tui_mode=tui_mode,
             show_hardware_cursor=self.settings_manager.get_show_hardware_cursor(),
             log_directory=get_agent_dir(),
+            fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
         )
         self._main_screen_render_state = None
         self._fullscreen_layout_root = None
@@ -1007,6 +1018,7 @@ class InteractiveMode:
             show_hardware_cursor=show_hardware_cursor,
             log_directory=get_agent_dir(),
             terminal=terminal,
+            fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
         )
         next_ui.set_clear_on_shrink(clear_on_shrink)
         next_ui.set_render_error_handler(self._uncaught_crash)
@@ -2045,6 +2057,7 @@ class InteractiveMode:
             self._transcript_scroll_view.set_scrollbar(self.settings_manager.get_fullscreen_scrollbar())
 
     async def _apply_runtime_settings(self) -> None:
+        set_capability_overrides(self.settings_manager.get_terminal_capability_overrides())
         # pi configures the undici HTTP dispatcher here; pidrei's HTTP
         # transport is punkreq's concern (see core/http_config.py).
         self._apply_fullscreen_scrollbar_setting()
@@ -2224,6 +2237,15 @@ class InteractiveMode:
 
         self.ui.post_ui(apply)
 
+    def _show_working_status_indicator(self) -> None:
+        self._show_status_indicator(
+            WorkingStatusIndicator(
+                self.ui,
+                self._working_message if self._working_message is not None else self._default_working_message,
+                self._working_indicator_options,
+            )
+        )
+
     def _set_working_visible(self, visible: bool) -> None:
         def apply() -> None:
             self._working_visible = visible
@@ -2234,13 +2256,7 @@ class InteractiveMode:
             if self.session.is_streaming and (
                 self._active_status_indicator is None or self._active_status_indicator.kind != "working"
             ):
-                self._show_status_indicator(
-                    WorkingStatusIndicator(
-                        self.ui,
-                        self._working_message if self._working_message is not None else self._default_working_message,
-                        self._working_indicator_options,
-                    )
-                )
+                self._show_working_status_indicator()
             self.ui.request_render()
 
         self.ui.post_ui(apply)
@@ -2891,7 +2907,11 @@ class InteractiveMode:
         )
         self._default_editor.on_action(
             "app.message.copy",
-            sync_action(lambda: tonio.spawn.without_tracking(self._handle_copy_command({"flashConfirmation": True}))),
+            sync_action(
+                lambda: tonio.spawn.without_tracking(
+                    self._handle_copy_command({"flashConfirmation": True, "preferSelection": True})
+                )
+            ),
         )
         self._default_editor.on_action(
             "app.message.followUp", sync_action(lambda: tonio.spawn.without_tracking(self._handle_follow_up()))
@@ -3187,22 +3207,19 @@ class InteractiveMode:
 
         if event_type == "agent_start":
             self._pending_tools.clear()
-            if self.settings_manager.get_show_terminal_progress():
-                self.ui.terminal.set_progress(True)
             # Restore main escape handler if retry handler is still active
             # (retry success event fires later, but we need the main handler
             # now)
             if self._retry_escape_handler is not None:
                 self._default_editor.on_escape = self._retry_escape_handler
                 self._retry_escape_handler = None
+
+        elif event_type == "turn_start":
+            if self.settings_manager.get_show_terminal_progress():
+                self.ui.terminal.set_progress(True)
             if self._working_visible:
-                self._show_status_indicator(
-                    WorkingStatusIndicator(
-                        self.ui,
-                        self._working_message if self._working_message is not None else self._default_working_message,
-                        self._working_indicator_options,
-                    )
-                )
+                if self._active_status_indicator is None or self._active_status_indicator.kind != "working":
+                    self._show_working_status_indicator()
             else:
                 self._clear_status_indicator()
             self.ui.request_render()
@@ -4107,21 +4124,17 @@ class InteractiveMode:
                     child.set_expanded(expanded)
         self.show_status(f"Tool output: {'expanded' if expanded else 'collapsed'}")
 
+    def _update_thinking_block_visibility(self) -> None:
+        """Update rendered assistant messages without rebuilding live tool components."""
+        for child in self._chat_container.children:
+            if isinstance(child, AssistantMessageComponent):
+                child.set_hide_thinking_block(self._hide_thinking_block)
+        self.ui.request_render()
+
     def _toggle_thinking_block_visibility(self) -> None:
         self._hide_thinking_block = not self._hide_thinking_block
         self.settings_manager.set_hide_thinking_block(self._hide_thinking_block)
-
-        # Rebuild chat from session messages
-        self._chat_container.clear()
-        self._rebuild_chat_from_messages()
-
-        # If streaming, re-add the streaming component with updated visibility
-        # and re-render
-        if self._streaming_component is not None and self._streaming_message is not None:
-            self._streaming_component.set_hide_thinking_block(self._hide_thinking_block)
-            self._streaming_component.update_content(self._streaming_message)
-            self._chat_container.add_child(self._streaming_component)
-
+        self._update_thinking_block_visibility()
         self.show_status(f"Thinking blocks: {'hidden' if self._hide_thinking_block else 'visible'}")
 
     async def _handle_open_external_editor(self) -> None:
@@ -4511,11 +4524,7 @@ class InteractiveMode:
             def on_hide_thinking_block_change(hidden: bool) -> None:
                 self._hide_thinking_block = hidden
                 self.settings_manager.set_hide_thinking_block(hidden)
-                for child in self._chat_container.children:
-                    if isinstance(child, AssistantMessageComponent):
-                        child.set_hide_thinking_block(hidden)
-                self._chat_container.clear()
-                self._rebuild_chat_from_messages()
+                self._update_thinking_block_visibility()
 
             def on_show_cache_miss_notices_change(shown: bool) -> None:
                 self.settings_manager.set_show_cache_miss_notices(shown)
@@ -4574,6 +4583,11 @@ class InteractiveMode:
                 self.settings_manager.set_fullscreen_scrollbar(mode)
                 self._apply_fullscreen_scrollbar_setting()
 
+            def on_fullscreen_copy_on_select_change(enabled: bool) -> None:
+                self.settings_manager.set_fullscreen_copy_on_select(enabled)
+                if isinstance(self._renderer, TuiAltScreen):
+                    self._renderer.set_copy_on_select(enabled)
+
             async def on_cancel() -> None:
                 done()
                 self.ui.request_render()
@@ -4616,6 +4630,7 @@ class InteractiveMode:
                     "tuiMode": self._renderer.mode,
                     "fullscreenExitOutput": self.settings_manager.get_fullscreen_exit_output(),
                     "fullscreenScrollbar": self.settings_manager.get_fullscreen_scrollbar(),
+                    "fullscreenCopyOnSelect": self.settings_manager.get_fullscreen_copy_on_select(),
                     "warnings": self.settings_manager.get_warnings(),
                 },
                 {
@@ -4660,6 +4675,7 @@ class InteractiveMode:
                         output
                     ),
                     "onFullscreenScrollbarChange": on_fullscreen_scrollbar_change,
+                    "onFullscreenCopyOnSelectChange": on_fullscreen_copy_on_select_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
                     "onCancel": on_cancel,
                 },
@@ -4853,6 +4869,7 @@ class InteractiveMode:
             async def select_model(model, persist: bool) -> None:
                 try:
                     await self.session.set_model(model, persist=persist)
+                    self._update_available_provider_count()
                     self._footer.invalidate()
                     self._update_editor_border_color()
                     done()
@@ -5865,8 +5882,8 @@ class InteractiveMode:
             if is_expandable(active_header):
                 active_header.set_expanded(self._tool_output_expanded)
             set_registered_themes(self.session.resource_loader.get_themes()["themes"])
-            await self._theme_controller.apply_from_settings()
             await self._apply_runtime_settings()
+            await self._theme_controller.apply_from_settings()
             self._setup_autocomplete_provider()
             runner = self.session.extension_runner
             self._setup_extension_shortcuts(runner)
@@ -6059,6 +6076,17 @@ class InteractiveMode:
 
     async def _handle_copy_command(self, options: dict | None = None) -> None:
         options = options or {}
+        # pi narrows with `instanceof TuiAltScreen`; the reference proxy is
+        # deliberately not isinstance-transparent, so ask the renderer.
+        if (
+            options.get("preferSelection")
+            and isinstance(self._renderer, TuiAltScreen)
+            and not self._renderer.get_copy_on_select()
+            and self._renderer.has_active_selection()
+        ):
+            await self._renderer.copy_active_selection_to_clipboard()
+            return
+
         text = self.session.get_last_assistant_text()
         if not text:
             self.show_error("No agent messages to copy yet.")

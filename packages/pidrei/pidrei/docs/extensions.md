@@ -210,6 +210,7 @@ user sends a prompt
 | `tool_call` | Before a tool runs | Block it, or rewrite arguments |
 | `tool_result` | After a tool runs | Rewrite the result |
 | `user_bash` | User ran a `!` command | — |
+| `ui_prompt_start` / `ui_prompt_end` | Around a blocking `ctx.ui` prompt (`select`, `confirm`, `input`, `editor`, `custom`) — nested prompts coalesce into one outer waiting span; handlers are best-effort and not awaited | — |
 | `model_select` / `thinking_level_select` | Selection changed | — |
 
 Handlers that return `None` leave the event unchanged. Handlers that return a

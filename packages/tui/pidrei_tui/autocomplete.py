@@ -118,7 +118,9 @@ def _build_completion_value(path: str, *, is_directory: bool, is_at_prefix: bool
     return f'{prefix}"{path}"'
 
 
-async def _walk_directory_with_fd(base_dir: str, fd_path: str, query: str, max_results: int, signal) -> list[dict]:
+async def _walk_directory_with_fd(
+    base_dir: str, fd_path: str, query: str, max_results: int, signal, max_depth: int | None = None
+) -> list[dict]:
     """Use fd to walk the directory tree (fast, respects .gitignore)."""
     args = [
         "--base-directory",
@@ -138,6 +140,9 @@ async def _walk_directory_with_fd(base_dir: str, fd_path: str, query: str, max_r
         "--exclude",
         ".git/**",
     ]
+
+    if max_depth is not None:
+        args.extend(["--max-depth", str(max_depth)])
 
     if "/" in _to_display_path(query):
         args.append("--full-path")
@@ -589,6 +594,12 @@ class CombinedAutocompleteProvider:
 
         return score
 
+    async def _get_base_dir_suggestions(self, base_dir: str, query: str, signal) -> list[dict]:
+        if not self._fd_path or signal.cancelled:
+            return []
+
+        return await _walk_directory_with_fd(base_dir, self._fd_path, query, 100, signal, 1)
+
     # Fuzzy file search using fd (fast, respects .gitignore)
     async def _get_fuzzy_file_suggestions(self, query: str, *, is_quoted_prefix: bool, signal) -> list[dict]:
         if not self._fd_path or signal.cancelled:
@@ -598,7 +609,15 @@ class CombinedAutocompleteProvider:
             scoped_query = self._resolve_scoped_fuzzy_query(query)
             fd_base_dir = scoped_query["baseDir"] if scoped_query else self._base_path
             fd_query = scoped_query["query"] if scoped_query else query
-            entries = await _walk_directory_with_fd(fd_base_dir, self._fd_path, fd_query, 100, signal)
+            base_dir_entries = await self._get_base_dir_suggestions(fd_base_dir, fd_query, signal)
+            recursive_entries = await _walk_directory_with_fd(fd_base_dir, self._fd_path, fd_query, 100, signal)
+            seen_paths = {entry["path"] for entry in base_dir_entries}
+            entries = list(base_dir_entries)
+            for entry in recursive_entries:
+                if entry["path"] in seen_paths:
+                    continue
+                seen_paths.add(entry["path"])
+                entries.append(entry)
             if signal.cancelled:
                 return []
 
@@ -608,7 +627,11 @@ class CombinedAutocompleteProvider:
             ]
             scored_entries = [entry for entry in scored_entries if entry["score"] > 0]
 
-            scored_entries.sort(key=lambda entry: -entry["score"])
+            def sort_key(entry: dict) -> tuple:
+                depth = len([part for part in _to_display_path(entry["path"]).split("/") if part])
+                return (-entry["score"], depth, len(entry["path"]), entry["path"])
+
+            scored_entries.sort(key=sort_key)
             top_entries = scored_entries[:20]
 
             suggestions: list[dict] = []

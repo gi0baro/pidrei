@@ -10,6 +10,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+import tonio.colored as tonio
+
 from pidrei.core.diagnostics import ResourceDiagnostic
 
 from .types import (
@@ -175,6 +177,34 @@ class _NoOpUIContext:
 
 
 _NO_OP_UI_CONTEXT = _NoOpUIContext()
+
+
+class _UIPromptContext:
+    """pi's wrapUIPromptContext: an interactive UI context whose blocking
+    prompt calls emit ui_prompt_start/ui_prompt_end extension events. Every
+    other attribute delegates to the wrapped context."""
+
+    def __init__(self, runner: ExtensionRunner, ui: Any):
+        self._runner = runner
+        self._ui = ui
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ui, name)
+
+    async def select(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return await self._runner._with_ui_prompt("select", title, lambda: self._ui.select(title, *args, **kwargs))
+
+    async def confirm(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return await self._runner._with_ui_prompt("confirm", title, lambda: self._ui.confirm(title, *args, **kwargs))
+
+    async def input(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return await self._runner._with_ui_prompt("input", title, lambda: self._ui.input(title, *args, **kwargs))
+
+    async def editor(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return await self._runner._with_ui_prompt("editor", title, lambda: self._ui.editor(title, *args, **kwargs))
+
+    async def custom(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._runner._with_ui_prompt("custom", None, lambda: self._ui.custom(*args, **kwargs))
 
 
 @dataclass(slots=True)
@@ -375,6 +405,8 @@ class ExtensionRunner:
         self._error_listeners: list[Callable[[ExtensionError], None]] = []
         self._shortcut_diagnostics: list[ResourceDiagnostic] = []
         self._stale_message: str | None = None
+        self._ui_prompt_depth = 0
+        self._active_ui_prompt: dict[str, Any] | None = None
 
         self._get_model: Callable[[], Any] = lambda: None
         self._get_scoped_models_fn: Callable[[], list] = list
@@ -514,8 +546,44 @@ class ExtensionRunner:
         self._reload_handler = _default_async_noop
 
     def set_ui_context(self, ui_context: Any = None, mode: str = "print") -> None:
-        self._ui_context = ui_context if ui_context is not None else _NO_OP_UI_CONTEXT
+        self._ui_context = _UIPromptContext(self, ui_context) if ui_context is not None else _NO_OP_UI_CONTEXT
         self._mode = mode
+
+    async def _with_ui_prompt(self, kind: str, title: str | None, run: Callable[[], Any]) -> Any:
+        outer_prompt = self._ui_prompt_depth == 0
+        self._ui_prompt_depth += 1
+        if outer_prompt:
+            self._active_ui_prompt = {"kind": kind, "title": title}
+            self._emit_ui_prompt_event(
+                {"type": "ui_prompt_start", "reason": "ui_prompt", "kind": kind, **({"title": title} if title else {})}
+            )
+
+        def finish() -> None:
+            self._ui_prompt_depth -= 1
+            if self._ui_prompt_depth > 0:
+                return
+            self._ui_prompt_depth = 0
+
+            prompt = self._active_ui_prompt or {"kind": kind, "title": title}
+            self._active_ui_prompt = None
+            self._emit_ui_prompt_event(
+                {
+                    "type": "ui_prompt_end",
+                    "reason": "ui_prompt",
+                    "kind": prompt["kind"],
+                    **({"title": prompt["title"]} if prompt.get("title") else {}),
+                }
+            )
+
+        try:
+            return await run()
+        finally:
+            finish()
+
+    def _emit_ui_prompt_event(self, event: dict[str, Any]) -> None:
+        # pi queueMicrotask's the emit so a prompt call never awaits its own
+        # listeners; the spawned task is the same fire-and-forget.
+        tonio.spawn.without_tracking(self.emit(event))
 
     def get_ui_context(self) -> Any:
         return self._ui_context

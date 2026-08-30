@@ -376,6 +376,25 @@ def get_effort_thinking_level_map(options: list[dict[str, Any]]) -> dict[str, st
     return mapping
 
 
+def get_openrouter_thinking_level_map(reasoning: dict[str, Any] | None) -> dict[str, str | None] | None:
+    """Port of scripts/openrouter-reasoning-options.ts (consolidated here like its
+    models-dev sibling): convert OpenRouter's reasoning metadata into pi model
+    capabilities."""
+    if not reasoning:
+        return None
+    supported_efforts = reasoning.get("supported_efforts")
+    if not supported_efforts:
+        return {"off": None} if reasoning.get("mandatory") is True else None
+
+    # OpenRouter's supported_efforts uses the same effort values as models.dev
+    # reasoning_options, so both sources can share the same pi thinking-level
+    # conversion.
+    mapping = get_effort_thinking_level_map([{"type": "effort", "values": supported_efforts}])
+    if not mapping:
+        return {"off": None} if reasoning.get("mandatory") is True else None
+    return {**mapping, "off": None if reasoning.get("mandatory") is True else "none"}
+
+
 def get_together_compat(model_id: str, reasoning: bool) -> dict[str, Any]:
     if not reasoning:
         return TOGETHER_BASE_COMPAT
@@ -933,6 +952,7 @@ async def fetch_openrouter_models(client: Client) -> list[dict[str, Any]]:
 
         pricing = model.get("pricing") or {}
         top_provider = model.get("top_provider") or {}
+        thinking_level_map = get_openrouter_thinking_level_map(model.get("reasoning"))
         models.append(
             {
                 "id": model["id"],
@@ -941,6 +961,7 @@ async def fetch_openrouter_models(client: Client) -> list[dict[str, Any]]:
                 "baseUrl": "https://openrouter.ai/api/v1",
                 "provider": "openrouter",
                 "reasoning": "reasoning" in supported,
+                **({"thinkingLevelMap": thinking_level_map} if thinking_level_map else {}),
                 "input": model_input,
                 # models.dev prices per token; pi's catalog is per million tokens.
                 "cost": {
@@ -1225,6 +1246,7 @@ def _load_gateway_providers(
         record("cloudflare-workers-ai", model_id, source)
 
     # Cloudflare AI Gateway
+    cloudflare_ai_gateway_model_ids: set[str] = set()
     for prefixed_id, source in _models_of(catalog, "cloudflare-ai-gateway").items():
         if not _tool_capable(source):
             continue
@@ -1259,8 +1281,37 @@ def _load_gateway_providers(
         # them for cache/routing affinity.
         if upstream in ("anthropic", "workers-ai"):
             model["compat"] = {"sendSessionAffinityHeaders": True}
+        cloudflare_ai_gateway_model_ids.add(model_id)
         models.append(model)
         record("cloudflare-ai-gateway", model_id, source)
+
+    # models.dev may omit Workers AI passthroughs from the AI Gateway provider
+    # list even though the gateway /compat endpoint supports routing to them.
+    # Mirror the Workers AI catalog under the documented workers-ai/ prefix so
+    # the gateway keeps its OpenAI-compatible /compat models stable.
+    for model_id, source in _models_of(catalog, "cloudflare-workers-ai").items():
+        if not _tool_capable(source):
+            continue
+        prefixed = f"workers-ai/{model_id}"
+        if prefixed in cloudflare_ai_gateway_model_ids:
+            continue
+        cloudflare_ai_gateway_model_ids.add(prefixed)
+        models.append(
+            {
+                "id": prefixed,
+                "name": source.get("name") or prefixed,
+                "api": "openai-completions",
+                "provider": "cloudflare-ai-gateway",
+                "baseUrl": CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+                "reasoning": source.get("reasoning") is True,
+                "input": _input(source),
+                "cost": _cost(source),
+                "contextWindow": _context(source),
+                "maxTokens": _max_tokens(source),
+                "compat": {"sendSessionAffinityHeaders": True},
+            }
+        )
+        record("cloudflare-ai-gateway", prefixed, source)
 
     # xAI
     for model_id, source in _models_of(catalog, "xai").items():
@@ -2070,6 +2121,19 @@ DEEPSEEK_V4_MODELS: list[dict[str, Any]] = [
         "provider": "deepseek",
         "reasoning": True,
         "input": ["text"],
+        "cost": {"input": 0.14, "output": 0.28, "cacheRead": 0.0028, "cacheWrite": 0},
+        "contextWindow": 1000000,
+        "maxTokens": 384000,
+        "compat": DEEPSEEK_COMPAT,
+    },
+    {
+        "id": "deepseek-v4-flash-vision-exp",
+        "name": "DeepSeek V4 Flash Vision Exp",
+        "api": "openai-completions",
+        "baseUrl": "https://api.deepseek.com",
+        "provider": "deepseek",
+        "reasoning": True,
+        "input": ["text", "image"],
         "cost": {"input": 0.14, "output": 0.28, "cacheRead": 0.0028, "cacheWrite": 0},
         "contextWindow": 1000000,
         "maxTokens": 384000,

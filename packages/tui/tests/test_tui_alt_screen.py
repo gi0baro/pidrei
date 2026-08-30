@@ -997,6 +997,70 @@ async def test_uses_an_injected_copy_selection_handler_instead_of_osc52_and_repo
 
 
 @pytest.mark.tonio
+async def test_leaves_selections_visible_without_copying_when_copy_on_select_is_disabled():
+    terminal = RecordingTerminal(20, 4)
+    copied: list[str] = []
+
+    async def copy_selection(text: str) -> bool:
+        copied.append(text)
+        return True
+
+    tui = TuiAltScreen(terminal, None, None, copy_on_select=False, copy_selection=copy_selection)
+    tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await terminal.wait_for_render(since)
+
+    assert copied == []
+    assert tui.has_active_selection() is True
+    assert terminal.writes_containing("\x1b[7m")
+    assert all("Copied!" not in line for line in terminal.get_viewport())
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_copies_an_active_selection_programmatically():
+    terminal = RecordingTerminal(20, 4)
+    copied: list[str] = []
+
+    async def copy_selection(text: str) -> bool:
+        copied.append(text)
+        return True
+
+    tui = TuiAltScreen(terminal, None, None, copy_selection=copy_selection)
+    tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    assert tui.has_active_selection() is False
+    assert await tui.copy_active_selection_to_clipboard() is False
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await terminal.wait_for_render(since)
+
+    assert await _wait_for_viewport_text(terminal, "Copied!")
+    assert copied == ["alpha\nbeta"]
+    assert tui.has_active_selection() is True
+
+    copied.clear()
+    assert await tui.copy_active_selection_to_clipboard() is True
+
+    assert copied == ["alpha\nbeta"]
+    assert await _wait_for_viewport_text(terminal, "Copied!")
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_flashes_an_error_when_the_injected_copy_selection_handler_fails():
     terminal = RecordingTerminal(20, 4)
 
@@ -1036,6 +1100,36 @@ async def test_does_not_append_whitespace_to_double_click_word_highlighting():
 
     assert await terminal.wait_for_write("foo\x1b[27m")
     await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_coalesces_slash_and_hyphen_separated_segments_for_double_click_word_selection():
+    for line, needle in [
+        ("extensions/starline/fixed-editor/compositor.ts", "starline"),
+        ("earendil-works/pi-tui", "works"),
+    ]:
+        copied: list[str] = []
+        terminal = RecordingTerminal(80, 1)
+
+        async def copy_selection(text: str, copied=copied) -> bool:
+            copied.append(text)
+            return True
+
+        tui = TuiAltScreen(terminal, None, None, copy_selection=copy_selection)
+        tui.add_child(Text(line, 0, 0))
+        await tui.start()
+        await terminal.wait_for_render()
+
+        one_based_click_column = line.index(needle) + 1
+        since = terminal.frames
+        await terminal.send_input(f"\x1b[<0;{one_based_click_column};1M")
+        await terminal.send_input(f"\x1b[<0;{one_based_click_column};1m")
+        await terminal.send_input(f"\x1b[<0;{one_based_click_column};1M")
+        await terminal.send_input(f"\x1b[<0;{one_based_click_column};1m")
+        await terminal.wait_for_render(since)
+
+        assert copied == [line]
+        await tui.stop()
 
 
 @pytest.mark.tonio

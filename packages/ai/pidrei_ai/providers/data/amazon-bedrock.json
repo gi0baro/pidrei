@@ -1058,16 +1058,13 @@
         "image"
       ],
       "cost": {
-        "input": 0.22,
-        "output": 1.32,
-        "cacheRead": 0.022,
-        "cacheWrite": 0.275
+        "input": 0.2,
+        "output": 1.2,
+        "cacheRead": 0.02,
+        "cacheWrite": 0.25
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsStrictMode": true
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh"
       }
@@ -1084,16 +1081,13 @@
         "image"
       ],
       "cost": {
-        "input": 5.5,
-        "output": 33,
-        "cacheRead": 0.55,
-        "cacheWrite": 6.875
+        "input": 4,
+        "output": 20,
+        "cacheRead": 0.4,
+        "cacheWrite": 5
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsStrictMode": true
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh"
       }
@@ -1110,16 +1104,13 @@
         "image"
       ],
       "cost": {
-        "input": 2.2,
-        "output": 13.2,
-        "cacheRead": 0.22,
-        "cacheWrite": 2.75
+        "input": 2,
+        "output": 12,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
-      "compat": {
-        "supportsStrictMode": true
-      },
       "thinkingLevelMap": {
         "xhigh": "xhigh"
       }
@@ -1915,10 +1906,10 @@
         "image"
       ],
       "cost": {
-        "input": 5.5,
-        "output": 33,
-        "cacheRead": 0.55,
-        "cacheWrite": 6.875
+        "input": 4.4,
+        "output": 22,
+        "cacheRead": 0.44,
+        "cacheWrite": 5.5
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,

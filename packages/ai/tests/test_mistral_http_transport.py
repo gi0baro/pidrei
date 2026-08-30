@@ -221,7 +221,7 @@ async def test_serializes_assistant_thinking_tool_calls_and_tool_results_for_rep
 
 
 @pytest.mark.tonio
-async def test_parses_native_thinking_text_tool_calls_and_cached_token_usage():
+async def test_parses_native_thinking_text_fragmented_tool_calls_and_cached_token_usage():
     context = Context(messages=[UserMessage(content="hello", timestamp=1)])
     events = [
         {
@@ -264,11 +264,7 @@ async def test_parses_native_thinking_text_tool_calls_and_cached_token_usage():
                 {
                     "index": 0,
                     "finish_reason": "tool_calls",
-                    "delta": {
-                        "tool_calls": [
-                            {"id": "abc123456", "index": 0, "function": {"name": "lookup", "arguments": '"pi"}'}}
-                        ]
-                    },
+                    "delta": {"tool_calls": [{"index": 0, "function": {"name": "", "arguments": '"pi"}'}}]},
                 }
             ],
             "usage": {

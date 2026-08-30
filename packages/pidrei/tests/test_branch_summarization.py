@@ -65,13 +65,13 @@ def _stream_fn(message: AssistantMessage) -> tuple:
 
 
 @pytest.mark.tonio
-async def test_disables_tools_for_branch_summaries():
+async def test_does_not_override_tool_choice_for_branch_summaries():
     stream_fn, calls = _stream_fn(_response([TextContent(text="summary")]))
 
     await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
 
     assert len(calls) == 1
-    assert calls[0].tool_choice == "none"
+    assert calls[0].tool_choice is None
 
 
 @pytest.mark.tonio
@@ -82,3 +82,17 @@ async def test_rejects_tool_calls_from_branch_summaries():
     result = await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
 
     assert result.error == "Branch summarization attempted to call a tool"
+
+
+@pytest.mark.tonio
+async def test_rejects_length_limited_branch_summaries():
+    message = _response([TextContent(text="partial")], stop_reason="length")
+
+    async def stream_fn(_model, _context, options=None):
+        stream = AssistantMessageEventStream()
+        stream.push(DoneEvent(reason="length", message=message))
+        return stream
+
+    result = await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
+
+    assert result.error == "Branch summarization failed: generation hit the token cap and the summary is incomplete"

@@ -68,6 +68,7 @@ from .terminal_image import (
     render_image,
     reset_capabilities_cache,
     set_capabilities,
+    set_capability_overrides,
     set_cell_dimensions,
 )
 from .tui import (
@@ -164,6 +165,7 @@ __all__ = [
     "render_latex",
     "reset_capabilities_cache",
     "set_capabilities",
+    "set_capability_overrides",
     "set_cell_dimensions",
     "set_keybindings",
     "set_kitty_protocol_active",

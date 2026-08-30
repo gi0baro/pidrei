@@ -1,7 +1,7 @@
 {
-  "black-forest-labs/flux.2-flex": {
-    "id": "black-forest-labs/flux.2-flex",
-    "name": "Black Forest Labs: FLUX.2 Flex",
+  "meta/muse-image": {
+    "id": "meta/muse-image",
+    "name": "Meta: Muse Image",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -19,9 +19,9 @@
       "cacheWrite": 0.0
     }
   },
-  "black-forest-labs/flux.2-klein-4b": {
-    "id": "black-forest-labs/flux.2-klein-4b",
-    "name": "Black Forest Labs: FLUX.2 Klein 4B",
+  "recraft/recraft-v4-styles-pro": {
+    "id": "recraft/recraft-v4-styles-pro",
+    "name": "Recraft: Recraft V4 Styles Pro",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -39,9 +39,9 @@
       "cacheWrite": 0.0
     }
   },
-  "black-forest-labs/flux.2-max": {
-    "id": "black-forest-labs/flux.2-max",
-    "name": "Black Forest Labs: FLUX.2 Max",
+  "recraft/recraft-v4-styles-vector": {
+    "id": "recraft/recraft-v4-styles-vector",
+    "name": "Recraft: Recraft V4 Styles Vector",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -59,9 +59,9 @@
       "cacheWrite": 0.0
     }
   },
-  "black-forest-labs/flux.2-pro": {
-    "id": "black-forest-labs/flux.2-pro",
-    "name": "Black Forest Labs: FLUX.2 Pro",
+  "recraft/recraft-v4-styles-pro-vector": {
+    "id": "recraft/recraft-v4-styles-pro-vector",
+    "name": "Recraft: Recraft V4 Styles Pro Vector",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -79,15 +79,15 @@
       "cacheWrite": 0.0
     }
   },
-  "bytedance-seed/seedream-4.5": {
-    "id": "bytedance-seed/seedream-4.5",
-    "name": "ByteDance Seed: Seedream 4.5",
+  "recraft/recraft-v4-styles": {
+    "id": "recraft/recraft-v4-styles",
+    "name": "Recraft: Recraft V4 Styles",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "image",
-      "text"
+      "text",
+      "image"
     ],
     "output": [
       "image"
@@ -139,128 +139,82 @@
       "cacheWrite": 0.0
     }
   },
-  "google/gemini-2.5-flash-image": {
-    "id": "google/gemini-2.5-flash-image",
-    "name": "Google: Nano Banana (Gemini 2.5 Flash Image)",
+  "x-ai/grok-imagine-image-2.0": {
+    "id": "x-ai/grok-imagine-image-2.0",
+    "name": "xAI: Grok Imagine Image 2.0",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "image",
-      "text"
+      "text",
+      "image"
     ],
     "output": [
-      "image",
-      "text"
+      "image"
     ],
     "cost": {
-      "input": 0.3,
-      "output": 2.5,
-      "cacheRead": 0.03,
-      "cacheWrite": 0.0833333333333333
-    }
-  },
-  "google/gemini-3-pro-image": {
-    "id": "google/gemini-3-pro-image",
-    "name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "image",
-      "text"
-    ],
-    "output": [
-      "image",
-      "text"
-    ],
-    "cost": {
-      "input": 2.0,
-      "output": 12.0,
-      "cacheRead": 0.19999999999999998,
-      "cacheWrite": 0.375
-    }
-  },
-  "google/gemini-3-pro-image-preview": {
-    "id": "google/gemini-3-pro-image-preview",
-    "name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "image",
-      "text"
-    ],
-    "output": [
-      "image",
-      "text"
-    ],
-    "cost": {
-      "input": 2.0,
-      "output": 12.0,
-      "cacheRead": 0.19999999999999998,
-      "cacheWrite": 0.375
-    }
-  },
-  "google/gemini-3.1-flash-image": {
-    "id": "google/gemini-3.1-flash-image",
-    "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "image",
-      "text"
-    ],
-    "output": [
-      "image",
-      "text"
-    ],
-    "cost": {
-      "input": 0.5,
-      "output": 3.0,
+      "input": 0.0,
+      "output": 0.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     }
   },
-  "google/gemini-3.1-flash-image-preview": {
-    "id": "google/gemini-3.1-flash-image-preview",
-    "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)",
+  "qwen/qwen-image-3": {
+    "id": "qwen/qwen-image-3",
+    "name": "Qwen: Qwen Image 3",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "image",
-      "text"
+      "text",
+      "image"
     ],
     "output": [
-      "image",
-      "text"
+      "image"
     ],
     "cost": {
-      "input": 0.5,
-      "output": 3.0,
+      "input": 0.0,
+      "output": 0.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     }
   },
-  "google/gemini-3.1-flash-lite-image": {
-    "id": "google/gemini-3.1-flash-lite-image",
-    "name": "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
+  "qwen/qwen-image-3-pro": {
+    "id": "qwen/qwen-image-3-pro",
+    "name": "Qwen: Qwen Image 3 Pro",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "image",
-      "text"
+      "text",
+      "image"
     ],
     "output": [
-      "image",
-      "text"
+      "image"
     ],
     "cost": {
-      "input": 0.25,
-      "output": 1.5,
+      "input": 0.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "microsoft/mai-image-2.5-pro": {
+    "id": "microsoft/mai-image-2.5-pro",
+    "name": "Microsoft: MAI-Image-2.5 Pro",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 5.0,
+      "output": 0.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     }
@@ -325,9 +279,51 @@
       "cacheWrite": 0.0
     }
   },
-  "microsoft/mai-image-2.5": {
-    "id": "microsoft/mai-image-2.5",
-    "name": "Microsoft: MAI-Image-2.5",
+  "openrouter/auto-beta": {
+    "id": "openrouter/auto-beta",
+    "name": "Auto Router (Beta)",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "text",
+      "image"
+    ],
+    "cost": {
+      "input": -1000000.0,
+      "output": -1000000.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "google/gemini-3.1-flash-lite-image": {
+    "id": "google/gemini-3.1-flash-lite-image",
+    "name": "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "image",
+      "text"
+    ],
+    "output": [
+      "image",
+      "text"
+    ],
+    "cost": {
+      "input": 0.25,
+      "output": 1.5,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "openai/gpt-image-2": {
+    "id": "openai/gpt-image-2",
+    "name": "OpenAI: GPT Image 2",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -337,93 +333,10 @@
     ],
     "output": [
       "image"
-    ],
-    "cost": {
-      "input": 5.0,
-      "output": 0.0,
-      "cacheRead": 0.0,
-      "cacheWrite": 0.0
-    }
-  },
-  "microsoft/mai-image-2.5-pro": {
-    "id": "microsoft/mai-image-2.5-pro",
-    "name": "Microsoft: MAI-Image-2.5 Pro",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "text",
-      "image"
-    ],
-    "output": [
-      "image"
-    ],
-    "cost": {
-      "input": 5.0,
-      "output": 0.0,
-      "cacheRead": 0.0,
-      "cacheWrite": 0.0
-    }
-  },
-  "openai/gpt-5-image": {
-    "id": "openai/gpt-5-image",
-    "name": "OpenAI: GPT-5 Image",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "image",
-      "text"
-    ],
-    "output": [
-      "image",
-      "text"
-    ],
-    "cost": {
-      "input": 10.0,
-      "output": 10.0,
-      "cacheRead": 1.25,
-      "cacheWrite": 0.0
-    }
-  },
-  "openai/gpt-5-image-mini": {
-    "id": "openai/gpt-5-image-mini",
-    "name": "OpenAI: GPT-5 Image Mini",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "image",
-      "text"
-    ],
-    "output": [
-      "image",
-      "text"
-    ],
-    "cost": {
-      "input": 2.5,
-      "output": 2.0,
-      "cacheRead": 0.25,
-      "cacheWrite": 0.0
-    }
-  },
-  "openai/gpt-5.4-image-2": {
-    "id": "openai/gpt-5.4-image-2",
-    "name": "OpenAI: GPT-5.4 Image 2",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "image",
-      "text"
-    ],
-    "output": [
-      "image",
-      "text"
     ],
     "cost": {
       "input": 8.0,
-      "output": 15.0,
+      "output": 8.0,
       "cacheRead": 2.0,
       "cacheWrite": 0.0
     }
@@ -468,71 +381,51 @@
       "cacheWrite": 0.0
     }
   },
-  "openai/gpt-image-2": {
-    "id": "openai/gpt-image-2",
-    "name": "OpenAI: GPT Image 2",
+  "google/gemini-3.1-flash-image": {
+    "id": "google/gemini-3.1-flash-image",
+    "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "text",
-      "image"
+      "image",
+      "text"
     ],
     "output": [
-      "image"
+      "image",
+      "text"
     ],
     "cost": {
-      "input": 8.0,
-      "output": 8.0,
-      "cacheRead": 2.0,
-      "cacheWrite": 0.0
-    }
-  },
-  "openrouter/auto": {
-    "id": "openrouter/auto",
-    "name": "Auto Router",
-    "api": "openrouter-images",
-    "provider": "openrouter",
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "input": [
-      "text",
-      "image"
-    ],
-    "output": [
-      "text",
-      "image"
-    ],
-    "cost": {
-      "input": -1000000.0,
-      "output": -1000000.0,
+      "input": 0.5,
+      "output": 3.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     }
   },
-  "openrouter/auto-beta": {
-    "id": "openrouter/auto-beta",
-    "name": "Auto Router (Beta)",
+  "google/gemini-3-pro-image": {
+    "id": "google/gemini-3-pro-image",
+    "name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "text",
-      "image"
+      "image",
+      "text"
     ],
     "output": [
-      "text",
-      "image"
+      "image",
+      "text"
     ],
     "cost": {
-      "input": -1000000.0,
-      "output": -1000000.0,
-      "cacheRead": 0.0,
-      "cacheWrite": 0.0
+      "input": 2.0,
+      "output": 12.0,
+      "cacheRead": 0.19999999999999998,
+      "cacheWrite": 0.375
     }
   },
-  "qwen/qwen-image-3": {
-    "id": "qwen/qwen-image-3",
-    "name": "Qwen: Qwen Image 3",
+  "sourceful/riverflow-v2.5-pro": {
+    "id": "sourceful/riverflow-v2.5-pro",
+    "name": "Sourceful: Riverflow V2.5 Pro",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -550,9 +443,9 @@
       "cacheWrite": 0.0
     }
   },
-  "qwen/qwen-image-3-pro": {
-    "id": "qwen/qwen-image-3-pro",
-    "name": "Qwen: Qwen Image 3 Pro",
+  "sourceful/riverflow-v2.5-fast": {
+    "id": "sourceful/riverflow-v2.5-fast",
+    "name": "Sourceful: Riverflow V2.5 Fast",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -570,9 +463,29 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v3": {
-    "id": "recraft/recraft-v3",
-    "name": "Recraft: Recraft V3",
+  "microsoft/mai-image-2.5": {
+    "id": "microsoft/mai-image-2.5",
+    "name": "Microsoft: MAI-Image-2.5",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 5.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "x-ai/grok-imagine-image-quality": {
+    "id": "x-ai/grok-imagine-image-quality",
+    "name": "SpaceXAI: Grok Imagine Image Quality",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -590,9 +503,9 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4": {
-    "id": "recraft/recraft-v4",
-    "name": "Recraft: Recraft V4",
+  "recraft/recraft-v4.1-pro-vector": {
+    "id": "recraft/recraft-v4.1-pro-vector",
+    "name": "Recraft: Recraft V4.1 Pro Vector",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -610,9 +523,89 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4-pro": {
-    "id": "recraft/recraft-v4-pro",
-    "name": "Recraft: Recraft V4 Pro",
+  "recraft/recraft-v4.1-vector": {
+    "id": "recraft/recraft-v4.1-vector",
+    "name": "Recraft: Recraft V4.1 Vector",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "recraft/recraft-v4.1-utility-pro": {
+    "id": "recraft/recraft-v4.1-utility-pro",
+    "name": "Recraft: Recraft V4.1 Utility Pro",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "recraft/recraft-v4.1-utility": {
+    "id": "recraft/recraft-v4.1-utility",
+    "name": "Recraft: Recraft V4.1 Utility",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "recraft/recraft-v4.1-pro": {
+    "id": "recraft/recraft-v4.1-pro",
+    "name": "Recraft: Recraft V4.1 Pro",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "text",
+      "image"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "recraft/recraft-v4.1": {
+    "id": "recraft/recraft-v4.1",
+    "name": "Recraft: Recraft V4.1",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -670,9 +663,9 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4.1": {
-    "id": "recraft/recraft-v4.1",
-    "name": "Recraft: Recraft V4.1",
+  "recraft/recraft-v4-pro": {
+    "id": "recraft/recraft-v4-pro",
+    "name": "Recraft: Recraft V4 Pro",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -690,9 +683,9 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4.1-pro": {
-    "id": "recraft/recraft-v4.1-pro",
-    "name": "Recraft: Recraft V4.1 Pro",
+  "recraft/recraft-v4": {
+    "id": "recraft/recraft-v4",
+    "name": "Recraft: Recraft V4",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -710,9 +703,9 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4.1-pro-vector": {
-    "id": "recraft/recraft-v4.1-pro-vector",
-    "name": "Recraft: Recraft V4.1 Pro Vector",
+  "recraft/recraft-v3": {
+    "id": "recraft/recraft-v3",
+    "name": "Recraft: Recraft V3",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -730,49 +723,51 @@
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4.1-utility": {
-    "id": "recraft/recraft-v4.1-utility",
-    "name": "Recraft: Recraft V4.1 Utility",
+  "openai/gpt-5.4-image-2": {
+    "id": "openai/gpt-5.4-image-2",
+    "name": "OpenAI: GPT-5.4 Image 2",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "text",
-      "image"
+      "image",
+      "text"
     ],
     "output": [
-      "image"
+      "image",
+      "text"
     ],
     "cost": {
-      "input": 0.0,
-      "output": 0.0,
-      "cacheRead": 0.0,
+      "input": 8.0,
+      "output": 15.0,
+      "cacheRead": 2.0,
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4.1-utility-pro": {
-    "id": "recraft/recraft-v4.1-utility-pro",
-    "name": "Recraft: Recraft V4.1 Utility Pro",
+  "google/gemini-3.1-flash-image-preview": {
+    "id": "google/gemini-3.1-flash-image-preview",
+    "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
     "input": [
-      "text",
-      "image"
+      "image",
+      "text"
     ],
     "output": [
-      "image"
+      "image",
+      "text"
     ],
     "cost": {
-      "input": 0.0,
-      "output": 0.0,
+      "input": 0.5,
+      "output": 3.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     }
   },
-  "recraft/recraft-v4.1-vector": {
-    "id": "recraft/recraft-v4.1-vector",
-    "name": "Recraft: Recraft V4.1 Vector",
+  "sourceful/riverflow-v2-pro": {
+    "id": "sourceful/riverflow-v2-pro",
+    "name": "Sourceful: Riverflow V2 Pro",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -810,9 +805,9 @@
       "cacheWrite": 0.0
     }
   },
-  "sourceful/riverflow-v2-pro": {
-    "id": "sourceful/riverflow-v2-pro",
-    "name": "Sourceful: Riverflow V2 Pro",
+  "black-forest-labs/flux.2-klein-4b": {
+    "id": "black-forest-labs/flux.2-klein-4b",
+    "name": "Black Forest Labs: FLUX.2 Klein 4B",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -830,9 +825,29 @@
       "cacheWrite": 0.0
     }
   },
-  "sourceful/riverflow-v2.5-fast": {
-    "id": "sourceful/riverflow-v2.5-fast",
-    "name": "Sourceful: Riverflow V2.5 Fast",
+  "bytedance-seed/seedream-4.5": {
+    "id": "bytedance-seed/seedream-4.5",
+    "name": "ByteDance Seed: Seedream 4.5",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "image",
+      "text"
+    ],
+    "output": [
+      "image"
+    ],
+    "cost": {
+      "input": 0.0,
+      "output": 0.0,
+      "cacheRead": 0.0,
+      "cacheWrite": 0.0
+    }
+  },
+  "black-forest-labs/flux.2-max": {
+    "id": "black-forest-labs/flux.2-max",
+    "name": "Black Forest Labs: FLUX.2 Max",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -850,9 +865,9 @@
       "cacheWrite": 0.0
     }
   },
-  "sourceful/riverflow-v2.5-pro": {
-    "id": "sourceful/riverflow-v2.5-pro",
-    "name": "Sourceful: Riverflow V2.5 Pro",
+  "black-forest-labs/flux.2-flex": {
+    "id": "black-forest-labs/flux.2-flex",
+    "name": "Black Forest Labs: FLUX.2 Flex",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -870,9 +885,9 @@
       "cacheWrite": 0.0
     }
   },
-  "x-ai/grok-imagine-image-2.0": {
-    "id": "x-ai/grok-imagine-image-2.0",
-    "name": "xAI: Grok Imagine Image 2.0",
+  "black-forest-labs/flux.2-pro": {
+    "id": "black-forest-labs/flux.2-pro",
+    "name": "Black Forest Labs: FLUX.2 Pro",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -890,9 +905,93 @@
       "cacheWrite": 0.0
     }
   },
-  "x-ai/grok-imagine-image-quality": {
-    "id": "x-ai/grok-imagine-image-quality",
-    "name": "SpaceXAI: Grok Imagine Image Quality",
+  "google/gemini-3-pro-image-preview": {
+    "id": "google/gemini-3-pro-image-preview",
+    "name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "image",
+      "text"
+    ],
+    "output": [
+      "image",
+      "text"
+    ],
+    "cost": {
+      "input": 2.0,
+      "output": 12.0,
+      "cacheRead": 0.19999999999999998,
+      "cacheWrite": 0.375
+    }
+  },
+  "openai/gpt-5-image-mini": {
+    "id": "openai/gpt-5-image-mini",
+    "name": "OpenAI: GPT-5 Image Mini",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "image",
+      "text"
+    ],
+    "output": [
+      "image",
+      "text"
+    ],
+    "cost": {
+      "input": 2.5,
+      "output": 2.0,
+      "cacheRead": 0.25,
+      "cacheWrite": 0.0
+    }
+  },
+  "openai/gpt-5-image": {
+    "id": "openai/gpt-5-image",
+    "name": "OpenAI: GPT-5 Image",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "image",
+      "text"
+    ],
+    "output": [
+      "image",
+      "text"
+    ],
+    "cost": {
+      "input": 10.0,
+      "output": 10.0,
+      "cacheRead": 1.25,
+      "cacheWrite": 0.0
+    }
+  },
+  "google/gemini-2.5-flash-image": {
+    "id": "google/gemini-2.5-flash-image",
+    "name": "Google: Nano Banana (Gemini 2.5 Flash Image)",
+    "api": "openrouter-images",
+    "provider": "openrouter",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "input": [
+      "image",
+      "text"
+    ],
+    "output": [
+      "image",
+      "text"
+    ],
+    "cost": {
+      "input": 0.3,
+      "output": 2.5,
+      "cacheRead": 0.03,
+      "cacheWrite": 0.0833333333333333
+    }
+  },
+  "openrouter/auto": {
+    "id": "openrouter/auto",
+    "name": "Auto Router",
     "api": "openrouter-images",
     "provider": "openrouter",
     "baseUrl": "https://openrouter.ai/api/v1",
@@ -901,11 +1000,12 @@
       "image"
     ],
     "output": [
+      "text",
       "image"
     ],
     "cost": {
-      "input": 0.0,
-      "output": 0.0,
+      "input": -1000000.0,
+      "output": -1000000.0,
       "cacheRead": 0.0,
       "cacheWrite": 0.0
     }

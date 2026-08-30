@@ -476,6 +476,9 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 await session.abort()
                 return success(id, "abort")
 
+            case "clear_queue":
+                return success(id, "clear_queue", session.clear_queue())
+
             case "new_session":
                 kwargs = {}
                 if command.get("parentSession"):

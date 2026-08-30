@@ -118,6 +118,9 @@ class _SwitchContext(_BareInteractiveMode):
         self._options = {"tuiMode": "regular"}
         self._theme_controller = SimpleNamespace(rebind_tui=_noop_async)
         self._extension_terminal_input_subscriptions = set()
+        self.runtime_host = SimpleNamespace(
+            session=SimpleNamespace(settings_manager=SimpleNamespace(get_fullscreen_copy_on_select=lambda: True))
+        )
         self.ui = interactive_mode.create_interactive_tui_reference(lambda: self._renderer)
 
 
@@ -188,6 +191,92 @@ class _CopyRecorder:
 
 
 @pytest.mark.tonio
+async def test_copies_an_active_fullscreen_selection_when_copy_on_select_is_disabled():
+    copied: list[str] = []
+    terminal = RecordingTerminal(40, 4)
+    ui = create_interactive_tui(
+        tui_mode="fullscreen",
+        show_hardware_cursor=False,
+        log_directory="/tmp",
+        terminal=terminal,
+        fullscreen_copy_on_select=False,
+    )
+    context = _CopyRecorder(ui)
+    last_text_calls: list[bool] = []
+
+    def get_last_assistant_text() -> str:
+        last_text_calls.append(True)
+        return "assistant response"
+
+    context.session = SimpleNamespace(get_last_assistant_text=get_last_assistant_text)
+    ui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+
+    await ui.start()
+    try:
+        await terminal.wait_for_render()
+        with _recording_clipboard(copied):
+            since = terminal.frames
+            await terminal.send_input("\x1b[<0;1;1M")
+            await terminal.send_input("\x1b[<32;4;2M")
+            await terminal.send_input("\x1b[<0;4;2m")
+            await terminal.wait_for_render(since)
+            copied.clear()
+
+            since = terminal.frames
+            await InteractiveMode._handle_copy_command(context, {"flashConfirmation": True, "preferSelection": True})
+            await terminal.wait_for_render(since)
+
+        assert copied == ["alpha\nbeta"]
+        assert last_text_calls == []
+        assert context.statuses == []
+        assert context.errors == []
+        assert any("Copied!" in line for line in terminal.get_viewport())
+    finally:
+        await ui.stop()
+
+
+@pytest.mark.tonio
+async def test_copies_the_last_assistant_message_with_an_active_fullscreen_selection_when_copy_on_select_is_enabled():
+    copied: list[str] = []
+    terminal = RecordingTerminal(40, 4)
+    ui = create_interactive_tui(
+        tui_mode="fullscreen", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
+    )
+    context = _CopyRecorder(ui)
+    last_text_calls: list[bool] = []
+
+    def get_last_assistant_text() -> str:
+        last_text_calls.append(True)
+        return "assistant response"
+
+    context.session = SimpleNamespace(get_last_assistant_text=get_last_assistant_text)
+    ui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+
+    await ui.start()
+    try:
+        await terminal.wait_for_render()
+        with _recording_clipboard(copied):
+            since = terminal.frames
+            await terminal.send_input("\x1b[<0;1;1M")
+            await terminal.send_input("\x1b[<32;4;2M")
+            await terminal.send_input("\x1b[<0;4;2m")
+            await terminal.wait_for_render(since)
+            copied.clear()
+
+            since = terminal.frames
+            await InteractiveMode._handle_copy_command(context, {"flashConfirmation": True, "preferSelection": True})
+            await terminal.wait_for_render(since)
+
+        assert copied == ["assistant response"]
+        assert last_text_calls == [True]
+        assert context.statuses == []
+        assert context.errors == []
+        assert any("Copied!" in line for line in terminal.get_viewport())
+    finally:
+        await ui.stop()
+
+
+@pytest.mark.tonio
 async def test_flashes_copied_for_the_copy_shortcut_in_fullscreen_mode():
     copied: list[str] = []
     terminal = RecordingTerminal(40, 4)
@@ -201,7 +290,7 @@ async def test_flashes_copied_for_the_copy_shortcut_in_fullscreen_mode():
         await terminal.wait_for_render()
         with _recording_clipboard(copied):
             since = terminal.frames
-            await InteractiveMode._handle_copy_command(context, {"flashConfirmation": True})
+            await InteractiveMode._handle_copy_command(context, {"flashConfirmation": True, "preferSelection": True})
             await terminal.wait_for_render(since)
 
         assert copied == ["assistant response"]
@@ -221,7 +310,7 @@ async def test_keeps_the_status_line_confirmation_for_the_copy_shortcut_in_regul
     context = _CopyRecorder(ui)
 
     with _recording_clipboard(copied):
-        await InteractiveMode._handle_copy_command(context, {"flashConfirmation": True})
+        await InteractiveMode._handle_copy_command(context, {"flashConfirmation": True, "preferSelection": True})
 
     assert context.statuses == ["Copied last agent message to clipboard"]
     assert context.errors == []

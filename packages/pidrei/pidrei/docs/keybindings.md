@@ -19,7 +19,7 @@ the current bindings with `/keybindings`.
 | `ctrl+l` | `app.model.select` | Open the model selector |
 | `ctrl+o` | `app.tools.expand` | Expand or collapse tool output |
 | `ctrl+g` | `app.editor.external` | Open `$EDITOR` |
-| `ctrl+x` | `app.message.copy` | Copy the last message |
+| `ctrl+x` | `app.message.copy` | Copy the selected message in `/tree`; otherwise copy the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
 | `alt+enter` | `app.message.followUp` | Queue a follow-up message |
 | `alt+up` | `app.message.dequeue` | Restore queued messages |
 | `ctrl+n` | `app.session.toggleNamedFilter` | Toggle the named-session filter |

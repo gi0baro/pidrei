@@ -15,6 +15,9 @@
 | `PIDREI_PROVIDER` / `PIDREI_MODEL` | Default provider and model |
 | `PIDREI_REASONING_LEVEL` | Default thinking level |
 | `PIDREI_OAUTH_CALLBACK_HOST` | Host the OAuth callback server binds |
+| `PIDREI_HYPERLINKS` | Override OSC 8 hyperlink detection with `1`, `0`, or `auto` |
+| `PIDREI_IMAGE_PROTOCOL` | Override inline image detection with `kitty`, `iterm2`, `none`, or `auto` |
+| `PIDREI_TRUE_COLOR` | Override truecolor detection with `1`, `0`, or `auto` |
 | `PIDREI_TUI_ESC_TIMEOUT` | How long to wait after a lone ESC before treating it as Escape, in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
 | `PIDREI_THREADS` | Runtime worker threads (default: CPU count clamped to 2–8) |
 | `PIDREI_BLOCKING_THREADS` | Blocking thread pool cap (default: 8 per worker) |

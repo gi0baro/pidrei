@@ -20,7 +20,7 @@
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
-      "maxTokens": 128000
+      "maxTokens": 131072
     },
     "MiniMaxAI/MiniMax-M2.1": {
       "id": "MiniMaxAI/MiniMax-M2.1",
@@ -109,7 +109,7 @@
         "supportsDeveloperRole": false
       },
       "contextWindow": 524288,
-      "maxTokens": 128000
+      "maxTokens": 512000
     },
     "Qwen/Qwen2.5-Coder-32B-Instruct": {
       "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
@@ -599,6 +599,38 @@
       },
       "contextWindow": 262144,
       "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      }
+    },
+    "Qwen/Qwen3.8-27B": {
+      "id": "Qwen/Qwen3.8-27B",
+      "name": "Qwen3.8 27B",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.4,
+        "output": 3,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 262144,
+      "maxTokens": 32768,
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -1620,6 +1652,69 @@
       },
       "contextWindow": 262144,
       "maxTokens": 131072
+    },
+    "zai-org/GLM-5.3": {
+      "id": "zai-org/GLM-5.3",
+      "name": "GLM-5.3",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
+    },
+    "zai-org/GLM-5.3-Flash": {
+      "id": "zai-org/GLM-5.3-Flash",
+      "name": "GLM-5.3-Flash",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
     }
   }
 }

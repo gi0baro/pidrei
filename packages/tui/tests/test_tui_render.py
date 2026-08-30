@@ -1026,3 +1026,77 @@ async def test_next_frame_is_computed_while_the_previous_one_is_still_on_the_wir
     release.set()
     await tui.stop()
     assert any("three" in line for line in terminal.get_viewport())
+
+
+# TUI bounded render output (pi's BoundedTerminalWriter; enforced at the
+# island's write seam — see MAX_RENDER_WRITE_CHARS in tui.py)
+
+
+class _BoundedWriteTerminal(VirtualTerminal):
+    """Record-only terminal for the megabyte renders (pi's BoundedWriteTerminal):
+    feeding 1.2M-char kitty payloads through pyte would dominate the suite."""
+
+    def __init__(self, columns: int = 80, rows: int = 24) -> None:
+        super().__init__(columns, rows)
+        self._writes: list[str] = []
+
+    async def write(self, data: str) -> None:
+        self._writes.append(data)
+        if "\x1b[?2026h" in data:
+            self._frames += 1
+
+    def get_writes(self) -> str:
+        return "".join(self._writes)
+
+    def clear_writes(self) -> None:
+        self._writes = []
+
+
+@pytest.mark.tonio
+async def test_splits_a_large_full_render_without_changing_its_output():
+    terminal = _BoundedWriteTerminal(80, 24)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    kitty_line = "\x1b_Ga=T,f=100;" + "A" * 1_200_000 + "\x1b\\"
+    component.lines = [kitty_line, kitty_line]
+    tui.add_child(component)
+
+    await tui.start()
+    await terminal.wait_for_render()
+    await tui.stop()
+
+    writes = terminal._writes
+    assert len(writes) > 2, "large output should be split across terminal writes"
+    assert all(len(write) <= tui_module.MAX_RENDER_WRITE_CHARS for write in writes), (
+        "each terminal write should stay below the configured limit"
+    )
+    # Chunking must preserve the synchronized render output.
+    output = terminal.get_writes()
+    assert f"\x1b[?2026h{kitty_line}\r\n{kitty_line}\x1b[?2026l" in output
+
+
+@pytest.mark.tonio
+async def test_splits_large_differential_updates_without_a_full_redraw():
+    terminal = _BoundedWriteTerminal(80, 24)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    tui.add_child(component)
+    component.lines = ["before"]
+    await tui.start()
+    await terminal.wait_for_render()
+    terminal.clear_writes()
+
+    kitty_line = "\x1b_Ga=T,f=100;" + "A" * 1_200_000 + "\x1b\\"
+    component.lines = ["before", kitty_line, kitty_line]
+    since = terminal.frames
+    tui.request_render()
+    await terminal.wait_for_render(since)
+    await tui.stop()
+
+    writes = terminal._writes
+    assert len(writes) > 2, "large output should be split across terminal writes"
+    assert all(len(write) <= tui_module.MAX_RENDER_WRITE_CHARS for write in writes)
+    output = terminal.get_writes()
+    assert output.startswith("\x1b[?2026h")
+    assert "\x1b[?2026l" in output
+    assert "\x1b[2J" not in output, "the update should stay on the differential render path"

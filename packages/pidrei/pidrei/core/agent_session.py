@@ -417,6 +417,9 @@ class AgentSession:
         self._follow_up_messages: list[str] = []
         # Messages queued to be included with the next user prompt as context.
         self._pending_next_turn_messages: list[CustomMessage] = []
+        # Context-only custom messages queued during a run, flushed once the
+        # current turn's tool results are in.
+        self._pending_custom_messages: list[CustomMessage] = []
 
         # Compaction state
         self._compaction_cancel: CancelToken | None = None
@@ -608,6 +611,20 @@ class AgentSession:
         self.agent.before_tool_call = before_tool_call
         self.agent.after_tool_call = after_tool_call
 
+    async def _compact_before_next_assistant_response(self, context: AgentContext) -> AgentContext:
+        model = self.model
+        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
+
+        if (
+            model is None
+            or model.context_window <= 0
+            or not should_compact(estimate_context_tokens(context.messages).tokens, model.context_window, settings)
+        ):
+            return context
+
+        await self._run_auto_compaction("threshold", False)
+        return dataclass_replace(context, messages=list(self.agent.state.messages))
+
     def _install_agent_next_turn_refresh(self) -> None:
         previous_with_context = self.agent.prepare_next_turn_with_context
         if previous_with_context is None and self.agent.prepare_next_turn is not None:
@@ -619,13 +636,12 @@ class AgentSession:
             previous_with_context = adapted
 
         async def prepare_next_turn_with_context(turn: PrepareNextTurnContext, cancel=None):
+            context = await self._compact_before_next_assistant_response(turn.context)
             previous_snapshot = None
             if previous_with_context is not None:
-                previous_snapshot = await previous_with_context(turn, cancel)
-            previous_context = (
-                previous_snapshot.context
-                if previous_snapshot is not None and previous_snapshot.context
-                else turn.context
+                previous_snapshot = await previous_with_context(dataclass_replace(turn, context=context), cancel)
+            next_context = (
+                previous_snapshot.context if previous_snapshot is not None and previous_snapshot.context else context
             )
 
             system_prompt = (
@@ -634,7 +650,7 @@ class AgentSession:
             return AgentLoopTurnUpdate(
                 context=AgentContext(
                     system_prompt=system_prompt,
-                    messages=previous_context.messages,
+                    messages=next_context.messages,
                     tools=list(self.agent.state.tools),
                 ),
                 model=self.agent.state.model,
@@ -754,6 +770,14 @@ class AgentSession:
                 if message.stop_reason != "error" and self._retry_attempt > 0:
                     self._emit(AutoRetryEndEvent(success=True, attempt=self._retry_attempt))
                     self._retry_attempt = 0
+
+        # A turn ends after its assistant message and every tool result has been appended,
+        # so this is the first point in the run where a context-only custom message can be
+        # inserted without landing between a tool call and its result. Flushing after the
+        # extension and listener dispatch above also picks up messages that turn_end
+        # handlers queued.
+        if event.type == "turn_end":
+            await self._flush_pending_custom_messages()
 
     def _will_retry_after_agent_end(self, event: AgentEndEvent) -> bool:
         settings = self.settings_manager.get_retry_settings()
@@ -1079,6 +1103,7 @@ class AgentSession:
             with self._state_guard:
                 self._is_agent_run_active = False
             await self._flush_pending_bash_messages()
+            await self._flush_pending_custom_messages()
             await self._emit_agent_settled()
 
     async def _handle_post_agent_run(self) -> bool:
@@ -1168,8 +1193,9 @@ class AgentSession:
                     preflight_result(True)
                 return
 
-            # Flush any pending bash messages before the new prompt
+            # Flush any pending bash and custom messages before the new prompt
             await self._flush_pending_bash_messages()
+            await self._flush_pending_custom_messages()
 
             # Validate model
             if self.model is None:
@@ -1361,6 +1387,7 @@ class AgentSession:
         """Send a custom message to the session. Creates a CustomMessageEntry.
 
         - Streaming: queues message, processed when loop pulls from queue
+        - Streaming + trigger_turn False: appended to state/session once the current turn ends
         - Not streaming + trigger_turn: appends to state/session, starts new turn
         - Not streaming + no trigger: appends to state/session, no turn
         """
@@ -1395,11 +1422,37 @@ class AgentSession:
                 self.agent.steer(app_message)
         elif trigger_turn:
             await self._run_agent_prompt(app_message)
+        elif self.is_streaming:
+            # Appending now would put the message between an assistant tool call and its
+            # result, which providers that validate message order reject on replay. Defer
+            # to the end of the turn. Nothing is emitted yet: message events must not
+            # describe messages the session tree does not contain.
+            self._pending_custom_messages.append(app_message)
         else:
-            self.agent.state.messages.append(app_message)
-            await self.session_manager.append_custom_message_entry(custom_type, content, display, details)
-            self._emit(AgentMessageStartEvent(message=app_message))
-            self._emit(AgentMessageEndEvent(message=app_message))
+            await self._append_custom_message(app_message)
+
+    async def _append_custom_message(self, app_message: CustomMessage) -> None:
+        self.agent.state.messages.append(app_message)
+        await self.session_manager.append_custom_message_entry(
+            app_message.custom_type,
+            app_message.content,
+            app_message.display,
+            app_message.details,
+        )
+        self._emit(AgentMessageStartEvent(message=app_message))
+        self._emit(AgentMessageEndEvent(message=app_message))
+
+    async def _flush_pending_custom_messages(self) -> None:
+        """Append custom messages queued while the agent was running.
+
+        Called once the current turn's tool results are in agent state and
+        session history."""
+        if not self._pending_custom_messages:
+            return
+
+        pending, self._pending_custom_messages = self._pending_custom_messages, []
+        for app_message in pending:
+            await self._append_custom_message(app_message)
 
     async def send_user_message(
         self,
@@ -1502,6 +1555,7 @@ class AgentSession:
         await self.session_manager.append_model_change(model.provider, model.id)
         if persist:
             self.settings_manager.set_default_model_and_provider(model.provider, model.id)
+            self._add_persisted_default_to_non_empty_scope(model)
 
         # Apply thinking level for the new model.
         # Per-model thinking level overrides take priority over the global default.
@@ -1509,6 +1563,23 @@ class AgentSession:
         await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(model, previous_model, "set")
+
+    def _add_persisted_default_to_non_empty_scope(self, model: Model) -> None:
+        if not self._scoped_models:
+            return
+        if any(models_are_equal(scoped.model, model) for scoped in self._scoped_models):
+            return
+
+        self._scoped_models = [*self._scoped_models, ScopedModel(model=model)]
+
+        enabled_models = self.settings_manager.get_enabled_models()
+        if not enabled_models:
+            return
+
+        model_reference = f"{model.provider}/{model.id}"
+        if any(pattern.lower() == model_reference.lower() for pattern in enabled_models):
+            return
+        self.settings_manager.set_enabled_models([*enabled_models, model_reference])
 
     async def cycle_model(self, direction: str = "forward", *, persist: bool = False) -> ModelCycleResult | None:
         """Cycle to next/previous model. Uses scoped models (--models flag) if
@@ -1540,6 +1611,7 @@ class AgentSession:
         await self.session_manager.append_model_change(next_scoped.model.provider, next_scoped.model.id)
         if persist:
             self.settings_manager.set_default_model_and_provider(next_scoped.model.provider, next_scoped.model.id)
+            self._add_persisted_default_to_non_empty_scope(next_scoped.model)
 
         # Apply thinking level for the new model.
         # - An explicit scoped model thinking level overrides defaults
@@ -1571,6 +1643,7 @@ class AgentSession:
         await self.session_manager.append_model_change(next_model.provider, next_model.id)
         if persist:
             self.settings_manager.set_default_model_and_provider(next_model.provider, next_model.id)
+            self._add_persisted_default_to_non_empty_scope(next_model)
 
         # Apply thinking level for the new model.
         # Model persistence does not implicitly rewrite the global thinking default.

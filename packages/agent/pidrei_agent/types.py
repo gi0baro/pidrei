@@ -252,11 +252,12 @@ class AgentLoopConfig(SimpleStreamOptions):
     get_api_key: Callable[[str], Awaitable[str | None]] | None = None
 
     # Called after each turn fully completes; returning True exits the loop
-    # before polling steering/follow-up queues.
+    # before polling steering/follow-up queues. This callback sees the
+    # completed-turn context and runs before `prepare_next_turn`.
     should_stop_after_turn: Callable[[ShouldStopAfterTurnContext], Awaitable[bool]] | None = None
 
-    # Called after `turn_end`, before the loop decides whether another provider
-    # request should start. Return replacement state or None to keep current.
+    # Called after `turn_end` when the loop will continue, immediately before
+    # the next turn starts. Return replacement state or None to keep current.
     prepare_next_turn: Callable[[PrepareNextTurnContext], Awaitable[AgentLoopTurnUpdate | None]] | None = None
 
     # Returns steering messages to inject into the conversation mid-run.

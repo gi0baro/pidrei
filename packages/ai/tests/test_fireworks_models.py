@@ -8,7 +8,7 @@ headers and payload from the adapter's own transport (see anthropic_helpers).
 import pytest
 
 from pidrei_ai.env_api_keys import find_env_keys, get_env_api_key
-from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
+from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     Context,
@@ -46,22 +46,6 @@ def test_registers_default_kimi_k26_via_anthropic_messages():
     assert model.context_window == 262000
     assert model.max_tokens == 262000
     assert model.cost == ModelCost(input=0.95, output=4, cache_read=0.16, cache_write=0)
-
-
-def test_registers_the_fire_pass_turbo_router_model():
-    model = next(
-        (
-            candidate
-            for candidate in get_builtin_models("fireworks")
-            if candidate.id.startswith("accounts/fireworks/routers/") and candidate.id.endswith("-turbo")
-        ),
-        None,
-    )
-
-    assert model is not None
-    assert model.api == "anthropic-messages"
-    assert model.base_url == "https://api.fireworks.ai/inference"
-    assert model.input == ["text", "image"]
 
 
 def test_aligns_glm_52_fast_with_glm_52_openai_compatible_config():

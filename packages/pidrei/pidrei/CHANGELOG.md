@@ -6,6 +6,51 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.4.0] - 2026-08-30
+
+### Added
+
+- Terminal capability overrides: force or disable inline images, truecolor,
+  and OSC 8 hyperlinks via the `terminal.images` / `terminal.trueColor` /
+  `terminal.hyperlinks` settings or the `PIDREI_IMAGE_PROTOCOL` /
+  `PIDREI_TRUE_COLOR` / `PIDREI_HYPERLINKS` environment variables.
+- A `fullscreenCopyOnSelect` setting: disable automatic copy-on-select in
+  fullscreen mode and copy the active selection with `ctrl+x` instead.
+- `ui_prompt_start` / `ui_prompt_end` extension events fire around blocking
+  extension UI prompts so host integrations can report "waiting for user".
+- An RPC `clear_queue` command (and `RpcClient.clear_queue()`) that clears
+  queued steering and follow-up messages and returns their text.
+- New models: DeepSeek V4 Flash Vision Exp, Cloudflare Workers AI
+  passthroughs on the AI Gateway catalog, and a refreshed image model catalog.
+- OpenRouter reasoning controls are derived from OpenRouter's model metadata,
+  so reasoning-mandatory models no longer receive `effort: "none"`.
+
+### Fixed
+
+- Compaction now runs between a turn's tool results and the next provider
+  request in the same run, instead of waiting for the run to finish; steering
+  queued while compaction runs is included in the resumed request.
+- Truncated compaction and branch summaries (a `length` stop) are rejected
+  instead of being persisted as session checkpoints.
+- Custom messages sent while the agent is running are appended after the
+  turn's tool results instead of landing between a tool call and its result.
+- Persisting a default model with `--models` in effect adds it to the scoped
+  model list and `enabledModels` instead of silently escaping the scope.
+- OpenRouter `reasoning_details` deltas are merged into logical entries and
+  the thinking signature is serialized once when the block completes.
+- Explicitly requested `toolChoice` is honored even when no tools are defined,
+  and compaction requests no longer force `toolChoice: "none"`.
+- Fragmented Mistral tool calls no longer split when continuation chunks omit
+  the tool-call ID.
+- Valid session files with an unterminated final line are repaired on load so
+  later entries cannot fuse with the tail.
+- Fullscreen double-click word selection keeps paths and kebab-case tokens
+  whole, and large main-screen renders are written in bounded 1 MiB chunks.
+- Toggling thinking-block visibility no longer rebuilds live tool components,
+  preserving partial bash output.
+- `@` autocomplete ranks direct children of the scoped directory before deeper
+  same-score matches, even when recursive results are flooded.
+
 ## [0.84.3.3] - 2026-08-29
 
 ### Changed

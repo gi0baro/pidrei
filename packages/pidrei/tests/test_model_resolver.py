@@ -605,3 +605,77 @@ class TestMaxThinkingLevel:
         # No flush: the in-memory backend writes inline, so there is
         # nothing queued to wait for.
         assert settings.get_default_thinking_level() == "max"
+
+
+class TestPersistedDefaultModelScoping:
+    """pi's "persisted default model scoping" describe. pi passes scopedModels
+    to the AgentSession constructor; the helper session gets the same starting
+    state via the public `set_scoped_models`."""
+
+    async def _create_session(self, tmp_path, *, scoped: bool, persisted_scope: list[str] | None = None):
+        from pidrei.core.agent_session import ScopedModel
+
+        from .agent_session_helpers import create_agent_session
+
+        sonnet = _sonnet()
+
+        async def stream_fn(*_args, **_kwargs):
+            raise AssertionError("no model request expected")
+
+        session = await create_agent_session(str(tmp_path), stream_fn=stream_fn, model=sonnet)
+        if persisted_scope:
+            session.settings_manager.set_enabled_models(persisted_scope)
+        if scoped:
+            session.set_scoped_models([ScopedModel(model=sonnet)])
+        return session
+
+    @pytest.mark.tonio
+    async def test_adds_a_persisted_default_to_an_existing_scoped_model_list(self, tmp_path):
+        sonnet, opus = _sonnet(), _opus()
+        session = await self._create_session(tmp_path, scoped=True, persisted_scope=[f"{sonnet.provider}/{sonnet.id}"])
+
+        await session.set_model(opus, persist=True)
+
+        assert session.settings_manager.get_default_provider() == opus.provider
+        assert session.settings_manager.get_default_model() == opus.id
+        assert [f"{scoped.model.provider}/{scoped.model.id}" for scoped in session.scoped_models] == [
+            f"{sonnet.provider}/{sonnet.id}",
+            f"{opus.provider}/{opus.id}",
+        ]
+        assert session.settings_manager.get_enabled_models() == [
+            f"{sonnet.provider}/{sonnet.id}",
+            f"{opus.provider}/{opus.id}",
+        ]
+
+    @pytest.mark.tonio
+    async def test_does_not_create_a_scoped_model_list_when_all_models_are_available(self, tmp_path):
+        session = await self._create_session(tmp_path, scoped=False)
+
+        await session.set_model(_opus(), persist=True)
+
+        assert session.scoped_models == []
+        assert session.settings_manager.get_enabled_models() is None
+
+    @pytest.mark.tonio
+    async def test_keeps_session_only_model_changes_out_of_scope(self, tmp_path):
+        sonnet = _sonnet()
+        session = await self._create_session(tmp_path, scoped=True, persisted_scope=[f"{sonnet.provider}/{sonnet.id}"])
+
+        await session.set_model(_opus(), persist=False)
+
+        assert [f"{scoped.model.provider}/{scoped.model.id}" for scoped in session.scoped_models] == [
+            f"{sonnet.provider}/{sonnet.id}"
+        ]
+        assert session.settings_manager.get_enabled_models() == [f"{sonnet.provider}/{sonnet.id}"]
+
+
+def _sonnet():
+    from pidrei_ai.providers.all import get_builtin_model
+
+    return get_builtin_model("anthropic", "claude-sonnet-4-5")
+
+
+def _opus():
+    from pidrei_ai.providers.all import get_builtin_model
+
+    return get_builtin_model("anthropic", "claude-opus-4-8")

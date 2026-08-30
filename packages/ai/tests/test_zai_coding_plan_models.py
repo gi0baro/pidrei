@@ -32,10 +32,11 @@ def test_uses_api_equivalent_reference_costs_for_coding_plan_models():
     assert cost_of("zai", "glm-5.2") == (1.4, 4.4, 0.26, 0)
     assert cost_of("zai-coding-cn", "glm-5.1") == (1.4, 4.4, 0.26, 0)
     assert cost_of("zai-coding-cn", "glm-5v-turbo") == (1.2, 4, 0.24, 0)
+    for provider in ("zai", "zai-coding-cn"):
+        assert cost_of(provider, "glm-5.3") == (1.4, 4.4, 0.26, 0)
 
 
 def test_keeps_zero_costs_for_coding_plan_models_without_a_matching_api_price():
     for provider in ("zai", "zai-coding-cn"):
-        for model_id in ("glm-5.2-highspeed", "glm-5.3"):
-            cost = get_builtin_model(provider, model_id).cost
-            assert (cost.input, cost.output, cost.cache_read, cost.cache_write) == (0, 0, 0, 0)
+        cost = get_builtin_model(provider, "glm-5.2-highspeed").cost
+        assert (cost.input, cost.output, cost.cache_read, cost.cache_write) == (0, 0, 0, 0)

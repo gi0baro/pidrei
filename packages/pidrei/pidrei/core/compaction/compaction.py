@@ -27,6 +27,7 @@ from pidrei_agent.harness.compaction.compaction import (
     should_compact,
 )
 from pidrei_ai.types import (
+    AssistantMessage,
     Context,
     Model,
     SimpleStreamOptions,
@@ -389,6 +390,18 @@ UPDATE_SUMMARIZATION_PROMPT = f"""The messages above are NEW conversation messag
 {UPDATE_SUMMARIZATION_INSTRUCTIONS}"""
 
 
+def get_summarization_failure(response: AssistantMessage, label: str) -> str | None:
+    """Returns an error message when a summarization response cannot safely be persisted.
+
+    A length stop contains partial text and must not become a session checkpoint.
+    """
+    if response.stop_reason == "error":
+        return f"{label} failed: {response.error_message or 'Unknown error'}"
+    if response.stop_reason == "length":
+        return f"{label} failed: generation hit the token cap and the summary is incomplete"
+    return None
+
+
 def _build_summarization_context(prompt_text: str) -> Context:
     """Build the provider context for a standalone summary request."""
     return Context(
@@ -439,7 +452,6 @@ async def complete_summarization(
         options,
         cache_retention="none",
         session_id=options.session_id if options.session_id is not None else uuidv7(),
-        tool_choice="none",
     )
     if stream_fn is None:
         raise Exception("complete_summarization requires a stream function (pi's compat registry is not ported)")
@@ -542,8 +554,9 @@ async def generate_summary_with_usage(
         callbacks,
     )
 
-    if response.stop_reason == "error":
-        raise Exception(f"Summarization failed: {response.error_message or 'Unknown error'}")
+    failure = get_summarization_failure(response, "Summarization")
+    if failure:
+        raise Exception(failure)
     if any(isinstance(block, ToolCall) for block in response.content):
         raise Exception("Summarization attempted to call a tool")
 
@@ -810,8 +823,9 @@ async def _generate_turn_prefix_summary(
         callbacks,
     )
 
-    if response.stop_reason == "error":
-        raise Exception(f"Turn prefix summarization failed: {response.error_message or 'Unknown error'}")
+    failure = get_summarization_failure(response, "Turn prefix summarization")
+    if failure:
+        raise Exception(failure)
     if any(isinstance(block, ToolCall) for block in response.content):
         raise Exception("Turn prefix summarization attempted to call a tool")
 

@@ -486,6 +486,40 @@ def _parse_legacy_encrypted_reasoning_detail(signature: str | None) -> dict[str,
     return None
 
 
+def _fill_missing_common_reasoning_detail_fields(target: dict, source: dict) -> None:
+    # pi: `target.id ??= source.id; target.format ||= source.format; target.index ??= source.index`
+    # (an absent JS property is dropped by JSON.stringify, so only real values are copied).
+    if target.get("id") is None and source.get("id") is not None:
+        target["id"] = source["id"]
+    if not target.get("format") and source.get("format") is not None:
+        target["format"] = source["format"]
+    if target.get("index") is None and source.get("index") is not None:
+        target["index"] = source["index"]
+
+
+def _append_openai_reasoning_detail(details: list, detail: dict) -> None:
+    last_detail = details[-1] if details else None
+    if (
+        detail.get("type") == "reasoning.text"
+        and last_detail is not None
+        and last_detail.get("type") == "reasoning.text"
+    ):
+        last_detail["text"] += detail["text"]
+        if not last_detail.get("signature") and detail.get("signature") is not None:
+            last_detail["signature"] = detail["signature"]
+        _fill_missing_common_reasoning_detail_fields(last_detail, detail)
+        return
+    if (
+        detail.get("type") == "reasoning.summary"
+        and last_detail is not None
+        and last_detail.get("type") == "reasoning.summary"
+    ):
+        last_detail["summary"] += detail["summary"]
+        _fill_missing_common_reasoning_detail_fields(last_detail, detail)
+        return
+    details.append({**detail})
+
+
 def _resolve_cache_retention(cache_retention: CacheRetention | None, env: ProviderEnv | None) -> CacheRetention:
     if cache_retention:
         return cache_retention
@@ -1190,7 +1224,16 @@ def stream(  # noqa: C901
     )
     out_stream.partial = output
 
+    # `reasoning_details` are replay metadata, not user-visible stream deltas.
+    # Keep them in memory during streaming and serialize once when the block is finalized.
+    streamed_reasoning_details: list[dict] | None = None
+
+    def apply_streamed_reasoning_details(block: ThinkingContentBuilder) -> None:
+        if streamed_reasoning_details is not None:
+            block.thinking_signature = json.dumps(streamed_reasoning_details)
+
     async def _run() -> None:  # noqa: C901
+        nonlocal streamed_reasoning_details
         try:
             compat = get_compat(model)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
@@ -1265,6 +1308,7 @@ def stream(  # noqa: C901
                 if block.type == "text":
                     out_stream.push(TextEndEvent(content_index=index, content=block.text, partial=output))
                 elif block.type == "thinking":
+                    apply_streamed_reasoning_details(block)
                     out_stream.push(ThinkingEndEvent(content_index=index, content=block.thinking, partial=output))
                 elif block.type == "toolCall":
                     entry = tool_scratch(block)
@@ -1445,12 +1489,13 @@ def stream(  # noqa: C901
                         for detail in reasoning_details:
                             if not _is_openai_reasoning_detail(detail):
                                 continue
-                            block = ensure_thinking_block("")
-                            preserved_details = _parse_openai_reasoning_details(block.thinking_signature) or []
-                            preserved_details.append(detail)
-                            # Keep provider replay data in the existing signature slot. OpenRouter
-                            # requires the complete reasoning_details sequence in its original order.
-                            block.thinking_signature = json.dumps(preserved_details)
+                            ensure_thinking_block("")
+                            if streamed_reasoning_details is None:
+                                streamed_reasoning_details = []
+                            # Keep provider replay data in the existing signature slot. OpenRouter streams
+                            # reasoning_details as deltas: consecutive text/summary deltas are merged into
+                            # logical entries, while encrypted entries remain opaque and discrete.
+                            _append_openai_reasoning_detail(streamed_reasoning_details, detail)
 
             for block in list(blocks):
                 finish_block(block)
@@ -1469,6 +1514,9 @@ def stream(  # noqa: C901
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()
         except Exception as error:
+            for block in output.content:
+                if block.type == "thinking":
+                    apply_streamed_reasoning_details(block)
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
             output.error_message = format_provider_error(normalize_provider_error(error))
             # OpenRouter attaches extra info in error.metadata.raw; append it

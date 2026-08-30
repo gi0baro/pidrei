@@ -53,13 +53,13 @@ def _compaction_factory(pi) -> None:
 
 
 @pytest.mark.tonio
-async def test_runs_only_the_requested_manual_compaction_when_the_previous_turn_crossed_the_threshold(harnesses):
+async def test_persists_the_aborted_response_before_running_the_requested_manual_compaction(harnesses):
     second_response_started = tonio.Event()
     second_response_released = tonio.Event()
 
     harness = await create_harness(
-        models=[{"id": "faux-1", "context_window": 1000, "max_tokens": 100}],
-        settings={"compaction": {"enabled": True, "reserveTokens": 999, "keepRecentTokens": 2}},
+        models=[{"id": "faux-1", "context_window": 1000, "max_tokens": 1000}],
+        settings={"compaction": {"enabled": True, "reserveTokens": 200, "keepRecentTokens": 2}},
         tools=[_create_noop_tool()],
         extension_factories=[_compaction_factory],
     )
@@ -68,7 +68,7 @@ async def test_runs_only_the_requested_manual_compaction_when_the_previous_turn_
     async def second(*_args):
         second_response_started.set()
         await second_response_released.wait(None)
-        return faux_assistant_message("second response")
+        return faux_assistant_message(f"second response:{'x' * 4000}")
 
     harness.set_responses(
         [
@@ -94,4 +94,18 @@ async def test_runs_only_the_requested_manual_compaction_when_the_previous_turn_
     assert compaction_results[0].summary == "manual summary"
     assert [event.reason for event in harness.events_of_type("compaction_start")] == ["manual"]
     assert [event.reason for event in harness.events_of_type("compaction_end")] == ["manual"]
-    assert len([e for e in harness.session_manager.get_entries() if e.get("type") == "compaction"]) == 1
+    entries = harness.session_manager.get_entries()
+    aborted_response_index = next(
+        (
+            index
+            for index, entry in enumerate(entries)
+            if entry.get("type") == "message"
+            and getattr(entry["message"], "role", None) == "assistant"
+            and entry["message"].stop_reason == "aborted"
+        ),
+        -1,
+    )
+    compaction_index = next((index for index, entry in enumerate(entries) if entry.get("type") == "compaction"), -1)
+    assert aborted_response_index > -1
+    assert compaction_index > aborted_response_index
+    assert len([entry for entry in entries if entry.get("type") == "compaction"]) == 1

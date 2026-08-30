@@ -275,6 +275,14 @@ def is_viewport_tui(tui) -> bool:
 
 # TuiMode: "regular" (main screen) | "fullscreen" (alternate screen).
 
+# pi streams renders through a BoundedTerminalWriter so a full render never
+# forms one string large enough to exceed V8's limit; the island's frame
+# pipeline still assembles whole frames (Python strings have no such cap),
+# and the observable contract — no single terminal write above this size —
+# is enforced at the write seam instead. pi also avoids splitting UTF-16
+# surrogate pairs; Python slices on codepoints, so no guard is needed.
+MAX_RENDER_WRITE_CHARS = 1024 * 1024
+
 
 class TuiBase(Container, ABC):
     """Renderer-independent half of the TUI: focus, overlays, input, queries.
@@ -892,11 +900,16 @@ class TuiBase(Container, ABC):
         data = "".join(parts)
         frames = self._frames
         if frames is None:
-            await self.terminal.write(data)
+            await self._write_bounded(data)
             return
         await frames.send(data)
         if self._frame_writer_error is not None:
             raise self._frame_writer_error
+
+    async def _write_bounded(self, data: str) -> None:
+        """Write frame data in chunks no larger than MAX_RENDER_WRITE_CHARS."""
+        for offset in range(0, len(data), MAX_RENDER_WRITE_CHARS):
+            await self.terminal.write(data[offset : offset + MAX_RENDER_WRITE_CHARS])
 
     async def _flush_frames(self) -> None:
         """Return once every frame handed over so far is on the wire."""
@@ -923,7 +936,7 @@ class TuiBase(Container, ABC):
             if self._frame_writer_error is not None:
                 continue  # the terminal is gone; the loop learns on its next _emit
             try:
-                await self.terminal.write(item)
+                await self._write_bounded(item)
             except BaseException as error:
                 # BaseException: a dead writer wedges the next render job on
                 # its send; the stored error resurfaces there instead.

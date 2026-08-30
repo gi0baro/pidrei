@@ -1167,6 +1167,40 @@ class TestLoadEntriesFromFile:
         assert entries[0]["type"] == "session"
         assert entries[1]["type"] == "message"
 
+    def test_adds_a_newline_after_an_unterminated_valid_record(self, tmp_path):
+        file = os.path.join(str(tmp_path), "unterminated.jsonl")
+        content = (
+            '{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n'
+            '{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z",'
+            '"message":{"role":"user","content":"hi","timestamp":1}}'
+        )
+        with open(file, "w") as handle:
+            handle.write(content)
+
+        assert len(load_entries_from_file(file)) == 2
+        with open(file) as handle:
+            assert handle.read() == f"{content}\n"
+
+    def test_adds_a_newline_after_an_unterminated_malformed_final_fragment(self, tmp_path):
+        file = os.path.join(str(tmp_path), "malformed-tail.jsonl")
+        content = '{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n{"type":"message"'
+        with open(file, "w") as handle:
+            handle.write(content)
+
+        assert len(load_entries_from_file(file)) == 1
+        with open(file) as handle:
+            assert handle.read() == f"{content}\n"
+
+    def test_does_not_modify_an_unterminated_non_session_file(self, tmp_path):
+        file = os.path.join(str(tmp_path), "invalid.jsonl")
+        content = '{"type":"message","id":"1"}'
+        with open(file, "w") as handle:
+            handle.write(content)
+
+        assert load_entries_from_file(file) == []
+        with open(file) as handle:
+            assert handle.read() == content
+
     def test_skips_malformed_lines_but_keeps_valid_ones(self, tmp_path):
         file = os.path.join(str(tmp_path), "mixed.jsonl")
         with open(file, "w") as handle:

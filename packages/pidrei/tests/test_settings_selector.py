@@ -33,6 +33,7 @@ BASE_CONFIG = {
     "followUpMode": "queue",
     "fullscreenExitOutput": "transcript",
     "fullscreenScrollbar": "auto",
+    "fullscreenCopyOnSelect": True,
     "hideThinkingBlock": False,
     "httpIdleTimeoutMs": 0,
     "imageWidthCells": 40,
@@ -63,6 +64,7 @@ def _theme():
 async def test_cycles_through_fullscreen_settings():
     exit_output_changes: list[str] = []
     scrollbar_changes: list[str] = []
+    copy_on_select_changes: list[bool] = []
 
     async def on_cancel() -> None:
         pass
@@ -70,6 +72,7 @@ async def test_cycles_through_fullscreen_settings():
     callbacks = {
         "onFullscreenExitOutputChange": exit_output_changes.append,
         "onFullscreenScrollbarChange": scrollbar_changes.append,
+        "onFullscreenCopyOnSelectChange": copy_on_select_changes.append,
         "onWarningsChange": lambda warnings: None,
         "onCancel": on_cancel,
     }
@@ -85,3 +88,5 @@ async def test_cycles_through_fullscreen_settings():
     assert exit_output_changes == ["resume-hint", "transcript"]
     await cycle("Fullscreen scrollbar", 3)
     assert scrollbar_changes == ["always", "hidden", "auto"]
+    await cycle("Fullscreen copy on select", 2)
+    assert copy_on_select_changes == [False, True]

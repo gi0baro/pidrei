@@ -292,6 +292,24 @@ class TestProjectSettingsDirectoryCreation:
         assert (project_dir / ".pidrei" / "settings.json").exists()
 
 
+class TestTerminalCapabilityOverrides:
+    def test_maps_explicit_values_and_omits_auto_values(self):
+        def get_overrides(terminal: dict) -> dict:
+            return SettingsManager.in_memory({"terminal": terminal}).get_terminal_capability_overrides()
+
+        assert get_overrides({"images": False, "trueColor": False, "hyperlinks": False}) == {
+            "images": None,
+            "trueColor": False,
+            "hyperlinks": False,
+        }
+        assert get_overrides({"images": "kitty", "trueColor": True, "hyperlinks": True}) == {
+            "images": "kitty",
+            "trueColor": True,
+            "hyperlinks": True,
+        }
+        assert get_overrides({"images": "auto", "trueColor": "auto", "hyperlinks": "auto"}) == {}
+
+
 class TestHttpIdleTimeoutMs:
     @pytest.mark.tonio
     async def test_defaults_to_5_minutes(self, dirs):
@@ -364,18 +382,22 @@ class TestFullscreenScrollbar:
         manager = await SettingsManager.create(str(project_dir), str(agent_dir))
         assert manager.get_fullscreen_exit_output() == "transcript"
         assert manager.get_fullscreen_scrollbar() == "auto"
+        assert manager.get_fullscreen_copy_on_select() is True
 
         manager.set_fullscreen_exit_output("resume-hint")
         manager.set_fullscreen_scrollbar("hidden")
+        manager.set_fullscreen_copy_on_select(False)
         await manager.flush()
         saved_settings = read_json(agent_dir / "settings.json")
         assert saved_settings["fullscreenExitOutput"] == "resume-hint"
         assert saved_settings["fullscreenScrollbar"] == "hidden"
+        assert saved_settings["fullscreenCopyOnSelect"] is False
 
         write_json(agent_dir / "settings.json", {"fullscreenExitOutput": "nothing", "fullscreenScrollbar": "sometimes"})
         reloaded = await SettingsManager.create(str(project_dir), str(agent_dir))
         assert reloaded.get_fullscreen_exit_output() == "transcript"
         assert reloaded.get_fullscreen_scrollbar() == "auto"
+        assert reloaded.get_fullscreen_copy_on_select() is True
 
 
 class TestTuiMode:

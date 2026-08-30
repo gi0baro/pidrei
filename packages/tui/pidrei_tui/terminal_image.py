@@ -28,6 +28,10 @@ from pathlib import Path
 _cell_dimensions = {"widthPx": 9, "heightPx": 18}
 
 _cached_capabilities: dict | None = None
+_capability_overrides: dict = {}
+
+# Sentinel for "no override" (pi uses `undefined`, distinct from `images: null`).
+_UNSET = object()
 
 
 def get_cell_dimensions() -> dict:
@@ -62,7 +66,7 @@ def _probe_tmux_hyperlinks() -> bool:
         return False
 
 
-def detect_capabilities(tmux_forwards_hyperlink=_probe_tmux_hyperlinks) -> dict:
+def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     term_program = (os.environ.get("TERM_PROGRAM") or "").lower()
     terminal_emulator = (os.environ.get("TERMINAL_EMULATOR") or "").lower()
     term = (os.environ.get("TERM") or "").lower()
@@ -117,15 +121,57 @@ def detect_capabilities(tmux_forwards_hyperlink=_probe_tmux_hyperlinks) -> dict:
     return {"images": None, "trueColor": has_true_color_hint, "hyperlinks": False}
 
 
+def _parse_boolean_capability_override(value: str | None) -> bool | None:
+    return True if value == "1" else False if value == "0" else None
+
+
+def detect_capabilities(tmux_forwards_hyperlink=_probe_tmux_hyperlinks) -> dict:
+    hyperlinks = _parse_boolean_capability_override(os.environ.get("PIDREI_HYPERLINKS"))
+    detected = _detect_capabilities_from_environment(
+        tmux_forwards_hyperlink if hyperlinks is None else (lambda: hyperlinks)
+    )
+    image_protocol = (os.environ.get("PIDREI_IMAGE_PROTOCOL") or "").lower() or None
+    if image_protocol in ("kitty", "iterm2"):
+        images = image_protocol
+    elif image_protocol in ("none", "0"):
+        images = None
+    else:
+        images = _UNSET
+    true_color = _parse_boolean_capability_override(os.environ.get("PIDREI_TRUE_COLOR"))
+    return {
+        **detected,
+        **({"images": images} if images is not _UNSET else {}),
+        **({"trueColor": true_color} if true_color is not None else {}),
+        **({"hyperlinks": hyperlinks} if hyperlinks is not None else {}),
+    }
+
+
 def get_capabilities() -> dict:
     global _cached_capabilities
     if _cached_capabilities is None:
-        _cached_capabilities = detect_capabilities()
+        hyperlinks = _capability_overrides.get("hyperlinks")
+        _cached_capabilities = {
+            **(detect_capabilities() if hyperlinks is None else detect_capabilities(lambda: hyperlinks)),
+            **_capability_overrides,
+        }
     return _cached_capabilities
 
 
 def reset_capabilities_cache() -> None:
     global _cached_capabilities
+    _cached_capabilities = None
+
+
+def set_capability_overrides(overrides: dict) -> None:
+    """Override selected auto-detected capabilities."""
+    global _capability_overrides, _cached_capabilities
+    if (
+        _capability_overrides.get("images", _UNSET) == overrides.get("images", _UNSET)
+        and _capability_overrides.get("trueColor", _UNSET) == overrides.get("trueColor", _UNSET)
+        and _capability_overrides.get("hyperlinks", _UNSET) == overrides.get("hyperlinks", _UNSET)
+    ):
+        return
+    _capability_overrides = {**overrides}
     _cached_capabilities = None
 
 

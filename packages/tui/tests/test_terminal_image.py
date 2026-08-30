@@ -19,6 +19,7 @@ from pidrei_tui.terminal_image import (
     detect_capabilities,
     encode_iterm2,
     encode_kitty,
+    get_capabilities,
     get_kitty_image_metadata,
     get_kitty_image_placement,
     hyperlink,
@@ -28,6 +29,7 @@ from pidrei_tui.terminal_image import (
     render_image,
     reset_capabilities_cache,
     set_capabilities,
+    set_capability_overrides,
     set_cell_dimensions,
 )
 from pidrei_tui.utils import visible_width
@@ -49,6 +51,9 @@ _ENV_KEYS = (
     "CMUX_WORKSPACE_ID",
     "WARP_SESSION_ID",
     "WARP_TERMINAL_SESSION_UUID",
+    "PIDREI_HYPERLINKS",
+    "PIDREI_IMAGE_PROTOCOL",
+    "PIDREI_TRUE_COLOR",
 )
 
 
@@ -257,6 +262,61 @@ def test_defaults_to_hyperlinks_false_for_unknown_terminals():
         caps = detect_capabilities()
         assert caps["hyperlinks"] is False
         assert caps["images"] is None
+
+
+def test_applies_environment_overrides():
+    with clean_env({"PIDREI_HYPERLINKS": "1", "PIDREI_IMAGE_PROTOCOL": "kitty", "PIDREI_TRUE_COLOR": "1"}):
+        assert detect_capabilities() == {"images": "kitty", "trueColor": True, "hyperlinks": True}
+    with clean_env(
+        {
+            "TERM_PROGRAM": "iTerm.app",
+            "PIDREI_HYPERLINKS": "0",
+            "PIDREI_IMAGE_PROTOCOL": "none",
+            "PIDREI_TRUE_COLOR": "0",
+        }
+    ):
+        assert detect_capabilities() == {"images": None, "trueColor": False, "hyperlinks": False}
+
+
+def test_preserves_auto_detection_for_auto_environment_overrides():
+    with clean_env(
+        {
+            "TERM_PROGRAM": "ghostty",
+            "PIDREI_HYPERLINKS": "auto",
+            "PIDREI_IMAGE_PROTOCOL": "auto",
+            "PIDREI_TRUE_COLOR": "auto",
+        }
+    ):
+        assert detect_capabilities() == {"images": "kitty", "trueColor": True, "hyperlinks": True}
+
+
+def test_applies_and_clears_programmatic_overrides():
+    with clean_env({"PIDREI_HYPERLINKS": "1", "PIDREI_IMAGE_PROTOCOL": "kitty", "PIDREI_TRUE_COLOR": "1"}):
+        set_capability_overrides({"images": None, "trueColor": False, "hyperlinks": False})
+        try:
+            assert get_capabilities() == {"images": None, "trueColor": False, "hyperlinks": False}
+            set_capability_overrides({})
+            assert get_capabilities() == {"images": "kitty", "trueColor": True, "hyperlinks": True}
+        finally:
+            set_capability_overrides({})
+            reset_capabilities_cache()
+
+
+def test_bypasses_the_tmux_probe_when_hyperlinks_are_overridden():
+    probed = []
+
+    def probe() -> bool:
+        probed.append(True)
+        return False
+
+    with clean_env(
+        {"TMUX": "/tmp/tmux-1000/default,1234,0", "PIDREI_HYPERLINKS": "1", "PIDREI_IMAGE_PROTOCOL": "kitty"}
+    ):
+        caps = detect_capabilities(probe)
+
+    assert probed == []
+    assert caps["hyperlinks"] is True
+    assert caps["images"] == "kitty"
 
 
 def test_enables_hyperlinks_under_tmux_when_the_client_forwards_them():

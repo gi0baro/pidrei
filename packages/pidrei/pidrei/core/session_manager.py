@@ -530,13 +530,18 @@ def _load_wire_entries_from_file(file_path: str) -> list[dict[str, Any]]:
     if final_entry is not None:
         entries.append(final_entry)
 
-    # Validate session header
+    # Validate session header before repairing the file.
     if not entries:
         return entries
     header = entries[0]
     if header.get("type") != "session" or not isinstance(header.get("id"), str):
         return []
 
+    # Append a newline after loading a valid session so subsequent entries
+    # cannot fuse with an unterminated tail.
+    if pending:
+        with open(resolved_file_path, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n")
     return entries
 
 

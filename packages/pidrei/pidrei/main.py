@@ -23,6 +23,8 @@ from typing import Any
 
 import tonio.colored as tonio
 
+from pidrei_tui import set_capability_overrides
+
 from .cli.args import Args, normalize_session_name, parse_args, print_help
 from .cli.auth_check import (
     AuthCheckResult,
@@ -850,6 +852,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     settings_manager = services.settings_manager
     model_runtime = services.model_runtime
     resource_loader = services.resource_loader
+    set_capability_overrides(settings_manager.get_terminal_capability_overrides())
     apply_http_proxy_settings(settings_manager.get_global_settings().get("httpProxy"))
 
     if parsed.help:

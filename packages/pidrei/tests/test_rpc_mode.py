@@ -265,6 +265,54 @@ class TestRpcPromptResponseSemantics:
         finally:
             await harness.stop()
 
+    @pytest.mark.tonio
+    async def test_returns_and_clears_queued_steering_and_follow_up_messages(self, tmp_path):
+        # Mirrors the clear_queue case pi added to rpc-prompt-response-semantics.test.ts
+        # (the rest of that suite is a recorded parity gap).
+        harness = _RpcHarness()
+        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0.5))
+        await harness.start(host)
+        try:
+            harness.send({"id": "clear-start", "type": "prompt", "message": "Start"})
+            await _wait_for(lambda: len(harness.responses("clear-start", "prompt")) == 1)
+
+            harness.send(
+                {
+                    "id": "clear-steering",
+                    "type": "prompt",
+                    "message": "Change direction",
+                    "streamingBehavior": "steer",
+                }
+            )
+            await _wait_for(lambda: len(harness.responses("clear-steering", "prompt")) == 1)
+
+            harness.send(
+                {
+                    "id": "clear-follow-up",
+                    "type": "prompt",
+                    "message": "Summarize when finished",
+                    "streamingBehavior": "followUp",
+                }
+            )
+            await _wait_for(lambda: len(harness.responses("clear-follow-up", "prompt")) == 1)
+
+            response = await harness.request({"id": "clear", "type": "clear_queue"})
+            assert response == {
+                "id": "clear",
+                "type": "response",
+                "command": "clear_queue",
+                "success": True,
+                "data": {
+                    "steering": ["Change direction"],
+                    "followUp": ["Summarize when finished"],
+                },
+            }
+
+            await tonio.time.sleep(0.6)
+            assert len([record for record in harness.records() if record.get("type") == "agent_start"]) == 1
+        finally:
+            await harness.stop()
+
 
 class TestRpcMode:
     @pytest.mark.tonio

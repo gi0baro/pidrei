@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-ai"
-version = "0.84.3.3"
+version = "0.84.4.0"
 description = "Unified multi-provider LLM API layer of pidrei (port of pi-ai)"
 requires-python = ">=3.14"
 license = "MIT"

@@ -146,6 +146,79 @@
         "text"
       ],
       "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "zai",
+        "zaiToolStream": true
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072
+    },
+    "glm-5.3-flash": {
+      "id": "glm-5.3-flash",
+      "name": "GLM-5.3-Flash",
+      "api": "openai-completions",
+      "provider": "zai",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.075,
+        "output": 0.25,
+        "cacheRead": 0.015,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "zai",
+        "zaiToolStream": true
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072
+    },
+    "glm-5.3-highspeed": {
+      "id": "glm-5.3-highspeed",
+      "name": "GLM-5.3 Highspeed",
+      "api": "openai-completions",
+      "provider": "zai",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "input": [
+        "text"
+      ],
+      "cost": {
         "input": 0,
         "output": 0,
         "cacheRead": 0,

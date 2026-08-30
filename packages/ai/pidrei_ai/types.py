@@ -597,7 +597,8 @@ class AnthropicAllowedFallbackModel:
 class SimpleStreamOptions(StreamOptions):
     """Unified options with reasoning, passed to `stream_simple`/`complete_simple`."""
 
-    # Provider-neutral tool selection for simple requests. Default: "auto".
+    # Provider-neutral tool selection for simple requests. When omitted, adapters
+    # use provider-specific behavior.
     tool_choice: ToolChoice | None = None
     reasoning: ThinkingLevel | None = None
     # Ask a capable provider to return a durable handle and continue the request

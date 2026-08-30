@@ -74,6 +74,9 @@ MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16
 MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024
 MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024
 DOUBLE_CLICK_INTERVAL_S = 0.5
+# Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
+# so mirror common terminal word-selection behavior by keeping paths and kebab-case tokens whole.
+TERMINAL_WORD_SELECTION_JOINERS = {"/", "-"}
 _word_segmenter = get_word_segmenter()
 
 _SGR_MOUSE_RE = re.compile(r"^\x1b\[<(\d+);(\d+);(\d+)([Mm])$")
@@ -123,6 +126,7 @@ class TuiAltScreen(TuiBase):
         search_match_style=None,
         search_current_match_style=None,
         open_url=None,
+        copy_on_select: bool | None = None,
         copy_selection=None,
     ) -> None:
         super().__init__(terminal, show_hardware_cursor, log_directory)
@@ -161,8 +165,27 @@ class TuiAltScreen(TuiBase):
         self._search_match_style = search_match_style or (lambda text: f"\x1b[4m{text}\x1b[24m")
         self._search_current_match_style = search_current_match_style or (lambda text: f"\x1b[1;7m{text}\x1b[22;27m")
         self._open_url = open_url
+        self._copy_on_select = copy_on_select if copy_on_select is not None else True
         self._copy_selection = copy_selection
         self.add_input_listener(self._handle_viewport_input)
+
+    def get_copy_on_select(self) -> bool:
+        return self._copy_on_select
+
+    def set_copy_on_select(self, enabled: bool) -> None:
+        self._copy_on_select = enabled
+
+    def has_active_selection(self) -> bool:
+        """Whether the fullscreen viewport has a non-empty active text selection."""
+        return self._get_active_selection_text() is not None
+
+    async def copy_active_selection_to_clipboard(self) -> bool:
+        """Copy the active fullscreen text selection, if any, using the configured
+        selection clipboard path."""
+        text = self._get_active_selection_text()
+        if not text:
+            return False
+        return await self._copy_text_to_clipboard(text)
 
     @property
     def viewport_top(self) -> int:
@@ -791,16 +814,38 @@ class TuiAltScreen(TuiBase):
     def _get_word_selection(self, point: dict) -> dict | None:
         """Selection range {"start", "end"} covering the word under `point`."""
         line = strip_terminal_sequences(self._get_selection_source_line(point))
+        segments: list[dict] = []
         start = 0
         for segment in _word_segmenter.segment(line):
             end = start + visible_width(segment["segment"])
-            if start <= point["col"] < end:
-                return {
-                    "start": {**point, "col": start},
-                    "end": {**point, "col": end, "boundary": True},
-                }
+            joiner = segment["segment"] in TERMINAL_WORD_SELECTION_JOINERS
+            segments.append(
+                {"start": start, "end": end, "selectable": segment["isWordLike"] is True or joiner, "joiner": joiner}
+            )
             start = end
-        return None
+        clicked_segment_index = next(
+            (i for i, segment in enumerate(segments) if segment["start"] <= point["col"] < segment["end"]), -1
+        )
+        if clicked_segment_index < 0:
+            return None
+
+        def can_join(left: dict, right: dict) -> bool:
+            return left["selectable"] and right["selectable"] and (left["joiner"] or right["joiner"])
+
+        selection_start = segments[clicked_segment_index]["start"]
+        selection_end = segments[clicked_segment_index]["end"]
+        index = clicked_segment_index
+        while index > 0 and can_join(segments[index - 1], segments[index]):
+            selection_start = segments[index - 1]["start"]
+            index -= 1
+        index = clicked_segment_index
+        while index < len(segments) - 1 and can_join(segments[index], segments[index + 1]):
+            selection_end = segments[index + 1]["end"]
+            index += 1
+        return {
+            "start": {**point, "col": selection_start},
+            "end": {**point, "col": selection_end, "boundary": True},
+        }
 
     def _get_line_selection(self, point: dict) -> dict:
         return {
@@ -949,7 +994,8 @@ class TuiAltScreen(TuiBase):
                     pass
                 self.request_render()
                 return
-            tonio.spawn.without_tracking(self._copy_selection_to_clipboard())
+            if self._copy_on_select:
+                tonio.spawn.without_tracking(self._copy_selection_to_clipboard())
             self.request_render()
             return
         if (event["button"] & 32) != 0:
@@ -1020,17 +1066,17 @@ class TuiAltScreen(TuiBase):
                 end = cell_range[1] if cell_range else min(selection["end"]["col"] + 1, line_width)
         return max(min_column, start), min(max_column, end)
 
-    async def _copy_selection_to_clipboard(self) -> None:
+    def _get_active_selection_text(self) -> str | None:
         selection = self._get_selection_bounds()
         if not selection:
-            return
+            return None
         source_lines: list[str] = self._previous_screen
         if selection["start"].get("scrollView") is not None:
             if self._current_layout is None:
-                return
+                return None
             box = get_scroll_view_box(self._current_layout, selection["start"]["scrollView"])
             if box is None or box.scroll_content_lines is None:
-                return
+                return None
             source_lines = box.scroll_content_lines
         lines: list[str] = []
         for row in range(selection["start"]["row"], selection["end"]["row"] + 1):
@@ -1038,8 +1084,15 @@ class TuiAltScreen(TuiBase):
             start, end = self._get_selection_columns(line, row, selection)
             lines.append(strip_terminal_sequences(slice_by_column(line, start, max(0, end - start), True)).rstrip())
         text = "\n".join(lines)
-        if len(text) == 0:
-            return
+        return None if len(text) == 0 else text
+
+    async def _copy_selection_to_clipboard(self) -> bool:
+        text = self._get_active_selection_text()
+        if text is None:
+            return False
+        return await self._copy_text_to_clipboard(text)
+
+    async def _copy_text_to_clipboard(self, text: str) -> bool:
         # Prefer an injected clipboard implementation (native clipboard +
         # platform tools with a verified success path) when the host app
         # provides one. A bare OSC 52 write can show "Copied!" while leaving
@@ -1049,10 +1102,11 @@ class TuiAltScreen(TuiBase):
         if self._copy_selection is not None:
             ok = await self._copy_selection(text)
             self.flash("Copied!" if ok else "Copy failed")
-            return
+            return ok
         encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
         await self.terminal.write(f"\x1b]52;c;{encoded}\x07")
         self.flash("Copied!")
+        return True
 
     def _apply_search_text_highlight(self, text: str, current: bool) -> str:
         style = self._search_current_match_style if current else self._search_match_style

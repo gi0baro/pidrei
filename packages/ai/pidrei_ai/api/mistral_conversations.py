@@ -462,7 +462,7 @@ def _get_mistral_cached_prompt_tokens(usage: dict, prompt_tokens: int) -> int:
 async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out_stream, mistral_stream) -> None:
     current_block: TextContent | ThinkingContent | None = None
     blocks = output.content
-    tool_blocks_by_key: dict[str, int] = {}
+    tool_blocks_by_key: dict[str | int, int] = {}
     partial_args: dict[int, str] = {}
 
     def block_index() -> int:
@@ -560,7 +560,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out
             index = tool_call.get("index") or 0
             raw_id = tool_call.get("id")
             call_id = raw_id if raw_id and raw_id != "null" else derive_mistral_tool_call_id(f"toolcall:{index}", 0)
-            key = f"{call_id}:{index}"
+            key = tool_call["index"] if tool_call.get("index") is not None else call_id
             existing_index = tool_blocks_by_key.get(key)
             block = None
 

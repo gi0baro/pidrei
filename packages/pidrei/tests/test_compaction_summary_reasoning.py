@@ -83,7 +83,8 @@ def recording_stream_fn(response: AssistantMessage | None = None) -> tuple:
         stream = AssistantMessageEventStream()
         message = response if response is not None else mock_summary_response()
         stream.push(StartEvent(partial=mock_summary_response()))
-        stream.push(DoneEvent(reason="toolUse" if message.stop_reason == "toolUse" else "stop", message=message))
+        reason = message.stop_reason if message.stop_reason in ("toolUse", "length") else "stop"
+        stream.push(DoneEvent(reason=reason, message=message))
         return stream
 
     return stream_fn, calls
@@ -127,12 +128,11 @@ async def test_uses_fresh_routing_sessions_without_prompt_caching():
 
     assert len(calls) == 2
     assert all(options.cache_retention == "none" for options in calls)
-    assert all(options.tool_choice == "none" for options in calls)
     assert calls[0].session_id != calls[1].session_id
 
 
 @pytest.mark.tonio
-async def test_honors_a_caller_supplied_routing_session_without_prompt_caching():
+async def test_honors_caller_supplied_routing_session_and_tool_choice_without_prompt_caching():
     stream_fn, calls = recording_stream_fn()
 
     await complete_summarization(
@@ -144,7 +144,7 @@ async def test_honors_a_caller_supplied_routing_session_without_prompt_caching()
 
     assert calls[0].session_id == "current-routing-session"
     assert calls[0].cache_retention == "none"
-    assert calls[0].tool_choice == "none"
+    assert calls[0].tool_choice == "auto"
 
 
 @pytest.mark.tonio
@@ -200,6 +200,35 @@ async def test_rejects_tool_calls_from_split_turn_summaries():
     )
 
     with pytest.raises(Exception, match="Turn prefix summarization attempted to call a tool"):
+        await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
+
+
+@pytest.mark.tonio
+async def test_rejects_a_length_limited_history_summary():
+    length_response = replace(mock_summary_response(), content=[TextContent(text="partial")], stop_reason="length")
+    stream_fn, _calls = recording_stream_fn(length_response)
+
+    with pytest.raises(Exception, match="generation hit the token cap"):
+        await generate_summary_with_usage(
+            messages(), create_model(False), 2000, "test-key", None, None, None, None, None, stream_fn
+        )
+
+
+@pytest.mark.tonio
+async def test_rejects_a_length_limited_split_turn_summary():
+    length_response = replace(mock_summary_response(), content=[TextContent(text="partial")], stop_reason="length")
+    stream_fn, _calls = recording_stream_fn(length_response)
+    preparation = CompactionPreparation(
+        first_kept_entry_id="entry-keep",
+        messages_to_summarize=[],
+        turn_prefix_messages=messages(),
+        is_split_turn=True,
+        tokens_before=100,
+        file_ops=FileOperations(),
+        settings=CompactionSettings(enabled=True, reserve_tokens=2000, keep_recent_tokens=20),
+    )
+
+    with pytest.raises(Exception, match="generation hit the token cap"):
         await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
 
 

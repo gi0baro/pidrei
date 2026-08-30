@@ -166,6 +166,40 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
     assert flush_calls == [{"willRetry": False}]
 
 
+def test_updates_the_working_state_when_the_same_agent_run_resumes_after_compaction():
+    show_working_calls: list = []
+    clear_status_calls: list = []
+    set_progress_calls: list = []
+    request_render_calls: list = []
+    fake = SimpleNamespace(
+        _is_initialized=True,
+        _footer=SimpleNamespace(invalidate=lambda: None),
+        _active_status_indicator=None,
+        _working_visible=True,
+        settings_manager=SimpleNamespace(get_show_terminal_progress=lambda: True),
+        ui=SimpleNamespace(
+            request_render=lambda force=False: request_render_calls.append(force),
+            terminal=SimpleNamespace(set_progress=set_progress_calls.append),
+        ),
+    )
+    fake._show_working_status_indicator = lambda: show_working_calls.append(True)
+    fake._clear_status_indicator = lambda kind=None: clear_status_calls.append(kind)
+
+    InteractiveMode._handle_event(fake, SimpleNamespace(type="turn_start"))
+
+    assert set_progress_calls == [True]
+    assert show_working_calls == [True]
+    assert clear_status_calls == []
+    assert len(request_render_calls) == 1
+
+    fake._working_visible = False
+    InteractiveMode._handle_event(fake, SimpleNamespace(type="turn_start"))
+
+    assert show_working_calls == [True]
+    assert len(clear_status_calls) == 1
+    assert len(request_render_calls) == 2
+
+
 @pytest.mark.tonio
 async def test_preserves_steering_behavior_when_flushing_into_an_active_agent_run():
     prompt_calls: list = []

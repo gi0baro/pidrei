@@ -3,6 +3,7 @@ import warnings
 
 import pytest
 
+from pidrei_tui import terminal_image
 from pidrei_tui._timers import get_ui_owner, set_ui_owner
 
 
@@ -22,6 +23,28 @@ def _ambient_ui_owner_guard():
         warnings.warn(
             "test left pidrei_tui's ambient UI owner registered (a TuiBase was "
             "started without reaching stop()); reset to detached timers",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _capability_overrides_guard():
+    """Fail-loud reset of the process-wide terminal capability overrides.
+
+    `set_capability_overrides` (0.84.4) keeps a module-level override dict and
+    invalidates the capability cache when it changes; this suite reaches it
+    through production paths (`InteractiveMode.__init__`,
+    `_apply_runtime_settings`, `create_startup_tui`), so a test driving those
+    with terminal settings would silently rewrite `get_capabilities()` for
+    every later test in the shared runtime. The warning names the polluting
+    test; the reset keeps the poison from spreading.
+    """
+    yield
+    if terminal_image._capability_overrides:
+        terminal_image.set_capability_overrides({})
+        warnings.warn(
+            "test left pidrei_tui's terminal capability overrides set "
+            "(set_capability_overrides was not restored); reset to auto-detection",
             stacklevel=1,
         )
 

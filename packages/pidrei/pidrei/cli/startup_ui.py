@@ -5,7 +5,14 @@ import os
 
 import tonio.colored as tonio
 
-from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen, get_capabilities, set_keybindings
+from pidrei_tui import (
+    TUI,
+    ProcessTerminal,
+    TuiMainScreen,
+    get_capabilities,
+    set_capability_overrides,
+    set_keybindings,
+)
 
 from ..config import APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, get_agent_dir, get_settings_path
 from ..core.experimental import are_experimental_features_enabled
@@ -71,6 +78,7 @@ async def _load_startup_themes(settings_manager: SettingsManager) -> list:
 
 
 async def create_startup_tui(settings_manager: SettingsManager) -> TUI:
+    set_capability_overrides(settings_manager.get_terminal_capability_overrides())
     # Warm the caches that sync render/callback paths read from, so neither
     # the builtin-theme files nor the tmux capability probe is ever touched
     # from a runtime worker later.

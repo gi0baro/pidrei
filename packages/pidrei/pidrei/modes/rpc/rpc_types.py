@@ -10,7 +10,8 @@ shapes that are constructed as values.
 
 Commands (stdin, camelCase keys, optional "id" for correlation):
   prompt {message, images?, streamingBehavior?}, steer {message, images?},
-  follow_up {message, images?}, abort, new_session {parentSession?},
+  follow_up {message, images?}, abort, clear_queue,
+  new_session {parentSession?},
   get_state, set_model {provider, modelId}, cycle_model,
   get_available_models, set_thinking_level {level}, cycle_thinking_level,
   get_available_thinking_levels, set_steering_mode {mode},

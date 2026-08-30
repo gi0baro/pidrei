@@ -269,6 +269,80 @@
     }
   },
   "openai-completions": {
+    "workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731": {
+      "id": "workers-ai/@cf/deepseek-ai/deepseek-v4-flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "api": "openai-completions",
+      "provider": "cloudflare-ai-gateway",
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.44,
+        "output": 1.32,
+        "cacheRead": 0.014,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1310720,
+      "maxTokens": 1048576,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true,
+        "requiresReasoningContentOnAssistantMessages": true,
+        "thinkingFormat": "deepseek"
+      },
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      }
+    },
+    "workers-ai/@cf/deepseek-ai/deepseek-v4-pro-0813": {
+      "id": "workers-ai/@cf/deepseek-ai/deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "api": "openai-completions",
+      "provider": "cloudflare-ai-gateway",
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 1.32,
+        "output": 3.96,
+        "cacheRead": 0.044,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true,
+        "requiresReasoningContentOnAssistantMessages": true,
+        "thinkingFormat": "deepseek"
+      },
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "max": "max"
+      }
+    },
     "workers-ai/@cf/google/gemma-4-26b-a4b-it": {
       "id": "workers-ai/@cf/google/gemma-4-26b-a4b-it",
       "name": "Gemma 4 26B A4B IT",
@@ -581,6 +655,35 @@
         "sendSessionAffinityHeaders": true
       }
     },
+    "workers-ai/@cf/qwen/qwen3.8-27b": {
+      "id": "workers-ai/@cf/qwen/qwen3.8-27b",
+      "name": "Qwen3.8 27B",
+      "api": "openai-completions",
+      "provider": "cloudflare-ai-gateway",
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.45,
+        "output": 3.2,
+        "cacheRead": 0.05,
+        "cacheWrite": 0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true
+      }
+    },
     "workers-ai/@cf/zai-org/glm-4.7-flash": {
       "id": "workers-ai/@cf/zai-org/glm-4.7-flash",
       "name": "GLM-4.7-Flash",
@@ -636,54 +739,66 @@
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       }
-    }
-  },
-  "openai-responses": {
-    "gpt-4": {
-      "id": "gpt-4",
-      "name": "GPT-4",
-      "api": "openai-responses",
+    },
+    "workers-ai/@cf/zai-org/glm-5.3": {
+      "id": "workers-ai/@cf/zai-org/glm-5.3",
+      "name": "Glm 5.3",
+      "api": "openai-completions",
       "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": false,
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+      "reasoning": true,
       "input": [
         "text"
       ],
       "cost": {
-        "input": 30,
-        "output": 60,
-        "cacheRead": 0,
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.26,
         "cacheWrite": 0
       },
-      "contextWindow": 8192,
-      "maxTokens": 8192,
+      "contextWindow": 1310720,
+      "maxTokens": 1310720,
       "compat": {
-        "supportsStrictMode": true
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true
       }
     },
-    "gpt-4-turbo": {
-      "id": "gpt-4-turbo",
-      "name": "GPT-4 Turbo",
-      "api": "openai-responses",
+    "workers-ai/@cf/zai-org/glm-5.3-flash": {
+      "id": "workers-ai/@cf/zai-org/glm-5.3-flash",
+      "name": "Glm 5.3 Flash",
+      "api": "openai-completions",
       "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": false,
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
+      "reasoning": true,
       "input": [
         "text",
         "image"
       ],
       "cost": {
-        "input": 10,
-        "output": 30,
-        "cacheRead": 0,
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
         "cacheWrite": 0
       },
-      "contextWindow": 128000,
-      "maxTokens": 4096,
+      "contextWindow": 1310720,
+      "maxTokens": 1048576,
       "compat": {
-        "supportsStrictMode": true
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "supportsLongCacheRetention": false,
+        "sendSessionAffinityHeaders": true
       }
-    },
+    }
+  },
+  "openai-responses": {
     "gpt-4.1": {
       "id": "gpt-4.1",
       "name": "GPT-4.1",
@@ -747,7 +862,7 @@
         "cacheRead": 0.025,
         "cacheWrite": 0
       },
-      "contextWindow": 1047576,
+      "contextWindow": 1000000,
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
@@ -816,7 +931,7 @@
         "cacheRead": 0.125,
         "cacheWrite": 0
       },
-      "contextWindow": 400000,
+      "contextWindow": 128000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -849,7 +964,7 @@
         "cacheRead": 0.025,
         "cacheWrite": 0
       },
-      "contextWindow": 400000,
+      "contextWindow": 128000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -882,46 +997,13 @@
         "cacheRead": 0.005,
         "cacheWrite": 0
       },
-      "contextWindow": 400000,
+      "contextWindow": 128000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
         "minimal": "minimal",
         "low": "low",
         "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5-pro": {
-      "id": "gpt-5-pro",
-      "name": "GPT-5 Pro",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 15,
-        "output": 120,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "contextWindow": 400000,
-      "maxTokens": 272000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": null,
-        "medium": null,
         "high": "high",
         "xhigh": null,
         "max": null
@@ -948,7 +1030,7 @@
         "cacheRead": 0.125,
         "cacheWrite": 0
       },
-      "contextWindow": 400000,
+      "contextWindow": 128000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -957,199 +1039,6 @@
         "medium": "medium",
         "high": "high",
         "xhigh": null,
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.2": {
-      "id": "gpt-5.2",
-      "name": "GPT-5.2",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 1.75,
-        "output": 14,
-        "cacheRead": 0.175,
-        "cacheWrite": 0
-      },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.2-chat-latest": {
-      "id": "gpt-5.2-chat-latest",
-      "name": "GPT-5.2 Chat",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 1.75,
-        "output": 14,
-        "cacheRead": 0.175,
-        "cacheWrite": 0
-      },
-      "contextWindow": 128000,
-      "maxTokens": 16384,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": null,
-        "medium": "medium",
-        "high": null,
-        "xhigh": "xhigh",
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.2-pro": {
-      "id": "gpt-5.2-pro",
-      "name": "GPT-5.2 Pro",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 21,
-        "output": 168,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": null,
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.3-chat-latest": {
-      "id": "gpt-5.3-chat-latest",
-      "name": "GPT-5.3 Chat (latest)",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": false,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 1.75,
-        "output": 14,
-        "cacheRead": 0.175,
-        "cacheWrite": 0
-      },
-      "contextWindow": 128000,
-      "maxTokens": 16384,
-      "thinkingLevelMap": {
-        "off": null,
-        "xhigh": "xhigh"
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.3-codex": {
-      "id": "gpt-5.3-codex",
-      "name": "GPT-5.3 Codex",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 1.75,
-        "output": 14,
-        "cacheRead": 0.175,
-        "cacheWrite": 0
-      },
-      "contextWindow": 400000,
-      "maxTokens": 128000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.3-codex-spark": {
-      "id": "gpt-5.3-codex-spark",
-      "name": "GPT-5.3 Codex Spark",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 1.75,
-        "output": 14,
-        "cacheRead": 0.175,
-        "cacheWrite": 0
-      },
-      "contextWindow": 128000,
-      "maxTokens": 32000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
         "max": null
       },
       "compat": {
@@ -1174,7 +1063,7 @@
         "cacheRead": 0.25,
         "cacheWrite": 0
       },
-      "contextWindow": 1050000,
+      "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1207,7 +1096,7 @@
         "cacheRead": 0.075,
         "cacheWrite": 0
       },
-      "contextWindow": 400000,
+      "contextWindow": 128000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1240,7 +1129,7 @@
         "cacheRead": 0.02,
         "cacheWrite": 0
       },
-      "contextWindow": 400000,
+      "contextWindow": 128000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1273,7 +1162,7 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1050000,
+      "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1303,10 +1192,10 @@
       "cost": {
         "input": 5,
         "output": 30,
-        "cacheRead": 0.5,
+        "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1050000,
+      "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1339,7 +1228,7 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 1050000,
+      "contextWindow": 1000000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1349,39 +1238,6 @@
         "high": "high",
         "xhigh": "xhigh",
         "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true,
-        "supportsOpenAIGrammarTools": true
-      }
-    },
-    "gpt-5.6": {
-      "id": "gpt-5.6",
-      "name": "GPT-5.6",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 5,
-        "output": 30,
-        "cacheRead": 0.5,
-        "cacheWrite": 6.25
-      },
-      "contextWindow": 1050000,
-      "maxTokens": 128000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": "max"
       },
       "compat": {
         "supportsStrictMode": true,
@@ -1442,10 +1298,10 @@
         "image"
       ],
       "cost": {
-        "input": 5,
-        "output": 30,
-        "cacheRead": 0.5,
-        "cacheWrite": 6.25
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.25,
+        "cacheWrite": 3.125
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
@@ -1505,70 +1361,6 @@
         "supportsOpenAIGrammarTools": true
       }
     },
-    "o1": {
-      "id": "o1",
-      "name": "o1",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 15,
-        "output": 60,
-        "cacheRead": 7.5,
-        "cacheWrite": 0
-      },
-      "contextWindow": 200000,
-      "maxTokens": 100000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true
-      }
-    },
-    "o1-pro": {
-      "id": "o1-pro",
-      "name": "o1-pro",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 150,
-        "output": 600,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "contextWindow": 200000,
-      "maxTokens": 100000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true
-      }
-    },
     "o3": {
       "id": "o3",
       "name": "o3",
@@ -1615,38 +1407,6 @@
         "input": 1.1,
         "output": 4.4,
         "cacheRead": 0.55,
-        "cacheWrite": 0
-      },
-      "contextWindow": 200000,
-      "maxTokens": 100000,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
-      "compat": {
-        "supportsStrictMode": true
-      }
-    },
-    "o3-pro": {
-      "id": "o3-pro",
-      "name": "o3-pro",
-      "api": "openai-responses",
-      "provider": "cloudflare-ai-gateway",
-      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 20,
-        "output": 80,
-        "cacheRead": 0,
         "cacheWrite": 0
       },
       "contextWindow": 200000,

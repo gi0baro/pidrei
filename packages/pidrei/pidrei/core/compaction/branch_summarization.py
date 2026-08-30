@@ -19,7 +19,7 @@ from ..messages import (
     create_compaction_summary_message,
     create_custom_message,
 )
-from .compaction import complete_summarization, estimate_tokens
+from .compaction import complete_summarization, estimate_tokens, get_summarization_failure
 from .utils import (
     SUMMARIZATION_SYSTEM_PROMPT,
     FileOperations,
@@ -276,8 +276,9 @@ async def generate_branch_summary(
     # Check if aborted or errored
     if response.stop_reason == "aborted":
         return BranchSummaryResult(aborted=True)
-    if response.stop_reason == "error":
-        return BranchSummaryResult(error=response.error_message or "Summarization failed")
+    failure = get_summarization_failure(response, "Branch summarization")
+    if failure:
+        return BranchSummaryResult(error=failure)
     if any(isinstance(block, ToolCall) for block in response.content):
         return BranchSummaryResult(error="Branch summarization attempted to call a tool")
 
