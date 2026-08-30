@@ -146,7 +146,14 @@ class HarnessEventBus:
 
             async def drain() -> None:
                 while True:
-                    item = await receiver.receive()
+                    try:
+                        item = await receiver.receive()
+                    except BrokenPipeError:
+                        # The sender closure was dropped without unsubscribe()
+                        # (a collected WatchHandle): no event can ever arrive
+                        # again, so a closed channel is the same end-of-watch
+                        # as _STOP — not an error to leak to tonio's printer.
+                        return
                     if item is _STOP:
                         return
                     await next_listener(item)

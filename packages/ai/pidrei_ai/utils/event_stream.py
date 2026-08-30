@@ -115,9 +115,13 @@ class EventStream[T, R]:
                 await producer
             except CancelledError:
                 raise  # the owner terminates the stream via `_abort`
+            except GeneratorExit:
+                raise  # coroutine close protocol, not a producer failure
             except BaseException as error:
+                # The stream owns delivery: `fail` settles `result()` with
+                # this error. Escaping further would only reach tonio's
+                # unhandled-coroutine printer on stdout.
                 self.fail(error)
-                raise
             finally:
                 finished.set()
 

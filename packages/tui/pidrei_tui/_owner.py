@@ -250,7 +250,13 @@ class OwnerTask:
                     job.done.set()
         except BaseException as error:
             crash = error
-            raise
+            if isinstance(error, GeneratorExit):
+                raise
+            # Swallowed, not re-raised: the sweep below fully accounts for
+            # the crash (`_crashed`, `OwnerStopped` settlements, `serving`
+            # off). Escaping further would only reach tonio's
+            # unhandled-coroutine printer on stdout — which the TUI may be
+            # holding in non-blocking mode.
         finally:
             # Shutdown sweep — sync only (a cancelled child unwinds but cannot
             # await): whatever stopped this loop, no `run()` waiter is left

@@ -57,9 +57,13 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
             outcome.append((False, await operation))
         except CancelledError:
             raise  # reported as the token's reason below
+        except GeneratorExit:
+            raise  # coroutine close protocol, not an operation failure
         except BaseException as error:
+            # Delivery is `raise payload` at the call site below: escaping
+            # further would only double-report through tonio's
+            # unhandled-coroutine printer on stdout.
             outcome.append((True, error))
-            raise
         finally:
             settled.set()
 
