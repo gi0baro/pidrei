@@ -27,6 +27,21 @@ async def flush(turns: int = 4) -> None:
         await tonio.sleep(0.005)
 
 
+async def settled(awaitable, what: str = "the awaited step", timeout: float = 5.0):
+    """Await with a bound: a wedged choreography step fails here, with a name
+    and this call site's line in the traceback, instead of parking forever
+    and hanging the whole CI job (seen on linux and macOS 3.14t).
+
+    Takes a `Deferred` (awaited via `wait()`) or any plain awaitable — the
+    wire client's `next()`/`next_from()` return Deferreds while `request()`/
+    `hello()` return coroutines/awaitables.
+    """
+    wait = awaitable.wait() if hasattr(awaitable, "wait") else awaitable
+    value, completed = await tonio.time.timeout(wait, timeout)
+    assert completed, f"timed out waiting for {what}"
+    return value
+
+
 class Harness:
     """Tracks servers and wire clients for one test; close in `finally`."""
 

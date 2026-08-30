@@ -32,7 +32,9 @@ jobs:
     - name: Test
       timeout-minutes: 3
       run: |
-        make test
+        # -s: no capture — tonio reports a crashed task on stdout, and a
+        # job killed by timeout never flushes pytest's capture buffer.
+        make test PYTEST_ARGS=-s
 
   macos:
     runs-on: macos-latest
@@ -56,4 +58,5 @@ jobs:
     - name: Test
       timeout-minutes: 3
       run: |
-        make test
+        # -s: no capture — see the linux job.
+        make test PYTEST_ARGS=-s

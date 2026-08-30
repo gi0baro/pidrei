@@ -85,6 +85,17 @@ class OwnerTask:
     def started(self) -> bool:
         return self._scope is not None and not self._closed
 
+    @property
+    def serving(self) -> bool:
+        """Started and the consumer is still alive (not stopped, not crashed).
+
+        The predicate for routing *new* work from ambient callers (the
+        timers module): `started` alone reflects only what `start()`/
+        `close()` recorded, so an owner abandoned without `close()` reads
+        started forever even though nothing will ever drain its queue.
+        """
+        return self.started and not self._stopped and self._crashed is None
+
     def start(self, scope) -> None:
         """Run the owner loop as a child of `scope` (restartable after `close()`)."""
         if self._closed:

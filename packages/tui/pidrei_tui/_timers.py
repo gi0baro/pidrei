@@ -10,7 +10,17 @@ same task), and the timer tasks are children of the TUI's scope, reaped at
 `stop()` instead of ticking on after a skipped `dispose()`.
 
 With no TUI started (tests, headless modes) timers run detached, calling
-`fn` on their own task — the pre-owner behaviour.
+`fn` on their own task — the pre-owner behaviour. Each detached timer gets
+its own single-use `OwnerTask`: a shared module-level one would be state
+spanning every TUI lifetime in the process (and, under pytest's
+session-scoped runtime, every test), accumulating handles and pinning
+zombie tasks across runtime teardowns.
+
+A registered owner is routed to only while it is `serving` — merely
+`started` is not enough: an owner whose TUI never reached `stop()` (a
+crashed flow, a test that died mid-lifecycle) still reads as started, but
+its scope is consumed, and `scope.spawn` on a consumed scope silently
+drops the timer coroutine — a timer that never fires and never errors.
 
 `fn` must return an awaitable (async-only callback policy); the result is
 awaited rather than dropped.
@@ -19,7 +29,6 @@ awaited rather than dropped.
 from ._owner import OwnerTask, TimerHandle
 
 
-_detached = OwnerTask()
 _ui_owner: OwnerTask | None = None
 
 
@@ -35,7 +44,7 @@ def get_ui_owner() -> OwnerTask | None:
 
 def _owner() -> OwnerTask:
     owner = _ui_owner
-    return owner if owner is not None and owner.started else _detached
+    return owner if owner is not None and owner.serving else OwnerTask()
 
 
 class Timeout:

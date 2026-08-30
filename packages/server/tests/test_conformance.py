@@ -7,7 +7,7 @@ from tonio.colored import fs
 from pidrei_protocol import PROTOCOL_VERSION, encode_client_message, encode_frame
 from pidrei_server import InternalServerError, NotImplementedError, PiServerError
 from pidrei_server.testing import Deferred, TestServerService
-from tests.server_support import Harness
+from tests.server_support import Harness, settled
 
 
 @pytest.mark.tonio
@@ -18,7 +18,7 @@ async def test_accepts_a_transport_fragmented_framed_cbor_hello(sock_dir):
         client = await harness.connect(server)
         response = client.next(lambda message: message["type"] == "hello")
         await client.send_fragmented_message({"type": "hello", "version": PROTOCOL_VERSION}, 2)
-        hello = await response
+        hello = await settled(response, "the hello response")
         assert hello["type"] == "hello"
         assert hello["version"] == PROTOCOL_VERSION
     finally:
@@ -32,24 +32,24 @@ async def test_enforces_version_and_exactly_one_first_message_hello(sock_dir):
         server, _ = await harness.start_server()
 
         bad_version = await harness.connect(server)
-        response = await bad_version.hello(PROTOCOL_VERSION + 1)
+        response = await settled(bad_version.hello(PROTOCOL_VERSION + 1), "the version-mismatch hello response")
         assert response["type"] == "hello_error"
         assert response["error"]["code"] == "version"
-        await bad_version.wait_for_close()
+        await settled(bad_version.wait_for_close(), "the bad-version connection close")
 
         request_first = await harness.connect(server)
         first_error = request_first.next(lambda message: message["type"] == "hello_error")
         await request_first.send_message({"type": "request", "id": "too-early", "request": {"command": "list"}})
-        error = await first_error
+        error = await settled(first_error, "the request-before-hello error")
         assert error["error"]["code"] == "invalid_request"
-        await request_first.wait_for_close()
+        await settled(request_first.wait_for_close(), "the request-first connection close")
 
         duplicate = await harness.connect(server)
-        assert (await duplicate.hello())["type"] == "hello"
+        assert (await settled(duplicate.hello(), "the duplicate client's hello response"))["type"] == "hello"
         duplicate_error = duplicate.next(lambda message: message["type"] == "hello_error")
         await duplicate.send_message({"type": "hello", "version": PROTOCOL_VERSION})
-        assert (await duplicate_error)["error"]["code"] == "invalid_request"
-        await duplicate.wait_for_close()
+        assert (await settled(duplicate_error, "the duplicate-hello error"))["error"]["code"] == "invalid_request"
+        await settled(duplicate.wait_for_close(), "the duplicate connection close")
     finally:
         await harness.close()
 
@@ -60,7 +60,7 @@ async def test_closes_connections_that_do_not_complete_hello_before_the_timeout(
     try:
         server, _ = await harness.start_server(handshake_timeout_ms=20)
         client = await harness.connect(server)
-        await client.wait_for_close()
+        await settled(client.wait_for_close(), "the handshake-timeout close")
         assert any(
             message["type"] == "hello_error" and message["error"]["code"] == "invalid_request"
             for message in client.messages
@@ -78,8 +78,8 @@ async def test_keeps_the_handshake_timeout_active_until_the_server_hello_is_sent
         server, _ = await harness.start_server(service, handshake_timeout_ms=20)
         client = await harness.connect(server)
         await client.send_message({"type": "hello", "version": PROTOCOL_VERSION})
-        await delay.entered
-        await client.wait_for_close()
+        await settled(delay.entered, "the delayed list_sessions entry")
+        await settled(client.wait_for_close(), "the mid-handshake timeout close")
         delay.release.resolve(None)
         assert any(
             message["type"] == "hello_error" and message["error"]["code"] == "invalid_request"
@@ -97,21 +97,21 @@ async def test_bounds_and_closes_malformed_or_oversized_frames(sock_dir):
         malformed = await harness.connect(malformed_server)
         malformed_error = malformed.next(lambda message: message["type"] == "hello_error")
         await malformed.send_bytes(encode_frame(bytes([0xFF])))
-        assert (await malformed_error)["error"]["code"] == "invalid_request"
-        await malformed.wait_for_close()
+        assert (await settled(malformed_error, "the malformed-frame error"))["error"]["code"] == "invalid_request"
+        await settled(malformed.wait_for_close(), "the malformed connection close")
 
         bounded_server, _ = await harness.start_server(max_frame_length=128)
         oversized = await harness.connect(bounded_server)
         frame = bytearray(4 + 129)
         frame[3] = 129
         await oversized.send_bytes(bytes(frame))
-        await oversized.wait_for_close()
+        await settled(oversized.wait_for_close(), "the oversized connection close")
         assert not any(message["type"] == "hello" for message in oversized.messages)
 
         outbound_server, _ = await harness.start_server(max_frame_length=128)
         outbound = await harness.connect(outbound_server)
         await outbound.send_message({"type": "hello", "version": PROTOCOL_VERSION})
-        await outbound.wait_for_close()
+        await settled(outbound.wait_for_close(), "the outbound-bounded connection close")
         assert outbound.messages == []
     finally:
         await harness.close()
@@ -140,21 +140,24 @@ async def test_catches_up_a_handshaking_client_after_a_concurrent_server_change(
         service.seed("shared")
         server, _ = await harness.start_server(service)
         controller = await harness.connect(server)
-        await controller.hello()
+        await settled(controller.hello(), "the controller's hello handshake")
         service.race = True
         joining = await harness.connect(server)
         hello = joining.hello()
-        await service.entered
-        await controller.request({"command": "attach", "sessionId": "shared"})
+        await settled(service.entered, "the raced list_sessions entry")
+        await settled(controller.request({"command": "attach", "sessionId": "shared"}), "the attach response")
         service.release.resolve(None)
-        handshake = await hello
+        handshake = await settled(hello, "the joining client's hello response")
         assert handshake["type"] == "hello"
-        catchup = await joining.next(
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "server_snapshot"
-                and message["event"]["snapshot"]["revision"] > handshake["snapshot"]["revision"]
-            )
+        catchup = await settled(
+            joining.next(
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "server_snapshot"
+                    and message["event"]["snapshot"]["revision"] > handshake["snapshot"]["revision"]
+                )
+            ),
+            "the catch-up server_snapshot event",
         )
         sessions = catchup["event"]["snapshot"]["sessions"]
         assert [(item["id"], item["sessionName"]) for item in sessions] == [("shared", "Session shared")]
@@ -171,19 +174,23 @@ async def test_shares_request_event_attachment_and_disconnect_behavior(sock_dir)
         service.seed("second")
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        hello = await client.hello()
+        hello = await settled(client.hello(), "the hello response")
         assert hello["type"] == "hello"
         assert [item["id"] for item in hello["snapshot"]["sessions"]] == ["first", "second"]
 
-        listed = await client.request({"command": "list"})
+        listed = await settled(client.request({"command": "list"}), "the list response")
         assert listed["ok"] is True
         assert listed["result"]["command"] == "list"
         assert [item["id"] for item in listed["result"]["sessions"]] == ["first", "second"]
-        attached_first = await client.request({"command": "attach", "sessionId": "first"})
+        attached_first = await settled(
+            client.request({"command": "attach", "sessionId": "first"}), "the first attach response"
+        )
         assert attached_first["ok"] is True
         assert attached_first["result"]["session"]["id"] == "first"
         assert attached_first["result"]["session"]["attached"] is True
-        attached_second = await client.request({"command": "attach", "sessionId": "second"})
+        attached_second = await settled(
+            client.request({"command": "attach", "sessionId": "second"}), "the second attach response"
+        )
         assert attached_second["ok"] is True
         assert attached_second["result"]["session"]["attached"] is True
 
@@ -198,23 +205,26 @@ async def test_shares_request_event_attachment_and_disconnect_behavior(sock_dir)
             lambda message: message["type"] == "event" and message["event"]["type"] == "session_progress"
         )
         service.latest_runtime("first").emit_progress(progress)
-        assert await progress_event == {
+        assert await settled(progress_event, "the session_progress event") == {
             "type": "event",
             "event": {"type": "session_progress", "sessionId": "first", "progress": progress},
         }
 
-        detached = await client.request({"command": "detach", "sessionId": "first"})
+        detached = await settled(client.request({"command": "detach", "sessionId": "first"}), "the detach response")
         assert detached["ok"] is True
         assert detached["result"] == {"command": "detach", "sessionId": "first"}
         assert service.latest_runtime("first").dispose_count == 1
-        thinking = await client.request({"command": "set_thinking", "sessionId": "second", "thinkingLevel": "high"})
+        thinking = await settled(
+            client.request({"command": "set_thinking", "sessionId": "second", "thinkingLevel": "high"}),
+            "the set_thinking response",
+        )
         assert thinking["ok"] is True
         assert thinking["result"]["session"]["id"] == "second"
         assert thinking["result"]["session"]["thinkingLevel"] == "high"
 
         second_runtime = service.latest_runtime("second")
         await client.close()
-        await second_runtime.disposed
+        await settled(second_runtime.disposed, "the second runtime's disposal")
         assert second_runtime.dispose_count == 1
     finally:
         await harness.close()
@@ -229,21 +239,23 @@ async def test_disconnects_attached_clients_when_a_runtime_reports_a_terminal_er
         errors = []
         server, _ = await harness.start_server(service, on_error=errors.append)
         client = await harness.connect(server)
-        await client.hello()
-        await client.request({"command": "attach", "sessionId": "terminal"})
+        await settled(client.hello(), "the hello handshake")
+        await settled(client.request({"command": "attach", "sessionId": "terminal"}), "the attach response")
         runtime = service.latest_runtime("terminal")
 
         runtime.set_phase("turn")
         runtime.emit_error(PiServerError("session_locked", "lock ownership lost"))
-        await client.wait_for_close()
-        await runtime.disposed
+        await settled(client.wait_for_close(), "the terminal-error disconnect")
+        await settled(runtime.disposed, "the terminal runtime's disposal")
         assert runtime.dispose_count == 1
         assert "terminal" not in service.locked
         assert any(getattr(error, "code", None) == "session_locked" for error in errors)
 
         next_client = await harness.connect(server)
-        await next_client.hello()
-        reattached = await next_client.request({"command": "attach", "sessionId": "terminal"})
+        await settled(next_client.hello(), "the next client's hello handshake")
+        reattached = await settled(
+            next_client.request({"command": "attach", "sessionId": "terminal"}), "the reattach response"
+        )
         assert reattached["ok"] is True
         assert reattached["result"]["session"]["id"] == "terminal"
         assert service.latest_runtime("terminal") is not runtime
@@ -274,8 +286,8 @@ async def test_does_not_expose_unexpected_service_errors_to_clients(sock_dir):
 
         server, _ = await harness.start_server(FailingService(), on_error=on_error)
         client = await harness.connect(server)
-        await client.hello()
-        response = await client.request({"command": "list"})
+        await settled(client.hello(), "the hello handshake")
+        response = await settled(client.request({"command": "list"}), "the list response")
         assert response["ok"] is False
         assert response["error"] == {"code": "internal_error", "message": "Internal server error"}
         assert any(str(error) == "private service detail" for error in errors)
@@ -300,8 +312,8 @@ async def test_keeps_not_implemented_stable(sock_dir):
     try:
         server, _ = await harness.start_server(IncompleteService())
         client = await harness.connect(server)
-        await client.hello()
-        response = await client.request({"command": "list"})
+        await settled(client.hello(), "the hello handshake")
+        response = await settled(client.request({"command": "list"}), "the list response")
         assert response["ok"] is False
         assert response["error"] == {"code": "not_implemented", "message": "Operation is not implemented"}
     finally:
@@ -329,8 +341,8 @@ async def test_reports_wrapped_internal_causes_without_exposing_them(sock_dir):
         errors = []
         server, _ = await harness.start_server(WrappedFailureService(), on_error=errors.append)
         client = await harness.connect(server)
-        await client.hello()
-        response = await client.request({"command": "list"})
+        await settled(client.hello(), "the hello handshake")
+        response = await settled(client.request({"command": "list"}), "the list response")
         assert response["ok"] is False
         assert response["error"] == {"code": "internal_error", "message": "Internal server error"}
         assert "private" not in str(response)
@@ -348,19 +360,19 @@ async def test_can_respond_out_of_request_order_after_the_handshake(sock_dir):
         service.seed("first")
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
 
         delay = service.delay_next_list()
         slow_task = tonio.spawn(client.request({"command": "list"}, "slow"))
-        await delay.entered
-        fast = await client.request({"command": "attach", "sessionId": "first"}, "fast")
+        await settled(delay.entered, "the delayed list_sessions entry")
+        fast = await settled(client.request({"command": "attach", "sessionId": "first"}, "fast"), "the fast response")
         assert fast["ok"] is True
         assert fast["id"] == "fast"
         assert fast["result"]["command"] == "attach"
         assert not any(message["type"] == "response" and message["id"] == "slow" for message in client.messages)
 
         delay.release.resolve(None)
-        slow_response = await slow_task
+        slow_response = await settled(slow_task, "the slow response")
         assert slow_response["ok"] is True
         assert slow_response["id"] == "slow"
         assert slow_response["result"]["command"] == "list"
@@ -383,13 +395,13 @@ async def test_gracefully_closes_connections_sessions_and_listener_resources(soc
         server, _ = await harness.start_server(service)
         socket_path = server.addresses[0]
         client = await harness.connect(server)
-        await client.hello()
-        await client.request({"command": "attach", "sessionId": "first"})
+        await settled(client.hello(), "the hello handshake")
+        await settled(client.request({"command": "attach", "sessionId": "first"}), "the attach response")
         runtime = service.latest_runtime("first")
         client_closed = client.wait_for_close()
 
         await server.close()
-        await client_closed
+        await settled(client_closed, "the client close after server shutdown")
         assert runtime.dispose_count == 1
         assert server.addresses == []
         with pytest.raises(FileNotFoundError):
@@ -405,14 +417,14 @@ async def test_unix_socket_decodes_multiple_framed_requests_from_one_raw_chunk(s
     try:
         server, _ = await harness.start_server()
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
         first = encode_client_message({"type": "request", "id": "first", "request": {"command": "list"}})
         second = encode_client_message({"type": "request", "id": "second", "request": {"command": "list"}})
         combined = first + second
         first_response = client.next(lambda message: message["type"] == "response" and message["id"] == "first")
         second_response = client.next(lambda message: message["type"] == "response" and message["id"] == "second")
         await client.send_bytes(combined)
-        assert (await first_response)["ok"] is True
-        assert (await second_response)["ok"] is True
+        assert (await settled(first_response, "the first response"))["ok"] is True
+        assert (await settled(second_response, "the second response"))["ok"] is True
     finally:
         await harness.close()

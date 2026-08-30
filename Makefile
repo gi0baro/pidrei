@@ -17,7 +17,7 @@ audit:
 
 .PHONY: test
 test:
-	uv run pytest -v
+	uv run pytest -v $(PYTEST_ARGS)
 
 # Runs the suite with the blocking-fs detector installed: reports every
 # filesystem call that happened on a tonio runtime worker. Opt-in because

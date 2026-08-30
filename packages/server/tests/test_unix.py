@@ -15,7 +15,7 @@ from tonio.colored import fs
 
 from pidrei_server.testing import TestServerService
 from pidrei_server.transports.unix import UnixServerOptions, create_unix_server
-from tests.server_support import Harness
+from tests.server_support import Harness, settled
 
 
 _STALE_SOCKET_SERVER = """
@@ -47,7 +47,7 @@ async def test_rejects_a_live_listener_without_unlinking_it(sock_dir):
         )
 
         client = await harness.connect(first)
-        assert (await client.hello())["type"] == "hello"
+        assert (await settled(client.hello(), "the hello response"))["type"] == "hello"
     finally:
         await harness.close()
 
@@ -127,7 +127,7 @@ async def test_removes_a_genuinely_stale_socket_before_binding(sock_dir):
         live_identity = await fs.Path(path).lstat()
         assert stat_module.S_ISSOCK(live_identity.st_mode)
         client = await harness.connect(server)
-        assert (await client.hello())["type"] == "hello"
+        assert (await settled(client.hello(), "the hello response"))["type"] == "hello"
     finally:
         await harness.close()
 

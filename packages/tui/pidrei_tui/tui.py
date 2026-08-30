@@ -718,16 +718,25 @@ class TuiBase(Container, ABC):
 
         await self.terminal.start(on_input, self.request_render)
         set_ui_owner(self.input_owner)
-        await self._after_terminal_start()
-        self.terminal.hide_cursor()
-        if self._color_scheme_notifications_enabled:
-            await self.terminal.write("\x1b[?2031h")
-        await self._query_cell_size()
-        self._frames, receiver = channel.channel(1)
-        self._frame_writer_error = None
-        self._writer_scope = tonio.scope()
-        await self._writer_scope.__aenter__()
-        self._writer_scope.spawn(self._frame_writer(receiver))
+        try:
+            await self._after_terminal_start()
+            self.terminal.hide_cursor()
+            if self._color_scheme_notifications_enabled:
+                await self.terminal.write("\x1b[?2031h")
+            await self._query_cell_size()
+            self._frames, receiver = channel.channel(1)
+            self._frame_writer_error = None
+            self._writer_scope = tonio.scope()
+            await self._writer_scope.__aenter__()
+            self._writer_scope.spawn(self._frame_writer(receiver))
+        except BaseException:
+            # A failed start must not leave this TUI as the process-wide
+            # ambient timer owner: the registry outlives us, and an owner
+            # that never reaches stop() would capture every later
+            # `Timeout`/`Interval` into a queue nothing drains.
+            if get_ui_owner() is self.input_owner:
+                set_ui_owner(None)
+            raise
         # Rendering is owner work from here on. Requests made earlier in
         # start() were dropped by the `_render_active` gate; this final
         # request supersedes them all with the first frame.
@@ -791,37 +800,45 @@ class TuiBase(Container, ABC):
         self._stopped = True
         self._render_active = False
 
-        # Barrier: a render job already queued (or mid-frame) finishes
-        # before the writer is told to stop, so nothing sends into a
-        # drained pipeline; jobs queued after this see `_render_active`
-        # False and no-op. A still-pending throttle timer fires into a
-        # no-op too and is reaped when the owner closes. (`run` on an owner
-        # that never started settles inline.)
-        async def _drained() -> None: ...
+        try:
+            # Barrier: a render job already queued (or mid-frame) finishes
+            # before the writer is told to stop, so nothing sends into a
+            # drained pipeline; jobs queued after this see `_render_active`
+            # False and no-op. A still-pending throttle timer fires into a
+            # no-op too and is reaped when the owner closes. (`run` on an owner
+            # that never started settles inline.)
+            async def _drained() -> None: ...
 
-        await self.input_owner.run(_drained)
-        if self._writer_scope is not None:
-            # After the barrier: what rendering handed over still goes out,
-            # then the writer stops and everything below writes in order
-            # behind it.
-            frames, self._frames = self._frames, None
-            await frames.send(None)
-            await self._writer_scope.__aexit__(None, None, None)
-            self._writer_scope = None
-        if self._color_scheme_notifications_enabled:
-            await self.terminal.write("\x1b[?2031l")
-        await self._before_terminal_stop(options)
-        self.terminal.show_cursor()
-        if get_ui_owner() is self.input_owner:
-            set_ui_owner(None)
-        await self.terminal.stop()
-        if self._owner_scope is not None:
-            # After the terminal: its input no longer arrives, so the queued
-            # work drains and the owner's timers are reaped with the scope.
-            self.input_owner.close()
-            await self._owner_scope.__aexit__(None, None, None)
-            self._owner_scope = None
-        await self._after_terminal_stop(options)
+            await self.input_owner.run(_drained)
+            if self._writer_scope is not None:
+                # After the barrier: what rendering handed over still goes out,
+                # then the writer stops and everything below writes in order
+                # behind it.
+                frames, self._frames = self._frames, None
+                await frames.send(None)
+                await self._writer_scope.__aexit__(None, None, None)
+                self._writer_scope = None
+            if self._color_scheme_notifications_enabled:
+                await self.terminal.write("\x1b[?2031l")
+            await self._before_terminal_stop(options)
+            self.terminal.show_cursor()
+            if get_ui_owner() is self.input_owner:
+                set_ui_owner(None)
+            await self.terminal.stop()
+            if self._owner_scope is not None:
+                # After the terminal: its input no longer arrives, so the queued
+                # work drains and the owner's timers are reaped with the scope.
+                self.input_owner.close()
+                await self._owner_scope.__aexit__(None, None, None)
+                self._owner_scope = None
+            await self._after_terminal_stop(options)
+        finally:
+            # Backstop for a stop() that raised before the in-order clear
+            # above: the registry outlives this TUI, and leaving it pointing
+            # here would route every later ambient timer into a queue
+            # nothing drains.
+            if get_ui_owner() is self.input_owner:
+                set_ui_owner(None)
 
     def _handle_owner_error(self, error: BaseException) -> None:
         """Posted UI work (a timer tick, an autocomplete result) raised.

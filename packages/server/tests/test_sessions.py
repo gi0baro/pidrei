@@ -6,22 +6,14 @@ import pytest
 import tonio.colored as tonio
 
 from pidrei_server.testing import TEST_MODEL, Deferred, TestServerService
-from tests.server_support import Harness, flush
-
-
-async def settled(deferred: Deferred, what: str, timeout: float = 5.0):
-    """Await `deferred` with a bound: a wedged choreography step fails with a
-    name instead of hanging the whole CI job (seen on linux 3.14t)."""
-    value, completed = await tonio.time.timeout(deferred.wait(), timeout)
-    assert completed, f"timed out waiting for {what}"
-    return value
+from tests.server_support import Harness, flush, settled
 
 
 MODEL = TEST_MODEL
 
 
 async def attach(client, session_id):
-    response = await client.request({"command": "attach", "sessionId": session_id})
+    response = await settled(client.request({"command": "attach", "sessionId": session_id}), "the attach response")
     assert response["ok"] is True
     assert response["result"]["command"] == "attach"
     return response["result"]["session"]
@@ -56,7 +48,7 @@ async def test_serializes_server_snapshot_revisions(sock_dir):
         service = OrderedSnapshotService()
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
         service.controlled = True
         message_index = len(client.messages)
 
@@ -71,8 +63,8 @@ async def test_serializes_server_snapshot_revisions(sock_dir):
         service.first_release.resolve(None)
         await settled(service.second_started, "the second broadcast to reach list_models")
         service.second_release.resolve(None)
-        await first_create
-        await second_create
+        await settled(first_create, "the first create response")
+        await settled(second_create, "the second create response")
         await settled(
             client.next_from(
                 message_index,
@@ -101,8 +93,10 @@ async def test_creates_server_assigned_durable_ids_and_supports_list_attach_and_
     try:
         server, service = await harness.start_server()
         client = await harness.connect(server)
-        await client.hello()
-        created = await client.request({"command": "create", "cwd": "/work", "name": "Created"})
+        await settled(client.hello(), "the hello handshake")
+        created = await settled(
+            client.request({"command": "create", "cwd": "/work", "name": "Created"}), "the create response"
+        )
         assert created["ok"] is True
         assert created["result"]["command"] == "create"
         created_id = created["result"]["session"]["id"]
@@ -112,7 +106,7 @@ async def test_creates_server_assigned_durable_ids_and_supports_list_attach_and_
         assert created["result"]["session"]["attached"] is True
         assert created["result"]["session"]["locked"] is True
 
-        listed = await client.request({"command": "list"})
+        listed = await settled(client.request({"command": "list"}), "the list response")
         assert listed["ok"] is True
         assert listed["result"]["command"] == "list"
         assert listed["result"]["sessions"] == [
@@ -124,11 +118,13 @@ async def test_creates_server_assigned_durable_ids_and_supports_list_attach_and_
                 "cwd": "/work",
             }
         ]
-        detached = await client.request({"command": "detach", "sessionId": created_id})
+        detached = await settled(client.request({"command": "detach", "sessionId": created_id}), "the detach response")
         assert detached["ok"] is True
         assert detached["result"] == {"command": "detach", "sessionId": created_id}
         assert service.latest_runtime(created_id).dispose_count == 1
-        detached_again = await client.request({"command": "detach", "sessionId": created_id})
+        detached_again = await settled(
+            client.request({"command": "detach", "sessionId": created_id}), "the repeat detach response"
+        )
         assert detached_again["ok"] is True
         assert detached_again["result"] == {"command": "detach", "sessionId": created_id}
 
@@ -154,10 +150,10 @@ async def test_preserves_backend_metadata_while_refreshing_live_session_metadata
         service.seed("session-1", "Live name")
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
         await attach(client, "session-1")
 
-        listed = await client.request({"command": "list"})
+        listed = await settled(client.request({"command": "list"}), "the list response")
         assert listed["ok"] is True
         assert listed["result"]["sessions"] == [
             {
@@ -182,14 +178,17 @@ async def test_keeps_multiple_attachments_on_one_connection_independent(sock_dir
         service.seed("second")
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
         await attach(client, "first")
         await attach(client, "second")
 
-        await client.request({"command": "detach", "sessionId": "first"})
+        await settled(client.request({"command": "detach", "sessionId": "first"}), "the detach response")
         assert service.latest_runtime("first").dispose_count == 1
         assert service.latest_runtime("second").dispose_count == 0
-        response = await client.request({"command": "set_thinking", "sessionId": "second", "thinkingLevel": "medium"})
+        response = await settled(
+            client.request({"command": "set_thinking", "sessionId": "second", "thinkingLevel": "medium"}),
+            "the set_thinking response",
+        )
         assert response["ok"] is True
         assert response["result"]["session"]["id"] == "second"
         assert response["result"]["session"]["thinkingLevel"] == "medium"
@@ -206,8 +205,8 @@ async def test_broadcasts_full_snapshots_and_progress_only_to_clients_attached_t
         server, _ = await harness.start_server(service)
         attached_client = await harness.connect(server)
         unattached_client = await harness.connect(server)
-        await attached_client.hello()
-        await unattached_client.hello()
+        await settled(attached_client.hello(), "the attached client's hello handshake")
+        await settled(unattached_client.hello(), "the unattached client's hello handshake")
         await attach(attached_client, "session-1")
         runtime = service.latest_runtime("session-1")
         progress = {
@@ -218,8 +217,11 @@ async def test_broadcasts_full_snapshots_and_progress_only_to_clients_attached_t
             "delta": "hello",
         }
         runtime.emit_progress(progress)
-        progress_message = await attached_client.next(
-            lambda message: message["type"] == "event" and message["event"]["type"] == "session_progress"
+        progress_message = await settled(
+            attached_client.next(
+                lambda message: message["type"] == "event" and message["event"]["type"] == "session_progress"
+            ),
+            "the session_progress event",
         )
         assert progress_message == {
             "type": "event",
@@ -233,13 +235,16 @@ async def test_broadcasts_full_snapshots_and_progress_only_to_clients_attached_t
         message_count = len(attached_client.messages)
         runtime.emit_snapshot()
         current_revision = (await runtime.snapshot())["revision"]
-        snapshot_message = await attached_client.next_from(
-            message_count,
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "session_snapshot"
-                and message["event"]["snapshot"]["revision"] == current_revision
+        snapshot_message = await settled(
+            attached_client.next_from(
+                message_count,
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "session_snapshot"
+                    and message["event"]["snapshot"]["revision"] == current_revision
+                ),
             ),
+            "the current-revision session_snapshot event",
         )
         assert snapshot_message["event"]["snapshot"]["id"] == "session-1"
         assert snapshot_message["event"]["snapshot"]["attached"] is True
@@ -261,10 +266,10 @@ async def test_allows_every_attached_client_to_control_a_singleton_live_runtime(
         server, _ = await harness.start_server(service)
         first = await harness.connect(server)
         second = await harness.connect(server)
-        await first.hello()
-        await second.hello()
+        await settled(first.hello(), "the first client's hello handshake")
+        await settled(second.hello(), "the second client's hello handshake")
         await attach(first, "session-1")
-        second_list = await second.request({"command": "list"})
+        second_list = await settled(second.request({"command": "list"}), "the list response")
         assert second_list["ok"] is True
         assert second_list["result"]["sessions"] == [
             {
@@ -278,20 +283,27 @@ async def test_allows_every_attached_client_to_control_a_singleton_live_runtime(
         await attach(second, "session-1")
         assert len(service.runtimes["session-1"]) == 1
 
-        model_response = await second.request(
-            {"command": "set_model", "sessionId": "session-1", "model": {"provider": "test", "id": "large"}}
+        model_response = await settled(
+            second.request(
+                {"command": "set_model", "sessionId": "session-1", "model": {"provider": "test", "id": "large"}}
+            ),
+            "the set_model response",
         )
         assert model_response["ok"] is True
         assert model_response["result"]["session"]["model"]["id"] == "large"
-        await first.next(
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "session_snapshot"
-                and message["event"]["snapshot"]["model"]["id"] == "large"
-            )
+        await settled(
+            first.next(
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "session_snapshot"
+                    and message["event"]["snapshot"]["model"]["id"] == "large"
+                )
+            ),
+            "the large-model session_snapshot event",
         )
-        thinking_response = await first.request(
-            {"command": "set_thinking", "sessionId": "session-1", "thinkingLevel": "high"}
+        thinking_response = await settled(
+            first.request({"command": "set_thinking", "sessionId": "session-1", "thinkingLevel": "high"}),
+            "the set_thinking response",
         )
         assert thinking_response["ok"] is True
         assert thinking_response["result"]["session"]["thinkingLevel"] == "high"
@@ -307,29 +319,36 @@ async def test_does_not_queue_prompts_and_processes_steer_and_abort_while_a_prom
         service.seed()
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
         await attach(client, "session-1")
 
         prompt = tonio.spawn(client.request({"command": "prompt", "sessionId": "session-1", "text": "first"}))
-        await client.next(
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "session_snapshot"
-                and message["event"]["snapshot"]["phase"] == "turn"
-            )
+        await settled(
+            client.next(
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "session_snapshot"
+                    and message["event"]["snapshot"]["phase"] == "turn"
+                )
+            ),
+            "the turn-phase session_snapshot event",
         )
-        busy = await client.request({"command": "prompt", "sessionId": "session-1", "text": "second"})
+        busy = await settled(
+            client.request({"command": "prompt", "sessionId": "session-1", "text": "second"}), "the busy response"
+        )
         assert busy["ok"] is False
         assert busy["error"]["code"] == "busy"
 
-        steer = await client.request({"command": "steer", "sessionId": "session-1", "text": "adjust"})
+        steer = await settled(
+            client.request({"command": "steer", "sessionId": "session-1", "text": "adjust"}), "the steer response"
+        )
         assert steer["ok"] is True
         assert steer["result"]["command"] == "steer"
         assert [item.text for item in service.latest_runtime("session-1").steers] == ["adjust"]
-        abort = await client.request({"command": "abort", "sessionId": "session-1"})
+        abort = await settled(client.request({"command": "abort", "sessionId": "session-1"}), "the abort response")
         assert abort["ok"] is True
         assert abort["result"]["command"] == "abort"
-        prompt_response = await prompt
+        prompt_response = await settled(prompt, "the prompt response")
         assert prompt_response["ok"] is True
         assert prompt_response["result"]["command"] == "prompt"
         assert prompt_response["result"]["session"]["phase"] == "idle"
@@ -346,23 +365,26 @@ async def test_returns_operation_attachment_state_relative_to_the_requesting_con
         server, _ = await harness.start_server(service)
         first = await harness.connect(server)
         second = await harness.connect(server)
-        await first.hello()
-        await second.hello()
+        await settled(first.hello(), "the first client's hello handshake")
+        await settled(second.hello(), "the second client's hello handshake")
         await attach(first, "session-1")
         await attach(second, "session-1")
 
         prompt = tonio.spawn(first.request({"command": "prompt", "sessionId": "session-1", "text": "hello"}))
-        await first.next(
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "session_snapshot"
-                and message["event"]["snapshot"]["phase"] == "turn"
-            )
+        await settled(
+            first.next(
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "session_snapshot"
+                    and message["event"]["snapshot"]["phase"] == "turn"
+                )
+            ),
+            "the turn-phase session_snapshot event",
         )
-        await first.request({"command": "detach", "sessionId": "session-1"})
+        await settled(first.request({"command": "detach", "sessionId": "session-1"}), "the detach response")
         service.latest_runtime("session-1").finish_prompt()
 
-        prompt_response = await prompt
+        prompt_response = await settled(prompt, "the prompt response")
         assert prompt_response["ok"] is True
         assert prompt_response["result"]["session"]["id"] == "session-1"
         assert prompt_response["result"]["session"]["attached"] is False
@@ -378,15 +400,18 @@ async def test_keeps_busy_work_alive_after_disconnect_and_disposes_when_it_next_
         service.seed()
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
+        await settled(client.hello(), "the hello handshake")
         await attach(client, "session-1")
         prompt = tonio.spawn(client.request({"command": "prompt", "sessionId": "session-1", "text": "survive"}))
-        await client.next(
-            lambda message: (
-                message["type"] == "event"
-                and message["event"]["type"] == "session_snapshot"
-                and message["event"]["snapshot"]["phase"] == "turn"
-            )
+        await settled(
+            client.next(
+                lambda message: (
+                    message["type"] == "event"
+                    and message["event"]["type"] == "session_snapshot"
+                    and message["event"]["snapshot"]["phase"] == "turn"
+                )
+            ),
+            "the turn-phase session_snapshot event",
         )
         runtime = service.latest_runtime("session-1")
         await client.close()
@@ -394,11 +419,11 @@ async def test_keeps_busy_work_alive_after_disconnect_and_disposes_when_it_next_
             await prompt
         assert runtime.dispose_count == 0
         runtime.finish_prompt()
-        await runtime.disposed
+        await settled(runtime.disposed, "the runtime disposal")
         assert runtime.dispose_count == 1
 
         reconnect = await harness.connect(server)
-        await reconnect.hello()
+        await settled(reconnect.hello(), "the reconnect hello handshake")
         snapshot = await attach(reconnect, "session-1")
         assert len(snapshot["transcript"]) == 2
         assert snapshot["transcript"][1]["role"] == "assistant"
@@ -415,16 +440,19 @@ async def test_restores_persisted_sessions_lazily_after_a_server_restart(sock_di
         service.seed()
         first_server, _ = await harness.start_server(service)
         first_client = await harness.connect(first_server)
-        await first_client.hello()
+        await settled(first_client.hello(), "the first client's hello handshake")
         await attach(first_client, "session-1")
-        await first_client.request({"command": "set_thinking", "sessionId": "session-1", "thinkingLevel": "high"})
+        await settled(
+            first_client.request({"command": "set_thinking", "sessionId": "session-1", "thinkingLevel": "high"}),
+            "the set_thinking response",
+        )
         await first_client.close()
         await first_server.close()
 
         second_server, _ = await harness.start_server(service)
         assert len(service.runtimes["session-1"]) == 1
         second_client = await harness.connect(second_server)
-        await second_client.hello()
+        await settled(second_client.hello(), "the second client's hello handshake")
         restored = await attach(second_client, "session-1")
         assert restored["thinkingLevel"] == "high"
         assert len(service.runtimes["session-1"]) == 2
@@ -443,8 +471,8 @@ async def test_rejects_and_disposes_a_service_runtime_with_the_wrong_server_assi
         service = WrongIdService()
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
-        response = await client.request({"command": "create"})
+        await settled(client.hello(), "the hello handshake")
+        response = await settled(client.request({"command": "create"}), "the create response")
         assert response["ok"] is False
         assert response["error"]["code"] == "invalid_request"
         assert service.latest_runtime("wrong-id").dispose_count == 1
@@ -461,11 +489,15 @@ async def test_maps_service_lock_errors_and_rejects_control_from_unattached_clie
         service.locked.add("locked")
         server, _ = await harness.start_server(service)
         client = await harness.connect(server)
-        await client.hello()
-        locked = await client.request({"command": "attach", "sessionId": "locked"})
+        await settled(client.hello(), "the hello handshake")
+        locked = await settled(
+            client.request({"command": "attach", "sessionId": "locked"}), "the locked-attach response"
+        )
         assert locked["ok"] is False
         assert locked["error"]["code"] == "session_locked"
-        unattached = await client.request({"command": "abort", "sessionId": "locked"})
+        unattached = await settled(
+            client.request({"command": "abort", "sessionId": "locked"}), "the unattached-abort response"
+        )
         assert unattached["ok"] is False
         assert unattached["error"]["code"] == "invalid_request"
     finally:
