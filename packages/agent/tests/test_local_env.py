@@ -178,8 +178,15 @@ async def test_returns_aborted_results_for_pre_aborted_cancellable_file_operatio
         await env.read_text_lines("file.txt", cancel=token),
         await env.read_binary_file("file.txt", cancel=token),
         await env.write_file("other.txt", "hello", cancel=token),
+        await env.append_file("file.txt", "!", cancel=token),
         await env.rename_file("file.txt", "renamed.txt", cancel=token),
+        await env.file_info("file.txt", cancel=token),
         await env.list_dir(".", cancel=token),
+        await env.canonical_path("file.txt", cancel=token),
+        await env.create_dir("dir", cancel=token),
+        await env.remove("file.txt", cancel=token),
+        await env.create_temp_dir(cancel=token),
+        await env.create_temp_file(cancel=token),
     ]
     for result in results:
         assert result.ok is False
@@ -317,7 +324,10 @@ async def test_streams_stdout_and_stderr_chunks():
     result = get_or_throw(
         await env.exec(
             "printf out; printf err >&2",
-            ShellExecOptions(on_stdout=stdout_chunks.append, on_stderr=stderr_chunks.append),
+            ShellExecOptions(
+                on_stdout=lambda chunk, _cancel: stdout_chunks.append(chunk),
+                on_stderr=lambda chunk, _cancel: stderr_chunks.append(chunk),
+            ),
         )
     )
     assert result == ShellExecResult(stdout="out", stderr="err", exit_code=0)
@@ -358,7 +368,7 @@ async def test_returns_callback_errors_from_exec_stream_handlers():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
 
-    def failing_callback(_chunk: str) -> None:
+    def failing_callback(_chunk: str, _cancel) -> None:
         raise Exception("callback failed")
 
     result = await env.exec("printf out", ShellExecOptions(on_stdout=failing_callback))
@@ -389,7 +399,7 @@ async def test_returns_an_aborted_result_for_aborted_commands():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
     token = CancelToken()
-    execution = tonio.spawn(env.exec("sleep 5", ShellExecOptions(cancel=token)))
+    execution = tonio.spawn(env.exec("sleep 5", None, token))
     await tonio.sleep(0.05)
     token.cancel()
     result = await execution

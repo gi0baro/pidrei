@@ -16,7 +16,9 @@ import tonio.colored as tonio
 
 from pidrei_tui.components.h_stack import HStack
 from pidrei_tui.components.image import Image
+from pidrei_tui.components.mouse_region import MouseRegion
 from pidrei_tui.components.scroll_view import ScrollView
+from pidrei_tui.components.select_list import SelectList
 from pidrei_tui.components.text import Text
 from pidrei_tui.components.v_stack import VStack
 from pidrei_tui.keybindings import (
@@ -32,6 +34,7 @@ from pidrei_tui.terminal_image import (
     reset_capabilities_cache,
     set_capabilities,
 )
+from pidrei_tui.tui import TuiMouseEventResult
 from pidrei_tui.tui_alt_screen import TuiAltScreen
 
 from .virtual_terminal import VirtualTerminal, poll_until
@@ -1544,4 +1547,193 @@ async def test_keeps_viewport_scrolling_while_transcript_search_is_focused():
     await terminal.wait_for_render(since)
     assert tui.viewport_top < top_before
     assert any("Find transcript" in line for line in terminal.get_viewport())
+    await tui.stop()
+
+
+# --- component mouse dispatch (pi 0.85.0) ------------------------------------
+
+
+class _MouseComponent:
+    """A dict-literal component in pi; render/invalidate/handle_mouse here."""
+
+    def __init__(self, on_mouse, lines: list[str] | None = None) -> None:
+        self._on_mouse = on_mouse
+        self._lines = lines if lines is not None else ["control"]
+        self.render_count = 0
+
+    def render(self, _width: int) -> list[str]:
+        self.render_count += 1
+        return self._lines
+
+    def invalidate(self) -> None:
+        pass
+
+    async def handle_mouse(self, event):
+        return self._on_mouse(event)
+
+
+@pytest.mark.tonio
+async def test_does_not_vertically_redispatch_misses_through_horizontal_layout_containers():
+    terminal = VirtualTerminal(20, 2)
+    tui = TuiAltScreen(terminal)
+    selections = [0]
+    select_list = SelectList(
+        [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}],
+        2,
+        {
+            "selectedPrefix": lambda text: text,
+            "selectedText": lambda text: text,
+            "description": lambda text: text,
+            "scrollInfo": lambda text: text,
+            "noMatch": lambda text: text,
+        },
+    )
+
+    async def on_select(_item) -> None:
+        selections[0] += 1
+
+    select_list.on_select = on_select
+    tui.set_layout_root(
+        HStack([{"component": select_list, "basis": 10}, {"component": Text("plain", 0, 0), "basis": 10}])
+    )
+    await tui.start()
+    await terminal.wait_for_render()
+
+    await terminal.send_input("\x1b[<0;15;1M")
+    await terminal.send_input("\x1b[<0;15;1m")
+    await terminal.wait_for_render()
+    assert selections[0] == 0
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_dispatches_clicks_to_nested_mouse_regions_without_breaking_drag_selection():
+    terminal = RecordingTerminal(20, 2)
+    tui = TuiAltScreen(terminal)
+    clicks = [0]
+
+    def on_mouse(event):
+        if event.type != "click":
+            return None
+        clicks[0] += 1
+        return TuiMouseEventResult(handled=True)
+
+    tui.add_child(MouseRegion(Text("clickable\nselectable", 0, 0), on_mouse))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;2;1M")
+    await terminal.send_input("\x1b[<0;2;1m")
+    await terminal.wait_for_render(since)
+    assert clicks[0] == 1
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await terminal.wait_for_render(since)
+    assert clicks[0] == 1
+    assert await terminal.wait_for_write("\x1b]52;c;")
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_focuses_and_captures_drag_gestures_for_mouse_aware_components():
+    terminal = VirtualTerminal(20, 2)
+    tui = TuiAltScreen(terminal)
+    events: list[str] = []
+
+    def on_mouse(event):
+        events.append(event.type)
+        if event.type == "press":
+            return TuiMouseEventResult(handled=True, capture=True, focus=True)
+        return TuiMouseEventResult(handled=True)
+
+    component = _MouseComponent(on_mouse)
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;5;2M")
+    await terminal.send_input("\x1b[<0;5;2m")
+    await terminal.wait_for_render(since)
+
+    assert events == ["press", "drag", "release"]
+    assert tui.get_focused_component() is component
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_reports_consecutive_click_counts_to_component_owned_controls():
+    terminal = VirtualTerminal(20, 1)
+    tui = TuiAltScreen(terminal)
+    click_counts: list[int] = []
+
+    def on_mouse(event):
+        if event.type == "press":
+            return TuiMouseEventResult(handled=True)
+        if event.type == "click":
+            click_counts.append(event.click_count if event.click_count is not None else 0)
+            return TuiMouseEventResult(handled=True)
+        return None
+
+    tui.add_child(_MouseComponent(on_mouse))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    for _ in range(3):
+        await terminal.send_input("\x1b[<0;1;1M")
+        await terminal.send_input("\x1b[<0;1;1m")
+    await terminal.wait_for_render(since)
+    assert click_counts == [1, 2, 3]
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_does_not_rerender_for_handled_no_op_pointer_motion():
+    terminal = RecordingTerminal(20, 2)
+    tui = TuiAltScreen(terminal)
+    component = _MouseComponent(
+        lambda event: TuiMouseEventResult(handled=True) if event.type == "move" else None,
+        ["hover target"],
+    )
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+    rendered_before_motion = component.render_count
+    writes_before_motion = len([event for event in terminal.events if event["type"] == "write"])
+
+    await terminal.send_input("\x1b[<35;1;1M")
+    await terminal.wait_for_render()
+    assert component.render_count == rendered_before_motion
+    assert len([event for event in terminal.events if event["type"] == "write"]) == writes_before_motion
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_lets_mouse_aware_components_consume_wheel_events_before_viewport_scrolling():
+    terminal = VirtualTerminal(20, 3)
+    tui = TuiAltScreen(terminal)
+    wheel_events = [0]
+
+    def on_mouse(event):
+        if event.type != "wheel":
+            return None
+        wheel_events[0] += 1
+        return TuiMouseEventResult(handled=True)
+
+    tui.add_child(MouseRegion(Text(_lines(8), 0, 0), on_mouse))
+    await tui.start()
+    await terminal.wait_for_render()
+    viewport_top = tui.viewport_top
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<64;1;1M")
+    await terminal.wait_for_render(since)
+    assert wheel_events[0] == 1
+    assert tui.viewport_top == viewport_top
     await tui.stop()

@@ -12,6 +12,7 @@ import math
 import re
 
 from ..keybindings import get_keybindings
+from ..tui import TuiMouseEvent, TuiMouseEventResult
 from ..utils import truncate_to_width, visible_width
 
 
@@ -37,6 +38,7 @@ class SelectList:
         self._items = items
         self._filtered_items = items
         self._selected_index = 0
+        self._mouse_pressed_index: int | None = None
         self._max_visible = max_visible
         self._theme = theme
         self._layout = layout if layout is not None else {}
@@ -68,14 +70,7 @@ class SelectList:
         primary_column_width = self._get_primary_column_width()
 
         # Calculate visible range with scrolling
-        start_index = max(
-            0,
-            min(
-                self._selected_index - math.floor(self._max_visible / 2),
-                len(self._filtered_items) - self._max_visible,
-            ),
-        )
-        end_index = min(start_index + self._max_visible, len(self._filtered_items))
+        start_index, end_index = self._get_visible_range()
 
         # Render visible items
         for i in range(start_index, end_index):
@@ -93,6 +88,52 @@ class SelectList:
             lines.append(self._theme["scrollInfo"](truncate_to_width(scroll_text, width - 2, "")))
 
         return lines
+
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+        if not self._filtered_items:
+            return None
+        if event.type == "wheel" and event.wheel_delta:
+            delta = -1 if event.wheel_delta < 0 else 1
+            previous_index = self._selected_index
+            self._selected_index = max(0, min(len(self._filtered_items) - 1, self._selected_index + delta))
+            if self._selected_index != previous_index:
+                await self._notify_selection_change()
+            return TuiMouseEventResult(handled=True, render=self._selected_index != previous_index)
+        if event.type != "move" and event.button != "left":
+            return None
+        start_index, end_index = self._get_visible_range()
+        item_index = start_index + event.y
+        if item_index < start_index or item_index >= end_index:
+            return None
+
+        if event.type in ("move", "press"):
+            if event.type == "press":
+                self._mouse_pressed_index = item_index
+            changed = self._selected_index != item_index
+            if changed:
+                self._selected_index = item_index
+                await self._notify_selection_change()
+            return TuiMouseEventResult(
+                handled=True,
+                focus=event.type == "press",
+                render=changed if event.type == "move" else None,
+            )
+        if event.type == "click":
+            clicked_index = self._mouse_pressed_index if self._mouse_pressed_index is not None else item_index
+            self._mouse_pressed_index = None
+            changed = self._selected_index != clicked_index
+            self._selected_index = clicked_index
+            if changed:
+                await self._notify_selection_change()
+            selected_item = (
+                self._filtered_items[self._selected_index]
+                if 0 <= self._selected_index < len(self._filtered_items)
+                else None
+            )
+            if selected_item is not None and self.on_select is not None:
+                await self.on_select(selected_item)
+            return TuiMouseEventResult(handled=True)
+        return None
 
     async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
@@ -123,6 +164,16 @@ class SelectList:
         elif kb.matches(key_data, "tui.select.cancel"):
             if self.on_cancel is not None:
                 await self.on_cancel()
+
+    def _get_visible_range(self) -> tuple[int, int]:
+        start_index = max(
+            0,
+            min(
+                self._selected_index - math.floor(self._max_visible / 2),
+                len(self._filtered_items) - self._max_visible,
+            ),
+        )
+        return start_index, min(start_index + self._max_visible, len(self._filtered_items))
 
     def _render_item(
         self,

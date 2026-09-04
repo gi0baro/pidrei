@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 import yaml
 
+from pidrei_ai.utils.cancel import CancelToken
+
 from .types import FileInfo, to_error
 
 
@@ -61,7 +63,9 @@ class LoadedSourcedPromptTemplates:
     diagnostics: list[SourcedPromptTemplateDiagnostic]
 
 
-async def load_prompt_templates(env, paths: str | list[str]) -> LoadedPromptTemplates:
+async def load_prompt_templates(
+    env, paths: str | list[str], cancel: CancelToken | None = None
+) -> LoadedPromptTemplates:
     """Load prompt templates from one or more paths.
 
     Directory inputs load direct `.md` children non-recursively. File inputs
@@ -71,7 +75,7 @@ async def load_prompt_templates(env, paths: str | list[str]) -> LoadedPromptTemp
     prompt_templates: list[PromptTemplate] = []
     diagnostics: list[PromptTemplateDiagnostic] = []
     for path in paths if isinstance(paths, list) else [paths]:
-        info_result = await env.file_info(path)
+        info_result = await env.file_info(path, cancel)
         if not info_result.ok:
             if info_result.error.code != "not_found":
                 diagnostics.append(
@@ -79,13 +83,13 @@ async def load_prompt_templates(env, paths: str | list[str]) -> LoadedPromptTemp
                 )
             continue
         info = info_result.value
-        kind = await _resolve_kind(env, info, diagnostics)
+        kind = await _resolve_kind(env, info, diagnostics, cancel)
         if kind == "directory":
-            result = await _load_templates_from_dir(env, info.path)
+            result = await _load_templates_from_dir(env, info.path, cancel)
             prompt_templates.extend(result.prompt_templates)
             diagnostics.extend(result.diagnostics)
         elif kind == "file" and info.name.endswith(".md"):
-            template, file_diagnostics = await _load_template_from_file(env, info.path, info.name)
+            template, file_diagnostics = await _load_template_from_file(env, info.path, info.name, cancel)
             if template is not None:
                 prompt_templates.append(template)
             diagnostics.extend(file_diagnostics)
@@ -96,18 +100,24 @@ async def load_sourced_prompt_templates(
     env,
     inputs: list[dict[str, Any]],
     map_prompt_template=None,
+    cancel: CancelToken | None = None,
 ) -> LoadedSourcedPromptTemplates:
     """Load prompt templates from source-tagged paths.
 
     Source values are preserved exactly and attached to every loaded prompt
-    template and diagnostic.
+    template and diagnostic. `map_prompt_template` receives
+    `(prompt_template, source, cancel)`.
     """
     prompt_templates: list[SourcedPromptTemplate] = []
     diagnostics: list[SourcedPromptTemplateDiagnostic] = []
     for entry in inputs:
-        result = await load_prompt_templates(env, entry["path"])
+        result = await load_prompt_templates(env, entry["path"], cancel)
         for prompt_template in result.prompt_templates:
-            mapped = map_prompt_template(prompt_template, entry["source"]) if map_prompt_template else prompt_template
+            mapped = (
+                map_prompt_template(prompt_template, entry["source"], cancel)
+                if map_prompt_template
+                else prompt_template
+            )
             prompt_templates.append(SourcedPromptTemplate(prompt_template=mapped, source=entry["source"]))
         for diagnostic in result.diagnostics:
             diagnostics.append(
@@ -118,10 +128,10 @@ async def load_sourced_prompt_templates(
     return LoadedSourcedPromptTemplates(prompt_templates=prompt_templates, diagnostics=diagnostics)
 
 
-async def _load_templates_from_dir(env, directory: str) -> LoadedPromptTemplates:
+async def _load_templates_from_dir(env, directory: str, cancel: CancelToken | None) -> LoadedPromptTemplates:
     prompt_templates: list[PromptTemplate] = []
     diagnostics: list[PromptTemplateDiagnostic] = []
-    entries_result = await env.list_dir(directory)
+    entries_result = await env.list_dir(directory, cancel)
     if not entries_result.ok:
         diagnostics.append(
             PromptTemplateDiagnostic(code="list_failed", message=entries_result.error.message, path=directory)
@@ -129,10 +139,10 @@ async def _load_templates_from_dir(env, directory: str) -> LoadedPromptTemplates
         return LoadedPromptTemplates(prompt_templates=prompt_templates, diagnostics=diagnostics)
 
     for entry in sorted(entries_result.value, key=lambda info: info.name):
-        kind = await _resolve_kind(env, entry, diagnostics)
+        kind = await _resolve_kind(env, entry, diagnostics, cancel)
         if kind != "file" or not entry.name.endswith(".md"):
             continue
-        template, file_diagnostics = await _load_template_from_file(env, entry.path, entry.name)
+        template, file_diagnostics = await _load_template_from_file(env, entry.path, entry.name, cancel)
         if template is not None:
             prompt_templates.append(template)
         diagnostics.extend(file_diagnostics)
@@ -140,10 +150,10 @@ async def _load_templates_from_dir(env, directory: str) -> LoadedPromptTemplates
 
 
 async def _load_template_from_file(
-    env, file_path: str, file_name: str
+    env, file_path: str, file_name: str, cancel: CancelToken | None
 ) -> tuple[PromptTemplate | None, list[PromptTemplateDiagnostic]]:
     diagnostics: list[PromptTemplateDiagnostic] = []
-    raw_content = await env.read_text_file(file_path)
+    raw_content = await env.read_text_file(file_path, cancel)
     if not raw_content.ok:
         diagnostics.append(
             PromptTemplateDiagnostic(code="read_failed", message=raw_content.error.message, path=file_path)
@@ -172,17 +182,17 @@ async def _load_template_from_file(
     )
 
 
-async def _resolve_kind(env, info: FileInfo, diagnostics: list) -> str | None:
+async def _resolve_kind(env, info: FileInfo, diagnostics: list, cancel: CancelToken | None) -> str | None:
     if info.kind in ("file", "directory"):
         return info.kind
-    canonical_path = await env.canonical_path(info.path)
+    canonical_path = await env.canonical_path(info.path, cancel)
     if not canonical_path.ok:
         if canonical_path.error.code != "not_found":
             diagnostics.append(
                 PromptTemplateDiagnostic(code="file_info_failed", message=canonical_path.error.message, path=info.path)
             )
         return None
-    target = await env.file_info(canonical_path.value)
+    target = await env.file_info(canonical_path.value, cancel)
     if not target.ok:
         if target.error.code != "not_found":
             diagnostics.append(

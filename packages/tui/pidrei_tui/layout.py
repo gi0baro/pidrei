@@ -371,6 +371,22 @@ def _contains_point(rect: LayoutRect, x: int, y: int) -> bool:
     return rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height
 
 
+def get_layout_boxes_at(frame: LayoutFrame, x: int, y: int) -> list[LayoutBox]:
+    """Return the visual hit path from the deepest component to the layout root."""
+    result: list[tuple[LayoutBox, int]] = []
+
+    def visit(box: LayoutBox, depth: int) -> None:
+        if not _contains_point(box.clip, x, y):
+            return
+        result.append((box, depth))
+        for child in box.children:
+            visit(child, depth + 1)
+
+    visit(frame.root, 0)
+    result.sort(key=lambda entry: (-entry[0].layer, -entry[1]))
+    return [box for box, _ in result]
+
+
 def get_scroll_view_box(frame: LayoutFrame, scroll_view) -> LayoutBox | None:
     def visit(box: LayoutBox) -> LayoutBox | None:
         if box.scroll_view is scroll_view:

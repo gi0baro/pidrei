@@ -35,12 +35,12 @@ class LateOutputExecutionEnv(LocalExecutionEnv):
         super().__init__(cwd)
         self.settled = tonio.Event()
 
-    async def exec(self, _command: str, options: ShellExecOptions | None = None):
-        options.on_stdout("before\n")
+    async def exec(self, _command: str, options: ShellExecOptions | None = None, cancel=None):
+        options.on_stdout("before\n", cancel)
 
         async def late() -> None:
             await self.settled.wait(None)
-            options.on_stdout("late\n")
+            options.on_stdout("late\n", cancel)
 
         tonio.spawn.without_tracking(late())
         return ok(ShellExecResult(stdout="before\n", stderr="", exit_code=0))
@@ -52,17 +52,17 @@ TRUNCATED_OUTPUT_LINES = DEFAULT_MAX_LINES + 1
 class TimeoutOutputExecutionEnv(LocalExecutionEnv):
     """Emits a fixed above-truncation output chunk, then reports a timeout."""
 
-    async def exec(self, _command: str, options: ShellExecOptions | None = None):
+    async def exec(self, _command: str, options: ShellExecOptions | None = None, cancel=None):
         output = "".join(f"line-{index + 1}\n" for index in range(TRUNCATED_OUTPUT_LINES))
         if options is not None and options.on_stdout is not None:
-            options.on_stdout(output)
+            options.on_stdout(output, cancel)
         return err(ExecutionError("timeout", f"timeout:{options.timeout if options is not None else None}"))
 
 
 @pytest.mark.tonio
 async def test_executes_commands_and_combines_stdout_and_stderr():
     context = create_context()
-    result = await create_bash_tool().execute("bash-1", {"command": "printf out; printf err >&2"}, None, None, context)
+    result = await create_bash_tool().execute("bash-1", {"command": "printf out; printf err >&2"}, None, context)
 
     assert "out" in text_output(result)
     assert "err" in text_output(result)
@@ -74,9 +74,9 @@ async def test_reports_nonzero_exits_and_timeouts():
     tool = create_bash_tool()
 
     with pytest.raises(Exception, match="(?s)failed.*Command exited with code 7"):
-        await tool.execute("bash-2", {"command": "printf failed; exit 7"}, None, None, context)
+        await tool.execute("bash-2", {"command": "printf failed; exit 7"}, None, context)
     with pytest.raises(Exception, match=re.escape("Command timed out after 0.01 seconds")):
-        await tool.execute("bash-3", {"command": "sleep 2", "timeout": 0.01}, None, None, context)
+        await tool.execute("bash-3", {"command": "sleep 2", "timeout": 0.01}, None, context)
 
 
 @pytest.mark.tonio
@@ -87,7 +87,6 @@ async def test_preserves_truncated_output_when_a_command_times_out():
         await create_bash_tool().execute(
             "bash-timeout-output",
             {"command": "emit-output-then-time-out", "timeout": 0.05},
-            None,
             None,
             context,
         )
@@ -111,7 +110,6 @@ async def test_ignores_output_callbacks_after_execution_settles():
     result = await create_bash_tool().execute(
         "bash-late",
         {"command": "late"},
-        None,
         lambda update: updates.append(text_output(update)),
         ExecutionToolContext(env=env),
     )
@@ -125,7 +123,7 @@ async def test_ignores_output_callbacks_after_execution_settles():
 @pytest.mark.tonio
 async def test_reports_the_total_size_of_an_oversized_final_line():
     context = create_context()
-    result = await create_bash_tool().execute("bash-long-line", {"command": "printf '%060000d' 0"}, None, None, context)
+    result = await create_bash_tool().execute("bash-long-line", {"command": "printf '%060000d' 0"}, None, context)
 
     assert re.search(r"Showing last 50\.0KB of line 1 \(line is 58\.6KB\)\. Full output:", text_output(result))
 
@@ -156,7 +154,7 @@ async def test_prepares_command_cwd_and_explicit_environment_with_the_turn_conte
 
     tool = create_bash_tool(BashToolOptions(command_prefix="prefix=ready", prepare=prepare))
 
-    result = await tool.execute("bash-prepare", {"command": ":"}, controller, None, context)
+    result = await tool.execute("bash-prepare", {"command": ":"}, None, context, controller)
 
     assert received["context"] is context
     assert received["cancel"] is controller
@@ -168,7 +166,7 @@ async def test_prepares_command_cwd_and_explicit_environment_with_the_turn_conte
 async def test_supports_command_prefixes():
     context = create_context()
     result = await create_bash_tool(BashToolOptions(command_prefix="value=hello")).execute(
-        "bash-4", {"command": "printf $value"}, None, None, context
+        "bash-4", {"command": "printf $value"}, None, context
     )
 
     assert text_output(result) == "hello"
@@ -181,7 +179,6 @@ async def test_coalesces_updates_and_persists_truncated_full_output():
     result = await create_bash_tool().execute(
         "bash-5",
         {"command": "i=1; while [ $i -le 3000 ]; do echo line-$i; i=$((i + 1)); done"},
-        None,
         updates.append,
         context,
     )

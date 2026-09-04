@@ -9,6 +9,7 @@ from pidrei.modes.interactive.components import AssistantMessageComponent, UserM
 from pidrei.modes.interactive.theme import get_markdown_theme, init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import AssistantMessage, TextContent, ThinkingContent, ToolCall, Usage
+from pidrei_tui import TuiMouseEvent
 
 
 OSC133_ZONE_START = "\x1b]133;A\x07"
@@ -90,6 +91,43 @@ class TestAssistantMessageComponent:
 
         assert len(re.findall(r"Thinking\.\.\.", rendered)) == 1
         assert "answer" in rendered
+
+    @pytest.mark.tonio
+    async def test_collapses_individual_thinking_runs_when_clicked(self):
+        await init_theme("dark")
+        component = AssistantMessageComponent(
+            create_assistant_message(
+                [
+                    ThinkingContent(thinking="first reasoning"),
+                    TextContent(text="answer"),
+                    ThinkingContent(thinking="second reasoning"),
+                ]
+            )
+        )
+        width = 80
+        lines = component.render(width)
+        first_thinking_row = next(
+            (index for index, line in enumerate(lines) if "first reasoning" in strip_ansi(line)), -1
+        )
+        assert first_thinking_row >= 0
+        event = TuiMouseEvent(
+            type="click",
+            button="left",
+            x=1,
+            y=first_thinking_row,
+            screen_x=1,
+            screen_y=first_thinking_row,
+            width=width,
+            height=len(lines),
+            click_count=1,
+        )
+        result = await component.handle_mouse(event)
+        assert result is not None and result.handled is True
+
+        collapsed = strip_ansi("\n".join(component.render(width)))
+        assert "first reasoning" not in collapsed
+        assert "Thinking..." in collapsed
+        assert "second reasoning" in collapsed
 
     @pytest.mark.tonio
     async def test_uses_configured_output_padding_for_text_and_thinking(self):

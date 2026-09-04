@@ -6,12 +6,12 @@ UPSTREAM_EXPERIMENTAL_RULING.md.
 """
 
 from .connection import ByteConnection, ByteConnectionAcceptor, ByteConnectionHandler
-from .listener import PiServerListener
+from .listener import ServerListener
 
 
 __all__ = [
     "ByteConnection",
     "ByteConnectionAcceptor",
     "ByteConnectionHandler",
-    "PiServerListener",
+    "ServerListener",
 ]

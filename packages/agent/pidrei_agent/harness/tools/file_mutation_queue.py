@@ -17,6 +17,8 @@ from collections.abc import Awaitable, Callable
 import tonio.colored as tonio
 from tonio.colored import sync
 
+from pidrei_ai.utils.cancel import CancelToken
+
 from ..types import get_or_throw
 
 
@@ -40,9 +42,9 @@ def _get_state(env) -> _MutationQueueState:
         return state
 
 
-async def _get_mutation_queue_key(env, path: str) -> str:
-    absolute_path = get_or_throw(await env.absolute_path(path))
-    canonical_path = await env.canonical_path(absolute_path)
+async def _get_mutation_queue_key(env, path: str, cancel: CancelToken | None) -> str:
+    absolute_path = get_or_throw(await env.absolute_path(path, cancel))
+    canonical_path = await env.canonical_path(absolute_path, cancel)
     if canonical_path.ok:
         return canonical_path.value
     if canonical_path.error.code in ("not_found", "not_supported"):
@@ -50,11 +52,13 @@ async def _get_mutation_queue_key(env, path: str) -> str:
     raise canonical_path.error
 
 
-async def with_file_mutation_queue[T](env, path: str, fn: Callable[[], Awaitable[T]]) -> T:
+async def with_file_mutation_queue[T](
+    env, path: str, fn: Callable[[], Awaitable[T]], cancel: CancelToken | None = None
+) -> T:
     """Serialize file mutations targeting the same environment and canonical path."""
     state = _get_state(env)
     async with state.registration_lock:
-        key = await _get_mutation_queue_key(env, path)
+        key = await _get_mutation_queue_key(env, path, cancel)
         with state.queues_guard:
             current_tail = state.queues.get(key)
             my_done = tonio.Event()

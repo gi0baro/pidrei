@@ -21,6 +21,7 @@ purely synchronous editing (no provider set) works without one.
 import copy
 import math
 import re
+from dataclasses import replace
 
 import grapheme as grapheme_lib
 from tonio.colored import sync
@@ -29,7 +30,7 @@ from .._owner import TimerHandle
 from ..keybindings import get_keybindings
 from ..keys import decode_printable_key, matches_key
 from ..kill_ring import KillRing
-from ..tui import CURSOR_MARKER
+from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult
 from ..undo_stack import UndoStack
 from ..utils import (
     cjk_break_regex,
@@ -263,8 +264,10 @@ class Editor:
         self._tui = tui
         self._theme = theme
 
-        # Store last render width for cursor navigation
+        # Store last render geometry for cursor navigation and mouse hit-testing.
         self._last_width = 80
+        self._rendered_visible_line_count = 1
+        self._rendered_autocomplete_height = 0
 
         # Vertical scrolling support
         self._scroll_offset = 0
@@ -478,6 +481,7 @@ class Editor:
 
         # Get visible lines slice
         visible_lines = layout_lines[self._scroll_offset : self._scroll_offset + max_visible_lines]
+        self._rendered_visible_line_count = len(visible_lines)
 
         result: list[str] = []
         left_padding = " " * padding_x
@@ -543,14 +547,79 @@ class Editor:
             result.append(horizontal * width)
 
         # Add autocomplete list if active
+        self._rendered_autocomplete_height = 0
         if self._autocomplete_state and self._autocomplete_list is not None:
             autocomplete_result = self._autocomplete_list.render(content_width)
+            self._rendered_autocomplete_height = len(autocomplete_result)
             for line in autocomplete_result:
                 line_width = visible_width(line)
                 line_padding = " " * max(0, content_width - line_width)
                 result.append(f"{left_padding}{line}{line_padding}{right_padding}")
 
         return result
+
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+        autocomplete_start_row = self._rendered_visible_line_count + 2
+        if (
+            self._autocomplete_state
+            and self._autocomplete_list is not None
+            and autocomplete_start_row <= event.y < autocomplete_start_row + self._rendered_autocomplete_height
+        ):
+            max_padding = max(0, (event.width - 1) // 2)
+            padding_x = min(self._padding_x, max_padding)
+            content_width = max(1, event.width - padding_x * 2)
+            result = await self._autocomplete_list.handle_mouse(
+                replace(
+                    event,
+                    x=event.x - padding_x,
+                    y=event.y - autocomplete_start_row,
+                    width=content_width,
+                    height=self._rendered_autocomplete_height,
+                )
+            )
+            return replace(result, focus=True) if result is not None else None
+
+        if event.type != "press" or event.button != "left":
+            return None
+        if event.y <= 0 or event.y > self._rendered_visible_line_count:
+            return TuiMouseEventResult(handled=True, focus=True)
+
+        visual_lines = self._build_visual_line_map(self._last_width)
+        visual_line_index = self._scroll_offset + event.y - 1
+        visual_line = visual_lines[visual_line_index] if visual_line_index < len(visual_lines) else None
+        if visual_line is None:
+            return TuiMouseEventResult(handled=True, focus=True)
+        lines = self._state["lines"]
+        logical_line = lines[visual_line["logicalLine"]] if visual_line["logicalLine"] < len(lines) else ""
+        chunk_end = visual_line["startCol"] + visual_line["length"]
+        chunk = logical_line[visual_line["startCol"] : chunk_end]
+        max_padding = max(0, (event.width - 1) // 2)
+        padding_x = min(self._padding_x, max_padding)
+        target_column = max(0, event.x - padding_x)
+        visible_column = 0
+        target_index = len(chunk)
+        last_grapheme_index = 0
+        for grapheme in self._segment(chunk, "grapheme"):
+            next_column = visible_column + visible_width(grapheme["segment"])
+            last_grapheme_index = grapheme["index"]
+            if target_column < next_column:
+                target_index = grapheme["index"]
+                break
+            visible_column = next_column
+        is_last_segment = (
+            visual_line_index == len(visual_lines) - 1
+            or visual_lines[visual_line_index + 1]["logicalLine"] != visual_line["logicalLine"]
+        )
+        if not is_last_segment and target_index == len(chunk) and len(chunk) > 0:
+            target_index = last_grapheme_index
+
+        self._state["cursorLine"] = visual_line["logicalLine"]
+        self._set_cursor_col(visual_line["startCol"] + target_index)
+        self._last_action = None
+        self._exit_history_browsing()
+        if self._autocomplete_state:
+            self._update_autocomplete()
+        return TuiMouseEventResult(handled=True, focus=True)
 
     async def handle_input(self, data: str) -> None:  # noqa: C901
         kb = get_keybindings()
@@ -1930,7 +1999,29 @@ class Editor:
 
     def _create_autocomplete_list(self, prefix: str, items: list[dict]) -> SelectList:
         layout = SLASH_COMMAND_SELECT_LIST_LAYOUT if prefix.startswith("/") else None
-        return SelectList(items, self._autocomplete_max_visible, self._theme["selectList"], layout)
+        select_list = SelectList(items, self._autocomplete_max_visible, self._theme["selectList"], layout)
+
+        async def on_select(selected: dict) -> None:
+            if self._autocomplete_provider is None:
+                return
+            self._push_undo_snapshot()
+            self._last_action = None
+            result = self._autocomplete_provider.apply_completion(
+                self._state["lines"],
+                self._state["cursorLine"],
+                self._state["cursorCol"],
+                selected,
+                self._autocomplete_prefix,
+            )
+            self._state["lines"] = result["lines"]
+            self._state["cursorLine"] = result["cursorLine"]
+            self._set_cursor_col(result["cursorCol"])
+            self._cancel_autocomplete()
+            if self.on_change:
+                self.on_change(self.get_text())
+
+        select_list.on_select = on_select
+        return select_list
 
     def _try_trigger_autocomplete(self, explicit_tab: bool = False) -> None:
         self._request_autocomplete(force=False, explicit_tab=explicit_tab)

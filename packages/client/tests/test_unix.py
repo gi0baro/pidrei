@@ -18,8 +18,6 @@ from pidrei_protocol import FrameDecoder, decode_cbor, encode_cbor, encode_frame
 def test_rejects_invalid_unix_transport_options():
     with pytest.raises(TypeError, match="must not be empty"):
         create_unix_transport_factory(UnixTransportOptions(path=""))
-    with pytest.raises(TypeError, match="too long"):
-        create_unix_transport_factory(UnixTransportOptions(path=f"/tmp/{'x' * 512}"))
     with pytest.raises(TypeError, match="positive"):
         create_unix_transport_factory(UnixTransportOptions(path="/tmp/pi.sock", max_pending_bytes=0))
 

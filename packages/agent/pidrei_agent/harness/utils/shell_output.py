@@ -39,8 +39,8 @@ class ShellCaptureOptions:
     env: dict[str, str] = field(default_factory=dict)
     inherit_env: bool = True
     timeout: float | None = None
-    cancel: CancelToken | None = None
-    on_chunk: Callable[[str, Callable[[], ShellCaptureProgress]], None] | None = None
+    # (chunk, get_progress, cancel) — pi passes the call's context last.
+    on_chunk: Callable[[str, Callable[[], ShellCaptureProgress], CancelToken | None], None] | None = None
     # Return shell execution failures with captured output instead of as a failed Result.
     return_execution_errors: bool = False
 
@@ -89,6 +89,7 @@ async def execute_shell_with_capture(
     env,
     command: str,
     options: ShellCaptureOptions | None = None,
+    cancel: CancelToken | None = None,
 ) -> Result[ShellCaptureResult, ExecutionError]:
     options = options if options is not None else ShellCaptureOptions()
     max_output_bytes = DEFAULT_MAX_BYTES * 2
@@ -176,7 +177,7 @@ async def execute_shell_with_capture(
                 last_line_bytes=current_line_bytes,
             )
 
-    def on_chunk(chunk: str) -> None:
+    def on_chunk(chunk: str, _cancel: CancelToken | None = None) -> None:
         nonlocal tail_output, total_bytes, completed_lines, has_open_line, current_line_bytes, capture_error
         with state_lock:
             if not accepting_output:
@@ -203,7 +204,7 @@ async def execute_shell_with_capture(
                     append_full_output(text)
                 tail_output = trim_to_last_utf8_bytes(tail_output, max_output_bytes)
                 if options.on_chunk is not None:
-                    options.on_chunk(text, create_progress)
+                    options.on_chunk(text, create_progress, cancel)
             except Exception as error:
                 capture_error = _to_execution_error(to_error(error))
 
@@ -222,10 +223,10 @@ async def execute_shell_with_capture(
                 env=options.env,
                 inherit_env=options.inherit_env,
                 timeout=options.timeout,
-                cancel=options.cancel,
                 on_stdout=on_chunk,
                 on_stderr=on_chunk,
             ),
+            cancel,
         )
     except Exception as error:
         with state_lock:
@@ -247,7 +248,7 @@ async def execute_shell_with_capture(
     progress = create_progress()
 
     if not result.ok:
-        if result.error.code == "aborted" or (options.cancel is not None and options.cancel.cancelled):
+        if result.error.code == "aborted" or (cancel is not None and cancel.cancelled):
             return ok(
                 ShellCaptureResult(
                     output=progress.output,
@@ -274,7 +275,7 @@ async def execute_shell_with_capture(
             )
         return err(result.error)
 
-    cancelled = options.cancel.cancelled if options.cancel is not None else False
+    cancelled = cancel.cancelled if cancel is not None else False
     return ok(
         ShellCaptureResult(
             output=progress.output,

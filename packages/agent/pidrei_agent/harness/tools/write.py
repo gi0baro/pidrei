@@ -40,13 +40,13 @@ class WriteTool(AgentHarnessTool[ExecutionToolContext, None]):
         self,
         tool_call_id: str,
         params: dict[str, Any],
-        cancel: CancelToken | None,
         on_update: AgentToolUpdateCallback[None] | None,
-        context: ExecutionToolContext,
+        tool_context: ExecutionToolContext,
+        cancel: CancelToken | None = None,
     ) -> AgentToolResult[None]:
         path: str = params["path"]
         content: str = params["content"]
-        env = context.env
+        env = tool_context.env
         absolute_path = await resolve_tool_path(env, path, cancel)
 
         async def mutation() -> AgentToolResult[None]:
@@ -60,7 +60,7 @@ class WriteTool(AgentHarnessTool[ExecutionToolContext, None]):
                 details=None,
             )
 
-        return await with_file_mutation_queue(env, absolute_path, mutation)
+        return await with_file_mutation_queue(env, absolute_path, mutation, cancel)
 
 
 def create_write_tool() -> WriteTool:

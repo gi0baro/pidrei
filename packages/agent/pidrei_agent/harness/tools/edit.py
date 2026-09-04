@@ -126,12 +126,12 @@ class EditTool(AgentHarnessTool[ExecutionToolContext, EditToolDetails | None]):
         self,
         tool_call_id: str,
         params: dict[str, Any],
-        cancel: CancelToken | None,
         on_update: AgentToolUpdateCallback[EditToolDetails | None] | None,
-        context: ExecutionToolContext,
+        tool_context: ExecutionToolContext,
+        cancel: CancelToken | None = None,
     ) -> AgentToolResult[EditToolDetails | None]:
         path, edits = _validate_edit_input(params)
-        env = context.env
+        env = tool_context.env
         absolute_path = await resolve_tool_path(env, path, cancel)
 
         async def mutation() -> AgentToolResult[EditToolDetails | None]:
@@ -173,7 +173,7 @@ class EditTool(AgentHarnessTool[ExecutionToolContext, EditToolDetails | None]):
                 ),
             )
 
-        return await with_file_mutation_queue(env, absolute_path, mutation)
+        return await with_file_mutation_queue(env, absolute_path, mutation, cancel)
 
 
 def create_edit_tool() -> EditTool:

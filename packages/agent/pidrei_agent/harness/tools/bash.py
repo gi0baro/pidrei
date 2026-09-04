@@ -55,7 +55,7 @@ class BashExecution:
     inherit_env: bool
 
 
-# Prepare hook: receives (execution, context, cancel); awaitable-returning
+# Prepare hook: receives (execution, tool_context, cancel); awaitable-returning
 # (async-only callback policy; pi types this `void | Promise<void>`).
 type BashPrepare = Callable[[BashExecution, Any, CancelToken | None], Awaitable[None]]
 
@@ -93,19 +93,19 @@ class BashTool(AgentHarnessTool[ExecutionToolContext, BashToolDetails | None]):
         self,
         tool_call_id: str,
         params: dict[str, Any],
-        cancel: CancelToken | None,
         on_update: AgentToolUpdateCallback[BashToolDetails | None] | None,
-        context: ExecutionToolContext,
+        tool_context: ExecutionToolContext,
+        cancel: CancelToken | None = None,
     ) -> AgentToolResult[BashToolDetails | None]:
         command: str = params["command"]
         timeout: float | None = params.get("timeout")
         _validate_timeout(timeout)
-        env = context.env
+        env = tool_context.env
         options = self._options
         prefixed = f"{options.command_prefix}\n{command}" if options is not None and options.command_prefix else command
         execution = BashExecution(command=prefixed, cwd=env.cwd, env={}, inherit_env=True)
         if options is not None and options.prepare is not None:
-            await options.prepare(execution, context, cancel)
+            await options.prepare(execution, tool_context, cancel)
 
         throttle_lock = threading.RLock()
         get_latest_progress: Callable[[], ShellCaptureProgress] | None = None
@@ -173,7 +173,9 @@ class BashTool(AgentHarnessTool[ExecutionToolContext, BashToolDetails | None]):
             if should_emit:
                 emit_output_update()
 
-        def on_chunk(_chunk: str, get_progress: Callable[[], ShellCaptureProgress]) -> None:
+        def on_chunk(
+            _chunk: str, get_progress: Callable[[], ShellCaptureProgress], _cancel: CancelToken | None = None
+        ) -> None:
             nonlocal get_latest_progress
             with throttle_lock:
                 get_latest_progress = get_progress
@@ -191,10 +193,10 @@ class BashTool(AgentHarnessTool[ExecutionToolContext, BashToolDetails | None]):
                         env=execution.env,
                         inherit_env=execution.inherit_env,
                         timeout=timeout,
-                        cancel=cancel,
                         return_execution_errors=True,
                         on_chunk=on_chunk,
                     ),
+                    cancel,
                 )
             )
             clear_update_timer()

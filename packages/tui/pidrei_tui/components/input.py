@@ -10,7 +10,7 @@ import grapheme as grapheme_lib
 from ..keybindings import get_keybindings
 from ..keys import decode_kitty_printable
 from ..kill_ring import KillRing
-from ..tui import CURSOR_MARKER
+from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult
 from ..undo_stack import UndoStack
 from ..utils import is_whitespace_char, slice_by_column, visible_width
 from ..word_navigation import find_word_backward, find_word_forward
@@ -23,6 +23,7 @@ class Input:
     def __init__(self) -> None:
         self._value = ""
         self._cursor = 0  # Cursor position in the value
+        self._rendered_start_column = 0
         self.on_submit = None
         self.on_escape = None
 
@@ -184,6 +185,24 @@ class Input:
         has_control_chars = any(ord(char) < 32 or ord(char) == 0x7F or 0x80 <= ord(char) <= 0x9F for char in data)
         if not has_control_chars:
             self._insert_character(data)
+
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+        if event.type != "press" or event.button != "left" or event.y != 0:
+            return None
+        visible_column = max(0, event.x - 2)
+        target_column = self._rendered_start_column + visible_column
+        current_column = 0
+        self._cursor = len(self._value)
+        index = 0
+        for segment in grapheme_lib.graphemes(self._value):
+            next_column = current_column + visible_width(segment)
+            if target_column < next_column:
+                self._cursor = index
+                break
+            current_column = next_column
+            index += len(segment)
+        self._last_action = None
+        return TuiMouseEventResult(handled=True, focus=True)
 
     def _insert_character(self, char: str) -> None:
         # Undo coalescing: consecutive word chars coalesce into one undo unit
@@ -352,6 +371,7 @@ class Input:
 
         visible_text = ""
         cursor_display = self._cursor
+        self._rendered_start_column = 0
         total_width = visible_width(self._value)
 
         if total_width < available_width:
@@ -376,6 +396,7 @@ class Input:
                     # Cursor in middle
                     start_col = max(0, cursor_col - half_width)
 
+                self._rendered_start_column = start_col
                 visible_text = slice_by_column(self._value, start_col, scroll_width, True)
                 before_cursor = slice_by_column(self._value, start_col, max(0, cursor_col - start_col), True)
                 cursor_display = len(before_cursor)

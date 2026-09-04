@@ -10,9 +10,13 @@ With no layout root set, the whole child list is wrapped in one
 end-following ``ScrollView`` so the renderer behaves like the main screen.
 
 Port deviations: ``_do_render`` and the lifecycle hooks are async (the
-terminal driver is). Mouse handling runs in a sync input listener, so the
-OSC 52 clipboard write it triggers is spawned rather than awaited — pi's
-``terminal.write`` is sync.
+terminal driver is). pi handles pointer input inside its sync viewport input
+listener; here component ``handle_mouse`` is async (list selections await
+their callbacks, like ``handle_input``), so the pointer path is the awaited
+``_handle_pointer_input`` hook the base TUI runs before its input listeners,
+and the keyboard half stays in the sync listener. The OSC 52 clipboard write
+selection triggers is spawned rather than awaited — pi's ``terminal.write``
+is sync.
 """
 
 import base64
@@ -20,6 +24,7 @@ import math
 import os
 import re
 import time
+from dataclasses import replace
 
 import tonio.colored as tonio
 
@@ -33,7 +38,14 @@ from .components.alt_screen_flash import AltScreenFlashContainer
 from .components.scroll_view import ScrollView
 from .keybindings import get_keybindings
 from .keys import is_key_release
-from .layout import get_scroll_view_box, get_scroll_views_at, get_scrollbar_geometry, render_layout_frame
+from .layout import (
+    get_layout_boxes_at,
+    get_scroll_view_box,
+    get_scroll_views_at,
+    get_scrollbar_geometry,
+    render_layout_frame,
+)
+from .layout_node import get_layout_node
 from .terminal_image import (
     delete_all_kitty_images,
     delete_all_kitty_placements,
@@ -43,7 +55,18 @@ from .terminal_image import (
     is_image_line,
     set_capabilities,
 )
-from .tui import CURSOR_MARKER, VIEWPORT_TUI, TuiBase, composite_tui_line
+from .tui import (
+    CURSOR_MARKER,
+    VIEWPORT_TUI,
+    Container,
+    TuiBase,
+    TuiMouseDispatchResult,
+    TuiMouseDispatchTarget,
+    TuiMouseEvent,
+    composite_tui_line,
+    dispatch_mouse_event,
+    retarget_mouse_event,
+)
 from .utils import (
     extract_ansi_code,
     get_grapheme_cell_range,
@@ -91,6 +114,9 @@ class _ImplicitDocument:
     def render(self, width: int) -> list[str]:
         return super(TuiAltScreen, self._tui).render(width)
 
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+        return await super(TuiAltScreen, self._tui).handle_mouse(event)
+
     def invalidate(self) -> None:
         for child in self._tui.children:
             child.invalidate()
@@ -108,9 +134,10 @@ class TuiAltScreen(TuiBase):
     ``True`` on success (the caller flashes an error otherwise); when omitted,
     the selection is copied via an OSC 52 write.
 
-    Selection points are ``{"row", "col", "scrollView"?}`` records; mouse
-    events are ``{"button", "x", "y", "release"}``; wheel events are
-    ``{"direction", "x", "y"}``.
+    Selection points are ``{"row", "col", "scrollView"?}`` records; raw SGR
+    mouse events are ``{"button", "x", "y", "release"}``; wheel events are
+    ``{"direction", "x", "y", "button"}``. Component-facing events are the
+    normalized ``TuiMouseEvent`` values from ``tui``.
     """
 
     mode = "fullscreen"
@@ -159,6 +186,12 @@ class TuiAltScreen(TuiBase):
         self._scrollbar_hover = None
         self._pressed_url: str | None = None
         self._selection_dragged = False
+        self._mouse_capture: TuiMouseDispatchTarget | None = None
+        self._mouse_press_target: TuiMouseDispatchTarget | None = None
+        self._mouse_press_point: tuple[int, int] | None = None
+        self._mouse_press_moved = False
+        # {"timestamp", "count", "component", "x", "y"}
+        self._last_component_click: dict | None = None
         self._active_search: dict | None = None
         self._wheel_scroll_lines = max(1, math.floor(wheel_scroll_lines if wheel_scroll_lines is not None else 1))
         self._mouse_enabled = mouse if mouse is not None else True
@@ -235,6 +268,8 @@ class TuiAltScreen(TuiBase):
         self._last_click = None
         self._pressed_url = None
         self._selection_dragged = False
+        self._clear_component_mouse_gesture()
+        self._last_component_click = None
         self._reset_render_state()
         term = (os.environ.get("TERM") or "").lower()
         # Multiplexers can lag when every pointer movement is forwarded. Button-motion
@@ -256,6 +291,7 @@ class TuiAltScreen(TuiBase):
         self._selection_press_active = False
         self._stop_scrollbar_hover()
         self._stop_scrollbar_drag()
+        self._clear_component_mouse_gesture()
         self._flashes.dispose()
         if not self._alt_screen_active:
             return
@@ -533,7 +569,14 @@ class TuiAltScreen(TuiBase):
         search_focused = search_overlay is not None and search_overlay.is_focused()
         return self._is_overlay_focused() and not search_focused
 
-    def _handle_viewport_input(self, data: str) -> dict | None:
+    def _clear_component_mouse_gesture(self) -> None:
+        self._mouse_capture = None
+        self._mouse_press_target = None
+        self._mouse_press_point = None
+        self._mouse_press_moved = False
+
+    async def _handle_pointer_input(self, data: str) -> bool:
+        """The pointer half of pi's viewport input listener (see the module docstring)."""
         if data == FOCUS_OUT:
             had_active_selection = self._selection_press_active
             had_non_empty_active_selection = had_active_selection and self._get_selection_bounds() is not None
@@ -543,6 +586,8 @@ class TuiAltScreen(TuiBase):
             self._stop_scrollbar_drag()
             self._pressed_url = None
             self._selection_dragged = False
+            self._clear_component_mouse_gesture()
+            self._last_component_click = None
             if had_active_selection:
                 self._selection_anchor = None
                 self._selection_focus = None
@@ -551,27 +596,37 @@ class TuiAltScreen(TuiBase):
                 if had_non_empty_active_selection:
                     self.request_render()
             self._last_click = None
-            return {"consume": True}
+            return True
         if data == FOCUS_IN:
-            return {"consume": True}
+            return True
 
         wheel_event = self._parse_wheel_event(data)
         if wheel_event:
+            event = self._create_mouse_event(
+                "wheel",
+                wheel_event["button"],
+                wheel_event["x"],
+                wheel_event["y"],
+                wheel_delta=wheel_event["direction"] * self._wheel_scroll_lines,
+            )
+            hit, result = await self._dispatch_mouse_to_overlay(event)
+            if result is None and not hit:
+                result = await self._dispatch_mouse_to_layout(event)
+            if result is not None:
+                if self._apply_mouse_dispatch_result(event, result):
+                    self.request_render()
+                return True
             if self._should_defer_viewport_input_to_overlay():
-                return None
+                return False
             self._route_wheel(wheel_event)
-            return {"consume": True}
+            return True
         mouse_event = self._parse_sgr_mouse_event(data)
         if mouse_event:
-            handled = self._handle_scrollbar_mouse_event(mouse_event)
-            if self._scrollbar_drag is None:
-                self._update_scrollbar_hover(mouse_event["x"], mouse_event["y"])
-            if not handled:
-                self._handle_selection_mouse_event(mouse_event)
-            return {"consume": True}
-        if self._is_mouse_sequence(data):
-            return {"consume": True}
+            await self._handle_mouse_event(mouse_event)
+            return True
+        return self._is_mouse_sequence(data)
 
+    def _handle_viewport_input(self, data: str) -> dict | None:
         keybindings = get_keybindings()
         is_release = is_key_release(data)
         if keybindings.matches(data, "tui.altScreen.search"):
@@ -637,6 +692,177 @@ class TuiAltScreen(TuiBase):
             return {"consume": True}
         return None
 
+    def _decode_mouse_button(self, button: int) -> str:
+        code = button & 3
+        if code == 0:
+            return "left"
+        if code == 1:
+            return "middle"
+        if code == 2:
+            return "right"
+        return "none"
+
+    def _create_mouse_event(
+        self,
+        event_type: str,
+        button: int,
+        x: int,
+        y: int,
+        *,
+        wheel_delta: int | None = None,
+        click_count: int | None = None,
+    ) -> TuiMouseEvent:
+        return TuiMouseEvent(
+            type=event_type,
+            button="none" if event_type == "wheel" else self._decode_mouse_button(button),
+            x=x,
+            y=y,
+            screen_x=x,
+            screen_y=y,
+            width=max(1, self.terminal.columns),
+            height=max(1, self.terminal.rows),
+            shift=(button & 4) != 0,
+            alt=(button & 8) != 0,
+            ctrl=(button & 16) != 0,
+            wheel_delta=wheel_delta,
+            click_count=click_count,
+        )
+
+    async def _dispatch_mouse_to_layout(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+        if self._current_layout is None:
+            return None
+        visited: list = []
+        for box in get_layout_boxes_at(self._current_layout, event.screen_x, event.screen_y):
+            component = box.component
+            if any(component is seen for seen in visited):
+                continue
+            # Layout-aware containers are positioned by the layout engine;
+            # their children are boxes of their own, so the inherited
+            # vertical-stacking dispatch must not re-route a miss.
+            if get_layout_node(component) and type(component).handle_mouse is Container.handle_mouse:
+                continue
+            visited.append(component)
+            result = await dispatch_mouse_event(
+                component,
+                replace(
+                    event,
+                    x=event.screen_x - box.rect.x,
+                    y=event.screen_y - box.rect.y,
+                    width=box.rect.width,
+                    height=box.rect.height,
+                ),
+            )
+            if result is not None:
+                return result
+        return None
+
+    def _apply_mouse_dispatch_result(self, event: TuiMouseEvent, result: TuiMouseDispatchResult) -> bool:
+        focus_target = self._resolve_mouse_focus_target(
+            result.focus_target if result.focus_target is not None else result.target.component
+        )
+        focus_changed = result.focus and self.get_focused_component() is not focus_target
+        if result.focus:
+            self.set_focus(focus_target)
+        if result.capture:
+            self._mouse_capture = result.target
+        if result.render is not None:
+            return result.render
+        return focus_changed or event.type in ("press", "click", "drag", "wheel")
+
+    async def _dispatch_mouse_to_target(
+        self, event: TuiMouseEvent, target: TuiMouseDispatchTarget
+    ) -> TuiMouseDispatchResult | None:
+        return await dispatch_mouse_event(target.component, retarget_mouse_event(event, target))
+
+    def _get_component_click_count(self, target: TuiMouseDispatchTarget, x: int, y: int) -> int:
+        now = time.monotonic()
+        previous = self._last_component_click
+        if (
+            previous is not None
+            and now - previous["timestamp"] <= DOUBLE_CLICK_INTERVAL_S
+            and previous["component"] is target.component
+            and previous["x"] == x
+            and previous["y"] == y
+        ):
+            count = (previous["count"] % 3) + 1
+        else:
+            count = 1
+        self._last_component_click = {"timestamp": now, "count": count, "component": target.component, "x": x, "y": y}
+        return count
+
+    def _clear_text_selection(self) -> None:
+        self._stop_selection_auto_scroll()
+        self._selection_press_active = False
+        self._selection_anchor = None
+        self._selection_focus = None
+        self._selection_granularity = "character"
+        self._selection_initial_range = None
+        self._pressed_url = None
+        self._selection_dragged = False
+
+    async def _handle_mouse_event(self, raw: dict) -> None:
+        is_motion = (raw["button"] & 32) != 0
+        if raw["release"]:
+            event_type = "release"
+        elif is_motion:
+            event_type = "move" if self._decode_mouse_button(raw["button"]) == "none" else "drag"
+        else:
+            event_type = "press"
+        event = self._create_mouse_event(event_type, raw["button"], raw["x"], raw["y"])
+
+        if self._mouse_capture is not None or self._mouse_press_target is not None:
+            target = self._mouse_capture if self._mouse_capture is not None else self._mouse_press_target
+            press_point = self._mouse_press_point
+            if press_point is not None and (raw["x"] != press_point[0] or raw["y"] != press_point[1]):
+                self._mouse_press_moved = True
+                self._last_component_click = None
+            render = False
+            target_result = await self._dispatch_mouse_to_target(event, target)
+            if target_result is not None:
+                render = self._apply_mouse_dispatch_result(event, target_result)
+            if raw["release"]:
+                if not self._mouse_press_moved and press_point == (raw["x"], raw["y"]):
+                    click_event = self._create_mouse_event(
+                        "click",
+                        raw["button"],
+                        raw["x"],
+                        raw["y"],
+                        click_count=self._get_component_click_count(target, raw["x"], raw["y"]),
+                    )
+                    click_result = await self._dispatch_mouse_to_target(click_event, target)
+                    if click_result is not None:
+                        render = self._apply_mouse_dispatch_result(click_event, click_result) or render
+                self._clear_component_mouse_gesture()
+            if render:
+                self.request_render()
+            return
+
+        hit, result = await self._dispatch_mouse_to_overlay(event)
+        if not hit:
+            scrollbar_handled = self._handle_scrollbar_mouse_event(raw)
+            if self._scrollbar_drag is None:
+                self._update_scrollbar_hover(raw["x"], raw["y"])
+            if scrollbar_handled:
+                return
+        else:
+            self._stop_scrollbar_hover()
+
+        if result is None and not hit:
+            result = await self._dispatch_mouse_to_layout(event)
+        if result is not None:
+            render = self._apply_mouse_dispatch_result(event, result)
+            if event_type == "press":
+                self._clear_text_selection()
+                self._mouse_press_target = result.target
+                self._mouse_press_point = (raw["x"], raw["y"])
+                self._mouse_press_moved = False
+            if render:
+                self.request_render()
+            return
+
+        # pi's right-click paste fallback is win32-only (dropped, POSIX port).
+        await self._handle_selection_mouse_event(raw)
+
     def _parse_wheel_event(self, data: str) -> dict | None:
         sgr = _SGR_MOUSE_RE.match(data)
         if sgr:
@@ -650,6 +876,7 @@ class TuiAltScreen(TuiBase):
                 "direction": -1 if direction == 0 else 1,
                 "x": int(sgr.group(2)) - 1,
                 "y": int(sgr.group(3)) - 1,
+                "button": button,
             }
         if len(data) == 6 and data.startswith("\x1b[M"):
             button = ord(data[3]) - 32
@@ -658,7 +885,12 @@ class TuiAltScreen(TuiBase):
             direction = button & 3
             if direction not in (0, 1):
                 return None
-            return {"direction": -1 if direction == 0 else 1, "x": ord(data[4]) - 33, "y": ord(data[5]) - 33}
+            return {
+                "direction": -1 if direction == 0 else 1,
+                "x": ord(data[4]) - 33,
+                "y": ord(data[5]) - 33,
+                "button": button,
+            }
         return None
 
     def _route_wheel(self, event: dict) -> None:
@@ -959,7 +1191,7 @@ class TuiAltScreen(TuiBase):
         self._selection_auto_scroll_direction = 0
         self._selection_drag_pointer = None
 
-    def _handle_selection_mouse_event(self, event: dict) -> None:
+    async def _handle_selection_mouse_event(self, event: dict) -> None:
         button = event["button"] & 3
         if button != 0 and not (event["release"] and button == 3):
             return
@@ -973,16 +1205,13 @@ class TuiAltScreen(TuiBase):
             if not self._selection_anchor:
                 return
             self._update_selection_focus(point)
-            clicked_url = (
-                self._pressed_url
-                if (
-                    not self._selection_dragged
-                    and self._selection_anchor.get("scrollView") is point.get("scrollView")
-                    and self._selection_anchor["row"] == point["row"]
-                    and self._selection_anchor["col"] == point["col"]
-                )
-                else None
+            is_click = (
+                not self._selection_dragged
+                and self._selection_anchor.get("scrollView") is point.get("scrollView")
+                and self._selection_anchor["row"] == point["row"]
+                and self._selection_anchor["col"] == point["col"]
             )
+            clicked_url = self._pressed_url if is_click else None
             self._pressed_url = None
             if clicked_url and self._open_url:
                 self._selection_anchor = None
@@ -994,6 +1223,23 @@ class TuiAltScreen(TuiBase):
                     pass
                 self.request_render()
                 return
+            if is_click:
+                click_event = self._create_mouse_event(
+                    "click",
+                    event["button"],
+                    event["x"],
+                    event["y"],
+                    click_count=self._last_click["count"] if self._last_click is not None else 1,
+                )
+                hit, result = await self._dispatch_mouse_to_overlay(click_event)
+                if result is None and not hit:
+                    result = await self._dispatch_mouse_to_layout(click_event)
+                if result is not None:
+                    render = self._apply_mouse_dispatch_result(click_event, result)
+                    self._clear_text_selection()
+                    if render:
+                        self.request_render()
+                    return
             if self._copy_on_select:
                 tonio.spawn.without_tracking(self._copy_selection_to_clipboard())
             self.request_render()

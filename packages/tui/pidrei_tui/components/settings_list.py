@@ -16,9 +16,11 @@ before the next statement — awaiting inline is the matching order.
 """
 
 import math
+from dataclasses import replace
 
 from ..fuzzy import fuzzy_filter
 from ..keybindings import get_keybindings
+from ..tui import TuiMouseEvent, TuiMouseEventResult
 from ..utils import truncate_to_width, visible_width, wrap_text_with_ansi
 from .input import Input
 
@@ -40,6 +42,7 @@ class SettingsList:
         self._filtered_items = items
         self._theme = theme
         self._selected_index = 0
+        self._mouse_pressed_index: int | None = None
         self._max_visible = max_visible
         self._on_change = on_change
         self._on_cancel = on_cancel
@@ -93,18 +96,14 @@ class SettingsList:
                 self._add_hint_line(lines, width)
             return lines
 
-        display_items = self._filtered_items if self._search_enabled else self._items
+        display_items = self._get_display_items()
         if not display_items:
             lines.append(truncate_to_width(self._theme["hint"]("  No matching settings"), width))
             self._add_hint_line(lines, width)
             return lines
 
         # Calculate visible range with scrolling
-        start_index = max(
-            0,
-            min(self._selected_index - math.floor(self._max_visible / 2), len(display_items) - self._max_visible),
-        )
-        end_index = min(start_index + self._max_visible, len(display_items))
+        start_index, end_index = self._get_visible_range(display_items)
 
         # Calculate max label width for alignment
         max_label_width = min(36, max(visible_width(item["label"]) for item in self._items))
@@ -148,6 +147,52 @@ class SettingsList:
 
         return lines
 
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+        if self._submenu_component is not None:
+            handle_mouse = getattr(self._submenu_component, "handle_mouse", None)
+            result = await handle_mouse(event) if handle_mouse is not None else None
+            return replace(result, focus=True) if result is not None else None
+
+        if self._search_enabled and self._search_input is not None:
+            if event.y == 0:
+                result = await self._search_input.handle_mouse(event)
+                return replace(result, focus=True) if result is not None else None
+            if event.y == 1:
+                return None
+
+        display_items = self._get_display_items()
+        if not display_items:
+            return None
+        if event.type == "wheel" and event.wheel_delta:
+            delta = -1 if event.wheel_delta < 0 else 1
+            previous_index = self._selected_index
+            self._selected_index = max(0, min(len(display_items) - 1, self._selected_index + delta))
+            return TuiMouseEventResult(handled=True, render=self._selected_index != previous_index)
+        if event.type != "move" and event.button != "left":
+            return None
+
+        row_offset = 2 if self._search_enabled else 0
+        start_index, end_index = self._get_visible_range(display_items)
+        item_index = start_index + event.y - row_offset
+        if item_index < start_index or item_index >= end_index:
+            return None
+        if event.type in ("move", "press"):
+            if event.type == "press":
+                self._mouse_pressed_index = item_index
+            changed = self._selected_index != item_index
+            self._selected_index = item_index
+            return TuiMouseEventResult(
+                handled=True,
+                focus=event.type == "press",
+                render=changed if event.type == "move" else None,
+            )
+        if event.type == "click":
+            self._selected_index = self._mouse_pressed_index if self._mouse_pressed_index is not None else item_index
+            self._mouse_pressed_index = None
+            await self._activate_item()
+            return TuiMouseEventResult(handled=True)
+        return None
+
     async def handle_input(self, data: str) -> None:
         # If submenu is active, delegate all input to it
         # The submenu's onCancel (triggered by escape) will call done() which closes it
@@ -159,7 +204,7 @@ class SettingsList:
 
         # Main list input handling
         kb = get_keybindings()
-        display_items = self._filtered_items if self._search_enabled else self._items
+        display_items = self._get_display_items()
         if kb.matches(data, "tui.select.up"):
             if not display_items:
                 return
@@ -178,8 +223,18 @@ class SettingsList:
             await self._search_input.handle_input(data)
             self._apply_filter(self._search_input.get_value())
 
+    def _get_display_items(self) -> list[dict]:
+        return self._filtered_items if self._search_enabled else self._items
+
+    def _get_visible_range(self, display_items: list[dict]) -> tuple[int, int]:
+        start_index = max(
+            0,
+            min(self._selected_index - math.floor(self._max_visible / 2), len(display_items) - self._max_visible),
+        )
+        return start_index, min(start_index + self._max_visible, len(display_items))
+
     async def _activate_item(self) -> None:
-        items = self._filtered_items if self._search_enabled else self._items
+        items = self._get_display_items()
         item = items[self._selected_index] if 0 <= self._selected_index < len(items) else None
         if item is None:
             return

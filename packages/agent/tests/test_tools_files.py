@@ -135,9 +135,7 @@ async def test_read_reads_text_with_offsets_limits_and_continuation_notices():
     context = create_context()
     get_or_throw(await context.env.write_file("test.txt", "\n".join(f"Line {i + 1}" for i in range(100))))
 
-    result = await create_read_tool().execute(
-        "read-1", {"path": "test.txt", "offset": 41, "limit": 20}, None, None, context
-    )
+    result = await create_read_tool().execute("read-1", {"path": "test.txt", "offset": 41, "limit": 20}, None, context)
     output = text_output(result)
 
     assert "Line 40" not in output
@@ -152,7 +150,7 @@ async def test_read_truncates_large_text_by_line_count():
     context = create_context()
     get_or_throw(await context.env.write_file("large.txt", "\n".join(f"Line {i + 1}" for i in range(2500))))
 
-    result = await create_read_tool().execute("read-2", {"path": "large.txt"}, None, None, context)
+    result = await create_read_tool().execute("read-2", {"path": "large.txt"}, None, context)
 
     assert "[Showing lines 1-2000 of 2500. Use offset=2001 to continue.]" in text_output(result)
     assert result.details is not None
@@ -170,7 +168,7 @@ async def test_read_does_not_count_a_trailing_newline_as_an_extra_line_at_the_tr
     context = create_context()
     get_or_throw(await context.env.write_file("exact.txt", "\n".join("x" for _ in range(2000)) + "\n"))
 
-    result = await create_read_tool().execute("read-exact", {"path": "exact.txt"}, None, None, context)
+    result = await create_read_tool().execute("read-exact", {"path": "exact.txt"}, None, context)
 
     assert result.details is None
     assert "Use offset=" not in text_output(result)
@@ -182,7 +180,7 @@ async def test_read_rejects_offsets_beyond_the_file():
     get_or_throw(await context.env.write_file("short.txt", "one\ntwo\nthree"))
 
     with pytest.raises(Exception, match=re.escape("Offset 100 is beyond end of file (3 lines total)")):
-        await create_read_tool().execute("read-3", {"path": "short.txt", "offset": 100}, None, None, context)
+        await create_read_tool().execute("read-3", {"path": "short.txt", "offset": 100}, None, context)
 
 
 @pytest.mark.tonio
@@ -192,7 +190,7 @@ async def test_read_detects_supported_images_by_content():
     png = base64.b64decode(png_base64)
     get_or_throw(await context.env.write_file("image.txt", png))
 
-    result = await create_read_tool().execute("read-4", {"path": "image.txt"}, None, None, context)
+    result = await create_read_tool().execute("read-4", {"path": "image.txt"}, None, context)
 
     assert "Read image file [image/png]" in text_output(result)
     assert ImageContent(data=png_base64, mime_type="image/png") in result.content
@@ -205,7 +203,7 @@ async def test_read_delegates_image_conversion_and_resizing_to_an_injected_proce
     get_or_throw(await context.env.write_file("image.bmp", bmp))
     received = {}
 
-    async def image_processor(data, mime_type, auto_resize_images):
+    async def image_processor(data, mime_type, auto_resize_images, _cancel):
         received["bytes"] = data
         received["mime_type"] = mime_type
         received["auto_resize_images"] = auto_resize_images
@@ -218,7 +216,7 @@ async def test_read_delegates_image_conversion_and_resizing_to_an_injected_proce
 
     tool = create_read_tool(ReadToolOptions(auto_resize_images=False, image_processor=image_processor))
 
-    result = await tool.execute("read-bmp", {"path": "image.bmp"}, None, None, context)
+    result = await tool.execute("read-bmp", {"path": "image.bmp"}, None, context)
 
     assert received["mime_type"] == "image/bmp"
     assert received["auto_resize_images"] is False
@@ -234,7 +232,7 @@ async def test_read_delegates_image_conversion_and_resizing_to_an_injected_proce
 async def test_write_writes_files_and_creates_parent_directories():
     context = create_context()
     result = await create_write_tool().execute(
-        "write-1", {"path": "nested/dir/file.txt", "content": "hello"}, None, None, context
+        "write-1", {"path": "nested/dir/file.txt", "content": "hello"}, None, context
     )
 
     assert text_output(result) == "Successfully wrote 5 bytes to nested/dir/file.txt"
@@ -248,15 +246,13 @@ async def test_write_keeps_the_mutation_queue_locked_until_an_aborted_write_sett
     controller = CancelToken()
     first_write = tonio.spawn(
         tool.execute(
-            "write-first", {"path": "file.txt", "content": "first\n"}, controller, None, ExecutionToolContext(env=env)
+            "write-first", {"path": "file.txt", "content": "first\n"}, None, ExecutionToolContext(env=env), controller
         )
     )
     await env.first_write_started.wait(None)
     controller.cancel()
     second_write = tonio.spawn(
-        tool.execute(
-            "write-second", {"path": "file.txt", "content": "second\n"}, None, None, ExecutionToolContext(env=env)
-        )
+        tool.execute("write-second", {"path": "file.txt", "content": "second\n"}, None, ExecutionToolContext(env=env))
     )
 
     await tonio.sleep(0.02)
@@ -287,7 +283,6 @@ async def test_edit_applies_disjoint_edits_and_returns_both_diff_formats():
             ],
         },
         None,
-        None,
         context,
     )
 
@@ -315,7 +310,6 @@ async def test_edit_matches_all_edits_against_the_original_and_rejects_overlaps(
                 ],
             },
             None,
-            None,
             context,
         )
     assert get_or_throw(await context.env.read_text_file("edit.txt")) == "one\ntwo\nthree\n"
@@ -329,11 +323,11 @@ async def test_edit_rejects_missing_and_duplicate_target_text():
 
     with pytest.raises(Exception, match="Could not find the exact text"):
         await tool.execute(
-            "edit-3", {"path": "edit.txt", "edits": [{"oldText": "bar", "newText": "baz"}]}, None, None, context
+            "edit-3", {"path": "edit.txt", "edits": [{"oldText": "bar", "newText": "baz"}]}, None, context
         )
     with pytest.raises(Exception, match="Found 3 occurrences"):
         await tool.execute(
-            "edit-4", {"path": "edit.txt", "edits": [{"oldText": "foo", "newText": "bar"}]}, None, None, context
+            "edit-4", {"path": "edit.txt", "edits": [{"oldText": "foo", "newText": "bar"}]}, None, context
         )
 
 
@@ -347,9 +341,9 @@ async def test_edit_keeps_the_mutation_queue_locked_until_an_aborted_edit_write_
         tool.execute(
             "edit-first",
             {"path": "file.txt", "edits": [{"oldText": "alpha", "newText": "ALPHA"}]},
-            controller,
             None,
             ExecutionToolContext(env=env),
+            controller,
         )
     )
     await env.first_edit_write_started.wait(None)
@@ -358,7 +352,6 @@ async def test_edit_keeps_the_mutation_queue_locked_until_an_aborted_edit_write_
         tool.execute(
             "edit-second",
             {"path": "file.txt", "edits": [{"oldText": "beta", "newText": "BETA"}]},
-            None,
             None,
             ExecutionToolContext(env=env),
         )
@@ -387,13 +380,11 @@ async def test_edit_serializes_concurrent_edits_through_canonical_and_symlink_pa
             "edit-target",
             {"path": "target.txt", "edits": [{"oldText": "alpha", "newText": "ALPHA"}]},
             None,
-            None,
             ExecutionToolContext(env=env),
         ),
         tool.execute(
             "edit-link",
             {"path": "link.txt", "edits": [{"oldText": "beta", "newText": "BETA"}]},
-            None,
             None,
             ExecutionToolContext(env=env),
         ),
@@ -409,7 +400,7 @@ async def test_edit_edits_regular_files_through_symlinks():
     os.symlink("target.txt", os.path.join(context.env.cwd, "link.txt"))
 
     await create_edit_tool().execute(
-        "edit-symlink", {"path": "link.txt", "edits": [{"oldText": "before", "newText": "after"}]}, None, None, context
+        "edit-symlink", {"path": "link.txt", "edits": [{"oldText": "before", "newText": "after"}]}, None, context
     )
 
     assert get_or_throw(await context.env.read_text_file("target.txt")) == "after\n"
@@ -421,7 +412,7 @@ async def test_edit_preserves_bom_and_crlf_line_endings():
     get_or_throw(await context.env.write_file("edit.txt", "﻿one\r\ntwo\r\n"))
 
     await create_edit_tool().execute(
-        "edit-5", {"path": "edit.txt", "edits": [{"oldText": "two", "newText": "TWO"}]}, None, None, context
+        "edit-5", {"path": "edit.txt", "edits": [{"oldText": "two", "newText": "TWO"}]}, None, context
     )
 
     assert get_or_throw(await context.env.read_text_file("edit.txt")) == "﻿one\r\nTWO\r\n"

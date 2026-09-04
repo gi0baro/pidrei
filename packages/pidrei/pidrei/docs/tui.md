@@ -37,6 +37,36 @@ for the initial renderer, which `--tui-mode` overrides for one run.
 entries) and `ScrollView` are the layout-aware components the alternate screen
 measures; on the main screen they render as plain stacked output.
 
+Fullscreen mode also routes normalized press, release, click, move, drag and
+wheel events to components and overlays through an optional
+`async handle_mouse(event)` method (a `TuiMouseEvent`). Return
+`TuiMouseEventResult(handled=True)` to suppress default behavior,
+`capture=True` to retain drag/release ownership, `focus=True` to request
+keyboard focus, and `render=True` when a hover or release visibly changes the
+component. Press, click, drag and wheel render by default; no-op move/release
+events do not. `MouseRegion(component, on_mouse)` adds mouse behavior to an
+existing component without changing its rendering:
+
+```python
+from pidrei_tui import MouseRegion, TuiMouseEventResult
+
+
+def on_mouse(event):
+    if event.type != "click" or event.button != "left":
+        return None
+    toggle()
+    return TuiMouseEventResult(handled=True)
+
+
+clickable = MouseRegion(content, on_mouse)
+```
+
+Unhandled wheel input scrolls the nearest `ScrollView`; unhandled
+primary-button drags retain transcript selection. OSC 8 links take precedence
+over parent click regions. `Input`, `Editor`, `SelectList` and `SettingsList`
+include fullscreen mouse behavior. Regular mode does not capture mouse input
+because the terminal owns its scrollback.
+
 | Component | Purpose |
 |-----------|---------|
 | `Container` | Groups children; the basic building block |
@@ -47,6 +77,7 @@ measures; on the main screen they render as plain stacked output.
 | `Box` | A bordered container |
 | `SelectList` | A selectable list with filtering |
 | `SettingsList` | Rows of labelled, cycling values |
+| `MouseRegion` | Adds mouse handling to a component without changing its rendering |
 | `Editor` / `Input` | Multi-line and single-line text entry |
 | `Loader` / `CancellableLoader` | Progress spinners |
 | `Image` | Inline image, where the terminal supports it |

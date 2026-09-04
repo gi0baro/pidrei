@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/assistant-message.ts."""
 
-from pidrei_tui import Container, Markdown, Spacer, Text
+from pidrei_tui import Container, Markdown, MouseRegion, Spacer, Text, TuiMouseEventResult
 
 from ..theme import get_markdown_theme, theme
 from .markdown_transform import create_markdown_transform
@@ -39,6 +39,7 @@ class AssistantMessageComponent(Container):
         self._last_message = None
         self._has_tool_calls = False
         self._is_streaming = False
+        self._thinking_visibility_overrides: dict[int, bool] = {}
         # The Markdown children of the last build, in order, each with the
         # settings it was built for. pi builds fresh ones per update, which is
         # free there (its render is a pure function of the text); here a
@@ -61,6 +62,7 @@ class AssistantMessageComponent(Container):
 
     def set_hide_thinking_block(self, hide: bool) -> None:
         self._hide_thinking_block = hide
+        self._thinking_visibility_overrides.clear()
         if self._last_message is not None:
             self.update_content(self._last_message)
 
@@ -117,6 +119,7 @@ class AssistantMessageComponent(Container):
             children.append(Spacer(1))
 
         # Render content in order
+        thinking_run_index = 0
         i = 0
         while i < len(message.content):
             content = message.content[i]
@@ -145,24 +148,33 @@ class AssistantMessageComponent(Container):
                 # separately-rendered tool execution blocks.
                 has_visible_content_after = any(_has_visible_content(c) for c in message.content[i + 1 :])
 
-                if self._hide_thinking_block:
+                run_index = thinking_run_index
+                thinking_run_index += 1
+                hidden = self._thinking_visibility_overrides.get(run_index, self._hide_thinking_block)
+                if hidden:
                     # Show one static label for each run of thinking blocks when hidden.
-                    children.append(
-                        Text(
-                            theme.italic(theme.fg("thinkingText", self._hidden_thinking_label)),
-                            self._output_pad,
-                            0,
-                        )
+                    thinking_component = Text(
+                        theme.italic(theme.fg("thinkingText", self._hidden_thinking_label)),
+                        self._output_pad,
+                        0,
                     )
                 else:
                     # Render each run of thinking blocks as one Markdown section.
-                    children.append(
-                        markdown(
-                            "\n\n".join(thinking_blocks),
-                            "assistant-thinking",
-                            {"color": lambda text: theme.fg("thinkingText", text), "italic": True},
-                        )
+                    thinking_component = markdown(
+                        "\n\n".join(thinking_blocks),
+                        "assistant-thinking",
+                        {"color": lambda text: theme.fg("thinkingText", text), "italic": True},
                     )
+
+                def toggle_thinking(event, run_index=run_index, hidden=hidden):
+                    if event.type != "click" or event.button != "left":
+                        return None
+                    self._thinking_visibility_overrides[run_index] = not hidden
+                    if self._last_message is not None:
+                        self.update_content(self._last_message)
+                    return TuiMouseEventResult(handled=True)
+
+                children.append(MouseRegion(thinking_component, toggle_thinking))
                 if has_visible_content_after:
                     children.append(Spacer(1))
             i += 1

@@ -16,7 +16,7 @@ import tonio.colored as tonio
 from tonio.colored import net
 
 from pidrei_server.connection import ByteConnection, ByteConnectionHandler
-from pidrei_server.listener import PiServerListener
+from pidrei_server.listener import ServerListener
 from pidrei_server.transports.unix import UnixListenerOptions, create_unix_listener
 
 
@@ -59,14 +59,14 @@ class Harness:
     def __init__(self, sock_dir) -> None:
         self._sock_dir = sock_dir
         self._sequence = 0
-        self.listeners: list[PiServerListener] = []
+        self.listeners: list[ServerListener] = []
 
     def socket_path(self, nested: bool = False) -> str:
         self._sequence += 1
         base = self._sock_dir / f"srv{self._sequence}"
         return str(base / "p" / "n" / "server.sock" if nested else base / "server.sock")
 
-    def make_listener(self, path: str, **overrides) -> PiServerListener:
+    def make_listener(self, path: str, **overrides) -> ServerListener:
         listener = create_unix_listener(UnixListenerOptions(path=path, **overrides))
         self.listeners.append(listener)
         return listener

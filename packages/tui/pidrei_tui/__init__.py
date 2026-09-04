@@ -10,6 +10,7 @@ from .components.input import Input
 from .components.loader import Loader
 from .components.markdown import Markdown
 from .components.markdown_lexer import lex_markdown
+from .components.mouse_region import MouseRegion
 from .components.scroll_view import ScrollView
 from .components.select_list import SelectList
 from .components.settings_list import SettingsList
@@ -78,9 +79,14 @@ from .tui import (
     Container,
     Focusable,
     OverlayHandle,
+    TuiMouseDispatchResult,
+    TuiMouseEvent,
+    TuiMouseEventResult,
     composite_tui_line,
+    dispatch_mouse_event,
     is_focusable,
     is_viewport_tui,
+    retarget_mouse_event,
 )
 from .tui_alt_screen import TuiAltScreen
 from .tui_main_screen import TuiMainScreen
@@ -113,6 +119,7 @@ __all__ = [
     "KeybindingsManager",
     "Loader",
     "Markdown",
+    "MouseRegion",
     "OverlayHandle",
     "ProcessTerminal",
     "ScrollView",
@@ -125,6 +132,9 @@ __all__ = [
     "TruncatedText",
     "TuiAltScreen",
     "TuiMainScreen",
+    "TuiMouseDispatchResult",
+    "TuiMouseEvent",
+    "TuiMouseEventResult",
     "VStack",
     "allocate_image_id",
     "calculate_image_rows",
@@ -133,6 +143,7 @@ __all__ = [
     "delete_all_kitty_images",
     "delete_kitty_image",
     "detect_capabilities",
+    "dispatch_mouse_event",
     "encode_iterm2",
     "encode_kitty",
     "fuzzy_filter",
@@ -164,6 +175,7 @@ __all__ = [
     "render_image",
     "render_latex",
     "reset_capabilities_cache",
+    "retarget_mouse_event",
     "set_capabilities",
     "set_capability_overrides",
     "set_cell_dimensions",

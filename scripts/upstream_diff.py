@@ -298,6 +298,9 @@ DROPPED_PREFIXES += tuple(
         "packages/agent/src/harness/execution/",
         "packages/agent/src/harness/runtime/",
         "packages/agent/src/harness/session/",
+        # usage arithmetic whose only consumers are the session storage and
+        # harness compaction above (0.85.0 `fd9a45aa`/`29c41fc6`)
+        "packages/agent/src/harness/utils/usage.ts",
         "packages/agent/src/search/",
         # transient in-range shapes (added and removed inside 0.85.0)
         "packages/agent/src/harness/runtime2/",

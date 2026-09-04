@@ -47,10 +47,10 @@ class ReadImageProcessorResult:
     message: str | None = None
 
 
-# (bytes, mime_type, auto_resize_images) -> ReadImageProcessorResult.
+# (bytes, mime_type, auto_resize_images, cancel) -> ReadImageProcessorResult.
 # Async-only, matching pi's `ReadImageProcessor` (strictly Promise-returning,
 # unlike `BashPrepare` next door which pi declares as a union).
-type ReadImageProcessor = Callable[[bytes, str, bool], Awaitable[Any]]
+type ReadImageProcessor = Callable[[bytes, str, bool, CancelToken | None], Awaitable[Any]]
 
 
 @dataclass(slots=True)
@@ -79,14 +79,14 @@ class ReadTool(AgentHarnessTool[ExecutionToolContext, ReadToolDetails | None]):
         self,
         tool_call_id: str,
         params: dict[str, Any],
-        cancel: CancelToken | None,
         on_update: AgentToolUpdateCallback[ReadToolDetails | None] | None,
-        context: ExecutionToolContext,
+        tool_context: ExecutionToolContext,
+        cancel: CancelToken | None = None,
     ) -> AgentToolResult[ReadToolDetails | None]:
         path: str = params["path"]
         offset: float | None = params.get("offset")
         limit: float | None = params.get("limit")
-        env = context.env
+        env = tool_context.env
         options = self._options
 
         absolute_path = await resolve_read_tool_path(env, path, cancel)
@@ -95,7 +95,7 @@ class ReadTool(AgentHarnessTool[ExecutionToolContext, ReadToolDetails | None]):
         if mime_type:
             if options is not None and options.image_processor is not None:
                 auto_resize = options.auto_resize_images if options.auto_resize_images is not None else True
-                processed = await options.image_processor(data, mime_type, auto_resize)
+                processed = await options.image_processor(data, mime_type, auto_resize, cancel)
                 if not processed.ok:
                     return AgentToolResult(
                         content=[TextContent(text=f"Read image file [{mime_type}]\n{processed.message}")],

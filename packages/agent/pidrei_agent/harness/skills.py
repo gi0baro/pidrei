@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 import pathspec
 
+from pidrei_ai.utils.cancel import CancelToken
+
 from .prompt_templates import parse_frontmatter
 from .types import FileInfo, Skill, to_error
 
@@ -99,7 +101,7 @@ def format_skill_invocation(skill: Skill, additional_instructions: str | None = 
     return f"{skill_block}\n\n{additional_instructions}" if additional_instructions else skill_block
 
 
-async def load_skills(env, dirs: str | list[str]) -> LoadedSkills:
+async def load_skills(env, dirs: str | list[str], cancel: CancelToken | None = None) -> LoadedSkills:
     """Load skills from one or more directories.
 
     Traverses directories recursively, loads `SKILL.md` files, loads direct
@@ -110,7 +112,7 @@ async def load_skills(env, dirs: str | list[str]) -> LoadedSkills:
     skills: list[Skill] = []
     diagnostics: list[SkillDiagnostic] = []
     for directory in dirs if isinstance(dirs, list) else [dirs]:
-        root_info_result = await env.file_info(directory)
+        root_info_result = await env.file_info(directory, cancel)
         if not root_info_result.ok:
             if root_info_result.error.code != "not_found":
                 diagnostics.append(
@@ -118,27 +120,31 @@ async def load_skills(env, dirs: str | list[str]) -> LoadedSkills:
                 )
             continue
         root_info = root_info_result.value
-        if await _resolve_kind(env, root_info, diagnostics) != "directory":
+        if await _resolve_kind(env, root_info, diagnostics, cancel) != "directory":
             continue
-        result = await _load_skills_from_dir(env, root_info.path, True, _IgnoreMatcher(), root_info.path)
+        result = await _load_skills_from_dir(env, root_info.path, True, _IgnoreMatcher(), root_info.path, cancel)
         skills.extend(result.skills)
         diagnostics.extend(result.diagnostics)
     return LoadedSkills(skills=skills, diagnostics=diagnostics)
 
 
-async def load_sourced_skills(env, inputs: list[dict[str, Any]], map_skill=None) -> LoadedSourcedSkills:
+async def load_sourced_skills(
+    env, inputs: list[dict[str, Any]], map_skill=None, cancel: CancelToken | None = None
+) -> LoadedSourcedSkills:
     """Load skills from source-tagged directories.
 
     Source values are preserved exactly and attached to every loaded skill and
-    diagnostic.
+    diagnostic. `map_skill` receives `(skill, source, cancel)`.
     """
     skills: list[SourcedSkill] = []
     diagnostics: list[SourcedSkillDiagnostic] = []
     for entry in inputs:
-        result = await load_skills(env, entry["path"])
+        result = await load_skills(env, entry["path"], cancel)
         for skill in result.skills:
             skills.append(
-                SourcedSkill(skill=map_skill(skill, entry["source"]) if map_skill else skill, source=entry["source"])
+                SourcedSkill(
+                    skill=map_skill(skill, entry["source"], cancel) if map_skill else skill, source=entry["source"]
+                )
             )
         for diagnostic in result.diagnostics:
             diagnostics.append(
@@ -155,23 +161,24 @@ async def _load_skills_from_dir(
     include_root_files: bool,
     ignore_matcher: _IgnoreMatcher,
     root_dir: str,
+    cancel: CancelToken | None,
 ) -> LoadedSkills:
     skills: list[Skill] = []
     diagnostics: list[SkillDiagnostic] = []
 
-    dir_info_result = await env.file_info(directory)
+    dir_info_result = await env.file_info(directory, cancel)
     if not dir_info_result.ok:
         if dir_info_result.error.code != "not_found":
             diagnostics.append(
                 SkillDiagnostic(code="file_info_failed", message=dir_info_result.error.message, path=directory)
             )
         return LoadedSkills(skills=skills, diagnostics=diagnostics)
-    if await _resolve_kind(env, dir_info_result.value, diagnostics) != "directory":
+    if await _resolve_kind(env, dir_info_result.value, diagnostics, cancel) != "directory":
         return LoadedSkills(skills=skills, diagnostics=diagnostics)
 
-    await _add_ignore_rules(env, ignore_matcher, directory, root_dir, diagnostics)
+    await _add_ignore_rules(env, ignore_matcher, directory, root_dir, diagnostics, cancel)
 
-    entries_result = await env.list_dir(directory)
+    entries_result = await env.list_dir(directory, cancel)
     if not entries_result.ok:
         diagnostics.append(SkillDiagnostic(code="list_failed", message=entries_result.error.message, path=directory))
         return LoadedSkills(skills=skills, diagnostics=diagnostics)
@@ -180,14 +187,14 @@ async def _load_skills_from_dir(
     for entry in entries:
         if entry.name != "SKILL.md":
             continue
-        kind = await _resolve_kind(env, entry, diagnostics)
+        kind = await _resolve_kind(env, entry, diagnostics, cancel)
         if kind != "file":
             continue
         rel_path = _relative_env_path(root_dir, entry.path)
         if ignore_matcher.ignores(rel_path):
             continue
 
-        skill, file_diagnostics = await _load_skill_from_file(env, entry.path, dir_info_result.value.name)
+        skill, file_diagnostics = await _load_skill_from_file(env, entry.path, dir_info_result.value.name, cancel)
         if skill is not None:
             skills.append(skill)
         diagnostics.extend(file_diagnostics)
@@ -196,7 +203,7 @@ async def _load_skills_from_dir(
     for entry in sorted(entries, key=lambda info: info.name):
         if entry.name.startswith(".") or entry.name == "node_modules":
             continue
-        kind = await _resolve_kind(env, entry, diagnostics)
+        kind = await _resolve_kind(env, entry, diagnostics, cancel)
         if kind is None:
             continue
 
@@ -206,14 +213,14 @@ async def _load_skills_from_dir(
             continue
 
         if kind == "directory":
-            result = await _load_skills_from_dir(env, entry.path, False, ignore_matcher, root_dir)
+            result = await _load_skills_from_dir(env, entry.path, False, ignore_matcher, root_dir, cancel)
             skills.extend(result.skills)
             diagnostics.extend(result.diagnostics)
             continue
 
         if kind != "file" or not include_root_files or not entry.name.endswith(".md"):
             continue
-        skill, file_diagnostics = await _load_skill_from_file(env, entry.path, dir_info_result.value.name)
+        skill, file_diagnostics = await _load_skill_from_file(env, entry.path, dir_info_result.value.name, cancel)
         if skill is not None:
             skills.append(skill)
         diagnostics.extend(file_diagnostics)
@@ -221,19 +228,26 @@ async def _load_skills_from_dir(
     return LoadedSkills(skills=skills, diagnostics=diagnostics)
 
 
-async def _add_ignore_rules(env, matcher: _IgnoreMatcher, directory: str, root_dir: str, diagnostics: list) -> None:
+async def _add_ignore_rules(
+    env,
+    matcher: _IgnoreMatcher,
+    directory: str,
+    root_dir: str,
+    diagnostics: list,
+    cancel: CancelToken | None,
+) -> None:
     relative_dir = _relative_env_path(root_dir, directory)
     prefix = f"{relative_dir}/" if relative_dir else ""
 
     for filename in IGNORE_FILE_NAMES:
-        ignore_path_result = await env.join_path([directory, filename])
+        ignore_path_result = await env.join_path([directory, filename], cancel)
         if not ignore_path_result.ok:
             diagnostics.append(
                 SkillDiagnostic(code="file_info_failed", message=ignore_path_result.error.message, path=directory)
             )
             continue
         ignore_path = ignore_path_result.value
-        info = await env.file_info(ignore_path)
+        info = await env.file_info(ignore_path, cancel)
         if not info.ok:
             if info.error.code != "not_found":
                 diagnostics.append(
@@ -242,7 +256,7 @@ async def _add_ignore_rules(env, matcher: _IgnoreMatcher, directory: str, root_d
             continue
         if info.value.kind != "file":
             continue
-        content = await env.read_text_file(ignore_path)
+        content = await env.read_text_file(ignore_path, cancel)
         if not content.ok:
             diagnostics.append(SkillDiagnostic(code="read_failed", message=content.error.message, path=ignore_path))
             continue
@@ -275,14 +289,14 @@ def _prefix_ignore_pattern(line: str, prefix: str) -> str | None:
 
 
 async def _load_skill_from_file(
-    env, file_path: str, parent_dir_name: str
+    env, file_path: str, parent_dir_name: str, cancel: CancelToken | None
 ) -> tuple[Skill | None, list[SkillDiagnostic]]:
     diagnostics: list[SkillDiagnostic] = []
     # A file only *declares* a skill when it is named SKILL.md. Root `.md` files are
     # discovered as candidates, so a README that neither parses nor describes a skill
     # is skipped silently instead of being reported as broken.
     is_declared_skill = file_path.rstrip("/").split("/")[-1] == "SKILL.md"
-    raw_content = await env.read_text_file(file_path)
+    raw_content = await env.read_text_file(file_path, cancel)
     if not raw_content.ok:
         diagnostics.append(SkillDiagnostic(code="read_failed", message=raw_content.error.message, path=file_path))
         return None, diagnostics
@@ -345,17 +359,17 @@ def _validate_description(description: str | None) -> list[str]:
     return errors
 
 
-async def _resolve_kind(env, info: FileInfo, diagnostics: list) -> str | None:
+async def _resolve_kind(env, info: FileInfo, diagnostics: list, cancel: CancelToken | None) -> str | None:
     if info.kind in ("file", "directory"):
         return info.kind
-    canonical_path = await env.canonical_path(info.path)
+    canonical_path = await env.canonical_path(info.path, cancel)
     if not canonical_path.ok:
         if canonical_path.error.code != "not_found":
             diagnostics.append(
                 SkillDiagnostic(code="file_info_failed", message=canonical_path.error.message, path=info.path)
             )
         return None
-    target = await env.file_info(canonical_path.value)
+    target = await env.file_info(canonical_path.value, cancel)
     if not target.ok:
         if target.error.code != "not_found":
             diagnostics.append(SkillDiagnostic(code="file_info_failed", message=target.error.message, path=info.path))

@@ -64,7 +64,8 @@ import re
 import threading
 import time as _time
 from abc import ABC, abstractmethod
-from typing import Any, Protocol
+from dataclasses import dataclass, replace
+from typing import Any, Literal, Protocol
 
 import tonio.colored as tonio
 from tonio.colored.sync import channel
@@ -85,6 +86,115 @@ _CELL_SIZE_RESPONSE_RE = re.compile(r"^\x1b\[6;(\d+);(\d+)t$")
 _PERCENT_RE = re.compile(r"^(\d+(?:\.\d+)?)%$")
 
 
+type TuiMouseEventType = Literal["press", "release", "move", "drag", "click", "wheel"]
+type TuiMouseButton = Literal["left", "middle", "right", "none"]
+
+
+@dataclass(slots=True, frozen=True)
+class TuiMouseEvent:
+    """Normalized cell-based mouse event. Coordinates are zero-based."""
+
+    type: TuiMouseEventType
+    button: TuiMouseButton
+    # Coordinates local to the receiving component.
+    x: int
+    y: int
+    # Absolute terminal coordinates.
+    screen_x: int
+    screen_y: int
+    # Current component bounds.
+    width: int
+    height: int
+    shift: bool = False
+    alt: bool = False
+    ctrl: bool = False
+    # Logical lines. Negative values scroll up.
+    wheel_delta: int | None = None
+    # Consecutive click count when type is click.
+    click_count: int | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class TuiMouseEventResult:
+    # Stop propagation and suppress renderer-level fallback behavior.
+    handled: bool = False
+    # Route subsequent drag/release events to this component. Implies handled.
+    capture: bool = False
+    # Give keyboard focus to this component. Implies handled.
+    focus: bool = False
+    # Explicitly request or suppress a render. Move and release default to
+    # False; press, click, drag, and wheel default to True.
+    render: bool | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class TuiMouseDispatchTarget:
+    """Internal target metadata used by containers and alternate-screen dispatch."""
+
+    component: Any
+    origin_x: int
+    origin_y: int
+    width: int
+    height: int
+
+
+@dataclass(slots=True, frozen=True)
+class TuiMouseDispatchResult:
+    """Result of dispatching to a concrete component."""
+
+    target: TuiMouseDispatchTarget
+    handled: bool = True
+    capture: bool = False
+    focus: bool = False
+    render: bool | None = None
+    # Keyboard focus target, which may be a delegating parent container.
+    focus_target: Any = None
+
+
+async def dispatch_mouse_event(component, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+    """Dispatch an event to a component and retain the exact target and coordinate
+    transform. Containers use this when forwarding events to nested children.
+
+    `handle_mouse` is async here (pi's is sync) for the same reason
+    `handle_input` is: list selections run awaited callbacks.
+    """
+    handle_mouse = getattr(component, "handle_mouse", None)
+    if handle_mouse is None:
+        return None
+    result = await handle_mouse(event)
+    if result is None:
+        return None
+    if isinstance(result, TuiMouseDispatchResult):
+        return result
+    if not result.handled and not result.capture and not result.focus:
+        return None
+    return TuiMouseDispatchResult(
+        handled=True,
+        capture=result.capture,
+        focus=result.focus,
+        render=result.render,
+        focus_target=component if result.focus else None,
+        target=TuiMouseDispatchTarget(
+            component=component,
+            origin_x=event.screen_x - event.x,
+            origin_y=event.screen_y - event.y,
+            width=event.width,
+            height=event.height,
+        ),
+    )
+
+
+def retarget_mouse_event(event: TuiMouseEvent, target: TuiMouseDispatchTarget) -> TuiMouseEvent:
+    """Recreate local coordinates for a previously dispatched mouse target."""
+    return replace(
+        event,
+        x=event.screen_x - target.origin_x,
+        y=event.screen_y - target.origin_y,
+        width=target.width,
+        height=target.height,
+    )
+
+
 class Component(Protocol):
     """Component interface - all components must implement this."""
 
@@ -100,8 +210,10 @@ class Component(Protocol):
         """
         ...
 
-    # Optional: handle_input(data) for keyboard input when focused;
-    # wants_key_release = True to receive Kitty key release events.
+    # Optional: async handle_input(data) for keyboard input when focused;
+    # async handle_mouse(event) -> TuiMouseEventResult | None for normalized
+    # pointer input in fullscreen mode; wants_key_release = True to receive
+    # Kitty key release events.
 
 
 class Focusable(Protocol):
@@ -181,6 +293,9 @@ class Container:
 
     def __init__(self) -> None:
         self.children: list = []
+        # Geometry of the last rendered frame, for hit-testing without
+        # re-rendering: {"width", "children": [(component, height), ...]}.
+        self._mouse_layout: dict | None = None
 
     def add_child(self, component) -> None:
         self.children.append(component)
@@ -212,10 +327,33 @@ class Container:
             if invalidate is not None:
                 invalidate()
 
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+        if event.y < 0 or event.y >= event.height:
+            return None
+        layout = self._mouse_layout
+        mouse_children = (
+            layout["children"]
+            if layout is not None and layout["width"] == event.width
+            else [(component, len(component.render(event.width))) for component in self.children]
+        )
+        child_y = 0
+        for child, child_height in mouse_children:
+            if child_y <= event.y < child_y + child_height:
+                result = await dispatch_mouse_event(child, replace(event, y=event.y - child_y, height=child_height))
+                if result is not None and result.focus and getattr(self, "handle_input", None) is not None:
+                    return replace(result, focus_target=self)
+                return result
+            child_y += child_height
+        return None
+
     def render(self, width: int) -> list[str]:
         lines: list[str] = []
+        mouse_children: list[tuple] = []
         for child in self.children:
-            lines.extend(child.render(width))
+            child_lines = child.render(width)
+            mouse_children.append((child, len(child_lines)))
+            lines.extend(child_lines)
+        self._mouse_layout = {"width": width, "children": mouse_children}
         return lines
 
 
@@ -349,6 +487,9 @@ class TuiBase(Container, ABC):
         self._focus_order_counter = 0
         self._overlay_stack: list[_OverlayStackEntry] = []
         self._overlay_focus_restore: dict = {"status": "inactive"}
+        # Where the last frame composited each visible overlay:
+        # {"entry", "row", "col", "width", "height"} records.
+        self._rendered_overlay_layouts: list[dict] = []
 
         if show_hardware_cursor is not None:
             self._show_hardware_cursor = show_hardware_cursor
@@ -690,6 +831,48 @@ class TuiBase(Container, ABC):
             if topmost is None or overlay.focus_order > topmost.focus_order:
                 topmost = overlay
         return topmost
+
+    def _resolve_mouse_focus_target(self, component):
+        """Keep overlay containers as keyboard focus owners when a nested control is clicked."""
+        for overlay in reversed(self._overlay_stack):
+            if self._is_overlay_visible(overlay) and self._contains_component(overlay.component, component):
+                return overlay.component
+        return component
+
+    async def _dispatch_mouse_to_overlay(self, event: TuiMouseEvent) -> tuple[bool, TuiMouseDispatchResult | None]:
+        """Dispatch to the visually topmost overlay under the pointer: (hit, result)."""
+        for layout in reversed(self._rendered_overlay_layouts):
+            if (
+                event.screen_x < layout["col"]
+                or event.screen_x >= layout["col"] + layout["width"]
+                or event.screen_y < layout["row"]
+                or event.screen_y >= layout["row"] + layout["height"]
+            ):
+                continue
+            result = await dispatch_mouse_event(
+                layout["entry"].component,
+                replace(
+                    event,
+                    x=event.screen_x - layout["col"],
+                    y=event.screen_y - layout["row"],
+                    width=layout["width"],
+                    height=layout["height"],
+                ),
+            )
+            if result is None:
+                return True, None
+            return True, replace(result, focus_target=layout["entry"].component) if result.focus else result
+        return False, None
+
+    async def _handle_pointer_input(self, data: str) -> bool:
+        """Renderer hook for pointer input, run before the input listeners.
+
+        pi handles the mouse inside the alternate screen's (sync) viewport
+        input listener; here component mouse handlers are async, so the
+        pointer path is this awaited hook instead. Returns True when the
+        input was consumed.
+        """
+        return False
 
     def invalidate(self) -> None:
         for root in self._get_mounted_roots():
@@ -1049,6 +1232,8 @@ class TuiBase(Container, ABC):
             return
         if await self._consume_terminal_color_scheme_report(data):
             return
+        if await self._handle_pointer_input(data):
+            return
 
         if self._input_listeners:
             current = data
@@ -1265,6 +1450,7 @@ class TuiBase(Container, ABC):
     def _composite_overlays(self, lines: list[str], term_width: int, term_height: int) -> list[str]:
         """Composite all overlays into content lines (sorted by focus_order, higher = on top)."""
         if not self._overlay_stack:
+            self._rendered_overlay_layouts = []
             return lines
         result = list(lines)
 
@@ -1294,8 +1480,20 @@ class TuiBase(Container, ABC):
             # Get final row/col with actual overlay height
             layout = self._resolve_overlay_layout(options, len(overlay_lines), term_width, term_height)
 
-            rendered.append({"overlayLines": overlay_lines, "row": layout["row"], "col": layout["col"], "w": width})
+            rendered.append(
+                {"entry": entry, "overlayLines": overlay_lines, "row": layout["row"], "col": layout["col"], "w": width}
+            )
             min_lines_needed = max(min_lines_needed, layout["row"] + len(overlay_lines))
+        self._rendered_overlay_layouts = [
+            {
+                "entry": item["entry"],
+                "row": item["row"],
+                "col": item["col"],
+                "width": item["w"],
+                "height": len(item["overlayLines"]),
+            }
+            for item in rendered
+        ]
 
         # Pad to at least terminal height so overlays have screen-relative positions.
         # Excludes max_lines_rendered: the historical high-water mark caused

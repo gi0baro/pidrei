@@ -101,6 +101,8 @@ class AgentTool[TDetails]:
     parameters: dict[str, Any]  # JSON Schema (pi: TypeBox TSchema)
     # pi-ai `Tool` field carried through (adapters read it when converting tools).
     constrained_sampling: Any = None
+    # Recovery policy for an effect whose durable intent exists but whose outcome is unknown.
+    replay: Literal["never", "safe"] | None = None
     # Per-tool execution mode override; None applies the loop default.
     execution_mode: ToolExecutionMode | None = None
     prepare_arguments: PrepareArguments | None = None

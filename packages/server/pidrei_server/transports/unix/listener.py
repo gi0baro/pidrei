@@ -13,7 +13,6 @@ import errno
 import hashlib
 import socket as _stdlib_socket
 import stat as stat_module
-import sys
 import threading
 import uuid
 from collections.abc import Awaitable, Callable
@@ -27,7 +26,7 @@ from tonio.colored.sync import channel
 from pidrei_protocol import DEFAULT_MAX_FRAME_LENGTH
 
 from ...connection import ByteConnectionAcceptor, ByteConnectionHandler
-from ...listener import PiServerListener
+from ...listener import ServerListener
 from ...promise import Deferred, driven, gather, rejected, resolved
 from ...timers import Timer
 from .types import UnixListenerOptions
@@ -38,16 +37,8 @@ DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS = 5_000
 MAX_UINT32 = 0xFFFF_FFFF
 MAX_TIMER_DELAY_MS = 2_147_483_647
 SOCKET_PROBE_TIMEOUT_MS = 1_000
-MAX_UNIX_SOCKET_PATH_BYTES = 107 if sys.platform == "linux" else 103
 
 _MAX_SAFE_INTEGER = 2**53 - 1
-
-
-def validate_unix_socket_path(path: str, description: str = "Unix socket path") -> None:
-    if not path:
-        raise TypeError(f"{description} must not be empty")
-    if len(path.encode("utf-8")) > MAX_UNIX_SOCKET_PATH_BYTES:
-        raise TypeError(f"{description} is too long; maximum is {MAX_UNIX_SOCKET_PATH_BYTES} UTF-8 bytes")
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,14 +59,9 @@ class UnixListener:
         self._server: net.SocketListener | None = None
         self._socket_identity: tuple[int, int] | None = None
         self._owned_bind_path: str | None = None
-        self._bound_path: str | None = None
         self._closing = False
         self._close_deferred: Deferred | None = None
         self._accept: ByteConnectionAcceptor | None = None
-
-    @property
-    def address(self) -> str | None:
-        return self._bound_path
 
     async def start(self, accept: ByteConnectionAcceptor) -> None:
         if self._server is not None:
@@ -85,7 +71,6 @@ class UnixListener:
         self._accept = accept
 
         owned_bind_path = _get_owned_bind_path(self._path)
-        validate_unix_socket_path(owned_bind_path, "PiServer private Unix bind path")
         await _make_private_directories(dirname(self._path))
         await _remove_stale_socket(self._path)
         await _remove_stale_socket(owned_bind_path)
@@ -104,7 +89,8 @@ class UnixListener:
             self._socket_identity = (stats.st_dev, stats.st_ino)
             await fs.Path(self._path).hardlink_to(owned_bind_path)
             await _set_socket_mode(self._path, self._mode)
-            self._bound_path = self._path
+            await _remove_path(owned_bind_path)
+            self._owned_bind_path = None
             tonio.spawn.without_tracking(self._run_accept_loop(server))
         except Exception:
             await self._close_server_and_cleanup(server)
@@ -169,7 +155,6 @@ class UnixListener:
         handler.on_close()
 
     async def _close_internal(self) -> None:
-        self._bound_path = None
         server = self._server
         server_closed = driven(self._close_server_and_cleanup(server) if server is not None else self._cleanup_only())
         await gather([connection.close() for connection in list(self._connections)])
@@ -189,10 +174,11 @@ class UnixListener:
         except Exception as error:
             self._report_error(error)
         finally:
-            await self._cleanup_owned_socket()
+            # Remove an unpublished startup bind path before the public route.
             if self._owned_bind_path is not None:
                 await _remove_path(self._owned_bind_path)
             self._owned_bind_path = None
+            await self._cleanup_owned_socket()
 
     async def _cleanup_owned_socket(self) -> None:
         identity = self._socket_identity
@@ -206,7 +192,7 @@ class UnixListener:
         if not stat_module.S_ISSOCK(current.st_mode) or (current.st_dev, current.st_ino) != identity:
             return
 
-        preserved = join(dirname(self._path), f".c-{str(uuid.uuid4())[:6]}")
+        preserved = join(dirname(self._path), f"cleanup-{str(uuid.uuid4())[:6]}")
         try:
             await fs.Path(self._path).rename(preserved)
         except FileNotFoundError:
@@ -260,6 +246,12 @@ class UnixByteConnection:
         # Guards `_pending_bytes` (+= in `send` on any task, -= on the writer:
         # torn updates drift the counter into spurious limit disconnects).
         self._pending_guard = threading.Lock()
+        # Guards the close transition: `close()` (any task) races the reader's
+        # `mark_closed()` on the remote EOF. Without it, a `mark_closed` landing
+        # between `_closing = True` and the deferred's assignment resolves
+        # nothing, and the later forced close early-returns on `_closed_value`
+        # — every `listener.close()` awaiter parks forever.
+        self._close_guard = threading.Lock()
         self._closed_value = False
         self._closing = False
         self._close_deferred: Deferred | None = None
@@ -297,32 +289,35 @@ class UnixByteConnection:
         return deferred
 
     def close(self, final_chunk: bytes | None = None) -> Awaitable[None]:
-        if self._closed_value:
-            self.mark_closed()
-            return resolved(None)
-        if self._close_deferred is not None:
-            return self._close_deferred
-        self._closing = True
-        final_bytes = bytes(final_chunk) if final_chunk is not None else None
-        deferred = Deferred()
-        self._close_deferred = deferred
-        self._close_timer = Timer(self._graceful_close_timeout_ms, self._force_close)
+        with self._close_guard:
+            if self._closed_value:
+                return resolved(None)
+            if self._close_deferred is not None:
+                return self._close_deferred
+            self._closing = True
+            final_bytes = bytes(final_chunk) if final_chunk is not None else None
+            deferred = Deferred()
+            self._close_deferred = deferred
+            self._close_timer = Timer(self._graceful_close_timeout_ms, self._force_close)
         try:
             self._write_sender.send(_FinalWrite(final_bytes))
         except Exception:
-            # `mark_closed` won the race: the deferred is already resolved.
+            # `mark_closed` ran after the transition above: it resolved the deferred.
             pass
         return deferred
 
     def mark_closed(self) -> None:
-        if self._closed_value:
-            return
-        self._closed_value = True
-        self._closing = True
-        if self._close_timer is not None:
-            self._close_timer.cancel()
-        if self._close_deferred is not None:
-            self._close_deferred.resolve(None)
+        with self._close_guard:
+            if self._closed_value:
+                return
+            self._closed_value = True
+            self._closing = True
+            timer = self._close_timer
+            deferred = self._close_deferred
+        if timer is not None:
+            timer.cancel()
+        if deferred is not None:
+            deferred.resolve(None)
         # Ends the queue after everything already enqueued; the writer drains
         # the remainder and exits on the closed channel.
         try:
@@ -386,7 +381,7 @@ class UnixByteConnection:
 
 def _get_owned_bind_path(path: str) -> str:
     suffix = hashlib.sha256(path.encode("utf-8")).hexdigest()[:8]
-    return join(dirname(path), f".p-{suffix}")
+    return join(dirname(path), f"bind-{suffix}")
 
 
 async def _make_private_directories(path: str) -> None:
@@ -412,7 +407,7 @@ async def _remove_stale_socket(path: str) -> None:
     if await _is_socket_live(path):
         raise Exception(f"Unix listener is already running: {path}")
 
-    preserved = join(dirname(path), f".s-{str(uuid.uuid4())[:6]}")
+    preserved = join(dirname(path), f"stale-{str(uuid.uuid4())[:6]}")
     try:
         await fs.Path(path).rename(preserved)
     except FileNotFoundError:
@@ -462,15 +457,16 @@ async def _set_socket_mode(path: str, mode: int) -> None:
             raise
 
 
-def create_unix_listener(options: UnixListenerOptions) -> PiServerListener:
+def create_unix_listener(options: UnixListenerOptions) -> ServerListener:
     return UnixListener(options)
 
 
 def _resolve_unix_listener_options(options: UnixListenerOptions) -> _ResolvedUnixListenerOptions:
-    validate_unix_socket_path(options.path, "PiServer Unix socket path")
+    if not options.path:
+        raise TypeError("Server Unix socket path must not be empty")
     mode = options.mode if options.mode is not None else DEFAULT_SOCKET_MODE
     if isinstance(mode, bool) or not isinstance(mode, int) or mode < 0 or mode > 0o777:
-        raise TypeError("PiServer Unix socket mode must be an integer between 0 and 0o777")
+        raise TypeError("Server Unix socket mode must be an integer between 0 and 0o777")
     max_frame_length = options.max_frame_length if options.max_frame_length is not None else DEFAULT_MAX_FRAME_LENGTH
     if (
         isinstance(max_frame_length, bool)
@@ -478,7 +474,7 @@ def _resolve_unix_listener_options(options: UnixListenerOptions) -> _ResolvedUni
         or max_frame_length <= 0
         or max_frame_length > MAX_UINT32
     ):
-        raise TypeError(f"PiServer maxFrameLength must be an integer between 1 and {MAX_UINT32}")
+        raise TypeError(f"Server maxFrameLength must be an integer between 1 and {MAX_UINT32}")
     max_pending_bytes = options.max_pending_bytes if options.max_pending_bytes is not None else max_frame_length * 4
     if (
         isinstance(max_pending_bytes, bool)
@@ -486,7 +482,7 @@ def _resolve_unix_listener_options(options: UnixListenerOptions) -> _ResolvedUni
         or max_pending_bytes > _MAX_SAFE_INTEGER
         or max_pending_bytes < max_frame_length + 4
     ):
-        raise TypeError("PiServer maxPendingBytes must be a safe integer at least maxFrameLength + 4")
+        raise TypeError("Server maxPendingBytes must be a safe integer at least maxFrameLength + 4")
     graceful_close_timeout_ms = (
         options.graceful_close_timeout_ms
         if options.graceful_close_timeout_ms is not None
@@ -498,7 +494,7 @@ def _resolve_unix_listener_options(options: UnixListenerOptions) -> _ResolvedUni
         or graceful_close_timeout_ms <= 0
         or graceful_close_timeout_ms > MAX_TIMER_DELAY_MS
     ):
-        raise TypeError(f"PiServer gracefulCloseTimeoutMs must be an integer between 1 and {MAX_TIMER_DELAY_MS}")
+        raise TypeError(f"Server gracefulCloseTimeoutMs must be an integer between 1 and {MAX_TIMER_DELAY_MS}")
     return _ResolvedUnixListenerOptions(
         path=options.path,
         mode=mode,

@@ -46,7 +46,8 @@ class CustomMessage:
 @dataclass(slots=True, kw_only=True)
 class BranchSummaryMessage:
     summary: str
-    from_id: str
+    # Root branch summaries have no source entry (pi: `string | null`).
+    from_id: str | None
     timestamp: int
     role: Literal["branchSummary"] = "branchSummary"
 
@@ -80,7 +81,7 @@ def bash_execution_to_text(msg: BashExecutionMessage) -> str:
     return text
 
 
-def create_branch_summary_message(summary: str, from_id: str, timestamp: str | int) -> BranchSummaryMessage:
+def create_branch_summary_message(summary: str, from_id: str | None, timestamp: str | int) -> BranchSummaryMessage:
     return BranchSummaryMessage(summary=summary, from_id=from_id, timestamp=_to_epoch_ms(timestamp))
 
 

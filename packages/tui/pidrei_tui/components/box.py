@@ -3,6 +3,9 @@
 Port of pi tui ``components/box.ts``.
 """
 
+from dataclasses import replace
+
+from ..tui import TuiMouseDispatchResult, TuiMouseEvent, dispatch_mouse_event
 from ..utils import apply_background_to_line, visible_width
 
 
@@ -18,6 +21,9 @@ class Box:
 
         # Cache for rendered output: {"childLines", "width", "bgSample", "lines"}
         self._cache: dict | None = None
+        # Geometry of the last rendered frame, for hit-testing without
+        # re-rendering: {"width", "children": [(component, height), ...]}.
+        self._mouse_layout: dict | None = None
 
     def add_child(self, component) -> None:
         self.children.append(component)
@@ -62,6 +68,29 @@ class Box:
             if invalidate is not None:
                 invalidate()
 
+    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+        content_width = max(1, event.width - self._padding_x * 2)
+        content_y = event.y - self._padding_y
+        content_x = event.x - self._padding_x
+        if content_y < 0 or content_x < 0 or content_x >= content_width:
+            return None
+
+        layout = self._mouse_layout
+        mouse_children = (
+            layout["children"]
+            if layout is not None and layout["width"] == content_width
+            else [(component, len(component.render(content_width))) for component in self.children]
+        )
+        child_y = 0
+        for child, child_height in mouse_children:
+            if child_y <= content_y < child_y + child_height:
+                return await dispatch_mouse_event(
+                    child,
+                    replace(event, x=content_x, y=content_y - child_y, width=content_width, height=child_height),
+                )
+            child_y += child_height
+        return None
+
     def render(self, width: int) -> list[str]:
         if not self.children:
             return []
@@ -71,9 +100,13 @@ class Box:
 
         # Render all children
         child_lines: list[str] = []
+        mouse_children: list[tuple] = []
         for child in self.children:
-            for line in child.render(content_width):
+            lines = child.render(content_width)
+            mouse_children.append((child, len(lines)))
+            for line in lines:
                 child_lines.append(left_pad + line)
+        self._mouse_layout = {"width": content_width, "children": mouse_children}
 
         if not child_lines:
             return []

@@ -186,7 +186,7 @@ class FileSystem(Protocol):
     async def create_temp_file(
         self, prefix: str = "", suffix: str = "", cancel: CancelToken | None = None
     ) -> Result[str, FileError]: ...
-    async def cleanup(self) -> None:
+    async def cleanup(self, cancel: CancelToken | None = None) -> None:
         """Release filesystem resources. Best-effort; must not raise."""
         ...
 
@@ -212,21 +212,20 @@ class ShellExecOptions:
     inherit_env: bool = True
     # Timeout in seconds. Defaults to no timeout.
     timeout: float | None = None
-    # Cancel token used to terminate the command (pi: `abortSignal`).
-    cancel: CancelToken | None = None
-    # Called with stdout chunks as they are produced.
-    on_stdout: Callable[[str], None] | None = None
+    # Called with stdout chunks as they are produced (pi: `(chunk, context)`;
+    # the call's cancel token is the second argument here).
+    on_stdout: Callable[[str, CancelToken | None], None] | None = None
     # Called with stderr chunks as they are produced.
-    on_stderr: Callable[[str], None] | None = None
+    on_stderr: Callable[[str, CancelToken | None], None] | None = None
 
 
 class Shell(Protocol):
     """Shell execution capability used by the harness."""
 
     async def exec(
-        self, command: str, options: ShellExecOptions | None = None
+        self, command: str, options: ShellExecOptions | None = None, cancel: CancelToken | None = None
     ) -> Result[ShellExecResult, ExecutionError]: ...
-    async def cleanup(self) -> None:
+    async def cleanup(self, cancel: CancelToken | None = None) -> None:
         """Release shell resources. Best-effort; must not raise."""
         ...
 
@@ -259,11 +258,17 @@ class AgentHarnessTool[TContext, TDetails]:
         self,
         tool_call_id: str,
         params: Any,
-        cancel: CancelToken | None,
         on_update: AgentToolUpdateCallback[TDetails] | None,
-        context: TContext,
+        tool_context: TContext,
+        cancel: CancelToken | None = None,
     ) -> AgentToolResult[TDetails]:
-        """Execute the tool call with the context resolved for the current turn snapshot."""
+        """Execute the tool call with the context resolved for the current turn snapshot.
+
+        pi's signature is `(toolCallId, params, onUpdate, toolContext,
+        invocation, context)`; the durable-replay `invocation` belongs to the
+        harness runtime (not ported) and `context` is the call's cancel token
+        (cancel-token recipe, UPSTREAM_DELTA_PORT.md).
+        """
         raise NotImplementedError
 
 
@@ -354,6 +359,9 @@ class AgentHarnessStreamOptions:
     metadata: dict[str, Any] | None = None
     # Provider cache retention hint.
     cache_retention: Any = None
+    # Ask a capable provider to continue generation asynchronously
+    # (pi: `boolean | { window?: "15m" | "1h" | "24h" }`).
+    deferred: bool | dict[str, Any] | None = None
 
 
 # Per-request stream option patch returned by provider hooks. A plain dict so

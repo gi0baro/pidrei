@@ -14,7 +14,7 @@ from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.components import ToolExecutionComponent
 from pidrei.modes.interactive.theme import init_theme_sync, theme
 from pidrei.utils.ansi import strip_ansi
-from pidrei_tui import Text
+from pidrei_tui import Text, TuiMouseEvent
 
 
 def create_base_tool_definition(name: str = "custom_tool") -> ToolDefinition:
@@ -339,6 +339,39 @@ class TestToolExecutionComponentParity:
         rendered = "\n".join(component.render(120))
         assert error in strip_ansi(rendered)
         assert theme.fg("toolOutput", error) in rendered
+
+    @pytest.mark.tonio
+    async def test_expands_a_collapsed_tool_result_when_clicked(self):
+        component = ToolExecutionComponent(
+            "read",
+            "tool-click-expand",
+            {"path": "notes.txt"},
+            {},
+            create_read_tool_definition(CWD),
+            create_fake_tui(),
+            CWD,
+        )
+        component.update_result(
+            {"content": [{"type": "text", "text": "hidden content"}], "details": None, "isError": False}, False
+        )
+        width = 120
+        lines = component.render(width)
+        result_row = next((index for index, line in enumerate(lines) if "notes.txt" in strip_ansi(line)), -1)
+        assert result_row >= 0
+        event = TuiMouseEvent(
+            type="click",
+            button="left",
+            x=2,
+            y=result_row,
+            screen_x=2,
+            screen_y=result_row,
+            width=width,
+            height=len(lines),
+            click_count=1,
+        )
+        result = await component.handle_mouse(event)
+        assert result is not None and result.handled is True
+        assert "hidden content" in strip_ansi("\n".join(component.render(width)))
 
     def test_collapses_ordinary_read_results_until_expanded(self):
         component = ToolExecutionComponent(

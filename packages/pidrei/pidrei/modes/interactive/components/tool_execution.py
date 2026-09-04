@@ -1,10 +1,21 @@
 """Mirror of pi coding-agent src/modes/interactive/components/tool-execution.ts."""
 
 import json
+from dataclasses import replace
 
 import tonio.colored as tonio
 
-from pidrei_tui import Box, Container, Image, Spacer, Text, get_capabilities
+from pidrei_tui import (
+    Box,
+    Container,
+    Image,
+    MouseRegion,
+    Spacer,
+    Text,
+    TuiMouseEvent,
+    TuiMouseEventResult,
+    get_capabilities,
+)
 
 from ....utils.image_process import convert_to_png
 from ..theme import theme
@@ -47,6 +58,7 @@ class ToolExecutionComponent(Container):
         self._ui = ui
         self._cwd = cwd
 
+        self._self_render_height = 0
         self._call_renderer_component = None
         self._result_renderer_component = None
         self._renderer_state: dict = {}
@@ -68,12 +80,13 @@ class ToolExecutionComponent(Container):
         # fallback rendering when no tool definition exists.
         self._content_box = Box(1, 1, lambda text: theme.bg("toolPendingBg", text))
         self._content_text = Text("", 1, 1, lambda text: theme.bg("toolPendingBg", text))
+        self._content_text_region = self._create_result_region(self._content_text)
         self._self_render_container = Container()
 
         if self._has_renderer_definition():
             self.add_child(self._self_render_container if self._get_render_shell() == "self" else self._content_box)
         else:
-            self.add_child(self._content_text)
+            self.add_child(self._content_text_region)
 
         self._update_display()
 
@@ -143,6 +156,15 @@ class ToolExecutionComponent(Container):
                 f"{key_hint('app.tools.expand', 'to expand')}{theme.fg('muted', ')')}"
             )
         return Text(text, 0, 0)
+
+    def _create_result_region(self, component) -> MouseRegion:
+        def on_mouse(event: TuiMouseEvent):
+            if not self._result or event.type != "click" or event.button != "left":
+                return None
+            self.set_expanded(not self._expanded)
+            return TuiMouseEventResult(handled=True)
+
+        return MouseRegion(component, on_mouse)
 
     def update_args(self, args) -> None:
         self._args = args
@@ -214,6 +236,7 @@ class ToolExecutionComponent(Container):
 
         if self._has_renderer_definition() and self._get_render_shell() == "self":
             content_lines = self._self_render_container.render(width)
+            self._self_render_height = len(content_lines)
             if not content_lines and not self._image_components:
                 return []
 
@@ -227,6 +250,15 @@ class ToolExecutionComponent(Container):
             return lines
 
         return super().render(width)
+
+    async def handle_mouse(self, event: TuiMouseEvent):
+        if not self._has_renderer_definition() or self._get_render_shell() != "self":
+            return await super().handle_mouse(event)
+        if event.y <= 0 or event.y > self._self_render_height:
+            return None
+        return await self._self_render_container.handle_mouse(
+            replace(event, y=event.y - 1, height=self._self_render_height)
+        )
 
     def _update_display(self) -> None:
         if self._is_partial:
@@ -248,7 +280,7 @@ class ToolExecutionComponent(Container):
 
             call_renderer = self._get_call_renderer()
             if call_renderer is None:
-                children.append(self._create_call_fallback())
+                children.append(self._create_result_region(self._create_call_fallback()))
                 has_content = True
             else:
                 try:
@@ -256,11 +288,11 @@ class ToolExecutionComponent(Container):
                         self._args, theme, self._get_render_context(self._call_renderer_component)
                     )
                     self._call_renderer_component = component
-                    children.append(component)
+                    children.append(self._create_result_region(component))
                     has_content = True
                 except Exception:
                     self._call_renderer_component = None
-                    children.append(self._create_call_fallback())
+                    children.append(self._create_result_region(self._create_call_fallback()))
                     has_content = True
 
             if self._result:
@@ -268,7 +300,7 @@ class ToolExecutionComponent(Container):
                 if result_renderer is None:
                     component = self._create_result_fallback()
                     if component is not None:
-                        children.append(component)
+                        children.append(self._create_result_region(component))
                         has_content = True
                 else:
                     try:
@@ -279,13 +311,13 @@ class ToolExecutionComponent(Container):
                             self._get_render_context(self._result_renderer_component),
                         )
                         self._result_renderer_component = component
-                        children.append(component)
+                        children.append(self._create_result_region(component))
                         has_content = True
                     except Exception:
                         self._result_renderer_component = None
                         component = self._create_result_fallback()
                         if component is not None:
-                            children.append(component)
+                            children.append(self._create_result_region(component))
                             has_content = True
             render_container.set_children(children)
         else:

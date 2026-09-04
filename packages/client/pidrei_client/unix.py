@@ -8,7 +8,6 @@ cap. pi's win32 rejection is dropped (POSIX-only port).
 """
 
 import socket as _stdlib_socket
-import sys
 from collections.abc import Awaitable
 from dataclasses import dataclass
 
@@ -22,8 +21,6 @@ from .promise import Deferred, rejected
 from .transport import ByteTransport, ByteTransportFactory, ByteTransportHandlers
 
 
-MAX_UNIX_SOCKET_PATH_BYTES = 107 if sys.platform == "linux" else 103
-
 _CLOSE_SENTINEL = object()
 
 
@@ -34,24 +31,36 @@ class UnixTransportOptions:
 
 
 def create_unix_transport_factory(options: UnixTransportOptions) -> ByteTransportFactory:
-    """Creates fresh Unix-domain socket transports, one per connection attempt."""
+    """Creates fresh Unix-domain socket transports for Client connection attempts.
+
+    pi's `discoverUnixServers` (the other export of `unix.ts`) probes each
+    socket with a protocol `Client` handshake, which is not ported —
+    UPSTREAM_EXPERIMENTAL_RULING.md.
+    """
+    max_pending_bytes = _validate_unix_transport_options(options)
+
+    async def factory(handlers: ByteTransportHandlers) -> ByteTransport:
+        return await _connect_unix_socket(options.path, max_pending_bytes, handlers)
+
+    return factory
+
+
+def _validate_unix_transport_options(options: UnixTransportOptions) -> int:
     if len(options.path) == 0:
         raise TypeError("Unix transport path must not be empty")
-    if len(options.path.encode("utf-8")) > MAX_UNIX_SOCKET_PATH_BYTES:
-        raise TypeError(f"Unix transport path is too long; maximum is {MAX_UNIX_SOCKET_PATH_BYTES} UTF-8 bytes")
     max_pending_bytes = (
         options.max_pending_bytes if options.max_pending_bytes is not None else DEFAULT_MAX_FRAME_LENGTH * 4
     )
     if isinstance(max_pending_bytes, bool) or not isinstance(max_pending_bytes, int) or max_pending_bytes <= 0:
         raise TypeError("Unix transport maxPendingBytes must be a positive safe integer")
+    return max_pending_bytes
 
-    async def factory(handlers: ByteTransportHandlers) -> ByteTransport:
-        stream = await net.open_unix_socket(options.path)
-        transport = UnixByteTransport(stream, max_pending_bytes)
-        tonio.spawn.without_tracking(transport._run_writer(), transport._run_reader(handlers))
-        return transport
 
-    return factory
+async def _connect_unix_socket(path: str, max_pending_bytes: int, handlers: ByteTransportHandlers) -> ByteTransport:
+    stream = await net.open_unix_socket(path)
+    transport = UnixByteTransport(stream, max_pending_bytes)
+    tonio.spawn.without_tracking(transport._run_writer(), transport._run_reader(handlers))
+    return transport
 
 
 class UnixByteTransport:

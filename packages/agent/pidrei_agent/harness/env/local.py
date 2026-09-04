@@ -291,8 +291,12 @@ class LocalExecutionEnv:
         self, path: str, content: str | bytes, cancel: CancelToken | None = None
     ) -> Result[None, FileError]:
         resolved = _resolve_path(self.cwd, path)
+        if (aborted := _abort_result(cancel, resolved)) is not None:
+            return aborted
         try:
             await tonio.spawn_blocking(os.makedirs, os.path.dirname(resolved) or ".", exist_ok=True)
+            if (after_mkdir_abort := _abort_result(cancel, resolved)) is not None:
+                return after_mkdir_abort
 
             def append() -> None:
                 data = content.encode("utf-8") if isinstance(content, str) else content
@@ -300,7 +304,8 @@ class LocalExecutionEnv:
                     file.write(data)
 
             await tonio.spawn_blocking(append)
-            return ok(None)
+            after_append_abort = _abort_result(cancel, resolved)
+            return after_append_abort if after_append_abort is not None else ok(None)
         except Exception as error:
             return err(_to_file_error(error, resolved))
 
@@ -319,6 +324,8 @@ class LocalExecutionEnv:
 
     async def file_info(self, path: str, cancel: CancelToken | None = None) -> Result[FileInfo, FileError]:
         resolved = _resolve_path(self.cwd, path)
+        if (aborted := _abort_result(cancel, resolved)) is not None:
+            return aborted
         try:
             return _file_info_from_stat(resolved, await tonio.spawn_blocking(os.lstat, resolved))
         except Exception as error:
@@ -347,6 +354,8 @@ class LocalExecutionEnv:
 
     async def canonical_path(self, path: str, cancel: CancelToken | None = None) -> Result[str, FileError]:
         resolved = _resolve_path(self.cwd, path)
+        if (aborted := _abort_result(cancel, resolved)) is not None:
+            return aborted
         try:
             return ok(await tonio.spawn_blocking(os.path.realpath, resolved, strict=True))
         except Exception as error:
@@ -364,6 +373,8 @@ class LocalExecutionEnv:
         self, path: str, recursive: bool = True, cancel: CancelToken | None = None
     ) -> Result[None, FileError]:
         resolved = _resolve_path(self.cwd, path)
+        if (aborted := _abort_result(cancel, resolved)) is not None:
+            return aborted
         try:
             if recursive:
                 # Node's recursive mkdir is idempotent for existing directories.
@@ -378,6 +389,8 @@ class LocalExecutionEnv:
         self, path: str, recursive: bool = False, force: bool = False, cancel: CancelToken | None = None
     ) -> Result[None, FileError]:
         resolved = _resolve_path(self.cwd, path)
+        if (aborted := _abort_result(cancel, resolved)) is not None:
+            return aborted
 
         def do_remove() -> None:
             try:
@@ -401,6 +414,8 @@ class LocalExecutionEnv:
             return err(_to_file_error(error, resolved))
 
     async def create_temp_dir(self, prefix: str = "tmp-", cancel: CancelToken | None = None) -> Result[str, FileError]:
+        if (aborted := _abort_result(cancel)) is not None:
+            return aborted
         try:
             return ok(await tonio.spawn_blocking(tempfile.mkdtemp, prefix=prefix))
         except Exception as error:
@@ -409,7 +424,7 @@ class LocalExecutionEnv:
     async def create_temp_file(
         self, prefix: str = "", suffix: str = "", cancel: CancelToken | None = None
     ) -> Result[str, FileError]:
-        directory = await self.create_temp_dir("tmp-")
+        directory = await self.create_temp_dir("tmp-", cancel)
         if not directory.ok:
             return directory
         file_path = os.path.join(directory.value, f"{prefix}{uuid.uuid4()}{suffix}")
@@ -427,10 +442,10 @@ class LocalExecutionEnv:
     # --- shell ----------------------------------------------------------------
 
     async def exec(
-        self, command: str, options: ShellExecOptions | None = None
+        self, command: str, options: ShellExecOptions | None = None, cancel: CancelToken | None = None
     ) -> Result[ShellExecResult, ExecutionError]:
         options = options if options is not None else ShellExecOptions()
-        if options.cancel is not None and options.cancel.cancelled:
+        if cancel is not None and cancel.cancelled:
             return err(ExecutionError("aborted", "aborted"))
         timeout_result = _resolve_timeout_seconds(options.timeout)
         if not timeout_result.ok:
@@ -484,7 +499,7 @@ class LocalExecutionEnv:
                 activity_count += 1
             if callback is not None:
                 try:
-                    callback(text)
+                    callback(text, cancel)
                 except Exception as error:
                     cause = to_error(error)
                     with state_lock:
@@ -532,8 +547,8 @@ class LocalExecutionEnv:
         watchdog_join = tonio.spawn(watchdog()) if timeout_seconds is not None else None
 
         unsubscribe = None
-        if options.cancel is not None:
-            unsubscribe = options.cancel.on_cancel(lambda _reason: kill_process_tree(pid))
+        if cancel is not None:
+            unsubscribe = cancel.on_cancel(lambda _reason: kill_process_tree(pid))
 
         try:
             exit_code = await process.wait()
@@ -588,12 +603,12 @@ class LocalExecutionEnv:
             return err(captured_callback_error)
         if timed_out:
             return err(ExecutionError("timeout", f"timeout:{options.timeout}"))
-        if options.cancel is not None and options.cancel.cancelled:
+        if cancel is not None and cancel.cancelled:
             return err(ExecutionError("aborted", "aborted"))
         # Node reports `null` for signal-killed children and pi maps it to 0.
         return ok(ShellExecResult(stdout=stdout, stderr=stderr, exit_code=max(exit_code, 0)))
 
-    async def cleanup(self) -> None:
+    async def cleanup(self, cancel: CancelToken | None = None) -> None:
         with self._active_child_pids_lock:
             pids = list(self._active_child_pids)
             self._active_child_pids.clear()
