@@ -18,7 +18,6 @@ from .framing import (
     FrameDecoder,
     FrameDecoderOptions,
     FrameError,
-    assert_complete_frame,
     encode_frame,
 )
 
@@ -33,7 +32,6 @@ __all__ = [
     "FrameDecoder",
     "FrameDecoderOptions",
     "FrameError",
-    "assert_complete_frame",
     "decode_cbor",
     "encode_cbor",
     "encode_frame",

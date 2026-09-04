@@ -36,18 +36,14 @@ from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
 from pidrei_tui import (
-    TUI,
     CombinedAutocompleteProvider,
     Container,
     Markdown,
-    ProcessTerminal,
-    ScrollView,
     Spacer,
     Text,
     TruncatedText,
     TuiAltScreen,
     TuiMainScreen,
-    VStack,
     fuzzy_filter,
     get_capabilities,
     hyperlink,
@@ -96,6 +92,7 @@ from ...core.package_manager import DefaultPackageManager
 from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
 from ...core.session_manager import SessionManager, session_entry_to_context_messages
 from ...core.slash_commands import BUILTIN_SLASH_COMMANDS
+from ...core.tools.renderers import with_built_in_renderers
 from ...core.tools.truncate import TruncationResult
 from ...core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
 from ...core.usage_totals import get_usage_cost_breakdown
@@ -105,12 +102,12 @@ from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboa
 from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
-from ...utils.open_browser import open_browser
 from ...utils.paths import get_cwd_relative_path
 from ...utils.process import run_command
 from ...utils.shell import kill_tracked_detached_children
 from ...utils.tools_manager import ensure_tool
 from ...utils.version_check import RELEASES_URL, check_for_new_version
+from .chat_viewport import create_chat_viewport
 from .components import (
     ArminComponent,
     AssistantMessageComponent,
@@ -170,6 +167,7 @@ from .theme import (
     stop_theme_watcher,
     theme,
 )
+from .tui_renderer import create_interactive_tui, create_interactive_tui_reference
 
 
 class _TimeoutCancel:
@@ -477,84 +475,6 @@ class ExtensionUIContext:
 
     def set_tools_expanded(self, expanded) -> None:
         self._mode.set_tools_expanded(expanded)
-
-
-def create_interactive_tui(
-    *,
-    tui_mode: str,
-    show_hardware_cursor: bool,
-    log_directory: str,
-    terminal=None,
-    fullscreen_copy_on_select: bool | None = None,
-) -> TUI:
-    """Composition root for selecting the interactive terminal renderer."""
-    terminal = terminal if terminal is not None else ProcessTerminal()
-    if tui_mode == "fullscreen":
-
-        def style_search_match(text: str) -> str:
-            return theme.bg("searchMatchBg", theme.fg("searchMatchText", text))
-
-        async def copy_selection(text: str) -> bool:
-            try:
-                await copy_to_clipboard(text)
-                return True
-            except Exception:
-                return False
-
-        return TuiAltScreen(
-            terminal,
-            show_hardware_cursor,
-            log_directory,
-            search_match_style=lambda text: theme.underline(style_search_match(text)),
-            search_current_match_style=lambda text: theme.bold(theme.inverse(style_search_match(text))),
-            open_url=open_browser,
-            copy_on_select=fullscreen_copy_on_select,
-            copy_selection=copy_selection,
-        )
-    return TuiMainScreen(terminal, show_hardware_cursor, log_directory)
-
-
-class _InteractiveTuiReference:
-    """Stable reference for components while InteractiveMode replaces the active renderer.
-
-    pi uses a `Proxy`; attribute delegation is the Python equivalent. `isinstance`
-    is deliberately NOT faked (pi's `getPrototypeOf` trap makes `instanceof` see
-    through), so the few renderer-type checks read `self._renderer` instead.
-    """
-
-    def __init__(self, get_tui) -> None:
-        object.__setattr__(self, "_get_tui", get_tui)
-
-    def __getattr__(self, name: str):
-        get_tui = object.__getattribute__(self, "_get_tui")
-        tui = get_tui()
-        value = getattr(tui, name)
-        if not callable(value):
-            return value
-
-        # A captured method must follow a later renderer swap (pi #7731), but it
-        # must not re-resolve on every call either: a wrapper installed *onto*
-        # the reference lives on the renderer, so re-reading the attribute each
-        # time would call the wrapper from inside itself.
-        bound = [tui, value]
-
-        def call(*args, **kwargs):
-            current = get_tui()
-            if current is not bound[0]:
-                method = getattr(current, name)
-                if not callable(method):
-                    raise TypeError(f"TUI property {name} is not callable")
-                bound[0], bound[1] = current, method
-            return bound[1](*args, **kwargs)
-
-        return call
-
-    def __setattr__(self, name: str, value) -> None:
-        setattr(object.__getattribute__(self, "_get_tui")(), name, value)
-
-
-def create_interactive_tui_reference(get_tui) -> TUI:
-    return _InteractiveTuiReference(get_tui)
 
 
 class _TerminalInputSubscription:
@@ -1084,32 +1004,19 @@ class InteractiveMode:
 
         # Keep one component tree and remount it when changing renderers.
         self._render_widgets()  # Initialize with default spacer
-        self._transcript_scroll_view = ScrollView(
-            self._document_container,
-            {
-                "follow": "end",
-                "primary": True,
-                "overscroll": "chain",
-                "scrollbar": self.settings_manager.get_fullscreen_scrollbar(),
-                "scrollbarStyle": lambda text: theme.bg("scrollbarThumb", text),
-            },
+        viewport = create_chat_viewport(
+            document=self._document_container,
+            pending_messages=self._pending_messages_container,
+            status=self._status_container,
+            widgets_above=self._widget_container_above,
+            editor=self._editor_container,
+            widgets_below=self._widget_container_below,
+            footer=self._footer_container,
+            scrollbar=self.settings_manager.get_fullscreen_scrollbar(),
+            scrollbar_style=lambda text: theme.bg("scrollbarThumb", text),
         )
-        dock = VStack(
-            [
-                {"component": self._pending_messages_container, "shrink": 1, "minSize": 0},
-                {"component": self._status_container, "shrink": 1, "minSize": 0},
-                {"component": self._widget_container_above, "shrink": 1, "minSize": 0},
-                {"component": self._editor_container, "shrink": 1, "minSize": 3},
-                {"component": self._widget_container_below, "shrink": 1, "minSize": 0},
-                {"component": self._footer_container, "shrink": 1, "minSize": 1},
-            ]
-        )
-        self._fullscreen_layout_root = VStack(
-            [
-                {"component": self._transcript_scroll_view, "basis": 0, "grow": 1, "shrink": 1, "minSize": 1},
-                {"component": dock, "basis": "auto", "grow": 0, "shrink": 1, "minSize": 1},
-            ]
-        )
+        self._transcript_scroll_view = viewport.transcript
+        self._fullscreen_layout_root = viewport.root
         self._mount_interactive_tui(
             self._renderer,
             [
@@ -2128,8 +2035,12 @@ class InteractiveMode:
         self.ui.post_ui(apply)
 
     def _get_registered_tool_definition(self, tool_name: str):
-        """Get a registered tool definition by name (for custom rendering)."""
-        return self.session.get_tool_definition(tool_name)
+        """Extension-registered definition, falling back to the built-in one.
+
+        The renderer components take whatever this returns, so they never
+        reach into the tool registry themselves.
+        """
+        return with_built_in_renderers(tool_name, self.session.get_tool_definition(tool_name))
 
     def _get_markdown_transformers(self) -> list:
         return self.session.extension_runner.get_markdown_transformers()

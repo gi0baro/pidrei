@@ -469,8 +469,6 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
-    _get_client_api_key(model.provider, options.api_key if options else None, options.headers if options else None)
-
     base = build_base_options(model, context, options, options.api_key if options else None)
     clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else None
     reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning

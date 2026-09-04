@@ -839,12 +839,12 @@ class Models:
     async def complete_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return await self.stream_simple(model, context, options).result()
 
-    async def fetch_deferred(
+    def stream_deferred(
         self,
         model: Model,
         handle: DeferredHandle,
         options: DeferredFetchOptions | None = None,
-    ) -> AssistantMessage:
+    ) -> AssistantMessageEventStream:
         async def _setup(_stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             if not provider.supports_fetch_deferred:
@@ -854,7 +854,15 @@ class Models:
             )
             return provider.fetch_deferred(request_model, handle, request_options)
 
-        return await lazy_stream(model, _setup, _cancel_of(options)).result()
+        return lazy_stream(model, _setup, _cancel_of(options))
+
+    async def fetch_deferred(
+        self,
+        model: Model,
+        handle: DeferredHandle,
+        options: DeferredFetchOptions | None = None,
+    ) -> AssistantMessage:
+        return await self.stream_deferred(model, handle, options).result()
 
     async def cancel_deferred(
         self,

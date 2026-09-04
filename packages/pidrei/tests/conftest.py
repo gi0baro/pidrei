@@ -1,3 +1,4 @@
+import importlib
 import os
 import warnings
 
@@ -23,6 +24,27 @@ def _ambient_ui_owner_guard():
         warnings.warn(
             "test left pidrei_tui's ambient UI owner registered (a TuiBase was "
             "started without reaching stop()); reset to detached timers",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
+def _theme_json_validator_guard():
+    """Fail-loud check of the process-wide theme JSON validator.
+
+    `set_theme_json_validator` is a set-once startup install (pi's module
+    `let`); a test that installs it would make every later custom-theme load
+    validate, which no test may rely on by accident. The install is left in
+    place so the warning names the polluting test rather than masking it.
+    """
+    # The package re-exports the `theme` proxy under the submodule's name, so
+    # attribute-style imports resolve to the proxy; go through the registry.
+    theme_module = importlib.import_module("pidrei.modes.interactive.theme.theme")
+    before = theme_module._theme_json_validator
+    yield
+    if theme_module._theme_json_validator is not before:
+        warnings.warn(
+            "test changed the theme JSON validator (set_theme_json_validator) and did not restore it",
             stacklevel=1,
         )
 

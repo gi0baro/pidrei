@@ -477,11 +477,10 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             return slot
         if item_type == "custom_tool_call":
             input_property = grammar_tool_input_properties.get(item.get("name", ""), "input")
-            input_value = item.get("input") or ""
             block = ToolCallBuilder(
                 id=f"{item.get('call_id')}|{item.get('id')}",
                 name=item.get("name", ""),
-                arguments={input_property: input_value},
+                arguments={},
                 namespace=item.get("namespace"),
             )
             output.content.append(block)
@@ -494,6 +493,8 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             )
             output_slots[output_index] = slot
             stream.push(ToolCallStartEvent(content_index=slot.content_index, partial=output))
+            if item.get("input"):
+                push_tool_call_delta(slot, append_custom_input(slot, item["input"], False))
             return slot
         return None
 

@@ -28,10 +28,12 @@ from .theme import (
     set_registered_themes,
     set_theme,
     set_theme_instance,
+    set_theme_json_validator,
     stop_theme_watcher,
     theme,
 )
 from .theme_controller import InteractiveThemeController
+from .theme_json import validate_theme_json
 
 
 __all__ = [
@@ -65,6 +67,8 @@ __all__ = [
     "set_registered_themes",
     "set_theme",
     "set_theme_instance",
+    "set_theme_json_validator",
     "stop_theme_watcher",
     "theme",
+    "validate_theme_json",
 ]

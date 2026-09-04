@@ -31,6 +31,7 @@ from pidrei.core.tools import (
 )
 from pidrei.core.tools.bash import BASH_TOOL_CONFIG, BashExecResult, ShellToolConfig, create_shell_tool_definition
 from pidrei.core.tools.edit_diff import EditDiffError, compute_edits_diff
+from pidrei.core.tools.renderers.bash import _format_shell_call
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.utils.cancel import CancelToken
@@ -762,8 +763,8 @@ class TestBashTool:
         assert definition.prompt_guidelines == ["Prefer shellish."]
         without_env = create_shell_tool_definition(str(tmp_path), config, expose_session_environment=False)
         assert without_env.prompt_guidelines is None
-        assert strip_ansi(bash_module._format_shell_call({"command": "ls"}, config.prompt)) == "> ls"
-        assert strip_ansi(bash_module._format_shell_call({"command": "ls"}, BASH_TOOL_CONFIG.prompt)) == "$ ls"
+        assert strip_ansi(_format_shell_call({"command": "ls"}, config.prompt)) == "> ls"
+        assert strip_ansi(_format_shell_call({"command": "ls"}, BASH_TOOL_CONFIG.prompt)) == "$ ls"
 
 
 @pytest.mark.skipif(not HAS_RG, reason="ripgrep not installed")

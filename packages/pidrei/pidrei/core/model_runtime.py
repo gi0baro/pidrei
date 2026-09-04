@@ -891,14 +891,17 @@ class ModelRuntime:
     async def complete_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
         return await self.stream_simple(model, context, options).result()
 
-    async def fetch_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
+    def stream_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
         async def setup(_stream):
             provider, request_model, request_options = await self._prepare_request(model, options)
             if not getattr(provider, "supports_fetch_deferred", False):
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
             return provider.fetch_deferred(request_model, handle, request_options)
 
-        return await lazy_stream(model, setup, _cancel_of(options)).result()
+        return lazy_stream(model, setup, _cancel_of(options))
+
+    async def fetch_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
+        return await self.stream_deferred(model, handle, options).result()
 
     async def cancel_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None) -> None:
         provider, request_model, request_options = await self._prepare_request(model, options)

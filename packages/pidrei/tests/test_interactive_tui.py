@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pidrei.modes.interactive import interactive_mode
+from pidrei.modes.interactive import interactive_mode, tui_renderer
 from pidrei.modes.interactive.interactive_mode import InteractiveMode, create_interactive_tui
 from pidrei_tui import Container, Text, is_viewport_tui
 
@@ -28,17 +28,22 @@ from virtual_terminal import VirtualTerminal
 
 @contextlib.contextmanager
 def _recording_clipboard(copied: list[str]):
-    """pi mocks the clipboard module; here the imported name is swapped back."""
+    """pi mocks the clipboard module; here the imported names are swapped back.
+
+    Two importers: the renderer's `copy_selection` (tui_renderer) and the
+    interactive mode's own copy paths.
+    """
 
     async def copy(text: str) -> None:
         copied.append(text)
 
-    original = interactive_mode.copy_to_clipboard
+    originals = (interactive_mode.copy_to_clipboard, tui_renderer.copy_to_clipboard)
     interactive_mode.copy_to_clipboard = copy
+    tui_renderer.copy_to_clipboard = copy
     try:
         yield
     finally:
-        interactive_mode.copy_to_clipboard = original
+        interactive_mode.copy_to_clipboard, tui_renderer.copy_to_clipboard = originals
 
 
 class RecordingTerminal(VirtualTerminal):

@@ -10,6 +10,7 @@ from pidrei.config import get_readme_path
 from pidrei.core.extensions.types import ToolDefinition
 from pidrei.core.tools.bash import BashExecResult, create_bash_tool_definition
 from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
+from pidrei.core.tools.renderers import with_built_in_renderers
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.components import ToolExecutionComponent
 from pidrei.modes.interactive.theme import init_theme_sync, theme
@@ -84,7 +85,7 @@ class TestToolExecutionComponentParity:
             "tool-2",
             {"path": "README.md", "oldText": "before", "newText": "after"},
             {},
-            override_definition,
+            with_built_in_renderers("edit", override_definition),
             create_fake_tui(),
             CWD,
         )
@@ -170,7 +171,13 @@ class TestToolExecutionComponentParity:
         )
 
         component = ToolExecutionComponent(
-            "read", "tool-4b", {"path": "notes.txt"}, {}, override_definition, create_fake_tui(), CWD
+            "read",
+            "tool-4b",
+            {"path": "notes.txt"},
+            {},
+            with_built_in_renderers("read", override_definition),
+            create_fake_tui(),
+            CWD,
         )
         component.update_result(
             {"content": [{"type": "text", "text": "hello"}], "details": None, "isError": False}, False
@@ -187,7 +194,13 @@ class TestToolExecutionComponentParity:
         )
 
         component = ToolExecutionComponent(
-            "read", "tool-4c", {"path": "README.md"}, {}, override_definition, create_fake_tui(), CWD
+            "read",
+            "tool-4c",
+            {"path": "README.md"},
+            {},
+            with_built_in_renderers("read", override_definition),
+            create_fake_tui(),
+            CWD,
         )
         component.update_result(
             {"content": [{"type": "text", "text": "hello"}], "details": None, "isError": False}, False

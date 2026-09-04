@@ -45,20 +45,6 @@ def encode_frame(payload: bytes) -> bytes:
     return len(payload).to_bytes(_FRAME_HEADER_LENGTH, "big") + payload
 
 
-def assert_complete_frame(frame: bytes, options: FrameDecoderOptions | None = None) -> None:
-    """Validates that bytes contain exactly one complete frame within the configured limit."""
-    if not isinstance(frame, bytes | bytearray):
-        raise TypeError("Frame must be bytes")
-    if len(frame) < _FRAME_HEADER_LENGTH:
-        raise FrameError("Frame does not contain a complete length prefix")
-    length = int.from_bytes(frame[:_FRAME_HEADER_LENGTH], "big")
-    max_frame_length = _resolve_max_frame_length(options)
-    if length > max_frame_length:
-        raise FrameError(f"Frame length {length} exceeds configured limit of {max_frame_length}")
-    if len(frame) != _FRAME_HEADER_LENGTH + length:
-        raise FrameError("Frame must contain exactly one complete payload")
-
-
 class FrameDecoder:
     """Incrementally splits arbitrary byte chunks into length-prefixed payloads."""
 

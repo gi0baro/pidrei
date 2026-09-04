@@ -118,6 +118,12 @@ class InteractiveThemeController:
     def disable_auto_sync(self) -> Awaitable[None]:
         return self._set_auto_sync(False)
 
+    async def dispose(self) -> None:
+        await self._set_auto_sync(False)
+        if self._terminal_color_scheme_unsubscribe is not None:
+            self._terminal_color_scheme_unsubscribe()
+        self._terminal_color_scheme_unsubscribe = None
+
     def get_terminal_theme(self) -> str:
         return self._terminal_theme
 

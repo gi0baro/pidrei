@@ -330,8 +330,13 @@ async def test_the_gemini_adapter_requires_an_api_key():
 
 @pytest.mark.tonio
 async def test_the_gemini_stream_simple_requires_an_api_key():
-    with pytest.raises(RuntimeError, match="No API key for provider: google"):
-        google_generative_ai.stream_simple(_model(google_generative_ai), CONTEXT, SimpleStreamOptions())
+    # Since pi 5c6655e7 the missing key is an error stream, not a sync raise
+    # (test_pre_generation_error.py covers every direct API).
+    stream = google_generative_ai.stream_simple(_model(google_generative_ai), CONTEXT, SimpleStreamOptions())
+    events = [event async for event in stream]
+
+    assert _types(events) == ["error"]
+    assert (await stream.result()).error_message == "No API key for provider: google"
 
 
 @pytest.mark.tonio

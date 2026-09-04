@@ -12,9 +12,6 @@ async def sleep(ms: float, cancel=None) -> None:
         await tonio.time.sleep(ms / 1000)
         return
 
-    async def wait_cancel() -> None:
-        await cancel.wait()
-
-    _, completed = await tonio.time.timeout(wait_cancel(), ms / 1000)
-    if completed and cancel.cancelled:
+    await cancel.wait(ms / 1000)
+    if cancel.cancelled:
         raise Exception("Aborted")

@@ -103,6 +103,14 @@ def get_tool_call(output: AssistantMessage) -> ToolCall:
 
 
 @pytest.mark.tonio
+async def test_omits_an_absent_error_message():
+    output = create_output()
+    await process_responses_stream(create_function_call_events(), output, AssistantMessageEventStream(), MODEL)
+
+    assert output.error_message is None
+
+
+@pytest.mark.tonio
 async def test_round_trips_a_function_namespace_received_only_on_output_item_done():
     output = create_output()
     await process_responses_stream(create_function_call_events(), output, AssistantMessageEventStream(), MODEL)

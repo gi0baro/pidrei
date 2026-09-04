@@ -1,6 +1,7 @@
 """Mirror of pi tui test/mouse-components.test.ts."""
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei_tui.components.editor import Editor
 from pidrei_tui.components.input import Input
@@ -162,4 +163,38 @@ async def test_positions_and_focuses_the_multiline_editor_through_alternate_scre
 
     assert editor.get_text() == "heXllo"
     assert tui.get_focused_component() is editor
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_selects_and_copies_editor_text_on_drag_instead_of_moving_the_cursor():
+    terminal = VirtualTerminal(20, 6)
+    copied: list[str] = []
+    # The copy runs as a detached task after the release; wait on its signal
+    # rather than on a frame that may precede it.
+    copied_event = tonio.Event()
+
+    async def copy_selection(text: str) -> bool:
+        copied.append(text)
+        copied_event.set()
+        return True
+
+    tui = TuiAltScreen(terminal, None, None, copy_selection=copy_selection)
+    editor = Editor(tui, EDITOR_THEME)
+    editor.set_text("hello world")
+    tui.add_child(editor)
+    await tui.start()
+    await terminal.wait_for_render()
+    cursor_before = editor.get_cursor()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;2M")
+    await terminal.send_input("\x1b[<32;5;2M")
+    await terminal.send_input("\x1b[<0;5;2m")
+    await terminal.wait_for_render(since)
+    await copied_event.wait(2)
+
+    assert copied_event.is_set()
+    assert copied == ["hello"]
+    assert editor.get_cursor() == cursor_before
     await tui.stop()

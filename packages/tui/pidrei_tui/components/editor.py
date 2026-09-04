@@ -579,7 +579,11 @@ class Editor:
             )
             return replace(result, focus=True) if result is not None else None
 
-        if event.type != "press" or event.button != "left":
+        # Leave press/drag/release unhandled so the renderer's screen-level text
+        # selection can run over the editor rows (drag to select, release to copy).
+        # The renderer synthesizes a click when press and release land on the same
+        # cell without movement, which is the gesture that positions the cursor.
+        if event.type != "click" or event.button != "left":
             return None
         if event.y <= 0 or event.y > self._rendered_visible_line_count:
             return TuiMouseEventResult(handled=True, focus=True)

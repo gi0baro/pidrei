@@ -7,7 +7,6 @@ from pidrei_protocol.framing import (
     FrameDecoder,
     FrameDecoderOptions,
     FrameError,
-    assert_complete_frame,
     encode_frame,
 )
 
@@ -15,16 +14,6 @@ from pidrei_protocol.framing import (
 def test_prefixes_payloads_with_a_four_byte_big_endian_length():
     assert encode_frame(b"\xaa\xbb\xcc") == b"\x00\x00\x00\x03\xaa\xbb\xcc"
     assert encode_frame(b"") == b"\x00\x00\x00\x00"
-
-
-def test_validates_one_complete_bounded_frame_without_accepting_trailing_or_partial_bytes():
-    assert_complete_frame(b"\x00\x00\x00\x02\x01\x02", FrameDecoderOptions(max_frame_length=2))
-    with pytest.raises(FrameError, match="complete"):
-        assert_complete_frame(b"\x00\x00\x00\x02\x01")
-    with pytest.raises(FrameError, match="exactly"):
-        assert_complete_frame(b"\x00\x00\x00\x01\x01\x02")
-    with pytest.raises(FrameError, match="limit"):
-        assert_complete_frame(b"\x00\x00\x00\x03\x01\x02\x03", FrameDecoderOptions(max_frame_length=2))
 
 
 def test_decodes_fragmented_coalesced_and_empty_frames_in_order():

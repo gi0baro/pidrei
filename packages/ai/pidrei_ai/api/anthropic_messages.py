@@ -788,8 +788,6 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
-    _assert_request_auth(model.provider, options.api_key if options else None, options.headers if options else None)
-
     base = build_base_options(model, context, options, options.api_key if options else None)
 
     def with_thinking(**extra) -> AnthropicOptions:

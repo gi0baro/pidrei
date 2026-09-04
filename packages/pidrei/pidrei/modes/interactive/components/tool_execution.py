@@ -37,7 +37,14 @@ def _block_get(block, key: str):
 
 
 class ToolExecutionComponent(Container):
-    """Options: ``{"showImages"?, "imageWidthCells"?}``."""
+    """Options: ``{"showImages"?, "imageWidthCells"?}``.
+
+    ``tool_definition`` is what this component needs from a tool: how to draw
+    it. It neither executes tools nor reads their parameter schemas, so a
+    `ToolDefinition` and a bare `ToolRenderers` pair are equally acceptable;
+    callers merge the built-in renderers in (`with_built_in_renderers`) so
+    the component never reaches into the tool registry itself.
+    """
 
     def __init__(self, tool_name: str, tool_call_id: str, args, options, tool_definition, ui, cwd: str) -> None:
         super().__init__()
@@ -46,11 +53,6 @@ class ToolExecutionComponent(Container):
         self._tool_call_id = tool_call_id
         self._args = args
         self._tool_definition = tool_definition
-        # Imported lazily: core.tools imports interactive components for its
-        # renderers, so a module-level import here would be circular.
-        from ....core.tools import create_all_tool_definitions
-
-        self._built_in_tool_definition = create_all_tool_definitions(cwd).get(tool_name)
         show_images = options.get("showImages")
         self._show_images = show_images if show_images is not None else True
         image_width_cells = options.get("imageWidthCells")
@@ -91,32 +93,16 @@ class ToolExecutionComponent(Container):
         self._update_display()
 
     def _get_call_renderer(self):
-        if self._built_in_tool_definition is None:
-            return getattr(self._tool_definition, "render_call", None)
-        if self._tool_definition is None:
-            return self._built_in_tool_definition.render_call
-        return getattr(self._tool_definition, "render_call", None) or self._built_in_tool_definition.render_call
+        return self._tool_definition.render_call if self._tool_definition is not None else None
 
     def _get_result_renderer(self):
-        if self._built_in_tool_definition is None:
-            return getattr(self._tool_definition, "render_result", None)
-        if self._tool_definition is None:
-            return self._built_in_tool_definition.render_result
-        return getattr(self._tool_definition, "render_result", None) or self._built_in_tool_definition.render_result
+        return self._tool_definition.render_result if self._tool_definition is not None else None
 
     def _has_renderer_definition(self) -> bool:
-        return self._built_in_tool_definition is not None or self._tool_definition is not None
+        return self._tool_definition is not None
 
     def _get_render_shell(self) -> str:
-        if self._built_in_tool_definition is None:
-            return getattr(self._tool_definition, "render_shell", None) or "default"
-        if self._tool_definition is None:
-            return self._built_in_tool_definition.render_shell or "default"
-        return (
-            getattr(self._tool_definition, "render_shell", None)
-            or self._built_in_tool_definition.render_shell
-            or "default"
-        )
+        return (self._tool_definition.render_shell if self._tool_definition is not None else None) or "default"
 
     def _get_render_context(self, last_component) -> dict:
         def invalidate() -> None:

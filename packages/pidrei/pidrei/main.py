@@ -78,7 +78,7 @@ from .core.timings import print_timings, reset_timings, time
 from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
 from .extensions import builtin_extensions
 from .modes import run_print_mode, run_rpc_mode
-from .modes.interactive.theme import init_theme, stop_theme_watcher
+from .modes.interactive.theme import init_theme, set_theme_json_validator, stop_theme_watcher, validate_theme_json
 from .modes.print_mode import PrintModeOptions
 from .utils.colors import dim, red, yellow
 from .utils.fd_io import FdReader
@@ -879,6 +879,8 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     initial = await _prepare_initial_message(parsed, settings_manager.get_image_auto_resize(), stdin_content)
     time("prepareInitialMessage")
+    # pi reads user-authored themes, so it opts into full validation before any theme loads.
+    set_theme_json_validator(validate_theme_json)
     await init_theme(settings_manager.get_theme(), app_mode == "interactive")
     time("initTheme")
 

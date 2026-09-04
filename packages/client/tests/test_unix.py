@@ -66,8 +66,8 @@ async def test_exchanges_fragmented_framed_messages_over_a_real_unix_socket(sock
     transport = await factory(ByteTransportHandlers(on_data=on_data, on_close=done.set, on_error=errors.append))
     try:
         await transport.send(encode_frame(encode_cbor(request)))
-        _, completed = await tonio.time.timeout(done.wait(), 5)
-        assert completed, "timed out waiting for the framed replies"
+        await done.wait(5)
+        assert done.is_set(), "timed out waiting for the framed replies"
         assert received == replies
         assert errors == []
     finally:

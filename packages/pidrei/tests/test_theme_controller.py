@@ -22,6 +22,7 @@ class _FakeUi:
         self.background_color_queries = 0
         self.color_scheme_queries = 0
         self.notification_calls: list[bool] = []
+        self.unsubscribe_calls = 0
         self._listener = None
 
     def invalidate(self) -> None:
@@ -35,7 +36,11 @@ class _FakeUi:
 
     def on_terminal_color_scheme_change(self, listener):
         self._listener = listener
-        return lambda: None
+
+        def unsubscribe() -> None:
+            self.unsubscribe_calls += 1
+
+        return unsubscribe
 
     async def query_terminal_background_color(self, timeout_ms=None):
         self.background_color_queries += 1
@@ -131,6 +136,20 @@ async def test_resolves_a_theme_pair_and_follows_terminal_appearance_changes():
 
         await ui.emit_terminal_color_scheme("dark")
         assert theme.name == "dark"
+
+
+@pytest.mark.tonio
+async def test_disables_terminal_appearance_updates_when_disposed():
+    ui = _FakeUi(color_scheme="light")
+    manager = SettingsManager.in_memory({"theme": "light/dark"})
+    controller = _create_controller(ui, lambda: manager)
+    await controller.prime()
+    await controller.apply_from_settings()
+
+    await controller.dispose()
+
+    assert ui.notification_calls[-1] is False
+    assert ui.unsubscribe_calls == 1
 
 
 @pytest.mark.tonio

@@ -10,55 +10,12 @@ from tonio.colored import fs
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 from pidrei_ai.utils.tasks import gather
-from pidrei_tui import Text
 
-from ...modes.interactive.components.keybinding_hints import key_hint
 from ..extensions.types import ToolDefinition
 from .path_utils import resolve_to_cwd
-from .render_utils import get_text_output, render_tool_path, str_or_none
+from .renderers.ls import ls_renderers
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .truncate import DEFAULT_MAX_BYTES, TruncationResult, format_size, truncate_head
-
-
-def _format_ls_call(args: dict | None, theme, cwd: str) -> str:
-    args = args or {}
-    limit = args.get("limit")
-    path_display = render_tool_path(str_or_none(args.get("path")), theme, cwd, {"emptyFallback": "."})
-    text = f"{theme.fg('toolTitle', theme.bold('ls'))} {path_display}"
-    if limit is not None:
-        text += theme.fg("toolOutput", f" (limit {limit})")
-    return text
-
-
-def _format_ls_result(result, options: dict, theme, show_images: bool) -> str:
-    output = get_text_output(result, show_images).strip()
-    text = ""
-    if output:
-        lines = output.split("\n")
-        max_lines = len(lines) if options.get("expanded") else 20
-        display_lines = lines[:max_lines]
-        remaining = len(lines) - max_lines
-        text += "\n" + "\n".join(theme.fg("toolOutput", line) for line in display_lines)
-        if remaining > 0:
-            text += (
-                theme.fg("muted", f"\n... ({remaining} more lines,")
-                + " "
-                + key_hint("app.tools.expand", "to expand")
-                + theme.fg("muted", ")")
-            )
-
-    details = result.get("details") if isinstance(result, dict) else getattr(result, "details", None)
-    entry_limit = getattr(details, "entry_limit_reached", None) if details is not None else None
-    truncation = getattr(details, "truncation", None) if details is not None else None
-    if entry_limit or (truncation is not None and truncation.truncated):
-        warnings = []
-        if entry_limit:
-            warnings.append(f"{entry_limit} entries limit")
-        if truncation is not None and truncation.truncated:
-            max_bytes = truncation.max_bytes if truncation.max_bytes is not None else DEFAULT_MAX_BYTES
-            warnings.append(f"{format_size(max_bytes)} limit")
-        text += "\n" + theme.fg("warning", f"[Truncated: {', '.join(warnings)}]")
-    return text
 
 
 LS_SCHEMA = {
@@ -174,16 +131,6 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
 
         return AgentToolResult(content=[TextContent(text=output)], details=details if has_details else None)
 
-    def render_call(args, theme, context):
-        text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
-        text.set_text(_format_ls_call(args, theme, context["cwd"]))
-        return text
-
-    def render_result(result, options, theme, context):
-        text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
-        text.set_text(_format_ls_result(result, options, theme, context["showImages"]))
-        return text
-
     return ToolDefinition(
         name="ls",
         label="ls",
@@ -195,8 +142,8 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
         prompt_snippet=LS_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         parameters=LS_SCHEMA,
         execute=execute,
-        render_call=render_call,
-        render_result=render_result,
+        render_call=ls_renderers.render_call,
+        render_result=ls_renderers.render_result,
     )
 
 
