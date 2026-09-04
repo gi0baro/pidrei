@@ -29,7 +29,7 @@ jobs:
           uv sync --all-packages --group test
 
       - name: Release checks
-        # Tag vs tree version, the five package versions, the intra-repo pins,
+        # Tag vs tree version, the four package versions, the intra-repo pins,
         # the LICENSE copies, and the upstream ref. Same script as
         # `make release-check`, so it is runnable before tagging.
         run: |
@@ -37,10 +37,14 @@ jobs:
 
       - name: Build distributions
         run: |
-          # --all-packages, not bare `uv build`: the repo root is a uv
+          # Named members, not bare `uv build`: the repo root is a uv
           # workspace with no [project], where bare `uv build` silently
-          # produces an "unknown-0.0.0" artifact instead of failing.
-          uv build --all-packages
+          # produces an "unknown-0.0.0" artifact instead of failing. Not
+          # --all-packages either: protocol/client/server are workspace-only
+          # transport remnants (UPSTREAM_EXPERIMENTAL_RULING.md), never shipped.
+          for name in pidrei pidrei-ai pidrei-agent pidrei-tui; do
+            uv build --package "${name}"
+          done
 
       - name: Verify the built artifacts
         # The workspace can never catch a missing intra-repo dependency —
@@ -49,7 +53,7 @@ jobs:
         # dist/. This is how the missing `pidrei-tui` dependency was found.
         run: |
           version="${GITHUB_REF_NAME#v}"
-          for name in pidrei pidrei_ai pidrei_agent pidrei_protocol pidrei_client pidrei_tui pidrei_server; do
+          for name in pidrei pidrei_ai pidrei_agent pidrei_tui; do
             test -f "dist/${name}-${version}-py3-none-any.whl" \
               || { echo "missing wheel: ${name}-${version}"; exit 1; }
             test -f "dist/${name}-${version}.tar.gz" \
@@ -57,7 +61,7 @@ jobs:
           done
 
           uv venv --python ${{ env.UV_PYTHON }} /tmp/release-check
-          # --find-links only, no --no-index: the five pidrei wheels exist on
+          # --find-links only, no --no-index: the four pidrei wheels exist on
           # no index and must come from dist/, while tonio and the rest still
           # resolve from PyPI. --no-index blocks both and fails to resolve.
           uv pip install --python /tmp/release-check/bin/python \
@@ -75,7 +79,7 @@ jobs:
           "
 
       - name: Generate the Homebrew formula
-        # Complete and final: the five no-index distributions from the
+        # Complete and final: the four no-index distributions from the
         # artifacts just built, the third-party resources from uv.lock (the
         # exact set this run's test suite ran against). Deliberately not
         # `brew update-python-resources`: brew resolves latest-from-PyPI —

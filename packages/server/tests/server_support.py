@@ -1,19 +1,23 @@
-"""Shared harness for the server test suite.
+"""Shared harness for the server transport tests.
 
 Upstream's vitest files keep module-level `servers`/`clients`/`tempDirectories`
-sets torn down in `afterEach`; here each
-test owns a `Harness` and closes it in a `finally` block instead. Socket paths
-live under the test's `sock_dir` (a deliberately short directory — see the
-conftest fixture: deep `tmp_path` paths overflow `sun_path` on macOS); the
-listener itself creates the per-server subdirectories (mirroring `mkdtemp`
-per server upstream).
+sets torn down in `afterEach`; here each test owns a `Harness` and closes it
+in a `finally` block instead. Socket paths live under the test's `sock_dir`
+(a deliberately short directory — see the conftest fixture: deep `tmp_path`
+paths overflow `sun_path` on macOS); the listener itself creates the
+per-server subdirectories (mirroring `mkdtemp` per server upstream).
+
+The protocol server is not ported (UPSTREAM_EXPERIMENTAL_RULING.md), so the
+listener is driven directly: the accept handler echoes bytes and a raw socket
+round-trip stands in for the hello handshake as the liveness probe.
 """
 
 import tonio.colored as tonio
+from tonio.colored import net
 
-from pidrei_server.server import PiServer
-from pidrei_server.testing import ProtocolTestClient, TestServerService, connect_unix_test_client
-from pidrei_server.transports.unix import UnixServerOptions, create_unix_server
+from pidrei_server.connection import ByteConnection, ByteConnectionHandler
+from pidrei_server.listener import PiServerListener
+from pidrei_server.transports.unix import UnixListenerOptions, create_unix_listener
 
 
 async def flush(turns: int = 4) -> None:
@@ -32,9 +36,7 @@ async def settled(awaitable, what: str = "the awaited step", timeout: float = 5.
     and this call site's line in the traceback, instead of parking forever
     and hanging the whole CI job (seen on linux and macOS 3.14t).
 
-    Takes a `Deferred` (awaited via `wait()`) or any plain awaitable — the
-    wire client's `next()`/`next_from()` return Deferreds while `request()`/
-    `hello()` return coroutines/awaitables.
+    Takes a `Deferred` (awaited via `wait()`) or any plain awaitable.
     """
     wait = awaitable.wait() if hasattr(awaitable, "wait") else awaitable
     value, completed = await tonio.time.timeout(wait, timeout)
@@ -42,44 +44,49 @@ async def settled(awaitable, what: str = "the awaited step", timeout: float = 5.
     return value
 
 
+def echo_acceptor(connection: ByteConnection) -> ByteConnectionHandler:
+    """Accept handler that writes every inbound chunk straight back."""
+    return ByteConnectionHandler(
+        on_data=lambda chunk: connection.send(chunk),
+        on_close=lambda: None,
+        on_error=lambda error: None,
+    )
+
+
 class Harness:
-    """Tracks servers and wire clients for one test; close in `finally`."""
+    """Tracks listeners for one test; close in `finally`."""
 
     def __init__(self, sock_dir) -> None:
         self._sock_dir = sock_dir
         self._sequence = 0
-        self.servers: list[PiServer] = []
-        self.clients: list[ProtocolTestClient] = []
+        self.listeners: list[PiServerListener] = []
 
     def socket_path(self, nested: bool = False) -> str:
         self._sequence += 1
         base = self._sock_dir / f"srv{self._sequence}"
         return str(base / "p" / "n" / "server.sock" if nested else base / "server.sock")
 
-    def make_server(self, path: str, service: TestServerService | None = None, **overrides) -> PiServer:
-        server = create_unix_server(
-            service if service is not None else TestServerService(), UnixServerOptions(path=path, **overrides)
-        )
-        self.servers.append(server)
-        return server
+    def make_listener(self, path: str, **overrides) -> PiServerListener:
+        listener = create_unix_listener(UnixListenerOptions(path=path, **overrides))
+        self.listeners.append(listener)
+        return listener
 
-    async def start_server(
-        self, service: TestServerService | None = None, **overrides
-    ) -> tuple[PiServer, TestServerService]:
-        resolved_service = service if service is not None else TestServerService()
-        server = self.make_server(self.socket_path(), resolved_service, **overrides)
-        await server.start()
-        return server, resolved_service
-
-    async def connect(self, server: PiServer) -> ProtocolTestClient:
-        client = await connect_unix_test_client(server.addresses[0])
-        self.clients.append(client)
-        return client
+    async def roundtrip(self, path: str, payload: bytes = b"ping") -> bytes:
+        """Connect to a listener started with `echo_acceptor` and read the echo back."""
+        stream = await net.open_unix_socket(path)
+        try:
+            await stream.send_all(payload)
+            received = b""
+            while len(received) < len(payload):
+                chunk = await stream.receive_some()
+                if not chunk:
+                    break
+                received += chunk
+            return received
+        finally:
+            stream.close()
 
     async def close(self) -> None:
-        for client in self.clients:
-            await client.close()
-        self.clients.clear()
-        for server in self.servers:
-            await server.close()
-        self.servers.clear()
+        for listener in self.listeners:
+            await listener.close()
+        self.listeners.clear()

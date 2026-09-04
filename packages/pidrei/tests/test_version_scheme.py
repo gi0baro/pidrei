@@ -4,8 +4,10 @@ pidrei is versioned `<pi version>.<our build>` — `0.82.0.0` is the first pidre
 build tracking pi 0.82.0. That only means anything if three facts stay in sync,
 and all three live in different files that nothing otherwise ties together:
 
-- five `pyproject.toml` versions (a release that skews them ships a `pidrei`
-  depending on a differently-versioned `pidrei-ai`),
+- the four published `pyproject.toml` versions (a release that skews them
+  ships a `pidrei` depending on a differently-versioned `pidrei-ai`) —
+  protocol/client/server are workspace-only transport remnants
+  (UPSTREAM_EXPERIMENTAL_RULING.md) and are neither published nor pinned,
 - `pidrei/upstream.py`'s `UPSTREAM_VERSION`, which the first three segments must
   equal — so the pi ref and the version cannot be bumped independently,
 - the repo-root `.last_upstream_ref`, which tooling reads without importing
@@ -31,7 +33,7 @@ from pidrei.upstream import UPSTREAM_REF, UPSTREAM_VERSION, short_ref
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-PACKAGES = ("ai", "agent", "server", "tui", "pidrei")
+PACKAGES = ("ai", "agent", "tui", "pidrei")
 
 #: `0.82.0.0`, or with a PEP 440 pre-release suffix. Four release segments.
 VERSION_RE = re.compile(r"^(\d+\.\d+\.\d+)\.(\d+)((?:a|b|rc|\.post|\.dev)\d+)?$")
@@ -46,7 +48,7 @@ def test_installed_version_matches_the_scheme():
     assert VERSION_RE.match(VERSION), f"{VERSION!r} is not <pi version>.<build>[pre]"
 
 
-def test_all_five_packages_share_one_version():
+def test_all_published_packages_share_one_version():
     versions = {name: package_version(name) for name in PACKAGES}
     assert len(set(versions.values())) == 1, f"packages disagree: {versions}"
 
@@ -59,7 +61,7 @@ def test_the_first_three_segments_are_the_ported_pi_version():
 
 
 def test_intra_repo_dependencies_pin_the_shared_version():
-    """The five ship as a set. `pidrei-ai` unpinned would let a user mix wheels
+    """The four ship as a set. `pidrei-ai` unpinned would let a user mix wheels
     from two releases and get a silently mismatched install; pinned, it fails
     loudly instead. The cost is that a version bump must touch the pins too —
     which is what this asserts."""

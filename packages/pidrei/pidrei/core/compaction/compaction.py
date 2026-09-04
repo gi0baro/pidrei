@@ -4,8 +4,7 @@ Context compaction for long sessions. Pure functions for compaction logic;
 the session manager handles I/O, and after compaction the session is reloaded.
 
 Session entries are the coding-agent plain camelCase dicts from
-session_manager.py. Token-estimation helpers are shared with the agent
-package's harness compaction port (identical logic in pi).
+session_manager.py.
 
 Deviation: pi falls back to the pi-ai compat global `completeSimple` when no
 stream function is given; pidrei never ported the deprecated compat registry,
@@ -17,15 +16,6 @@ import time as time_module
 from dataclasses import dataclass, replace
 from typing import Any
 
-from pidrei_agent.harness.compaction.compaction import (
-    DEFAULT_COMPACTION_SETTINGS,
-    CompactionSettings,
-    ContextUsageEstimate,
-    calculate_context_tokens,
-    estimate_context_tokens,
-    estimate_tokens,
-    should_compact,
-)
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
@@ -51,11 +41,12 @@ from .utils import (
     create_file_ops,
     extract_file_ops_from_message,
     format_file_operations,
+    safe_json_stringify,
     serialize_conversation,
 )
 
 
-__all__ = [  # re-exported shared helpers keep pi's coding-agent module surface
+__all__ = [
     "DEFAULT_COMPACTION_SETTINGS",
     "CompactionDetails",
     "CompactionPreparation",
@@ -167,6 +158,32 @@ def _combine_usage(first: Usage, second: Usage) -> Usage:
     )
 
 
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class CompactionSettings:
+    enabled: bool
+    reserve_tokens: int
+    keep_recent_tokens: int
+
+
+DEFAULT_COMPACTION_SETTINGS = CompactionSettings(enabled=True, reserve_tokens=16384, keep_recent_tokens=20000)
+
+
+# ---------------------------------------------------------------------------
+# Token calculation
+# ---------------------------------------------------------------------------
+
+
+def calculate_context_tokens(usage: Usage) -> int:
+    """Calculate total context tokens from usage.
+    Uses the native total_tokens field when available, falls back to computing from components."""
+    return usage.total_tokens or usage.input + usage.output + usage.cache_read + usage.cache_write
+
+
 def _get_assistant_usage(msg: Any) -> Usage | None:
     """Usage from an assistant message if available.
     Skips aborted, error, and all-zero usage messages."""
@@ -191,9 +208,100 @@ def get_last_assistant_usage(entries: list[dict[str, Any]]) -> Usage | None:
     return None
 
 
+@dataclass(slots=True)
+class ContextUsageEstimate:
+    tokens: int
+    usage_tokens: int
+    trailing_tokens: int
+    last_usage_index: int | None
+
+
+def _get_last_assistant_usage_info(messages: list[Any]) -> tuple[Usage, int] | None:
+    for index in range(len(messages) - 1, -1, -1):
+        usage = _get_assistant_usage(messages[index])
+        if usage is not None:
+            return usage, index
+    return None
+
+
+def estimate_context_tokens(messages: list[Any]) -> ContextUsageEstimate:
+    """Estimate context tokens from messages, using the last assistant usage when available.
+    If there are messages after the last usage, estimate their tokens with estimate_tokens."""
+    usage_info = _get_last_assistant_usage_info(messages)
+
+    if usage_info is None:
+        estimated = sum(estimate_tokens(message) for message in messages)
+        return ContextUsageEstimate(tokens=estimated, usage_tokens=0, trailing_tokens=estimated, last_usage_index=None)
+
+    usage, index = usage_info
+    usage_tokens = calculate_context_tokens(usage)
+    trailing_tokens = sum(estimate_tokens(message) for message in messages[index + 1 :])
+
+    return ContextUsageEstimate(
+        tokens=usage_tokens + trailing_tokens,
+        usage_tokens=usage_tokens,
+        trailing_tokens=trailing_tokens,
+        last_usage_index=index,
+    )
+
+
+def should_compact(context_tokens: int, context_window: int, settings: CompactionSettings) -> bool:
+    """Check if compaction should trigger based on context usage."""
+    if not settings.enabled:
+        return False
+    return context_tokens > context_window - settings.reserve_tokens
+
+
 # ---------------------------------------------------------------------------
 # Cut point detection
 # ---------------------------------------------------------------------------
+
+ESTIMATED_IMAGE_CHARS = 4800
+
+
+def _estimate_text_and_image_content_chars(content: Any) -> int:
+    if isinstance(content, str):
+        return len(content)
+
+    chars = 0
+    for block in content:
+        block_type = getattr(block, "type", None)
+        if block_type == "text" and block.text:
+            chars += len(block.text)
+        elif block_type == "image":
+            chars += ESTIMATED_IMAGE_CHARS
+    return chars
+
+
+def estimate_tokens(message: Any) -> int:
+    """Estimate token count for a message using chars/4 heuristic.
+    This is conservative (overestimates tokens)."""
+    role = getattr(message, "role", None)
+    chars = 0
+
+    if role == "user":
+        chars = _estimate_text_and_image_content_chars(message.content)
+        return math.ceil(chars / 4)
+    if role == "assistant":
+        for block in message.content:
+            if block.type == "text":
+                chars += len(block.text)
+            elif block.type == "thinking":
+                chars += len(block.thinking)
+            elif block.type == "toolCall":
+                chars += len(block.name) + len(safe_json_stringify(block.arguments))
+        return math.ceil(chars / 4)
+    if role in ("custom", "toolResult"):
+        chars = _estimate_text_and_image_content_chars(message.content)
+        return math.ceil(chars / 4)
+    if role == "bashExecution":
+        chars = len(message.command) + len(message.output)
+        return math.ceil(chars / 4)
+    if role in ("branchSummary", "compactionSummary"):
+        chars = len(message.summary)
+        return math.ceil(chars / 4)
+
+    return 0
 
 
 def _is_cut_point_message(message: Any) -> bool:

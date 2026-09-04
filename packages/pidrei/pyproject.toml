@@ -24,8 +24,6 @@ classifiers = [
 dependencies = [
     "pidrei-agent==0.84.4.1",
     "pidrei-ai==0.84.4.1",
-    "pidrei-client==0.84.4.1",
-    "pidrei-protocol==0.84.4.1",
     "pidrei-tui==0.84.4.1",
     "tonio~=0.9.14",
     "pyyaml~=6.0",
@@ -38,8 +36,6 @@ dependencies = [
 [tool.uv.sources]
 pidrei-agent = { workspace = true }
 pidrei-ai = { workspace = true }
-pidrei-client = { workspace = true }
-pidrei-protocol = { workspace = true }
 pidrei-tui = { workspace = true }
 
 [project.scripts]

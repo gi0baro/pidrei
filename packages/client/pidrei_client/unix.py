@@ -34,7 +34,7 @@ class UnixTransportOptions:
 
 
 def create_unix_transport_factory(options: UnixTransportOptions) -> ByteTransportFactory:
-    """Creates fresh Unix-domain socket transports for PiClient connection attempts."""
+    """Creates fresh Unix-domain socket transports, one per connection attempt."""
     if len(options.path) == 0:
         raise TypeError("Unix transport path must not be empty")
     if len(options.path.encode("utf-8")) > MAX_UNIX_SOCKET_PATH_BYTES:

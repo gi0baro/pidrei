@@ -5,7 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "pidrei-server"
 version = "0.84.4.1"
-description = "pidrei server package: composable session protocol server (port of pi-server)"
+# Workspace-only transport remnant (unix listener + byte-connection
+# contracts); not published — see UPSTREAM_EXPERIMENTAL_RULING.md.
+description = "Unix-socket listener layer of pidrei's server package (port of pi-server's transport half)"
 requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,16 +21,15 @@ classifiers = [
     "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
+    "Private :: Do Not Upload",
 ]
 
 dependencies = [
-    "pidrei-ai==0.84.4.1",
-    "pidrei-protocol==0.84.4.1",
+    "pidrei-protocol",
     "tonio~=0.9.14",
 ]
 
 [tool.uv.sources]
-pidrei-ai = { workspace = true }
 pidrei-protocol = { workspace = true }
 
 [tool.hatch.build.targets.wheel]

@@ -5,7 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "pidrei-protocol"
 version = "0.84.4.1"
-description = "Transport-neutral CBOR protocol for remote sessions of pidrei (port of pi-protocol)"
+# Workspace-only transport remnant (CBOR + framing); not published — see
+# UPSTREAM_EXPERIMENTAL_RULING.md.
+description = "CBOR and framing transport layer of pidrei (port of pi-protocol's transport half)"
 requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,15 +21,11 @@ classifiers = [
     "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
+    "Private :: Do Not Upload",
 ]
 
-dependencies = [
-    # pi validates wire messages with TypeBox; the established mapping
-    # (model_config.py, pidrei_ai/utils/validation.py) is hand-rolled JSON
-    # Schema dicts run through `jsonschema`. Everything else is dependency-free
-    # by design: CBOR and framing are hand-ported, sans-io.
-    "jsonschema~=4.26",
-]
+# Dependency-free by design: CBOR and framing are hand-ported, sans-io.
+dependencies = []
 
 [tool.uv.sources]
 

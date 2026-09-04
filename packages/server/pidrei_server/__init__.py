@@ -1,78 +1,17 @@
-"""Mirror of pi server src/index.ts (errors, listener, protocol bridge, server, types)."""
+"""Transport layer of pi's server package: listener and byte-connection contracts.
 
-from .errors import (
-    INTERNAL_SERVER_ERROR_MESSAGE,
-    NOT_IMPLEMENTED_MESSAGE,
-    InternalServerError,
-    NotImplementedError,
-    PiServerError,
-    PiServerOperationErrorCode,
-    SessionBusyError,
-    SessionLockedError,
-    SessionNotFoundError,
-)
+The unix transport is `pidrei_server.transports.unix` (pi's `/unix` subpath
+export). The protocol server itself is not ported —
+UPSTREAM_EXPERIMENTAL_RULING.md.
+"""
+
+from .connection import ByteConnection, ByteConnectionAcceptor, ByteConnectionHandler
 from .listener import PiServerListener
-from .protocol import (
-    AssistantTranscriptOptions,
-    ToolTranscriptOptions,
-    UserTranscriptOptions,
-    sanitize_protocol_details,
-    to_protocol_assistant_message,
-    to_protocol_json_value,
-    to_protocol_model_metadata,
-    to_protocol_tool_result_message,
-    to_protocol_usage,
-    to_protocol_user_message,
-)
-from .server import PiServer
-from .types import (
-    CreateSessionOptions,
-    PiServerOptions,
-    PiServerService,
-    PiSessionRuntime,
-    PiSessionRuntimeEvent,
-    PromptInput,
-    SessionRuntime,
-    SessionRuntimeErrorEvent,
-    SessionRuntimeEvent,
-    SessionRuntimeProgressEvent,
-    SessionRuntimeSnapshotEvent,
-    SteerInput,
-)
 
 
 __all__ = [
-    "INTERNAL_SERVER_ERROR_MESSAGE",
-    "NOT_IMPLEMENTED_MESSAGE",
-    "AssistantTranscriptOptions",
-    "CreateSessionOptions",
-    "InternalServerError",
-    "NotImplementedError",
-    "PiServer",
-    "PiServerError",
+    "ByteConnection",
+    "ByteConnectionAcceptor",
+    "ByteConnectionHandler",
     "PiServerListener",
-    "PiServerOperationErrorCode",
-    "PiServerOptions",
-    "PiServerService",
-    "PiSessionRuntime",
-    "PiSessionRuntimeEvent",
-    "PromptInput",
-    "SessionBusyError",
-    "SessionLockedError",
-    "SessionNotFoundError",
-    "SessionRuntime",
-    "SessionRuntimeErrorEvent",
-    "SessionRuntimeEvent",
-    "SessionRuntimeProgressEvent",
-    "SessionRuntimeSnapshotEvent",
-    "SteerInput",
-    "ToolTranscriptOptions",
-    "UserTranscriptOptions",
-    "sanitize_protocol_details",
-    "to_protocol_assistant_message",
-    "to_protocol_json_value",
-    "to_protocol_model_metadata",
-    "to_protocol_tool_result_message",
-    "to_protocol_usage",
-    "to_protocol_user_message",
 ]

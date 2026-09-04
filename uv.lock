@@ -335,8 +335,6 @@ dependencies = [
     { name = "pathspec" },
     { name = "pidrei-agent" },
     { name = "pidrei-ai" },
-    { name = "pidrei-client" },
-    { name = "pidrei-protocol" },
     { name = "pidrei-tui" },
     { name = "pillow" },
     { name = "pygments" },
@@ -350,8 +348,6 @@ requires-dist = [
     { name = "pathspec", specifier = "~=1.1" },
     { name = "pidrei-agent", editable = "packages/agent" },
     { name = "pidrei-ai", editable = "packages/ai" },
-    { name = "pidrei-client", editable = "packages/client" },
-    { name = "pidrei-protocol", editable = "packages/protocol" },
     { name = "pidrei-tui", editable = "packages/tui" },
     { name = "pillow", specifier = "~=12.3" },
     { name = "pygments", specifier = "~=2.20" },
@@ -424,26 +420,18 @@ requires-dist = [
 name = "pidrei-protocol"
 version = "0.84.4.1"
 source = { editable = "packages/protocol" }
-dependencies = [
-    { name = "jsonschema" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "jsonschema", specifier = "~=4.26" }]
 
 [[package]]
 name = "pidrei-server"
 version = "0.84.4.1"
 source = { editable = "packages/server" }
 dependencies = [
-    { name = "pidrei-ai" },
     { name = "pidrei-protocol" },
     { name = "tonio" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pidrei-protocol", editable = "packages/protocol" },
     { name = "tonio", specifier = "~=0.9.14" },
 ]

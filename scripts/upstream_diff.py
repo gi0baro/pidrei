@@ -274,6 +274,167 @@ DROPPED_PREFIXES += (
     ),
 )
 
+#: pi's experimental stack — the durable harness runtime, Chord, the
+#: server/worker/client split and the Chord-era protocol/server/client — is
+#: not ported (2026-09-04 ruling; DROPPED prefixes per its §9). The stable
+#: harness helper layer (env/, tools/, utils/, messages, prompt-templates,
+#: skills, system-prompt, types) and the transport survivors (protocol cbor +
+#: framing, server unix listener + byte contracts, client unix transport)
+#: keep their mechanical mapping.
+_EXPERIMENTAL_REASON = "experimental stack not ported (UPSTREAM_EXPERIMENTAL_RULING.md)"
+DROPPED_PREFIXES += tuple(
+    (path, _EXPERIMENTAL_REASON)
+    for path in (
+        "packages/chord/",
+        "packages/agent/benchmark/",
+        # durable harness runtime (agent)
+        "packages/agent/src/harness/agent-harness.ts",
+        "packages/agent/src/harness/compaction/",
+        "packages/agent/src/harness/config.ts",
+        "packages/agent/src/harness/context.ts",
+        "packages/agent/src/harness/events.ts",
+        "packages/agent/src/harness/hooks.ts",
+        "packages/agent/src/harness/result.ts",
+        "packages/agent/src/harness/execution/",
+        "packages/agent/src/harness/runtime/",
+        "packages/agent/src/harness/session/",
+        "packages/agent/src/search/",
+        # transient in-range shapes (added and removed inside 0.85.0)
+        "packages/agent/src/harness/runtime2/",
+        "packages/agent/src/harness/restore.ts",
+        "packages/agent/src/harness/agent-harness-runtime.ts",
+        "packages/agent/src/plugins/",
+        "packages/agent/test/plugins/",
+        "packages/agent/test/harness/scratch.ts",
+        "packages/agent/test/harness/runtime2-restore.test.ts",
+        "packages/agent/test/harness/agent-harness-r",
+        "packages/agent/test/harness/agent-harness-runtime.test.ts",
+        "packages/agent/test/harness/restore.test.ts",
+        "packages/agent/test/harness/lane.test.ts",
+        "packages/agent/test/harness/harness.test.ts",
+        "packages/agent/test/harness/progress.test.ts",
+        "packages/agent/test/harness/session-tree.test.ts",
+        "packages/agent/test/harness/session-create-lane.test.ts",
+        "packages/agent/test/harness/utils.test.ts",
+        "packages/agent/test/harness/id-generator.test.ts",
+        "packages/agent/test/harness/lane-mutations.test.ts",
+        "packages/agent/test/harness/scratch/",
+        "packages/agent/test/harness/runtime2/",
+        "packages/agent/test/harness/runtime/",
+        "packages/agent/test/harness/branch-summarization.test.ts",
+        "packages/agent/test/harness/branch.test.ts",
+        "packages/agent/test/harness/compaction.test.ts",
+        "packages/agent/test/harness/context.test.ts",
+        "packages/agent/test/harness/execution-",
+        "packages/agent/test/harness/gating-storage.test.ts",
+        "packages/agent/test/harness/instrumented-storage.test.ts",
+        "packages/agent/test/harness/jsonl-",
+        "packages/agent/test/harness/memory-",
+        "packages/agent/test/harness/mutation-line.test.ts",
+        "packages/agent/test/harness/session-context.test.ts",
+        "packages/agent/test/harness/session-create-branch.test.ts",
+        "packages/agent/test/harness/session-codec.test.ts",
+        "packages/agent/test/harness/storage-backed-session.test.ts",
+        "packages/agent/test/harness/types.test.ts",
+        "packages/agent/test/harness/values.test.ts",
+        # experimental coding-agent (server/worker/client split, facets, mini)
+        "packages/coding-agent/src/experimental/",
+        "packages/coding-agent/src/cli/experimental/",
+        "packages/coding-agent/src/client/",
+        "packages/coding-agent/src/server/",
+        "packages/coding-agent/src/bun/",
+        "packages/coding-agent/test/client/",
+        "packages/coding-agent/test/server/",
+        "packages/coding-agent/test/experimental-agent-controller.test.ts",
+        "packages/coding-agent/test/experimental-cli-",
+        "packages/coding-agent/test/experimental-client-tui.test.ts",
+        "packages/coding-agent/test/experimental-harness-wire-adapter.test.ts",
+        "packages/coding-agent/test/experimental-internal-process.test.ts",
+        "packages/coding-agent/test/experimental-lane-replica.test.ts",
+        "packages/coding-agent/test/experimental-plugin-reload.test.ts",
+        "packages/coding-agent/test/experimental-presentation-facets.test.ts",
+        "packages/coding-agent/test/experimental-remote-runtime.test.ts",
+        "packages/coding-agent/test/experimental-server-",
+        "packages/coding-agent/test/experimental-service-",
+        "packages/coding-agent/test/experimental-session-",
+        "packages/coding-agent/test/experimental-slash-commands.test.ts",
+        "packages/coding-agent/test/experimental-transcript-provider.test.ts",
+        "packages/coding-agent/test/experimental-chat-service.test.ts",
+        "packages/coding-agent/test/experimental-facet",
+        "packages/coding-agent/test/plugin-app-",
+        "packages/coding-agent/test/fixtures/faux-session-worker.ts",
+        "packages/coding-agent/test/fixtures/keyed-service.ts",
+        "packages/coding-agent/test/fixtures/plugin-app/",
+        "packages/coding-agent/test/fixtures/session-worker-fixture.ts",
+        "packages/coding-agent/examples/plugins/",
+        "packages/coding-agent/examples/facets/",
+        # Chord-era protocol/server/client (transport survivors excluded)
+        "packages/protocol/src/protocol.ts",
+        "packages/protocol/src/codec.ts",
+        "packages/protocol/src/harness.ts",
+        "packages/protocol/src/json-value.ts",
+        "packages/protocol/src/rpc.ts",
+        "packages/protocol/src/service-state.ts",
+        "packages/protocol/src/schemas.ts",
+        "packages/protocol/src/index.ts",
+        "packages/protocol/test/protocol.test.ts",
+        "packages/server/src/server.ts",
+        "packages/server/src/session-router.ts",
+        "packages/server/src/sessions.ts",
+        "packages/server/src/snapshots.ts",
+        "packages/server/src/protocol.ts",
+        "packages/server/src/hosted-harness-manager.ts",
+        "packages/server/src/remote-session-manager.ts",
+        "packages/server/src/service-id.ts",
+        "packages/server/test/remote-session.test.ts",
+        "packages/server/src/types.ts",
+        "packages/server/src/errors.ts",
+        "packages/server/src/index.ts",
+        "packages/server/src/testing/",
+        "packages/server/src/transports/unix/preset.ts",
+        "packages/server/test/conformance.test.ts",
+        "packages/server/test/listener.test.ts",
+        "packages/server/test/protocol.test.ts",
+        "packages/server/test/server.test.ts",
+        "packages/server/test/sessions.test.ts",
+        "packages/client/src/client.ts",
+        "packages/client/src/control.ts",
+        "packages/client/test/control.test.ts",
+        "packages/client/src/connection.ts",
+        "packages/client/src/errors.ts",
+        "packages/client/src/index.ts",
+        "packages/client/src/session-handle.ts",
+        "packages/client/src/state.ts",
+        "packages/client/src/types.ts",
+        "packages/client/test/client.test.ts",
+        "packages/client/test/connection.test.ts",
+        "packages/client/test/disposal.test.ts",
+        "packages/client/test/requests.test.ts",
+        "packages/client/test/sessions.test.ts",
+        "packages/client/test/state.test.ts",
+        "packages/client/test/support.ts",
+    )
+)
+DROPPED_PREFIXES += (
+    # 0.85.0 drops (PORT_0.85.0.md).
+    (
+        "packages/coding-agent/test/session-share.test.ts",
+        "Radius share flow not ported (PORT_0.84.3.md decision 1)",
+    ),
+    (
+        "packages/tui/test/alt-screen-large-transcript-bench.ts",
+        "manual render benchmark, not ported",
+    ),
+    (
+        "packages/ai/src/api/cloudflare-ai-binding.ts",
+        "Cloudflare Workers env.AI binding fetch — JS-runtime object, no pidrei consumer",
+    ),
+    (
+        "packages/ai/test/cloudflare-ai-binding.test.ts",
+        "Cloudflare Workers env.AI binding fetch — JS-runtime object, no pidrei consumer",
+    ),
+)
+
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
 #: providers, so pidrei drops them; offline mirrors exist where noted in
 #: TEST_HOMES / test docstrings.
@@ -305,12 +466,18 @@ RENAMES = {
     "packages/coding-agent/src/core/remote-catalog-provider.ts": "packages/pidrei/pidrei/core/remote_catalog.py",
     "packages/coding-agent/test/package-command-paths.test.ts": "packages/pidrei/tests/test_package_commands.py",
     # 0.84.x additions (PORT_0.84.1.md).
-    "packages/agent/src/harness/session/jsonl.ts": "packages/agent/pidrei_agent/harness/session/jsonl/__init__.py",
     "packages/coding-agent/src/package-manager-cli.ts": "packages/pidrei/pidrei/cli/package_commands.py",
     "packages/agent/src/harness/env/nodejs.ts": "packages/agent/pidrei_agent/harness/env/local.py",
     "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
     "packages/agent/test/harness/session-test-utils.ts": "packages/agent/tests/session_helpers.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",
+    # pi's name refers to the Node `http` module it configures; nothing in
+    # pidrei is Node (docstring of http_proxy.py).
+    "packages/ai/src/utils/node-http-proxy.ts": "packages/ai/pidrei_ai/utils/http_proxy.py",
+    "packages/ai/test/node-http-proxy.test.ts": "packages/ai/tests/test_http_proxy.py",
+    # EXIF orientation is Pillow's `ImageOps.exif_transpose` inside the image
+    # pipeline; pi's hand-rolled APP1 scanner has no separate mirror.
+    "packages/coding-agent/src/utils/exif-orientation.ts": "packages/pidrei/pidrei/utils/image_process.py",
     # 0.84.4: consolidated into generate_models.py like its models-dev sibling.
     "packages/ai/scripts/openrouter-reasoning-options.ts": "packages/ai/scripts/generate_models.py",
     "packages/ai/src/models.generated.ts": "packages/ai/pidrei_ai/models_generated.py",
@@ -322,28 +489,15 @@ RENAMES = {
     "packages/coding-agent/src/core/pi-manifest.ts": "packages/pidrei/pidrei/core/pidrei_manifest.py",
     "packages/coding-agent/src/modes/interactive/theme/theme-schema.json": "packages/pidrei/pidrei/modes/interactive/theme/theme-schema.json",
     "packages/tui/src/TuiAltScreen.ts": "packages/tui/pidrei_tui/tui_alt_screen.py",
-    # Server package (U4): mid-range names collapsed by upstream refactors —
-    # backend.ts became service.ts (bb6a1cddc), unix-lifecycle.test.ts was
-    # consolidated into unix.test.ts (546e00235); the stale-socket child
-    # fixture is inlined as a python -c script in test_unix.py.
-    "packages/server/src/testing/backend.ts": "packages/server/pidrei_server/testing/service.py",
+    # Server transport (U4): unix-lifecycle.test.ts was consolidated into
+    # unix.test.ts (546e00235); the stale-socket child fixture is inlined as a
+    # python -c script in test_unix.py (both packages' copies).
     "packages/server/test/unix-lifecycle.test.ts": "packages/server/tests/test_unix.py",
     "packages/server/test/fixtures/stale-socket-server.mjs": "packages/server/tests/test_unix.py",
-    # Remote-session client helpers (U5): the mechanical target tests/support.py
-    # collides with the client package's helper across the shared `tests`
-    # namespace.
-    "packages/coding-agent/test/client/support.ts": "packages/pidrei/tests/remote_session_support.py",
-    # Experimental CLI (U5): mid-range names collapsed by upstream refactors —
-    # auth-options.ts/options.ts became auth.ts/command.ts (68ad320af),
-    # endpoint.ts became transport-address.ts (0ac010b74).
-    "packages/coding-agent/src/cli/experimental/auth-options.ts": "packages/pidrei/pidrei/cli/experimental/auth.py",
-    "packages/coding-agent/src/cli/experimental/options.ts": "packages/pidrei/pidrei/cli/experimental/command.py",
-    "packages/coding-agent/src/cli/experimental/endpoint.ts": (
-        "packages/pidrei/pidrei/cli/experimental/transport_address.py"
-    ),
-    "packages/coding-agent/test/experimental-cli-options.test.ts": (
-        "packages/pidrei/tests/test_experimental_cli_command.py"
-    ),
+    "packages/client/test/fixtures/stale-socket-server.mjs": "packages/client/tests/test_unix.py",
+    # 0.85.0: upstream renamed unix.test.ts to unix-transport.test.ts when the
+    # client grew server discovery; pidrei's transport-only test keeps its name.
+    "packages/client/test/unix-transport.test.ts": "packages/client/tests/test_unix.py",
     # 0.84.2 additions. test-theme-colors.ts is a manual CLI tool, not a
     # collected test; its mirror keeps the non-test_ name for the same reason.
     "packages/coding-agent/test/test-theme-colors.ts": "packages/pidrei/tests/theme_colors_tool.py",
@@ -554,6 +708,22 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
 #: ported production module but no mirrored tests — backfill when a commit
 #: touches them.
 TEST_HOMES = {
+    # Pre-existing gaps surfaced by the 0.85.0 triage (PORT_0.85.0.md U0).
+    "packages/ai/test/openai-completions-cache-control-format.test.ts": (
+        "PARITY GAP: anthropic-style cache-marker placement for openai-completions has no standalone "
+        "mirror (cache_control cases live in test_openai_completions.py); port deltas there"
+    ),
+    "packages/ai/test/tool-call-id-normalization.test.ts": (
+        "PARITY GAP: cross-provider tool-call-id normalization has no standalone mirror (adapter "
+        "suites cover it piecemeal); port deltas into the adapter test that owns the case"
+    ),
+    "packages/coding-agent/test/status-indicator.test.ts": (
+        "home: packages/pidrei/tests/test_interactive_mode_status.py (working-indicator cases; verify per delta)"
+    ),
+    "packages/coding-agent/test/image-processing.test.ts": (
+        "PARITY GAP: image conversion/EXIF cases unmirrored (Pillow's exif_transpose replaces pi's "
+        "APP1 scanner, so orientation deltas are usually moot); port behaviour deltas into a new mirror"
+    ),
     "packages/ai/test/env-api-keys.test.ts": "covered by packages/ai/tests/test_providers.py (+ test_registry.py; see its docstring)",
     "packages/ai/test/supports-xhigh.test.ts": "covered by packages/ai/tests/test_registry.py + test_models_generated.py (get_supported_thinking_levels)",
     "packages/ai/test/models-runtime.test.ts": "covered by packages/ai/tests/test_registry.py (models.ts ported as registry.py)",
@@ -619,10 +789,6 @@ TEST_HOMES = {
         "pidrei has no provider SDKs (native punkreq transports)"
     ),
     # 0.84.3 additions (PORT_0.84.3.md classifier triage).
-    "packages/coding-agent/test/compaction.test.ts": (
-        "covered by packages/agent/tests/test_compaction.py (pi's two compaction suites "
-        "mirror one pidrei module — coding-agent compaction re-exports the harness port)"
-    ),
     "packages/coding-agent/test/session-manager/tree-traversal.test.ts": (
         "covered by packages/pidrei/tests/test_session_manager.py (tree-traversal cases "
         "live with the rest of the session-manager mirror)"
@@ -660,8 +826,10 @@ NOISE_BASENAMES = {
     "vitest.config.ts",
     "vitest.base.ts",
     "vitest.harness.config.ts",
+    "vitest.benchmark.config.ts",
     "biome.json",
     "test.sh",
+    "mini-test.sh",
     ".npmignore",
     ".gitignore",
 }

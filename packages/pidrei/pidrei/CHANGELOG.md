@@ -6,6 +6,16 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+### Removed
+
+- The remote-session packages `pidrei_protocol`, `pidrei_client` and
+  `pidrei_server`, together with the agent harness runtime scaffold and the
+  experimental `server`/`client` CLI mirrors. They tracked pi's experimental
+  server/worker architecture, which pi rewrote from scratch in 0.85 and which
+  no pidrei feature uses; only the transport layer (CBOR, framing, unix
+  sockets) stays in the workspace, unpublished. See
+  `UPSTREAM_EXPERIMENTAL_RULING.md` in the repository.
+
 ## [0.84.4.1] - 2026-09-04
 
 ### Fixed

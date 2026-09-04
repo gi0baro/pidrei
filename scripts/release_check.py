@@ -5,10 +5,10 @@ Each check here exists because something already went wrong, or would have:
 - **tag vs tree version** — the tree carries the next release version bare (no
   `.dev0`), which trades "remember to strip the marker" for "the machine checks
   the tag". Tags are `vX.Y.Z.N`; the `v` is stripped before comparing.
-- **the five versions agree** — a skewed set ships a `pidrei` that depends on a
+- **the four versions agree** — a skewed set ships a `pidrei` that depends on a
   `pidrei-ai==<other version>` and cannot resolve.
 - **LICENSE copies** — PEP 639 forbids `..` in `license-files` and a symlink
-  breaks the sdist unpack, so the file is duplicated into all five packages and
+  breaks the sdist unpack, so the file is duplicated into all four packages and
   nothing but this keeps them honest.
 - **no stale `.dev`/`.post` marker** — a pre-release version reaching a tag
   means the tag and the artifact names disagree.
@@ -16,7 +16,7 @@ Each check here exists because something already went wrong, or would have:
   the release ships, installs and runs, and the only symptom is that nobody
   ever sees a "What's New" panel for it. Silent, so it gets a gate.
 
-The gates that need a built artifact (install outside the workspace, all five
+The gates that need a built artifact (install outside the workspace, all four
 wheels present) run in `release.yml` after the build, not here.
 """
 
@@ -29,7 +29,10 @@ import tomllib
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGES = ("ai", "agent", "protocol", "client", "server", "tui", "pidrei")
+# The published distributions. protocol/client/server are workspace-only
+# transport remnants (UPSTREAM_EXPERIMENTAL_RULING.md) and are neither
+# version-checked nor built.
+PACKAGES = ("ai", "agent", "tui", "pidrei")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.\d+$")
 
 failures: list[str] = []

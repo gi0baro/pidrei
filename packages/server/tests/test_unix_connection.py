@@ -8,7 +8,7 @@ the recorded final `send_all` + `send_eof`.
 import pytest
 import tonio.colored as tonio
 
-from pidrei_protocol import ServerMessageDecoder, encode_server_message
+from pidrei_protocol import FrameDecoder, decode_cbor, encode_cbor, encode_frame
 from pidrei_server.transports.unix.listener import UnixByteConnection
 from tests.server_support import flush
 
@@ -38,7 +38,7 @@ async def test_queues_a_final_protocol_error_behind_pending_output_before_closin
     pending_write = connection.send(bytes([1, 2, 3]))
     await flush()
     final_message = {"type": "hello_error", "error": {"code": "invalid_request", "message": "Protocol violation"}}
-    closing = connection.close(encode_server_message(final_message))
+    closing = connection.close(encode_frame(encode_cbor(final_message)))
     await flush()
 
     assert stream.eof_sent is False
@@ -49,7 +49,7 @@ async def test_queues_a_final_protocol_error_behind_pending_output_before_closin
     await pending_write
     await flush()
     assert stream.eof_sent is True
-    assert ServerMessageDecoder().push(stream.sent[-1]) == [final_message]
+    assert [decode_cbor(frame) for frame in FrameDecoder().push(stream.sent[-1])] == [final_message]
 
     connection.mark_closed()
     await closing

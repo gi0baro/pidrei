@@ -1,28 +1,18 @@
-"""Port of pi client `test/unix.test.ts` (POSIX-only; the win32 guard test is dropped)."""
+"""Port of pi client `test/unix.test.ts` (POSIX-only; the win32 guard test is dropped).
+
+Driven against the transport directly (the protocol client is not ported —
+UPSTREAM_EXPERIMENTAL_RULING.md): the framed exchange feeds a `FrameDecoder`
+from the transport handlers instead of going through the client's handshake,
+and the truncated-final-frame case is gone with the client that rejected it.
+"""
 
 import pytest
 import tonio.colored as tonio
 from tonio.colored import net
 
-from pidrei_client import PiClient, PiClientOptions
 from pidrei_client.transport import ByteTransportHandlers
 from pidrei_client.unix import UnixTransportOptions, create_unix_transport_factory
-from pidrei_protocol import (
-    PROTOCOL_VERSION,
-    ClientMessageDecoder,
-    ProtocolValidationError,
-    ServerSnapshot,
-    encode_server_message,
-)
-
-
-SERVER_SNAPSHOT: ServerSnapshot = {
-    "serverId": "unix-server",
-    "protocolVersion": PROTOCOL_VERSION,
-    "revision": 4,
-    "sessions": [],
-    "models": [],
-}
+from pidrei_protocol import FrameDecoder, decode_cbor, encode_cbor, encode_frame
 
 
 def test_rejects_invalid_unix_transport_options():
@@ -35,57 +25,55 @@ def test_rejects_invalid_unix_transport_options():
 
 
 @pytest.mark.tonio
-async def test_pi_client_exchanges_fragmented_framed_messages_over_a_real_unix_socket(sock_dir):
+async def test_exchanges_fragmented_framed_messages_over_a_real_unix_socket(sock_dir):
     socket_path = str(sock_dir / "pi.sock")
     listener = await net.open_unix_listener(socket_path)
+    request = {"type": "request", "id": "1", "call": {"serviceId": "sessions", "member": "list", "args": []}}
+    replies = [{"type": "hello", "version": 1}, {"type": "response", "id": "1", "ok": True, "result": []}]
 
     async def serve():
         stream = await listener.accept()
-        decoder = ClientMessageDecoder()
+        decoder = FrameDecoder()
         try:
             while True:
                 chunk = await stream.receive_some()
                 if not chunk:
                     return
-                for message in decoder.push(chunk):
-                    if message["type"] == "hello":
-                        hello = encode_server_message(
-                            {
-                                "type": "hello",
-                                "version": PROTOCOL_VERSION,
-                                "connectionId": "unix-connection",
-                                "snapshot": SERVER_SNAPSHOT,
-                            }
-                        )
-                        for byte in hello:
-                            await stream.send_all(bytes([byte]))
-                    else:
-                        response = encode_server_message(
-                            {
-                                "type": "response",
-                                "id": message["id"],
-                                "ok": True,
-                                "result": {"command": "list", "sessions": []},
-                            }
-                        )
-                        split = len(response) // 2
-                        await stream.send_all(response[:split])
-                        await stream.send_all(response[split:])
+                for frame in decoder.push(chunk):
+                    assert decode_cbor(frame) == request
+                    # First reply one byte at a time, second reply split in two.
+                    for byte in encode_frame(encode_cbor(replies[0])):
+                        await stream.send_all(bytes([byte]))
+                    response = encode_frame(encode_cbor(replies[1]))
+                    split = len(response) // 2
+                    await stream.send_all(response[:split])
+                    await stream.send_all(response[split:])
+                    return
         finally:
             stream.close()
 
     server_task = tonio.spawn(serve())
-    client = PiClient(
-        PiClientOptions(transport_factory=create_unix_transport_factory(UnixTransportOptions(path=socket_path)))
-    )
+    decoder = FrameDecoder()
+    received: list[object] = []
+    errors: list[Exception] = []
+    done = tonio.Event()
 
+    def on_data(chunk: bytes) -> None:
+        for frame in decoder.push(chunk):
+            received.append(decode_cbor(frame))
+            if len(received) == len(replies):
+                done.set()
+
+    factory = create_unix_transport_factory(UnixTransportOptions(path=socket_path))
+    transport = await factory(ByteTransportHandlers(on_data=on_data, on_close=done.set, on_error=errors.append))
     try:
-        assert await client.connect() == SERVER_SNAPSHOT
-        first = client.list_sessions()
-        second = client.list_sessions()
-        assert [await first, await second] == [[], []]
+        await transport.send(encode_frame(encode_cbor(request)))
+        _, completed = await tonio.time.timeout(done.wait(), 5)
+        assert completed, "timed out waiting for the framed replies"
+        assert received == replies
+        assert errors == []
     finally:
-        client.disconnect()
+        transport.close()
         await server_task
         listener.close()
 
@@ -147,51 +135,6 @@ async def test_bounds_pending_writes_preserves_order_and_reports_remote_end_once
         assert close_count[0] == 1
     finally:
         transport.close()
-        await server_task
-        listener.close()
-
-
-@pytest.mark.tonio
-async def test_pi_client_rejects_a_truncated_final_frame_from_a_real_unix_socket(sock_dir):
-    socket_path = str(sock_dir / "pi.sock")
-    listener = await net.open_unix_listener(socket_path)
-
-    async def serve():
-        stream = await listener.accept()
-        decoder = ClientMessageDecoder()
-        while True:
-            chunk = await stream.receive_some()
-            if not chunk:
-                return
-            for message in decoder.push(chunk):
-                if message["type"] == "hello":
-                    await stream.send_all(
-                        encode_server_message(
-                            {
-                                "type": "hello",
-                                "version": PROTOCOL_VERSION,
-                                "connectionId": "unix-truncated",
-                                "snapshot": SERVER_SNAPSHOT,
-                            }
-                        )
-                    )
-                else:
-                    await stream.send_all(bytes([0, 0, 0, 2, 1]))
-                    stream.send_eof()
-                    return
-
-    server_task = tonio.spawn(serve())
-    client = PiClient(
-        PiClientOptions(transport_factory=create_unix_transport_factory(UnixTransportOptions(path=socket_path)))
-    )
-
-    try:
-        await client.connect()
-        with pytest.raises(ProtocolValidationError):
-            await client.list_sessions()
-        assert client.connection_state == "disconnected"
-    finally:
-        client.disconnect()
         await server_task
         listener.close()
 
