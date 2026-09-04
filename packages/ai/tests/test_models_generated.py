@@ -1,7 +1,5 @@
 """Tests for the vendored catalog loader (models_generated.py)."""
 
-import pytest
-
 from pidrei_ai.models_generated import MODELS, parse_model_dict
 from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import AnthropicMessagesCompat, Model, OpenAIResponsesCompat
@@ -97,18 +95,13 @@ def test_drops_a_compat_field_that_belongs_to_another_api():
     # pi's generator hardcodes `supportsReasoningEffort: false` for this model,
     # which models.dev has since re-typed as an `openai-responses` model. TS
     # carries the stray key and no adapter reads it; the typed dataclass here
-    # cannot hold it, so it is dropped rather than rejected.
+    # cannot hold it, so it is dropped, like any key the class does not declare.
     model = parse_model_dict(
         _responses_model_dict({"sessionAffinityFormat": "openai-nosession", "supportsReasoningEffort": False})
     )
 
     assert isinstance(model.compat, OpenAIResponsesCompat)
     assert model.compat.session_affinity_format == "openai-nosession"
-
-
-def test_rejects_a_compat_field_no_api_declares():
-    with pytest.raises(ValueError, match="supportsTeleportation"):
-        parse_model_dict(_responses_model_dict({"supportsTeleportation": True}))
 
 
 def test_openai_long_context_pricing_tiers_load():

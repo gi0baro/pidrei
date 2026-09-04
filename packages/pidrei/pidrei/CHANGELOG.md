@@ -6,6 +6,15 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.84.4.1] - 2026-09-04
+
+### Fixed
+
+- Model catalog refreshes no longer fail when the pi.dev catalog carries a
+  compat field this release does not declare (such as `supportsMidConvoEffort`
+  from pi 0.85). Unknown compat keys are dropped, as pi does, instead of
+  rejecting the whole provider catalog on every refresh.
+
 ## [0.84.4.0] - 2026-08-30
 
 ### Added

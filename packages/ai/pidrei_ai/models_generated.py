@@ -59,17 +59,6 @@ def _compat_fields(compat_class: type) -> frozenset[str]:
     return frozenset(field.name for field in fields(compat_class))
 
 
-# Every compat field pi declares, across all APIs. pi's generator sometimes
-# attaches a field belonging to another API's compat interface (e.g. the
-# hardcoded `supportsReasoningEffort: false` for OpenCode's grok-build-0.1,
-# which models.dev has since re-typed as an `openai-responses` model). TS
-# carries the extra key along and no adapter ever reads it, so it is inert
-# upstream; the typed dataclasses here cannot hold it, so it is dropped.
-# A key no compat class declares is a genuinely new upstream field and still
-# raises — that is what this check is for.
-_ANY_COMPAT_FIELD = frozenset().union(*(_compat_fields(cls) for cls in set(_COMPAT_CLASSES.values())))
-
-
 def _parse_fallback_targets(raw: list[dict[str, Any]]) -> list[AnthropicAllowedFallbackModel]:
     return [
         AnthropicAllowedFallbackModel(
@@ -93,10 +82,12 @@ def _parse_compat(api: str, raw: dict[str, Any]) -> ModelCompat:
     kwargs: dict[str, Any] = {}
     for key, value in raw.items():
         name = _snake(key)
+        # Unknown keys are dropped, as pi does: its catalog parse is a plain
+        # spread and no adapter reads outside the typed compat surface, so a
+        # field from a newer pi.dev catalog (or one pi's generator attached
+        # from another API's interface) is inert there and must be here too.
         if name not in known:
-            if name in _ANY_COMPAT_FIELD:
-                continue
-            raise ValueError(f"Unknown {compat_class.__name__} field {key!r} in catalog data")
+            continue
         parser = COMPAT_FIELD_PARSERS.get(name)
         kwargs[name] = parser(value) if parser is not None else value
     return compat_class(**kwargs)
