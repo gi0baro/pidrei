@@ -528,6 +528,14 @@ async def _execute_tool_calls_parallel(
 
         def make_entry(prepared: _PreparedToolCall) -> Callable[[], Awaitable[_FinalizedToolCallOutcome]]:
             async def run() -> _FinalizedToolCallOutcome:
+                if cancel is not None and cancel.cancelled:
+                    finalized = _FinalizedToolCallOutcome(
+                        tool_call=prepared.tool_call,
+                        result=_create_error_tool_result("Operation aborted"),
+                        is_error=True,
+                    )
+                    await _emit_tool_execution_end(finalized, emit)
+                    return finalized
                 executed = await _execute_prepared_tool_call(prepared, cancel, emit)
                 finalized = await _finalize_executed_tool_call(
                     current_context, assistant_message, prepared, executed, config, cancel

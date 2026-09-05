@@ -13,11 +13,13 @@ import tonio.colored as tonio
 
 from pidrei.core.compaction import SUMMARIZATION_SYSTEM_PROMPT
 from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
+from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.registry import create_provider
-from pidrei_ai.types import DoneEvent, ErrorEvent, StartEvent, Usage, UsageCost
+from pidrei_ai.types import DoneEvent, ErrorEvent, StartEvent, TextContent, Usage, UsageCost, UserMessage
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 from .agent_session_helpers import create_agent_session, create_assistant_message
+from .harness import create_harness
 
 
 def _make_llm_stream_fn(*, summary_text="## Goal\nSummarized work.", answer_prefix="answer"):
@@ -534,3 +536,74 @@ class TestTreeNavigation:
         assert result.summary_entry is not None
         assert len(result.summary_entry["summary"]) > 0
         session.dispose()
+
+
+async def _create_abortable_compaction_harness():
+    """pi's createAbortableCompactionHarness: a `session_before_compact` hook
+    that parks until its signal fires, then cancels the compaction."""
+    compaction_started = tonio.Event()
+
+    def factory(pi) -> None:
+        async def on_before_compact(event, _ctx):
+            compaction_started.set()
+            await event["signal"].wait()
+            return {"cancel": True}
+
+        pi.on("session_before_compact", on_before_compact)
+
+    harness = await create_harness(settings={"compaction": {"keepRecentTokens": 1}}, extension_factories=[factory])
+    await harness.session_manager.append_message(
+        UserMessage(content=[TextContent(text="old user message")], timestamp=1_000)
+    )
+    await harness.session_manager.append_message(faux_assistant_message("old assistant response", timestamp=1_500))
+    harness.session.agent.state.messages = harness.session_manager.build_session_context().messages
+    return harness, compaction_started
+
+
+async def _compact_capturing_error(harness, errors: list) -> None:
+    try:
+        await harness.session.compact()
+    except Exception as error:
+        errors.append(error)
+
+
+class TestCompactionAbort:
+    @pytest.mark.tonio
+    async def test_cancels_in_progress_manual_compaction_when_abort_compaction_is_called(self):
+        harness, compaction_started = await _create_abortable_compaction_harness()
+        try:
+            errors: list[Exception] = []
+            compact_task = tonio.spawn(_compact_capturing_error(harness, errors))
+            await compaction_started.wait(5)
+            assert compaction_started.is_set()
+            harness.session.abort_compaction()
+
+            await compact_task
+            assert [str(error) for error in errors] == ["Compaction cancelled"]
+        finally:
+            harness.cleanup()
+
+    @pytest.mark.tonio
+    async def test_aborts_an_in_progress_manual_compaction_and_waits_until_the_session_is_idle(self):
+        # Regression test for #8920.
+        harness, compaction_started = await _create_abortable_compaction_harness()
+        try:
+            harness.set_responses([faux_assistant_message("continued")])
+            errors: list[Exception] = []
+            compact_task = tonio.spawn(_compact_capturing_error(harness, errors))
+            await compaction_started.wait(5)
+            assert compaction_started.is_set()
+            await harness.session.abort()
+            await compact_task
+            assert [str(error) for error in errors] == ["Compaction cancelled"]
+
+            compaction_end = harness.events_of_type("compaction_end")[-1]
+            assert compaction_end.reason == "manual"
+            assert compaction_end.aborted is True
+            assert harness.session.is_compacting is False
+            assert harness.session.is_idle is True
+
+            assert await harness.session.prompt("next prompt") is None
+            assert harness.session.get_last_assistant_text() == "continued"
+        finally:
+            harness.cleanup()

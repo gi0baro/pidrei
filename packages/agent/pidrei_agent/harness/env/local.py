@@ -17,7 +17,6 @@ Deviations from pi (documented):
 - Text decoding uses `errors="replace"`, mirroring Node's UTF-8 decoding.
 """
 
-import codecs
 import errno as errno_module
 import math
 import os
@@ -33,6 +32,7 @@ from pathlib import Path
 from urllib.request import url2pathname
 
 import tonio.colored as tonio
+from tonio.colored.sync import channel
 
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -49,6 +49,7 @@ from ..types import (
     ok,
     to_error,
 )
+from ..utils.output_capture import OutputCapture
 
 
 MAX_TIMEOUT_MS = 2_147_483_647
@@ -176,6 +177,115 @@ def _get_shell_env(
     if not inherit_env:
         return {**(extra_env or {})}
     return {**os.environ, **(base_env or {}), **(extra_env or {})}
+
+
+def _append_bytes(path: str, data: bytes) -> None:
+    with open(path, "ab") as file:
+        file.write(data)
+
+
+# Pipe reads are 64 KiB (`receive_some` default), so this many queued chunks is
+# pi's 8 MiB `SPILL_HIGH_WATER_MARK` on the spill write stream.
+SPILL_CHANNEL_SIZE = 128
+
+
+class _OutputPump:
+    """Feeds raw process chunks into the bounded capture and, once the limits
+    are crossed, into the spill file (pi's `feed`/`startSpill`/`writeSpill`
+    closures). Chunks arrive from the stdout and stderr reader tasks.
+
+    The spill is a bounded channel drained by one writer task: pi's write
+    stream with a high-water mark. A reader whose `send` finds the channel
+    full suspends, the pipe fills, and the child blocks on its write — the
+    same pause/resume pi performs on the child's stdio behind `drain`."""
+
+    def __init__(self, env, capture: OutputCapture, *, spill: bool, on_callback_error, on_failure) -> None:
+        self._env = env
+        self._capture = capture
+        self._on_callback_error = on_callback_error
+        self._on_failure = on_failure
+        self._state_lock = threading.RLock()
+        # Raw chunks seen before the limits were crossed: they become the head
+        # of the spill file the moment output overflows.
+        self._spill_prefix: list[bytes] = []
+        self._spilling = False
+        self._spill_path: str | None = None
+        self.spill_error: ExecutionError | None = None
+        self.activity_count = 0
+        self.done = tonio.Event()
+        self._sender = None
+        if spill:
+            self._sender, receiver = channel.channel(SPILL_CHANNEL_SIZE)
+            tonio.spawn.without_tracking(self._write_spill(receiver))
+        else:
+            self.done.set()
+
+    def _fail_spill(self, error: Exception) -> None:
+        cause = to_error(error)
+        with self._state_lock:
+            if self.spill_error is not None:
+                return
+            self.spill_error = ExecutionError("unknown", f"Failed to preserve complete shell output: {cause}", cause)
+        self._on_failure()
+
+    async def _write_spill(self, receiver) -> None:
+        """The single spill writer; `receive()` raises BrokenPipeError once the
+        sender is closed and the queue is drained. After a failure it keeps
+        draining so the readers never park on a dead spill."""
+        try:
+            while True:
+                try:
+                    chunk = await receiver.receive()
+                except BrokenPipeError:
+                    break
+                if self.spill_error is not None:
+                    continue
+                if self._spill_path is None:
+                    created = await self._env.create_temp_file("pidrei-output-", ".log")
+                    if not created.ok:
+                        self._fail_spill(created.error)
+                        continue
+                    self._spill_path = created.value
+                    self._capture.set_spill_path(created.value)
+                try:
+                    await tonio.spawn_blocking(_append_bytes, self._spill_path, chunk)
+                except Exception as error:
+                    self._fail_spill(error)
+        finally:
+            self.done.set()
+
+    async def feed(self, chunk: bytes) -> None:
+        to_write: list[bytes] = []
+        with self._state_lock:
+            self.activity_count += 1
+            try:
+                self._capture.push(chunk)
+            except Exception as error:
+                self._on_callback_error(error)
+                return
+            if self._sender is None or not chunk:
+                return
+            if self._spilling:
+                to_write.append(chunk)
+            elif self._capture.truncated:
+                self._spilling = True
+                to_write.extend(self._spill_prefix)
+                self._spill_prefix.clear()
+                to_write.append(chunk)
+            else:
+                self._spill_prefix.append(chunk)
+        try:
+            for pending in to_write:
+                await self._sender.send(pending)
+        except BrokenPipeError:
+            # The pump was closed while this reader was still draining a pipe:
+            # exec has already failed and given up on the spill.
+            pass
+
+    def close(self) -> None:
+        """No more chunks: let the writer drain and set `done` (pi's `finishSpill`)."""
+        if self._sender is not None:
+            self._sender.close()
 
 
 def kill_process_tree(pid: int) -> None:
@@ -484,52 +594,51 @@ class LocalExecutionEnv:
         with self._active_child_pids_lock:
             self._active_child_pids.add(pid)
 
-        state_lock = threading.Lock()
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
+        state_lock = threading.RLock()
         callback_error: ExecutionError | None = None
         timed_out = False
-        activity_count = 0
         readers_done = tonio.Event()
 
-        def handle_chunk(parts: list[str], callback, text: str) -> None:
-            nonlocal callback_error, activity_count
+        def fail_callback(error: Exception) -> None:
+            nonlocal callback_error
+            cause = to_error(error)
             with state_lock:
-                parts.append(text)
-                activity_count += 1
-            if callback is not None:
-                try:
-                    callback(text, cancel)
-                except Exception as error:
-                    cause = to_error(error)
-                    with state_lock:
-                        if callback_error is None:
-                            callback_error = ExecutionError("callback_error", str(cause), cause)
-                    kill_process_tree(pid)
+                if callback_error is not None:
+                    return
+                callback_error = ExecutionError("callback_error", str(cause), cause)
+            kill_process_tree(pid)
 
-        async def read_stream(stream, parts: list[str], callback) -> None:
-            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        try:
+            capture = OutputCapture(options.capture, cancel, on_update=options.on_update, on_error=fail_callback)
+        except Exception as error:
+            kill_process_tree(pid)
+            with self._active_child_pids_lock:
+                self._active_child_pids.discard(pid)
+            cause = to_error(error)
+            return err(ExecutionError("unknown", str(cause), cause))
+
+        pump = _OutputPump(
+            self,
+            capture,
+            spill=options.capture is not None and options.capture.spill,
+            on_callback_error=fail_callback,
+            on_failure=lambda: kill_process_tree(pid),
+        )
+
+        async def read_stream(stream) -> None:
             try:
                 while True:
                     chunk = await stream.receive_some()
                     if not chunk:
                         break
-                    text = decoder.decode(chunk)
-                    if text:
-                        handle_chunk(parts, callback, text)
-                final = decoder.decode(b"", True)
-                if final:
-                    handle_chunk(parts, callback, final)
+                    await pump.feed(chunk)
             except Exception:
                 # Stream force-closed by the post-exit grace logic or broken pipe.
                 pass
 
         async def read_streams() -> None:
             try:
-                await tonio.spawn(
-                    read_stream(process.stdout, stdout_parts, options.on_stdout),
-                    read_stream(process.stderr, stderr_parts, options.on_stderr),
-                )
+                await tonio.spawn(read_stream(process.stdout), read_stream(process.stderr))
             finally:
                 readers_done.set()
 
@@ -551,7 +660,7 @@ class LocalExecutionEnv:
             unsubscribe = cancel.on_cancel(lambda _reason: kill_process_tree(pid))
 
         try:
-            exit_code = await process.wait()
+            raw_exit_code = await process.wait()
         except Exception as error:
             exited.set()
             if watchdog_join is not None:
@@ -560,6 +669,8 @@ class LocalExecutionEnv:
                 unsubscribe()
             with self._active_child_pids_lock:
                 self._active_child_pids.discard(pid)
+            pump.close()
+            capture.dispose()
             cause = to_error(error)
             return err(ExecutionError("spawn_error", str(cause), cause))
         exited.set()
@@ -568,16 +679,12 @@ class LocalExecutionEnv:
 
         # Post-exit stdio grace: detached descendants can keep the inherited
         # pipes open. Give the readers a grace window per burst of data (pi
-        # re-arms a 100 ms idle timer on each chunk), then force-close.
+        # re-arms a 100 ms idle timer on each chunk; a draining spill write
+        # counts as activity), then force-close.
         while not readers_done.is_set():
-            with state_lock:
-                before = activity_count
+            before = pump.activity_count
             await readers_done.wait(EXIT_STDIO_GRACE_SECONDS)
-            if readers_done.is_set():
-                break
-            with state_lock:
-                unchanged = activity_count == before
-            if unchanged:
+            if readers_done.is_set() or pump.activity_count == before:
                 break
 
         # Release the pipe fds (pi destroys the stdio streams at finalize).
@@ -589,24 +696,50 @@ class LocalExecutionEnv:
                     stream.close()
                 except Exception:
                     pass
+        # pi's `finishSpill()`: once both readers have stopped feeding, close
+        # the spill channel and wait for the writer to drain it to disk.
+        await readers_done.wait(None)
+        pump.close()
+        await pump.done.wait(None)
 
         if unsubscribe is not None:
             unsubscribe()
         with self._active_child_pids_lock:
             self._active_child_pids.discard(pid)
 
+        try:
+            capture.finish()
+            capture.flush()
+        except Exception as error:
+            fail_callback(error)
         with state_lock:
             captured_callback_error = callback_error
-            stdout = "".join(stdout_parts)
-            stderr = "".join(stderr_parts)
-        if captured_callback_error is not None:
-            return err(captured_callback_error)
-        if timed_out:
-            return err(ExecutionError("timeout", f"timeout:{options.timeout}"))
-        if cancel is not None and cancel.cancelled:
-            return err(ExecutionError("aborted", "aborted"))
-        # Node reports `null` for signal-killed children and pi maps it to 0.
-        return ok(ShellExecResult(stdout=stdout, stderr=stderr, exit_code=max(exit_code, 0)))
+        captured_spill_error = pump.spill_error
+        try:
+            if captured_callback_error is not None:
+                return err(captured_callback_error)
+            if timed_out:
+                return err(ExecutionError("timeout", f"timeout:{options.timeout}"))
+            if cancel is not None and cancel.cancelled:
+                return err(ExecutionError("aborted", "aborted"))
+            if captured_spill_error is not None:
+                return err(captured_spill_error)
+            output = capture.snapshot()
+            # A process killed by a signal (e.g. OOM killer) has no exit code —
+            # Python reports the negated signal number; map it to the
+            # conventional 128 + signal number so callers do not mistake it for
+            # a successful exit.
+            exit_code = raw_exit_code if raw_exit_code >= 0 else 128 - raw_exit_code
+            return ok(
+                ShellExecResult(
+                    exit_code=exit_code,
+                    truncation=output.truncation,
+                    spill_path=output.spill_path,
+                    last_line_bytes=output.last_line_bytes,
+                )
+            )
+        finally:
+            capture.dispose()
 
     async def cleanup(self, cancel: CancelToken | None = None) -> None:
         with self._active_child_pids_lock:

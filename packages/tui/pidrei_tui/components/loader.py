@@ -36,6 +36,7 @@ class Loader(Text):
         self._current_frame = 0
         self._interval: Interval | None = None
         self._ui = ui
+        self._updating_display = False
         self._render_indicator_verbatim = False
         self._spinner_color_fn = spinner_color_fn
         self._message_color_fn = message_color_fn
@@ -44,6 +45,13 @@ class Loader(Text):
 
     def render(self, width: int) -> list[str]:
         return ["", *super().render(width)]
+
+    def invalidate(self) -> None:
+        super().invalidate()
+        # `Text.set_text` invalidates on its own (pi's does not), so the
+        # refresh must not re-enter itself through that call.
+        if not self._updating_display:
+            self._update_display()
 
     def start(self) -> None:
         self._update_display()
@@ -78,10 +86,17 @@ class Loader(Text):
 
         self._interval = Interval(self._interval_ms, advance)
 
-    def _update_display(self) -> None:
+    def _get_rendered_indicator(self) -> str:
         frame = self._frames[self._current_frame] if self._current_frame < len(self._frames) else ""
-        rendered_frame = frame if self._render_indicator_verbatim else self._spinner_color_fn(frame)
-        indicator = f"{rendered_frame} " if frame else ""
-        self.set_text(f"{indicator}{self._message_color_fn(self._message)}")
+        return frame if self._render_indicator_verbatim else self._spinner_color_fn(frame)
+
+    def _update_display(self) -> None:
+        rendered_frame = self._get_rendered_indicator()
+        indicator = f"{rendered_frame} " if rendered_frame else ""
+        self._updating_display = True
+        try:
+            self.set_text(f"{indicator}{self._message_color_fn(self._message)}")
+        finally:
+            self._updating_display = False
         if self._ui is not None:
             self._ui.request_render()

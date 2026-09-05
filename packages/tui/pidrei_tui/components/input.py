@@ -12,7 +12,7 @@ from ..keys import decode_kitty_printable
 from ..kill_ring import KillRing
 from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult
 from ..undo_stack import UndoStack
-from ..utils import is_whitespace_char, slice_by_column, visible_width
+from ..utils import is_whitespace_char, slice_by_column, truncate_to_width, visible_width
 from ..word_navigation import find_word_backward, find_word_forward
 
 
@@ -20,9 +20,15 @@ __all__ = ["Input"]
 
 
 class Input:
-    def __init__(self) -> None:
+    def __init__(self, options: dict | None = None) -> None:
+        """``options`` mirrors pi's ``InputOptions``: ``prompt`` (default "> "),
+        ``placeholder`` and ``placeholderStyle`` (a text -> styled text callable)."""
+        options = options or {}
         self._value = ""
         self._cursor = 0  # Cursor position in the value
+        self._prompt = options.get("prompt") if options.get("prompt") is not None else "> "
+        self._placeholder = options.get("placeholder") or ""
+        self._placeholder_style = options.get("placeholderStyle") or (lambda text: text)
         self._rendered_start_column = 0
         self.on_submit = None
         self.on_escape = None
@@ -363,11 +369,22 @@ class Input:
 
     def render(self, width: int) -> list[str]:
         # Calculate visible window
-        prompt = "> "
-        available_width = width - len(prompt)
+        prompt = self._prompt
+        available_width = width - visible_width(prompt)
 
         if available_width <= 0:
-            return [prompt]
+            return [truncate_to_width(prompt, width, "")]
+
+        if len(self._value) == 0 and self._placeholder:
+            placeholder = truncate_to_width(self._placeholder, available_width, "")
+            first_grapheme = next(grapheme_lib.graphemes(placeholder), None)
+            at_cursor = first_grapheme if first_grapheme is not None else " "
+            after_cursor = placeholder[len(at_cursor) :]
+            marker = CURSOR_MARKER if self.focused else ""
+            cursor_char = f"\x1b[7m{self._placeholder_style(at_cursor)}\x1b[27m"
+            text_with_cursor = marker + cursor_char + self._placeholder_style(after_cursor)
+            padding = " " * max(0, available_width - visible_width(text_with_cursor))
+            return [prompt + text_with_cursor + padding]
 
         visible_text = ""
         cursor_display = self._cursor

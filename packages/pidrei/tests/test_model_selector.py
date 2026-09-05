@@ -35,6 +35,38 @@ def render(selector: ModelSelectorComponent) -> str:
 
 
 @pytest.mark.tonio
+async def test_keeps_the_current_model_marked_while_browsing():
+    harness = await create_harness(
+        models=[
+            {"id": "current-model", "name": "Current Model", "reasoning": True},
+            {"id": "browsed-model", "name": "Browsed Model", "reasoning": True},
+        ]
+    )
+    try:
+        current_model = harness.get_model("current-model")
+        selector = ModelSelectorComponent(
+            fake_tui(),
+            current_model,
+            harness.session.model_runtime,
+            [],
+            lambda *args: None,
+            lambda *args: None,
+        )
+
+        def get_model_row(model_id: str) -> str | None:
+            row = next((line for line in render(selector).split("\n") if f"{model_id} [" in line), None)
+            return row.rstrip() if row is not None else None
+
+        assert get_model_row("current-model") == f"→ ✓ current-model [{current_model.provider}]"
+        await selector.handle_input("\x1b[B")
+        assert get_model_row("current-model") == f"  ✓ current-model [{current_model.provider}]"
+        assert get_model_row("browsed-model") == f"→   browsed-model [{current_model.provider}]"
+        selector.dispose()
+    finally:
+        harness.cleanup()
+
+
+@pytest.mark.tonio
 async def test_lists_every_catalog_that_failed_to_refresh():
     harness = await create_harness()
     try:

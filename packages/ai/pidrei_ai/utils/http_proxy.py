@@ -29,7 +29,45 @@ UNSUPPORTED_PROXY_PROTOCOL_MESSAGE = (
     "Unsupported proxy protocol. SOCKS and PAC proxy URLs are not supported; use an HTTP or HTTPS proxy URL."
 )
 
-_HOST_PORT_RE = re.compile(r"^(.+):(\d+)$")
+_LEADING_INT_RE = re.compile(r"\s*[+-]?\d+")
+
+
+def _parse_int(text: str) -> int | None:
+    """JS `Number.parseInt(text, 10)`: leading digits, or None for NaN."""
+    match = _LEADING_INT_RE.match(text)
+    return int(match.group()) if match else None
+
+
+def _strip_brackets(host: str) -> str:
+    return host[1:-1] if host.startswith("[") and host.endswith("]") else host
+
+
+def _parse_no_proxy_entry(entry: str) -> tuple[str, int] | None:
+    trimmed = entry.strip().lower()
+    if not trimmed:
+        return None
+
+    if trimmed.startswith("["):
+        closing_bracket = trimmed.find("]")
+        if closing_bracket != -1:
+            host = trimmed[1:closing_bracket]
+            rest = trimmed[closing_bracket + 1 :]
+            if rest.startswith(":"):
+                port = _parse_int(rest[1:])
+                return host, 0 if port is None else port
+            return host, 0
+
+    if ":" in trimmed and len(trimmed.split(":")) > 2:
+        return trimmed, 0
+
+    colon_index = trimmed.rfind(":")
+    if colon_index != -1 and colon_index == trimmed.find(":"):
+        host = trimmed[:colon_index]
+        port = _parse_int(trimmed[colon_index + 1 :])
+        if port is not None:
+            return host, port
+
+    return trimmed, 0
 
 
 def _get_proxy_env(key: str, env: ProviderEnv | None = None) -> str:
@@ -53,17 +91,30 @@ def _should_proxy_hostname(hostname: str, port: int, env: ProviderEnv | None = N
     if no_proxy == "*":
         return False
 
+    normalized_target_host = _strip_brackets(hostname.lower())
+
     def allows(entry: str) -> bool:
-        if not entry:
+        parsed = _parse_no_proxy_entry(entry)
+        if parsed is None:
             return True
-        match = _HOST_PORT_RE.match(entry)
-        proxy_hostname = match.group(1) if match else entry
-        proxy_port = int(match.group(2)) if match else 0
-        if proxy_port and proxy_port != port:
+        entry_host, entry_port = parsed
+
+        if entry_port and entry_port != port:
             return True
-        if not proxy_hostname.startswith((".", "*")):
-            return hostname != proxy_hostname
-        return not hostname.endswith(proxy_hostname.removeprefix("*"))
+
+        domain = _strip_brackets(entry_host)
+        if domain.startswith("*."):
+            domain = domain[2:]
+        elif domain.startswith((".", "*")):
+            domain = domain[1:]
+
+        if not domain:
+            return True
+
+        if normalized_target_host == domain:
+            return False
+
+        return not normalized_target_host.endswith(f".{domain}")
 
     return all(allows(entry) for entry in re.split(r"[,\s]", no_proxy))
 
@@ -76,7 +127,7 @@ def _get_proxy_for_url(target_url: str, env: ProviderEnv | None = None) -> str:
     protocol = parsed.scheme
     # `netloc` carries userinfo too; pi reads `URL.host`, which does not.
     host = parsed.netloc.rpartition("@")[2]
-    hostname = re.sub(r":\d*$", "", host)
+    hostname = _strip_brackets(parsed.hostname or re.sub(r":\d*$", "", host))
     try:
         port = int(parsed.port or 0)
     except ValueError:

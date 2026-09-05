@@ -270,7 +270,10 @@ async def generate_branch_summary(
     # running through agent state/events. Retried via complete_summarization so
     # transient stream drops reuse the configured retry policy.
     context = Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages)
-    request_options = SimpleStreamOptions(api_key=api_key, headers=headers, env=env, cancel=cancel, max_tokens=2048)
+    max_tokens = min(4096, model.max_tokens if model.max_tokens > 0 else float("inf"))
+    request_options = SimpleStreamOptions(
+        api_key=api_key, headers=headers, env=env, cancel=cancel, max_tokens=max_tokens
+    )
     response = await complete_summarization(model, context, request_options, stream_fn, retry, callbacks)
 
     # Check if aborted or errored

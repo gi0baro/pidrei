@@ -254,6 +254,8 @@ class AssistantMessage:
     # Concrete response model when different from the requested one (e.g. OpenRouter `auto`).
     response_model: str | None = None
     response_id: str | None = None  # Provider-specific response/message identifier
+    # Exact provider-native effort level used for this response. None for legacy or unmanaged responses.
+    provider_thinking_level: str | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -398,6 +400,11 @@ class OpenAICompletionsCompat:
     # `"thinking_token_budget"` is vLLM, `"thinking_budget"` is Qwen/DashScope/SGLang,
     # `"thinking_budget_tokens"` is llama.cpp. Off by default; not set on the generated catalog.
     thinking_token_budget_field: ThinkingTokenBudgetField | None = None
+    # vLLM scheduler priority sent as the top-level `priority` request field (lower values are
+    # handled earlier; server default 0). Only meaningful when vLLM runs with
+    # `--scheduling-policy priority`; useful for keeping background/batch work from stalling
+    # interactive sessions. Off by default; not set on the generated catalog.
+    vllm_priority: int | None = None
     # Alias for `thinking_token_budget_field="thinking_token_budget"` (vLLM).
     # Prefer `thinking_token_budget_field`. Default: False.
     supports_thinking_token_budget: bool | None = None
@@ -423,6 +430,8 @@ class OpenAIResponsesCompat:
     supports_additional_tools: bool | None = None
     supports_tool_search: bool | None = None  # default False
     supports_explicit_prompt_cache_mode: bool | None = None  # default False
+    # Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: True.
+    supports_max_output_tokens: bool | None = None
 
 
 @dataclass(slots=True)
@@ -444,6 +453,9 @@ class AnthropicMessagesCompat:
     # Replay empty thinking signatures as `signature: ""` instead of converting to text.
     allow_empty_signature: bool | None = None  # default False
     supports_strict_tools: bool | None = None  # default False
+    # Whether the exact model transport supports effort-only system messages and
+    # thinking binding controls. Default False.
+    supports_mid_convo_effort: bool | None = None
     # Models Anthropic accepts in `fallbacks` for server-side refusal fallback, with
     # local pricing metadata for returned fallback responses. When absent or empty,
     # callers must omit `fallbacks`; Anthropic rejects the field for models with no
@@ -705,16 +717,15 @@ class ErrorEvent:
 # Successful streams emit `start` before partial updates and terminate with
 # `done`. A stream may terminate directly with `error` when request setup fails
 # before generation starts; after `start`, failures also terminate with `error`.
+# Direct `stream_simple()` calls raise synchronously when request auth is missing.
 # Updates and `done` must never appear before `start`.
 #
 # `partial` is the shared live response-so-far helper, not an event-time
 # snapshot. Text and thinking blocks are empty when their `*_start` event is
 # emitted and grow only through their corresponding `*_delta` events until the
 # authoritative `*_end`. Redacted thinking may be complete at start and emit no
-# deltas. A streaming tool call starts with empty arguments and emits its full
-# raw JSON through `toolcall_delta`; a provider that starts with complete
-# arguments must emit a cumulative delta prefix that parses to those arguments
-# before emitting any later argument delta.
+# deltas. Tool-call arguments at `toolcall_start` are provider-specific;
+# `toolcall_delta` carries subsequent JSON updates.
 type AssistantMessageEvent = (
     StartEvent
     | TextStartEvent

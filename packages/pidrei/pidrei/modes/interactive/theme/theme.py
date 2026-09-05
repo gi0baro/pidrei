@@ -62,7 +62,6 @@ def set_theme_json_validator(validator) -> None:
 
 THEME_BG_KEYS = (
     "selectedBg",
-    "scrollbarThumb",
     "searchMatchBg",
     "userMessageBg",
     "customMessageBg",
@@ -192,12 +191,15 @@ def _resolve_theme_colors(colors: dict, vars_map: dict | None = None) -> dict:
 
 
 def _with_theme_color_fallbacks(colors: dict) -> dict:
+    scrollbar_track = colors.get("scrollbarTrack")
+    if scrollbar_track is None:
+        scrollbar_track = colors["muted"]
+    scrollbar_thumb = colors.get("scrollbarThumb")
+    if scrollbar_thumb is None:
+        scrollbar_thumb = colors["text"]
     fallback = colors.get("thinkingMax")
     if fallback is None:
         fallback = colors["thinkingXhigh"]
-    scrollbar_thumb = colors.get("scrollbarThumb")
-    if scrollbar_thumb is None:
-        scrollbar_thumb = colors["selectedBg"]
     search_match_bg = colors.get("searchMatchBg")
     if search_match_bg is None:
         search_match_bg = colors["selectedBg"]
@@ -206,8 +208,9 @@ def _with_theme_color_fallbacks(colors: dict) -> dict:
         search_match_text = colors["text"]
     return {
         **colors,
-        "thinkingMax": fallback,
+        "scrollbarTrack": scrollbar_track,
         "scrollbarThumb": scrollbar_thumb,
+        "thinkingMax": fallback,
         "searchMatchBg": search_match_bg,
         "searchMatchText": search_match_text,
     }
@@ -231,13 +234,16 @@ class Theme:
         search_match_text = fg_colors.get("searchMatchText")
         if search_match_text is None:
             search_match_text = fg_colors["text"]
-        self._fg_colors = {
-            key: _fg_ansi(value, mode)
-            for key, value in {**fg_colors, "thinkingMax": thinking_max, "searchMatchText": search_match_text}.items()
+        foregrounds = {
+            **fg_colors,
+            "scrollbarTrack": fg_colors.get("scrollbarTrack") or fg_colors["muted"],
+            "scrollbarThumb": fg_colors.get("scrollbarThumb") or fg_colors["text"],
+            "thinkingMax": thinking_max,
+            "searchMatchText": search_match_text,
         }
+        self._fg_colors = {key: _fg_ansi(value, mode) for key, value in foregrounds.items()}
         backgrounds = {
             **bg_colors,
-            "scrollbarThumb": bg_colors.get("scrollbarThumb") or bg_colors["selectedBg"],
             "searchMatchBg": bg_colors.get("searchMatchBg") or bg_colors["selectedBg"],
         }
         self._bg_colors = {key: _bg_ansi(value, mode) for key, value in backgrounds.items()}

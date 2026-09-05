@@ -10,8 +10,18 @@ import tonio.colored as tonio
 from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.tools.bash import BashExecution, BashToolOptions, create_bash_tool
 from pidrei_agent.harness.tools.tool_context import ExecutionToolContext
-from pidrei_agent.harness.types import ExecutionError, ShellExecOptions, ShellExecResult, err, get_or_throw, ok
-from pidrei_agent.harness.utils.truncate import DEFAULT_MAX_LINES
+from pidrei_agent.harness.types import (
+    ExecutionError,
+    ShellExecOptions,
+    ShellExecResult,
+    ShellOutputReplace,
+    ShellOutputTruncation,
+    ShellOutputView,
+    err,
+    get_or_throw,
+    ok,
+)
+from pidrei_agent.harness.utils.truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncate_tail
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -28,34 +38,68 @@ def create_context() -> ExecutionToolContext:
     return ExecutionToolContext(env=LocalExecutionEnv(cwd=create_temp_dir()))
 
 
+def fake_shell_output(
+    text: str, options: ShellExecOptions | None, spill_path: str | None = None, cancel=None
+) -> ShellExecResult:
+    """pi's `fakeShellOutput`: publish one complete bounded view of `text` and
+    return the matching exec result."""
+    limits = options.capture.limits if options is not None and options.capture is not None else None
+    truncated = truncate_tail(
+        text,
+        max_lines=limits.max_lines if limits is not None else DEFAULT_MAX_LINES,
+        max_bytes=limits.max_bytes if limits is not None else DEFAULT_MAX_BYTES,
+    )
+    truncation = ShellOutputTruncation(
+        truncated=truncated.truncated,
+        truncated_by=truncated.truncated_by,
+        total_lines=truncated.total_lines,
+        total_bytes=truncated.total_bytes,
+        output_lines=truncated.output_lines,
+        output_bytes=truncated.output_bytes,
+        last_line_partial=truncated.last_line_partial,
+        first_line_exceeds_limit=truncated.first_line_exceeds_limit,
+        max_lines=truncated.max_lines,
+        max_bytes=truncated.max_bytes,
+    )
+    if options is not None and options.on_update is not None:
+        options.on_update(
+            ShellOutputReplace(
+                output=ShellOutputView(text=truncated.content, truncation=truncation, spill_path=spill_path)
+            ),
+            cancel,
+        )
+    return ShellExecResult(exit_code=0, truncation=truncation, spill_path=spill_path)
+
+
 class LateOutputExecutionEnv(LocalExecutionEnv):
-    """Emits one chunk during exec and one after the execution settles."""
+    """Emits one view during exec and one after the execution settles."""
 
     def __init__(self, cwd: str):
         super().__init__(cwd)
         self.settled = tonio.Event()
 
     async def exec(self, _command: str, options: ShellExecOptions | None = None, cancel=None):
-        options.on_stdout("before\n", cancel)
+        result = fake_shell_output("before\n", options, cancel=cancel)
 
         async def late() -> None:
             await self.settled.wait(None)
-            options.on_stdout("late\n", cancel)
+            fake_shell_output("before\nlate\n", options, cancel=cancel)
 
         tonio.spawn.without_tracking(late())
-        return ok(ShellExecResult(stdout="before\n", stderr="", exit_code=0))
+        return ok(result)
 
 
 TRUNCATED_OUTPUT_LINES = DEFAULT_MAX_LINES + 1
 
 
 class TimeoutOutputExecutionEnv(LocalExecutionEnv):
-    """Emits a fixed above-truncation output chunk, then reports a timeout."""
+    """Emits a fixed above-truncation output view, then reports a timeout."""
 
     async def exec(self, _command: str, options: ShellExecOptions | None = None, cancel=None):
         output = "".join(f"line-{index + 1}\n" for index in range(TRUNCATED_OUTPUT_LINES))
-        if options is not None and options.on_stdout is not None:
-            options.on_stdout(output, cancel)
+        spill_path = get_or_throw(await self.create_temp_file("timeout-", ".log"))
+        get_or_throw(await self.write_file(spill_path, output))
+        fake_shell_output(output, options, spill_path, cancel=cancel)
         return err(ExecutionError("timeout", f"timeout:{options.timeout if options is not None else None}"))
 
 

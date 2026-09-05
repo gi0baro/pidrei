@@ -299,13 +299,11 @@ class ModelSelectorComponent(Container):
             is_current = models_are_equal(self._current_model, item["model"])
             default_badge = theme.fg("muted", " · default") if self._is_default_model(item["model"]) else ""
 
+            cursor = theme.fg("accent", "→ ") if is_selected else "  "
+            current_marker = theme.fg("accent", "✓ ") if is_current else "  "
+            model_text = theme.fg("accent", item["id"]) if is_selected else item["id"]
             provider_badge = theme.fg("muted", f"[{item['provider']}]")
-            checkmark = theme.fg("success", " ✓") if is_current else ""
-            if is_selected:
-                prefix = theme.fg("accent", "→ ")
-                line = f"{prefix + theme.fg('accent', item['id'])} {provider_badge}{default_badge}{checkmark}"
-            else:
-                line = f"  {item['id']} {provider_badge}{default_badge}{checkmark}"
+            line = f"{cursor}{current_marker}{model_text} {provider_badge}{default_badge}"
 
             rows.append(Text(line, 0, 0))
 

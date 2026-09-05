@@ -35,6 +35,7 @@ def test_fails_when_an_individual_model_loses_tool_support():
         "qwen3.6-flash",
         "qwen3.7-max",
         "qwen3.7-plus",
+        "qwen3.8-flash",
         "qwen3.8-max",
         "qwen3.8-max-preview",
     ]

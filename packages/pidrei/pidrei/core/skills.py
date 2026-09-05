@@ -319,7 +319,7 @@ def _escape_xml(value: str) -> str:
     )
 
 
-def format_skills_for_prompt(skills: list[Skill]) -> str:
+def format_skills_for_prompt(skills: list[Skill], file_read_tool: str = "read") -> str:
     """Format skills for inclusion in a system prompt (Agent Skills XML format).
 
     Skills with disable_model_invocation=True are excluded from the prompt
@@ -332,7 +332,9 @@ def format_skills_for_prompt(skills: list[Skill]) -> str:
 
     lines = [
         "\n\nThe following skills provide specialized instructions for specific tasks.",
-        "Use the read tool to load a skill's file when the task matches its description.",
+        "Use the read tool to load a skill's file when the task matches its description."
+        if file_read_tool == "read"
+        else "Use bash to load a skill's file when the task matches its description.",
         (
             "When a skill file references a relative path, resolve it against the skill directory "
             "(parent of SKILL.md / dirname of the path) and use that absolute path in tool commands."

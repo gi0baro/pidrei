@@ -144,6 +144,7 @@ class AssistantMessageBuilder:
     timestamp: int
     response_model: str | None = None
     response_id: str | None = None
+    provider_thinking_level: str | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -171,6 +172,7 @@ class AssistantMessageBuilder:
             timestamp=self.timestamp,
             response_model=self.response_model,
             response_id=self.response_id,
+            provider_thinking_level=self.provider_thinking_level,
             diagnostics=list(self.diagnostics) if self.diagnostics is not None else None,
             error_message=self.error_message,
             raw_stop_reason=self.raw_stop_reason,

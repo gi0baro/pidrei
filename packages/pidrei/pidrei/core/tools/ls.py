@@ -58,14 +58,14 @@ def create_ls_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefini
     # runtime, so the union is deliberately not ported.
     ops = operations if operations is not None else LocalLsOperations()
 
-    async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
+    async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
         path = params.get("path")
         limit = params.get("limit")
 
         if cancel is not None and cancel.cancelled:
             raise Exception("Operation aborted")
 
-        dir_path = resolve_to_cwd(path or ".", cwd)
+        dir_path = resolve_to_cwd(path or ".", (ctx.cwd if ctx is not None else None) or cwd)
         effective_limit = int(limit) if limit is not None else DEFAULT_LIMIT
 
         # Check if path exists.

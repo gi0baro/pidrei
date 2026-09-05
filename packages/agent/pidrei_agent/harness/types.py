@@ -191,11 +191,109 @@ class FileSystem(Protocol):
         ...
 
 
+# Which portion of bounded output survives after the limit is crossed.
+type ShellOutputRetention = Literal["head", "tail"]
+
+
+@dataclass(slots=True)
+class ShellOutputLimits:
+    """Source-side limits for one combined shell output view."""
+
+    max_bytes: int
+    max_lines: int
+    retain: ShellOutputRetention = "tail"
+
+
+@dataclass(slots=True)
+class ShellOutputCaptureOptions:
+    """Bounded shell capture requested by the caller."""
+
+    limits: ShellOutputLimits
+    # Preserve complete output in an execution-environment-local file after the limits are crossed.
+    spill: bool = False
+
+
+@dataclass(slots=True)
+class ShellOutputTruncation:
+    """Truncation metadata without a duplicate copy of the retained text
+    (pi: `Omit<TruncationResult, "content">`)."""
+
+    truncated: bool
+    truncated_by: Literal["lines", "bytes"] | None
+    total_lines: int
+    total_bytes: int
+    output_lines: int
+    output_bytes: int
+    last_line_partial: bool
+    first_line_exceeds_limit: bool
+    max_lines: int
+    max_bytes: int
+
+
+@dataclass(slots=True)
+class ShellOutputMetadata:
+    """Metadata accompanying a bounded shell output view."""
+
+    truncation: ShellOutputTruncation
+    spill_path: str | None = None
+    last_line_bytes: int | None = None
+
+
+@dataclass(slots=True)
+class ShellOutputView:
+    """Complete bounded shell output view (pi: `ShellOutputMetadata & {text}`)."""
+
+    text: str
+    truncation: ShellOutputTruncation
+    spill_path: str | None = None
+    last_line_bytes: int | None = None
+
+    @property
+    def metadata(self) -> ShellOutputMetadata:
+        return ShellOutputMetadata(
+            truncation=self.truncation, spill_path=self.spill_path, last_line_bytes=self.last_line_bytes
+        )
+
+
+# Incremental source-side changes to one bounded shell output view.
+@dataclass(slots=True)
+class ShellOutputReplace:
+    output: ShellOutputView
+    kind: Literal["replace"] = "replace"
+
+
+@dataclass(slots=True)
+class ShellOutputAppend:
+    text: str
+    metadata: ShellOutputMetadata
+    kind: Literal["append"] = "append"
+
+
+@dataclass(slots=True)
+class ShellOutputSlide:
+    drop: int
+    text: str
+    metadata: ShellOutputMetadata
+    kind: Literal["slide"] = "slide"
+
+
+@dataclass(slots=True)
+class ShellOutputMetadataUpdate:
+    metadata: ShellOutputMetadata
+    kind: Literal["metadata"] = "metadata"
+
+
+type ShellOutputUpdate = ShellOutputReplace | ShellOutputAppend | ShellOutputSlide | ShellOutputMetadataUpdate
+
+
 @dataclass(slots=True)
 class ShellExecResult:
-    stdout: str
-    stderr: str
+    """Bounded shell completion. Output text is delivered through `ShellExecOptions.on_update`."""
+
     exit_code: int
+    truncation: ShellOutputTruncation
+    spill_path: str | None = None
+    last_line_bytes: int | None = None
 
 
 @dataclass(slots=True)
@@ -212,11 +310,11 @@ class ShellExecOptions:
     inherit_env: bool = True
     # Timeout in seconds. Defaults to no timeout.
     timeout: float | None = None
-    # Called with stdout chunks as they are produced (pi: `(chunk, context)`;
-    # the call's cancel token is the second argument here).
-    on_stdout: Callable[[str, CancelToken | None], None] | None = None
-    # Called with stderr chunks as they are produced.
-    on_stderr: Callable[[str, CancelToken | None], None] | None = None
+    # Source-side bounded capture. Output is discarded when this and `on_update` are both absent.
+    capture: ShellOutputCaptureOptions | None = None
+    # Called with bounded output changes (pi: `(update, context)`; the call's
+    # cancel token is the second argument here).
+    on_update: Callable[[ShellOutputUpdate, CancelToken | None], None] | None = None
 
 
 class Shell(Protocol):

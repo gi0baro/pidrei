@@ -771,6 +771,9 @@ class AnsiCodeTracker:
             result += _format_osc8_hyperlink(self._active_hyperlink)
         return result
 
+    def get_active_background_code(self) -> str:
+        return f"\x1b[{self._bg_color}m" if self._bg_color else ""
+
     def has_active_codes(self) -> bool:
         return (
             self._bold
@@ -810,6 +813,13 @@ def _update_tracker_from_text(text: str, tracker: AnsiCodeTracker) -> None:
             i += ansi_result["length"]
         else:
             i += 1
+
+
+def get_active_background_ansi(text: str) -> str:
+    """Return only the background color active at the end of an ANSI-styled string."""
+    tracker = AnsiCodeTracker()
+    _update_tracker_from_text(text, tracker)
+    return tracker.get_active_background_code()
 
 
 # =============================================================================

@@ -66,6 +66,25 @@ def test_prefers_scoped_proxy_env_aliases_before_process_env_aliases():
     assert resolved == "http://scoped-proxy.example:8080/"
 
 
+def test_handles_subdomain_wildcards_ipv6_and_ports_in_no_proxy():
+    with process_proxy_env(
+        HTTPS_PROXY="http://proxy.example:8080",
+        NO_PROXY="example.com, .wildcard.org, *.star.net, ::1, [2001:db8::1], 127.0.0.1:8080",
+    ):
+        assert resolve_http_proxy_url_for_target("https://example.com") is None
+        assert resolve_http_proxy_url_for_target("https://api.example.com") is None
+        assert resolve_http_proxy_url_for_target("https://wildcard.org") is None
+        assert resolve_http_proxy_url_for_target("https://api.wildcard.org") is None
+        assert resolve_http_proxy_url_for_target("https://star.net") is None
+        assert resolve_http_proxy_url_for_target("https://api.star.net") is None
+        assert resolve_http_proxy_url_for_target("https://notexample.com") == "http://proxy.example:8080/"
+
+        assert resolve_http_proxy_url_for_target("https://[::1]:80") is None
+        assert resolve_http_proxy_url_for_target("https://[2001:db8::1]") is None
+        assert resolve_http_proxy_url_for_target("https://127.0.0.1:8080") is None
+        assert resolve_http_proxy_url_for_target("https://127.0.0.1:3000") == "http://proxy.example:8080/"
+
+
 def test_rejects_socks_and_pac_proxy_urls_explicitly():
     with (
         process_proxy_env(HTTPS_PROXY="socks5://proxy.example:1080"),

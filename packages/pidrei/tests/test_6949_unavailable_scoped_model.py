@@ -15,7 +15,7 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.scoped_models_selector import ScopedModelsSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme_sync, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import Model, ModelCost
 from pidrei_tui import set_keybindings
@@ -122,7 +122,9 @@ class TestUnavailableScopedModels:
             },
         )
 
-        assert f"{unavailable_id} [unavailable] ✗" in strip_ansi("\n".join(selector.render(100)))
+        rendered = "\n".join(selector.render(100))
+        assert f"{unavailable_id} [unavailable]" in strip_ansi(rendered)
+        assert theme.strikethrough(unavailable_id) in rendered
         await selector.handle_input(ENTER)
         assert changes == [[available_id]]
         await selector.handle_input(CTRL_S)
@@ -142,7 +144,7 @@ class TestUnavailableScopedModels:
         assert selector is not None, "Expected scoped-model selector to open"
         rendered = strip_ansi("\n".join(selector.render(100)))
         for unavailable_id in unavailable_ids:
-            assert f"{unavailable_id} [unavailable] ✗" in rendered
+            assert f"{unavailable_id} [unavailable]" in rendered
         assert get_available_calls["count"] >= 1
 
     @pytest.mark.tonio
@@ -159,7 +161,7 @@ class TestUnavailableScopedModels:
 
         selector = holder["selector"]
         assert selector is not None, "Expected scoped-model selector to open"
-        assert f"{full_id} [unavailable] ✗" in strip_ansi("\n".join(selector.render(100)))
+        assert f"{full_id} [unavailable]" in strip_ansi("\n".join(selector.render(100)))
 
     @pytest.mark.tonio
     async def test_does_not_clear_a_partial_scope_when_an_enabled_model_is_unavailable(self):

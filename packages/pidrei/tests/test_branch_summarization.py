@@ -71,7 +71,17 @@ async def test_does_not_override_tool_choice_for_branch_summaries():
     await generate_branch_summary(ENTRIES, model=MODEL, cancel=None, stream_fn=stream_fn)
 
     assert len(calls) == 1
+    assert calls[0].max_tokens == 4096
     assert calls[0].tool_choice is None
+
+
+@pytest.mark.tonio
+async def test_clamps_the_branch_summary_output_cap_to_the_model_limit():
+    stream_fn, calls = _stream_fn(_response([TextContent(text="summary")]))
+
+    await generate_branch_summary(ENTRIES, model=replace(MODEL, max_tokens=1024), cancel=None, stream_fn=stream_fn)
+
+    assert calls[0].max_tokens == 1024
 
 
 @pytest.mark.tonio

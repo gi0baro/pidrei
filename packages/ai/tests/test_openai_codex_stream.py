@@ -391,6 +391,20 @@ async def test_streams_sse_responses_into_event_stream():
 
 
 @pytest.mark.tonio
+async def test_processes_a_terminal_sse_event_without_a_trailing_blank_line():
+    # Regression test for https://github.com/earendil-works/pi/issues/9047
+    client = FakeCodexClient(lambda _request: FakeCodexResponse([sse_payload("completed").rstrip()]))
+    result = await stream_codex(
+        make_model(),
+        hello_context(),
+        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", client=client),
+    ).result()
+
+    assert result.stop_reason == "stop"
+    assert text_of(result) == "Hello"
+
+
+@pytest.mark.tonio
 async def test_completes_after_response_completed_even_when_the_sse_body_stays_open():
     client = FakeCodexClient(
         lambda _request: FakeCodexResponse(

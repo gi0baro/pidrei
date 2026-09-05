@@ -1,5 +1,6 @@
 """Port of pi's openrouter provider factory (packages/ai/src/providers/openrouter.ts)."""
 
+from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
 from pidrei_ai.api.openai_completions_lazy import openai_completions_api
 from pidrei_ai.auth.helpers import env_api_key_auth, lazy_oauth
 from pidrei_ai.auth.oauth.load import load_openrouter_oauth
@@ -20,5 +21,8 @@ def openrouter_provider() -> Provider:
             ),
         ),
         models=list(MODELS.get("openrouter", [])),
-        api=openai_completions_api(),
+        api={
+            "anthropic-messages": anthropic_messages_api(),
+            "openai-completions": openai_completions_api(),
+        },
     )

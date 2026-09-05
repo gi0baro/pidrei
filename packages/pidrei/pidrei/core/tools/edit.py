@@ -165,9 +165,9 @@ def edit_access_error_message(error: Exception) -> str:
 def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefinition:
     ops = operations if operations is not None else LocalEditOperations()
 
-    async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
+    async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
         path, edits = _validate_edit_input(params)
-        absolute_path = resolve_to_cwd(path, cwd)
+        absolute_path = resolve_to_cwd(path, (ctx.cwd if ctx is not None else None) or cwd)
 
         async def run():
             # Do not release the mutation queue while an in-flight filesystem

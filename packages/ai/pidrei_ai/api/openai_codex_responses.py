@@ -694,7 +694,9 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
-    api_key = (options.api_key if options else None) or ""
+    api_key = options.api_key if options else None
+    if not api_key:
+        raise Exception(f"No API key for provider: {model.provider}")
 
     base = build_base_options(model, context, options, api_key)
     clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else None

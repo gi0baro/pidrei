@@ -29,6 +29,17 @@ def test_omits_reasoning_when_no_reasoning_is_requested():
     assert "reasoning" not in params
 
 
+def test_sends_max_output_tokens_by_default():
+    params = build_params(make_model(), make_context(), OpenAIResponsesOptions(max_tokens=1024))
+    assert params["max_output_tokens"] == 1024
+
+
+def test_omits_max_output_tokens_when_supports_max_output_tokens_is_false():
+    model = make_model(compat=OpenAIResponsesCompat(supports_max_output_tokens=False))
+    params = build_params(model, make_context(), OpenAIResponsesOptions(max_tokens=1024))
+    assert "max_output_tokens" not in params
+
+
 def test_forwards_required_tool_choice():
     params = build_params(make_model(), make_context(), OpenAIResponsesOptions(tool_choice="required"))
     assert params["tool_choice"] == "required"

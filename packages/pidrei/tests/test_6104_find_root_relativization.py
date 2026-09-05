@@ -45,6 +45,8 @@ async def test_relativizes_custom_glob_results_against_a_root_search_path():
 
     definition = create_find_tool_definition("/", operations=_Operations())
 
-    result = await definition.execute("call-1", {"pattern": "**"}, None, None, {})
+    # pi passes `{}` as a minimal ctx stub; since 62835ea8 the tool reads `ctx?.cwd`,
+    # which is `undefined` on that stub. The Python "no cwd override" spelling is None.
+    result = await definition.execute("call-1", {"pattern": "**"}, None, None, None)
 
     assert result.content[0].text == "home/user/project/\nhome/user/project/file.txt"

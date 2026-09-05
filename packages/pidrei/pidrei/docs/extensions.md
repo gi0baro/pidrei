@@ -301,8 +301,8 @@ arguments.
 | `get_active_tools()` / `set_active_tools(names)` | The active tool set |
 | `get_all_tools()` | Every registered tool |
 | `get_commands()` | Every registered command |
-| `await set_model(model)` | Switch model |
-| `get_thinking_level()` / `await set_thinking_level(level)` | Reasoning level |
+| `await set_model(model)` | Switch the model for the current session (recorded in the session, restored on resume; the configured default for new sessions is unchanged). Returns `False` when the provider has no auth configured |
+| `get_thinking_level()` / `await set_thinking_level(level)` | Reasoning level, clamped to the model; the setter is session-scoped like `set_model` |
 | `events` | Shared bus for extension-to-extension messages |
 
 The rows written with `await` return an awaitable and do nothing until you await

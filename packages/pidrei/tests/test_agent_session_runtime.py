@@ -124,6 +124,47 @@ def _recorder(events: list):
 
 class TestRuntimeSessionLifecycleEvents:
     @pytest.mark.tonio
+    async def test_preserves_an_existing_session_when_importing_a_file_with_the_same_name(self, tmp_path):
+        temp_dir = str(tmp_path)
+        runtime = await _create_runtime_host(temp_dir, [])
+        session_dir = runtime.session.session_manager.get_session_dir()
+        import_dir = os.path.join(temp_dir, "import")
+        filename = "collision.jsonl"
+        stored_path = os.path.join(session_dir, filename)
+        import_path = os.path.join(import_dir, filename)
+        timestamp = datetime.now(UTC).isoformat()
+        # `JSON.stringify` spacing, so the id assertion below matches the raw file.
+        stored_session = (
+            json.dumps(
+                {"type": "session", "version": 3, "id": "stored", "timestamp": timestamp, "cwd": temp_dir},
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        imported_session = (
+            json.dumps(
+                {"type": "session", "version": 3, "id": "imported", "timestamp": timestamp, "cwd": temp_dir},
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        os.makedirs(session_dir, exist_ok=True)
+        os.makedirs(import_dir, exist_ok=True)
+        with open(stored_path, "w", encoding="utf-8") as handle:
+            handle.write(stored_session)
+        with open(import_path, "w", encoding="utf-8") as handle:
+            handle.write(imported_session)
+
+        await runtime.import_from_jsonl(import_path)
+
+        with open(stored_path, encoding="utf-8") as handle:
+            assert handle.read() == stored_session
+        assert runtime.session.session_file != stored_path
+        with open(runtime.session.session_file, encoding="utf-8") as handle:
+            assert '"id":"imported"' in handle.read()
+        await runtime.dispose()
+
+    @pytest.mark.tonio
     async def test_emits_before_switch_and_session_start_for_new_and_resume(self, tmp_path):
         events = []
         runtime_host = await _create_runtime_host(

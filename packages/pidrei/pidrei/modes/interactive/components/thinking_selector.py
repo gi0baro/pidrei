@@ -41,7 +41,7 @@ class ThinkingSelectorComponent(Container):
         self._all_items = [
             {
                 "value": level,
-                "label": level,
+                "label": f"{'✓ ' if level == current_level else '  '}{level}",
                 "description": f"{LEVEL_DESCRIPTIONS[level]} · default"
                 if level == default_thinking_level
                 else LEVEL_DESCRIPTIONS[level],
@@ -94,7 +94,7 @@ class ThinkingSelectorComponent(Container):
 
     def _apply_filter(self, query: str) -> None:
         filtered = (
-            fuzzy_filter(self._all_items, query, lambda item: f"{item['label']} {item.get('description') or ''}")
+            fuzzy_filter(self._all_items, query, lambda item: f"{item['value']} {item.get('description') or ''}")
             if query
             else self._all_items
         )

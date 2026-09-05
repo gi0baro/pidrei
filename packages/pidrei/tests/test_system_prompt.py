@@ -2,7 +2,21 @@
 
 import os
 
+import pytest
+
+from pidrei.core.skills import Skill
+from pidrei.core.source_info import create_synthetic_source_info
 from pidrei.core.system_prompt import BuildSystemPromptOptions, build_system_prompt
+
+
+TEST_SKILL = Skill(
+    name="test-skill",
+    description="A test skill.",
+    file_path="/skills/test-skill/SKILL.md",
+    base_dir="/skills/test-skill",
+    source_info=create_synthetic_source_info("/skills/test-skill/SKILL.md", source="test"),
+    disable_model_invocation=False,
+)
 
 
 class TestEmptyTools:
@@ -88,3 +102,28 @@ class TestPromptGuidelines:
         )
 
         assert prompt.count("- Use dynamic_tool for summaries.") == 1
+
+
+class TestSkills:
+    @pytest.mark.parametrize("custom_prompt", [None, "Custom system prompt"], ids=["default prompt", "custom prompt"])
+    def test_includes_skills_with_only_bash(self, custom_prompt):
+        prompt = build_system_prompt(
+            BuildSystemPromptOptions(
+                custom_prompt=custom_prompt,
+                selected_tools=["bash"],
+                context_files=[],
+                skills=[TEST_SKILL],
+                cwd=os.getcwd(),
+            )
+        )
+
+        assert "<available_skills>" in prompt
+        assert "<name>test-skill</name>" in prompt
+        assert "Use bash to load a skill's file" in prompt
+
+    def test_omits_skills_without_read_or_bash(self):
+        prompt = build_system_prompt(
+            BuildSystemPromptOptions(selected_tools=["write"], context_files=[], skills=[TEST_SKILL], cwd=os.getcwd())
+        )
+
+        assert "<available_skills>" not in prompt

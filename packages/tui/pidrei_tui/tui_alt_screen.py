@@ -31,7 +31,7 @@ import tonio.colored as tonio
 from ._timers import Interval
 from .alt_screen_search import (
     AltScreenSearchComponent,
-    find_alt_screen_search_matches,
+    AltScreenSearchIndex,
     get_alt_screen_search_match_key,
 )
 from .components.alt_screen_flash import AltScreenFlashContainer
@@ -75,6 +75,7 @@ from .utils import (
     js_round,
     slice_by_column,
     strip_terminal_sequences,
+    truncate_to_width,
     visible_width,
 )
 
@@ -152,6 +153,8 @@ class TuiAltScreen(TuiBase):
         mouse: bool | None = None,
         search_match_style=None,
         search_current_match_style=None,
+        search_navigation_button_style=None,
+        scroll_to_end_indicator=None,
         open_url=None,
         copy_on_select: bool | None = None,
         copy_selection=None,
@@ -184,6 +187,8 @@ class TuiAltScreen(TuiBase):
         self._selection_press_active = False
         self._scrollbar_drag: dict | None = None
         self._scrollbar_hover = None
+        # {"row", "column", "width"} of the last composited jump-to-end label.
+        self._scroll_to_end_indicator_rect: dict | None = None
         self._pressed_url: str | None = None
         self._selection_dragged = False
         self._mouse_capture: TuiMouseDispatchTarget | None = None
@@ -197,6 +202,10 @@ class TuiAltScreen(TuiBase):
         self._mouse_enabled = mouse if mouse is not None else True
         self._search_match_style = search_match_style or (lambda text: f"\x1b[4m{text}\x1b[24m")
         self._search_current_match_style = search_current_match_style or (lambda text: f"\x1b[1;7m{text}\x1b[22;27m")
+        self._search_navigation_button_style = search_navigation_button_style or (lambda text, _hovered: text)
+        # Renders a clickable jump-to-end label, centered on the last row of a
+        # follow-end primary scroll view while it is scrolled away from its end.
+        self._scroll_to_end_indicator = scroll_to_end_indicator
         self._open_url = open_url
         self._copy_on_select = copy_on_select if copy_on_select is not None else True
         self._copy_selection = copy_selection
@@ -424,15 +433,14 @@ class TuiAltScreen(TuiBase):
                 return
             row += direction
 
-    def _open_search(self) -> None:
+    def _toggle_search(self) -> None:
         if self._active_search is not None:
-            overlay = self._active_search.get("overlay")
-            if overlay is not None:
-                overlay.focus()
+            self._close_search()
             return
-        component = AltScreenSearchComponent(self._update_search_query)
+        component = AltScreenSearchComponent(self._update_search_query, self._search_navigation_button_style)
         search: dict = {
             "component": component,
+            "index": AltScreenSearchIndex(),
             "overlay": None,
             "query": "",
             "matches": [],
@@ -445,7 +453,7 @@ class TuiAltScreen(TuiBase):
         self._active_search = search
         search["overlay"] = self.show_overlay(
             component,
-            {"anchor": "top-right", "width": "40%", "minWidth": 24, "margin": 1},
+            {"anchor": "top-right", "width": "40%", "minWidth": 32, "margin": 1},
         )
 
     def _close_search(self) -> None:
@@ -484,6 +492,30 @@ class TuiAltScreen(TuiBase):
         search["selectionMode"] = "previous" if direction < 0 else "next"
         self.request_render()
 
+    def _get_search_navigation_direction_at(self, x: int, y: int) -> int | None:
+        search = self._active_search
+        overlay = search.get("overlay") if search is not None else None
+        bounds = overlay.get_bounds() if overlay is not None else None
+        if search is None or bounds is None:
+            return None
+        if not (bounds["col"] <= x < bounds["col"] + bounds["width"]) or not (
+            bounds["row"] <= y < bounds["row"] + bounds["height"]
+        ):
+            return None
+        return search["component"].get_navigation_direction_at(y - bounds["row"], x - bounds["col"])
+
+    def _handle_search_mouse_event(self, event: dict) -> bool:
+        search = self._active_search
+        if search is None:
+            return False
+        direction = self._get_search_navigation_direction_at(event["x"], event["y"])
+        if search["component"].set_hovered_navigation_direction(direction):
+            self.request_render()
+        if direction is None or event["release"] or (event["button"] & 32) != 0 or (event["button"] & 3) != 0:
+            return False
+        self._navigate_search(direction)
+        return True
+
     def _refresh_search(self, layout) -> bool:
         search = self._active_search
         if search is None:
@@ -502,9 +534,15 @@ class TuiAltScreen(TuiBase):
             return False
 
         should_reveal_selection = search["selectionMode"] != "retain"
-        matches = find_alt_screen_search_matches(lines, search["query"])
-        exact_index = -1
-        if search["selectedKey"] is not None:
+        result = search["index"].search(lines, search["query"])
+        matches = result.matches
+        search["matches"] = matches
+        if not result.changed and search["selectionMode"] == "retain":
+            return False
+
+        if not result.changed:
+            exact_index = search["selectedIndex"]
+        elif search["selectedKey"] is not None:
             exact_index = next(
                 (
                     index
@@ -513,18 +551,22 @@ class TuiAltScreen(TuiBase):
                 ),
                 -1,
             )
+        else:
+            exact_index = -1
         selected_index = -1
         if matches:
             if search["selectionMode"] == "query":
-                selected_index = next(
-                    (
-                        index
-                        for index, match in enumerate(matches)
-                        if (match.segments[0].row if match.segments else 0) >= search["anchorRow"]
-                    ),
-                    -1,
-                )
-                selected_index = max(selected_index, 0)
+                low = 0
+                high = len(matches)
+                anchor_row = search["anchorRow"]
+                while low < high:
+                    middle = low + (high - low) // 2
+                    middle_segments = matches[middle].segments
+                    if (middle_segments[0].row if middle_segments else 0) < anchor_row:
+                        low = middle + 1
+                    else:
+                        high = middle
+                selected_index = low if low < len(matches) else 0
             elif search["selectionMode"] == "next":
                 base_index = exact_index if exact_index >= 0 else min(search["selectedIndex"], len(matches) - 1)
                 selected_index = 0 if base_index < 0 else (base_index + 1) % len(matches)
@@ -536,7 +578,6 @@ class TuiAltScreen(TuiBase):
                     exact_index if exact_index >= 0 else min(max(0, search["selectedIndex"]), len(matches) - 1)
                 )
 
-        search["matches"] = matches
         search["selectedIndex"] = selected_index
         search["selectedKey"] = (
             get_alt_screen_search_match_key(matches[selected_index]) if selected_index >= 0 else None
@@ -583,6 +624,10 @@ class TuiAltScreen(TuiBase):
             self._selection_press_active = False
             self._stop_selection_auto_scroll()
             self._stop_scrollbar_hover()
+            if self._active_search is not None and self._active_search["component"].set_hovered_navigation_direction(
+                None
+            ):
+                self.request_render()
             self._stop_scrollbar_drag()
             self._pressed_url = None
             self._selection_dragged = False
@@ -631,7 +676,7 @@ class TuiAltScreen(TuiBase):
         is_release = is_key_release(data)
         if keybindings.matches(data, "tui.altScreen.search"):
             if not is_release:
-                self._open_search()
+                self._toggle_search()
             return {"consume": True}
         active_search = self._active_search
         search_overlay = active_search.get("overlay") if active_search is not None else None
@@ -837,8 +882,13 @@ class TuiAltScreen(TuiBase):
                 self.request_render()
             return
 
+        if self._handle_search_mouse_event(raw):
+            return
+
         hit, result = await self._dispatch_mouse_to_overlay(event)
         if not hit:
+            if self._handle_scroll_to_end_indicator_mouse_event(raw):
+                return
             scrollbar_handled = self._handle_scrollbar_mouse_event(raw)
             if self._scrollbar_drag is None:
                 self._update_scrollbar_hover(raw["x"], raw["y"])
@@ -923,17 +973,26 @@ class TuiAltScreen(TuiBase):
             "release": match.group(4) == "m",
         }
 
-    def _get_scrollbar_target_at(self, x: int, y: int) -> dict | None:
-        """The scroll view whose scrollbar thumb covers (x, y): {"scrollView", "geometry"}."""
+    def _handle_scroll_to_end_indicator_mouse_event(self, event: dict) -> bool:
+        rect = self._scroll_to_end_indicator_rect
+        if rect is None or event["release"] or (event["button"] & 32) != 0 or (event["button"] & 3) != 0:
+            return False
+        if event["y"] != rect["row"] or not (rect["column"] <= event["x"] < rect["column"] + rect["width"]):
+            return False
+        self.scroll_to_bottom()
+        return True
+
+    def _get_scrollbar_target_at(self, x: int, y: int, include_hidden_auto: bool = False) -> dict | None:
+        """The scroll view whose scrollbar track covers (x, y): {"scrollView", "geometry"}."""
         if self.has_overlay() or self._current_layout is None:
             return None
         for scroll_view in get_scroll_views_at(self._current_layout, x, y):
             box = get_scroll_view_box(self._current_layout, scroll_view)
-            geometry = get_scrollbar_geometry(box) if box is not None else None
+            geometry = get_scrollbar_geometry(box, include_hidden_auto) if box is not None else None
             if (
                 geometry
                 and x == geometry["column"]
-                and geometry["thumbTop"] <= y < geometry["thumbTop"] + geometry["thumbHeight"]
+                and geometry["trackTop"] <= y < geometry["trackTop"] + geometry["trackHeight"]
             ):
                 return {"scrollView": scroll_view, "geometry": geometry}
         return None
@@ -948,11 +1007,19 @@ class TuiAltScreen(TuiBase):
             self._scrollbar_hover.set_scrollbar_active(True)
 
     def _update_scrollbar_hover(self, x: int, y: int) -> None:
-        target = self._get_scrollbar_target_at(x, y)
+        target = self._get_scrollbar_target_at(x, y, True)
         self._set_scrollbar_hover(target["scrollView"] if target else None)
 
     def _stop_scrollbar_hover(self) -> None:
         self._set_scrollbar_hover(None)
+
+    def _scroll_scrollbar_to_pointer(self, scroll_view, geometry: dict, pointer_y: int, grab_offset: int) -> None:
+        max_thumb_offset = geometry["trackHeight"] - geometry["thumbHeight"]
+        thumb_offset = max(0, min(max_thumb_offset, pointer_y - geometry["trackTop"] - grab_offset))
+        scroll_top = (
+            0 if max_thumb_offset == 0 else js_round(thumb_offset / max_thumb_offset * geometry["maxScrollTop"])
+        )
+        scroll_view.scroll_to(scroll_top)
 
     def _handle_scrollbar_mouse_event(self, event: dict) -> bool:
         if self._scrollbar_drag is not None:
@@ -966,15 +1033,9 @@ class TuiAltScreen(TuiBase):
             )
             geometry = get_scrollbar_geometry(box) if box is not None else None
             if geometry:
-                max_thumb_offset = geometry["trackHeight"] - geometry["thumbHeight"]
-                thumb_offset = max(
-                    0,
-                    min(max_thumb_offset, event["y"] - geometry["trackTop"] - self._scrollbar_drag["grabOffset"]),
+                self._scroll_scrollbar_to_pointer(
+                    self._scrollbar_drag["scrollView"], geometry, event["y"], self._scrollbar_drag["grabOffset"]
                 )
-                scroll_top = (
-                    0 if max_thumb_offset == 0 else js_round(thumb_offset / max_thumb_offset * geometry["maxScrollTop"])
-                )
-                self._scrollbar_drag["scrollView"].scroll_to(scroll_top)
             return True
 
         if event["release"] or (event["button"] & 32) != 0 or (event["button"] & 3) != 0:
@@ -992,10 +1053,12 @@ class TuiAltScreen(TuiBase):
         self._pressed_url = None
         self._selection_dragged = False
         self._set_scrollbar_hover(target["scrollView"])
-        self._scrollbar_drag = {
-            "scrollView": target["scrollView"],
-            "grabOffset": event["y"] - target["geometry"]["thumbTop"],
-        }
+        geometry = target["geometry"]
+        on_thumb = geometry["thumbTop"] <= event["y"] < geometry["thumbTop"] + geometry["thumbHeight"]
+        grab_offset = event["y"] - geometry["thumbTop"] if on_thumb else geometry["thumbHeight"] // 2
+        if not on_thumb:
+            self._scroll_scrollbar_to_pointer(target["scrollView"], geometry, event["y"], grab_offset)
+        self._scrollbar_drag = {"scrollView": target["scrollView"], "grabOffset": grab_offset}
         return True
 
     def _stop_scrollbar_drag(self) -> None:
@@ -1396,7 +1459,25 @@ class TuiAltScreen(TuiBase):
             box.clip.x + box.clip.width,
             scrollbar_column if scrollbar_column is not None else math.inf,
         )
-        for match_index, match in enumerate(search["matches"]):
+        # Only the matches that can intersect the visible rows are visited
+        # (matches are in transcript order; binary-search the first candidate).
+        matches = search["matches"]
+        min_content_row = scroll_view.scroll_top + min_row - box.rect.y
+        max_content_row = scroll_view.scroll_top + max_row - box.rect.y - 1
+        low = 0
+        high = len(matches)
+        while low < high:
+            middle = low + (high - low) // 2
+            middle_segments = matches[middle].segments
+            last_row = middle_segments[-1].row if middle_segments else -1
+            if last_row < min_content_row:
+                low = middle + 1
+            else:
+                high = middle
+        for match_index in range(low, len(matches)):
+            match = matches[match_index]
+            if (match.segments[0].row if match.segments else 0) > max_content_row:
+                break
             for segment in match.segments:
                 row = box.rect.y + segment.row - scroll_view.scroll_top
                 if row < min_row or row >= max_row:
@@ -1501,6 +1582,33 @@ class TuiAltScreen(TuiBase):
     def _is_mouse_sequence(self, data: str) -> bool:
         return bool(_SGR_MOUSE_RE.match(data)) or (len(data) == 6 and data.startswith("\x1b[M"))
 
+    def _composite_scroll_to_end_indicator(self, screen: list[str], layout, width: int) -> list[str]:
+        self._scroll_to_end_indicator_rect = None
+        scroll_view = (
+            layout.primary_scroll_view if layout.primary_scroll_view is not None else self._implicit_scroll_view
+        )
+        if self._scroll_to_end_indicator is None or not scroll_view.follow_end or scroll_view.is_following_end:
+            return screen
+        box = get_scroll_view_box(layout, scroll_view)
+        clip = box.clip if box is not None else None
+        if clip is None or clip.width <= 0 or clip.height <= 0:
+            return screen
+        row = clip.y + clip.height - 1
+        if row >= len(screen) or is_image_line(screen[row]):
+            return screen
+        scrollbar_geometry = get_scrollbar_geometry(box)
+        scrollbar_column = scrollbar_geometry["column"] if scrollbar_geometry is not None else None
+        available_width = max(0, (scrollbar_column if scrollbar_column is not None else clip.x + clip.width) - clip.x)
+        text = truncate_to_width(self._scroll_to_end_indicator(), available_width, "")
+        text_width = visible_width(text)
+        if text_width == 0:
+            return screen
+        column = clip.x + (available_width - text_width) // 2
+        result = list(screen)
+        result[row] = composite_tui_line(result[row], text, column, text_width, width)
+        self._scroll_to_end_indicator_rect = {"row": row, "column": column, "width": text_width}
+        return result
+
     def _composite_flashes(self, screen: list[str], width: int, height: int) -> list[str]:
         flash_lines = self._flashes.render(width)[-height:]
         if not flash_lines:
@@ -1526,6 +1634,7 @@ class TuiAltScreen(TuiBase):
             next_layout = render_layout_frame(root, width, height, self.request_render)
         screen = [OSC133_ZONE_PREFIX.sub("", line) for line in next_layout.lines]
         screen = self._apply_search_highlights(screen, next_layout)
+        screen = self._composite_scroll_to_end_indicator(screen, next_layout, width)
         screen = self._composite_overlays(screen, width, height)
         if len(screen) > height:
             screen = screen[len(screen) - height :]

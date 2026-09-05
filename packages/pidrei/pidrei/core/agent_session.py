@@ -699,7 +699,7 @@ class AgentSession:
 
     def _resolve_idle_wait_if_idle(self) -> None:
         with self._state_guard:
-            if self._is_agent_run_active or self._idle_wait_event is None:
+            if not self.is_idle or self._idle_wait_event is None:
                 return
             event = self._idle_wait_event
             self._idle_wait_event = None
@@ -942,7 +942,8 @@ class AgentSession:
 
     @property
     def is_idle(self) -> bool:
-        return not self._is_agent_run_active
+        """Whether the session has no active agent run, compaction, branch summary, retry, or queued continuation."""
+        return not self._is_agent_run_active and not self.is_compacting
 
     @property
     def system_prompt(self) -> str:
@@ -1517,10 +1518,18 @@ class AgentSession:
     def resource_loader(self) -> Any:
         return self._resource_loader
 
+    def _request_abort(self) -> None:
+        """The synchronous prefix of `abort()`: everything pi runs before its
+        first await, so an extension's `ctx.abort()` cancels the agent before
+        control returns to the tool loop (regression #8935)."""
+        self.abort_retry()
+        self.abort_compaction()
+        self.abort_branch_summary()
+        self.agent.abort()
+
     async def abort(self) -> None:
         """Abort current operation and wait for agent to become idle."""
-        self.abort_retry()
-        self.agent.abort()
+        self._request_abort()
         await self.wait_for_idle()
 
     async def wait_for_idle(self) -> None:
@@ -1888,14 +1897,14 @@ class AgentSession:
             )
             # compaction_end listeners may submit queued prompts, so expose idle
             # state before notifying them.
-            self._compaction_cancel = None
+            self._clear_manual_compaction_state()
             self._emit(CompactionEndEvent(reason="manual", result=compaction_result, aborted=False, will_retry=False))
             return compaction_result
         except Exception as error:
             message = str(error)
             aborted = message == "Compaction cancelled" or type(error).__name__ == "AbortError"
             error_message = None if aborted else f"Compaction failed: {message}"
-            self._compaction_cancel = None
+            self._clear_manual_compaction_state()
             self._emit(
                 CompactionEndEvent(
                     reason="manual",
@@ -1914,7 +1923,11 @@ class AgentSession:
             )
             raise
         finally:
-            self._compaction_cancel = None
+            self._clear_manual_compaction_state()
+
+    def _clear_manual_compaction_state(self) -> None:
+        self._compaction_cancel = None
+        self._resolve_idle_wait_if_idle()
 
     def abort_compaction(self) -> None:
         """Cancel in-progress compaction (manual or auto)."""
@@ -2226,6 +2239,7 @@ class AgentSession:
             return False
         finally:
             self._auto_compaction_cancel = None
+            self._resolve_idle_wait_if_idle()
 
     def set_auto_compaction_enabled(self, enabled: bool) -> None:
         self.settings_manager.set_compaction_enabled(enabled)
@@ -2418,7 +2432,9 @@ class AgentSession:
             if self._extension_abort_handler is not None:
                 self._extension_abort_handler()
                 return
-            tonio.spawn.without_tracking(self.abort())
+            # pi: `void this.abort()` — the cancel lands synchronously; only
+            # the idle wait is discarded.
+            self._request_abort()
 
         runner.bind_core(
             {
@@ -3021,6 +3037,7 @@ class AgentSession:
             return NavigateTreeResult(cancelled=False, editor_text=editor_text, summary_entry=summary_entry)
         finally:
             self._branch_summary_cancel = None
+            self._resolve_idle_wait_if_idle()
 
     def get_user_messages_for_forking(self) -> list[dict[str, str]]:
         """All user messages from session for fork selector."""

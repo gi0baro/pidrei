@@ -15,12 +15,17 @@ def _is_enabled(enabled_ids, model_id: str) -> bool:
     return enabled_ids is None or model_id in enabled_ids
 
 
-def _toggle(enabled_ids, model_id: str):
+def _normalize_enabled(result: list, all_ids: list):
+    """Collapse an explicit list back to None (= all enabled) when it covers every available model."""
+    return None if len(result) == len(all_ids) and all(model_id in all_ids for model_id in result) else result
+
+
+def _toggle(enabled_ids, all_ids: list, model_id: str):
     if enabled_ids is None:
-        return [model_id]  # First toggle: start with only this one
+        return [entry for entry in all_ids if entry != model_id]
     if model_id in enabled_ids:
         return [entry for entry in enabled_ids if entry != model_id]
-    return [*enabled_ids, model_id]
+    return _normalize_enabled([*enabled_ids, model_id], all_ids)
 
 
 def _enable_all(enabled_ids, all_ids: list, target_ids: list | None = None):
@@ -31,7 +36,7 @@ def _enable_all(enabled_ids, all_ids: list, target_ids: list | None = None):
     for model_id in targets:
         if model_id not in result:
             result.append(model_id)
-    return None if len(result) == len(all_ids) and all(model_id in all_ids for model_id in result) else result
+    return _normalize_enabled(result, all_ids)
 
 
 def _clear_all(enabled_ids, all_ids: list, target_ids: list | None = None):
@@ -236,26 +241,18 @@ class ScopedModelsSelectorComponent(Container):
             min(self._selected_index - self._max_visible // 2, len(self._filtered_items) - self._max_visible),
         )
         end_index = min(start_index + self._max_visible, len(self._filtered_items))
-        all_enabled = self._enabled_ids is None
-
         for i in range(start_index, end_index):
             item = self._filtered_items[i]
             is_selected = i == self._selected_index
             prefix = theme.fg("accent", "→ ") if is_selected else "  "
             model_id = item["model"].id if item["model"] is not None else item["fullId"]
-            model_text = theme.fg("accent", model_id) if is_selected else model_id
+            styled_id = model_id if item["model"] is not None else theme.strikethrough(model_id)
+            model_text = theme.fg("accent", styled_id) if is_selected else styled_id
             provider_badge = theme.fg(
                 "muted", f" [{item['model'].provider}]" if item["model"] is not None else " [unavailable]"
             )
-            if item["model"] is None:
-                status = theme.fg("dim", " ✗")
-            elif all_enabled:
-                status = ""
-            elif item["enabled"]:
-                status = theme.fg("success", " ✓")
-            else:
-                status = theme.fg("dim", " ✗")
-            rows.append(Text(f"{prefix}{model_text}{provider_badge}{status}", 0, 0))
+            status = theme.fg("accent", "✓ ") if item["model"] is not None and item["enabled"] else "  "
+            rows.append(Text(f"{prefix}{status}{model_text}{provider_badge}", 0, 0))
 
         # Add scroll indicator if needed
         if start_index > 0 or end_index < len(self._filtered_items):
@@ -314,7 +311,7 @@ class ScopedModelsSelectorComponent(Container):
         if kb.matches(data, "tui.select.confirm"):
             if self._filtered_items:
                 item = self._filtered_items[self._selected_index]
-                self._enabled_ids = _toggle(self._enabled_ids, item["fullId"])
+                self._enabled_ids = _toggle(self._enabled_ids, self._all_ids, item["fullId"])
                 self._is_dirty = True
                 self._refresh()
                 self._notify_change()

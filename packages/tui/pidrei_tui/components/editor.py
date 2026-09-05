@@ -235,6 +235,12 @@ def _build_debounce_pattern(trigger_characters: list[str]):
 
 def _create_scroll_border(direction: str, hidden_line_count: int, width: int) -> str:
     available_width = max(0, width)
+    label = f" {direction} {hidden_line_count} more "
+    label_width = visible_width(label)
+    if label_width + 2 <= available_width:
+        left_width = (available_width - label_width) // 2
+        return "─" * left_width + label + "─" * (available_width - left_width - label_width)
+
     indicator = f"─── {direction} {hidden_line_count} more "
     remaining = available_width - visible_width(indicator)
     if remaining >= 0:
@@ -443,6 +449,14 @@ class Editor:
         # No cached state to invalidate currently
         pass
 
+    def render_top_border(self, width: int, hidden_line_count: int) -> str:
+        border = _create_scroll_border("↑", hidden_line_count, width) if hidden_line_count > 0 else "─" * width
+        return self.border_color(border)
+
+    def render_bottom_border(self, width: int, hidden_line_count: int) -> str:
+        border = _create_scroll_border("↓", hidden_line_count, width) if hidden_line_count > 0 else "─" * width
+        return self.border_color(border)
+
     def render(self, width: int) -> list[str]:
         max_padding = max(0, (width - 1) // 2)
         padding_x = min(self._padding_x, max_padding)
@@ -454,8 +468,6 @@ class Editor:
 
         # Store for cursor navigation (must match wrapping width)
         self._last_width = layout_width
-
-        horizontal = self.border_color("─")
 
         # Layout the text
         layout_lines = self._layout_text(layout_width)
@@ -488,11 +500,7 @@ class Editor:
         right_padding = left_padding
 
         # Render top border (with scroll indicator if scrolled down)
-        if self._scroll_offset > 0:
-            border = _create_scroll_border("↑", self._scroll_offset, width)
-            result.append(self.border_color(border))
-        else:
-            result.append(horizontal * width)
+        result.append(self.render_top_border(width, self._scroll_offset))
 
         # Render each visible layout line
         # Emit hardware cursor marker when focused so TUI can position the
@@ -540,11 +548,7 @@ class Editor:
 
         # Render bottom border (with scroll indicator if more content below)
         lines_below = len(layout_lines) - (self._scroll_offset + len(visible_lines))
-        if lines_below > 0:
-            border = _create_scroll_border("↓", lines_below, width)
-            result.append(self.border_color(border))
-        else:
-            result.append(horizontal * width)
+        result.append(self.render_bottom_border(width, lines_below))
 
         # Add autocomplete list if active
         self._rendered_autocomplete_height = 0

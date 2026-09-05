@@ -210,6 +210,14 @@ def is_expandable(obj) -> bool:
     return callable(getattr(obj, "set_expanded", None))
 
 
+def is_working_status_editor(editor) -> bool:
+    """Whether the editor opted into rendering the working status in its border
+    (pi's WorkingStatusEditor structural check)."""
+    return getattr(editor, "embed_working_status", None) is True and callable(
+        getattr(editor, "set_working_status_indicator", None)
+    )
+
+
 class ExpandableText(Text):
     def __init__(self, get_collapsed_text, get_expanded_text, expanded=False, padding_x=0, padding_y=0) -> None:
         super().__init__(get_expanded_text() if expanded else get_collapsed_text(), padding_x, padding_y)
@@ -549,7 +557,11 @@ class InteractiveMode:
             self.ui,
             get_editor_theme(),
             self._keybindings,
-            {"paddingX": editor_padding_x, "autocompleteMaxVisible": autocomplete_max_visible},
+            {
+                "paddingX": editor_padding_x,
+                "autocompleteMaxVisible": autocomplete_max_visible,
+                "embedWorkingStatus": True,
+            },
         )
         self.editor = self._default_editor
         self._editor_component_factory = None
@@ -568,11 +580,12 @@ class InteractiveMode:
         self._on_input_callback = None
         self._pending_user_inputs: list = []
         self._active_status_indicator = None
+        self._active_working_indicator_embedded = False
         self._idle_status = IdleStatus()
         self._working_message: str | None = None
         self._working_visible = True
         self._working_indicator_options = None
-        self._default_working_message = "Working..."
+        self._default_working_message = "Working"
         self._default_hidden_thinking_label = "Thinking..."
         self._hidden_thinking_label = self._default_hidden_thinking_label
 
@@ -1013,7 +1026,8 @@ class InteractiveMode:
             widgets_below=self._widget_container_below,
             footer=self._footer_container,
             scrollbar=self.settings_manager.get_fullscreen_scrollbar(),
-            scrollbar_style=lambda text: theme.bg("scrollbarThumb", text),
+            scrollbar_track_style=lambda text: theme.fg("scrollbarTrack", text),
+            scrollbar_thumb_style=lambda text: theme.fg("scrollbarThumb", text),
         )
         self._transcript_scroll_view = viewport.transcript
         self._fullscreen_layout_root = viewport.root
@@ -2120,11 +2134,26 @@ class InteractiveMode:
     # state whether the caller is the routed agent listener, a detached
     # command handler, or an extension task.
 
+    def _set_editor_working_status_indicator(self, indicator) -> bool:
+        """Hand the working indicator to the editor's border; False when the
+        active editor has not opted in (the standalone status row stays)."""
+        self._default_editor.set_working_status_indicator(None)
+        if not is_working_status_editor(self.editor):
+            return False
+        self.editor.set_working_status_indicator(indicator)
+        return True
+
     def _show_status_indicator(self, indicator) -> None:
         def apply() -> None:
             if self._active_status_indicator is not None:
                 self._active_status_indicator.dispose()
             self._active_status_indicator = indicator
+            self._active_working_indicator_embedded = False
+            self._status_container.clear()
+            self._set_editor_working_status_indicator(None)
+            if isinstance(indicator, WorkingStatusIndicator) and self._set_editor_working_status_indicator(indicator):
+                self._active_working_indicator_embedded = True
+                return
             self._status_container.set_children([indicator])
 
         self.ui.post_ui(apply)
@@ -2133,12 +2162,20 @@ class InteractiveMode:
         def apply() -> None:
             if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
                 return
-            had_active_status_indicator = self._active_status_indicator is not None
-            if self._active_status_indicator is not None:
-                self._active_status_indicator.dispose()
+            cleared_indicator = self._active_status_indicator
+            cleared_indicator_was_embedded = (
+                cleared_indicator is not None
+                and cleared_indicator.kind == "working"
+                and self._active_working_indicator_embedded
+            )
+            if cleared_indicator is not None:
+                cleared_indicator.dispose()
             self._active_status_indicator = None
+            self._active_working_indicator_embedded = False
+            self._set_editor_working_status_indicator(None)
             if (
-                had_active_status_indicator
+                cleared_indicator is not None
+                and not cleared_indicator_was_embedded
                 and self._options.get("tuiMode") == "regular"
                 and self.ui.get_clear_on_shrink()
             ):
@@ -2149,11 +2186,21 @@ class InteractiveMode:
         self.ui.post_ui(apply)
 
     def _show_working_status_indicator(self) -> None:
+        color_fn = None
+        if is_working_status_editor(self.editor):
+
+            def color_fn(text: str) -> str:
+                border_color = self.editor.border_color or theme.get_thinking_border_color(
+                    self.session.thinking_level or "off"
+                )
+                return border_color(text)
+
         self._show_status_indicator(
             WorkingStatusIndicator(
                 self.ui,
                 self._working_message if self._working_message is not None else self._default_working_message,
                 self._working_indicator_options,
+                color_fn,
             )
         )
 
@@ -2662,6 +2709,13 @@ class InteractiveMode:
             self.editor = self._default_editor
 
         self._editor_container.add_child(self.editor)
+        if isinstance(self._active_status_indicator, WorkingStatusIndicator):
+            self._status_container.clear()
+            self._active_working_indicator_embedded = self._set_editor_working_status_indicator(
+                self._active_status_indicator
+            )
+            if not self._active_working_indicator_embedded:
+                self._status_container.set_children([self._active_status_indicator])
         self.ui.set_focus(self.editor)
         self.ui.request_render()
 
@@ -3237,6 +3291,7 @@ class InteractiveMode:
                     # edit tools
                     for component in self._pending_tools.values():
                         component.set_args_complete()
+                    self._maybe_show_assistant_diagnostics(self._streaming_message)
                     self._maybe_show_cache_miss_notice(self._streaming_message)
                 self._streaming_component = None
                 self._streaming_message = None
@@ -3626,6 +3681,7 @@ class InteractiveMode:
                         else:
                             rendered_pending_tools[content.id] = component
                 if message.stop_reason not in ("aborted", "error"):
+                    self._maybe_show_assistant_diagnostics(message)
                     # collect_cache_misses keys by id() of the assistant
                     # message (pi keys a Map by object reference)
                     miss = cache_misses.get(id(message))
@@ -3677,6 +3733,35 @@ class InteractiveMode:
         self._chat_container.add_child(
             Text(theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
         )
+
+    def _maybe_show_assistant_diagnostics(self, message) -> None:
+        if not self.settings_manager.get_show_cache_miss_notices():
+            return
+
+        for diagnostic in message.diagnostics or []:
+            if diagnostic.type != "anthropic_input_transformations":
+                continue
+            transformations = (diagnostic.details or {}).get("transformations")
+            if not isinstance(transformations, list):
+                continue
+
+            dropped: list[str] = []
+            for transformation in transformations:
+                if not isinstance(transformation, dict) or transformation.get("type") != "thinking_dropped":
+                    continue
+                reason = transformation.get("reason")
+                reason = reason if isinstance(reason, str) else "unknown reason"
+                path = transformation.get("path")
+                location = f" at {path}" if isinstance(path, str) else ""
+                dropped.append(f"{reason}{location}")
+            if not dropped:
+                continue
+
+            noun = "thinking block" if len(dropped) == 1 else f"{len(dropped)} thinking blocks"
+            self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(
+                Text(theme.fg("warning", f"Anthropic dropped {noun}: {'; '.join(dropped)}"), 1, 0)
+            )
 
     def _maybe_show_cache_miss_notice(self, message) -> None:
         """Show a transcript notice for a significant prompt-cache miss.
@@ -3988,6 +4073,8 @@ class InteractiveMode:
         else:
             level = self.session.thinking_level or "off"
             self.editor.border_color = theme.get_thinking_border_color(level)
+        if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
+            self._active_status_indicator.invalidate()
         self.ui.request_render()
 
     async def _cycle_thinking_level(self) -> None:

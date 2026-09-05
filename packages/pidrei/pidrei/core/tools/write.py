@@ -39,18 +39,13 @@ class LocalWriteOperations:
         await fs.Path(dir).mkdir(parents=True, exist_ok=True)
 
 
-def _js_string_length(text: str) -> int:
-    """JS String.length (UTF-16 code units) for the byte-count message parity."""
-    return sum(2 if ord(char) > 0xFFFF else 1 for char in text)
-
-
 def create_write_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefinition:
     ops = operations if operations is not None else LocalWriteOperations()
 
-    async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
+    async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
         path = params["path"]
         content = params["content"]
-        absolute_path = resolve_to_cwd(path, cwd)
+        absolute_path = resolve_to_cwd(path, (ctx.cwd if ctx is not None else None) or cwd)
         dir = os.path.dirname(absolute_path)
 
         async def run():
@@ -70,7 +65,7 @@ def create_write_tool_definition(cwd: str, *, operations: Any = None) -> ToolDef
             throw_if_aborted()
 
             return AgentToolResult(
-                content=[TextContent(text=f"Successfully wrote {_js_string_length(content)} bytes to {path}")],
+                content=[TextContent(text=f"Successfully wrote to {path}")],
                 details=None,
             )
 

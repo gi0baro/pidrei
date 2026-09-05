@@ -135,7 +135,7 @@ async def _run_streaming_lines(argv: list[str], cancel, on_line: Callable[[str],
 def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefinition:
     custom_ops = operations
 
-    async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
+    async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
         pattern = params["pattern"]
         search_dir = params.get("path")
         glob = params.get("glob")
@@ -151,7 +151,7 @@ def create_grep_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         if not rg_path:
             raise Exception(missing_tool_message("rg"))
 
-        search_path = resolve_to_cwd(search_dir or ".", cwd)
+        search_path = resolve_to_cwd(search_dir or ".", (ctx.cwd if ctx is not None else None) or cwd)
         ops = custom_ops if custom_ops is not None else LocalGrepOperations()
         try:
             is_directory = await ops.is_directory(search_path)

@@ -75,59 +75,73 @@ async def refresh_github_copilot_models_for_test(
         )
 
 
+def _require_model_id(models: list, index: int) -> str:
+    """Catalog-sensitive ids come from the generated models, not literals."""
+    assert len(models) > index, f"Expected a GitHub Copilot model at index {index}"
+    return models[index].id
+
+
 @pytest.mark.tonio
 async def test_filters_models_to_the_authenticated_account_picker_catalog():
+    provider = github_copilot_provider()
+    provider_models = provider.get_models()
+    picker_model_id = _require_model_id(provider_models, 0)
+    disabled_model_id = _require_model_id(provider_models, 1)
+    hidden_model_id = _require_model_id(provider_models, 2)
+
     credential = await refresh_github_copilot_models_for_test(
         [
-            {"id": "gpt-4.1", "model_picker_enabled": True, "capabilities": {"supports": {"tool_calls": True}}},
+            {"id": picker_model_id, "model_picker_enabled": True, "capabilities": {"supports": {"tool_calls": True}}},
             {
-                "id": "claude-opus-4.7",
+                "id": disabled_model_id,
                 "model_picker_enabled": True,
                 "policy": {"state": "disabled"},
                 "capabilities": {"supports": {"tool_calls": True}},
             },
             {
-                "id": "gpt-5.4-nano",
+                "id": hidden_model_id,
                 "model_picker_enabled": False,
                 "policy": {"state": "enabled"},
                 "capabilities": {"supports": {"tool_calls": True}},
             },
         ]
     )
-    assert credential.extra["availableModelIds"] == ["gpt-4.1"]
+    assert credential.extra["availableModelIds"] == [picker_model_id]
 
     store = InMemoryCredentialStore()
     await store.modify("github-copilot", lambda _current: _store(credential))
     models = create_models(credentials=store)
-    models.set_provider(github_copilot_provider())
+    models.set_provider(provider)
     available = await models.get_available("github-copilot")
 
-    assert [model.id for model in available] == ["gpt-4.1"]
+    assert [model.id for model in available] == [picker_model_id]
 
 
 @pytest.mark.tonio
 async def test_falls_back_to_explicitly_enabled_policy_models_when_the_picker_catalog_is_empty():
+    provider = github_copilot_provider()
+    enabled_model_id = _require_model_id(provider.get_models(), 0)
     credential = await refresh_github_copilot_models_for_test(
         [
             {
-                "id": "gpt-4.1",
+                "id": enabled_model_id,
                 "model_picker_enabled": False,
                 "policy": {"state": "enabled"},
                 "capabilities": {"supports": {"tool_calls": True}},
             },
             {
-                "id": "claude-opus-4.7",
+                "id": "policy-disabled-model",
                 "model_picker_enabled": False,
                 "policy": {"state": "disabled"},
                 "capabilities": {"supports": {"tool_calls": True}},
             },
             {
-                "id": "gpt-5.4-nano",
+                "id": "unconfigured-model",
                 "model_picker_enabled": False,
                 "capabilities": {"supports": {"tool_calls": True}},
             },
             {
-                "id": "gpt-4o",
+                "id": "tool-incapable-model",
                 "model_picker_enabled": False,
                 "policy": {"state": "enabled"},
                 "capabilities": {"supports": {"tool_calls": False}},
@@ -135,15 +149,15 @@ async def test_falls_back_to_explicitly_enabled_policy_models_when_the_picker_ca
         ]
     )
 
-    assert credential.extra["availableModelIds"] == ["gpt-4.1"]
+    assert credential.extra["availableModelIds"] == [enabled_model_id]
 
     store = InMemoryCredentialStore()
     await store.modify("github-copilot", lambda _current: _store(credential))
     models = create_models(credentials=store)
-    models.set_provider(github_copilot_provider())
+    models.set_provider(provider)
     available = await models.get_available("github-copilot")
 
-    assert [model.id for model in available] == ["gpt-4.1"]
+    assert [model.id for model in available] == [enabled_model_id]
 
 
 @pytest.mark.tonio
@@ -360,6 +374,10 @@ async def test_does_not_retry_model_catalog_throttling_during_credential_refresh
 
 @pytest.mark.tonio
 async def test_updates_only_known_tool_capable_unconfigured_account_model_policies():
+    provider_models = github_copilot_provider().get_models()
+    configured_model_id = _require_model_id(provider_models, 0)
+    unconfigured_model_id = _require_model_id(provider_models, 1)
+    tool_incapable_model_id = _require_model_id(provider_models, 2)
     catalog_request_count = 0
     policy_model_ids: list[str] = []
 
@@ -369,10 +387,10 @@ async def test_updates_only_known_tool_capable_unconfigured_account_model_polici
         return json_response(
             {
                 "data": [
-                    account_model("gpt-4.1", "enabled"),
-                    account_model("claude-sonnet-4.5", "unconfigured"),
+                    account_model(configured_model_id, "enabled"),
+                    account_model(unconfigured_model_id, "unconfigured"),
                     account_model("remote-only-model", "unconfigured"),
-                    account_model("gpt-5.4", "unconfigured", tool_calls=False),
+                    account_model(tool_incapable_model_id, "unconfigured", tool_calls=False),
                 ]
             }
         )
@@ -385,16 +403,21 @@ async def test_updates_only_known_tool_capable_unconfigured_account_model_polici
         credential = await github_copilot_oauth.login(RecordingInteraction(prompt=blank_enterprise_prompt))
 
     assert catalog_request_count == 1
-    assert policy_model_ids == ["claude-sonnet-4.5"]
-    assert credential.extra["availableModelIds"] == ["gpt-4.1", "claude-sonnet-4.5", "remote-only-model"]
+    assert policy_model_ids == [unconfigured_model_id]
+    assert credential.extra["availableModelIds"] == [
+        configured_model_id,
+        unconfigured_model_id,
+        "remote-only-model",
+    ]
 
 
 @pytest.mark.tonio
 async def test_retries_a_throttled_policy_update_after_retry_after():
+    model_id = _require_model_id(github_copilot_provider().get_models(), 0)
     policy_request_times: list[int] = []
 
     def models():
-        return json_response({"data": [account_model("claude-sonnet-4.5", "unconfigured")]})
+        return json_response({"data": [account_model(model_id, "unconfigured")]})
 
     def policy(_model_id: str):
         policy_request_times.append(clock.now_ms())
@@ -410,7 +433,8 @@ async def test_retries_a_throttled_policy_update_after_retry_after():
 
 @pytest.mark.tonio
 async def test_continues_policy_updates_after_a_transport_failure():
-    model_ids = ["gpt-4.1", "claude-sonnet-4.5"]
+    provider_models = github_copilot_provider().get_models()
+    model_ids = [_require_model_id(provider_models, 0), _require_model_id(provider_models, 1)]
     policy_model_ids: list[str] = []
 
     def models():
@@ -430,11 +454,14 @@ async def test_continues_policy_updates_after_a_transport_failure():
 
 @pytest.mark.tonio
 async def test_stops_policy_updates_and_persists_authentication_when_the_retry_delay_exceeds_the_login_budget():
+    provider_models = github_copilot_provider().get_models()
+    first_model_id = _require_model_id(provider_models, 0)
+    second_model_id = _require_model_id(provider_models, 1)
     policy_model_ids: list[str] = []
 
     def models():
         return json_response(
-            {"data": [account_model(model_id, "unconfigured") for model_id in ("gpt-4.1", "claude-sonnet-4.5")]}
+            {"data": [account_model(model_id, "unconfigured") for model_id in (first_model_id, second_model_id)]}
         )
 
     def policy(model_id: str):
@@ -451,5 +478,5 @@ async def test_stops_policy_updates_and_persists_authentication_when_the_retry_d
         )
 
     assert credential.access == COPILOT_TOKEN
-    assert policy_model_ids == ["gpt-4.1"]
+    assert policy_model_ids == [first_model_id]
     assert await store.read("github-copilot") == credential

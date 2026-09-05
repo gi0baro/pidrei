@@ -8,6 +8,7 @@ read a stale viewport.
 
 import base64
 import os
+import re
 import time
 from contextlib import contextmanager
 
@@ -191,6 +192,85 @@ async def test_renders_a_terminal_height_viewport_and_preserves_manual_scroll_po
 
 
 @pytest.mark.tonio
+async def test_shows_a_clickable_jump_to_end_indicator_on_the_transcripts_last_row_while_scrolled_up():
+    terminal = VirtualTerminal(30, 6)
+    tui = TuiAltScreen(terminal, None, None, scroll_to_end_indicator=lambda: "\x1b[7m ↓ Jump to end \x1b[27m")
+    transcript = ScrollView(Text(_lines(8), 0, 0), {"follow": "end", "primary": True})
+    tui.set_layout_root(
+        VStack(
+            [
+                {"component": transcript, "basis": 0, "grow": 1, "minSize": 1},
+                {"component": Text("editor\nfooter", 0, 0), "basis": "auto", "minSize": 1},
+            ]
+        )
+    )
+    await tui.start()
+    await terminal.wait_for_render()
+    assert not any("Jump to end" in line for line in terminal.get_viewport())
+
+    await terminal.send_input("\x1b[<64;1;1M")
+    assert await _wait_until(lambda: transcript.is_following_end is False)
+    # The virtual terminal trims trailing blanks; pi compares the padded row.
+    assert await _wait_until(lambda: terminal.get_viewport()[3].rstrip() == "line 7  ↓ Jump to end")
+    assert terminal.get_viewport()[4].rstrip() == "editor"
+
+    # Pressing next to the label starts a selection instead of jumping.
+    await terminal.send_input("\x1b[<0;2;4M")
+    await terminal.send_input("\x1b[<0;2;4m")
+    await terminal.wait_for_render()
+    assert transcript.is_following_end is False
+
+    await terminal.send_input("\x1b[<0;15;4M")
+    await terminal.send_input("\x1b[<0;15;4m")
+    assert await _wait_until(lambda: transcript.is_following_end is True)
+    assert await _wait_until(
+        lambda: _viewport(terminal) == ["line 5", "line 6", "line 7", "line 8", "editor", "footer"]
+    )
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_leaves_the_scrollbar_clickable_when_the_jump_to_end_indicator_spans_the_transcript():
+    terminal = VirtualTerminal(30, 6)
+    tui = TuiAltScreen(terminal, None, None, scroll_to_end_indicator=lambda: "↓" * 30)
+    transcript = ScrollView(Text(_lines(12), 0, 0), {"follow": "end", "primary": True, "scrollbar": "always"})
+    tui.set_layout_root(
+        VStack(
+            [
+                {"component": transcript, "basis": 0, "grow": 1, "minSize": 1},
+                {"component": Text("editor\nfooter", 0, 0), "basis": "auto", "minSize": 1},
+            ]
+        )
+    )
+    await tui.start()
+    await terminal.wait_for_render()
+
+    await terminal.send_input("\x1b[<64;1;1M")
+    assert await _wait_until(lambda: transcript.is_following_end is False)
+
+    # The indicator must not intercept a press on the scrollbar's last column.
+    await terminal.send_input("\x1b[<0;30;4M")
+    await terminal.send_input("\x1b[<0;30;4m")
+    await terminal.wait_for_render()
+    assert transcript.is_following_end is False
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_never_shows_the_jump_to_end_indicator_for_a_primary_scroll_view_without_follow_end():
+    terminal = VirtualTerminal(30, 3)
+    tui = TuiAltScreen(terminal, None, None, scroll_to_end_indicator=lambda: " ↓ Jump to end ")
+    transcript = ScrollView(Text("one\ntwo\nthree\nfour\nfive", 0, 0), {"primary": True})
+    tui.set_layout_root(transcript)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    assert transcript.is_following_end is False
+    assert not any("Jump to end" in line for line in terminal.get_viewport())
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_keeps_an_explicit_dock_fixed_while_the_transcript_scrolls():
     terminal = VirtualTerminal(20, 6)
     tui = TuiAltScreen(terminal)
@@ -307,75 +387,44 @@ async def test_uses_button_motion_tracking_inside_terminal_multiplexers():
 
 
 @pytest.mark.tonio
-async def test_drags_a_visible_scrollbar_thumb_and_keeps_it_visible_until_release():
+async def test_reveals_an_auto_scrollbar_when_the_pointer_enters_its_hidden_track():
     terminal = RecordingTerminal(10, 5)
     tui = TuiAltScreen(terminal)
-    scroll_view = ScrollView(
-        Text(_lines(20), 0, 0),
-        {"primary": True, "scrollbar": "auto", "scrollbarHideDelayMs": 50},
-    )
+    scroll_view = ScrollView(Text(_lines(20), 0, 0), {"primary": True, "scrollbar": "auto", "scrollbarHideDelayMs": 20})
     tui.set_layout_root(scroll_view)
     await tui.start()
     await terminal.wait_for_render()
     assert scroll_view.is_scrollbar_visible is False
 
-    since = terminal.frames
-    await terminal.send_input("\x1b[<65;10;1M")
-    await terminal.wait_for_render(since)
-    assert scroll_view.scroll_top == 1
-    assert scroll_view.is_scrollbar_visible is True
+    await terminal.send_input("\x1b[<35;10;3M")
+    assert await _wait_until(lambda: scroll_view.is_scrollbar_visible is True)
+    assert scroll_view.is_scrollbar_active is True
+    assert await _wait_until(lambda: any(re.search(r"[│█]", line) for line in terminal.get_viewport()))
 
-    await terminal.send_input("\x1b[<0;10;1M")
-    await terminal.wait_for_render()
-    await tonio.sleep(0.07)
-    assert scroll_view.is_scrollbar_visible is True
-
-    since = terminal.frames
-    await terminal.send_input("\x1b[<32;10;4M")
-    await terminal.wait_for_render(since)
-    assert scroll_view.scroll_top == 15
-    assert _viewport(terminal) == ["line 16", "line 17", "line 18", "line 19", "line 20"]
-
-    await terminal.send_input("\x1b[<0;10;4m")
-    await terminal.wait_for_render()
-    assert scroll_view.is_scrollbar_visible is True
-    await tonio.sleep(0.07)
-    assert scroll_view.is_scrollbar_visible is True
-    await terminal.send_input("\x1b[<35;9;4M")
-    await tonio.sleep(0.07)
-    assert scroll_view.is_scrollbar_visible is False
-
-    since = terminal.frames
-    await terminal.send_input("\x1b[<64;10;5M")
-    await terminal.wait_for_render(since)
-    assert scroll_view.scroll_top == 14
-    await tonio.sleep(0.07)
-    assert scroll_view.is_scrollbar_visible is True
-    await terminal.send_input("\x1b[<35;9;5M")
-    await tonio.sleep(0.07)
-    assert scroll_view.is_scrollbar_visible is False
-
-    assert not terminal.writes_containing("\x1b]52;c;")
+    await terminal.send_input("\x1b[<35;9;3M")
+    assert await _wait_until(lambda: scroll_view.is_scrollbar_visible is False)
     await tui.stop()
 
 
 @pytest.mark.tonio
-async def test_keeps_the_scrollbar_column_selectable_while_the_thumb_is_hidden():
-    terminal = RecordingTerminal(10, 2)
+async def test_jumps_to_a_scrollbar_track_position_and_continues_dragging_from_there():
+    terminal = RecordingTerminal(10, 10)
     tui = TuiAltScreen(terminal)
-    scroll_view = ScrollView(Text("123456789A\nabcdefghij\nmore\nlines", 0, 0), {"scrollbar": "auto"})
+    scroll_view = ScrollView(Text(_lines(50), 0, 0), {"primary": True, "scrollbar": "always"})
     tui.set_layout_root(scroll_view)
     await tui.start()
     await terminal.wait_for_render()
-    assert scroll_view.is_scrollbar_visible is False
+    assert scroll_view.scroll_top == 0
 
-    since = terminal.frames
-    await terminal.send_input("\x1b[<0;10;1M")
-    await terminal.send_input("\x1b[<32;10;2M")
-    await terminal.send_input("\x1b[<0;10;2m")
-    await terminal.wait_for_render(since)
+    await terminal.send_input("\x1b[<0;10;6M")
+    assert await _wait_until(lambda: scroll_view.scroll_top == 20)
 
-    assert await terminal.wait_for_write(_osc52("A\nabcdefghij"))
+    await terminal.send_input("\x1b[<32;10;10M")
+    assert await _wait_until(lambda: scroll_view.scroll_top == 40)
+
+    await terminal.send_input("\x1b[<0;10;10m")
+    await terminal.wait_for_render()
+    assert not terminal.writes_containing("\x1b]52;c;")
     await tui.stop()
 
 
@@ -456,6 +505,160 @@ def test_searches_normalized_rendered_transcript_text_across_rows():
     ]
 
 
+def test_maps_normalized_ascii_and_unicode_search_matches_back_to_rendered_columns():
+    from pidrei_tui.alt_screen_search import (
+        AltScreenSearchMatch,
+        AltScreenSearchSegment,
+        find_alt_screen_search_matches,
+    )
+
+    assert find_alt_screen_search_matches(["\x1b[31mfoo  bar\x1b[0m", "A界🙂éZ"], "oo   bar\nA界🙂é") == [
+        AltScreenSearchMatch(
+            segments=[
+                AltScreenSearchSegment(row=0, start_col=1, end_col=3),
+                AltScreenSearchSegment(row=0, start_col=5, end_col=8),
+                AltScreenSearchSegment(row=1, start_col=0, end_col=6),
+            ]
+        )
+    ]
+
+
+def test_reuses_indexed_transcript_matches_until_the_query_or_rendered_lines_change():
+    from pidrei_tui.alt_screen_search import AltScreenSearchIndex, AltScreenSearchSegment
+
+    index = AltScreenSearchIndex()
+    initial = index.search(["alpha needle", "omega"], "needle")
+    assert initial.changed is True
+    assert len(initial.matches) == 1
+
+    cached = index.search(["alpha needle", "omega"], "needle")
+    assert cached.changed is False
+    assert cached.matches is initial.matches
+
+    changed_query = index.search(["alpha needle", "omega"], "omega")
+    assert changed_query.changed is True
+    assert changed_query.matches is not initial.matches
+    assert changed_query.matches[0].segments == [AltScreenSearchSegment(row=1, start_col=0, end_col=5)]
+
+    changed_lines = index.search(["alpha needle", "no match"], "omega")
+    assert changed_lines.changed is True
+    assert changed_lines.matches == []
+
+
+def test_renders_transcript_search_with_a_muted_placeholder_and_right_aligned_controls():
+    from pidrei_tui.alt_screen_search import AltScreenSearchComponent
+    from pidrei_tui.utils import strip_terminal_sequences, visible_width
+
+    set_keybindings(KeybindingsManager(TUI_KEYBINDINGS))
+    component = AltScreenSearchComponent(lambda _query: None)
+    rendered = component.render(48)
+    lines = [strip_terminal_sequences(line) for line in rendered]
+
+    assert len(lines) == 3
+    assert all(visible_width(line) == 48 for line in lines)
+    assert re.match(r"^┌─+┐$", lines[0])
+    assert re.match(r"^│ Find in transcript +│$", lines[1])
+    assert "\x1b[2m" in rendered[1]
+    assert re.match(r"^└─+ ↑ Shift\+Enter · ↓ Enter ─┘$", lines[2])
+    controls = lines[2]
+    assert component.get_navigation_direction_at(2, controls.index("↑")) == -1
+    assert component.get_navigation_direction_at(2, controls.index("Shift+Enter") + 5) == -1
+    assert component.get_navigation_direction_at(2, controls.index("·")) is None
+    assert component.get_navigation_direction_at(2, controls.index("↓")) == 1
+    assert component.get_navigation_direction_at(2, controls.rindex("Enter") + 2) == 1
+
+
+@pytest.mark.tonio
+async def test_populates_transcript_search_results_next_to_the_query():
+    from pidrei_tui.alt_screen_search import AltScreenSearchComponent
+    from pidrei_tui.utils import strip_terminal_sequences
+
+    set_keybindings(KeybindingsManager(TUI_KEYBINDINGS))
+    component = AltScreenSearchComponent(lambda _query: None)
+    component.render(48)
+
+    await component.handle_input("n")
+    component.set_result(0, 2)
+    populated_render = component.render(48)
+    populated = [strip_terminal_sequences(line) for line in populated_render]
+    assert "n" in populated[1]
+    assert "1/2" in populated[1]
+    assert "\x1b[2m 1/2 \x1b[22m" in populated_render[1]
+    assert not any("Find in transcript" in line for line in populated)
+
+
+@pytest.mark.tonio
+async def test_navigates_transcript_search_with_hoverable_arrow_buttons_and_toggles_it_with_its_shortcut():
+    terminal = RecordingTerminal(120, 6)
+    tui = TuiAltScreen(
+        terminal,
+        None,
+        None,
+        search_navigation_button_style=lambda text, hovered: f"{'\x1b[45m' if hovered else '\x1b[44m'}{text}\x1b[49m",
+    )
+    tui.add_child(Text("needle one\nmiddle\nneedle two\nend", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    await terminal.send_input("\x1b[102;6u")
+    await terminal.send_input("needle")
+    assert await _wait_for_viewport_text(terminal, "1/2")
+    assert await _wait_for_viewport_text(terminal, "↑ Shift+Enter · ↓ Enter")
+
+    viewport = terminal.get_viewport()
+    arrow_row = next(index for index, line in enumerate(viewport) if "↑" in line and "↓" in line)
+    arrow_column = viewport[arrow_row].rindex("Enter")
+    await terminal.send_input(f"\x1b[<35;{arrow_column + 1};{arrow_row + 1}M")
+    assert await terminal.wait_for_write("\x1b[45m↓ Enter\x1b[49m")
+    await terminal.send_input(f"\x1b[<0;{arrow_column + 1};{arrow_row + 1}M")
+    assert await _wait_for_viewport_text(terminal, "2/2")
+    assert any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport())
+
+    viewport = terminal.get_viewport()
+    arrow_row = next(index for index, line in enumerate(viewport) if "↑" in line and "↓" in line)
+    arrow_column = viewport[arrow_row].index("Shift+Enter") + 3
+    await terminal.send_input(f"\x1b[<0;{arrow_column + 1};{arrow_row + 1}M")
+    assert await _wait_for_viewport_text(terminal, "1/2")
+    assert any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport())
+
+    await terminal.send_input("\x1b[102;6u")
+    assert await _wait_until(lambda: not any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport()))
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_does_not_treat_transcript_box_drawing_as_search_navigation_buttons():
+    terminal = VirtualTerminal(80, 10)
+    tui = TuiAltScreen(terminal)
+    transcript_lines = [
+        "needle one",
+        "middle",
+        "needle two",
+        "filler",
+        "┌────────────────────────────────────────┐",
+        "│ box                                    │",
+        "└────────────────────────────────────────┘",
+        "end",
+    ]
+    tui.add_child(Text("\n".join(transcript_lines), 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    await terminal.send_input("\x1b[102;6u")
+    await terminal.send_input("needle")
+    assert await _wait_for_viewport_text(terminal, "1/2")
+    assert not any("2/2" in line for line in terminal.get_viewport())
+
+    box_bottom_row = next(index for index, line in enumerate(terminal.get_viewport()) if line.startswith("└"))
+    await terminal.send_input(f"\x1b[<0;24;{box_bottom_row + 1}M")
+    await terminal.wait_for_render()
+
+    viewport = terminal.get_viewport()
+    assert any("1/2" in line for line in viewport)
+    assert not any("2/2" in line for line in viewport)
+    await tui.stop()
+
+
 @pytest.mark.tonio
 async def test_uses_configured_styles_for_current_and_non_current_search_matches():
     terminal = RecordingTerminal(60, 4)
@@ -524,9 +727,8 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
     await terminal.send_input("\x1b[102;6u")
     await terminal.send_input("needle")
     assert await _wait_until(lambda: transcript.is_following_end is False)
-    assert await _wait_until(
-        lambda: any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
-    )
+    assert await _wait_for_viewport_text(terminal, "2/2")
+    assert any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport())
     assert any("line 10 needle two" in line for line in terminal.get_viewport())
     assert editor_inputs == []
     assert await terminal.wait_for_write("\x1b[1;7mneedle\x1b[22;27m")
@@ -534,23 +736,19 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
     for _ in range(6):
         await terminal.send_input("\x1b[<64;1;4M")
     assert await _wait_until(lambda: transcript.scroll_top == 0)
-    assert await _wait_until(lambda: any("> needle" in line for line in terminal.get_viewport()))
+    assert await _wait_until(lambda: any("needle" in line and "2/2" in line for line in terminal.get_viewport()))
 
     await terminal.send_input("\x07")
-    assert await _wait_until(
-        lambda: any("Find transcript" in line and "1/2" in line for line in terminal.get_viewport())
-    )
+    assert await _wait_for_viewport_text(terminal, "1/2")
     assert any("line 5 needle one" in line for line in terminal.get_viewport())
 
     await terminal.send_input("\x1b[103;6u")
-    assert await _wait_until(
-        lambda: any("Find transcript" in line and "2/2" in line for line in terminal.get_viewport())
-    )
+    assert await _wait_for_viewport_text(terminal, "2/2")
     assert any("line 10 needle two" in line for line in terminal.get_viewport())
 
     await terminal.send_input("\x1b")
     await terminal.send_input("x")
-    assert await _wait_until(lambda: not any("Find transcript" in line for line in terminal.get_viewport()))
+    assert await _wait_until(lambda: not any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport()))
     assert await _wait_until(lambda: editor_inputs == ["x"])
 
     await tui.stop()
@@ -1536,17 +1734,15 @@ async def test_keeps_viewport_scrolling_while_transcript_search_is_focused():
     await terminal.wait_for_render()
     top_before = tui.viewport_top
 
-    since = terminal.frames
     await terminal.send_input("\x1b[102;6u")
-    await terminal.wait_for_render(since)
-    assert any("Find transcript" in line for line in terminal.get_viewport())
+    assert await _wait_for_viewport_text(terminal, "↑ ↓")
 
     since = terminal.frames
     await terminal.send_input("\x1b[5~")
     await terminal.send_input("\x1b[<64;1;4M")
     await terminal.wait_for_render(since)
-    assert tui.viewport_top < top_before
-    assert any("Find transcript" in line for line in terminal.get_viewport())
+    assert await _wait_until(lambda: tui.viewport_top < top_before)
+    assert any("↑ ↓" in line for line in terminal.get_viewport())
     await tui.stop()
 
 

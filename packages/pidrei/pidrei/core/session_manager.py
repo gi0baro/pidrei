@@ -871,6 +871,8 @@ class SessionManager:
 
         if session_file:
             self._set_session_file(session_file, preloaded_file_entries)
+        elif preloaded_file_entries:
+            self._load_entries(preloaded_file_entries, new_session_options)
         else:
             self.new_session(new_session_options)
 
@@ -902,23 +904,39 @@ class SessionManager:
                 self._flushed = True
                 return
 
-            header = next((entry for entry in wire_entries if entry.get("type") == "session"), None)
-            self._session_id = header.get("id") if header and header.get("id") else _create_session_id()
-
-            migrated = _migrate_to_current_version(wire_entries)
-            self._file_entries = [
-                entry if entry.get("type") == "session" else _decode_entry(entry) for entry in wire_entries
-            ]
-            self._entries_revision += 1
-            if migrated:
-                self._rewrite_file()
-
-            self._build_index()
+            self._load_entries(wire_entries)
             self._flushed = True
         else:
             explicit_path = self._session_file
             self.new_session()
             self._session_file = explicit_path  # preserve explicit path from --session flag
+
+    def _load_entries(self, entries: list[dict[str, Any]], options: dict[str, Any] | None = None) -> None:
+        """Adopt entries held outside this manager (a file, or a store outside the filesystem).
+
+        Wire-shaped entries are decoded on the way in; entries that already
+        carry decoded messages pass through. Entries carrying a session header
+        keep it (and are migrated against its version); without one, the
+        header comes from `options` and the entries become its body,
+        adopted as current-version.
+        """
+        header = next((entry for entry in entries if entry.get("type") == "session"), None)
+
+        if header is not None:
+            self._session_id = header.get("id") if header.get("id") else _create_session_id()
+            migrated = _migrate_to_current_version(entries)
+            self._file_entries = [
+                entry if entry.get("type") == "session" else _decode_entry(dict(entry)) for entry in entries
+            ]
+            self._entries_revision += 1
+            if migrated:
+                self._rewrite_file()
+        else:
+            self.new_session(options)
+            self._file_entries = [*self._file_entries, *(_decode_entry(dict(entry)) for entry in entries)]
+            self._entries_revision += 1
+
+        self._build_index()
 
     def new_session(self, options: dict[str, Any] | None = None) -> str | None:
         with self._lock:
@@ -1349,12 +1367,25 @@ class SessionManager:
             # Because labels are real tree entries, later entries can be children of
             # labels; removing labels requires re-chaining the retained path.
             path_without_labels: list[dict[str, Any]] = []
+            replacement_by_label_id: dict[str, str] = {}
+            pending_label_ids: list[str] = []
             path_parent_id: str | None = None
             for entry in path:
                 if entry.get("type") == "label":
+                    pending_label_ids.append(entry["id"])
                     continue
+                for label_id in pending_label_ids:
+                    replacement_by_label_id[label_id] = entry["id"]
+                pending_label_ids.clear()
                 copied = dict(entry)
                 copied["parentId"] = path_parent_id
+                if entry.get("type") == "compaction":
+                    # findCutPoint() can move a compaction boundary back to a
+                    # context-invisible label; keep the boundary on the entry
+                    # that replaces it.
+                    copied["firstKeptEntryId"] = replacement_by_label_id.get(
+                        entry["firstKeptEntryId"], entry["firstKeptEntryId"]
+                    )
                 path_without_labels.append(copied)
                 path_parent_id = entry["id"]
 
@@ -1502,9 +1533,15 @@ class SessionManager:
         return SessionManager(cwd, directory, None, True, _internal=True)
 
     @staticmethod
-    def in_memory(cwd: str | None = None, options: dict[str, Any] | None = None) -> SessionManager:
-        """Create an in-memory session (no file persistence)."""
-        return SessionManager(cwd if cwd is not None else os.getcwd(), "", None, False, options, _internal=True)
+    def in_memory(
+        cwd: str | None = None,
+        options: dict[str, Any] | None = None,
+        entries: list[dict[str, Any]] | None = None,
+    ) -> SessionManager:
+        """Create an in-memory session (no file persistence), optionally from entries held outside the filesystem."""
+        return SessionManager(
+            cwd if cwd is not None else os.getcwd(), "", None, False, options, entries, _internal=True
+        )
 
     @staticmethod
     def _fork_from_sync(

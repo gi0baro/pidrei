@@ -1,35 +1,37 @@
 """Bash tool (port of pi `harness/tools/bash.ts`).
 
-Runs a command through the execution env with streamed, 100 ms-throttled
-partial updates and tail truncation; truncated runs point at a temp file with
-the full output.
+Runs a command through the execution env with bounded, source-side captured
+output: the env publishes rate-limited view updates, the tool folds them into
+one view for partial updates and the final result; truncated runs point at the
+env's spill file with the full output.
 
-pi throttles updates with a `setTimeout` on the single JS thread; the port
-spawns a tonio timer task instead, and guards the throttle state with a lock
-because output chunks arrive from the env's reader tasks.
+pi's durable-recovery checkpoint flag on `onUpdate` (every 2 s) is
+harness-runtime facing and not ported (PORT_0.85.0.md, `eb1185d9`).
 """
 
 import math
-import threading
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
-
-import tonio.colored as tonio
 
 from pidrei_ai.types import TextContent
 from pidrei_ai.utils.cancel import CancelToken
 
 from ...types import AgentToolResult, AgentToolUpdateCallback
-from ..types import AgentHarnessTool, get_or_throw
-from ..utils.shell_output import ShellCaptureOptions, ShellCaptureProgress, execute_shell_with_capture
-from ..utils.truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, format_size
+from ..types import (
+    AgentHarnessTool,
+    ShellExecOptions,
+    ShellOutputCaptureOptions,
+    ShellOutputLimits,
+    ShellOutputTruncation,
+    ShellOutputView,
+)
+from ..utils.output_capture import apply_shell_output_update
+from ..utils.truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, format_size
 from .tool_context import ExecutionToolContext
 
 
 MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000
-BASH_UPDATE_THROTTLE_SECONDS = 0.1
 
 _BASH_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -43,7 +45,7 @@ _BASH_SCHEMA: dict[str, Any] = {
 
 @dataclass(slots=True)
 class BashToolDetails:
-    truncation: TruncationResult | None = None
+    truncation: ShellOutputTruncation | None = None
     full_output_path: str | None = None
 
 
@@ -79,7 +81,7 @@ class BashTool(AgentHarnessTool[ExecutionToolContext, BashToolDetails | None]):
     name = "bash"
     label = "bash"
     description = (
-        "Execute a bash command in the current working directory. Returns stdout and stderr. "
+        "Execute a bash command in the current working directory. Returns combined stdout and stderr. "
         f"Output is truncated to last {DEFAULT_MAX_LINES} lines or {DEFAULT_MAX_BYTES // 1024}KB "
         "(whichever is hit first). If truncated, full output is saved to a temp file. "
         "Optionally provide a timeout in seconds."
@@ -107,148 +109,94 @@ class BashTool(AgentHarnessTool[ExecutionToolContext, BashToolDetails | None]):
         if options is not None and options.prepare is not None:
             await options.prepare(execution, tool_context, cancel)
 
-        throttle_lock = threading.RLock()
-        get_latest_progress: Callable[[], ShellCaptureProgress] | None = None
-        update_dirty = False
-        last_update_at = 0.0
-        pending_timer: tonio.Event | None = None
+        view: ShellOutputView | None = None
+        accepting_updates = True
 
-        def emit_output_update() -> None:
-            nonlocal update_dirty, last_update_at
-            with throttle_lock:
-                if on_update is None or not update_dirty or get_latest_progress is None:
-                    return
-                update_dirty = False
-                last_update_at = time.monotonic()
-                getter = get_latest_progress
-            # Call the getter outside the throttle lock: it takes the capture
-            # state lock, which chunk callbacks hold while entering the
-            # throttle lock (opposite order would deadlock).
-            progress = getter()
+        def handle_update(update, _cancel) -> None:
+            nonlocal view
+            if not accepting_updates:
+                return
+            view = apply_shell_output_update(view, update)
+            if on_update is None:
+                return
             on_update(
                 AgentToolResult(
-                    content=[TextContent(text=progress.output)],
+                    content=[TextContent(text=view.text)],
                     details=BashToolDetails(
-                        truncation=progress.truncation if progress.truncation.truncated else None,
-                        full_output_path=progress.full_output_path,
+                        truncation=view.truncation if view.truncation.truncated else None,
+                        full_output_path=view.spill_path,
                     ),
                 )
             )
-
-        def clear_update_timer() -> None:
-            nonlocal pending_timer
-            with throttle_lock:
-                if pending_timer is None:
-                    return
-                pending_timer.set()
-                pending_timer = None
-
-        async def update_timer(cancel_event: tonio.Event, delay: float) -> None:
-            nonlocal pending_timer
-            await cancel_event.wait(delay)
-            with throttle_lock:
-                if pending_timer is cancel_event:
-                    pending_timer = None
-                if cancel_event.is_set():
-                    return
-            emit_output_update()
-
-        def schedule_output_update() -> None:
-            nonlocal update_dirty, pending_timer
-            if on_update is None:
-                return
-            with throttle_lock:
-                update_dirty = True
-                delay = BASH_UPDATE_THROTTLE_SECONDS - (time.monotonic() - last_update_at)
-                if delay <= 0:
-                    if pending_timer is not None:
-                        pending_timer.set()
-                        pending_timer = None
-                    should_emit = True
-                else:
-                    should_emit = False
-                    if pending_timer is None:
-                        pending_timer = tonio.Event()
-                        tonio.spawn.without_tracking(update_timer(pending_timer, delay))
-            if should_emit:
-                emit_output_update()
-
-        def on_chunk(
-            _chunk: str, get_progress: Callable[[], ShellCaptureProgress], _cancel: CancelToken | None = None
-        ) -> None:
-            nonlocal get_latest_progress
-            with throttle_lock:
-                get_latest_progress = get_progress
-            schedule_output_update()
 
         if on_update is not None:
             on_update(AgentToolResult(content=[], details=None))
-        try:
-            capture = get_or_throw(
-                await execute_shell_with_capture(
-                    env,
-                    execution.command,
-                    ShellCaptureOptions(
-                        cwd=execution.cwd,
-                        env=execution.env,
-                        inherit_env=execution.inherit_env,
-                        timeout=timeout,
-                        return_execution_errors=True,
-                        on_chunk=on_chunk,
-                    ),
-                    cancel,
-                )
+        result = await env.exec(
+            execution.command,
+            ShellExecOptions(
+                cwd=execution.cwd,
+                env=execution.env,
+                inherit_env=execution.inherit_env,
+                timeout=timeout,
+                capture=ShellOutputCaptureOptions(
+                    limits=ShellOutputLimits(max_bytes=DEFAULT_MAX_BYTES, max_lines=DEFAULT_MAX_LINES, retain="tail"),
+                    spill=True,
+                ),
+                on_update=handle_update,
+            ),
+            cancel,
+        )
+        accepting_updates = False
+
+        output_text = view.text if view is not None else ""
+        if result.ok:
+            capture: ShellOutputView | None = ShellOutputView(
+                text=output_text,
+                truncation=result.value.truncation,
+                spill_path=result.value.spill_path,
+                last_line_bytes=result.value.last_line_bytes,
             )
-            clear_update_timer()
-            with throttle_lock:
-                get_latest_progress = lambda: ShellCaptureProgress(
-                    output=capture.output,
-                    truncation=capture.truncation,
-                    full_output_path=capture.full_output_path,
-                    last_line_bytes=capture.last_line_bytes,
+        else:
+            capture = view
+        details: BashToolDetails | None = None
+        if capture is not None and capture.truncation.truncated:
+            details = BashToolDetails(truncation=capture.truncation, full_output_path=capture.spill_path)
+            start_line = capture.truncation.total_lines - capture.truncation.output_lines + 1
+            end_line = capture.truncation.total_lines
+            if capture.truncation.last_line_partial:
+                last_line_size = format_size(
+                    capture.last_line_bytes if capture.last_line_bytes is not None else capture.truncation.output_bytes
                 )
-                update_dirty = True
-            emit_output_update()
-
-            output_text = capture.output
-            details: BashToolDetails | None = None
-            if capture.truncation.truncated:
-                details = BashToolDetails(truncation=capture.truncation, full_output_path=capture.full_output_path)
-                start_line = capture.truncation.total_lines - capture.truncation.output_lines + 1
-                end_line = capture.truncation.total_lines
-                if capture.truncation.last_line_partial:
-                    last_line_size = format_size(capture.last_line_bytes)
-                    output_text += (
-                        f"\n\n[Showing last {format_size(capture.truncation.output_bytes)} of line {end_line} "
-                        f"(line is {last_line_size}). Full output: {capture.full_output_path}]"
-                    )
-                elif capture.truncation.truncated_by == "lines":
-                    output_text += (
-                        f"\n\n[Showing lines {start_line}-{end_line} of {capture.truncation.total_lines}. "
-                        f"Full output: {capture.full_output_path}]"
-                    )
-                else:
-                    output_text += (
-                        f"\n\n[Showing lines {start_line}-{end_line} of {capture.truncation.total_lines} "
-                        f"({format_size(DEFAULT_MAX_BYTES)} limit). Full output: {capture.full_output_path}]"
-                    )
-
-            def append_status(status: str) -> str:
-                return f"{output_text}\n\n{status}" if output_text else status
-
-            if capture.cancelled:
-                raise Exception(append_status("Command aborted"))
-            if capture.execution_error is not None and capture.execution_error.code == "timeout":
-                raise Exception(append_status(f"Command timed out after {timeout} seconds")) from (
-                    capture.execution_error
+                output_text += (
+                    f"\n\n[Showing last {format_size(capture.truncation.output_bytes)} of line {end_line} "
+                    f"(line is {last_line_size}). Full output: {capture.spill_path}]"
                 )
-            if capture.execution_error is not None:
-                raise capture.execution_error
-            if capture.exit_code != 0 and capture.exit_code is not None:
-                raise Exception(append_status(f"Command exited with code {capture.exit_code}"))
-            return AgentToolResult(content=[TextContent(text=output_text or "(no output)")], details=details)
-        finally:
-            clear_update_timer()
+            elif capture.truncation.truncated_by == "lines":
+                output_text += (
+                    f"\n\n[Showing lines {start_line}-{end_line} of {capture.truncation.total_lines}. "
+                    f"Full output: {capture.spill_path}]"
+                )
+            else:
+                output_text += (
+                    f"\n\n[Showing lines {start_line}-{end_line} of {capture.truncation.total_lines} "
+                    f"({format_size(DEFAULT_MAX_BYTES)} limit). Full output: {capture.spill_path}]"
+                )
+
+        if not result.ok:
+            if result.error.code == "timeout":
+                status = f"Command timed out after {timeout} seconds"
+            elif result.error.code == "aborted":
+                status = "Command aborted"
+            else:
+                status = result.error.message
+            raise Exception(f"{output_text}\n\n{status}" if output_text else status) from result.error
+        if result.value.exit_code != 0:
+            raise Exception(
+                f"{output_text}\n\nCommand exited with code {result.value.exit_code}"
+                if output_text
+                else f"Command exited with code {result.value.exit_code}"
+            )
+        return AgentToolResult(content=[TextContent(text=output_text or "(no output)")], details=details)
 
 
 def create_bash_tool(options: BashToolOptions | None = None) -> BashTool:

@@ -50,16 +50,15 @@ Port deviations (documented once here):
   the input pump and the querying task may run on different tonio workers.
 - ``CURSOR_MARKER`` is an APC sequence pi brands "pi:c" — renamed to
   "pidrei:c" (pi naming itself).
-- Env renames: PI_HARDWARE_CURSOR → PIDREI_HARDWARE_CURSOR,
-  PI_CLEAR_ON_SHRINK → PIDREI_CLEAR_ON_SHRINK, PI_DEBUG_REDRAW →
-  PIDREI_DEBUG_REDRAW, PI_TUI_DEBUG → PIDREI_TUI_DEBUG,
-  PI_CODING_AGENT_DIR → PIDREI_CODING_AGENT_DIR (log dir default
-  ~/.pidrei/agent); log files pidrei-debug.log / pidrei-crash.log.
+- Env renames: PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW, PI_TUI_DEBUG →
+  PIDREI_TUI_DEBUG; log files pidrei-tui-debug.log / pidrei-tui-crash.log.
+  The renderer reads no coding-agent configuration: the hardware cursor,
+  clear-on-shrink and the log directory are constructor/setter inputs (pi
+  maps PI_HARDWARE_CURSOR through its settings manager before creating it).
 """
 
 import functools
 import math
-import os
 import re
 import threading
 import time as _time
@@ -255,7 +254,7 @@ def _parse_size_value(value, reference_size: int) -> int | None:
 
 
 class _OverlayStackEntry:
-    __slots__ = ("component", "focus_order", "hidden", "options", "pre_focus")
+    __slots__ = ("bounds", "component", "focus_order", "hidden", "options", "pre_focus")
 
     def __init__(self, component, options, pre_focus, focus_order) -> None:
         self.component = component
@@ -263,20 +262,25 @@ class _OverlayStackEntry:
         self.pre_focus = pre_focus
         self.hidden = False
         self.focus_order = focus_order
+        # Last rendered terminal-relative rectangle (pi's OverlayBounds):
+        # {"row", "col", "width", "height"}, None until rendered.
+        self.bounds: dict | None = None
 
 
 class OverlayHandle:
     """Handle returned by show_overlay for controlling the overlay."""
 
-    __slots__ = ("focus", "hide", "is_focused", "is_hidden", "set_hidden", "unfocus")
+    __slots__ = ("focus", "get_bounds", "hide", "is_focused", "is_hidden", "set_hidden", "unfocus")
 
-    def __init__(self, *, hide, set_hidden, is_hidden, focus, unfocus, is_focused) -> None:
+    def __init__(self, *, hide, set_hidden, is_hidden, focus, unfocus, is_focused, get_bounds) -> None:
         self.hide = hide
         self.set_hidden = set_hidden
         self.is_hidden = is_hidden
         self.focus = focus
         self.unfocus = unfocus
         self.is_focused = is_focused
+        # The most recent rendered bounds for a visible overlay, or None.
+        self.get_bounds = get_bounds
 
 
 class _PendingOsc11Query:
@@ -434,11 +438,9 @@ class TuiBase(Container, ABC):
     def __init__(self, terminal, show_hardware_cursor: bool | None = None, log_directory: str | None = None) -> None:
         super().__init__()
         self.terminal = terminal
-        self._log_directory = (
-            log_directory
-            if log_directory is not None
-            else os.environ.get("PIDREI_CODING_AGENT_DIR") or os.path.join(os.path.expanduser("~"), ".pidrei", "agent")
-        )
+        # Directory for debug/crash logs. When None, debug logging is disabled
+        # and crash dumps fall back to the OS temp directory.
+        self._log_directory = log_directory
         self._focused_component = None
         self._input_listeners: list = []
 
@@ -472,9 +474,9 @@ class TuiBase(Container, ABC):
         self.input_owner: OwnerTask = getattr(terminal, "input_owner", None) or OwnerTask()
         self.input_owner.on_error = self._handle_owner_error
         self._owner_scope = None
-        self._show_hardware_cursor = os.environ.get("PIDREI_HARDWARE_CURSOR") == "1"
+        self._show_hardware_cursor = False
         # Clear empty rows when content shrinks (default: off)
-        self._clear_on_shrink = os.environ.get("PIDREI_CLEAR_ON_SHRINK") == "1"
+        self._clear_on_shrink = False
         self._full_redraw_count = 0
         self._stopped = False
         self._query_lock = threading.Lock()
@@ -780,6 +782,11 @@ class TuiBase(Container, ABC):
         def is_focused() -> bool:
             return self._focused_component is component
 
+        def get_bounds() -> dict | None:
+            if entry not in self._overlay_stack or not self._is_overlay_visible(entry) or entry.bounds is None:
+                return None
+            return dict(entry.bounds)
+
         return OverlayHandle(
             hide=hide,
             set_hidden=set_hidden,
@@ -787,6 +794,7 @@ class TuiBase(Container, ABC):
             focus=focus,
             unfocus=unfocus,
             is_focused=is_focused,
+            get_bounds=get_bounds,
         )
 
     def hide_overlay(self) -> None:
@@ -1454,6 +1462,9 @@ class TuiBase(Container, ABC):
             return lines
         result = list(lines)
 
+        for entry in self._overlay_stack:
+            entry.bounds = None
+
         # Pre-render all visible overlays and calculate positions
         rendered: list[dict] = []
         min_lines_needed = len(result)
@@ -1479,6 +1490,7 @@ class TuiBase(Container, ABC):
 
             # Get final row/col with actual overlay height
             layout = self._resolve_overlay_layout(options, len(overlay_lines), term_width, term_height)
+            entry.bounds = {"row": layout["row"], "col": layout["col"], "width": width, "height": len(overlay_lines)}
 
             rendered.append(
                 {"entry": entry, "overlayLines": overlay_lines, "row": layout["row"], "col": layout["col"], "w": width}

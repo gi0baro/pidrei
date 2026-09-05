@@ -45,10 +45,12 @@ readable, but any `colors` entry can be a literal hex value.
 
 The full list of roles is in `theme-schema.json`, shipped next to the built-in
 themes. Point `$schema` at it and an editor will complete and validate as you
-type. Four roles are optional, so older themes keep loading: `thinkingMax`
-falls back to `thinkingXhigh`, `scrollbarThumb` (the fullscreen scrollbar
-thumb) and `searchMatchBg` fall back to `selectedBg`, and `searchMatchText`
-falls back to `text`. Non-current transcript search matches render as
+type. Five roles are optional, so older themes keep loading: `thinkingMax`
+falls back to `thinkingXhigh`, `scrollbarTrack` (the fullscreen scrollbar
+track foreground) falls back to `muted`, `scrollbarThumb` (the thumb
+foreground, shared by the normal and expanded states) falls back to `text`,
+`searchMatchBg` falls back to `selectedBg`, and `searchMatchText` falls back
+to `text`. Non-current transcript search matches render as
 `searchMatchText` on `searchMatchBg` with an underline; the current match
 reverses that foreground/background pair and uses bold text.
 

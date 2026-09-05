@@ -4,6 +4,7 @@ from pidrei_tui import TUI, ProcessTerminal, TuiAltScreen, TuiMainScreen
 
 from ...utils.clipboard import copy_to_clipboard
 from ...utils.open_browser import open_browser
+from .components.keybinding_hints import key_display_text
 from .theme import theme
 
 
@@ -29,12 +30,19 @@ def create_interactive_tui(
             except Exception:
                 return False
 
+        def scroll_to_end_indicator() -> str:
+            shortcut = key_display_text("tui.altScreen.bottom")
+            label = f" ↓ Jump to latest message{f' · {shortcut}' if shortcut else ''} "
+            return theme.bg("selectedBg", theme.fg("text", label))
+
         return TuiAltScreen(
             terminal,
             show_hardware_cursor,
             log_directory,
             search_match_style=lambda text: theme.underline(style_search_match(text)),
             search_current_match_style=lambda text: theme.bold(theme.inverse(style_search_match(text))),
+            search_navigation_button_style=lambda text, hovered: theme.underline(text) if hovered else text,
+            scroll_to_end_indicator=scroll_to_end_indicator,
             open_url=open_browser,
             copy_on_select=fullscreen_copy_on_select,
             copy_selection=copy_selection,

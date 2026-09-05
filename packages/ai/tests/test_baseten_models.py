@@ -85,30 +85,9 @@ async def capture_payload(model: Model, reasoning: str | None = None) -> dict:
     return captured["payload"]
 
 
-def test_registers_glm_52_as_the_default_openai_compatible_reasoning_model():
-    model = get_builtin_model("baseten", "zai-org/GLM-5.2")
-
-    assert model is not None
-    assert model.api == "openai-completions"
-    assert model.provider == "baseten"
-    assert model.base_url == "https://inference.baseten.co/v1"
-    assert model.reasoning is True
-    assert model.thinking_level_map == GLM52_THINKING_LEVEL_MAP
-    assert model.input == ["text", "image"]
-    assert model.context_window == 1048576
-    assert model.max_tokens == 262144
-    assert model.cost == ModelCost(input=1.4, output=4.4, cache_read=0.3, cache_write=0)
-    compat = model.compat
-    assert isinstance(compat, OpenAICompletionsCompat)
-    assert compat.supports_store is False
-    assert compat.supports_developer_role is False
-    assert compat.supports_reasoning_effort is True
-    assert compat.supports_usage_in_streaming is True
-    assert compat.max_tokens_field == "max_tokens"
-    assert compat.supports_strict_mode is True
-    assert compat.supports_long_cache_retention is False
-    assert compat.thinking_format == "baseten"
-    assert compat.chat_template_args == {"enable_thinking": {"$var": "thinking.enabled"}}
+def test_keeps_both_glm_52_endpoints_text_only():
+    assert get_builtin_model("baseten", "zai-org/GLM-5.2").input == ["text"]
+    assert get_builtin_model("baseten", "zai-org/GLM-5.2-Fast").input == ["text"]
 
 
 @pytest.mark.tonio

@@ -14,8 +14,9 @@ OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS = [
 
 
 @pytest.mark.parametrize("model_id", OPENROUTER_ANTHROPIC_LATEST_MODEL_IDS)
-def test_enables_cache_control_for_openrouter_anthropic_aliases(model_id):
+def test_keeps_completions_cache_control_for_openrouter_anthropic_latest_aliases(model_id):
     model = get_builtin_model("openrouter", model_id)
 
     assert model is not None
+    assert model.api == "openai-completions"
     assert model.compat.cache_control_format == "anthropic"

@@ -1,5 +1,7 @@
 """Mirror of pi tui test/layout.test.ts."""
 
+import re
+
 import pytest
 import tonio.colored as tonio
 
@@ -227,82 +229,156 @@ def test_tracks_follow_end_state_and_returns_unused_scroll_delta():
 
 
 @pytest.mark.tonio
-async def test_renders_a_transient_proportional_scrollbar_without_replacing_cell_content():
+async def test_renders_a_proportional_glyph_scrollbar_with_an_expanded_active_thumb():
     source_lines = ["abcd界", "abcde2", "abcde3", "abcde4", "abcde5", "abcde6", "abcde7", "abcde8"]
     content_background = "\x1b[42m"
-    scrollbar_background = "\x1b[48;5;1m"
+    track_color = "\x1b[38;5;2m"
+    thumb_color = "\x1b[38;5;1m"
 
-    def scrollbar_style(text: str) -> str:
-        return f"{scrollbar_background}{text}\x1b[49m"
+    def scrollbar_track_style(text: str) -> str:
+        return f"{track_color}{text}\x1b[39m"
+
+    def scrollbar_thumb_style(text: str) -> str:
+        return f"{thumb_color}{text}\x1b[39m"
 
     content = Text("\n".join(source_lines), 0, 0, lambda text: f"{content_background}{text}\x1b[49m")
     scroll_view = ScrollView(
-        content, {"scrollbar": "auto", "scrollbarStyle": scrollbar_style, "scrollbarHideDelayMs": 10}
+        content,
+        {
+            "scrollbar": "auto",
+            "scrollbarTrackStyle": scrollbar_track_style,
+            "scrollbarThumbStyle": scrollbar_thumb_style,
+            "scrollbarHideDelayMs": 10,
+        },
     )
 
     def render() -> list[str]:
         return render_layout_frame(scroll_view, 6, 4, _noop).lines
 
-    def thumb_rows(lines: list[str]) -> list[bool]:
-        return [scrollbar_background in line for line in lines]
+    def visible(lines: list[str]) -> list[str]:
+        return [strip_terminal_sequences(line) for line in lines]
 
     lines = render()
-    assert thumb_rows(lines) == [False, False, False, False]
-    assert [strip_terminal_sequences(line) for line in lines] == source_lines[:4]
+    assert visible(lines) == source_lines[:4]
 
     scroll_view.scroll_by(2)
     lines = render()
-    assert thumb_rows(lines) == [False, True, True, False]
-    assert [strip_terminal_sequences(line) for line in lines] == source_lines[2:6]
-    assert lines[1].rfind(content_background) < lines[1].rfind(scrollbar_background)
+    assert visible(lines) == ["abcde│", "abcde┃", "abcde┃", "abcde│"]
+    assert [track_color in line for line in lines] == [True, False, False, True]
+    assert [thumb_color in line for line in lines] == [False, True, True, False]
 
+    scroll_view.set_scrollbar_active(True)
+    lines = render()
+    assert visible(lines) == ["abcde│", "abcde█", "abcde█", "abcde│"]
+    assert [thumb_color in line for line in lines] == [False, True, True, False]
+    assert lines[1].rfind(content_background) < lines[1].rfind(thumb_color)
+
+    scroll_view.set_scrollbar_active(False)
     await tonio.sleep(0.03)
     lines = render()
-    assert thumb_rows(lines) == [False, False, False, False]
+    assert visible(lines) == source_lines[2:6]
 
     scroll_view.scroll_to_end()
     lines = render()
-    assert thumb_rows(lines) == [False, False, True, True]
-    assert [strip_terminal_sequences(line) for line in lines] == source_lines[4:]
+    assert visible(lines) == ["abcde│", "abcde│", "abcde┃", "abcde┃"]
+
+    scroll_view.scroll_to_start()
+    lines = render()
+    assert visible(lines)[0] == "abcd ┃"
 
     followed_content = Text("\n".join(source_lines), 0, 0)
-    followed = ScrollView(followed_content, {"follow": "end", "scrollbar": "auto", "scrollbarStyle": scrollbar_style})
+    followed = ScrollView(
+        followed_content,
+        {
+            "follow": "end",
+            "scrollbar": "auto",
+            "scrollbarTrackStyle": scrollbar_track_style,
+            "scrollbarThumbStyle": scrollbar_thumb_style,
+        },
+    )
     render_layout_frame(followed, 6, 4, _noop)
     assert followed.scroll_top == 4
     followed_content.set_text("\n".join([*source_lines, "abcde9"]))
     growth_frame = render_layout_frame(followed, 6, 4, _noop)
     assert followed.scroll_top == 5
-    assert all(scrollbar_background not in line for line in growth_frame.lines)
+    assert all(not re.search(r"[│┃]", strip_terminal_sequences(line)) for line in growth_frame.lines)
 
     fitting_content = Text("1\n2", 0, 0)
-    automatic = ScrollView(fitting_content, {"scrollbar": "auto", "scrollbarStyle": scrollbar_style})
+    automatic = ScrollView(fitting_content, {"scrollbar": "auto", "scrollbarThumbStyle": scrollbar_thumb_style})
     render_layout_frame(automatic, 6, 4, _noop)
     automatic.scroll_by(1)
-    assert all(scrollbar_background not in line for line in render_layout_frame(automatic, 6, 4, _noop).lines)
+    assert all(
+        not re.search(r"[│┃]", strip_terminal_sequences(line))
+        for line in render_layout_frame(automatic, 6, 4, _noop).lines
+    )
 
-    always_fitting = ScrollView(fitting_content, {"scrollbar": "always", "scrollbarStyle": scrollbar_style})
+    always_fitting = ScrollView(fitting_content, {"scrollbar": "always", "scrollbarThumbStyle": scrollbar_thumb_style})
     always_fitting_frame = render_layout_frame(always_fitting, 6, 4, _noop)
     assert always_fitting_frame.root.children[0].rect.width == 5
-    assert all(scrollbar_background in line for line in always_fitting_frame.lines)
+    assert all(line.endswith("┃") for line in visible(always_fitting_frame.lines))
 
-    always_overflowing = ScrollView(content, {"scrollbar": "always", "scrollbarStyle": scrollbar_style})
+    always_overflowing = ScrollView(
+        content,
+        {
+            "scrollbar": "always",
+            "scrollbarTrackStyle": scrollbar_track_style,
+            "scrollbarThumbStyle": scrollbar_thumb_style,
+        },
+    )
     always_overflowing_frame = render_layout_frame(always_overflowing, 6, 4, _noop)
     assert always_overflowing_frame.root.children[0].rect.width == 5
-    assert len([line for line in always_overflowing_frame.lines if scrollbar_background in line]) == 2
+    assert len([line for line in visible(always_overflowing_frame.lines) if line.endswith("┃")]) == 2
+    assert len([line for line in visible(always_overflowing_frame.lines) if line.endswith("│")]) == 2
+    for line in always_overflowing_frame.lines:
+        scrollbar_style_index = max(line.rfind(track_color), line.rfind(thumb_color))
+        reserved_column_reset_index = line.rfind("\x1b[0m\x1b]8;;\x07", 0, scrollbar_style_index + 1)
+        assert reserved_column_reset_index > line.rfind(content_background)
 
     def thumb_height_for(content_height: int) -> int:
         sized = ScrollView(
             Text("\n".join(["x"] * content_height), 0, 0),
-            {"scrollbar": "auto", "scrollbarStyle": scrollbar_style},
+            {"scrollbar": "auto", "scrollbarThumbStyle": scrollbar_thumb_style},
         )
         render_layout_frame(sized, 6, 20, _noop)
         sized.scroll_by(1)
-        return len([line for line in render_layout_frame(sized, 6, 20, _noop).lines if scrollbar_background in line])
+        return len(
+            [
+                line
+                for line in render_layout_frame(sized, 6, 20, _noop).lines
+                if strip_terminal_sequences(line).endswith("┃")
+            ]
+        )
 
     assert thumb_height_for(21) == 19
     assert thumb_height_for(40) == 10
     assert thumb_height_for(100) == 4
     assert thumb_height_for(400) == 2
+
+
+def test_preserves_only_the_underlying_background_beneath_overlay_scrollbar_glyphs():
+    background = "\x1b[42m"
+    border_foreground = "\x1b[31m"
+
+    class _Content:
+        def render(self, width: int) -> list[str]:
+            return [f"{background}{'x' * (width - 1)}{border_foreground}│\x1b[39m\x1b[49m" for _ in range(8)]
+
+        def invalidate(self) -> None:
+            pass
+
+    scroll_view = ScrollView(
+        _Content(),
+        {"scrollbar": "auto", "scrollbarTrackStyle": lambda text: text, "scrollbarThumbStyle": lambda text: text},
+    )
+    render_layout_frame(scroll_view, 6, 4, _noop)
+    scroll_view.scroll_by(1)
+    frame = render_layout_frame(scroll_view, 6, 4, _noop)
+
+    assert [strip_terminal_sequences(line) for line in frame.lines] == ["xxxxx│", "xxxxx┃", "xxxxx┃", "xxxxx│"]
+    for line in frame.lines:
+        assert background in line
+        assert border_foreground not in line
+        assert f"\x1b[0m\x1b]8;;\x07{background}" in line
 
 
 def test_updates_reserved_scrollbar_layout_at_runtime():
@@ -312,7 +388,7 @@ def test_updates_reserved_scrollbar_layout_at_runtime():
         return render_layout_frame(HStack([scroll_view], {"align": "start"}), 6, 2, _noop)
 
     always = render()
-    assert visible_lines(always.lines) == ["12345", "6"]
+    assert visible_lines(always.lines) == ["12345┃", "6    ┃"]
     assert always.root.children[0].rect.width == 6
     assert always.root.children[0].children[0].rect.width == 5
 

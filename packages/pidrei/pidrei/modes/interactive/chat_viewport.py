@@ -21,7 +21,8 @@ def create_chat_viewport(
     widgets_above=None,
     widgets_below=None,
     scrollbar: str | None = None,
-    scrollbar_style=None,
+    scrollbar_track_style=None,
+    scrollbar_thumb_style=None,
 ) -> ChatViewport:
     """Shared fullscreen transcript and fixed input-dock layout."""
     scroll_options = {
@@ -30,8 +31,10 @@ def create_chat_viewport(
         "overscroll": "chain",
         "scrollbar": scrollbar if scrollbar is not None else "auto",
     }
-    if scrollbar_style is not None:
-        scroll_options["scrollbarStyle"] = scrollbar_style
+    if scrollbar_track_style is not None:
+        scroll_options["scrollbarTrackStyle"] = scrollbar_track_style
+    if scrollbar_thumb_style is not None:
+        scroll_options["scrollbarThumbStyle"] = scrollbar_thumb_style
     transcript = ScrollView(document, scroll_options)
     dock = VStack(
         [

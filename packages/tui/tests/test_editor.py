@@ -766,6 +766,21 @@ async def test_handles_mixed_cjk_and_ascii_word_movement():
 
 
 @pytest.mark.tonio
+async def test_centers_scroll_indicators_on_wide_borders():
+    width = 40
+    editor = Editor(create_test_tui(width), default_editor_theme)
+    editor.set_text("\n".join(f"line {index}" for index in range(20)))
+
+    editor.render(width)
+    for _ in range(10):
+        await editor.handle_input("\x1b[A")
+
+    lines = editor.render(width)
+    assert strip_ansi(lines[0]) == f"{'─' * 15} ↑ 9 more {'─' * 15}"
+    assert strip_ansi(lines[-1]) == f"{'─' * 15} ↓ 4 more {'─' * 15}"
+
+
+@pytest.mark.tonio
 async def test_keeps_truncated_scroll_indicators_within_width_and_preserves_their_color_issue_6962():
     width = 10
     border_color = lambda text: f"\x1b[35m{text}\x1b[39m"

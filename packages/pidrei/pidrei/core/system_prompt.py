@@ -58,6 +58,8 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
 
     context_files = options.context_files
     skills = options.skills
+    tools = selected_tools if selected_tools is not None else ["read", "bash", "edit", "write"]
+    skill_file_read_tool = next((tool for tool in ("read", "bash") if tool in tools), None)
 
     if options.custom_prompt:
         prompt = options.custom_prompt
@@ -69,10 +71,9 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
         if context_files:
             prompt += _project_context_section(context_files)
 
-        # Append skills section (only if read tool is available)
-        custom_prompt_has_read = selected_tools is None or "read" in selected_tools
-        if custom_prompt_has_read and skills:
-            prompt += format_skills_for_prompt(skills)
+        # Append skills when a tool capable of reading their files is available.
+        if skill_file_read_tool and skills:
+            prompt += format_skills_for_prompt(skills, skill_file_read_tool)
 
         prompt += f"\nCurrent working directory: {prompt_cwd}\n"
 
@@ -85,7 +86,6 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
 
     # Build tools list based on selected tools.
     # A tool appears in Available tools only when the caller provides a one-line snippet.
-    tools = selected_tools if selected_tools is not None else ["read", "bash", "edit", "write"]
     visible_tools = [name for name in tools if tool_snippets and tool_snippets.get(name)]
     tools_list = "\n".join(f"- {name}: {tool_snippets[name]}" for name in visible_tools) if visible_tools else "(none)"
 
@@ -103,7 +103,6 @@ def build_system_prompt(options: BuildSystemPromptOptions) -> str:
     has_grep = "grep" in tools
     has_find = "find" in tools
     has_ls = "ls" in tools
-    has_read = "read" in tools
 
     # File exploration guidelines
     if has_bash and not has_grep and not has_find and not has_ls:
@@ -146,9 +145,9 @@ pidrei documentation (read only when the user asks about pidrei itself, its SDK,
     if context_files:
         prompt += _project_context_section(context_files)
 
-    # Append skills section (only if read tool is available)
-    if has_read and skills:
-        prompt += format_skills_for_prompt(skills)
+    # Append skills when a tool capable of reading their files is available.
+    if skill_file_read_tool and skills:
+        prompt += format_skills_for_prompt(skills, skill_file_read_tool)
 
     prompt += f"\nCurrent working directory: {prompt_cwd}"
 

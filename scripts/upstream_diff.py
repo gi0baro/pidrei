@@ -99,6 +99,10 @@ DROPPED_PREFIXES = (
         "live-API test, not ported (offline mirror: test_azure_openai_responses_reasoning_replay.py)",
     ),
     (
+        "packages/ai/test/anthropic-thinking-binding-e2e.test.ts",
+        "live-API test (skipIf !ANTHROPIC_API_KEY), not ported (offline mirror: test_anthropic_mid_conversation_effort.py)",
+    ),
+    (
         "packages/ai/src/api/pi-messages.ts",
         "pi-messages adapter not ported (radius wire protocol; types.py keeps the api literal only)",
     ),
@@ -813,6 +817,12 @@ TEST_HOMES = {
     "packages/coding-agent/test/session-manager/file-operations.test.ts": (
         "covered by packages/pidrei/tests/test_session_manager.py (file-operations cases "
         "live with the rest of the session-manager mirror)"
+    ),
+    # 0.85.0 additions (PORT_0.85.0.md U3).
+    "packages/coding-agent/test/suite/regressions/4167-thinking-toggle-pending-tool-render.test.ts": (
+        "PARITY GAP: pending tool render surviving a thinking toggle (pi 755da309, pre-dates this "
+        "sync) has no mirror; the sibling 8611 case lives in test_8611_thinking_toggle_pending_bash_output.py. "
+        "In-range deltas only touch the fake-`this` fixture (maybeShowAssistantDiagnostics stub)"
     ),
 }
 

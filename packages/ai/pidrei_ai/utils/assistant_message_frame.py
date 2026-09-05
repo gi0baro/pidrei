@@ -196,6 +196,7 @@ def _clone_start_message(message) -> AssistantMessage:
         model=message.model,
         response_model=message.response_model,
         response_id=message.response_id,
+        provider_thinking_level=message.provider_thinking_level,
         diagnostics=copy.deepcopy(message.diagnostics) if message.diagnostics is not None else None,
         usage=usage.freeze() if isinstance(usage, UsageBuilder) else usage,
         stop_reason="pending",

@@ -30,25 +30,28 @@ def _write_theme(tmp_path, theme: dict) -> str:
 
 
 @pytest.mark.tonio
-async def test_falls_back_to_selected_bg_when_scrollbar_thumb_is_omitted(tmp_path):
+@pytest.mark.parametrize(("token", "fallback"), [("scrollbarTrack", "muted"), ("scrollbarThumb", "text")])
+async def test_falls_back_when_a_scrollbar_color_is_omitted(tmp_path, token, fallback):
     theme_json = _load_dark_theme()
-    theme_json["name"] = "legacy-scrollbar-theme"
-    del theme_json["colors"]["scrollbarThumb"]
+    theme_json["name"] = f"missing-{token}-theme"
+    del theme_json["colors"][token]
 
     loaded_theme = await load_theme_from_path(_write_theme(tmp_path, theme_json), "truecolor")
 
-    assert loaded_theme.get_bg_ansi("scrollbarThumb") == loaded_theme.get_bg_ansi("selectedBg")
+    assert loaded_theme.get_fg_ansi(token) == loaded_theme.get_fg_ansi(fallback)
 
 
 @pytest.mark.tonio
-async def test_uses_an_explicitly_configured_scrollbar_thumb(tmp_path):
+async def test_uses_explicitly_configured_scrollbar_colors(tmp_path):
     theme_json = _load_dark_theme()
     theme_json["name"] = "custom-scrollbar-theme"
+    theme_json["colors"]["scrollbarTrack"] = "#654321"
     theme_json["colors"]["scrollbarThumb"] = "#123456"
 
     loaded_theme = await load_theme_from_path(_write_theme(tmp_path, theme_json), "truecolor")
 
-    assert loaded_theme.get_bg_ansi("scrollbarThumb") == "\x1b[48;2;18;52;86m"
+    assert loaded_theme.get_fg_ansi("scrollbarTrack") == "\x1b[38;2;101;67;33m"
+    assert loaded_theme.get_fg_ansi("scrollbarThumb") == "\x1b[38;2;18;52;86m"
 
 
 @pytest.mark.tonio

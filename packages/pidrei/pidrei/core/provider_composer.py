@@ -242,13 +242,24 @@ def apply_models_json(
     ]
     for definition in config.get("models") or []:
         existing_index = next((i for i, model in enumerate(models) if model.id == definition["id"]), -1)
-        defaults = models[existing_index] if existing_index >= 0 else (models[0] if models else None)
+        defaults = _find_model_defaults(models, definition["id"], _nn(definition.get("api"), config.get("api")))
         model = _model_from_json(provider_id, definition, config, defaults)
         if existing_index >= 0:
             models[existing_index] = model
         else:
             models.append(model)
     return models
+
+
+def _find_model_defaults(models: list[Model], model_id: str, api: str | None = None) -> Model | None:
+    """The catalog model a custom definition inherits from: same id, else same
+    api, else the first completions model, else the first model."""
+    return (
+        next((model for model in models if model.id == model_id), None)
+        or (next((model for model in models if model.api == api), None) if api else None)
+        or next((model for model in models if model.api == "openai-completions"), None)
+        or (models[0] if models else None)
+    )
 
 
 def apply_extension(
@@ -264,9 +275,7 @@ def apply_extension(
         return list(models)
     result: list[Model] = []
     for definition in config["models"]:
-        defaults = next((model for model in models if model.id == definition["id"]), None) or (
-            models[0] if models else None
-        )
+        defaults = _find_model_defaults(models, definition["id"], _nn(definition.get("api"), config.get("api")))
         api = _nn(definition.get("api"), config.get("api"), defaults.api if defaults else None)
         if not api:
             raise Exception(

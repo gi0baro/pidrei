@@ -396,6 +396,138 @@ async def test_preserves_sensitive_stop_reasons_with_a_descriptive_error_message
 
 
 @pytest.mark.tonio
+async def test_fails_safely_when_anthropic_falls_back_after_output_begins():
+    model = get_builtin_model("anthropic", "claude-opus-5")
+    events = [
+        (
+            "message_start",
+            json.dumps(
+                {
+                    "type": "message_start",
+                    "message": {"id": "msg_fallback", "model": "claude-opus-5", "usage": {"input_tokens": 1}},
+                }
+            ),
+        ),
+        (
+            "content_block_start",
+            json.dumps(
+                {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": "partial"}}
+            ),
+        ),
+        ("content_block_stop", json.dumps({"type": "content_block_stop", "index": 0})),
+        (
+            "content_block_start",
+            json.dumps(
+                {
+                    "type": "content_block_start",
+                    "index": 1,
+                    "content_block": {
+                        "type": "fallback",
+                        "from": {"model": "claude-opus-5"},
+                        "to": {"model": "claude-opus-4-8"},
+                    },
+                }
+            ),
+        ),
+    ]
+
+    result = await stream_anthropic(
+        model, user_context("Hello"), AnthropicOptions(client=FakeClient(sse_body(events)))
+    ).result()
+
+    assert result.stop_reason == "error"
+    assert "unsupported mid-output model fallback" in result.error_message
+
+
+@pytest.mark.tonio
+async def test_forces_streaming_after_an_on_payload_replacement():
+    client = FakeClient(sse_body(minimal_anthropic_events()))
+
+    async def on_payload(payload, _model):
+        return {**payload, "stream": False}
+
+    await stream_anthropic(
+        get_builtin_model("anthropic", "claude-fable-5-1"),
+        user_context("Hello"),
+        AnthropicOptions(client=client, on_payload=on_payload),
+    ).result()
+
+    assert client.requests[0]["stream"] is True
+
+
+@pytest.mark.tonio
+async def test_omits_the_interleaved_thinking_beta_when_thinking_is_disabled():
+    client = FakeClient(sse_body(minimal_anthropic_events()))
+
+    await stream_anthropic(
+        get_builtin_model("openrouter", "anthropic/claude-3-haiku"),
+        user_context("Hello"),
+        AnthropicOptions(client=client, thinking_enabled=False),
+    ).result()
+
+    assert "interleaved-thinking-2025-05-14" not in client.requests[0].get("betas", [])
+
+
+@pytest.mark.tonio
+async def test_passes_managed_beta_features_to_injected_clients():
+    client = FakeClient(sse_body(minimal_anthropic_events()))
+
+    result = await stream_anthropic(
+        get_builtin_model("anthropic", "claude-fable-5-1"), user_context("Hello"), AnthropicOptions(client=client)
+    ).result()
+
+    assert result.stop_reason == "stop"
+    assert "mid-conversation-output-config-2026-07-01" in client.requests[0]["betas"]
+    assert "thinking-binding-controls-2026-08-01" in client.requests[0]["betas"]
+
+
+@pytest.mark.tonio
+async def test_uses_the_serving_model_input_transformations_from_the_final_stream_event():
+    events = minimal_anthropic_events()
+    events[0] = (
+        "message_start",
+        json.dumps(
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_transformations",
+                    "model": "claude-fable-5-1",
+                    "usage": {"input_tokens": 12, "output_tokens": 0},
+                    "input_transformations": [
+                        {
+                            "type": "thinking_dropped",
+                            "path": "messages.1.content.0",
+                            "reason": "prefix_binding_mismatch",
+                        }
+                    ],
+                },
+            }
+        ),
+    )
+    delta = json.loads(events[4][1])
+    delta["input_transformations"] = [
+        {"type": "thinking_dropped", "path": "messages.3.content.0", "reason": "model_binding_mismatch"}
+    ]
+    events[4] = ("message_delta", json.dumps(delta))
+
+    result = await stream_anthropic(
+        get_builtin_model("anthropic", "claude-fable-5-1"),
+        user_context("Hello"),
+        AnthropicOptions(client=FakeClient(sse_body(events))),
+    ).result()
+
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.type == "anthropic_input_transformations"
+    assert isinstance(diagnostic.timestamp, int)
+    assert diagnostic.details == {
+        "transformations": [
+            {"type": "thinking_dropped", "path": "messages.3.content.0", "reason": "model_binding_mismatch"}
+        ]
+    }
+
+
+@pytest.mark.tonio
 async def test_message_delta_without_usage_is_noop_for_usage_accumulation():
     events = [
         ("message_delta", json.dumps({"type": "message_delta", "delta": {"stop_reason": "end_turn"}}))

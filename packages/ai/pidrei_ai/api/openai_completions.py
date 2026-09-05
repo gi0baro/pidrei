@@ -214,6 +214,7 @@ class _ResolvedCompat:
     deferred_tools_mode: str | None
     session_affinity_format: str
     supports_long_cache_retention: bool
+    vllm_priority: int | None = None
 
 
 def detect_compat(model: Model) -> _ResolvedCompat:
@@ -378,6 +379,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
         supports_long_cache_retention=pick(
             compat.supports_long_cache_retention, detected.supports_long_cache_retention
         ),
+        vllm_priority=compat.vllm_priority,
     )
 
 
@@ -1086,6 +1088,9 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
     if options.tool_choice:
         params["tool_choice"] = options.tool_choice
 
+    if compat.vllm_priority is not None:
+        params["priority"] = compat.vllm_priority
+
     thinking_token_budget_field = _resolve_thinking_token_budget_field(compat)
     thinking_budget = _resolve_clamped_thinking_budget(model, options, params)
 
@@ -1357,7 +1362,7 @@ def stream(  # noqa: C901
                     block = ToolCallBuilder(
                         id=tool_call.get("id") or "",
                         name=name,
-                        arguments={},
+                        arguments={custom_input_property: ""} if has_custom else {},
                     )
                     entry = tool_scratch(block)
                     entry.partial_args = None if has_custom else ""
@@ -1381,7 +1386,7 @@ def stream(  # noqa: C901
                     block.name = name
                 if custom is not None and not tool_call.get("function") and entry.custom_property is None:
                     custom_input_property = grammar_tool_input_properties.get(block.name, "input")
-                    block.arguments = {}
+                    block.arguments = {custom_input_property: ""}
                     entry.custom_property = custom_input_property
                     entry.json_buffer = GrammarToolInputJsonBuffer()
                     entry.partial_args = None
@@ -1539,6 +1544,8 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
+    _get_client_api_key(model.provider, options.api_key if options else None, options.headers if options else None)
+
     base = build_base_options(model, context, options, options.api_key if options else None)
     clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else None
     reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning

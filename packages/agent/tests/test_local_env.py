@@ -1,6 +1,7 @@
 """Mirror of pi agent/test/harness/nodejs-env.test.ts."""
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -9,13 +10,51 @@ import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
 from pidrei_agent.harness.env.local import LocalExecutionEnv
-from pidrei_agent.harness.types import FileError, ShellExecOptions, ShellExecResult, get_or_throw
+from pidrei_agent.harness.types import (
+    FileError,
+    ShellExecOptions,
+    ShellOutputCaptureOptions,
+    ShellOutputLimits,
+    ShellOutputView,
+    get_or_throw,
+    ok,
+)
+from pidrei_agent.harness.utils.output_capture import apply_shell_output_update
 from pidrei_agent.harness.utils.shell_output import execute_shell_with_capture
 from pidrei_ai.utils.cancel import CancelToken
 
 
 def create_temp_dir() -> str:
     return tempfile.mkdtemp(prefix="pidrei-agent-test-")
+
+
+async def collect_shell_output(env: LocalExecutionEnv, command: str, options: ShellExecOptions | None, cancel=None):
+    """pi's `collectShellOutput`: run `command` and fold the published updates into one view."""
+    output: ShellOutputView | None = None
+
+    def on_update(update, _cancel) -> None:
+        nonlocal output
+        output = apply_shell_output_update(output, update)
+
+    options = options if options is not None else ShellExecOptions()
+    options.on_update = on_update
+    result = await env.exec(command, options, cancel)
+    return result, output
+
+
+def _capture(max_bytes: int, max_lines: int) -> ShellOutputCaptureOptions:
+    return ShellOutputCaptureOptions(
+        limits=ShellOutputLimits(max_bytes=max_bytes, max_lines=max_lines, retain="tail"), spill=True
+    )
+
+
+class FailingSpillExecutionEnv(LocalExecutionEnv):
+    """Hands the spill a path in a missing directory so its writes fail."""
+
+    async def create_temp_file(self, prefix: str = "", suffix: str = "", cancel=None):
+        if prefix == "pidrei-output-":
+            return ok(os.path.join(self.cwd, "missing", "spill.log"))
+        return await super().create_temp_file(prefix, suffix, cancel)
 
 
 @pytest.mark.tonio
@@ -231,13 +270,11 @@ async def test_cleanup_is_best_effort():
 async def test_executes_commands_in_cwd_with_env_overrides():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
-    result = get_or_throw(
-        await env.exec(
-            'printf \'%s:%s\' "$PWD" "$LOCAL_ENV_TEST"',
-            ShellExecOptions(env={"LOCAL_ENV_TEST": "ok"}),
-        )
+    result, output = await collect_shell_output(
+        env, 'printf \'%s:%s\' "$PWD" "$LOCAL_ENV_TEST"', ShellExecOptions(env={"LOCAL_ENV_TEST": "ok"})
     )
-    assert result == ShellExecResult(stdout=f"{os.path.realpath(root)}:ok", stderr="", exit_code=0)
+    assert output.text == f"{os.path.realpath(root)}:ok"
+    assert get_or_throw(result).exit_code == 0
 
 
 @pytest.mark.tonio
@@ -264,15 +301,15 @@ async def test_applies_string_shell_environment_overrides(description, overrides
             "PI_NODE_ENV_PRESERVED_TEST": "preserved",
         },
     )
-    result = get_or_throw(
-        await env.exec(
-            'printf \'%s:%s|%s|%s\' "${PI_SESSION_FILE+x}" "${PI_SESSION_FILE-}" "$PI_CODING_AGENT" '
-            '"$PI_NODE_ENV_PRESERVED_TEST"',
-            ShellExecOptions(env=overrides) if overrides is not None else None,
-        )
+    result, output = await collect_shell_output(
+        env,
+        'printf \'%s:%s|%s|%s\' "${PI_SESSION_FILE+x}" "${PI_SESSION_FILE-}" "$PI_CODING_AGENT" '
+        '"$PI_NODE_ENV_PRESERVED_TEST"',
+        ShellExecOptions(env=overrides) if overrides is not None else None,
     )
+    get_or_throw(result)
 
-    assert result.stdout == f"{expected_session_file}|true|preserved"
+    assert output.text == f"{expected_session_file}|true|preserved"
 
 
 @pytest.mark.tonio
@@ -285,13 +322,13 @@ async def test_can_replace_rather_than_inherit_the_default_shell_environment():
     os.environ[inherited_key] = "host"
     try:
         env = LocalExecutionEnv(cwd=root, shell_env={configured_key: "configured"})
-        result = get_or_throw(
-            await env.exec(
-                f'printf \'%s:%s:%s\' "${{{inherited_key}-}}" "${{{configured_key}-}}" "${{{explicit_key}-}}"',
-                ShellExecOptions(inherit_env=False, env={explicit_key: "explicit"}),
-            )
+        result, output = await collect_shell_output(
+            env,
+            f'printf \'%s:%s:%s\' "${{{inherited_key}-}}" "${{{configured_key}-}}" "${{{explicit_key}-}}"',
+            ShellExecOptions(inherit_env=False, env={explicit_key: "explicit"}),
         )
-        assert result.stdout == "::explicit"
+        get_or_throw(result)
+        assert output.text == "::explicit"
     finally:
         if previous_inherited is None:
             os.environ.pop(inherited_key, None)
@@ -316,23 +353,22 @@ async def test_cleanup_terminates_active_shell_processes():
 
 
 @pytest.mark.tonio
-async def test_streams_stdout_and_stderr_chunks():
+async def test_combines_stdout_and_stderr_into_one_bounded_view():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
-    stdout_chunks: list[str] = []
-    stderr_chunks: list[str] = []
-    result = get_or_throw(
-        await env.exec(
-            "printf out; printf err >&2",
-            ShellExecOptions(
-                on_stdout=lambda chunk, _cancel: stdout_chunks.append(chunk),
-                on_stderr=lambda chunk, _cancel: stderr_chunks.append(chunk),
-            ),
-        )
-    )
-    assert result == ShellExecResult(stdout="out", stderr="err", exit_code=0)
-    assert "".join(stdout_chunks) == "out"
-    assert "".join(stderr_chunks) == "err"
+    updates: list[str] = []
+    output: ShellOutputView | None = None
+
+    def on_update(update, _cancel) -> None:
+        nonlocal output
+        updates.append(update.kind)
+        output = apply_shell_output_update(output, update)
+
+    result = get_or_throw(await env.exec("printf out; printf err >&2", ShellExecOptions(on_update=on_update)))
+    assert result.exit_code == 0
+    assert "out" in output.text
+    assert "err" in output.text
+    assert updates[0] == "replace"
 
 
 @pytest.mark.tonio
@@ -351,7 +387,17 @@ async def test_returns_non_zero_command_exit_codes_as_successful_execution_resul
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
     result = get_or_throw(await env.exec("exit 7"))
-    assert result == ShellExecResult(stdout="", stderr="", exit_code=7)
+    assert result.exit_code == 7
+    assert result.truncation.total_bytes == 0
+
+
+@pytest.mark.tonio
+async def test_maps_signal_killed_processes_to_a_non_zero_exit_code():
+    # Regression test for https://github.com/earendil-works/pi/issues/8992
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    result = get_or_throw(await env.exec("kill -9 $$"))
+    assert result.exit_code == 128 + 9
 
 
 @pytest.mark.tonio
@@ -368,10 +414,10 @@ async def test_returns_callback_errors_from_exec_stream_handlers():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
 
-    def failing_callback(_chunk: str, _cancel) -> None:
+    def failing_callback(_update, _cancel) -> None:
         raise Exception("callback failed")
 
-    result = await env.exec("printf out", ShellExecOptions(on_stdout=failing_callback))
+    result = await env.exec("printf out", ShellExecOptions(on_update=failing_callback))
     assert result.ok is False
     assert result.error.code == "callback_error"
     assert result.error.message == "callback failed"
@@ -405,6 +451,61 @@ async def test_returns_an_aborted_result_for_aborted_commands():
     result = await execution
     assert result.ok is False
     assert result.error.code == "aborted"
+
+
+@pytest.mark.tonio
+async def test_does_not_create_a_spill_before_bounded_output_crosses_its_limits():
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    result = get_or_throw(
+        await env.exec(
+            "printf short", ShellExecOptions(capture=_capture(max_bytes=100, max_lines=10), on_update=lambda *_: None)
+        )
+    )
+    assert result.spill_path is None
+
+
+@pytest.mark.tonio
+async def test_preserves_exact_raw_bytes_in_the_spill_while_decoding_a_bounded_text_view():
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    expected = bytes([0x66, 0x80, 0x00, 0x6F])
+    result = get_or_throw(
+        await env.exec(
+            f'{sys.executable} -c "import sys; sys.stdout.buffer.write(bytes({list(expected)}))"',
+            ShellExecOptions(capture=_capture(max_bytes=1, max_lines=10), on_update=lambda *_: None),
+        )
+    )
+    assert result.spill_path is not None
+    assert get_or_throw(await env.read_binary_file(result.spill_path)) == expected
+
+
+@pytest.mark.tonio
+async def test_fails_rather_than_silently_losing_a_requested_spill():
+    root = create_temp_dir()
+    env = FailingSpillExecutionEnv(cwd=root)
+    result = await env.exec(
+        "printf 12345678901234567890",
+        ShellExecOptions(capture=_capture(max_bytes=10, max_lines=10), on_update=lambda *_: None),
+    )
+    assert result.ok is False
+    assert result.error.code == "unknown"
+    assert "Failed to preserve complete shell output" in result.error.message
+
+
+@pytest.mark.tonio
+async def test_preserves_complete_output_when_spill_backpressure_pauses_a_process_that_exits_quickly():
+    root = create_temp_dir()
+    env = LocalExecutionEnv(cwd=root)
+    size = 500_000
+    result = get_or_throw(
+        await env.exec(
+            f"{sys.executable} -c \"import sys; sys.stdout.write('x' * {size})\"",
+            ShellExecOptions(capture=_capture(max_bytes=10, max_lines=10), on_update=lambda *_: None),
+        )
+    )
+    assert result.spill_path is not None
+    assert len(get_or_throw(await env.read_text_file(result.spill_path))) == size
 
 
 @pytest.mark.tonio

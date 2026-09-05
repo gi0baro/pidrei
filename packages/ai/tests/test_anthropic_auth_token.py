@@ -4,8 +4,8 @@ pi mocks the Anthropic SDK constructor and asserts on its options
 (`apiKey`/`authToken` null, `defaultHeaders`); here the same observable
 request is inspected on the transport `_create_client` builds — no
 `x-api-key` header stands in for "constructor got a null apiKey", the
-`anthropic-beta` header carries the OAuth-shaping check, and the payload
-comes from `on_payload` capture.
+payload's `betas` carries the OAuth-shaping check (pi's SDK lifts it into the
+`anthropic-beta` header), and the payload comes from `on_payload` capture.
 """
 
 import pytest
@@ -137,7 +137,7 @@ async def test_uses_authorization_headers_without_oauth_mode_request_shaping():
 
     assert headers["Authorization"] == "Bearer gateway-token"
     assert "x-api-key" not in headers
-    assert "oauth-2025-04-20" not in headers.get("anthropic-beta", "")
+    assert "oauth-2025-04-20" not in payload.get("betas", [])
     assert payload["system"][0]["text"] == "System prompt."
 
 
@@ -147,19 +147,19 @@ async def test_threads_auth_context_anthropic_auth_token_through_request_headers
 
     assert headers["Authorization"] == "Bearer ctx-token"
     assert "x-api-key" not in headers
-    assert "oauth-2025-04-20" not in headers.get("anthropic-beta", "")
+    assert "oauth-2025-04-20" not in payload.get("betas", [])
     assert payload["system"][0]["text"] == "System prompt."
 
 
 @pytest.mark.tonio
 async def test_preserves_oauth_request_shaping_for_anthropic_oauth_token():
-    headers, _payload = await _capture_models_request(
+    headers, payload = await _capture_models_request(
         {"ANTHROPIC_OAUTH_TOKEN": "sk-ant-oat-test"}, SimpleStreamOptions()
     )
 
     assert headers["authorization"] == "Bearer sk-ant-oat-test"
     assert "x-api-key" not in headers
-    assert "oauth-2025-04-20" in headers.get("anthropic-beta", "")
+    assert "oauth-2025-04-20" in payload["betas"]
 
 
 @pytest.mark.tonio
@@ -206,3 +206,25 @@ async def test_lets_explicit_headers_override_the_default_anthropic_messages_use
         AnthropicOptions(api_key="kimi-key", headers={"user-agent": "custom-client"}),
     )
     assert [name for name in lowercase if name.lower() == "user-agent"] == ["user-agent"]
+
+
+@pytest.mark.tonio
+async def test_preserves_explicit_anthropic_beta_header_replacement():
+    _headers, payload = await capture_request(
+        make_model(),
+        AnthropicOptions(api_key="anthropic-key", headers={"anthropic-beta": "custom-beta"}),
+        make_context(),
+    )
+
+    assert payload["betas"] == ["custom-beta"]
+
+
+@pytest.mark.tonio
+async def test_preserves_explicit_anthropic_beta_header_suppression():
+    _headers, payload = await capture_request(
+        make_model(),
+        AnthropicOptions(api_key="anthropic-key", headers={"anthropic-beta": None}),
+        make_context(),
+    )
+
+    assert "betas" not in payload

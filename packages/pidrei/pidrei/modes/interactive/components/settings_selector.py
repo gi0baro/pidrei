@@ -95,21 +95,21 @@ def _model_item_label(model) -> str:
     return f"{model.id} {theme.fg('muted', f'[{model.provider}]')}"
 
 
-def _theme_items(available_themes: list) -> list:
-    return [{"value": name, "label": name} for name in available_themes]
+def _theme_items(available_themes: list, current_theme: str) -> list:
+    return [{"value": name, "label": f"{'✓ ' if name == current_theme else '  '}{name}"} for name in available_themes]
 
 
 AUTOMATIC_THEME_VALUE = "/"
 
 
-def _single_mode_theme_items(available_themes: list) -> list:
+def _single_mode_theme_items(available_themes: list, current_theme: str) -> list:
     return [
         {
             "value": AUTOMATIC_THEME_VALUE,
-            "label": "Automatic",
+            "label": "  Automatic",
             "description": "Use separate themes for light and dark terminal appearance",
         },
-        *_theme_items(available_themes),
+        *_theme_items(available_themes, current_theme),
     ]
 
 
@@ -201,7 +201,7 @@ class ThemeSubmenu(Container):
         menu = SelectSubmenu(
             "Theme",
             "Select a theme, or choose Automatic to follow terminal appearance.",
-            _single_mode_theme_items(self._available_themes),
+            _single_mode_theme_items(self._available_themes, self._single_theme),
             self._single_theme,
             on_select,
             lambda: self._cancel(),
@@ -304,7 +304,7 @@ class ThemeSubmenu(Container):
         return SelectSubmenu(
             title,
             description,
-            _theme_items(self._available_themes),
+            _theme_items(self._available_themes, current_value),
             current_value,
             on_select,
             on_cancel,
@@ -380,12 +380,20 @@ def _make_model_thinking_submenu(config: dict, callbacks: dict, current_model_th
             if model is None:
                 return []
             levels = get_supported_thinking_levels(model) if model.reasoning else ["off"]
-            items = [{"value": level, "label": level, "description": THINKING_DESCRIPTIONS[level]} for level in levels]
+            active_level = current_model_thinking_levels.get(context["model"])
+            items = [
+                {
+                    "value": level,
+                    "label": f"{'✓ ' if level == active_level else '  '}{level}",
+                    "description": THINKING_DESCRIPTIONS[level],
+                }
+                for level in levels
+            ]
             if current_model_thinking_levels.get(context["model"]) is not None:
                 items.append(
                     {
                         "value": CLEAR_OVERRIDE_VALUE,
-                        "label": "(clear override)",
+                        "label": "  (clear override)",
                         "description": f"Revert to global default ({config['thinkingLevel']})",
                     }
                 )
@@ -508,7 +516,7 @@ class SettingsSelectorComponent(Container):
             {
                 "id": "cache-miss-notices",
                 "label": "Cache miss notices",
-                "description": "Show transcript notices for significant prompt-cache misses and compaction costs",
+                "description": "Show transcript notices for cache costs and provider recovery diagnostics",
                 "currentValue": "true" if config["showCacheMissNotices"] else "false",
                 "values": ["true", "false"],
             },

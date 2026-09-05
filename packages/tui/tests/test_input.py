@@ -3,7 +3,23 @@
 import pytest
 
 from pidrei_tui.components.input import Input
-from pidrei_tui.utils import visible_width
+from pidrei_tui.utils import strip_terminal_sequences, visible_width
+
+
+@pytest.mark.tonio
+async def test_supports_a_custom_prompt_and_styled_placeholder():
+    input_component = Input(
+        {"prompt": "", "placeholder": "Find transcript", "placeholderStyle": lambda text: f"\x1b[2m{text}\x1b[22m"}
+    )
+    input_component.focused = True
+
+    empty = input_component.render(20)[0]
+    assert "\x1b[2m" in empty
+    assert strip_terminal_sequences(empty).rstrip() == "Find transcript"
+
+    await input_component.handle_input("n")
+    populated = input_component.render(20)[0]
+    assert strip_terminal_sequences(populated).rstrip() == "n"
 
 
 @pytest.mark.tonio

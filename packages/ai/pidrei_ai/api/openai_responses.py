@@ -200,6 +200,7 @@ class _ResolvedCompat:
     supports_additional_tools: bool
     supports_tool_search: bool
     supports_explicit_prompt_cache_mode: bool
+    supports_max_output_tokens: bool
 
 
 def get_compat(model: Model) -> _ResolvedCompat:
@@ -219,6 +220,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
         supports_additional_tools=pick(compat.supports_additional_tools if compat else None, False),
         supports_tool_search=pick(compat.supports_tool_search if compat else None, False),
         supports_explicit_prompt_cache_mode=pick(compat.supports_explicit_prompt_cache_mode if compat else None, False),
+        supports_max_output_tokens=pick(compat.supports_max_output_tokens if compat else None, True),
     )
 
 
@@ -312,7 +314,7 @@ def build_params(
     if disable_implicit_prompt_cache:
         params["prompt_cache_options"] = {"mode": "explicit"}
 
-    if options.max_tokens:
+    if options.max_tokens and compat.supports_max_output_tokens:
         params["max_output_tokens"] = max(options.max_tokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)
 
     if options.temperature is not None:
@@ -469,6 +471,8 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
+    _get_client_api_key(model.provider, options.api_key if options else None, options.headers if options else None)
+
     base = build_base_options(model, context, options, options.api_key if options else None)
     clamped_reasoning = clamp_thinking_level(model, options.reasoning) if options and options.reasoning else None
     reasoning_effort = None if clamped_reasoning == "off" else clamped_reasoning

@@ -29,21 +29,16 @@ def _model(api: str) -> Model:
     )
 
 
-async def _expect_pre_generation_error(module, api: str) -> None:
-    stream = module.stream_simple(_model(api), Context(messages=[]), SimpleStreamOptions())
-    events = [event async for event in stream]
-    assert [event.type for event in events] == ["error"]
-    result = await stream.result()
-    assert result.stop_reason == "error"
-    assert result.content == []
+def _expect_missing_auth_raises(module, api: str) -> None:
+    with pytest.raises(Exception, match="No API key for provider: test-provider"):
+        module.stream_simple(_model(api), Context(messages=[]), SimpleStreamOptions())
 
 
-@pytest.mark.tonio
-async def test_return_an_error_stream_instead_of_throwing_synchronously_when_auth_is_missing():
-    await _expect_pre_generation_error(anthropic_messages, "anthropic-messages")
-    await _expect_pre_generation_error(azure_openai_responses, "azure-openai-responses")
-    await _expect_pre_generation_error(google_generative_ai, "google-generative-ai")
-    await _expect_pre_generation_error(mistral_conversations, "mistral-conversations")
-    await _expect_pre_generation_error(openai_codex_responses, "openai-codex-responses")
-    await _expect_pre_generation_error(openai_completions, "openai-completions")
-    await _expect_pre_generation_error(openai_responses, "openai-responses")
+def test_throws_synchronously_when_auth_is_missing():
+    _expect_missing_auth_raises(anthropic_messages, "anthropic-messages")
+    _expect_missing_auth_raises(azure_openai_responses, "azure-openai-responses")
+    _expect_missing_auth_raises(google_generative_ai, "google-generative-ai")
+    _expect_missing_auth_raises(mistral_conversations, "mistral-conversations")
+    _expect_missing_auth_raises(openai_codex_responses, "openai-codex-responses")
+    _expect_missing_auth_raises(openai_completions, "openai-completions")
+    _expect_missing_auth_raises(openai_responses, "openai-responses")

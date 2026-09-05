@@ -92,10 +92,10 @@ class TrustSelectorComponent(Container):
         for i, option in enumerate(self._trust_options):
             is_selected = i == self._selected_index
             is_current = self._is_saved_option(option)
-            checkmark = theme.fg("success", " ✓") if is_current else ""
+            current_marker = theme.fg("accent", "✓ ") if is_current else "  "
             prefix = theme.fg("accent", "→ ") if is_selected else "  "
             label = theme.fg("accent", option.label) if is_selected else theme.fg("text", option.label)
-            self._list_container.add_child(Text(f"{prefix}{label}{checkmark}", 1, 0))
+            self._list_container.add_child(Text(f"{prefix}{current_marker}{label}", 1, 0))
 
     async def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()

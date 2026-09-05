@@ -1,4 +1,5 @@
-"""Wiring tests for `InteractiveMode._show_thinking_selector` (no pi counterpart).
+"""Mirror of pi coding-agent test/thinking-selector.test.ts, plus wiring tests
+for `InteractiveMode._show_thinking_selector` (pidrei-only).
 
 pi calls the selector callbacks synchronously; pidrei's `SelectList` awaits
 them (async-only callbacks), so a sync callback wired here returns `None` to
@@ -17,8 +18,10 @@ from types import SimpleNamespace
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
+from pidrei.modes.interactive.components.thinking_selector import ThinkingSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 
@@ -66,6 +69,23 @@ def create_interactive_context():
         ui=SimpleNamespace(request_render=request_render),
     )
     return context, holder, done_calls, render_calls, select_calls
+
+
+@pytest.mark.tonio
+async def test_keeps_the_current_thinking_level_marked_while_browsing():
+    selector = ThinkingSelectorComponent("medium", ["medium", "high"], lambda *args: None, lambda *args: None)
+
+    def get_level_row(level: str) -> str | None:
+        return next(
+            (line for line in (strip_ansi(row) for row in selector.get_select_list().render(80)) if level in line),
+            None,
+        )
+
+    assert selector.get_select_list().get_selected_item()["label"] == "✓ medium"
+    assert get_level_row("medium").startswith("→ ✓ medium")
+    await selector.handle_input("\x1b[B")
+    assert get_level_row("medium").startswith("  ✓ medium")
+    assert get_level_row("high").startswith("→   high")
 
 
 class TestThinkingSelectorWiring:

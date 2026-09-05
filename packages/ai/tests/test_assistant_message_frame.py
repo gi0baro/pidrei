@@ -87,6 +87,17 @@ def test_uses_authoritative_text_end_content_and_signature():
     ]
 
 
+def test_preserves_provider_thinking_level_from_the_stream_start():
+    partial = seed()
+    partial.provider_thinking_level = "high"
+    encoder = AssistantMessageFrameEncoder()
+    start = frame(encoder, StartEvent(partial=partial))
+
+    assert start.type == "start"
+    assert start.partial.provider_thinking_level == "high"
+    assert reduce_assistant_message_frames([start]).provider_thinking_level == "high"
+
+
 def test_preserves_initial_and_final_thinking_metadata_including_redaction():
     partial = seed()
     encoder = AssistantMessageFrameEncoder()

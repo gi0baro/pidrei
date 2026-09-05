@@ -85,7 +85,7 @@ the transcript's top or bottom edge auto-scrolls into off-screen content.
 | *(none)* | `tui.altScreen.lineDown` | Scroll the transcript down by one line |
 | `ctrl+shift+up`, `ctrl+up` | `tui.altScreen.previousPrompt` | Jump to the previous marked message |
 | `ctrl+shift+down`, `ctrl+down` | `tui.altScreen.nextPrompt` | Jump to the next marked message |
-| `ctrl+shift+f` | `tui.altScreen.search` | Search the rendered transcript |
+| `ctrl+shift+f` | `tui.altScreen.search` | Open or close the transcript search panel (it shows the previous/next shortcuts and clickable arrow controls) |
 | `enter`, `ctrl+g` | `tui.altScreen.searchNext` | Select the next search match while searching |
 | `shift+enter`, `ctrl+shift+g` | `tui.altScreen.searchPrevious` | Select the previous search match while searching |
 | `escape` | `tui.altScreen.searchClose` | Close transcript search |

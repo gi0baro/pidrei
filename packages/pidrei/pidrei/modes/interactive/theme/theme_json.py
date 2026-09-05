@@ -26,8 +26,9 @@ _REQUIRED_COLORS = [
     "dim",
     "text",
     "thinkingText",
-    # Backgrounds & Content Text (11 required, 3 optional: scrollbarThumb,
-    # searchMatchBg, searchMatchText)
+    # Scrollbar (2 optional: scrollbarTrack, scrollbarThumb)
+    # Backgrounds & Content Text (11 required, 2 optional: searchMatchBg,
+    # searchMatchText)
     "selectedBg",
     "userMessageBg",
     "userMessageText",

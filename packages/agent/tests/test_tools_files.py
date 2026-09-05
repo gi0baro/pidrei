@@ -235,7 +235,7 @@ async def test_write_writes_files_and_creates_parent_directories():
         "write-1", {"path": "nested/dir/file.txt", "content": "hello"}, None, context
     )
 
-    assert text_output(result) == "Successfully wrote 5 bytes to nested/dir/file.txt"
+    assert text_output(result) == "Successfully wrote to nested/dir/file.txt"
     assert get_or_throw(await context.env.read_text_file("nested/dir/file.txt")) == "hello"
 
 

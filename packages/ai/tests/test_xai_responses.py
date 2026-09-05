@@ -72,6 +72,7 @@ def test_excludes_retired_and_redundant_models_from_the_builtin_catalog():
         "grok-3-fast",
         "grok-4.20-0309-non-reasoning",
         "grok-4.20-0309-reasoning",
+        "grok-build-0.1",
         "grok-code-fast-1",
     ):
         assert model_id not in ids
@@ -83,7 +84,6 @@ def test_routes_every_builtin_xai_model_through_responses():
     assert get_supported_thinking_levels(xai_model("grok-4.5")) == ["low", "medium", "high"]
     assert get_supported_thinking_levels(xai_model("grok-4.6")) == ["low", "medium", "high", "xhigh"]
     assert get_supported_thinking_levels(xai_model("grok-4.3")) == ["off", "low", "medium", "high"]
-    assert get_supported_thinking_levels(xai_model("grok-build-0.1")) == ["low", "medium", "high"]
 
 
 @pytest.mark.tonio

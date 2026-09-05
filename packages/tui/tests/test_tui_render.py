@@ -4,6 +4,8 @@ Viewport expectations are right-stripped (see virtual_terminal.py).
 """
 
 import os
+import re
+import tempfile
 from contextlib import contextmanager
 
 import pytest
@@ -104,7 +106,7 @@ async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
 
 @pytest.mark.tonio
 async def test_writes_redraw_logs_to_the_provided_directory(tmp_path):
-    with env_var("PIDREI_DEBUG_REDRAW", "1"):
+    with env_var("PIDREI_TUI_DEBUG_REDRAW", "1"):
         terminal = VirtualTerminal(40, 10)
         tui = TuiMainScreen(terminal, None, str(tmp_path))
         component = TestComponent()
@@ -113,9 +115,37 @@ async def test_writes_redraw_logs_to_the_provided_directory(tmp_path):
         await tui.start()
         await terminal.wait_for_render()
 
-        with open(os.path.join(str(tmp_path), "pidrei-debug.log"), encoding="utf-8") as log_file:
+        with open(os.path.join(str(tmp_path), "pidrei-tui-debug.log"), encoding="utf-8") as log_file:
             assert "fullRender: first render" in log_file.read()
         await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_writes_the_crash_dump_to_the_os_temp_directory_instead_of_a_home_directory_default(tmp_path):
+    # The TUI falls back to the OS temp directory when no log directory is
+    # configured. pi points TMPDIR/TEMP/TMP at a fresh directory; Python caches
+    # `tempfile.gettempdir()`, so the cached value is swapped instead.
+    crash_dir = str(tmp_path / "crash")
+    os.makedirs(crash_dir)
+    crash_log_path = os.path.join(crash_dir, "pidrei-tui-crash.log")
+    previous_tempdir = tempfile.tempdir
+    tempfile.tempdir = crash_dir
+    try:
+        terminal = VirtualTerminal(40, 10)
+        tui = TuiMainScreen(terminal)
+        component = TestComponent()
+        tui.add_child(component)
+        component.lines = ["ok"]
+        await tui.render_now()
+
+        # Width overflow is detected in the differential render path
+        component.lines = ["ok", "x" * 60]
+        with pytest.raises(Exception, match=re.escape(crash_log_path)):
+            await tui.render_now()
+        with open(crash_log_path, encoding="utf-8") as crash_file:
+            assert "Terminal width: 40" in crash_file.read()
+    finally:
+        tempfile.tempdir = previous_tempdir
 
 
 # TUI Kitty image cleanup (encode_kitty-based cases)

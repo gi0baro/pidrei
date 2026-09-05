@@ -21,7 +21,8 @@ def _setup():
 
 
 class TestTrustSelectorComponent:
-    def test_marks_the_saved_trusted_decision(self):
+    @pytest.mark.tonio
+    async def test_keeps_the_saved_trusted_decision_marked_while_browsing(self):
         selector = TrustSelectorComponent(
             {
                 "cwd": "/project",
@@ -33,11 +34,15 @@ class TestTrustSelectorComponent:
         )
 
         output = strip_ansi("\n".join(selector.render(120)))
-
         assert "Saved decision: trusted (/project)" in output
         assert "Current session: trusted" in output
-        assert "Trust ✓" in output
-        assert "Do not trust ✓" not in output
+        assert "→ ✓ Trust" in output
+
+        await selector.handle_input("\x1b[B")
+        output = strip_ansi("\n".join(selector.render(120)))
+        assert "✓ Trust" in output
+        assert "→   Trust parent folder (/)" in output
+        assert "✓ Do not trust" not in output
 
     @pytest.mark.tonio
     async def test_selects_a_trust_decision(self):
@@ -94,7 +99,7 @@ class TestTrustSelectorComponent:
 
         output = strip_ansi("\n".join(selector.render(120)))
         assert "Saved decision: trusted (inherited from /parent)" in output
-        assert "Trust parent folder (/parent) ✓" in output
+        assert "✓ Trust parent folder (/parent)" in output
 
         await selector.handle_input("\n")
 

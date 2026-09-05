@@ -19,6 +19,7 @@ from tonio.colored import time as tonio_time
 
 import pidrei.core.tools.bash as bash_module
 from pidrei.core.bash_executor import execute_bash_with_operations
+from pidrei.core.extensions.types import ExtensionContext
 from pidrei.core.tools import (
     create_bash_tool,
     create_edit_tool,
@@ -29,9 +30,21 @@ from pidrei.core.tools import (
     create_read_tool,
     create_write_tool,
 )
-from pidrei.core.tools.bash import BASH_TOOL_CONFIG, BashExecResult, ShellToolConfig, create_shell_tool_definition
+from pidrei.core.tools.bash import (
+    BASH_TOOL_CONFIG,
+    BashExecResult,
+    ShellToolConfig,
+    create_bash_tool_definition,
+    create_shell_tool_definition,
+)
+from pidrei.core.tools.edit import create_edit_tool_definition
 from pidrei.core.tools.edit_diff import EditDiffError, compute_edits_diff
+from pidrei.core.tools.find import create_find_tool_definition
+from pidrei.core.tools.grep import create_grep_tool_definition
+from pidrei.core.tools.ls import create_ls_tool_definition
+from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.core.tools.renderers.bash import _format_shell_call
+from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.utils.cancel import CancelToken
@@ -262,8 +275,7 @@ class TestWriteTool:
 
         result = await write_tool.execute("test-call-3", {"path": str(test_file), "content": "Test content"})
 
-        assert "Successfully wrote" in get_text_output(result)
-        assert str(test_file) in get_text_output(result)
+        assert get_text_output(result) == f"Successfully wrote to {test_file}"
         assert result.details is None
 
     @pytest.mark.tonio
@@ -889,6 +901,80 @@ class TestLsTool:
 
         assert ".hidden-file" in output
         assert ".hidden-dir/" in output
+
+
+class TestToolCwdResolution:
+    """pi passes `{ cwd } as ExtensionContext`; the duck-typed stand-in carries the same field."""
+
+    @pytest.mark.tonio
+    async def test_read_uses_ctx_cwd_when_provided(self, tmp_path):
+        (tmp_path / "ctx-cwd-read.txt").write_text("hello from ctx.cwd")
+        tool = create_read_tool_definition("/")
+        result = await tool.execute(
+            "test-read-ctx-cwd", {"path": "ctx-cwd-read.txt"}, None, None, ExtensionContext(cwd=str(tmp_path))
+        )
+        assert "hello from ctx.cwd" in get_text_output(result)
+
+    @pytest.mark.tonio
+    async def test_write_uses_ctx_cwd_when_provided(self, tmp_path):
+        tool = create_write_tool_definition("/")
+        await tool.execute(
+            "test-write-ctx-cwd",
+            {"path": "ctx-cwd-write.txt", "content": "written via ctx.cwd"},
+            None,
+            None,
+            ExtensionContext(cwd=str(tmp_path)),
+        )
+        assert (tmp_path / "ctx-cwd-write.txt").read_text() == "written via ctx.cwd"
+
+    @pytest.mark.tonio
+    async def test_edit_uses_ctx_cwd_when_provided(self, tmp_path):
+        test_file = tmp_path / "ctx-cwd-edit.txt"
+        test_file.write_text("old text")
+        tool = create_edit_tool_definition("/")
+        await tool.execute(
+            "test-edit-ctx-cwd",
+            {"path": "ctx-cwd-edit.txt", "edits": [{"oldText": "old text", "newText": "new text"}]},
+            None,
+            None,
+            ExtensionContext(cwd=str(tmp_path)),
+        )
+        assert test_file.read_text() == "new text"
+
+    @pytest.mark.tonio
+    @pytest.mark.skipif(not HAS_RG, reason="rg not installed")
+    async def test_grep_uses_ctx_cwd_when_provided(self, tmp_path):
+        (tmp_path / "ctx-cwd-grep.txt").write_text("match in ctx.cwd")
+        tool = create_grep_tool_definition("/")
+        result = await tool.execute(
+            "test-grep-ctx-cwd", {"pattern": "match"}, None, None, ExtensionContext(cwd=str(tmp_path))
+        )
+        assert "ctx-cwd-grep.txt" in get_text_output(result)
+
+    @pytest.mark.tonio
+    @pytest.mark.skipif(not HAS_FD, reason="fd not installed")
+    async def test_find_uses_ctx_cwd_when_provided(self, tmp_path):
+        (tmp_path / "ctx-cwd-find.txt").write_text("find me")
+        tool = create_find_tool_definition("/")
+        result = await tool.execute(
+            "test-find-ctx-cwd", {"pattern": "ctx-cwd-find.txt"}, None, None, ExtensionContext(cwd=str(tmp_path))
+        )
+        assert "ctx-cwd-find.txt" in get_text_output(result)
+
+    @pytest.mark.tonio
+    async def test_ls_uses_ctx_cwd_when_provided(self, tmp_path):
+        (tmp_path / "ctx-cwd-ls.txt").write_text("list me")
+        tool = create_ls_tool_definition("/")
+        result = await tool.execute("test-ls-ctx-cwd", {}, None, None, ExtensionContext(cwd=str(tmp_path)))
+        assert "ctx-cwd-ls.txt" in get_text_output(result)
+
+    @pytest.mark.tonio
+    async def test_bash_uses_ctx_cwd_when_provided(self, tmp_path):
+        tool = create_bash_tool_definition("/", expose_session_environment=False)
+        result = await tool.execute(
+            "test-bash-ctx-cwd", {"command": "pwd"}, None, None, ExtensionContext(cwd=str(tmp_path))
+        )
+        assert os.path.realpath(str(tmp_path)) in get_text_output(result)
 
 
 class TestEditToolFuzzyMatching:

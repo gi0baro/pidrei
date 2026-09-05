@@ -87,7 +87,9 @@ def create_read_tool_definition(
         limit = params.get("limit")
         _throw_if_aborted(cancel)
 
-        absolute_path = await tonio.spawn_blocking(resolve_read_path, path, cwd)
+        absolute_path = await tonio.spawn_blocking(
+            resolve_read_path, path, (ctx.cwd if ctx is not None else None) or cwd
+        )
         _throw_if_aborted(cancel)
         # Check if file exists and is readable.
         await ops.access(absolute_path)

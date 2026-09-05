@@ -7,13 +7,14 @@ machinery both share lives in ``tui``.
 
 Port deviations: ``_do_render`` and the exit sequence are async (the terminal
 driver is); the crash/debug logs go through ``spawn_blocking`` rather than
-Node's sync fs calls; env renames PI_DEBUG_REDRAW → PIDREI_DEBUG_REDRAW,
-PI_TUI_DEBUG → PIDREI_TUI_DEBUG, log files pidrei-debug.log /
-pidrei-crash.log.
+Node's sync fs calls; env renames PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW,
+PI_TUI_DEBUG → PIDREI_TUI_DEBUG, log files pidrei-tui-debug.log /
+pidrei-tui-crash.log.
 """
 
 import os
 import secrets
+import tempfile
 import time as _time
 from datetime import UTC, datetime
 
@@ -287,12 +288,12 @@ class TuiMainScreen(TuiBase):
             self._previous_width = width
             self._previous_height = height
 
-        debug_redraw = os.environ.get("PIDREI_DEBUG_REDRAW") == "1"
+        redraw_log_directory = self._log_directory if os.environ.get("PIDREI_TUI_DEBUG_REDRAW") == "1" else None
 
         async def log_redraw(reason: str) -> None:
-            if not debug_redraw:
+            if redraw_log_directory is None:
                 return
-            log_path = os.path.join(self._log_directory, "pidrei-debug.log")
+            log_path = os.path.join(redraw_log_directory, "pidrei-tui-debug.log")
             timestamp = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             msg = (
                 f"[{timestamp}] fullRender: {reason} "
@@ -465,7 +466,10 @@ class TuiMainScreen(TuiBase):
             buffer += "\x1b[2K"  # Clear current line
             if not is_image and visible_width(line) > width:
                 # Log all lines to crash file for debugging
-                crash_log_path = os.path.join(self._log_directory, "pidrei-crash.log")
+                crash_log_path = os.path.join(
+                    self._log_directory if self._log_directory is not None else tempfile.gettempdir(),
+                    "pidrei-tui-crash.log",
+                )
                 timestamp = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 crash_data = "\n".join(
                     [

@@ -76,7 +76,7 @@ async def test_uses_bearer_auth_copilot_headers_and_a_valid_anthropic_messages_p
     assert headers["Openai-Intent"] == "conversation-edits"
 
     # No fine-grained-tool-streaming (Copilot does not support it).
-    assert "fine-grained-tool-streaming" not in headers.get("anthropic-beta", "")
+    assert "fine-grained-tool-streaming-2025-05-14" not in payload.get("betas", [])
 
     assert payload["model"] == "claude-sonnet-4.6"
     assert payload["stream"] is True
@@ -89,10 +89,10 @@ async def test_omits_interleaved_thinking_beta_for_adaptive_thinking_models():
     model = get_builtin_model("github-copilot", "claude-sonnet-4.6")
     assert model is not None
 
-    headers, _payload = await capture_request(
+    _headers, payload = await capture_request(
         model,
         AnthropicOptions(api_key="tid_copilot_session_test_token", interleaved_thinking=True),
         copilot_context(),
     )
 
-    assert "interleaved-thinking-2025-05-14" not in headers.get("anthropic-beta", "")
+    assert "interleaved-thinking-2025-05-14" not in payload.get("betas", [])

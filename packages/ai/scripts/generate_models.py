@@ -165,7 +165,7 @@ DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "low": "low",
 }
 
-QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP: dict[str, str | None] = {
+QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "minimal": None,
     "low": None,
     "medium": None,
@@ -173,29 +173,11 @@ QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "xhigh": None,
     "max": "max",
 }
-QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP: dict[str, str | None] = {
-    "minimal": None,
-    "low": "low",
-    "medium": "medium",
-    "high": None,
-    "xhigh": "xhigh",
-    "max": None,
-}
-QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = {
-    "MiniMax-M2.5",
-    "deepseek-v3.2",
-    "kimi-k2.5",
-    "kimi-k2.6",
-    "kimi-k2.7-code",
-    "qwen3.6-flash",
-    "qwen3.6-plus",
-    "qwen3.7-max",
-    "qwen3.7-plus",
-}
+QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS = {"glm-5", "glm-5.1"}
 # Retired preview id — models.dev may still list it after GA ships.
 QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS = {"qwen3.8-max-preview"}
 QWEN_TOKEN_PLAN_PROVIDER_IDS = {"qwen-token-plan", "qwen-token-plan-cn", "qwen-token-plan-individual"}
-# QwenCloud Token Plan Individual text-model allowlist, verified 2026-08-05.
+# QwenCloud Token Plan Individual text-model allowlist, verified 2026-09-03.
 # Retired models remain excluded above even if the public catalog lags.
 # https://docs.qwencloud.com/token-plan/personal/token-plan-personal-overview
 QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = {
@@ -206,6 +188,7 @@ QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS = {
     "qwen3.6-flash",
     "qwen3.7-max",
     "qwen3.7-plus",
+    "qwen3.8-flash",
     "qwen3.8-max",
 }
 
@@ -281,6 +264,7 @@ XAI_BUILTIN_EXCLUDED_MODEL_IDS = {
     "grok-3-fast",
     "grok-4.20-0309-non-reasoning",
     "grok-4.20-0309-reasoning",
+    "grok-build-0.1",
     "grok-code-fast-1",
 }
 XAI_RESPONSES_COMPAT: dict[str, Any] = {"supportsLongCacheRetention": False}
@@ -323,7 +307,7 @@ THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"]
 _GEMINI_3_PRO_RE = re.compile(r"gemini-3(?:\.\d+)?-pro")
 _GEMINI_3_FLASH_RE = re.compile(r"gemini-3(?:\.\d+)?-flash")
 _GEMMA_4_RE = re.compile(r"gemma-?4")
-_COPILOT_CLAUDE_RE = re.compile(r"^claude-(haiku|sonnet|opus)-[45]([.\-]|$)")
+_COPILOT_CLAUDE_RE = re.compile(r"^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)")
 
 
 def with_openai_long_context_pricing(cost: dict[str, Any]) -> dict[str, Any]:
@@ -419,6 +403,16 @@ def get_together_thinking_level_map(model_id: str, reasoning: bool) -> dict[str,
     return dict(TOGETHER_TOGGLE_REASONING_LEVEL_MAP)
 
 
+VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = {"anthropic", "openrouter"}
+_MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-5(?:-\d{8})?$")
+_MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$")
+
+
+def supports_anthropic_mid_convo_effort(model_id: str) -> bool:
+    model_id = re.sub(r"^~?anthropic/", "", model_id.lower())
+    return bool(_MID_CONVO_EFFORT_OPUS_RE.match(model_id) or _MID_CONVO_EFFORT_FABLE_RE.match(model_id))
+
+
 def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
     return any(
         marker in model_id
@@ -436,6 +430,7 @@ def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
             "sonnet-5",
             "sonnet.5",
             "fable-5",
+            "mythos-5",
         )
     )
 
@@ -614,6 +609,8 @@ def apply_anthropic_messages_compat_metadata(model: dict[str, Any]) -> None:
     compat = get_anthropic_messages_compat(model["provider"], model["id"])
     if compat:
         merge_compat(model, compat)
+        if compat.get("supportsMidConvoEffort"):
+            merge_thinking_level_map(model, {"off": None})
 
 
 def is_anthropic_fallback_metadata_model(model: dict[str, Any]) -> bool:
@@ -633,9 +630,14 @@ def apply_anthropic_allowed_fallback_model_metadata(models: list[dict[str, Any]]
         if model is None:
             continue
 
+        compatible_fallback_model_ids = (
+            [fallback_id for fallback_id in fallback_model_ids if supports_anthropic_mid_convo_effort(fallback_id)]
+            if model.get("compat", {}).get("supportsMidConvoEffort")
+            else fallback_model_ids
+        )
         allowed_fallback_models = [
             {"provider": fallback_model["provider"], "model": fallback_model["id"], "cost": fallback_model["cost"]}
-            for fallback_model_id in fallback_model_ids
+            for fallback_model_id in compatible_fallback_model_ids
             if (fallback_model := models_by_id.get(fallback_model_id)) is not None
         ]
         if allowed_fallback_models:
@@ -675,8 +677,8 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
         and model_id in OPENAI_RESPONSES_NONE_REASONING_MODELS
     ):
         merge_thinking_level_map(model, {"off": "none"})
-    # xAI models without verified effort options (e.g. grok-build-0.1) must not
-    # send the undocumented "none"/"minimal" efforts.
+    # xAI models without verified effort options must not send the undocumented
+    # "none"/"minimal" efforts.
     if provider == "xai" and model["api"] == "openai-responses" and "thinkingLevelMap" not in model:
         merge_thinking_level_map(model, {"off": None, "minimal": None})
     if supports_openai_xhigh(model_id):
@@ -818,6 +820,8 @@ def apply_openai_explicit_prompt_cache_metadata(model: dict[str, Any]) -> None:
 
 def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any] | None:
     compat: dict[str, Any] = {}
+    if provider in VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS and supports_anthropic_mid_convo_effort(model_id):
+        compat["supportsMidConvoEffort"] = True
     if f"{provider}:{model_id}" in EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS:
         compat["supportsEagerToolInputStreaming"] = False
     if provider == "xiaomi" or provider.startswith("xiaomi-token-plan-"):
@@ -953,12 +957,13 @@ async def fetch_openrouter_models(client: Client) -> list[dict[str, Any]]:
         pricing = model.get("pricing") or {}
         top_provider = model.get("top_provider") or {}
         thinking_level_map = get_openrouter_thinking_level_map(model.get("reasoning"))
+        use_anthropic_messages = model["id"].startswith("anthropic/") and not model["id"].endswith(":batch")
         models.append(
             {
                 "id": model["id"],
                 "name": model["name"],
-                "api": "openai-completions",
-                "baseUrl": "https://openrouter.ai/api/v1",
+                "api": "anthropic-messages" if use_anthropic_messages else "openai-completions",
+                "baseUrl": "https://openrouter.ai/api" if use_anthropic_messages else "https://openrouter.ai/api/v1",
                 "provider": "openrouter",
                 "reasoning": "reasoning" in supported,
                 **({"thinkingLevelMap": thinking_level_map} if thinking_level_map else {}),
@@ -1539,7 +1544,7 @@ def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorde
             "maxTokens": _max_tokens(source),
         }
 
-        if "glm-5p2" in model_id:
+        if "glm-" in model_id:
             models.append(
                 {
                     **common,
@@ -1652,8 +1657,9 @@ def _process_baseten_models(baseten_models: dict[str, Any], record: _Recorder) -
         }
         if thinking_level_map:
             model["thinkingLevelMap"] = dict(thinking_level_map)
+        # Baseten's GLM-5.2 endpoints are text-only despite models.dev reporting image input.
         model |= {
-            "input": _input(source),
+            "input": ["text"] if is_glm52 else _input(source),
             "cost": _cost(source),
             "compat": dict(compat),
             "contextWindow": _context(source),
@@ -1998,7 +2004,13 @@ def _process_qwen_token_plan_models(catalog: dict[str, Any], record: _Recorder) 
                 continue
             if allowed_model_ids is not None and model_id not in allowed_model_ids:
                 continue
-            supports_reasoning_effort = model_id not in QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS
+            # Token Plan reasoning effort levels come from models.dev metadata,
+            # with a fallback map for GLM-5 and GLM-5.1.
+            thinking_level_map = get_effort_thinking_level_map(source.get("reasoning_options") or []) or (
+                QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP
+                if model_id in QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS
+                else None
+            )
             entry: dict[str, Any] = {
                 "id": model_id,
                 "name": source.get("name") or model_id,
@@ -2006,7 +2018,7 @@ def _process_qwen_token_plan_models(catalog: dict[str, Any], record: _Recorder) 
                 "provider": provider,
                 "baseUrl": base_url,
                 "compat": dict(qwen_token_plan_compat)
-                if supports_reasoning_effort
+                if thinking_level_map
                 else {**qwen_token_plan_compat, "supportsReasoningEffort": False},
                 "reasoning": source.get("reasoning") is True,
                 "input": _input(source),
@@ -2014,16 +2026,11 @@ def _process_qwen_token_plan_models(catalog: dict[str, Any], record: _Recorder) 
                 "contextWindow": _context(source),
                 "maxTokens": _max_tokens(source),
             }
-            if supports_reasoning_effort:
-                entry["thinkingLevelMap"] = dict(
-                    QWEN_TOKEN_PLAN_QWEN38_THINKING_LEVEL_MAP
-                    if model_id == "qwen3.8-max"
-                    else QWEN_TOKEN_PLAN_HIGH_MAX_THINKING_LEVEL_MAP
-                )
+            if thinking_level_map:
+                entry["thinkingLevelMap"] = dict(thinking_level_map)
             models.append(entry)
             if emitted_model_ids is not None:
                 emitted_model_ids.add(model_id)
-            record(provider, model_id, source)
 
         # pi gates this on `--strict`; this generator is always-strict (see the
         # module docstring's deviation note).

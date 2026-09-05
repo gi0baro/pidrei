@@ -41,7 +41,7 @@ def selected_model_id(rendered: str) -> str | None:
     if line is None:
         return None
     rest = line.removeprefix("→").lstrip()
-    model_id = rest.split(" [")[0].strip()
+    model_id = rest.split(" [")[0].removeprefix("✓").strip()
     return model_id or None
 
 

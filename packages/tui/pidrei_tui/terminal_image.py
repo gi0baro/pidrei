@@ -105,10 +105,7 @@ def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     if os.environ.get("WT_SESSION"):
         return {"images": None, "trueColor": True, "hyperlinks": True}
 
-    if term_program == "vscode":
-        return {"images": None, "trueColor": True, "hyperlinks": True}
-
-    if term_program == "alacritty":
+    if term_program in ("alacritty", "vscode", "zed"):
         return {"images": None, "trueColor": True, "hyperlinks": True}
 
     if terminal_emulator == "jetbrains-jediterm":

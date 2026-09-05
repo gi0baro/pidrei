@@ -1,16 +1,15 @@
 """Mirror of pi's anthropic-eager-tool-input-compat.test.ts.
 
-pi captures the request with a loopback HTTP server; here the body assertions
-go through `on_payload` capture and the header assertions inspect the
-transport built by `_create_client` — same observable request, no server.
+pi captures the request with a loopback HTTP server and reads the
+`anthropic-beta` header; here everything goes through `on_payload` capture —
+the beta list is the payload's `betas`, which the transport lifts into that
+header (as pi's SDK does). Same observable request, no server.
 """
 
 import pytest
 
 from pidrei_ai.api.anthropic_messages import (
     FINE_GRAINED_TOOL_STREAMING_BETA,
-    _create_client,
-    _should_use_fine_grained_beta,
 )
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
@@ -90,52 +89,34 @@ def create_context(tools: list[Tool] | None = None) -> Context:
     )
 
 
-def transport_headers(model: Model, context: Context) -> dict[str, str]:
-    client, _is_oauth = _create_client(
-        model,
-        "test-key",
-        True,
-        _should_use_fine_grained_beta(model, context),
-        False,
-        None,
-        None,
-        None,
-    )
-    return client._headers
-
-
 async def capture_body(model: Model, context: Context) -> dict:
     return await capture_payload(model, SimpleStreamOptions(cache_retention="none"), context)
 
 
 @pytest.mark.tonio
 async def test_sends_per_tool_eager_input_streaming_by_default():
-    model = create_model()
-    context = create_context()
-    body = await capture_body(model, context)
+    body = await capture_body(create_model(), create_context())
 
     assert body["tools"][0]["eager_input_streaming"] is True
-    assert "anthropic-beta" not in transport_headers(model, context)
+    assert "betas" not in body
 
 
 @pytest.mark.tonio
 async def test_uses_legacy_fine_grained_beta_when_eager_tool_input_streaming_is_disabled():
     model = create_model(AnthropicMessagesCompat(supports_eager_tool_input_streaming=False))
-    context = create_context()
-    body = await capture_body(model, context)
+    body = await capture_body(model, create_context())
 
     assert "eager_input_streaming" not in body["tools"][0]
-    assert transport_headers(model, context)["anthropic-beta"] == FINE_GRAINED_TOOL_STREAMING_BETA
+    assert body["betas"] == [FINE_GRAINED_TOOL_STREAMING_BETA]
 
 
 @pytest.mark.tonio
 async def test_does_not_send_legacy_beta_when_there_are_no_tools():
     model = create_model(AnthropicMessagesCompat(supports_eager_tool_input_streaming=False))
-    context = create_context([])
-    body = await capture_body(model, context)
+    body = await capture_body(model, create_context([]))
 
     assert "tools" not in body
-    assert "anthropic-beta" not in transport_headers(model, context)
+    assert "betas" not in body
 
 
 @pytest.mark.tonio

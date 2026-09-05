@@ -291,7 +291,13 @@ def create_shell_tool_definition(
         command = params["command"]
         timeout = params.get("timeout")
         resolved_command = f"{command_prefix}\n{command}" if command_prefix else command
-        spawn_context = _resolve_spawn_context(resolved_command, cwd, spawn_hook, expose_session_environment, ctx)
+        spawn_context = _resolve_spawn_context(
+            resolved_command,
+            (ctx.cwd if ctx is not None else None) or cwd,
+            spawn_hook,
+            expose_session_environment,
+            ctx,
+        )
         output = OutputAccumulator(temp_file_prefix=config.temp_file_prefix)
         state = {
             "accepting_output": True,

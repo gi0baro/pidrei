@@ -16,7 +16,14 @@ from .components.stack import allocate_stack_sizes, visible_stack_entries
 from .layout_node import get_layout_node
 from .terminal_image import crop_kitty_image_line, get_kitty_image_metadata, is_image_line
 from .tui import CURSOR_MARKER, composite_tui_line
-from .utils import extract_ansi_code, get_grapheme_cell_range, js_round, slice_by_column, visible_width
+from .utils import (
+    extract_ansi_code,
+    get_active_background_ansi,
+    get_grapheme_cell_range,
+    js_round,
+    slice_by_column,
+    visible_width,
+)
 
 
 OSC133_ZONE_PREFIX_RE = re.compile(r"^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+")
@@ -238,7 +245,9 @@ def _layout_component(
     return box
 
 
-def _style_scrollbar_cell(line: str, column: int, total_width: int, style) -> str:
+def _replace_scrollbar_cell(
+    line: str, column: int, total_width: int, replacement: str, preserve_target_background: bool
+) -> str:
     if is_image_line(line):
         return line
 
@@ -257,17 +266,22 @@ def _style_scrollbar_cell(line: str, column: int, total_width: int, style) -> st
             break
         target_prefix += ansi["code"]
         target_index += ansi["length"]
-    target_text = target[target_index:] or " " * (end - start)
     before_padding = " " * max(0, start - visible_width(before))
-    return f"{before}{before_padding}{target_prefix}{style(target_text)}{after}"
+    cell_padding_before = " " * max(0, column - start)
+    cell_padding_after = " " * max(0, end - column - 1)
+    target_style = "\x1b[0m\x1b]8;;\x07" + (
+        get_active_background_ansi(target_prefix) if preserve_target_background else ""
+    )
+    return f"{before}{before_padding}{target_style}{cell_padding_before}{replacement}{cell_padding_after}{after}"
 
 
-def get_scrollbar_geometry(box: LayoutBox) -> dict | None:
+def get_scrollbar_geometry(box: LayoutBox, include_hidden_auto: bool = False) -> dict | None:
     """Scrollbar geometry for a scroll box: {"column", "trackTop", "trackHeight",
-    "thumbTop", "thumbHeight", "maxScrollTop"}, or None when it is not shown."""
-    if box.scroll_view is None or not box.scroll_view.is_scrollbar_visible:
-        return None
-    if box.rect.width <= 0 or box.rect.height <= 0:
+    "thumbTop", "thumbHeight", "maxScrollTop"}, or None when it is not shown.
+
+    `include_hidden_auto` also describes a hidden `auto` scrollbar whose content
+    overflows, so hovering its track can reveal it."""
+    if box.scroll_view is None or box.rect.width <= 0 or box.rect.height <= 0:
         return None
 
     if box.children:
@@ -275,6 +289,11 @@ def get_scrollbar_geometry(box: LayoutBox) -> dict | None:
     else:
         content_height = len(box.scroll_content_lines or [])
     track_height = box.rect.height
+    can_reveal_hidden_auto = (
+        include_hidden_auto and box.scroll_view.scrollbar == "auto" and content_height > track_height
+    )
+    if not box.scroll_view.is_scrollbar_visible and not can_reveal_hidden_auto:
+        return None
 
     min_thumb_height = min(2, track_height)
     thumb_height = max(min_thumb_height, min(track_height, js_round(track_height * track_height / content_height)))
@@ -300,12 +319,19 @@ def _paint_scrollbar(box: LayoutBox, screen: list[str], total_width: int) -> Non
     if not geometry or box.scroll_view is None:
         return
 
-    for offset in range(geometry["thumbHeight"]):
-        row = geometry["thumbTop"] + offset
+    scroll_view = box.scroll_view
+    for offset in range(geometry["trackHeight"]):
+        row = geometry["trackTop"] + offset
         if row < box.clip.y or row >= box.clip.y + box.clip.height or row < 0 or row >= len(screen):
             continue
-        screen[row] = _style_scrollbar_cell(
-            screen[row], geometry["column"], total_width, box.scroll_view.scrollbar_style
+        is_thumb = geometry["thumbTop"] <= row < geometry["thumbTop"] + geometry["thumbHeight"]
+        replacement = (
+            scroll_view.scrollbar_thumb_style("█" if scroll_view.is_scrollbar_active else "┃")
+            if is_thumb
+            else scroll_view.scrollbar_track_style("│")
+        )
+        screen[row] = _replace_scrollbar_cell(
+            screen[row], geometry["column"], total_width, replacement, scroll_view.scrollbar != "always"
         )
 
 

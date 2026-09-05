@@ -12,14 +12,18 @@ against plain attributes.
 
 import contextlib
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tonio.colored as tonio
 
+from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive import interactive_mode, tui_renderer
 from pidrei.modes.interactive.interactive_mode import InteractiveMode, create_interactive_tui
-from pidrei_tui import Container, Text, is_viewport_tui
+from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei_tui import Container, ScrollView, Text, get_keybindings, is_viewport_tui, set_keybindings
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tui" / "tests"))
@@ -321,12 +325,24 @@ async def test_keeps_the_status_line_confirmation_for_the_copy_shortcut_in_regul
     assert context.errors == []
 
 
-@pytest.mark.parametrize(("tui_mode", "expected_children"), [("regular", 1), ("fullscreen", 0)])
-def test_reserves_status_height_only_on_the_main_screen_renderer(tui_mode, expected_children):
-    indicator = _DisposeRecorder()
+class _StatusEditor:
+    """pi's StatusEditor fake: the two members `is_working_status_editor` checks."""
+
+    def __init__(self, embed_working_status: bool) -> None:
+        self.embed_working_status = embed_working_status
+        self.indicators: list = []
+
+    def set_working_status_indicator(self, indicator) -> None:
+        self.indicators.append(indicator)
+
+
+def _clear_status_context(*, tui_mode: str, indicator, embedded: bool, default_editor, editor):
     mode = _BareInteractiveMode()
     mode._active_status_indicator = indicator
+    mode._active_working_indicator_embedded = embedded
     mode._status_container = Container()
+    mode._default_editor = default_editor
+    mode.editor = editor
     mode._options = {"tuiMode": tui_mode}
     # post_ui applies inline like an un-started TUI (island relaxation,
     # PROPER_MT_DESIGN step 1).
@@ -336,8 +352,64 @@ def test_reserves_status_height_only_on_the_main_screen_renderer(tui_mode, expec
         {"get_clear_on_shrink": staticmethod(lambda: True), "post_ui": staticmethod(lambda fn: fn())},
     )()
     mode._idle_status = Text("", 0, 0)
+    return mode
+
+
+def test_does_not_reserve_separate_status_height_for_the_editor_border_working_indicator():
+    indicator = _DisposeRecorder()
+    editor = _StatusEditor(embed_working_status=True)
+    mode = _clear_status_context(
+        tui_mode="regular", indicator=indicator, embedded=True, default_editor=editor, editor=editor
+    )
 
     mode._clear_status_indicator()
 
     assert indicator.calls == 1
+    # pi asserts `toHaveBeenCalledWith(undefined)`: the editor is both the
+    # default and the active one, so the border is cleared through each role.
+    assert editor.indicators and all(cleared is None for cleared in editor.indicators)
+    assert len(mode._status_container.children) == 0
+
+
+@pytest.mark.parametrize(("tui_mode", "expected_children"), [("regular", 1), ("fullscreen", 0)])
+def test_uses_the_standalone_row_for_a_custom_editor_that_has_not_opted_in(tui_mode, expected_children):
+    default_editor = _StatusEditor(embed_working_status=True)
+    custom_editor = _StatusEditor(embed_working_status=False)
+    mode = _clear_status_context(
+        tui_mode=tui_mode,
+        indicator=_DisposeRecorder(),
+        embedded=False,
+        default_editor=default_editor,
+        editor=custom_editor,
+    )
+
+    mode._clear_status_indicator()
+
+    assert default_editor.indicators and all(cleared is None for cleared in default_editor.indicators)
+    assert custom_editor.indicators == []
     assert len(mode._status_container.children) == expected_children
+
+
+@pytest.mark.tonio
+async def test_shows_the_configured_jump_to_bottom_shortcut_while_scrolled_up():
+    init_theme_sync("dark")
+    previous_keybindings = get_keybindings()
+    set_keybindings(KeybindingsManager({"tui.altScreen.bottom": "ctrl+j"}))
+    terminal = RecordingTerminal(50, 4)
+    ui = create_interactive_tui(
+        tui_mode="fullscreen", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
+    )
+    ui.set_layout_root(
+        ScrollView(Text("\n".join(f"line {index + 1}" for index in range(8)), 0, 0), {"follow": "end", "primary": True})
+    )
+    await ui.start()
+    try:
+        await terminal.wait_for_render()
+        await terminal.send_input("\x1b[<64;1;1M")
+        deadline = time.monotonic() + 2.0
+        while "↓ Jump to latest message · Ctrl+J" not in terminal.get_viewport()[3]:
+            assert time.monotonic() < deadline, terminal.get_viewport()
+            await tonio.sleep(0.005)
+    finally:
+        await ui.stop()
+        set_keybindings(previous_keybindings)

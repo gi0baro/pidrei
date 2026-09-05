@@ -26,6 +26,7 @@ TEXT_MODELS = [
     "qwen3.6-plus",
     "qwen3.7-max",
     "qwen3.7-plus",
+    "qwen3.8-flash",
     "qwen3.8-max",
 ]
 
@@ -37,6 +38,7 @@ INDIVIDUAL_TEXT_MODELS = [
     "qwen3.6-flash",
     "qwen3.7-max",
     "qwen3.7-plus",
+    "qwen3.8-flash",
     "qwen3.8-max",
 ]
 
@@ -97,6 +99,7 @@ THINKING_MODELS = [
     "qwen3.6-plus",
     "qwen3.7-max",
     "qwen3.7-plus",
+    "qwen3.8-flash",
     "qwen3.8-max",
 ]
 
@@ -118,6 +121,9 @@ THINKING_MODEL_CASES = [(provider, model_id) for provider in PROVIDERS for model
 REASONING_EFFORT_MODEL_CASES = [
     (provider, model_id) for provider in PROVIDERS for model_id in REASONING_EFFORT_MODELS
 ] + [("qwen-token-plan-individual", model_id) for model_id in INDIVIDUAL_REASONING_EFFORT_MODELS]
+
+QWEN38_MODELS = ["qwen3.8-flash", "qwen3.8-max"]
+QWEN38_MODEL_CASES = [(provider, model_id) for provider in ALL_PROVIDERS for model_id in QWEN38_MODELS]
 
 
 def _context() -> Context:
@@ -155,10 +161,10 @@ def test_exposes_qwen_reasoning_effort_levels(provider, model_id):
     }
 
 
-@pytest.mark.parametrize("provider", ALL_PROVIDERS)
-def test_exposes_qwen38_reasoning_effort_levels(provider):
-    model = get_builtin_model(provider, "qwen3.8-max")
-    assert model is not None, f"Missing model: {provider}/qwen3.8-max"
+@pytest.mark.parametrize(("provider", "model_id"), QWEN38_MODEL_CASES)
+def test_exposes_qwen38_reasoning_effort_levels(provider, model_id):
+    model = get_builtin_model(provider, model_id)
+    assert model is not None, f"Missing model: {provider}/{model_id}"
 
     assert model.thinking_level_map == {
         "minimal": None,
@@ -180,10 +186,10 @@ def test_sends_qwen_reasoning_effort(provider, model_id):
     assert payload["reasoning_effort"] == "high"
 
 
-@pytest.mark.parametrize("provider", ALL_PROVIDERS)
-def test_sends_qwen38_max_reasoning_effort(provider):
-    model = get_builtin_model(provider, "qwen3.8-max")
-    assert model is not None, f"Missing model: {provider}/qwen3.8-max"
+@pytest.mark.parametrize(("provider", "model_id"), QWEN38_MODEL_CASES)
+def test_sends_qwen38_xhigh_reasoning_effort(provider, model_id):
+    model = get_builtin_model(provider, model_id)
+    assert model is not None, f"Missing model: {provider}/{model_id}"
 
     payload = _payload(model, "xhigh")
 

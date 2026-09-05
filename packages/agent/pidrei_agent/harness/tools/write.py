@@ -22,11 +22,6 @@ _WRITE_SCHEMA: dict[str, Any] = {
 }
 
 
-def _js_string_length(text: str) -> int:
-    """JS `String.length` (UTF-16 code units) — pi reports this as the byte count."""
-    return sum(2 if ord(char) > 0xFFFF else 1 for char in text)
-
-
 class WriteTool(AgentHarnessTool[ExecutionToolContext, None]):
     name = "write"
     label = "write"
@@ -56,7 +51,7 @@ class WriteTool(AgentHarnessTool[ExecutionToolContext, None]):
             if cancel is not None and cancel.cancelled:
                 raise Exception("Operation aborted")
             return AgentToolResult(
-                content=[TextContent(text=f"Successfully wrote {_js_string_length(content)} bytes to {path}")],
+                content=[TextContent(text=f"Successfully wrote to {path}")],
                 details=None,
             )
 

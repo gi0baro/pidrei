@@ -2,7 +2,7 @@
 
 import math
 
-from pidrei_tui import Loader
+from pidrei_tui import Loader, truncate_to_width
 
 from ..theme import theme
 from .countdown_timer import CountdownTimer
@@ -21,15 +21,23 @@ class StatusIndicator(Loader):
 
 
 class WorkingStatusIndicator(StatusIndicator):
-    def __init__(self, ui, message: str, indicator=None) -> None:
+    def __init__(self, ui, message: str, indicator=None, color_fn=None) -> None:
         super().__init__(
             "working",
             ui,
-            lambda spinner: theme.fg("accent", spinner),
-            lambda text: theme.fg("muted", text),
+            color_fn if color_fn is not None else (lambda text: theme.fg("accent", text)),
+            color_fn if color_fn is not None else (lambda text: theme.fg("muted", text)),
             message,
             indicator,
         )
+
+    def render_in_border(self, width: int) -> str:
+        rendered = super().render(width + 2)
+        line = rendered[1] if len(rendered) > 1 else ""
+        return truncate_to_width(line[1:].rstrip() if line.startswith(" ") else line.rstrip(), width, "")
+
+    def render_spinner_in_border(self, width: int) -> str:
+        return truncate_to_width(self._get_rendered_indicator(), width, "")
 
 
 class RetryStatusIndicator(StatusIndicator):

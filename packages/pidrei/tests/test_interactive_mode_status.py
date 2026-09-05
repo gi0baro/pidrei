@@ -16,10 +16,14 @@ from types import SimpleNamespace
 import pytest
 import tonio.colored as tonio
 
+from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.source_info import SourceInfo
+from pidrei.modes.interactive.components.custom_editor import CustomEditor
+from pidrei.modes.interactive.components.status_indicator import WorkingStatusIndicator
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme, init_theme_sync
-from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScreen
+from pidrei.modes.interactive.theme import get_editor_theme, init_theme, init_theme_sync, theme
+from pidrei.utils.ansi import strip_ansi
+from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScreen, visible_width
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tui" / "tests"))
@@ -1007,6 +1011,40 @@ class TestShowLoadedResources:
         output = render_all(fake._loaded_resources_container)
         assert "[Skill conflicts]" in output
         assert "[Skills]" not in output
+
+
+class TestWorkingStatusEmbedding:
+    """Mirror of pi's status-indicator.test.ts editor-border cases."""
+
+    @pytest.mark.tonio
+    async def test_keeps_the_top_border_unchanged_unless_the_editor_opts_in(self):
+        init_theme_sync("dark")
+        tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
+        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager())
+        indicator = WorkingStatusIndicator(tui, "Working")
+        editor.set_working_status_indicator(indicator)
+
+        assert strip_ansi(editor.render(20)[0]) == "─" * 20
+        standalone_line = indicator.render(20)[1]
+        assert theme.get_fg_ansi("accent") in standalone_line
+        assert theme.get_fg_ansi("muted") in standalone_line
+        indicator.dispose()
+
+    @pytest.mark.tonio
+    async def test_embeds_the_working_indicator_when_the_editor_opts_in(self):
+        init_theme_sync("dark")
+        tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
+        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
+        assert editor.embed_working_status is True
+        editor.border_color = theme.get_thinking_border_color("high")
+        indicator = WorkingStatusIndicator(tui, "Working", None, lambda text: editor.border_color(text))
+        editor.set_working_status_indicator(indicator)
+
+        top_border = editor.render(20)[0]
+        assert strip_ansi(top_border) == "── ⠋ Working ───────"
+        assert visible_width(top_border) == 20
+        assert len(top_border.split(theme.get_fg_ansi("thinkingHigh"))) == 5
+        indicator.dispose()
 
 
 class TestShowManagedToolStatus:

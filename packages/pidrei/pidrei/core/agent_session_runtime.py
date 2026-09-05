@@ -44,6 +44,12 @@ class SessionImportFileNotFoundError(Exception):
         self.file_path = file_path
 
 
+def _copy_file_exclusive(source: str, destination: str) -> None:
+    """`copyFileSync(..., COPYFILE_EXCL)`: fail instead of overwriting a file that appeared meanwhile."""
+    with open(source, "rb") as src, open(destination, "xb") as dst:
+        shutil.copyfileobj(src, dst)
+
+
 def _extract_user_message_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -303,11 +309,11 @@ class AgentSessionRuntime:
             return {"cancelled": False, "selectedText": selected_text}
 
         session_manager = self.session.session_manager
+        await self._teardown_current("fork", session_manager.get_session_file())
         if not target_leaf_id:
-            session_manager.new_session({"parentSession": self.session.session_file})
+            session_manager.new_session({"parentSession": previous_session_file})
         else:
             await session_manager.create_branched_session(target_leaf_id)
-        await self._teardown_current("fork", session_manager.get_session_file())
         self._apply(
             await self._create_runtime(
                 cwd=self.cwd,
@@ -338,14 +344,22 @@ class AgentSessionRuntime:
             await fs.Path(session_dir).mkdir(parents=True, exist_ok=True)
 
         destination_path = os.path.join(session_dir, os.path.basename(resolved_path))
+        source_already_stored = resolve_path(destination_path) == resolved_path
+        if not source_already_stored:
+            name, ext = os.path.splitext(os.path.basename(destination_path))
+            suffix = 1
+            while await fs.Path(destination_path).exists():
+                destination_path = os.path.join(session_dir, f"{name}-{suffix}{ext}")
+                suffix += 1
         before_result = await self._emit_before_switch("resume", destination_path)
         if before_result["cancelled"]:
             return before_result
 
         previous_session_file = self.session.session_file
-        if resolve_path(destination_path) != resolved_path:
-            # `shutil.copyfile` has no `fs` equivalent, so it goes to the pool.
-            await tonio.spawn_blocking(shutil.copyfile, resolved_path, destination_path)
+        if not source_already_stored:
+            # `shutil.copyfile` has no `fs` equivalent, so it goes to the pool;
+            # the exclusive create mirrors pi's COPYFILE_EXCL.
+            await tonio.spawn_blocking(_copy_file_exclusive, resolved_path, destination_path)
 
         session_manager = await SessionManager.open(destination_path, session_dir, cwd_override)
         assert_session_cwd_exists(session_manager, self.cwd)

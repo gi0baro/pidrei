@@ -419,6 +419,11 @@ def test_enables_hyperlinks_for_vscode():
         assert detect_capabilities()["hyperlinks"] is True
 
 
+def test_enables_alacritty_capabilities_for_zed():
+    with clean_env({"TERM_PROGRAM": "zed"}):
+        assert detect_capabilities() == {"images": None, "trueColor": True, "hyperlinks": True}
+
+
 def test_enables_truecolor_and_hyperlinks_for_windows_terminal_outside_multiplexers():
     with clean_env({"WT_SESSION": "session", "TERM": "xterm-256color"}):
         caps = detect_capabilities()

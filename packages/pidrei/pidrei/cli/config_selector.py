@@ -28,7 +28,8 @@ async def select_config(
     """Run the config TUI until the user closes it."""
     await init_theme(settings_manager.get_theme(), True)
 
-    ui: TUI = TuiMainScreen(ProcessTerminal(), None, agent_dir)
+    ui: TUI = TuiMainScreen(ProcessTerminal(), settings_manager.get_show_hardware_cursor(), agent_dir)
+    ui.set_clear_on_shrink(settings_manager.get_clear_on_shrink())
     closed = tonio.Event()
 
     # `TUI.start`/`stop` are async; these callbacks are sync (the component

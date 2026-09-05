@@ -34,7 +34,8 @@ class ScrollView(Container):
         self.primary = options.get("primary") or False
         self.overscroll = options.get("overscroll") or "chain"
         self._current_scrollbar = options.get("scrollbar") or "hidden"
-        self.scrollbar_style = options.get("scrollbarStyle") or (lambda text: f"\x1b[100m{text}\x1b[49m")
+        self.scrollbar_track_style = options.get("scrollbarTrackStyle") or (lambda text: f"\x1b[90m{text}\x1b[39m")
+        self.scrollbar_thumb_style = options.get("scrollbarThumbStyle") or (lambda text: f"\x1b[37m{text}\x1b[39m")
         self._scrollbar_hide_delay_ms = max(
             0, math.floor(options["scrollbarHideDelayMs"] if options.get("scrollbarHideDelayMs") is not None else 1000)
         )
@@ -59,8 +60,16 @@ class ScrollView(Container):
         return self._current_viewport_height
 
     @property
+    def follow_end(self) -> bool:
+        return self._follow_end
+
+    @property
     def scrollbar(self) -> str:
         return self._current_scrollbar
+
+    @property
+    def is_scrollbar_active(self) -> bool:
+        return self._scrollbar_active
 
     @property
     def is_scrollbar_visible(self) -> bool:
@@ -116,6 +125,8 @@ class ScrollView(Container):
             return
         self._scrollbar_active = active
         self._mark_scrollbar_activity()
+        if self._request_render_callback is not None:
+            self._request_render_callback()
 
     def scroll_to(self, scroll_top: int, options: dict | None = None) -> None:
         """``options`` mirrors pi's ``ScrollViewScrollToOptions`` (``{"disableFollow"?}``).

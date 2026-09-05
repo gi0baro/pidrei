@@ -90,14 +90,14 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
     # so the union is deliberately not ported.
     custom_ops = operations
 
-    async def execute(_tool_call_id, params, cancel=None, _on_update=None, _ctx=None):
+    async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
         pattern = params["pattern"]
         search_dir = params.get("path")
         limit = params.get("limit")
 
         _throw_if_aborted(cancel)
 
-        search_path = resolve_to_cwd(search_dir or ".", cwd)
+        search_path = resolve_to_cwd(search_dir or ".", (ctx.cwd if ctx is not None else None) or cwd)
         effective_limit = int(limit) if limit is not None else DEFAULT_LIMIT
 
         # If custom operations provide glob(), use that instead of fd.

@@ -31,6 +31,7 @@ from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     AssistantMessage,
+    AssistantMessageDiagnostic,
     CacheRetention,
     Context,
     DoneEvent,
@@ -62,6 +63,7 @@ from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.deferred_tools import split_deferred_tools
+from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json
 from pidrei_ai.utils.provider_env import get_provider_env_value
@@ -74,7 +76,7 @@ from pidrei_ai.utils.user_agent import set_default_user_agent
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Stealth mode: mimic Claude Code's tool naming exactly.
-CLAUDE_CODE_VERSION = "2.1.75"
+CLAUDE_CODE_VERSION = "2.1.251"
 
 # Claude Code 2.x tool names (canonical casing).
 # Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -102,6 +104,8 @@ _CC_TOOL_LOOKUP = {name.lower(): name for name in _CLAUDE_CODE_TOOLS}
 FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14"
 INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
 SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01"
+THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
 
 
 def _should_use_server_side_fallback_beta(model: Model) -> bool:
@@ -214,6 +218,11 @@ def _force_adaptive_thinking(model: Model) -> bool:
     return compat is not None and compat.force_adaptive_thinking is True
 
 
+def _supports_mid_convo_effort(model: Model) -> bool:
+    compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
+    return compat is not None and compat.supports_mid_convo_effort is True
+
+
 def _convert_content_blocks(content: list) -> str | list[dict[str, Any]]:
     """Convert text/image blocks to Anthropic API format."""
     has_images = any(block.type == "image" for block in content)
@@ -317,7 +326,12 @@ class _PunkreqAnthropicClient:
     ) -> AnthropicResponseLike:
         client = http.client_for(self._url, self._env)
         timeout = http.request_timeout(timeout_ms)
-        response = await client.post(self._url, json=params, headers=self._headers, timeout=timeout)
+        # pi's SDK lifts the `betas` request param into the `anthropic-beta`
+        # header; the wire body never carries it.
+        body = dict(params)
+        betas = body.pop("betas", None)
+        headers = {**self._headers, "anthropic-beta": ",".join(betas)} if betas else self._headers
+        response = await client.post(self._url, json=body, headers=headers, timeout=timeout)
         if not 200 <= response.status_code < 300:
             body = (await response.read()).decode("utf-8", "replace")
             raise AnthropicApiError(
@@ -391,34 +405,22 @@ def _should_use_fine_grained_beta(model: Model, context: Context) -> bool:
 def _create_client(
     model: Model,
     api_key: str | None,
-    interleaved_thinking: bool,
-    use_fine_grained_beta: bool,
-    use_server_side_fallback_beta: bool,
     options_headers: ProviderHeaders | None,
     dynamic_headers: dict[str, str] | None,
     session_id: str | None,
     env: ProviderEnv | None = None,
 ) -> tuple[AnthropicClient, bool]:
-    """Build the default transport with pi's exact header assembly."""
-    # Adaptive thinking models have interleaved thinking built in; skip the beta.
-    needs_interleaved_beta = interleaved_thinking and not _force_adaptive_thinking(model)
-    beta_features: list[str] = []
-    if use_fine_grained_beta:
-        beta_features.append(FINE_GRAINED_TOOL_STREAMING_BETA)
-    if needs_interleaved_beta:
-        beta_features.append(INTERLEAVED_THINKING_BETA)
-    if use_server_side_fallback_beta:
-        beta_features.append(SERVER_SIDE_FALLBACK_BETA)
+    """Build the default transport with pi's exact header assembly.
 
+    Beta features ride on the request (`betas`, see `_get_beta_features`), not
+    on the client headers."""
     base = {
         "accept": "application/json",
         "anthropic-dangerous-direct-browser-access": "true",
         "anthropic-version": ANTHROPIC_VERSION,
     }
-    if beta_features:
-        base["anthropic-beta"] = ",".join(beta_features)
 
-    # Copilot: Bearer auth, selective betas.
+    # Copilot: Bearer auth.
     if model.provider == "github-copilot":
         merged = _merge_client_headers(
             base,
@@ -435,7 +437,6 @@ def _create_client(
         merged = _merge_client_headers(
             {
                 **base,
-                "anthropic-beta": ",".join(["claude-code-20250219", "oauth-2025-04-20", *beta_features]),
                 "user-agent": f"claude-cli/{CLAUDE_CODE_VERSION}",
                 "x-app": "cli",
             },
@@ -498,6 +499,32 @@ async def _iterate_anthropic_events(
         raise RuntimeError("Anthropic stream ended before message_stop")
 
 
+def _pick_input_transformations(payload: dict, current: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    """The serving model's `input_transformations` list, when the event carries one."""
+    transformations = payload.get("input_transformations")
+    return transformations if isinstance(transformations, list) else current
+
+
+def _append_input_transformations_diagnostic(output: AssistantMessageBuilder, transformations: list[dict]) -> None:
+    append_assistant_message_diagnostic(
+        output,
+        AssistantMessageDiagnostic(
+            type="anthropic_input_transformations",
+            timestamp=int(time.time() * 1000),
+            details={
+                "transformations": [
+                    {
+                        "type": transformation.get("type"),
+                        "path": transformation.get("path"),
+                        "reason": transformation.get("reason"),
+                    }
+                    for transformation in transformations
+                ]
+            },
+        ),
+    )
+
+
 def _map_stop_reason(reason: str, stop_details: dict | None) -> tuple[StopReason, str | None]:
     if reason == "end_turn":
         return "stop", None
@@ -537,11 +564,13 @@ def stream(
     opts = _anthropic_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
 
+    provider_thinking_level = (opts.effort or "high") if _supports_mid_convo_effort(model) else None
     output = AssistantMessageBuilder(
         content=[],
         api=model.api,
         provider=model.provider,
         model=model.id,
+        provider_thinking_level=provider_thinking_level,
         usage=UsageBuilder(),
         stop_reason="pending",
         timestamp=int(time.time() * 1000),
@@ -555,6 +584,7 @@ def stream(
         partial_json: dict[int, str] = {}
 
         usage_model = model
+        input_transformations: list[dict[str, Any]] | None = None
 
         try:
             if opts.client is not None:
@@ -573,9 +603,6 @@ def stream(
                 client, is_oauth = _create_client(
                     model,
                     api_key,
-                    opts.interleaved_thinking if opts.interleaved_thinking is not None else True,
-                    _should_use_fine_grained_beta(model, context),
-                    _should_use_server_side_fallback_beta(model),
                     opts.headers,
                     copilot_dynamic_headers,
                     cache_session_id,
@@ -610,6 +637,7 @@ def stream(
                     message = event.get("message") or {}
                     usage = message.get("usage") or {}
                     output.response_id = message.get("id")
+                    input_transformations = _pick_input_transformations(message, input_transformations)
                     # Anthropic reports the model it actually served, which differs
                     # from the requested one when a refusal fallback fires.
                     served_model = message.get("model")
@@ -633,6 +661,10 @@ def stream(
                     content_block = event.get("content_block") or {}
                     block_type = content_block.get("type")
                     index = event.get("index")
+                    if block_type == "fallback":
+                        if blocks:
+                            raise RuntimeError("Anthropic performed an unsupported mid-output model fallback")
+                        continue
                     if block_type == "text":
                         blocks.append(TextContentBuilder(text=content_block.get("text") or ""))
                         anthropic_index_to_content[index] = len(blocks) - 1
@@ -719,6 +751,7 @@ def stream(
                                 ToolCallEndEvent(content_index=content_index, tool_call=block, partial=output)
                             )
                 elif event_type == "message_delta":
+                    input_transformations = _pick_input_transformations(event, input_transformations)
                     delta = event.get("delta") or {}
                     if delta.get("stop_reason"):
                         output.raw_stop_reason = delta["stop_reason"]
@@ -755,6 +788,8 @@ def stream(
                 raise RuntimeError("Anthropic stream ended without a stop reason")
             if output.stop_reason in ("aborted", "error"):
                 raise RuntimeError(output.error_message or "An unknown error occurred")
+            if input_transformations:
+                _append_input_transformations_diagnostic(output, input_transformations)
 
             out_stream.push(DoneEvent(reason=output.stop_reason, message=output))
             out_stream.end()
@@ -788,6 +823,8 @@ def stream_simple(
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
+    _assert_request_auth(model.provider, options.api_key if options else None, options.headers if options else None)
+
     base = build_base_options(model, context, options, options.api_key if options else None)
 
     def with_thinking(**extra) -> AnthropicOptions:
@@ -866,6 +903,13 @@ def _convert_tool_result(
     return tool_result, sibling_content
 
 
+@dataclass(slots=True)
+class _ConvertedAnthropicMessages:
+    messages: list[dict[str, Any]]
+    # Wire index of each assistant message -> the provider-native effort it was produced with.
+    assistant_levels: dict[int, AnthropicEffort]
+
+
 def _convert_messages(
     transformed_messages: list[Message],
     is_oauth_token: bool,
@@ -873,8 +917,10 @@ def _convert_messages(
     allow_empty_signature: bool,
     deferred_tool_names: set[str],
     normalize_tool_name,
-) -> list[dict[str, Any]]:
+    managed_provider: str | None = None,
+) -> _ConvertedAnthropicMessages:
     params: list[dict[str, Any]] = []
+    assistant_levels: dict[int, AnthropicEffort] = {}
     loaded_tool_names: set[str] = set()
 
     i = 0
@@ -943,7 +989,15 @@ def _convert_messages(
                         }
                     )
             if blocks:
+                message_index = len(params)
                 params.append({"role": "assistant", "content": blocks})
+                if (
+                    managed_provider is not None
+                    and msg.api == "anthropic-messages"
+                    and msg.provider == managed_provider
+                    and _is_anthropic_effort(msg.provider_thinking_level)
+                ):
+                    assistant_levels[message_index] = msg.provider_thinking_level
         elif msg.role == "toolResult":
             # Collect consecutive toolResult messages (z.ai Anthropic endpoint).
             tool_results: list[dict[str, Any]] = []
@@ -980,7 +1034,60 @@ def _convert_messages(
                     {"type": "text", "text": last_message["content"], "cache_control": cache_control}
                 ]
 
-    return params
+    return _ConvertedAnthropicMessages(messages=params, assistant_levels=assistant_levels)
+
+
+def _is_anthropic_effort(value: Any) -> bool:
+    return value in ("low", "medium", "high", "xhigh", "max")
+
+
+def _insert_thinking_level_messages(
+    converted: _ConvertedAnthropicMessages, active_effort: AnthropicEffort
+) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    for index, message in enumerate(converted.messages):
+        historical_effort = converted.assistant_levels.get(index)
+        if historical_effort is not None:
+            messages.append({"role": "system", "content": [], "output_config": {"effort": historical_effort}})
+        messages.append(message)
+    messages.append({"role": "system", "content": [], "output_config": {"effort": active_effort}})
+    return messages
+
+
+def _get_beta_features(model: Model, context: Context, is_oauth_token: bool, options: AnthropicOptions) -> list[str]:
+    """The `betas` request param (pi's SDK turns it into the `anthropic-beta` header).
+
+    An explicit `anthropic-beta` header on the model or the options replaces
+    the computed list; `None` suppresses it."""
+    configured_features: str | None = None
+    configured = False
+    for headers in (model.headers, options.headers):
+        for name, value in (headers or {}).items():
+            if name.lower() == "anthropic-beta":
+                configured_features = value
+                configured = True
+    if configured and configured_features is None:
+        return []
+    if configured_features is not None:
+        return list(dict.fromkeys(feature.strip() for feature in configured_features.split(",") if feature.strip()))
+
+    features: list[str] = []
+    if is_oauth_token:
+        features.extend(["claude-code-20250219", "oauth-2025-04-20"])
+    if _should_use_fine_grained_beta(model, context):
+        features.append(FINE_GRAINED_TOOL_STREAMING_BETA)
+    if (
+        model.reasoning
+        and options.thinking_enabled is True
+        and (options.interleaved_thinking if options.interleaved_thinking is not None else True)
+        and not _force_adaptive_thinking(model)
+    ):
+        features.append(INTERLEAVED_THINKING_BETA)
+    if _should_use_server_side_fallback_beta(model):
+        features.append(SERVER_SIDE_FALLBACK_BETA)
+    if _supports_mid_convo_effort(model):
+        features.extend([MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA])
+    return list(dict.fromkeys(features))
 
 
 def _convert_tools(
@@ -1044,18 +1151,26 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
         deferred_tools = []
     deferred_tool_names = {normalize_tool_name(tool.name) for tool in deferred_tools}
 
+    supports_mid_convo_effort = _supports_mid_convo_effort(model)
+    converted = _convert_messages(
+        transformed_messages,
+        is_oauth_token,
+        cache_control,
+        compat.allow_empty_signature,
+        deferred_tool_names,
+        normalize_tool_name,
+        model.provider if supports_mid_convo_effort else None,
+    )
+    active_effort: AnthropicEffort = options.effort or "high"
+    beta_features = _get_beta_features(model, context, is_oauth_token, options)
     params: dict[str, Any] = {
         "model": model.id,
-        "messages": _convert_messages(
-            transformed_messages,
-            is_oauth_token,
-            cache_control,
-            compat.allow_empty_signature,
-            deferred_tool_names,
-            normalize_tool_name,
-        ),
+        "messages": _insert_thinking_level_messages(converted, active_effort)
+        if supports_mid_convo_effort
+        else converted.messages,
         "max_tokens": options.max_tokens if options.max_tokens is not None else model.max_tokens,
         "stream": True,
+        **({"betas": beta_features} if beta_features else {}),
     }
 
     # For OAuth tokens, we MUST include Claude Code identity.
@@ -1085,7 +1200,12 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
         ]
 
     # Temperature is incompatible with extended thinking and unsupported on Opus 4.7+.
-    if options.temperature is not None and not options.thinking_enabled and compat.supports_temperature:
+    if (
+        options.temperature is not None
+        and not options.thinking_enabled
+        and not supports_mid_convo_effort
+        and compat.supports_temperature
+    ):
         params["temperature"] = options.temperature
 
     if immediate_tools or deferred_tools:
@@ -1107,8 +1227,16 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
             ),
         ]
 
-    # Thinking mode: adaptive, budget-based, or explicitly disabled.
-    if model.reasoning:
+    # Managed effort models always use adaptive thinking so prefix mismatches can
+    # be dropped instead of surfacing as persistent 400 responses.
+    if supports_mid_convo_effort:
+        params["thinking"] = {
+            "type": "adaptive",
+            "display": options.thinking_display or "summarized",
+            "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+        }
+        params["output_config"] = {"effort": "high"}
+    elif model.reasoning:
         if options.thinking_enabled:
             # Default "summarized" so Opus 4.7/Mythos Preview behave like older
             # Claude 4 models (whose API default is also "summarized").
