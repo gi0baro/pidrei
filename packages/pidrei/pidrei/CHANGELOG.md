@@ -8,6 +8,8 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [0.85.0.0] - 2026-09-05
 
+Tracks [Pi 0.85.0](https://github.com/earendil-works/pi/releases/tag/v0.85.0).
+
 ### Added
 
 - Persistent Anthropic thinking effort: on Anthropic transports that support
@@ -116,6 +118,8 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
   rejecting the whole provider catalog on every refresh.
 
 ## [0.84.4.0] - 2026-08-30
+
+Tracks [Pi 0.84.4](https://github.com/earendil-works/pi/releases/tag/v0.84.4).
 
 ### Added
 
