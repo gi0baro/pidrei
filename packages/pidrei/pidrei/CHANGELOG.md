@@ -6,6 +6,97 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.85.0.0] - 2026-09-05
+
+### Added
+
+- Persistent Anthropic thinking effort: on Anthropic transports that support
+  it (`supportsMidConvoEffort`), the thinking level chosen for each turn is
+  carried into later requests instead of being flattened to the current one,
+  and signed-thinking mismatches are recovered from safely. Assistant messages
+  record the `providerThinkingLevel` they were generated with.
+- Mouse interaction in fullscreen mode: click a thinking block to toggle it,
+  click a tool result to expand or collapse it, click in the editor to place
+  the cursor, and click list and settings entries to select them. Extension
+  components can handle clicks through `handle_mouse` and `MouseRegion`.
+- Fullscreen transcript controls: a clickable "Jump to latest message" label
+  (with the `tui.altScreen.bottom` shortcut) while the transcript is scrolled
+  up, a clickable and draggable scrollbar with `scrollbarTrack` /
+  `scrollbarThumb` theme colors, and a fullscreen search box with clickable
+  previous/next buttons.
+- The streaming working indicator is drawn inside the editor border and takes
+  the thinking-level border color. Custom editors keep the standalone
+  indicator unless they opt in with the `embedWorkingStatus` option.
+- `SessionManager.in_memory(cwd, options, entries)` restores externally stored
+  session entries into an in-memory session.
+- Model settings for OpenAI-compatible providers: `vllmPriority` (vLLM
+  scheduler priority) and `supportsMaxOutputTokens` (Responses output-token
+  limits).
+- LaTeX rendering of relational-algebra join symbols.
+- `Models.stream_deferred()` / `ModelRuntime.stream_deferred()` return the
+  stream and its final result separately, so callers can start a request and
+  await its completion at different points.
+- Model and theme selectors mark the current entry with `✓`.
+- Catalog: OpenRouter `anthropic/` models are routed through the Anthropic
+  Messages API, GitHub Copilot Claude Fable 5 goes through Anthropic Messages
+  with its reasoning levels, Qwen Token Plan reasoning models expose their
+  models.dev effort levels, and Qwen3.8 Flash joins the Individual plan.
+
+### Changed
+
+- Shell tool output is bounded while streaming: the model-visible view keeps
+  the first and last lines within the byte and line limits, the complete raw
+  output is preserved in a temporary spill file when the limits are crossed,
+  and a process killed by a signal reports exit code 128 plus the signal
+  number instead of failing the tool call.
+- Fullscreen transcript search runs in linear time on large transcripts:
+  unchanged searches are cached, ASCII runs are indexed and only visible
+  matches are highlighted.
+- Anthropic beta features are computed per request and sent in the
+  `anthropic-beta` header; `on_payload` hooks see them as the `betas` request
+  parameter, and an explicit `anthropic-beta` header in the model or request
+  options replaces the list.
+- The write tool reports `Successfully wrote to <path>` without a byte count.
+- Tool renderers live apart from tool definitions
+  (`create_all_tool_renderers`, `with_built_in_renderers`), so SDK callers
+  that override tools can attach the built-in renderers explicitly.
+- Bumped the tonio dependency to 0.9.15.
+
+### Fixed
+
+- `bash`, `edit`, `find`, `grep`, `ls`, `read` and `write` honor `ctx.cwd`
+  when an extension passes one.
+- Aborting a provider request releases its connection: the streaming body of
+  every SSE and event-stream adapter, one-shot OAuth and OpenRouter image
+  requests, and remote catalog fetches are closed even when the abort lands
+  while the request is still being processed.
+- A Codex WebSocket connect that completes after its deadline closes the
+  socket it opened instead of leaking it.
+- Skills are available when Bash is the only enabled tool; the skills prompt
+  names the tool the model can read files with.
+- Session forks keep their compaction boundary, in-memory forks wait for the
+  active turn to settle, and imported sessions no longer overwrite an existing
+  session with the same filename.
+- Aborting a session (RPC `abort`, an extension's `ctx.abort()`) cancels an
+  in-progress compaction or branch summary and waits for it to settle instead
+  of reporting success while it continues.
+- Tools that were prepared for a parallel batch no longer execute when the
+  turn is aborted before they start.
+- Branch summaries no longer fail when reasoning consumes the 2048-token
+  output cap; the request allows up to 4096 tokens within the model limit.
+- `NO_PROXY` matches root domains and their subdomains, IPv6 literals and
+  ports as the environment convention expects.
+- Provider streams emit a compatible event sequence for custom tool calls:
+  the start event carries the initial `arguments`, and streamed deltas no
+  longer replay a complete input.
+- OpenAI Codex SSE parsing processes terminal events that are not followed by
+  a blank line.
+- Drag selection no longer continues over the fullscreen editor.
+- Zed's terminal is detected for image capability.
+- Catalog: Fireworks GLM models use the completions API, Baseten GLM-5.2 no
+  longer advertises image input, and the unavailable Grok Build 0.1 model is
+  removed.
+
 ### Removed
 
 - The remote-session packages `pidrei_protocol`, `pidrei_client` and
@@ -13,8 +104,7 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
   experimental `server`/`client` CLI mirrors. They tracked pi's experimental
   server/worker architecture, which pi rewrote from scratch in 0.85 and which
   no pidrei feature uses; only the transport layer (CBOR, framing, unix
-  sockets) stays in the workspace, unpublished. See
-  `UPSTREAM_EXPERIMENTAL_RULING.md` in the repository.
+  sockets) stays in the workspace, unpublished.
 
 ## [0.84.4.1] - 2026-09-04
 

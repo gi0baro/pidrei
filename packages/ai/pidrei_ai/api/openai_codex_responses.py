@@ -970,7 +970,7 @@ async def _parse_sse(response: CodexSSEResponseLike, cancel: CancelToken | None 
                 yield event
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
 
 # --- WebSocket parsing --------------------------------------------------------
@@ -1048,11 +1048,29 @@ async def _connect_websocket(
     if cancel is not None and cancel.cancelled:
         raise RuntimeError("Request was aborted")
 
-    connect = websocket.connect(url, ws_headers, cancel=cancel)
     if timeout_ms <= 0:
-        return await connect
-    socket, completed = await tonio.time.timeout(connect, timeout_ms / 1000)
-    if not completed:
+        return await websocket.connect(url, ws_headers, cancel=cancel)
+
+    # `tonio.time.timeout` discards what a late coroutine returns, so the
+    # connect hands its socket over under a lock and closes it itself when the
+    # deadline got there first; a socket must never be dropped unclosed.
+    handoff_guard = threading.Lock()
+    handed: list[Any] = []
+    expired = False
+
+    async def _connect() -> None:
+        socket = await websocket.connect(url, ws_headers, cancel=cancel)
+        with handoff_guard:
+            if not expired:
+                handed.append(socket)
+                return
+        _close_websocket_silently(socket, 1000, "connect_timeout")
+
+    await tonio.time.timeout(_connect(), timeout_ms / 1000)
+    with handoff_guard:
+        expired = True
+        socket = handed.pop() if handed else None
+    if socket is None:
         raise RuntimeError(f"WebSocket connect timeout after {_format_ms(timeout_ms)}ms")
     return socket
 

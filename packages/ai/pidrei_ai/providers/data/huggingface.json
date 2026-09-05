@@ -910,6 +910,38 @@
         "max": "max"
       }
     },
+    "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": {
+      "id": "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
+      "name": "DeepSeek V4 Flash Vision Exp",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.44,
+        "output": 1.32,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
+    },
     "deepseek-ai/DeepSeek-V4-Pro": {
       "id": "deepseek-ai/DeepSeek-V4-Pro",
       "name": "DeepSeek V4 Pro",
@@ -1365,7 +1397,7 @@
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 64000,
+      "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": "none",
         "minimal": null,

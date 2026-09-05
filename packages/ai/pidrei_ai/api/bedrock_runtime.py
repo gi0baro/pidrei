@@ -387,7 +387,7 @@ async def _iterate_event_stream(response: Any, cancel: CancelToken | None) -> As
                     yield decoded
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
 
 def _decode_event(event: Any) -> dict[str, Any] | None:

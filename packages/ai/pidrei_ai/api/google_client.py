@@ -229,7 +229,7 @@ async def _iterate_chunks(response: Any, cancel: CancelToken | None) -> AsyncGen
             yield chunk
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
 
 # Config keys the SDK lifts out of `config` and onto the request body itself;

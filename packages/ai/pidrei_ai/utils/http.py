@@ -9,6 +9,7 @@ whole request — a legitimately long SSE stream must not hit a total deadline.
 (a client) does not expose.
 """
 
+import sys
 import threading
 from collections.abc import AsyncIterable, Mapping
 from typing import Any
@@ -17,6 +18,7 @@ import tonio.colored as tonio
 from httpunk import Backend, H1Connection, H1Server
 from punkreq import Limits, Timeout, TimeoutException
 from punkreq.tonio import Client
+from tonio.exceptions import CancelledError
 
 from pidrei_ai.utils.http_proxy import resolve_http_proxy_url_for_target
 
@@ -83,7 +85,35 @@ def _no_proxy_client() -> Client:
 _DRAIN_TIMEOUT_S = 1.0
 
 
-async def finish_body(body: AsyncIterable[bytes], response: object, *, drain: bool) -> None:
+def abandon_response(response: object) -> None:
+    """Release a response from inside a cancelled chain.
+
+    A scope cancel is delivered at the child's next suspension and no
+    suspension after it is served, so a close awaited from the unwinding
+    `finally` never completes. The close runs on its own task instead, which
+    is not part of the cancelled chain. Injected test clients without a
+    `close` are a no-op.
+    """
+    close = getattr(response, "close", None)
+    if close is None:
+        return
+
+    async def _close() -> None:
+        try:
+            await close()
+        except Exception:
+            pass
+
+    tonio.spawn.without_tracking(_close())
+
+
+def _unwinding_from_cancel(cancel: Any) -> bool:
+    if cancel is not None and cancel.cancelled:
+        return True
+    return isinstance(sys.exception(), CancelledError)
+
+
+async def finish_body(body: AsyncIterable[bytes], response: object, *, drain: bool, cancel: Any = None) -> None:
     """Settle the transport body an adapter stopped reading.
 
     Adapters stop at the terminal SSE event (`[DONE]`, `message_stop`), which
@@ -97,10 +127,16 @@ async def finish_body(body: AsyncIterable[bytes], response: object, *, drain: bo
     lets the transport's own tail run (punkreq's `iter_raw` releases the
     response there) and nothing is left for the GC. The drain is bounded: a
     provider that keeps the connection open past the terminal event falls
-    back to closing the response, which aborts the exchange. Error and cancel
-    paths never drain — they abort. Injected test clients without a `close`
-    are a no-op.
+    back to closing the response, which aborts the exchange. Error paths
+    never drain — they abort. Cancel paths (the token fired, or the caller's
+    `finally` is unwinding a `CancelledError`) abort without suspending: the
+    close is handed to `abandon_response`, because nothing awaited from a
+    cancelled chain runs. Injected test clients without a `close` are a
+    no-op.
     """
+    if _unwinding_from_cancel(cancel):
+        abandon_response(response)
+        return
     if drain:
         try:
             _result, completed = await tonio.time.timeout(_drain_body(body), _DRAIN_TIMEOUT_S)

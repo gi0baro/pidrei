@@ -54,7 +54,7 @@ def create_interactive_context(*, all_models, enabled_model_ids, scoped_models=N
     get_available_calls = {"count": 0}
     set_scoped_models_calls = []
 
-    async def refresh(_options=None):
+    async def refresh(_options=None, *, _requested_only=False):
         return SimpleNamespace(aborted=False, errors={})
 
     def get_available_snapshot():

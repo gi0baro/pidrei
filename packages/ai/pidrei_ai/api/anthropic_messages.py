@@ -493,7 +493,7 @@ async def _iterate_anthropic_events(
             yield event
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
     if saw_message_start and not saw_message_end:
         raise RuntimeError("Anthropic stream ended before message_stop")

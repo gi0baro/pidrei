@@ -9,6 +9,7 @@ import pytest
 import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
+from pidrei_agent.harness.env import local
 from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.types import (
     FileError,
@@ -506,6 +507,45 @@ async def test_preserves_complete_output_when_spill_backpressure_pauses_a_proces
     )
     assert result.spill_path is not None
     assert len(get_or_throw(await env.read_text_file(result.spill_path))) == size
+
+
+class SlowSpillExecutionEnv(LocalExecutionEnv):
+    """Hands the spill its file only after a delay that outlasts the post-exit
+    grace window, so the writer (and the channel behind it) stalls."""
+
+    async def create_temp_file(self, prefix: str = "", suffix: str = "", cancel=None):
+        if prefix == "pidrei-output-":
+            await tonio_time.sleep(0.2)
+        return await super().create_temp_file(prefix, suffix, cancel)
+
+
+@pytest.mark.tonio
+async def test_keeps_reading_the_pipes_while_a_slow_spill_parks_a_reader_after_exit():
+    """pidrei-only; pi's `spillIsDraining()` re-arms its idle timer. With a
+    one-slot spill channel and a stalled writer the reader sits parked on
+    `send` while the child prints its last line and exits. That silence is
+    not a detached descendant holding the pipe open: force-closing there loses
+    the unread tail (seen on macOS CI, where pipe reads are line-sized).
+
+    Read by read: `a` stays in the prefix (one line is within the limit), `b`
+    overflows and hands the writer its first chunk (which stalls on the
+    spill file), `c` fills the single slot, `d` parks the reader, and `e` is
+    the line still in the pipe when the child exits."""
+    saved = (local.SPILL_CHANNEL_SIZE, local.EXIT_STDIO_GRACE_SECONDS)
+    local.SPILL_CHANNEL_SIZE, local.EXIT_STDIO_GRACE_SECONDS = 1, 0.02
+    try:
+        env = SlowSpillExecutionEnv(cwd=create_temp_dir())
+        result = get_or_throw(
+            await env.exec(
+                "for line in a b c d e; do echo $line; sleep 0.02; done",
+                ShellExecOptions(capture=_capture(max_bytes=10_000, max_lines=1)),
+            )
+        )
+    finally:
+        local.SPILL_CHANNEL_SIZE, local.EXIT_STDIO_GRACE_SECONDS = saved
+    assert result.truncation.total_lines == 5
+    assert result.spill_path is not None
+    assert get_or_throw(await env.read_text_file(result.spill_path)) == "a\nb\nc\nd\ne\n"
 
 
 @pytest.mark.tonio

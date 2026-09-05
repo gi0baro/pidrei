@@ -20,7 +20,9 @@ Short real waits (50 ms) cover the connect/idle deadlines.
 import base64
 import contextlib
 import inspect
+import itertools
 import json
+import threading
 import time
 from compression import zstd
 from dataclasses import dataclass
@@ -33,6 +35,7 @@ from tonio.colored.sync import channel
 from pidrei_ai.api import openai_codex_responses as codex
 from pidrei_ai.api.openai_codex_responses import (
     OpenAICodexResponsesOptions,
+    _connect_websocket,
     close_openai_codex_websocket_sessions,
     get_openai_codex_websocket_debug_stats,
     reset_openai_codex_websocket_debug_stats,
@@ -960,6 +963,36 @@ async def test_falls_back_to_sse_when_websocket_connect_times_out():
 
 
 @pytest.mark.tonio
+async def test_closes_a_websocket_that_connects_after_the_deadline():
+    """pidrei-only: a connect parked on an await is unwound by the deadline, but
+    one still *running* when the deadline passes completes afterwards, and
+    `tonio.time.timeout` discards what it returns. That socket must close
+    itself instead of being handed to nobody. The stub blocks its worker until
+    the deadline has been reported, so the connect is running, not parked."""
+    gate = threading.Event()
+    closed = tonio.Event()
+
+    class LateSocket(FakeWebSocket):
+        def close(self, code=None, reason=None) -> None:
+            super().close(code, reason)
+            closed.set()
+
+    late = LateSocket(1)
+
+    def connect(_url, _headers, _index):
+        gate.wait()
+        return late
+
+    with stub_websocket(connect):
+        with pytest.raises(RuntimeError, match="WebSocket connect timeout after 20ms"):
+            await _connect_websocket("wss://example.test/v1/responses", {}, connect_timeout_ms=20)
+        gate.set()
+        await closed.wait(1)
+
+    assert late.closes == [(1000, "connect_timeout")]
+
+
+@pytest.mark.tonio
 async def test_reconnects_once_when_the_websocket_connection_limit_is_reached_before_output_starts():
     def events_for(socket, _body):
         if socket.connection_id == 1:
@@ -1318,12 +1351,24 @@ async def test_concurrent_turns_on_one_session_do_not_share_a_socket():
     """
 
     sockets: list[FakeWebSocket] = []
+    # Sends across all sockets: 1 is the warm-up turn, 2 and 3 the overlapping
+    # pair, 4 the closing turn. The answer to send 2 is held until send 3 has
+    # gone out, so the overlap is a fact and not a bet on how quickly the second
+    # producer gets scheduled (a fixed 30 ms delay lost that bet on macOS CI).
+    send_counter = itertools.count(1)
+    send_counter_guard = threading.Lock()
+    second_turn_sent = tonio.Event()
 
     def connect(_url, _headers, index):
         def on_send(socket, _body):
+            with send_counter_guard:
+                ordinal = next(send_counter)
+
             async def answer():
-                # Slow enough that the second turn acquires while the first holds.
-                await tonio_time.sleep(0.03)
+                if ordinal == 2:
+                    await second_turn_sent.wait(5)
+                elif ordinal == 3:
+                    second_turn_sent.set()
                 socket.emit_messages([completion_event(id=f"resp_{socket.connection_id}_{len(socket.sent)}")])
 
             tonio.spawn.without_tracking(answer())

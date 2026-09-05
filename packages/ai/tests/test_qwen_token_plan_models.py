@@ -146,19 +146,31 @@ def test_sends_qwen_thinking_fields(provider, model_id):
     assert "thinking" not in payload
 
 
+def _assert_matches(actual: dict | None, expected: dict) -> None:
+    """pi's `toMatchObject`: every expected entry present and equal. The generated
+    map also carries `off` (models.dev effort levels always yield one); pi leaves
+    it unasserted, so an exact comparison would be stricter than the spec."""
+    assert actual is not None
+    for key, value in expected.items():
+        assert actual.get(key) == value, key
+
+
 @pytest.mark.parametrize(("provider", "model_id"), REASONING_EFFORT_MODEL_CASES)
 def test_exposes_qwen_reasoning_effort_levels(provider, model_id):
     model = get_builtin_model(provider, model_id)
     assert model is not None, f"Missing model: {provider}/{model_id}"
 
-    assert model.thinking_level_map == {
-        "minimal": None,
-        "low": None,
-        "medium": None,
-        "high": "high",
-        "xhigh": None,
-        "max": "max",
-    }
+    _assert_matches(
+        model.thinking_level_map,
+        {
+            "minimal": None,
+            "low": None,
+            "medium": None,
+            "high": "high",
+            "xhigh": None,
+            "max": "max",
+        },
+    )
 
 
 @pytest.mark.parametrize(("provider", "model_id"), QWEN38_MODEL_CASES)
@@ -166,14 +178,17 @@ def test_exposes_qwen38_reasoning_effort_levels(provider, model_id):
     model = get_builtin_model(provider, model_id)
     assert model is not None, f"Missing model: {provider}/{model_id}"
 
-    assert model.thinking_level_map == {
-        "minimal": None,
-        "low": "low",
-        "medium": "medium",
-        "high": None,
-        "xhigh": "xhigh",
-        "max": None,
-    }
+    _assert_matches(
+        model.thinking_level_map,
+        {
+            "minimal": None,
+            "low": "low",
+            "medium": "medium",
+            "high": None,
+            "xhigh": "xhigh",
+            "max": None,
+        },
+    )
 
 
 @pytest.mark.parametrize(("provider", "model_id"), REASONING_EFFORT_MODEL_CASES)

@@ -157,7 +157,7 @@ async def _iterate_events(response: OpenAIResponseLike, cancel: CancelToken | No
                 yield event
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
 
 # --- compat / options ---------------------------------------------------------

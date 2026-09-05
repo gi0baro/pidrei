@@ -235,7 +235,7 @@ async def _iterate_completion_events(response: Any, cancel: CancelToken | None):
             yield chunk
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
 
 @dataclass(slots=True)

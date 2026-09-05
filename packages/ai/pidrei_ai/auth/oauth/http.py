@@ -81,7 +81,11 @@ async def request(
             content=content,
             timeout=http.oneshot_timeout(timeout_ms),
         )
-        body = await response.read()
+        try:
+            body = await response.read()
+        except BaseException:
+            http.abandon_response(response)
+            raise
         return OAuthHttpResponse(
             status=response.status_code,
             body=body if isinstance(body, bytes) else str(body).encode("utf-8"),

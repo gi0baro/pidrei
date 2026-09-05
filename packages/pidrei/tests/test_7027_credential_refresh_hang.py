@@ -110,6 +110,14 @@ async def test_does_not_hold_login_behind_an_older_stalled_network_catalog_refre
     credentials = AuthStorage.in_memory()
     runtime = await ModelRuntime.create(credentials=credentials, models_path=None, allow_model_network=False)
     runtime.register_native_provider(provider)
+    # Drain the detached full refresh `register_native_provider` requested
+    # before racing anything against it (pidrei-only; pi's `void refresh` is
+    # ordered by the single loop). Left running, its provider rebuild can
+    # supersede the stalled refresh below between the cached and the network
+    # phase: that refresh then returns `aborted=False` without ever calling
+    # `refresh_models(allow_network=True)`, `network_started` never fires and
+    # `drive()` waits forever — the macOS CI hang of 2026-09-05.
+    await runtime.refresh(ModelsRefreshOptions(allow_network=False))
     await runtime.refresh(ModelsRefreshOptions(allow_network=False, providers=[provider.id]))
 
     stalled_outcome: dict = {}
@@ -120,7 +128,8 @@ async def test_does_not_hold_login_behind_an_older_stalled_network_catalog_refre
         )
 
     async def drive() -> None:
-        await network_started.wait()
+        await network_started.wait(10)
+        assert network_started.is_set(), "the stalled refresh never reached its network phase"
         credential = await runtime.login(provider.id, "api_key", Interaction())
         assert credential == ApiKeyCredential(key="secret")
 
@@ -139,7 +148,7 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
     runtime = harness.session.model_runtime
     refresh_options: list = []
 
-    async def bounded_refresh(options=None):
+    async def bounded_refresh(options=None, *, _requested_only=False):
         refresh_options.append(options)
         if options is None or options.cancel is None:
             # Leftover harness `_request_refresh` drain — not the bounded call.

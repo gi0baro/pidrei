@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from posixpath import dirname, join
+from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import fs, net
@@ -436,13 +437,31 @@ _DEAD_SOCKET_ERRNOS = (errno.ECONNREFUSED, errno.ENOENT, errno.EPIPE, errno.ECON
 
 
 async def _is_socket_live(path: str) -> bool:
+    # `tonio.time.timeout` discards what a late coroutine returns, so the probe
+    # hands its stream over under a lock and closes it itself when the deadline
+    # got there first; a connected socket must never be dropped unclosed.
+    handoff_guard = threading.Lock()
+    handed: list[Any] = []
+    expired = False
+
+    async def _probe() -> None:
+        stream = await net.open_unix_socket(path)
+        with handoff_guard:
+            if not expired:
+                handed.append(stream)
+                return
+        stream.close()
+
     try:
-        stream, completed = await tonio.time.timeout(net.open_unix_socket(path), SOCKET_PROBE_TIMEOUT_MS / 1000)
+        await tonio.time.timeout(_probe(), SOCKET_PROBE_TIMEOUT_MS / 1000)
     except OSError as error:
         if error.errno in _DEAD_SOCKET_ERRNOS:
             return False
         raise
-    if not completed:
+    with handoff_guard:
+        expired = True
+        stream = handed.pop() if handed else None
+    if stream is None:
         # Mirror Node: an unresponsive endpoint is assumed live rather than removed.
         return True
     stream.close()

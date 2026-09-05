@@ -545,6 +545,26 @@
       "contextWindow": 991000,
       "maxTokens": 128000
     },
+    "alibaba/qwen3.8-flash-next": {
+      "id": "alibaba/qwen3.8-flash-next",
+      "name": "Qwen 3.8 Flash Next",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.12,
+        "output": 0.4,
+        "cacheRead": 0.01,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
+    },
     "alibaba/qwen3.8-max": {
       "id": "alibaba/qwen3.8-max",
       "name": "Qwen 3.8 Max",
@@ -563,6 +583,26 @@
         "cacheWrite": 2.5
       },
       "contextWindow": 1000000,
+      "maxTokens": 128000
+    },
+    "alibaba/qwen3.8-max-0902": {
+      "id": "alibaba/qwen3.8-max-0902",
+      "name": "Qwen3.8 Max 0902",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cacheRead": 0.25,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 991000,
       "maxTokens": 128000
     },
     "amazon/nova-2-lite": {
@@ -679,6 +719,34 @@
         "input": 10.0,
         "output": 50.0,
         "cacheRead": 1.0,
+        "cacheWrite": 12.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "forceAdaptiveThinking": true
+      }
+    },
+    "anthropic/claude-fable-5.1": {
+      "id": "anthropic/claude-fable-5.1",
+      "name": "Claude Fable 5.1",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cacheRead": 0.25,
         "cacheWrite": 12.5
       },
       "contextWindow": 1000000,
@@ -1108,25 +1176,6 @@
       "contextWindow": 128000,
       "maxTokens": 8192
     },
-    "deepseek/deepseek-v3": {
-      "id": "deepseek/deepseek-v3",
-      "name": "DeepSeek V3 0324",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": false,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.27,
-        "output": 1.12,
-        "cacheRead": 0.135,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 163840,
-      "maxTokens": 163840
-    },
     "deepseek/deepseek-v3.1": {
       "id": "deepseek/deepseek-v3.1",
       "name": "DeepSeek V3.1",
@@ -1258,8 +1307,8 @@
         "cacheRead": 0.007,
         "cacheWrite": 0.0
       },
-      "contextWindow": 1000000,
-      "maxTokens": 384000
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
     },
     "deepseek/deepseek-v4-pro": {
       "id": "deepseek/deepseek-v4-pro",
@@ -1499,6 +1548,26 @@
       "contextWindow": 1000000,
       "maxTokens": 65536
     },
+    "google/gemini-3.8-flash": {
+      "id": "google/gemini-3.8-flash",
+      "name": "Gemini 3.8 Flash",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.75,
+        "output": 3.75,
+        "cacheRead": 0.075,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 65536
+    },
     "google/gemma-4-26b-a4b-it": {
       "id": "google/gemma-4-26b-a4b-it",
       "name": "Google Gemma 4 26B A4B",
@@ -1618,6 +1687,44 @@
     "inclusionai/ling-3.0-flash-fin-free": {
       "id": "inclusionai/ling-3.0-flash-fin-free",
       "name": "Ling 3.0 Flash Fin (Free)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 256000,
+      "maxTokens": 32000
+    },
+    "inclusionai/ling-3.0-flash-sante": {
+      "id": "inclusionai/ling-3.0-flash-sante",
+      "name": "Ling 3.0 Flash Sante",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 256000,
+      "maxTokens": 32000
+    },
+    "inclusionai/ling-3.0-flash-sante-free": {
+      "id": "inclusionai/ling-3.0-flash-sante-free",
+      "name": "Ling 3.0 Flash Sante (Free)",
       "api": "anthropic-messages",
       "baseUrl": "https://ai-gateway.vercel.sh",
       "provider": "vercel-ai-gateway",
@@ -1892,6 +1999,46 @@
     "meta/muse-spark-1.2-contributor": {
       "id": "meta/muse-spark-1.2-contributor",
       "name": "Muse Spark 1.2 Contributor",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.2,
+        "cacheRead": 0.002,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
+    },
+    "meta/muse-spark-1.3": {
+      "id": "meta/muse-spark-1.3",
+      "name": "Muse Spark 1.3",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.25,
+        "output": 4.25,
+        "cacheRead": 0.15,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
+    },
+    "meta/muse-spark-1.3-contributor": {
+      "id": "meta/muse-spark-1.3-contributor",
+      "name": "Muse Spark 1.3 Contributor",
       "api": "anthropic-messages",
       "baseUrl": "https://ai-gateway.vercel.sh",
       "provider": "vercel-ai-gateway",
@@ -3477,7 +3624,7 @@
         "input": 0.4,
         "output": 2.4,
         "cacheRead": 0.04,
-        "cacheWrite": 0.25
+        "cacheWrite": 0.5
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
@@ -3523,7 +3670,7 @@
         "input": 4.0,
         "output": 20.0,
         "cacheRead": 0.4,
-        "cacheWrite": 2.5
+        "cacheWrite": 5.0
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
@@ -3569,13 +3716,53 @@
         "input": 4.0,
         "output": 24.0,
         "cacheRead": 0.4,
-        "cacheWrite": 2.5
+        "cacheWrite": 5.0
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
       }
+    },
+    "openai/gpt-6-astra": {
+      "id": "openai/gpt-6-astra",
+      "name": "GPT-6 Astra",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cacheRead": 1.0,
+        "cacheWrite": 12.5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000
+    },
+    "openai/gpt-6-astra-fast": {
+      "id": "openai/gpt-6-astra-fast",
+      "name": "GPT-6 Astra (Fast)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 20.0,
+        "output": 100.0,
+        "cacheRead": 2.0,
+        "cacheWrite": 25.0
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000
     },
     "openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
@@ -4267,6 +4454,25 @@
       "contextWindow": 1050000,
       "maxTokens": 131000
     },
+    "xiaomi/mimo-v2.5-pro-ultraspeed": {
+      "id": "xiaomi/mimo-v2.5-pro-ultraspeed",
+      "name": "MiMo V2.5 Pro UltraSpeed",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 1.305,
+        "output": 2.61,
+        "cacheRead": 0.0108,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072
+    },
     "zai/glm-4.5": {
       "id": "zai/glm-4.5",
       "name": "GLM 4.5",
@@ -4507,13 +4713,32 @@
         "text"
       ],
       "cost": {
-        "input": 1.4,
-        "output": 4.4,
-        "cacheRead": 0.14,
+        "input": 0.7,
+        "output": 2.2,
+        "cacheRead": 0.13,
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
       "maxTokens": 1000000
+    },
+    "zai/glm-5.3-fast": {
+      "id": "zai/glm-5.3-fast",
+      "name": "GLM 5.3 Fast",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 2.1,
+        "output": 6.6,
+        "cacheRead": 0.21,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 262144
     },
     "zai/glm-5.3-flash": {
       "id": "zai/glm-5.3-flash",
@@ -4534,6 +4759,25 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 131000
+    },
+    "zai/glm-5.3-promo-50": {
+      "id": "zai/glm-5.3-promo-50",
+      "name": "GLM 5.3 (50% off)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.7,
+        "output": 2.2,
+        "cacheRead": 0.13,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576
     },
     "zai/glm-5v-turbo": {
       "id": "zai/glm-5v-turbo",

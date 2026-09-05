@@ -29,6 +29,35 @@
         "max": "max"
       }
     },
+    "claude-fable-5.1": {
+      "id": "claude-fable-5.1",
+      "name": "Claude Fable 5.1",
+      "api": "anthropic-messages",
+      "provider": "cloudflare-ai-gateway",
+      "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 10,
+        "output": 50,
+        "cacheRead": 0.25,
+        "cacheWrite": 12.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "compat": {
+        "sendSessionAffinityHeaders": true,
+        "forceAdaptiveThinking": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "xhigh": "xhigh",
+        "max": "max"
+      }
+    },
     "claude-haiku-4.5": {
       "id": "claude-haiku-4.5",
       "name": "Claude Haiku 4.5 (latest)",

@@ -34,7 +34,7 @@ async def test_matches_the_availability_snapshot_without_starting_a_catalog_refr
     refresh_calls = {"count": 0}
     frozen = tonio.Event()
 
-    async def frozen_refresh(_options=None):
+    async def frozen_refresh(_options=None, *, _requested_only=False):
         refresh_calls["count"] += 1
         await frozen.wait()
 
@@ -59,7 +59,7 @@ async def test_uses_a_caller_owned_deadline_only_after_a_cache_miss(harnesses):
     harnesses.append(harness)
     refresh_options: list = []
 
-    async def aborted_refresh(options=None):
+    async def aborted_refresh(options=None, *, _requested_only=False):
         refresh_options.append(options)
         return ModelsRefreshResult(aborted=True, errors={})
 

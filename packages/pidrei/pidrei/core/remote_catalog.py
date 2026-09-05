@@ -17,6 +17,7 @@ from pidrei_ai.models_store import ModelsStoreEntry
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model
 from pidrei_ai.utils.abort import run_cancellable
+from pidrei_ai.utils.http import abandon_response
 
 from ..config import VERSION
 from ..utils.management_http import fetch_with_retry
@@ -39,7 +40,12 @@ class CatalogResponse:
 async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> CatalogResponse:
     async def _request() -> Any:
         response = await fetch_with_retry(url, headers=headers, attempt_timeout_ms=REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS)
-        return response, await response.read()
+        try:
+            body = await response.read()
+        except BaseException:
+            abandon_response(response)
+            raise
+        return response, body
 
     # The refresh watchdog (`model_runtime`) cancels this token; the request
     # is unwound wherever it is parked instead of running to completion.

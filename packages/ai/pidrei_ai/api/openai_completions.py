@@ -625,7 +625,7 @@ async def _iterate_chunks(response: OpenAIResponseLike, cancel: CancelToken | No
             yield chunk
         ended = True
     finally:
-        await http.finish_body(body, response, drain=ended)
+        await http.finish_body(body, response, drain=ended, cancel=cancel)
 
 
 # --- client / params ----------------------------------------------------------

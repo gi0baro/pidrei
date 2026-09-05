@@ -25,6 +25,7 @@
       "contextWindow": 1000000,
       "maxTokens": 384000,
       "thinkingLevelMap": {
+        "off": null,
         "minimal": null,
         "low": null,
         "medium": null,
@@ -58,6 +59,7 @@
       "contextWindow": 1000000,
       "maxTokens": 384000,
       "thinkingLevelMap": {
+        "off": null,
         "minimal": null,
         "low": null,
         "medium": null,
@@ -91,6 +93,7 @@
       "contextWindow": 1000000,
       "maxTokens": 384000,
       "thinkingLevelMap": {
+        "off": null,
         "minimal": null,
         "low": null,
         "medium": null,
@@ -124,6 +127,7 @@
       "contextWindow": 1000000,
       "maxTokens": 131072,
       "thinkingLevelMap": {
+        "off": null,
         "minimal": null,
         "low": null,
         "medium": null,
@@ -209,6 +213,41 @@
       "contextWindow": 1000000,
       "maxTokens": 65536
     },
+    "qwen3.8-flash": {
+      "id": "qwen3.8-flash",
+      "name": "Qwen3.8 Flash",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan-individual",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "compat": {
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": null,
+        "xhigh": "xhigh",
+        "max": null
+      }
+    },
     "qwen3.8-max": {
       "id": "qwen3.8-max",
       "name": "Qwen3.8 Max",
@@ -235,6 +274,7 @@
       "contextWindow": 1000000,
       "maxTokens": 131072,
       "thinkingLevelMap": {
+        "off": null,
         "minimal": null,
         "low": "low",
         "medium": "medium",

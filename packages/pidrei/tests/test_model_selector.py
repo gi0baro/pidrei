@@ -71,7 +71,7 @@ async def test_lists_every_catalog_that_failed_to_refresh():
     harness = await create_harness()
     try:
 
-        async def failing_refresh(_options=None):
+        async def failing_refresh(_options=None, *, _requested_only=False):
             return ModelsRefreshResult(
                 aborted=False,
                 errors={"openai": Exception("unavailable"), "anthropic": Exception("unavailable")},

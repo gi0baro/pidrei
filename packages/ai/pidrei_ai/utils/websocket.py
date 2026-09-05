@@ -37,6 +37,7 @@ from urllib.parse import urlsplit
 import tonio.colored as tonio
 from tonio.colored.net import open_tcp_stream, tls
 from tonio.colored.sync import channel
+from tonio.exceptions import CancelledError
 from websockets.frames import OP_BINARY, OP_CLOSE, OP_TEXT
 from websockets.protocol import CLIENT, OPEN, Protocol as FrameProtocol
 from websockets.utils import accept_key
@@ -262,7 +263,12 @@ async def connect(url: str, headers: dict[str, str], *, cancel: CancelToken | No
 
     try:
         status, response_headers, upgraded = await http.h1_client_upgrade(transport, target, handshake_headers)
-    except Exception:
+    except CancelledError:
+        # Unwinding from a scope cancel: nothing awaited here would run, so the
+        # close goes to its own task.
+        tonio.spawn.without_tracking(_close_transport(transport))
+        raise
+    except BaseException:
         await _close_transport(transport)
         raise
 

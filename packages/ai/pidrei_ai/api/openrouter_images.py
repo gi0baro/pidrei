@@ -63,7 +63,12 @@ class _OpenRouterImagesClient:
             response = await client.post(
                 self._url, json=params, headers=self._headers, timeout=http.request_timeout(timeout_ms)
             )
-            return response, (await response.read()).decode("utf-8", "replace")
+            try:
+                body = await response.read()
+            except BaseException:
+                http.abandon_response(response)
+                raise
+            return response, body.decode("utf-8", "replace")
 
         response, body = await run_cancellable(_send(), cancel)
         if not 200 <= response.status_code < 300:

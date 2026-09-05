@@ -45,9 +45,11 @@ class OpenedSelector:
         runtime = harness.session.model_runtime
         runtime.get_available_snapshot = lambda: list(self.snapshot)
 
-        async def refresh(options=None):
+        async def refresh(options=None, *, _requested_only=False):
             if options is None or options.cancel is None:
                 # Leftover harness `_request_refresh` drain — not the selector's.
+                # (It calls with `_requested_only=True`; a stub without the
+                # keyword dies as an UNHANDLED detached task, seen on macOS CI.)
                 return ModelsRefreshResult(aborted=False, errors={})
             self.refresh_cancel = options.cancel
             await self._finish.wait()

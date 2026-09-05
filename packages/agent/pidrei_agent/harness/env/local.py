@@ -32,6 +32,7 @@ from pathlib import Path
 from urllib.request import url2pathname
 
 import tonio.colored as tonio
+from tonio.colored import fs
 from tonio.colored.sync import channel
 
 from pidrei_ai.utils.cancel import CancelToken
@@ -179,11 +180,6 @@ def _get_shell_env(
     return {**os.environ, **(base_env or {}), **(extra_env or {})}
 
 
-def _append_bytes(path: str, data: bytes) -> None:
-    with open(path, "ab") as file:
-        file.write(data)
-
-
 # Pipe reads are 64 KiB (`receive_some` default), so this many queued chunks is
 # pi's 8 MiB `SPILL_HIGH_WATER_MARK` on the spill write stream.
 SPILL_CHANNEL_SIZE = 128
@@ -210,6 +206,9 @@ class _OutputPump:
         self._spill_prefix: list[bytes] = []
         self._spilling = False
         self._spill_path: str | None = None
+        # Chunks handed to the spill and not yet on disk, counting one a reader
+        # is still parked on in `send`.
+        self._pending_spill = 0
         self.spill_error: ExecutionError | None = None
         self.activity_count = 0
         self.done = tonio.Event()
@@ -228,34 +227,61 @@ class _OutputPump:
             self.spill_error = ExecutionError("unknown", f"Failed to preserve complete shell output: {cause}", cause)
         self._on_failure()
 
+    @property
+    def spill_draining(self) -> bool:
+        """Spill work still in flight (pi's `spillIsDraining()`): chunks queued
+        for the writer, one being appended, or one a reader is parked on."""
+        with self._state_lock:
+            return self._pending_spill > 0
+
     async def _write_spill(self, receiver) -> None:
         """The single spill writer; `receive()` raises BrokenPipeError once the
         sender is closed and the queue is drained. After a failure it keeps
-        draining so the readers never park on a dead spill."""
+        draining so the readers never park on a dead spill.
+
+        The file is opened once and held for the whole run (pi's append-mode
+        write stream): with line-sized pipe reads every chunk would otherwise
+        pay an open/close pair on the blocking pool."""
+        spill = None
         try:
             while True:
                 try:
                     chunk = await receiver.receive()
                 except BrokenPipeError:
                     break
-                if self.spill_error is not None:
-                    continue
-                if self._spill_path is None:
-                    created = await self._env.create_temp_file("pidrei-output-", ".log")
-                    if not created.ok:
-                        self._fail_spill(created.error)
-                        continue
-                    self._spill_path = created.value
-                    self._capture.set_spill_path(created.value)
                 try:
-                    await tonio.spawn_blocking(_append_bytes, self._spill_path, chunk)
+                    if self.spill_error is not None:
+                        continue
+                    if spill is None:
+                        created = await self._env.create_temp_file("pidrei-output-", ".log")
+                        if not created.ok:
+                            self._fail_spill(created.error)
+                            continue
+                        try:
+                            spill = await fs.open(created.value, "ab", buffering=0)
+                        except Exception as error:
+                            self._fail_spill(error)
+                            continue
+                        self._spill_path = created.value
+                        self._capture.set_spill_path(created.value)
+                    try:
+                        pending = memoryview(chunk)
+                        while pending:
+                            pending = pending[await spill.write(pending) :]
+                    except Exception as error:
+                        self._fail_spill(error)
+                finally:
+                    with self._state_lock:
+                        self._pending_spill -= 1
+        finally:
+            if spill is not None:
+                try:
+                    await spill.close()
                 except Exception as error:
                     self._fail_spill(error)
-        finally:
             self.done.set()
 
     async def feed(self, chunk: bytes) -> None:
-        to_write: list[bytes] = []
         with self._state_lock:
             self.activity_count += 1
             try:
@@ -266,21 +292,27 @@ class _OutputPump:
             if self._sender is None or not chunk:
                 return
             if self._spilling:
-                to_write.append(chunk)
+                to_write = chunk
             elif self._capture.truncated:
                 self._spilling = True
-                to_write.extend(self._spill_prefix)
+                # The pre-overflow prefix goes down as one chunk. pi's write
+                # stream buffers its per-chunk writes anyway; here each chunk is
+                # a file append, and with line-sized pipe reads (macOS) the
+                # prefix is thousands of them — enough to park this reader on
+                # the channel well past the post-exit grace window.
+                to_write = b"".join((*self._spill_prefix, chunk))
                 self._spill_prefix.clear()
-                to_write.append(chunk)
             else:
                 self._spill_prefix.append(chunk)
+                return
+            self._pending_spill += 1
         try:
-            for pending in to_write:
-                await self._sender.send(pending)
+            await self._sender.send(to_write)
         except BrokenPipeError:
             # The pump was closed while this reader was still draining a pipe:
             # exec has already failed and given up on the spill.
-            pass
+            with self._state_lock:
+                self._pending_spill -= 1
 
     def close(self) -> None:
         """No more chunks: let the writer drain and set `done` (pi's `finishSpill`)."""
@@ -678,13 +710,17 @@ class LocalExecutionEnv:
             await watchdog_join
 
         # Post-exit stdio grace: detached descendants can keep the inherited
-        # pipes open. Give the readers a grace window per burst of data (pi
-        # re-arms a 100 ms idle timer on each chunk; a draining spill write
-        # counts as activity), then force-close.
+        # pipes open. Give the readers a grace window per burst of data, then
+        # force-close — but never while the spill is draining: a reader parked
+        # on the spill channel feeds nothing although unread output may still
+        # sit in the pipe (pi re-arms its 100 ms idle timer on each chunk and
+        # again whenever `spillIsDraining()`).
         while not readers_done.is_set():
             before = pump.activity_count
             await readers_done.wait(EXIT_STDIO_GRACE_SECONDS)
-            if readers_done.is_set() or pump.activity_count == before:
+            if readers_done.is_set():
+                break
+            if pump.activity_count == before and not pump.spill_draining:
                 break
 
         # Release the pipe fds (pi destroys the stdio streams at finalize).
