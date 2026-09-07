@@ -782,8 +782,17 @@
         "cacheRead": 1,
         "cacheWrite": 12.5
       },
-      "contextWindow": 1050000,
+      "contextWindow": 272000,
       "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
       "compat": {
         "supportsOpenAIGrammarTools": true
       }

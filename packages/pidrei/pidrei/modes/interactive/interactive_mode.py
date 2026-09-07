@@ -1047,9 +1047,7 @@ class InteractiveMode:
 
         # Accept text while startup completes, but only enable interrupt,
         # exit, and submission feedback.
-        self._default_editor.on_action("app.clear", sync_action(self._handle_ctrl_c))
-        self._default_editor.on_ctrl_d = sync_action(self._handle_ctrl_d)
-        self._default_editor.on_submit = sync_action(self._handle_startup_submit)
+        self._setup_startup_input_handlers()
 
         # Start the UI before initializing extensions so session_start
         # handlers can use interactive dialogs
@@ -2960,6 +2958,18 @@ class InteractiveMode:
                 add_to_history(text)
 
         self._post_editor_mutation(apply)
+
+    def _setup_startup_input_handlers(self) -> None:
+        """The startup-window bindings (pi wires these inline in `init()`;
+        extracted so the wiring is unit-testable like `_setup_editor_submit_handler`).
+
+        `on_submit` is the editor's sync `(text) -> None` callback, not an
+        action handler: wrapping it in `sync_action` dropped the argument, and
+        a submit landing before `_setup_editor_submit_handler` ran crashed the
+        input pump (reachable on a slow runner — macOS CI, 0.85.1)."""
+        self._default_editor.on_action("app.clear", sync_action(self._handle_ctrl_c))
+        self._default_editor.on_ctrl_d = sync_action(self._handle_ctrl_d)
+        self._default_editor.on_submit = self._handle_startup_submit
 
     def _setup_editor_submit_handler(self) -> None:
         def on_submit(text: str) -> None:

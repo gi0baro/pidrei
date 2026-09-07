@@ -465,7 +465,8 @@ class AuthStorage(CredentialStore):
                 return state.snapshot.data
 
         # Pin the snapshot before comparing: any interleaving with a reload
-        # then degrades to one extra reload, never to stale-data-as-fresh.
+        # then degrades to a re-check under the guard, never to
+        # stale-data-as-fresh.
         snapshot = state.snapshot
         revision = await tonio.spawn_blocking(_get_file_revision, self._auth_path)
         if revision is not None and revision == snapshot.revision:
@@ -476,6 +477,14 @@ class AuthStorage(CredentialStore):
         # wait, and the last departing reader aborts a reload nobody awaits.
         with state.guard:
             if state.reload is None:
+                # pi's stat-compare-join is one synchronous step; here the stat
+                # is a pool hop, so a coalesced reload can publish and clear
+                # itself between the pin above and this guard. A reader whose
+                # stat already saw that reload's revision must not start a
+                # second locked reload (macOS CI, 0.85.1).
+                published = state.snapshot
+                if published is not snapshot and revision is not None and revision == published.revision:
+                    return published.data
                 controller = CancelToken()
                 reload = _AuthFileReload(controller=controller, done=tonio.Event(), box=[])
                 state.reload = reload

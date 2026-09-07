@@ -67,6 +67,33 @@ async def test_keeps_the_current_model_marked_while_browsing():
 
 
 @pytest.mark.tonio
+async def test_uses_the_configured_save_binding():
+    set_keybindings(KeybindingsManager({"app.models.save": "ctrl+r"}))
+    harness = await create_harness()
+    try:
+        current_model = harness.get_model()
+        save_default_calls = []
+        selector = ModelSelectorComponent(
+            fake_tui(),
+            current_model,
+            harness.session.model_runtime,
+            [],
+            lambda *args: None,
+            lambda *args: None,
+            None,
+            save_default_calls.append,
+        )
+
+        assert "Ctrl+R to set as default" in render(selector)
+        await selector.handle_input("\x13")
+        assert save_default_calls == []
+        await selector.handle_input("\x12")
+        assert save_default_calls == [current_model]
+    finally:
+        harness.cleanup()
+
+
+@pytest.mark.tonio
 async def test_lists_every_catalog_that_failed_to_refresh():
     harness = await create_harness()
     try:

@@ -1006,9 +1006,18 @@
         "input": 10,
         "output": 50,
         "cacheRead": 1,
-        "cacheWrite": 12.5
+        "cacheWrite": 12.5,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 20.0,
+            "output": 75.0,
+            "cacheRead": 2.0,
+            "cacheWrite": 25.0
+          }
+        ]
       },
-      "contextWindow": 1050000,
+      "contextWindow": 272000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "off": null,
@@ -1022,6 +1031,8 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
+        "supportsToolSearch": true,
         "supportsExplicitPromptCacheMode": true
       }
     },

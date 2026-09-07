@@ -6,6 +6,38 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.85.1.0] - 2026-09-07
+
+Tracks [Pi 0.85.1](https://github.com/earendil-works/pi/releases/tag/v0.85.1).
+
+### Added
+
+- GPT-6 Astra on the OpenAI and OpenAI Codex providers, with reasoning levels
+  `low` through `max` (including `xhigh`) and tool search.
+- Alt-modified mouse-wheel input scrolls the fullscreen transcript five times
+  faster.
+- `app.thinking.save` keybinding (default `ctrl+s`) saves the selected
+  thinking level as the default from the thinking selector. The model and
+  thinking selectors now honour and display the configured `app.models.save`
+  / `app.thinking.save` bindings instead of a fixed Ctrl+S.
+- Image catalog: Microsoft MAI-Image-2.6 and MAI-Image-2.6 Flash on
+  OpenRouter.
+
+### Changed
+
+- OpenAI Responses models that accept `prompt_cache_options` (GPT-5.6 and
+  later) request long cache retention with `prompt_cache_options.ttl: "30m"`
+  instead of `prompt_cache_retention: "24h"`.
+- Model catalog regenerated from models.dev.
+
+### Fixed
+
+- Hovering the mouse over a list or settings entry in fullscreen mode no
+  longer moves the selection; only a press or click does.
+- Pressing Enter before interactive startup had finished crashed input
+  handling instead of restoring the text and reporting that startup was
+  still in progress.
+
 ## [0.85.0.0] - 2026-09-05
 
 Tracks [Pi 0.85.0](https://github.com/earendil-works/pi/releases/tag/v0.85.0).

@@ -94,6 +94,7 @@ END_SYNCHRONIZED_OUTPUT = "\x1b[?2026l"
 OSC133_ZONE_PREFIX = re.compile(r"^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+")
 OSC133_PROMPT_START = re.compile(r"^\x1b\]133;A(?:\x07|\x1b\\)")
 PAGE_SCROLL_OVERLAP = 4
+ALT_WHEEL_SCROLL_MULTIPLIER = 5
 MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16
 MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024
 MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024
@@ -652,7 +653,7 @@ class TuiAltScreen(TuiBase):
                 wheel_event["button"],
                 wheel_event["x"],
                 wheel_event["y"],
-                wheel_delta=wheel_event["direction"] * self._wheel_scroll_lines,
+                wheel_delta=wheel_event["direction"] * self._get_wheel_scroll_lines(wheel_event["button"]),
             )
             hit, result = await self._dispatch_mouse_to_overlay(event)
             if result is None and not hit:
@@ -943,8 +944,12 @@ class TuiAltScreen(TuiBase):
             }
         return None
 
+    def _get_wheel_scroll_lines(self, button: int) -> int:
+        # SGR mouse button codes use bit 3 (value 8) for the Alt modifier.
+        return self._wheel_scroll_lines * ALT_WHEEL_SCROLL_MULTIPLIER if button & 8 else self._wheel_scroll_lines
+
     def _route_wheel(self, event: dict) -> None:
-        remaining = event["direction"] * self._wheel_scroll_lines
+        remaining = event["direction"] * self._get_wheel_scroll_lines(event["button"])
         seen: list = []
         scroll_views = (
             get_scroll_views_at(self._current_layout, event["x"], event["y"])

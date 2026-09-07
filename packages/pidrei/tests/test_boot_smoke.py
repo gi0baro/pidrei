@@ -171,6 +171,38 @@ async def _wait_for(screen: _Screen, needle: str, timeout: float) -> None:
     raise AssertionError(f"timed out waiting for {needle!r}; screen was:\n{screen.text}")
 
 
+STARTUP_IN_PROGRESS = "Startup is still in progress"
+
+
+async def _submit_until(screen: _Screen, master: int, line: bytes, needle: str, timeout: float) -> None:
+    """Type `line`, then wait for `needle`, re-pressing Enter whenever the
+    child answers with its startup status instead.
+
+    The banner and footer render before startup finishes (pi's staged
+    startup: managed tools, extensions, session bind), and until then a
+    submit only restores the text and shows "Startup is still in progress".
+    A slow runner (macOS CI) can reach that window; a user would just press
+    Enter again, and so does this.
+    """
+    os.write(master, line)
+    seen_status = screen.raw.count(STARTUP_IN_PROGRESS)
+    waited = 0.0
+    while waited < timeout:
+        screen.pump()
+        if needle in screen.text:
+            return
+        status_count = screen.raw.count(STARTUP_IN_PROGRESS)
+        if status_count > seen_status:
+            seen_status = status_count
+            await tonio.sleep(0.5)
+            waited += 0.5
+            os.write(master, b"\r")
+            continue
+        await tonio.sleep(0.1)
+        waited += 0.1
+    raise AssertionError(f"timed out waiting for {needle!r}; screen was:\n{screen.text}")
+
+
 @pytest.mark.tonio
 async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
     agent_dir = tmp_path / "agent"
@@ -214,8 +246,7 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
         await _wait_for(screen, "demo-model", BOOT_TIMEOUT)
 
         # Completes a turn against the local provider.
-        os.write(master, b"say pong\r")
-        await _wait_for(screen, "pong", REPLY_TIMEOUT)
+        await _submit_until(screen, master, b"say pong\r", "pong", REPLY_TIMEOUT)
 
         # Two Ctrl+C exit cleanly.
         os.write(master, b"\x03")

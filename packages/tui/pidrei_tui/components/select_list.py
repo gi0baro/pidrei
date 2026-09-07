@@ -99,25 +99,20 @@ class SelectList:
             if self._selected_index != previous_index:
                 await self._notify_selection_change()
             return TuiMouseEventResult(handled=True, render=self._selected_index != previous_index)
-        if event.type != "move" and event.button != "left":
+        # Hover must not change selection: the visible range is centered on it.
+        if event.button != "left" or event.type not in ("press", "click"):
             return None
         start_index, end_index = self._get_visible_range()
         item_index = start_index + event.y
         if item_index < start_index or item_index >= end_index:
             return None
 
-        if event.type in ("move", "press"):
-            if event.type == "press":
-                self._mouse_pressed_index = item_index
-            changed = self._selected_index != item_index
-            if changed:
+        if event.type == "press":
+            self._mouse_pressed_index = item_index
+            if self._selected_index != item_index:
                 self._selected_index = item_index
                 await self._notify_selection_change()
-            return TuiMouseEventResult(
-                handled=True,
-                focus=event.type == "press",
-                render=changed if event.type == "move" else None,
-            )
+            return TuiMouseEventResult(handled=True, focus=True)
         if event.type == "click":
             clicked_index = self._mouse_pressed_index if self._mouse_pressed_index is not None else item_index
             self._mouse_pressed_index = None

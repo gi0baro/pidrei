@@ -423,13 +423,18 @@ class OpenAIResponsesCompat:
 
     supports_developer_role: bool | None = None  # default True
     session_affinity_format: SessionAffinityFormat | None = None
-    supports_long_cache_retention: bool | None = None  # default True
+    # Whether the provider supports long prompt cache retention. This uses
+    # `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"`
+    # on earlier models. Default: True.
+    supports_long_cache_retention: bool | None = None
     supports_strict_mode: bool | None = None
     supports_openai_grammar_tools: bool | None = None  # default False
     # Whether the model supports message-anchored `additional_tools` input items. Default: False.
     supports_additional_tools: bool | None = None
     supports_tool_search: bool | None = None  # default False
-    supports_explicit_prompt_cache_mode: bool | None = None  # default False
+    # Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching).
+    # Older OpenAI models reject the parameter. Default: False.
+    supports_explicit_prompt_cache_mode: bool | None = None
     # Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: True.
     supports_max_output_tokens: bool | None = None
 

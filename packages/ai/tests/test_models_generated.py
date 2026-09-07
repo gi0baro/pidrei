@@ -1,5 +1,7 @@
 """Tests for the vendored catalog loader (models_generated.py)."""
 
+import pytest
+
 from pidrei_ai.models_generated import MODELS, parse_model_dict
 from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import AnthropicMessagesCompat, Model, OpenAIResponsesCompat
@@ -50,6 +52,16 @@ def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
     grok = next(model for model in MODELS["xai"] if model.id == "grok-4.6")
 
     assert get_supported_thinking_levels(grok) == ["low", "medium", "high", "xhigh"]
+
+
+@pytest.mark.parametrize(
+    "model_id", ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]
+)
+def test_includes_xhigh_for_openai_codex_models(model_id):
+    model = next((model for model in MODELS["openai-codex"] if model.id == model_id), None)
+    assert model is not None
+
+    assert "xhigh" in get_supported_thinking_levels(model)
 
 
 def test_includes_low_for_deepseek_v4_flash_on_opencode_go():

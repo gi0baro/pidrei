@@ -224,6 +224,26 @@ def get_compat(model: Model) -> _ResolvedCompat:
     )
 
 
+def _get_prompt_cache_retention(compat: _ResolvedCompat, cache_retention: str) -> str | None:
+    if (
+        cache_retention == "long"
+        and compat.supports_long_cache_retention
+        and not compat.supports_explicit_prompt_cache_mode
+    ):
+        return "24h"
+    return None
+
+
+def _get_prompt_cache_options(compat: _ResolvedCompat, cache_retention: str) -> dict[str, str] | None:
+    if not compat.supports_explicit_prompt_cache_mode:
+        return None
+    if cache_retention == "none":
+        return {"mode": "explicit"}
+    if cache_retention == "long" and compat.supports_long_cache_retention:
+        return {"ttl": "30m"}
+    return None
+
+
 def _format_openai_responses_error(error: Any) -> str:
     return format_provider_error(normalize_provider_error(error), "OpenAI API error")
 
@@ -303,16 +323,17 @@ def build_params(
     )
 
     cache_retention = _resolve_cache_retention(options.cache_retention, options.env)
-    disable_implicit_prompt_cache = cache_retention == "none" and compat.supports_explicit_prompt_cache_mode
     params: dict[str, Any] = {"model": model.id, "input": messages, "stream": True, "store": False}
     if cache_retention != "none":
         cache_key = clamp_openai_prompt_cache_key(options.session_id)
         if cache_key is not None:
             params["prompt_cache_key"] = cache_key
-    if cache_retention == "long" and compat.supports_long_cache_retention:
-        params["prompt_cache_retention"] = "24h"
-    if disable_implicit_prompt_cache:
-        params["prompt_cache_options"] = {"mode": "explicit"}
+    prompt_cache_retention = _get_prompt_cache_retention(compat, cache_retention)
+    if prompt_cache_retention is not None:
+        params["prompt_cache_retention"] = prompt_cache_retention
+    prompt_cache_options = _get_prompt_cache_options(compat, cache_retention)
+    if prompt_cache_options is not None:
+        params["prompt_cache_options"] = prompt_cache_options
 
     if options.max_tokens and compat.supports_max_output_tokens:
         params["max_output_tokens"] = max(options.max_tokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)

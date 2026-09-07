@@ -8,14 +8,14 @@ import tonio.colored as tonio
 
 from pidrei_ai.registry import models_are_equal
 from pidrei_ai.utils.cancel import CancelToken
-from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings, matches_key
+from pidrei_tui import Container, Input, Spacer, Text, fuzzy_filter, get_keybindings
 from pidrei_tui._timers import Timeout
 
 from ..model_catalog_refresh import refresh_model_catalogs
 from ..model_search import get_model_selector_search_text
 from ..theme import theme
 from .dynamic_border import DynamicBorder
-from .keybinding_hints import key_hint
+from .keybinding_hints import key_display_text, key_hint
 
 
 class ModelSelectorComponent(Container):
@@ -99,7 +99,16 @@ class ModelSelectorComponent(Container):
         # Hint
         if self._on_select_as_default_callback is not None:
             self.add_child(
-                Text(theme.fg("dim", "  Enter to select \u00b7 Ctrl+S to set as default \u00b7 Esc to cancel"), 0, 0)
+                Text(
+                    theme.fg(
+                        "dim",
+                        f"  {key_display_text('tui.select.confirm')} to select · "
+                        f"{key_display_text('app.models.save')} to set as default · "
+                        f"{key_display_text('tui.select.cancel')} to cancel",
+                    ),
+                    0,
+                    0,
+                )
             )
 
         # Add bottom border
@@ -371,8 +380,8 @@ class ModelSelectorComponent(Container):
         elif kb.matches(key_data, "tui.select.cancel"):
             self.dispose()
             self._on_cancel_callback()
-        # Ctrl+S — select and save as default
-        elif matches_key(key_data, "ctrl+s") and self._on_select_as_default_callback is not None:
+        # Select and save as default
+        elif kb.matches(key_data, "app.models.save") and self._on_select_as_default_callback is not None:
             if 0 <= self._selected_index < len(self._filtered_models):
                 selected_model = self._filtered_models[self._selected_index]["model"]
                 self.dispose()

@@ -167,6 +167,26 @@ def test_responses_prompt_cache_retention_when_env_long(monkeypatch):
     assert params["prompt_cache_retention"] == "24h"
 
 
+@pytest.mark.parametrize(
+    ("model_id", "retention", "cache_options"),
+    [
+        ("gpt-4o-mini", "24h", None),
+        ("gpt-6-astra", None, {"ttl": "30m"}),
+    ],
+)
+def test_responses_uses_the_supported_long_cache_field(monkeypatch, model_id, retention, cache_options):
+    monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
+    model = get_builtin_model("openai", model_id)
+    assert model is not None
+    params = build_responses_params(
+        model, make_context(), OpenAIResponsesOptions(cache_retention="long", session_id="session-2")
+    )
+
+    assert params["prompt_cache_key"] == "session-2"
+    assert params.get("prompt_cache_retention") == retention
+    assert params.get("prompt_cache_options") == cache_options
+
+
 def test_responses_prompt_cache_retention_for_proxy_base_url(monkeypatch):
     monkeypatch.delenv("PIDREI_CACHE_RETENTION", raising=False)
     model = make_responses_model(base_url="https://my-proxy.example.com/v1")

@@ -347,6 +347,24 @@ async def test_routes_wheel_input_to_the_scroll_view_under_the_pointer():
 
 
 @pytest.mark.tonio
+async def test_scrolls_faster_while_alt_is_held_during_wheel_input():
+    terminal = VirtualTerminal(20, 4)
+    tui = TuiAltScreen(terminal)
+    text = Text("\n".join(f"line {index + 1}" for index in range(12)), 0, 0)
+    tui.add_child(text)
+    await tui.start()
+    await terminal.wait_for_render()
+    assert tui.viewport_top == 8
+
+    # Alt modifier sets bit 8 on the wheel button (72 = 64 + 8).
+    since = terminal.frames
+    await terminal.send_input("\x1b[<72;1;1M")
+    await terminal.wait_for_render(since)
+    assert tui.viewport_top == 3
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_uses_button_motion_tracking_inside_terminal_multiplexers():
     environment_keys = ("TMUX", "ZELLIJ", "STY", "TERM")
     previous_environment = {key: os.environ.get(key) for key in environment_keys}
@@ -1310,10 +1328,12 @@ async def test_coalesces_slash_and_hyphen_separated_segments_for_double_click_wo
         ("earendil-works/pi-tui", "works"),
     ]:
         copied: list[str] = []
+        copied_event = tonio.Event()
         terminal = RecordingTerminal(80, 1)
 
-        async def copy_selection(text: str, copied=copied) -> bool:
+        async def copy_selection(text: str, copied=copied, copied_event=copied_event) -> bool:
             copied.append(text)
+            copied_event.set()
             return True
 
         tui = TuiAltScreen(terminal, None, None, copy_selection=copy_selection)
@@ -1328,6 +1348,10 @@ async def test_coalesces_slash_and_hyphen_separated_segments_for_double_click_wo
         await terminal.send_input(f"\x1b[<0;{one_based_click_column};1M")
         await terminal.send_input(f"\x1b[<0;{one_based_click_column};1m")
         await terminal.wait_for_render(since)
+        # The copy is a spawned task (see the module docstring), so the frame
+        # can land before it runs; wait for the handler, not the render.
+        await copied_event.wait(5.0)
+        assert copied_event.is_set(), "copy_selection never ran"
 
         assert copied == [line]
         await tui.stop()

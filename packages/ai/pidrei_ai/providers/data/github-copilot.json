@@ -432,6 +432,10 @@
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
       }
     },
     "kimi-k2.7-code": {

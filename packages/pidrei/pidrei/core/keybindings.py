@@ -60,6 +60,7 @@ KEYBINDINGS = {
     "app.exit": {"defaultKeys": "ctrl+d", "description": "Exit when editor is empty"},
     "app.suspend": {"defaultKeys": "ctrl+z", "description": "Suspend to background"},
     "app.thinking.cycle": {"defaultKeys": "shift+tab", "description": "Cycle thinking level"},
+    "app.thinking.save": {"defaultKeys": "ctrl+s", "description": "Save thinking level"},
     "app.model.cycleForward": {"defaultKeys": "ctrl+p", "description": "Cycle to next model"},
     "app.model.cycleBackward": {
         "defaultKeys": "alt+p" if _WINDOWS_KEYBINDINGS else "shift+ctrl+p",

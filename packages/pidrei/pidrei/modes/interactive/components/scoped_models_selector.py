@@ -8,7 +8,7 @@ from pidrei_tui import Container, Input, Key, Spacer, Text, fuzzy_filter, get_ke
 from ..model_search import get_model_search_text
 from ..theme import theme
 from .dynamic_border import DynamicBorder
-from .keybinding_hints import key_text
+from .keybinding_hints import key_display_text
 
 
 def _is_enabled(enabled_ids, model_id: str) -> bool:
@@ -101,7 +101,7 @@ class ScopedModelsSelectorComponent(Container):
         self.add_child(Spacer(1))
         self.add_child(Text(theme.fg("accent", theme.bold("Model Configuration")), 0, 0))
         self.add_child(
-            Text(theme.fg("muted", f"Session-only. {key_text('app.models.save')} to save to settings."), 0, 0)
+            Text(theme.fg("muted", f"Session-only. {key_display_text('app.models.save')} to save to settings."), 0, 0)
         )
         self.add_child(Spacer(1))
 
@@ -189,12 +189,12 @@ class ScopedModelsSelectorComponent(Container):
             unavailable_text = f" · {unavailable_count} unavailable" if unavailable_count else ""
             count_text = f"{enabled_count}/{len(self._all_ids)} enabled{unavailable_text}"
         parts = [
-            f"{key_text('tui.select.confirm')} toggle",
-            f"{key_text('app.models.enableAll')} all",
-            f"{key_text('app.models.clearAll')} clear",
-            f"{key_text('app.models.toggleProvider')} provider",
-            f"{key_text('app.models.reorderUp')}/{key_text('app.models.reorderDown')} reorder",
-            f"{key_text('app.models.save')} save",
+            f"{key_display_text('tui.select.confirm')} toggle",
+            f"{key_display_text('app.models.enableAll')} all",
+            f"{key_display_text('app.models.clearAll')} clear",
+            f"{key_display_text('app.models.toggleProvider')} provider",
+            f"{key_display_text('app.models.reorderUp')}/{key_display_text('app.models.reorderDown')} reorder",
+            f"{key_display_text('app.models.save')} save",
             count_text,
         ]
         if self._is_dirty:

@@ -8,6 +8,7 @@ Adaptations:
 
 import contextlib
 import json
+import threading
 import time
 
 import pytest
@@ -135,6 +136,60 @@ async def test_coalesces_file_reloads_across_concurrent_readers_and_storage_inst
         assert await first.read("anthropic") == ApiKeyCredential(key="newest")
         assert calls["count"] == 2
     finally:
+        auth_storage_module._acquire_lock_async = original_acquire
+
+
+@pytest.mark.tonio
+async def test_a_reader_whose_stat_outlives_the_coalesced_reload_does_not_reload_again(tmp_path):
+    """pidrei-specific (macOS CI, 0.85.1). pi's stat → compare → join is one
+    synchronous step; here the stat is a pool hop, so a reader can pin the
+    stale snapshot, stat after the shared reload published and cleared
+    itself, and reach the guard with nothing to join. It must recognise the
+    published snapshot instead of starting a second locked reload."""
+    auth_path = tmp_path / "auth.json"
+    write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
+    first = await AuthStorage.create(str(auth_path))
+    second = await AuthStorage.create(str(auth_path))
+
+    calls = {"count": 0}
+    original_acquire = auth_storage_module._acquire_lock_async
+    original_revision = auth_storage_module._get_file_revision
+    slow_stat_entered = threading.Event()
+    slow_stat_release = threading.Event()
+    stats = {"count": 0}
+
+    async def counting_acquire(path, cancel=None):
+        calls["count"] += 1
+        return await original_acquire(path, cancel)
+
+    def gated_revision(path):
+        # The first stat after patching belongs to the reader spawned first;
+        # it pinned the stale snapshot before getting here. Hold it (on the
+        # pool) until the other reader's reload has published.
+        stats["count"] += 1
+        if stats["count"] == 1:
+            slow_stat_entered.set()
+            slow_stat_release.wait(5.0)
+        return original_revision(path)
+
+    auth_storage_module._acquire_lock_async = counting_acquire
+    auth_storage_module._get_file_revision = gated_revision
+    try:
+        write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "new"}})
+
+        slow_reader = tonio.spawn(second.read("anthropic"))
+        await tonio.spawn_blocking(slow_stat_entered.wait, 5.0)
+        assert slow_stat_entered.is_set()
+
+        assert await first.read("anthropic") == ApiKeyCredential(key="new")
+        assert calls["count"] == 1
+
+        slow_stat_release.set()
+        assert await slow_reader == ApiKeyCredential(key="new")
+        assert calls["count"] == 1
+    finally:
+        slow_stat_release.set()
+        auth_storage_module._get_file_revision = original_revision
         auth_storage_module._acquire_lock_async = original_acquire
 
 

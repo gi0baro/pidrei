@@ -5,7 +5,16 @@ refresh path); here the two module seams `_resolve_branch_with_git_sync` /
 `_resolve_branch_with_git_async` are patched and call-counted instead, and
 the fakes set Events the tests wait on. pi's fake-timer watcher-retry test
 is mirrored by shortening FS_WATCH_RETRY_DELAY_MS and waiting in real time.
+
+The two debounce tests drive the reftable watcher's listener directly and
+swap the module-level `Timeout` for a hand-fired fake (pi 082f7577:
+`reftableWatcher.emit` under `vi.useFakeTimers`, because native fs.watch
+delivery raced watcher startup); pidrei's polling watcher has the same
+timing dependency, so the shape is mirrored rather than the file writes.
 """
+
+from contextlib import contextmanager
+from typing import ClassVar
 
 import pytest
 import tonio.colored as tonio
@@ -78,6 +87,41 @@ async def _wait(event: tonio.Event, timeout_s: float = 3.0) -> None:
     assert event.is_set(), "Timed out waiting for the refresh"
 
 
+class FakeTimeout:
+    """Hand-fired stand-in for `_timers.Timeout` (pi: `vi.advanceTimersByTimeAsync`)."""
+
+    instances: ClassVar[list] = []
+
+    def __init__(self, delay_ms: float, fn) -> None:
+        self.delay_ms = delay_ms
+        self.fn = fn
+        self.cancelled = False
+        FakeTimeout.instances.append(self)
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    async def fire(self) -> None:
+        await self.fn()
+
+
+@contextmanager
+def fake_debounce_timers():
+    original = fdp_module.Timeout
+    fdp_module.Timeout = FakeTimeout
+    FakeTimeout.instances = []
+    try:
+        yield FakeTimeout.instances
+    finally:
+        fdp_module.Timeout = original
+
+
+def emit_reftable_change(provider: FooterDataProvider) -> None:
+    watcher = provider._reftable_watcher
+    assert watcher is not None
+    watcher._listener("change", "tables.list")
+
+
 @pytest.mark.tonio
 async def test_uses_head_directly_in_a_regular_repo_from_a_nested_directory(tmp_path, git_mock):
     repo_dir = _create_plain_repo(tmp_path)
@@ -131,50 +175,58 @@ async def test_treats_an_unresolved_invalid_reftable_head_as_detached(tmp_path, 
         provider.dispose()
 
 
+# Drive debounce behavior explicitly; watcher delivery can race watcher startup.
 @pytest.mark.tonio
 async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_branch(tmp_path, git_mock):
     fixture = _create_reftable_worktree(tmp_path)
 
-    provider = FooterDataProvider(str(fixture["worktreeDir"]))
-    await provider.prime()
-    try:
-        assert provider.get_git_branch() == "main"
-        git_mock["sync_calls"].clear()
-        notifications = []
-        provider.on_branch_change(lambda: notifications.append(True))
+    with fake_debounce_timers() as timers:
+        provider = FooterDataProvider(str(fixture["worktreeDir"]))
+        await provider.prime()
+        try:
+            assert provider.get_git_branch() == "main"
+            git_mock["sync_calls"].clear()
+            notifications = []
+            provider.on_branch_change(lambda: notifications.append(True))
 
-        (fixture["reftableDir"] / "tables.list").write_text("1\n")
-        await _wait(git_mock["async_called"])
+            emit_reftable_change(provider)
+            assert len(timers) == 1
+            assert timers[0].delay_ms == FooterDataProvider.WATCH_DEBOUNCE_MS
+            await timers[0].fire()
 
-        assert len(git_mock["async_calls"]) == 1
-        assert git_mock["sync_calls"] == []
-        assert provider.get_git_branch() == "main"
-        assert notifications == []
-    finally:
-        provider.dispose()
+            assert len(git_mock["async_calls"]) == 1
+            assert git_mock["sync_calls"] == []
+            assert provider.get_git_branch() == "main"
+            assert notifications == []
+        finally:
+            provider.dispose()
 
 
 @pytest.mark.tonio
 async def test_debounces_rapid_reftable_updates_into_a_single_async_refresh(tmp_path, git_mock):
     fixture = _create_reftable_worktree(tmp_path)
 
-    provider = FooterDataProvider(str(fixture["worktreeDir"]))
-    await provider.prime()
-    try:
-        assert provider.get_git_branch() == "main"
-        git_mock["async_calls"].clear()
+    with fake_debounce_timers() as timers:
+        provider = FooterDataProvider(str(fixture["worktreeDir"]))
+        await provider.prime()
+        try:
+            assert provider.get_git_branch() == "main"
+            git_mock["async_calls"].clear()
 
-        (fixture["reftableDir"] / "tables.list").write_text("1\n")
-        (fixture["reftableDir"] / "tables.list").write_text("2\n")
-        (fixture["reftableDir"] / "tables.list").write_text("3\n")
-        await _wait(git_mock["async_called"])
-        # pi advances fake timers past a second debounce window; a second
-        # refresh, if one were scheduled, would land within it.
-        await tonio.sleep(FooterDataProvider.WATCH_DEBOUNCE_MS / 1000 + 0.15)
-
-        assert len(git_mock["async_calls"]) == 1
-    finally:
-        provider.dispose()
+            emit_reftable_change(provider)
+            emit_reftable_change(provider)
+            emit_reftable_change(provider)
+            # 499 ms in: the single debounce timer is still pending.
+            assert len(timers) == 1
+            assert git_mock["async_calls"] == []
+            # 501 ms in: it fires once.
+            await timers[0].fire()
+            assert len(git_mock["async_calls"]) == 1
+            # A further window later nothing else was armed.
+            assert len(timers) == 1
+            assert len(git_mock["async_calls"]) == 1
+        finally:
+            provider.dispose()
 
 
 @pytest.mark.tonio

@@ -88,6 +88,29 @@ async def test_keeps_the_current_thinking_level_marked_while_browsing():
     assert get_level_row("high").startswith("→   high")
 
 
+@pytest.mark.tonio
+async def test_uses_the_configured_save_binding():
+    set_keybindings(KeybindingsManager({"app.thinking.save": "ctrl+r"}))
+    save_default_calls = []
+
+    async def save_default(level: str) -> None:
+        save_default_calls.append(level)
+
+    selector = ThinkingSelectorComponent(
+        "medium",
+        ["medium", "high"],
+        lambda *args: None,
+        lambda *args: None,
+        save_default,
+    )
+
+    assert "Ctrl+R to set as default" in strip_ansi("\n".join(selector.render(80)))
+    await selector.handle_input("\x13")
+    assert save_default_calls == []
+    await selector.handle_input("\x12")
+    assert save_default_calls == ["medium"]
+
+
 class TestThinkingSelectorWiring:
     @pytest.mark.tonio
     async def test_escape_cancels_without_selecting(self):

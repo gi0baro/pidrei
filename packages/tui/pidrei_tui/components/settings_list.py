@@ -168,7 +168,8 @@ class SettingsList:
             previous_index = self._selected_index
             self._selected_index = max(0, min(len(display_items) - 1, self._selected_index + delta))
             return TuiMouseEventResult(handled=True, render=self._selected_index != previous_index)
-        if event.type != "move" and event.button != "left":
+        # Hover must not change selection: the visible range is centered on it.
+        if event.button != "left" or event.type not in ("press", "click"):
             return None
 
         row_offset = 2 if self._search_enabled else 0
@@ -176,16 +177,10 @@ class SettingsList:
         item_index = start_index + event.y - row_offset
         if item_index < start_index or item_index >= end_index:
             return None
-        if event.type in ("move", "press"):
-            if event.type == "press":
-                self._mouse_pressed_index = item_index
-            changed = self._selected_index != item_index
+        if event.type == "press":
+            self._mouse_pressed_index = item_index
             self._selected_index = item_index
-            return TuiMouseEventResult(
-                handled=True,
-                focus=event.type == "press",
-                render=changed if event.type == "move" else None,
-            )
+            return TuiMouseEventResult(handled=True, focus=True)
         if event.type == "click":
             self._selected_index = self._mouse_pressed_index if self._mouse_pressed_index is not None else item_index
             self._mouse_pressed_index = None

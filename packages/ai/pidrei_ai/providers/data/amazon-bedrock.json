@@ -1165,6 +1165,26 @@
         "xhigh": "xhigh"
       }
     },
+    "global.xai.grok-4.6": {
+      "id": "global.xai.grok-4.6",
+      "name": "Grok 4.6 (Global)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 6,
+        "cacheRead": 0.5,
+        "cacheWrite": 0
+      },
+      "contextWindow": 500000,
+      "maxTokens": 500000
+    },
     "google.gemma-3-27b-it": {
       "id": "google.gemma-3-27b-it",
       "name": "Google Gemma 3 27B Instruct",
@@ -2631,6 +2651,26 @@
       },
       "contextWindow": 3500000,
       "maxTokens": 16384
+    },
+    "us.xai.grok-4.6": {
+      "id": "us.xai.grok-4.6",
+      "name": "Grok 4.6 (US)",
+      "api": "bedrock-converse-stream",
+      "provider": "amazon-bedrock",
+      "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.2,
+        "output": 6.6,
+        "cacheRead": 0.55,
+        "cacheWrite": 0
+      },
+      "contextWindow": 500000,
+      "maxTokens": 500000
     },
     "writer.palmyra-x4-v1:0": {
       "id": "writer.palmyra-x4-v1:0",

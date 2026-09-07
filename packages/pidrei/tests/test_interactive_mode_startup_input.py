@@ -66,6 +66,31 @@ async def test_returns_queued_startup_input_before_installing_a_new_input_callba
 
 
 @pytest.mark.tonio
+async def test_startup_submit_wiring_passes_the_editor_text_through():
+    """pidrei-specific regression (macOS CI, 0.85.1): the startup `on_submit`
+    was wrapped in `sync_action`, whose handler takes no arguments, so the
+    editor's `on_submit(text)` call raised and killed the input pump."""
+    statuses: list[str] = []
+    set_texts: list[str] = []
+    actions: dict = {}
+    context = SimpleNamespace(
+        _default_editor=SimpleNamespace(on_action=actions.__setitem__, on_ctrl_d=None, on_submit=None),
+        editor=SimpleNamespace(set_text=set_texts.append),
+        show_status=statuses.append,
+        _handle_ctrl_c=lambda: None,
+        _handle_ctrl_d=lambda: None,
+    )
+    context._handle_startup_submit = partial(InteractiveMode._handle_startup_submit, context)
+
+    InteractiveMode._setup_startup_input_handlers(context)
+    context._default_editor.on_submit("early prompt")
+
+    assert set_texts == ["early prompt"]
+    assert statuses == ["Startup is still in progress"]
+    assert set(actions) == {"app.clear"}
+
+
+@pytest.mark.tonio
 async def test_restores_a_prompt_submitted_while_managed_tool_setup_is_running():
     statuses: list[str] = []
     set_texts: list[str] = []

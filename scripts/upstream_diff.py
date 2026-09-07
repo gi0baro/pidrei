@@ -475,6 +475,9 @@ RENAMES = {
     # 0.84.x additions (PORT_0.84.1.md).
     "packages/coding-agent/src/package-manager-cli.ts": "packages/pidrei/pidrei/cli/package_commands.py",
     "packages/agent/src/harness/env/nodejs.ts": "packages/agent/pidrei_agent/harness/env/local.py",
+    # 0.85.1 (PORT_0.85.1.md U4): pi split its process-title/env/undici prologue into
+    # cli/setup.ts; pidrei's equivalent has always been the entry module's run().
+    "packages/coding-agent/src/cli/setup.ts": "packages/pidrei/pidrei/__main__.py",
     "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
     "packages/agent/test/harness/session-test-utils.ts": "packages/agent/tests/session_helpers.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",
@@ -843,6 +846,7 @@ NOISE_BASENAMES = {
     "biome.json",
     "test.sh",
     "mini-test.sh",
+    "pi-test.sh",
     ".npmignore",
     ".gitignore",
 }

@@ -14,6 +14,8 @@ the current bindings with `/keybindings`.
 | `ctrl+d` | `app.exit` | Exit when the editor is empty |
 | `ctrl+z` | `app.suspend` | Suspend to background |
 | `shift+tab` | `app.thinking.cycle` | Cycle thinking level |
+| `ctrl+s` | `app.thinking.save` | Save the current thinking level to settings (inside the thinking selector) |
+| `ctrl+s` | `app.models.save` | Save the selected default model or scoped model configuration to settings (inside the model selectors) |
 | `ctrl+t` | `app.thinking.toggle` | Show or hide thinking blocks |
 | `ctrl+p` / `shift+ctrl+p` | `app.model.cycleForward` / `Backward` | Cycle model |
 | `ctrl+l` | `app.model.select` | Open the model selector |

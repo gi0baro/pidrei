@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/thinking-selector.ts."""
 
-from pidrei_tui import Container, Input, SelectList, Spacer, Text, fuzzy_filter, get_keybindings, matches_key
+from pidrei_tui import Container, Input, SelectList, Spacer, Text, fuzzy_filter, get_keybindings
 
 from ..theme import get_select_list_theme, theme
 from .dynamic_border import DynamicBorder
@@ -69,7 +69,18 @@ class ThinkingSelectorComponent(Container):
         self._select_list_child_index = len(self.children)
         self.add_child(self._select_list)
         self.add_child(Spacer(1))
-        self.add_child(Text(theme.fg("dim", "  Enter to select · Ctrl+S to set as default · Esc to cancel"), 0, 0))
+        self.add_child(
+            Text(
+                theme.fg(
+                    "dim",
+                    f"  {key_display_text('tui.select.confirm')} to select · "
+                    f"{key_display_text('app.thinking.save')} to set as default · "
+                    f"{key_display_text('tui.select.cancel')} to cancel",
+                ),
+                0,
+                0,
+            )
+        )
 
         # Add bottom border
         self.add_child(DynamicBorder())
@@ -106,13 +117,13 @@ class ThinkingSelectorComponent(Container):
         self._select_list = new_list
 
     async def handle_input(self, key_data: str) -> None:
-        if matches_key(key_data, "ctrl+s") and self._on_select_as_default is not None:
+        kb = get_keybindings()
+        if kb.matches(key_data, "app.thinking.save") and self._on_select_as_default is not None:
             item = self._select_list.get_selected_item()
             if item is not None:
                 await self._on_select_as_default(item["value"])
             return
 
-        kb = get_keybindings()
         is_nav = (
             kb.matches(key_data, "tui.select.up")
             or kb.matches(key_data, "tui.select.down")

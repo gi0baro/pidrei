@@ -223,13 +223,14 @@ OPENAI_TOOL_SEARCH_MODEL_IDS = {
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-6-astra",
 }
 # Public OpenAI documents additional_tools for applications that load tools
 # outside the normal tool-search flow. Codex currently uses the input item for
 # its Responses Lite GPT-5.6 models.
 # https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
 OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
-OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}
 OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000
 OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.4",
@@ -237,6 +238,7 @@ OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-6-astra",
 }
 OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = {
     "gpt-5.4",
@@ -246,6 +248,7 @@ OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = {
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-6-astra",
 }
 OPENAI_RESPONSES_NONE_REASONING_MODELS = {
     "gpt-5.1",
@@ -441,11 +444,11 @@ def is_anthropic_temperature_unsupported_model(model_id: str) -> bool:
 
 
 def supports_openai_xhigh(model_id: str) -> bool:
-    return any(marker in model_id for marker in ("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6"))
+    return any(marker in model_id for marker in ("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6", "gpt-6-astra"))
 
 
 def supports_openai_max(model: dict[str, Any]) -> bool:
-    return "gpt-5.6" in model["id"] and model["api"] in (
+    return ("gpt-5.6" in model["id"] or "gpt-6-astra" in model["id"]) and model["api"] in (
         "openai-responses",
         "azure-openai-responses",
         "openai-codex-responses",
@@ -669,6 +672,23 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
     provider = model["provider"]
     if model["api"] in ("openai-responses", "azure-openai-responses") and model_id.startswith("gpt-5"):
         merge_thinking_level_map(model, {"off": None})
+    if model_id == "gpt-6-astra" and model["api"] in (
+        "openai-responses",
+        "azure-openai-responses",
+        "openai-codex-responses",
+    ):
+        merge_thinking_level_map(
+            model,
+            {
+                "off": None,
+                "minimal": None,
+                "low": "low",
+                "medium": "medium",
+                "high": "high",
+                "xhigh": "xhigh",
+                "max": "max",
+            },
+        )
     if provider == "github-copilot" and model_id.startswith("gpt-5"):
         merge_thinking_level_map(model, {"minimal": "low"})
     if (
@@ -2065,6 +2085,18 @@ def load_models_dev_data(
 
 MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
     {
+        "id": "gpt-6-astra",
+        "name": "GPT-6 Astra",
+        "api": "openai-responses",
+        "baseUrl": "https://api.openai.com/v1",
+        "provider": "openai",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": with_openai_long_context_pricing({"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5}),
+        "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+        "maxTokens": 128000,
+    },
+    {
         "id": "gpt-5.6-sol",
         "name": "GPT-5.6 Sol",
         "api": "openai-responses",
@@ -2215,7 +2247,7 @@ MINIMAX_DIRECT_SUPPORTED_IDS = {"MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniM
 
 # OpenAI Codex (ChatGPT OAuth) models. Not fetched from models.dev; a small explicit
 # list avoids aliases. Older limits are based on observed server behavior; GPT-5.6
-# follows Codex's 272k catalog limit (formerly 372k).
+# and GPT-6 Astra use Codex's 272k default catalog limit.
 CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 CODEX_CONTEXT = 272000
 CODEX_GPT_56_CONTEXT = 272000
@@ -2246,6 +2278,13 @@ def _codex_model(
 
 
 CODEX_MODELS: list[dict[str, Any]] = [
+    _codex_model(
+        "gpt-6-astra",
+        "GPT-6 Astra",
+        with_openai_long_context_pricing({"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5}),
+        context_window=CODEX_CONTEXT,
+        model_input=["text", "image"],
+    ),
     _codex_model(
         "gpt-5.3-codex-spark",
         "GPT-5.3 Codex Spark",
