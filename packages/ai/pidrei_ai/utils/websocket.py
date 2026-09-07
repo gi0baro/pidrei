@@ -166,7 +166,13 @@ class WebSocketConnection:
                 if not chunk:
                     break
         except Exception as error:
-            self._events_sender.send(ErrorEvent(message=str(error) or type(error).__name__, error=error))
+            with self._lock:
+                locally_closed = self._closed
+            # After a local `close()` the write loop tears the transport down
+            # underneath this read; that is the socket's own teardown, not an
+            # error the consumer should see (the DOM fires no `error` there).
+            if not locally_closed:
+                self._events_sender.send(ErrorEvent(message=str(error) or type(error).__name__, error=error))
         self._finish()
 
     def _receive_locked(self, chunk: bytes) -> list[WebSocketEvent]:

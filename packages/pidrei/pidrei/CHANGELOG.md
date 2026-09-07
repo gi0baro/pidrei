@@ -6,6 +6,17 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.85.1.1] - 2026-09-07
+
+### Changed
+
+- Bumped httpunk and punkreq dependencies.
+
+### Fixed
+
+- Closing a Codex WebSocket locally no longer reports the socket's own
+  teardown as an error event.
+
 ## [0.85.1.0] - 2026-09-07
 
 Tracks [Pi 0.85.1](https://github.com/earendil-works/pi/releases/tag/v0.85.1).
