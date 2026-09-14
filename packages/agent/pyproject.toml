@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pidrei-agent"
-version = "0.85.1.2"
+version = "0.85.1.3"
 description = "Agent loop, harness and core tools of pidrei (port of pi-agent-core)"
 requires-python = ">=3.14"
 license = "MIT"
@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "pidrei-ai==0.85.1.2",
-    "tonio~=0.9.16",
+    "pidrei-ai==0.85.1.3",
+    "tonio~=0.9.17",
     "pyyaml~=6.0",
     "pathspec~=1.1",
 ]
