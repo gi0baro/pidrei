@@ -9,7 +9,10 @@ spawn handle wraps failures in a SpawnExceptionGroup).
 import pytest
 import tonio.colored as tonio
 
-from pidrei.modes.interactive.model_catalog_refresh import refresh_model_catalogs
+from pidrei.modes.interactive.model_catalog_refresh import (
+    _model_catalog_refresh_coordinator,
+    refresh_model_catalogs,
+)
 from pidrei_ai.registry import ModelsRefreshResult
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
@@ -46,6 +49,18 @@ async def _wait_until(condition, timeout=2.0):
             raise AssertionError("condition not reached before timeout")
 
 
+def _waiters(runtime) -> int:
+    """How many callers currently share `runtime`'s in-flight refresh.
+
+    pi's callers join synchronously, so its tests may cancel one right after
+    the refresh started; here each caller is a spawned task that joins when it
+    first runs, and a test that cancels a caller must first see every caller
+    counted — otherwise the last waiter leaving aborts the shared refresh, which
+    is the coordinator working as designed."""
+    active = _model_catalog_refresh_coordinator._active_by_runtime.get(runtime)
+    return 0 if active is None else active.waiters
+
+
 @pytest.mark.tonio
 async def test_shares_one_runtime_refresh_between_concurrent_callers():
     runtime = FakeRuntime()
@@ -54,8 +69,7 @@ async def test_shares_one_runtime_refresh_between_concurrent_callers():
 
     first = tonio.spawn(_settled(refresh_model_catalogs(runtime, first_controller)))
     second = tonio.spawn(_settled(refresh_model_catalogs(runtime, second_controller)))
-    await _wait_until(lambda: len(runtime.calls) >= 1)
-    await tonio.time.sleep(0.05)
+    await _wait_until(lambda: _waiters(runtime) == 2 and len(runtime.calls) >= 1)
     assert len(runtime.calls) == 1
 
     runtime.release.set()
@@ -70,7 +84,8 @@ async def test_keeps_the_shared_refresh_alive_when_one_caller_stops_waiting():
     second_controller = CancelToken()
     first = tonio.spawn(_settled(refresh_model_catalogs(runtime, first_controller)))
     second = tonio.spawn(_settled(refresh_model_catalogs(runtime, second_controller)))
-    await _wait_until(lambda: len(runtime.calls) >= 1)
+    await _wait_until(lambda: _waiters(runtime) == 2 and len(runtime.calls) >= 1)
+    assert len(runtime.calls) == 1
 
     first_controller.cancel()
     status, error = await first

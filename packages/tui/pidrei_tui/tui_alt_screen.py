@@ -16,7 +16,8 @@ their callbacks, like ``handle_input``), so the pointer path is the awaited
 ``_handle_pointer_input`` hook the base TUI runs before its input listeners,
 and the keyboard half stays in the sync listener. The OSC 52 clipboard write
 selection triggers is spawned rather than awaited — pi's ``terminal.write``
-is sync.
+is sync — with the selection text captured on the release itself, since the
+spawned task may first run after the next press has changed the selection.
 """
 
 import base64
@@ -1309,7 +1310,14 @@ class TuiAltScreen(TuiBase):
                         self.request_render()
                     return
             if self._copy_on_select:
-                tonio.spawn.without_tracking(self._copy_selection_to_clipboard())
+                # Read the selection now, on the release that made it: pi's
+                # `void this.copySelectionToClipboard()` evaluates the text
+                # synchronously, and a task that read it when it ran could see
+                # the *next* press's selection (an empty single-click selection
+                # copied as the double-click's word, twice).
+                text = self._get_active_selection_text()
+                if text is not None:
+                    tonio.spawn.without_tracking(self._copy_text_to_clipboard(text))
             self.request_render()
             return
         if (event["button"] & 32) != 0:
@@ -1399,12 +1407,6 @@ class TuiAltScreen(TuiBase):
             lines.append(strip_terminal_sequences(slice_by_column(line, start, max(0, end - start), True)).rstrip())
         text = "\n".join(lines)
         return None if len(text) == 0 else text
-
-    async def _copy_selection_to_clipboard(self) -> bool:
-        text = self._get_active_selection_text()
-        if text is None:
-            return False
-        return await self._copy_text_to_clipboard(text)
 
     async def _copy_text_to_clipboard(self, text: str) -> bool:
         # Prefer an injected clipboard implementation (native clipboard +

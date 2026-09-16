@@ -6,6 +6,17 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.85.1.4] - 2026-09-16
+
+### Changed
+
+- Bumped httpunk dependency.
+
+### Fixed
+
+- Fullscreen copy-on-select reads the selection on the mouse release that
+  made it, so a quick double-click can no longer copy the selected word twice.
+
 ## [0.85.1.3] - 2026-09-14
 
 ### Changed

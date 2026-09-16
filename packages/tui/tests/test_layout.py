@@ -1,10 +1,11 @@
 """Mirror of pi tui test/layout.test.ts."""
 
 import re
+from typing import ClassVar
 
 import pytest
-import tonio.colored as tonio
 
+import pidrei_tui.components.scroll_view as scroll_view_module
 from pidrei_tui.components.h_stack import HStack
 from pidrei_tui.components.scroll_view import ScrollView
 from pidrei_tui.components.text import Text
@@ -228,8 +229,48 @@ def test_tracks_follow_end_state_and_returns_unused_scroll_delta():
     assert scroll_view.is_following_end is True
 
 
+class FakeTimeout:
+    """Hand-fired stand-in for `_timers.Timeout` (see `test_footer_data_provider.py`)."""
+
+    instances: ClassVar[list] = []
+
+    def __init__(self, delay_ms: float, fn) -> None:
+        self.delay_ms = delay_ms
+        self.fn = fn
+        self.cancelled = False
+        FakeTimeout.instances.append(self)
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    async def fire(self) -> None:
+        await self.fn()
+
+
+@pytest.fixture
+def fake_scrollbar_hide_timers():
+    """Rebind the ScrollView's hide timer to `FakeTimeout` and yield its instances.
+
+    pi's test lets the real 10 ms hide timer run and sleeps 30 ms for it. With
+    no TUI started, a pidrei `Timeout` fires on a task of its own, so a
+    `cancel()` that lands between the timer's cancelled-check and its callback
+    is a no-op — a scroll that re-shows the scrollbar right as the previous
+    hide expires can be undone by that stale hide (seen on the macOS runners).
+    A started TUI orders cancel and fire on its owner task, so only this
+    detached-timer test can lose that race; firing the timer by hand removes
+    the clock from the test altogether.
+    """
+    original = scroll_view_module.Timeout
+    scroll_view_module.Timeout = FakeTimeout
+    FakeTimeout.instances = []
+    try:
+        yield FakeTimeout.instances
+    finally:
+        scroll_view_module.Timeout = original
+
+
 @pytest.mark.tonio
-async def test_renders_a_proportional_glyph_scrollbar_with_an_expanded_active_thumb():
+async def test_renders_a_proportional_glyph_scrollbar_with_an_expanded_active_thumb(fake_scrollbar_hide_timers):
     source_lines = ["abcd界", "abcde2", "abcde3", "abcde4", "abcde5", "abcde6", "abcde7", "abcde8"]
     content_background = "\x1b[42m"
     track_color = "\x1b[38;5;2m"
@@ -274,7 +315,9 @@ async def test_renders_a_proportional_glyph_scrollbar_with_an_expanded_active_th
     assert lines[1].rfind(content_background) < lines[1].rfind(thumb_color)
 
     scroll_view.set_scrollbar_active(False)
-    await tonio.sleep(0.03)
+    hide_timer = fake_scrollbar_hide_timers[-1]
+    assert hide_timer.delay_ms == 10 and not hide_timer.cancelled
+    await hide_timer.fire()
     lines = render()
     assert visible(lines) == source_lines[2:6]
 
