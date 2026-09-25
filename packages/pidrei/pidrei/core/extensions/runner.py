@@ -6,16 +6,18 @@ Executes extension handlers and owns the hook bus AgentSession emits into.
 import copy
 import sys
 import traceback
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import tonio.colored as tonio
 
 from pidrei.core.diagnostics import ResourceDiagnostic
+from pidrei_ai.utils.transcript import get_current_system_message
 
 from ..system_prompt import BuildSystemPromptOptions, build_system_prompt, normalize_build_system_prompt_options
 from .types import (
+    BoundaryContextPreview,
     Extension,
     ExtensionError,
     ExtensionFlag,
@@ -84,10 +86,36 @@ _SESSION_BEFORE_EVENT_TYPES = (
 )
 
 
+@dataclass(slots=True)
+class BoundaryDispatchResult:
+    entries: list[dict[str, Any]]
+    # pi: `continue` (a Python keyword).
+    continue_: bool
+    context: BoundaryContextPreview
+    valid: bool
+
+
 def _snapshot_event_handlers(extensions: list[Extension], event: str) -> list[tuple[Extension, list[Any]]]:
     """Every extension's handlers for `event`, copied before dispatch starts, so a handler
     added or removed mid-dispatch does not affect the dispatch in progress."""
     return [(ext, list(ext.handlers.get(event, ()))) for ext in extensions]
+
+
+def _same_messages(left: list[Any], right: list[Any]) -> bool:
+    return len(left) == len(right) and all(message is right[index] for index, message in enumerate(left))
+
+
+def _restore_system_messages(current: list[Any], visible: list[Any], returned: list[Any]) -> list[Any]:
+    """Re-attach the prompt and tool state after a `context` handler. Handlers only see
+    the conversation; the system messages belong to Pi. An unchanged conversation keeps
+    every system message in place, so models with mid-conversation support keep their
+    cached prefix. A changed one gets the replayed prompt sections and tool declarations
+    as one leading system message, so pruning, windowing, or slicing from a compaction
+    summary cannot drop them."""
+    if _same_messages(returned, visible):
+        return current
+    head = get_current_system_message(current)
+    return [head, *returned] if head is not None else returned
 
 
 def _is_user_bash_event_result(value: Any) -> bool:
@@ -858,6 +886,60 @@ class ExtensionRunner:
 
         return result
 
+    async def emit_boundary(
+        self,
+        base_event: dict[str, Any],
+        build_context: Callable[[list[dict[str, Any]]], Awaitable[BoundaryContextPreview]],
+    ) -> BoundaryDispatchResult:
+        """Dispatch a boundary event (`turn_end` / `agent_before_settle`).
+
+        Each handler sees the drafts and continuation chosen so far plus the
+        context those drafts would produce; the context is rebuilt after every
+        handler. Drafts that fail to build discard the whole result."""
+        ctx = self.create_context()
+        entries: list[dict[str, Any]] = []
+        should_continue = False
+        context = await build_context(entries)
+        valid = True
+
+        for ext, handlers in _snapshot_event_handlers(self._extensions, base_event["type"]):
+            for handler in handlers:
+                event = {**base_event, "entries": entries, "continue": should_continue, "context": context}
+                try:
+                    handler_result = await handler(event, ctx)
+                    if isinstance(handler_result, dict):
+                        if handler_result.get("entries") is not None:
+                            entries = handler_result["entries"]
+                        if handler_result.get("continue") is not None:
+                            should_continue = handler_result["continue"]
+                except Exception as error:
+                    self.emit_error(
+                        ExtensionError(
+                            extension_path=ext.path,
+                            event=base_event["type"],
+                            error=str(error),
+                            stack=traceback.format_exc(),
+                        )
+                    )
+
+                try:
+                    context = await build_context(entries)
+                    valid = True
+                except Exception as error:
+                    valid = False
+                    self.emit_error(
+                        ExtensionError(
+                            extension_path=ext.path,
+                            event=base_event["type"],
+                            error=f"Invalid boundary entries: {error}",
+                            stack=traceback.format_exc(),
+                        )
+                    )
+
+        if valid:
+            return BoundaryDispatchResult(entries=entries, continue_=should_continue, context=context, valid=True)
+        return BoundaryDispatchResult(entries=[], continue_=False, context=context, valid=False)
+
     async def emit_cache_warming_decision(self, event: dict[str, Any]) -> str:
         """Returns the event's own action unless a handler overrides it; the last override wins."""
         ctx = self.create_context()
@@ -1001,25 +1083,69 @@ class ExtensionRunner:
         return None
 
     async def emit_context(self, messages: list[Any]) -> list[Any]:
-
+        """Run the request-time transforms in two phases. `context` handlers see the
+        conversation only and Pi restores the prompt and tool state after each;
+        `context_with_system` handlers then see the full transcript and their output
+        is used as returned."""
         ctx = self.create_context()
         # pi structuredClones here; only pay for the deep copy when a handler exists.
-        if not self.has_handlers("context"):
+        if not self.has_handlers("context") and not self.has_handlers("context_with_system"):
             return messages
         current_messages = copy.deepcopy(messages)
 
         for ext, handlers in _snapshot_event_handlers(self._extensions, "context"):
             for handler in handlers:
                 try:
-                    event = {"type": "context", "messages": current_messages}
+                    visible_messages = [message for message in current_messages if message.role != "system"]
+                    visible_snapshot = list(visible_messages)
+                    event = {"type": "context", "messages": visible_messages}
                     handler_result = await handler(event, ctx)
-                    if isinstance(handler_result, dict) and handler_result.get("messages"):
-                        current_messages = handler_result["messages"]
+
+                    # Handlers may return a new list or edit event["messages"] in place.
+                    returned = handler_result.get("messages") if isinstance(handler_result, dict) else None
+                    if returned is None and not _same_messages(visible_messages, visible_snapshot):
+                        returned = visible_messages
+                    if returned is None:
+                        continue
+                    current_messages = _restore_system_messages(current_messages, visible_snapshot, returned)
                 except Exception as error:
                     self.emit_error(
                         ExtensionError(
                             extension_path=ext.path,
                             event="context",
+                            error=str(error),
+                            stack=traceback.format_exc(),
+                        )
+                    )
+
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "context_with_system"):
+            for handler in handlers:
+                try:
+                    had_leading_system_message = bool(current_messages) and current_messages[0].role == "system"
+                    event = {"type": "context_with_system", "messages": current_messages}
+                    handler_result = await handler(event, ctx)
+                    returned = handler_result.get("messages") if isinstance(handler_result, dict) else None
+                    if returned is not None:
+                        current_messages = returned
+                    # Providers read the prompt and initial tools from the leading system message.
+                    # Losing it is never intended; report it but honor the handler's output.
+                    if had_leading_system_message and (not current_messages or current_messages[0].role != "system"):
+                        self.emit_error(
+                            ExtensionError(
+                                extension_path=ext.path,
+                                event="context_with_system",
+                                error=(
+                                    "Handler removed the leading system message; the request has no prompt "
+                                    "or initial tool declarations. Keep it at index 0 or replace a dropped "
+                                    "prefix with get_current_system_message()."
+                                ),
+                            )
+                        )
+                except Exception as error:
+                    self.emit_error(
+                        ExtensionError(
+                            extension_path=ext.path,
+                            event="context_with_system",
                             error=str(error),
                             stack=traceback.format_exc(),
                         )

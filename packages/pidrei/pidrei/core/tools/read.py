@@ -7,7 +7,7 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
-from pidrei_ai.types import ImageContent, JsonSchemaConstrainedSampling, TextContent
+from pidrei_ai.types import ImageContent, JsonSchemaConstrainedSampling, ModelImageResizeOptions, TextContent
 
 from ...utils.image_process import process_image
 from ...utils.mime import detect_supported_image_mime_type_from_file
@@ -76,8 +76,11 @@ def create_read_tool_definition(
     cwd: str,
     *,
     auto_resize_images: bool = True,
+    resize_options: ModelImageResizeOptions | None = None,
     operations: Any = None,
 ) -> ToolDefinition:
+    """`resize_options` is the fallback resize profile when the execution
+    context has no model metadata."""
     ops = operations if operations is not None else LocalReadOperations()
 
     async def execute(_tool_call_id, params, cancel=None, _on_update=None, ctx=None):
@@ -95,14 +98,22 @@ def create_read_tool_definition(
         _throw_if_aborted(cancel)
         detect = getattr(ops, "detect_image_mime_type", None)
         mime_type = await detect(absolute_path) if detect is not None else None
-        non_vision_image_note = _get_non_vision_image_note(getattr(ctx, "model", None))
+        model = getattr(ctx, "model", None)
+        non_vision_image_note = _get_non_vision_image_note(model)
         details: ReadToolDetails | None = None
 
         if mime_type:
             # Read image as binary.
             buffer = await ops.read_file(absolute_path)
+            model_limits = model.input_limits if model is not None else None
+            model_resize = (
+                model_limits.images.resize if model_limits is not None and model_limits.images is not None else None
+            )
+            image_resize = model_resize if model_resize is not None else resize_options
             processed = await tonio.spawn_blocking(
-                lambda: process_image(buffer, mime_type, auto_resize_images=auto_resize_images)
+                lambda: process_image(
+                    buffer, mime_type, auto_resize_images=auto_resize_images, resize_options=image_resize
+                )
             )
             if not processed.ok:
                 text_note = f"Read image file [{mime_type}]\n{processed.message}"

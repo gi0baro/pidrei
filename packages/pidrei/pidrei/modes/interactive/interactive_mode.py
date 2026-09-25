@@ -82,7 +82,7 @@ from ...core.exec import exec_command
 from ...core.footer_data_provider import FooterDataProvider
 from ...core.http_config import format_http_idle_timeout_ms
 from ...core.keybindings import KeybindingsManager
-from ...core.messages import create_compaction_summary_message
+from ...core.messages import create_compaction_summary_message, create_custom_message
 from ...core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,
     find_exact_model_reference_match,
@@ -616,6 +616,8 @@ class InteractiveMode:
 
         # Streaming message tracking
         self._streaming_component = None
+        # Entries a boundary compaction already rendered; their own entry_appended is skipped.
+        self._entries_rendered_by_boundary_compaction: set[str] = set()
         self._streaming_message = None
 
         # Tool execution tracking: tool_call_id -> component
@@ -3207,12 +3209,28 @@ class InteractiveMode:
             self.ui.request_render()
 
         elif event_type == "entry_appended":
-            if event.entry.get("type") == "custom":
-                self._add_custom_entry_to_chat(event.entry)
+            entry = event.entry
+            if entry["id"] in self._entries_rendered_by_boundary_compaction:
+                self._entries_rendered_by_boundary_compaction.discard(entry["id"])
+            elif entry.get("type") == "custom":
+                self._add_custom_entry_to_chat(entry)
                 self.ui.request_render()
-            elif event.entry.get("type") == "usage" and event.entry.get("kind") == "cache_warm":
-                self._add_cache_warming_usage(event.entry)
+            elif entry.get("type") == "usage" and entry.get("kind") == "cache_warm":
+                self._add_cache_warming_usage(entry)
                 self.ui.request_render()
+            elif entry.get("type") == "custom_message" and entry.get("display"):
+                self._add_message_to_chat(
+                    create_custom_message(
+                        entry["customType"],
+                        entry.get("content"),
+                        entry["display"],
+                        entry.get("details"),
+                        entry.get("timestamp"),
+                    )
+                )
+                self.ui.request_render()
+            elif entry.get("type") == "compaction":
+                self._render_boundary_compaction(entry)
 
         elif event_type == "session_info_changed":
             self._update_terminal_title()
@@ -3721,6 +3739,31 @@ class InteractiveMode:
 
         for tool_call_id, component in rendered_pending_tools.items():
             self._pending_tools[tool_call_id] = component
+        self.ui.request_render()
+
+    def _render_boundary_compaction(self, entry: dict) -> None:
+        """Re-render the transcript around a compaction a boundary handler appended."""
+        entries = self.session_manager.build_context_entries()
+        if not entries or entries[0].get("id") != entry["id"]:
+            return
+        self._chat_container.clear()
+        branch = self.session_manager.get_branch()
+        compaction_index = next((i for i, candidate in enumerate(branch) if candidate["id"] == entry["id"]), -1)
+        entries_after_compaction = {candidate["id"] for candidate in branch[compaction_index + 1 :]}
+        retained_entries = entries[1:]
+        self._render_session_entries(
+            [candidate for candidate in retained_entries if candidate["id"] not in entries_after_compaction]
+        )
+        self._add_message_to_chat(
+            create_compaction_summary_message(entry.get("summary"), entry.get("tokensBefore"), entry.get("timestamp"))
+        )
+        if entry.get("usage"):
+            self._add_compaction_cost_notice({"type": "compaction_cost", "kind": "compaction", "usage": entry["usage"]})
+        self._render_session_entries(
+            [candidate for candidate in retained_entries if candidate["id"] in entries_after_compaction]
+        )
+        self._entries_rendered_by_boundary_compaction.update(entries_after_compaction)
+        self._footer.invalidate()
         self.ui.request_render()
 
     def _render_session_entries(self, entries: list, options: dict | None = None) -> None:

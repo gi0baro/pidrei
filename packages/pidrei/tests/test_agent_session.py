@@ -272,6 +272,7 @@ class TestConcurrentPromptGuard:
             "user",
             "assistant",
             "toolResult",
+            "system",
             "assistant",
         ]
         session.dispose()

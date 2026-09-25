@@ -16,6 +16,7 @@ import time as time_module
 from dataclasses import dataclass, replace
 from typing import Any
 
+from pidrei_agent.harness.session.serde import serialize_tool
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
@@ -31,11 +32,16 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
 from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
-from pidrei_ai.utils.transcript import normalize_context
+from pidrei_ai.utils.transcript import get_current_system_message, normalize_context
 from pidrei_ai.utils.uuid import uuidv7
 
 from ..messages import convert_to_llm
-from ..session_manager import build_session_context, session_entry_to_context_messages
+from ..session_manager import (
+    ProjectedSessionEntry,
+    SessionProjection,
+    build_session_projection,
+    session_entry_to_context_messages,
+)
 from .utils import (
     SUMMARIZATION_SYSTEM_PROMPT,
     FileOperations,
@@ -60,6 +66,7 @@ __all__ = [
     "compact",
     "complete_summarization",
     "estimate_context_tokens",
+    "estimate_projected_context_tokens",
     "estimate_tokens",
     "find_cut_point",
     "find_turn_start_index",
@@ -111,14 +118,11 @@ def _extract_file_operations(
     return file_ops
 
 
-def _get_message_from_entry_for_compaction(entry: dict[str, Any]) -> Any:
-    """Extract the first context message from an entry if it produces one."""
-    if entry.get("type") == "compaction":
-        return None
+def _get_messages_from_projected_entry_for_compaction(entry: ProjectedSessionEntry) -> list[Any]:
+    if entry.source_entry.get("type") == "compaction":
+        return []
     # System messages are prompt state, not conversation; the compaction entry carries their replay.
-    messages = session_entry_to_context_messages(entry)
-    message = messages[0] if messages else None
-    return None if getattr(message, "role", None) == "system" else message
+    return [message for message in entry.messages if getattr(message, "role", None) != "system"]
 
 
 @dataclass(slots=True)
@@ -249,6 +253,42 @@ def estimate_context_tokens(messages: list[Any]) -> ContextUsageEstimate:
     )
 
 
+def estimate_projected_context_tokens(
+    projection: SessionProjection, branch_entries: list[dict[str, Any]]
+) -> ContextUsageEstimate:
+    """Estimate projected context without trusting usage captured before a later edit or compaction."""
+    estimate = estimate_context_tokens(projection.messages)
+    if estimate.last_usage_index is not None:
+        projected_message_index = 0
+        usage_entry_id: str | None = None
+        for entry in projection.entries:
+            next_message_index = projected_message_index + len(entry.messages)
+            if estimate.last_usage_index < next_message_index:
+                usage_entry_id = entry.source_entry.get("id")
+                break
+            projected_message_index = next_message_index
+
+        usage_entry_index = (
+            next((i for i, entry in enumerate(branch_entries) if entry.get("id") == usage_entry_id), -1)
+            if usage_entry_id
+            else -1
+        )
+        latest_invalidating_entry_index = -1
+        for i in range(len(branch_entries) - 1, -1, -1):
+            if branch_entries[i].get("type") in ("context_edit", "compaction"):
+                latest_invalidating_entry_index = i
+                break
+        if usage_entry_index > latest_invalidating_entry_index:
+            return estimate
+
+    current_system = get_current_system_message(projection.messages)
+    tokens = estimate_tokens(current_system) if current_system is not None else 0
+    for message in projection.messages:
+        if getattr(message, "role", None) != "system":
+            tokens += estimate_tokens(message)
+    return ContextUsageEstimate(tokens=tokens, usage_tokens=0, trailing_tokens=tokens, last_usage_index=None)
+
+
 def should_compact(context_tokens: int, context_window: int, settings: CompactionSettings) -> bool:
     """Check if compaction should trigger based on context usage."""
     if not settings.enabled:
@@ -283,6 +323,15 @@ def estimate_tokens(message: Any) -> int:
     role = getattr(message, "role", None)
     chars = 0
 
+    if role == "system":
+        chars = _estimate_text_and_image_content_chars(message.content)
+        if message.sections:
+            for section in message.sections.values():
+                if section:
+                    chars += len(section)
+        if message.tools_added:
+            chars += len(safe_json_stringify([serialize_tool(tool) for tool in message.tools_added]))
+        return math.ceil(chars / 4)
     if role == "user":
         chars = _estimate_text_and_image_content_chars(message.content)
         return math.ceil(chars / 4)
@@ -700,6 +749,97 @@ class CompactionPreparation:
     previous_summary: str | None = None
 
 
+def _is_projected_turn_start(entry: ProjectedSessionEntry) -> bool:
+    if entry.source_entry.get("type") == "compaction":
+        return False
+    return any(_is_turn_start_message(message) for message in entry.messages)
+
+
+def _find_projected_turn_start_index(entries: list[ProjectedSessionEntry], entry_index: int, start_index: int) -> int:
+    for i in range(entry_index, start_index - 1, -1):
+        if _is_projected_turn_start(entries[i]):
+            return i
+    return -1
+
+
+def _find_projected_cut_point(
+    entries: list[ProjectedSessionEntry], start_index: int, end_index: int, keep_recent_tokens: int
+) -> CutPointResult:
+    cut_points = [
+        i
+        for i in range(start_index, end_index)
+        if entries[i].source_entry.get("type") != "compaction"
+        and any(_is_cut_point_message(message) for message in entries[i].messages)
+    ]
+    if not cut_points:
+        return CutPointResult(first_kept_entry_index=start_index, turn_start_index=-1, is_split_turn=False)
+
+    accumulated_tokens = 0
+    exceeded_budget = False
+    cut_index = cut_points[0]
+    for i in range(end_index - 1, start_index - 1, -1):
+        message_tokens = sum(estimate_tokens(message) for message in entries[i].messages)
+        if message_tokens == 0:
+            continue
+        accumulated_tokens += message_tokens
+        if accumulated_tokens >= keep_recent_tokens:
+            exceeded_budget = True
+            cut_index = next((candidate for candidate in cut_points if candidate >= i), cut_points[-1])
+            break
+
+    # A recovery attempt and its omission edits are context-invisible after the last
+    # visible input. Advance only for a closed suffix containing an omitted assistant
+    # attempt; arbitrary metadata must not move the cut past unsent input.
+    suffix = entries[cut_index + 1 : end_index]
+
+    def is_intrinsically_visible(entry: ProjectedSessionEntry) -> bool:
+        return (
+            entry.source_entry.get("type") != "context_edit"
+            and len(session_entry_to_context_messages(entry.source_entry)) > 0
+        )
+
+    def is_omitted(entry: ProjectedSessionEntry) -> bool:
+        return is_intrinsically_visible(entry) and len(entry.messages) == 0
+
+    omitted_suffix_ids = {entry.source_entry.get("id") for entry in suffix if is_omitted(entry)}
+    has_external_replacement = any(
+        entry.source_entry.get("type") == "context_edit"
+        and entry.source_entry.get("replacement") is not None
+        and entry.source_entry.get("targetId") not in omitted_suffix_ids
+        for entry in suffix
+    )
+    is_recovery_omission_suffix = (
+        exceeded_budget
+        and not has_external_replacement
+        and any(
+            entry.source_entry.get("type") == "message"
+            and getattr(entry.source_entry.get("message"), "role", None) == "assistant"
+            and is_omitted(entry)
+            for entry in suffix
+        )
+        and all(
+            entry.source_entry.get("type") != "compaction"
+            and (not is_intrinsically_visible(entry) or is_omitted(entry))
+            for entry in suffix
+        )
+    )
+    if is_recovery_omission_suffix:
+        cut_index += 1
+
+    while cut_index > start_index:
+        previous = entries[cut_index - 1]
+        if previous.source_entry.get("type") == "compaction" or previous.messages:
+            break
+        cut_index -= 1
+    starts_turn = _is_projected_turn_start(entries[cut_index])
+    turn_start_index = -1 if starts_turn else _find_projected_turn_start_index(entries, cut_index, start_index)
+    return CutPointResult(
+        first_kept_entry_index=cut_index,
+        turn_start_index=turn_start_index,
+        is_split_turn=not starts_turn and turn_start_index != -1,
+    )
+
+
 def prepare_compaction(
     path_entries: list[dict[str, Any]],
     settings: CompactionSettings,
@@ -707,58 +847,60 @@ def prepare_compaction(
     if path_entries and path_entries[-1].get("type") == "compaction":
         return None
 
-    prev_compaction_index = -1
-    for i in range(len(path_entries) - 1, -1, -1):
-        if path_entries[i].get("type") == "compaction":
-            prev_compaction_index = i
-            break
+    projection = build_session_projection(path_entries)
+    projected_entries = projection.entries
+    source_entries = [entry.source_entry for entry in projected_entries]
+    # The newest compaction is projected first. Older compaction entries can still
+    # occur in its retained raw range, but their projected contribution is empty.
+    prev_compaction_index = next(
+        (
+            i
+            for i, entry in enumerate(projected_entries)
+            if entry.source_entry.get("type") == "compaction" and entry.messages
+        ),
+        -1,
+    )
 
     previous_summary: str | None = None
     boundary_start = 0
     if prev_compaction_index >= 0:
-        prev_compaction = path_entries[prev_compaction_index]
-        previous_summary = prev_compaction.get("summary")
-        first_kept_entry_index = next(
-            (i for i, entry in enumerate(path_entries) if entry.get("id") == prev_compaction.get("firstKeptEntryId")),
-            -1,
-        )
-        boundary_start = first_kept_entry_index if first_kept_entry_index >= 0 else prev_compaction_index + 1
-    boundary_end = len(path_entries)
+        previous_summary = projected_entries[prev_compaction_index].source_entry.get("summary")
+        # The canonical projection has already selected the previous compaction's retained tail.
+        boundary_start = prev_compaction_index + 1
+    boundary_end = len(projected_entries)
+    tokens_before = estimate_projected_context_tokens(projection, path_entries).tokens
+    cut_point = _find_projected_cut_point(projected_entries, boundary_start, boundary_end, settings.keep_recent_tokens)
 
-    tokens_before = estimate_context_tokens(build_session_context(path_entries).messages).tokens
-
-    cut_point = find_cut_point(path_entries, boundary_start, boundary_end, settings.keep_recent_tokens)
-
-    # Get id of first kept entry
     first_kept_entry = (
-        path_entries[cut_point.first_kept_entry_index] if cut_point.first_kept_entry_index < len(path_entries) else None
+        projected_entries[cut_point.first_kept_entry_index].source_entry
+        if cut_point.first_kept_entry_index < len(projected_entries)
+        else None
     )
     if not first_kept_entry or not first_kept_entry.get("id"):
-        return None  # Session needs migration
+        return None
     first_kept_entry_id = first_kept_entry["id"]
-
     history_end = cut_point.turn_start_index if cut_point.is_split_turn else cut_point.first_kept_entry_index
 
-    # Messages to summarize (will be discarded after summary)
-    messages_to_summarize: list[Any] = []
-    for i in range(boundary_start, history_end):
-        msg = _get_message_from_entry_for_compaction(path_entries[i])
-        if msg is not None:
-            messages_to_summarize.append(msg)
-
-    # Messages for turn prefix summary (if splitting a turn)
-    turn_prefix_messages: list[Any] = []
-    if cut_point.is_split_turn:
-        for i in range(cut_point.turn_start_index, cut_point.first_kept_entry_index):
-            msg = _get_message_from_entry_for_compaction(path_entries[i])
-            if msg is not None:
-                turn_prefix_messages.append(msg)
+    messages_to_summarize = [
+        message
+        for entry in projected_entries[boundary_start:history_end]
+        for message in _get_messages_from_projected_entry_for_compaction(entry)
+    ]
+    turn_prefix_messages = (
+        [
+            message
+            for entry in projected_entries[cut_point.turn_start_index : cut_point.first_kept_entry_index]
+            for message in _get_messages_from_projected_entry_for_compaction(entry)
+        ]
+        if cut_point.is_split_turn
+        else []
+    )
 
     if not messages_to_summarize and not turn_prefix_messages:
         return None
 
-    # Extract file operations from messages and previous compaction
-    file_ops = _extract_file_operations(messages_to_summarize, path_entries, prev_compaction_index)
+    # Extract file operations from edited model-visible messages and the previous compaction.
+    file_ops = _extract_file_operations(messages_to_summarize, source_entries, prev_compaction_index)
 
     # Also extract file ops from turn prefix if splitting
     if cut_point.is_split_turn:

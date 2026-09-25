@@ -47,6 +47,7 @@ import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
 
 from pidrei_agent.harness.session.serde import (
+    parse_content_block,
     parse_message,
     parse_usage,
     serialize_content,
@@ -54,6 +55,7 @@ from pidrei_agent.harness.session.serde import (
     serialize_usage,
     to_wire_value,
 )
+from pidrei_ai.types import TextContent
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_ai.utils.uuid import uuidv7
@@ -91,6 +93,22 @@ class SessionContextModel:
 
 @dataclass(slots=True)
 class SessionContext:
+    messages: list[Any]
+    thinking_level: str
+    model: SessionContextModel | None
+
+
+@dataclass(slots=True)
+class ProjectedSessionEntry:
+    # Raw append-only entry that owns this projected contribution.
+    source_entry: dict[str, Any]
+    # Model-visible messages after context edits. Empty for state-only entries and omissions.
+    messages: list[Any]
+
+
+@dataclass(slots=True)
+class SessionProjection:
+    entries: list[ProjectedSessionEntry]
     messages: list[Any]
     thinking_level: str
     model: SessionContextModel | None
@@ -197,6 +215,10 @@ def _decode_entry(entry: dict[str, Any]) -> dict[str, Any]:
             entry["usage"] = parse_usage(entry["usage"])
         if isinstance(entry.get("systemMessage"), dict):
             entry["systemMessage"] = parse_message(entry["systemMessage"])
+    elif entry.get("type") == "context_edit":
+        replacement = entry.get("replacement")
+        if isinstance(replacement, dict) and isinstance(replacement.get("content"), list):
+            entry["replacement"] = {"content": [parse_content_block(block) for block in replacement["content"]]}
     return entry
 
 
@@ -236,6 +258,10 @@ def _entry_to_wire(entry: dict[str, Any]) -> dict[str, Any]:
             wire["content"] = serialize_content(entry["content"])
         if entry.get("details") is not None:
             wire["details"] = to_wire_value(entry["details"])
+        return wire
+    if entry_type == "context_edit" and entry.get("replacement") is not None:
+        wire = dict(entry)
+        wire["replacement"] = {"content": serialize_content(entry["replacement"]["content"])}
         return wire
     return entry
 
@@ -461,22 +487,72 @@ def build_context_entries(
     return context_entries
 
 
+def _project_context_entry(entry: dict[str, Any], edit: dict[str, Any] | None) -> list[Any]:
+    messages = session_entry_to_context_messages(entry)
+    if edit is None:
+        return messages
+    replacement = edit.get("replacement")
+    if replacement is None:
+        return []
+
+    projected: list[Any] = []
+    for message in messages:
+        role = getattr(message, "role", None)
+        if role not in ("user", "assistant", "toolResult", "custom"):
+            projected.append(message)
+            continue
+        content = replacement["content"]
+        if role in ("assistant", "toolResult") and isinstance(content, str):
+            content = [TextContent(text=content)]
+        projected.append(dataclasses.replace(message, content=content))
+    return projected
+
+
+def build_session_projection(
+    entries: list[dict[str, Any]],
+    leaf_id: Any = _UNSET,
+    by_id: dict[str, dict[str, Any]] | None = None,
+) -> SessionProjection:
+    """Build provenance-preserving, compaction-aware model context."""
+    path = _build_session_path(entries, leaf_id, by_id)
+    thinking_level, model = _get_session_context_settings(path)
+    context_entries = build_context_entries(entries, leaf_id, by_id)
+    edits: dict[str, dict[str, Any]] = {}
+    for entry in context_entries:
+        if entry.get("type") == "context_edit":
+            edits[entry["targetId"]] = entry
+    projected_entries = [
+        ProjectedSessionEntry(
+            source_entry=source_entry,
+            # build_context_entries() may retain an older compaction entry because its
+            # raw ID lies inside the newest retained range. Only the newest compaction
+            # at index zero contributes a checkpoint and summary.
+            messages=(
+                []
+                if source_entry.get("type") == "compaction" and index > 0
+                else _project_context_entry(source_entry, edits.get(source_entry.get("id")))
+            ),
+        )
+        for index, source_entry in enumerate(context_entries)
+    ]
+    return SessionProjection(
+        entries=projected_entries,
+        messages=[message for entry in projected_entries for message in entry.messages],
+        thinking_level=thinking_level,
+        model=model,
+    )
+
+
 def build_session_context(
     entries: list[dict[str, Any]],
     leaf_id: Any = _UNSET,
     by_id: dict[str, dict[str, Any]] | None = None,
 ) -> SessionContext:
-    """Build the session context from entries using tree traversal.
-    If leaf_id is provided, walks from that entry to root.
-    Handles compaction and branch summaries along the path."""
-    path = _build_session_path(entries, leaf_id, by_id)
-    thinking_level, model = _get_session_context_settings(path)
-    messages = [
-        message
-        for entry in build_context_entries(entries, leaf_id, by_id)
-        for message in session_entry_to_context_messages(entry)
-    ]
-    return SessionContext(messages=messages, thinking_level=thinking_level, model=model)
+    """Build the finalized model context from the canonical session projection."""
+    projection = build_session_projection(entries, leaf_id, by_id)
+    return SessionContext(
+        messages=projection.messages, thinking_level=projection.thinking_level, model=projection.model
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1191,18 +1267,20 @@ class SessionManager:
     async def append_compaction(
         self,
         summary: str,
-        first_kept_entry_id: str,
+        first_kept_entry_id: str | None,
         tokens_before: int,
         details: Any = None,
         from_hook: bool | None = None,
         usage: Any = None,
     ) -> str:
+        """`first_kept_entry_id=None` retains nothing: the boundary points at the
+        compaction entry itself."""
         async with self._io_lock:
             with self._lock:
                 entry = self._new_entry_base("compaction")
-                system_message = get_current_system_message(self.build_session_context().messages)
+                system_message = get_current_system_message(self.build_session_projection().messages)
                 entry["summary"] = summary
-                entry["firstKeptEntryId"] = first_kept_entry_id
+                entry["firstKeptEntryId"] = first_kept_entry_id if first_kept_entry_id is not None else entry["id"]
                 entry["tokensBefore"] = tokens_before
                 if details is not None:
                     entry["details"] = details
@@ -1265,6 +1343,46 @@ class SessionManager:
                 entry["display"] = display
                 if details is not None:
                     entry["details"] = details
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
+            return entry["id"]
+
+    async def append_context_edit(self, target_id: str, replacement: dict[str, Any] | None) -> str:
+        """Append a branch-local edit to an earlier model-visible entry.
+
+        `replacement` is None (omit the target from model context) or
+        `{"content": str | list}` (replace only its content)."""
+        if replacement is not None and (
+            not isinstance(replacement, dict)
+            or "content" not in replacement
+            or not isinstance(replacement["content"], str | list)
+        ):
+            raise Exception("Context edit replacement must be null or contain string/array content")
+        async with self._io_lock:
+            with self._lock:
+                target = self._by_id.get(target_id)
+                if target is None:
+                    raise Exception(f"Entry {target_id} not found")
+                if not any(entry["id"] == target_id for entry in self.get_branch()):
+                    raise Exception(f"Entry {target_id} is not on the active branch")
+                target_role = (
+                    getattr(target.get("message"), "role", None) if target.get("type") == "message" else "custom"
+                )
+                editable = target.get("type") == "custom_message" or (
+                    target.get("type") == "message" and target_role in ("user", "assistant", "toolResult")
+                )
+                if not editable:
+                    raise Exception(f"Entry {target_id} does not contribute editable model content")
+                normalized_replacement = (
+                    {"content": [TextContent(text=replacement["content"])]}
+                    if replacement is not None
+                    and target_role in ("assistant", "toolResult")
+                    and isinstance(replacement["content"], str)
+                    else replacement
+                )
+                entry = self._new_entry_base("context_edit")
+                entry["targetId"] = target_id
+                entry["replacement"] = normalized_replacement
                 self._append_entry_locked(entry)
             await self._persist_entry(entry)
             return entry["id"]
@@ -1332,10 +1450,17 @@ class SessionManager:
         with self._lock:
             return build_context_entries(self.get_entries(), self._leaf_id, self._by_id)
 
+    def build_session_projection(self) -> SessionProjection:
+        """Build the canonical, provenance-preserving model context from the current leaf."""
+        with self._lock:
+            return build_session_projection(self.get_entries(), self._leaf_id, self._by_id)
+
     def build_session_context(self) -> SessionContext:
         """Build the session context (what gets sent to the LLM)."""
-        with self._lock:
-            return build_session_context(self.get_entries(), self._leaf_id, self._by_id)
+        projection = self.build_session_projection()
+        return SessionContext(
+            messages=projection.messages, thinking_level=projection.thinking_level, model=projection.model
+        )
 
     def get_header(self) -> dict[str, Any] | None:
         with self._lock:
@@ -1474,8 +1599,10 @@ class SessionManager:
                     # findCutPoint() can move a compaction boundary back to a
                     # context-invisible label; keep the boundary on the entry
                     # that replaces it.
-                    copied["firstKeptEntryId"] = replacement_by_label_id.get(
-                        entry["firstKeptEntryId"], entry["firstKeptEntryId"]
+                    copied["firstKeptEntryId"] = (
+                        entry["id"]
+                        if entry["firstKeptEntryId"] == entry["id"]
+                        else replacement_by_label_id.get(entry["firstKeptEntryId"], entry["firstKeptEntryId"])
                     )
                 path_without_labels.append(copied)
                 path_parent_id = entry["id"]

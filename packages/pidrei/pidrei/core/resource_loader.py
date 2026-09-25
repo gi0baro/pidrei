@@ -690,13 +690,16 @@ class DefaultResourceLoader:
         if self._no_prompt_templates and not prompt_paths:
             prompts_result = LoadPromptsResult(prompts=[], diagnostics=[])
         else:
-            all_prompts = await load_prompt_templates(
+            loaded = await load_prompt_templates(
                 cwd=self._cwd,
                 agent_dir=self._agent_dir,
                 prompt_paths=prompt_paths,
                 include_defaults=False,
             )
-            prompts_result = self._dedupe_prompts(all_prompts)
+            deduped = self._dedupe_prompts(loaded.templates)
+            prompts_result = LoadPromptsResult(
+                prompts=deduped.prompts, diagnostics=[*loaded.diagnostics, *deduped.diagnostics]
+            )
         resolved_prompts = (
             self._prompts_override(prompts_result) if self._prompts_override is not None else prompts_result
         )

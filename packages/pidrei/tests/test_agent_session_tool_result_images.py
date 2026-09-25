@@ -15,7 +15,13 @@ from PIL import Image
 from pidrei.core.extensions import ToolDefinition
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
-from pidrei_ai.types import ImageContent, TextContent
+from pidrei_ai.types import (
+    ImageContent,
+    ModelImageInputLimits,
+    ModelImageResizeOptions,
+    ModelInputLimits,
+    TextContent,
+)
 
 from .harness import create_harness
 
@@ -108,3 +114,30 @@ async def test_honors_image_auto_resize_being_disabled(harnesses):
     images = _tool_result_images(harness)
     assert len(images) == 1
     assert images[0].data == OVERSIZED_PNG_BASE64
+
+
+@pytest.mark.tonio
+async def test_passes_the_current_model_profile_to_tool_result_normalization(harnesses):
+    # pi asserts the options its mocked normalizer receives; here the real
+    # normalizer runs, so the profile shows up in the resized dimensions.
+    harness = await create_harness(tools=[_screenshot_tool()])
+    harnesses.append(harness)
+    assert harness.session.model is not None, "Expected a model"
+    harness.session.model.input_limits = ModelInputLimits(
+        images=ModelImageInputLimits(
+            resize=ModelImageResizeOptions(max_width=1200, max_height=1000, max_bytes=500000, jpeg_quality=70)
+        )
+    )
+    harness.set_responses(
+        [
+            faux_assistant_message([faux_tool_call("screenshot", {})], stop_reason="toolUse"),
+            faux_assistant_message("done"),
+        ]
+    )
+
+    await harness.session.prompt("take a screenshot")
+
+    images = _tool_result_images(harness)
+    assert len(images) == 1
+    width, height = _read_png_dimensions(images[0].data)
+    assert (width, height) == (500, 1000)

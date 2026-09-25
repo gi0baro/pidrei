@@ -230,7 +230,52 @@ async def test_shows_a_clickable_jump_to_end_indicator_on_the_transcripts_last_r
 
 
 @pytest.mark.tonio
-async def test_leaves_the_scrollbar_clickable_when_the_jump_to_end_indicator_spans_the_transcript():
+async def test_keeps_the_jump_to_end_indicator_centered_as_the_auto_scrollbar_hides_and_reappears():
+    # Regression test for #9136: auto scrollbar visibility must not move the indicator.
+    terminal = VirtualTerminal(80, 6)
+    label = " ↓ Jump to latest message · End "
+    # get_viewport() trims trailing blanks, which drops the label's last cell once the
+    # scrollbar no longer follows it; the start column is what the test compares.
+    shown = label.rstrip()
+    tui = TuiAltScreen(terminal, None, None, scroll_to_end_indicator=lambda: label)
+    transcript = ScrollView(
+        Text("\n".join(f"line {index + 1}" for index in range(20)), 0, 0),
+        {"follow": "end", "primary": True, "scrollbar": "auto", "scrollbarHideDelayMs": 0},
+    )
+    tui.set_layout_root(transcript)
+    await tui.start()
+    try:
+        await terminal.wait_for_render()
+
+        # Scrolling over the track keeps the scrollbar visible until the pointer leaves.
+        await terminal.send_input("\x1b[<64;80;1M")
+        assert await _wait_until(lambda: shown in terminal.get_viewport()[5])
+        assert transcript.is_scrollbar_visible is True
+        assert transcript.is_following_end is False
+        scroll_top = transcript.scroll_top
+        visible_column = terminal.get_viewport()[5].index(shown)
+
+        # Leaving the track lets the auto-hide timer expire without changing the content.
+        await terminal.send_input("\x1b[<35;79;1M")
+        assert await _wait_until(lambda: not terminal.get_viewport()[0].endswith("│"))
+        assert transcript.is_scrollbar_visible is False
+        assert transcript.scroll_top == scroll_top
+        hidden_column = terminal.get_viewport()[5].index(shown)
+
+        await terminal.send_input("\x1b[<35;80;1M")
+        assert await _wait_until(lambda: terminal.get_viewport()[0].endswith("│"))
+        assert transcript.is_scrollbar_visible is True
+        assert transcript.scroll_top == scroll_top
+        revealed_column = terminal.get_viewport()[5].index(shown)
+
+        assert [visible_column, hidden_column, revealed_column] == [24, 24, 24]
+    finally:
+        await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_leaves_the_scrollbar_visible_and_clickable_when_the_jump_to_end_indicator_spans_the_transcript():
+    # Regression coverage for #9136: centering must not paint or capture clicks over the scrollbar.
     terminal = VirtualTerminal(30, 6)
     tui = TuiAltScreen(terminal, None, None, scroll_to_end_indicator=lambda: "↓" * 30)
     transcript = ScrollView(Text(_lines(12), 0, 0), {"follow": "end", "primary": True, "scrollbar": "always"})
@@ -249,6 +294,7 @@ async def test_leaves_the_scrollbar_clickable_when_the_jump_to_end_indicator_spa
     assert await _wait_until(lambda: transcript.is_following_end is False)
 
     # The indicator must not intercept a press on the scrollbar's last column.
+    assert await _wait_until(lambda: terminal.get_viewport()[3] == f"{'↓' * 29}┃")
     await terminal.send_input("\x1b[<0;30;4M")
     await terminal.send_input("\x1b[<0;30;4m")
     await terminal.wait_for_render()

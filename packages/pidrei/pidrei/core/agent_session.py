@@ -13,6 +13,7 @@ export_to_html landed with the Phase 4 export-html slice; export_to_jsonl
 is here.
 """
 
+import base64
 import os
 import re
 import threading
@@ -33,15 +34,28 @@ from pidrei_agent.types import (
     AgentEndEvent,
     AgentEvent,
     AgentLoopTurnUpdate,
+    AgentRequestUpdate,
     AgentTool,
+    AgentTurnContext,
+    AgentTurnDecision,
     BeforeToolCallContext,
     BeforeToolCallResult,
     MessageEndEvent as AgentMessageEndEvent,
     MessageStartEvent as AgentMessageStartEvent,
     PrepareNextTurnContext,
+    PrepareRequestContext,
 )
 from pidrei_ai.registry import clamp_thinking_level, get_supported_thinking_levels, models_are_equal
-from pidrei_ai.types import AssistantMessage, ImageContent, Model, SystemMessage, TextContent, Usage, UserMessage
+from pidrei_ai.types import (
+    AssistantMessage,
+    ImageContent,
+    Model,
+    ModelImageResizeOptions,
+    SystemMessage,
+    TextContent,
+    Usage,
+    UserMessage,
+)
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
@@ -50,6 +64,7 @@ from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import get_current_system_message
 
 from ..utils.frontmatter import strip_frontmatter
+from ..utils.image_process import process_image
 from ..utils.sleep import sleep
 from ..utils.tool_result_images import normalize_tool_result_images
 from .auth_guidance import format_no_api_key_found_message, format_no_model_selected_message
@@ -63,6 +78,7 @@ from .compaction import (
     collect_entries_for_branch_summary,
     compact as run_compact,
     estimate_context_tokens,
+    estimate_projected_context_tokens,
     estimate_tokens,
     generate_branch_summary,
     prepare_compaction,
@@ -71,11 +87,12 @@ from .compaction import (
 from .defaults import DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS
 from .extensions import ExtensionRunner, wrap_registered_tools
 from .extensions.runner import emit_session_shutdown_event
-from .messages import BashExecutionMessage, CustomMessage
+from .extensions.types import AgentActivityOutcome, BoundaryContextPreview, ExtensionError
+from .messages import BashExecutionMessage, CustomMessage, convert_to_llm
 from .model_registry import ModelRegistry
 from .model_runtime import ModelRuntimeAuthOverrides
 from .prompt_templates import expand_prompt_template
-from .session_manager import get_latest_compaction_entry
+from .session_manager import SessionManager, get_latest_compaction_entry
 from .settings_manager import CacheWarmingMode
 from .source_info import create_synthetic_source_info
 from .system_prompt import (
@@ -457,6 +474,24 @@ class AgentSession:
         # Extension system
         self._extension_runner: ExtensionRunner | None = None
         self._turn_index = 0
+        # State epochs (PROPER_MT_DESIGN step 5): pi's `WeakMap<message, entryId>` and
+        # `WeakSet<message>` become run-scoped strong tables keyed by id(). They hold only
+        # messages persisted or dispatched during the current prompt-loop iteration (strong
+        # refs pin each id for the run) and are cleared when it ends; older messages resolve
+        # through the positional projection walk in `_find_persisted_message_entry_id`.
+        # Written on the dispatcher (message_end) and read on the loop task after the fused
+        # emit, which orders the two.
+        self._entry_ids_by_message: dict[int, tuple[Any, str]] = {}
+        self._boundary_dispatched_messages: dict[int, Any] = {}
+        # pi's message_end replacement mutates the message in place, so the loop's own
+        # reference sees it; pidrei swaps objects, so loop-held originals resolve here.
+        self._message_replacements: dict[int, tuple[Any, Any]] = {}
+        self._last_assistant_tool_results: list[Any] = []
+        self._last_activity_outcome: AgentActivityOutcome = "completed"
+        self._is_before_settle = False
+        self._abort_during_before_settle = False
+        self._is_emitting_agent_settled = False
+        self._deferred_settled_actions: list[Callable[[], Awaitable[None]]] = []
 
         self._resource_loader = config.resource_loader
         self._custom_tools: list[Any] = config.custom_tools or []
@@ -505,6 +540,8 @@ class AgentSession:
         self._unsubscribe_agent = self.agent.subscribe(self._handle_agent_event)
         self._install_agent_tool_hooks()
         self._install_agent_next_turn_refresh()
+        self._install_agent_request_projection()
+        self._install_agent_boundary_hooks()
         self._install_agent_forced_prompt_projection()
 
         self._build_runtime(
@@ -621,7 +658,9 @@ class AgentSession:
             # Runs after the extension hook so images injected or replaced by
             # extensions are normalized too.
             normalized_content = await normalize_tool_result_images(
-                content, auto_resize_images=self.settings_manager.get_image_auto_resize()
+                content,
+                auto_resize_images=self.settings_manager.get_image_auto_resize(),
+                resize_options=self._model_image_resize_options(),
             )
 
             if hook_result is None and normalized_content is content:
@@ -641,16 +680,122 @@ class AgentSession:
     async def _compact_before_next_assistant_response(self, context: AgentContext) -> AgentContext:
         model = self.model
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
+        projection = self.session_manager.build_session_projection()
 
         if (
             model is None
             or model.context_window <= 0
-            or not should_compact(estimate_context_tokens(context.messages).tokens, model.context_window, settings)
+            or not should_compact(
+                estimate_projected_context_tokens(projection, self.session_manager.get_branch()).tokens,
+                model.context_window,
+                settings,
+            )
         ):
-            return context
+            return dataclass_replace(context, messages=list(projection.messages))
 
         await self._run_auto_compaction("threshold", False)
-        return dataclass_replace(context, messages=list(self.agent.state.messages))
+        return dataclass_replace(context, messages=list(self.session_manager.build_session_projection().messages))
+
+    def _install_agent_request_projection(self) -> None:
+        previous_prepare_request = self.agent.prepare_request
+
+        async def prepare_request(request: PrepareRequestContext, cancel=None) -> AgentRequestUpdate:
+            canonical_context = dataclass_replace(
+                request.context,
+                messages=list(self.session_manager.build_session_projection().messages),
+                # Messages declare the provider-visible loadout; context.tools keeps executable implementations.
+                tools=list(self.agent.state.tools),
+            )
+            previous = (
+                await previous_prepare_request(
+                    dataclass_replace(
+                        request,
+                        context=canonical_context,
+                        model=self.agent.state.model,
+                        thinking_level=self.agent.state.thinking_level,
+                    ),
+                    cancel,
+                )
+                if previous_prepare_request is not None
+                else None
+            )
+            return AgentRequestUpdate(
+                context=previous.context
+                if previous is not None and previous.context is not None
+                else canonical_context,
+                model=previous.model if previous is not None and previous.model is not None else self.agent.state.model,
+                thinking_level=(
+                    previous.thinking_level
+                    if previous is not None and previous.thinking_level is not None
+                    else self.agent.state.thinking_level
+                ),
+            )
+
+        self.agent.prepare_request = prepare_request
+
+    async def _dispatch_turn_end_boundary(self, message: AssistantMessage, tool_results: list[Any]) -> bool:
+        message = self._current_message(message)
+        tool_results = [self._current_message(result) for result in tool_results]
+        self._last_activity_outcome = (
+            "aborted"
+            if message.stop_reason == "aborted"
+            else "error"
+            if message.stop_reason == "error"
+            else "completed"
+        )
+        message_entry_id = self._find_persisted_message_entry_id(message)
+        if not self._extension_runner.has_handlers("turn_end"):
+            return False
+        if not message_entry_id:
+            self._extension_runner.emit_error(
+                ExtensionError(
+                    extension_path="<boundary>",
+                    event="turn_end",
+                    error="turn_end could not resolve the persisted assistant entry ID",
+                )
+            )
+            return False
+        tool_result_entry_ids = [
+            entry_id
+            for entry_id in (self._find_persisted_message_entry_id(result) for result in tool_results)
+            if entry_id
+        ]
+
+        async def build_context(entries: list[dict[str, Any]]) -> BoundaryContextPreview:
+            return await self._build_boundary_context(entries, "turn_end")
+
+        boundary = await self._extension_runner.emit_boundary(
+            {
+                "type": "turn_end",
+                "turnIndex": self._turn_index,
+                "message": message,
+                "toolResults": tool_results,
+                "messageEntryId": message_entry_id,
+                "toolResultEntryIds": tool_result_entry_ids,
+                "outcome": self._last_activity_outcome,
+            },
+            build_context,
+        )
+        await self._commit_boundary_drafts(boundary.entries)
+        if boundary.continue_ and not (await self._build_boundary_context([], "turn_end")).can_continue:
+            self._report_invalid_boundary_continuation("turn_end")
+            return False
+        return boundary.continue_
+
+    def _install_agent_boundary_hooks(self) -> None:
+        previous_finish_turn = self.agent.finish_turn
+
+        async def finish_turn(turn: AgentTurnContext, cancel=None) -> AgentTurnDecision | None:
+            self._boundary_dispatched_messages[id(turn.message)] = turn.message
+            extension_continue = await self._dispatch_turn_end_boundary(turn.message, turn.tool_results)
+            previous_decision = await previous_finish_turn(turn, cancel) if previous_finish_turn is not None else None
+            if previous_decision is not None and previous_decision.action == "end":
+                return previous_decision
+            if extension_continue or (previous_decision is not None and previous_decision.action == "continue"):
+                return AgentTurnDecision("continue")
+            return None
+
+        self.agent.finish_turn = finish_turn
 
     def _install_agent_next_turn_refresh(self) -> None:
         previous_with_context = self.agent.prepare_next_turn_with_context
@@ -663,7 +808,9 @@ class AgentSession:
             previous_with_context = adapted
 
         async def prepare_next_turn_with_context(turn: PrepareNextTurnContext, cancel=None):
-            context = await self._compact_before_next_assistant_response(turn.context)
+            context = await self._compact_before_next_assistant_response(
+                dataclass_replace(turn.context, messages=list(self.session_manager.build_session_projection().messages))
+            )
             previous_snapshot = None
             if previous_with_context is not None:
                 previous_snapshot = await previous_with_context(dataclass_replace(turn, context=context), cancel)
@@ -708,6 +855,96 @@ class AgentSession:
     # =========================================================================
     # Event Subscription
     # =========================================================================
+
+    def _refresh_finalized_context(self) -> None:
+        """Rebind the finalized transcript to the canonical session projection.
+
+        pi also records every projected message's entry id here; the run-scoped
+        table only holds messages persisted this run, and projected messages
+        resolve through the positional walk (state epochs, option P)."""
+        self.agent.state.messages = self.session_manager.build_session_projection().messages
+
+    async def _apply_boundary_drafts(
+        self, manager: SessionManager, drafts: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        appended: list[dict[str, Any]] = []
+        for draft in drafts:
+            draft_type = draft.get("type")
+            if draft_type == "custom":
+                entry_id = await manager.append_custom_entry(draft["customType"], draft.get("data"))
+            elif draft_type == "custom_message":
+                entry_id = await manager.append_custom_message_entry(
+                    draft["customType"], draft["content"], draft["display"], draft.get("details")
+                )
+            elif draft_type == "context_edit":
+                entry_id = await manager.append_context_edit(draft["targetId"], draft["replacement"])
+            elif draft_type == "compaction":
+                tokens_before = estimate_projected_context_tokens(
+                    manager.build_session_projection(), manager.get_branch()
+                ).tokens
+                entry_id = await manager.append_compaction(
+                    draft["summary"],
+                    draft["firstKeptEntryId"],
+                    tokens_before,
+                    draft.get("details"),
+                    True,
+                    draft.get("usage"),
+                )
+            else:
+                continue
+            entry = manager.get_entry(entry_id)
+            if entry is not None:
+                appended.append(entry)
+        return appended
+
+    async def _create_boundary_preview_manager(self, drafts: list[dict[str, Any]]) -> SessionManager:
+        header = self.session_manager.get_header()
+        if header is None:
+            raise Exception("Session header is missing")
+        manager = SessionManager.in_memory(
+            self._cwd, None, [dict(header), *(dict(entry) for entry in self.session_manager.get_branch())]
+        )
+        await self._apply_boundary_drafts(manager, drafts)
+        return manager
+
+    async def _get_pending_boundary_messages(self) -> list[Any]:
+        return [*(await self.agent.peek_queued_messages()), *self._pending_custom_messages]
+
+    async def _build_boundary_context(self, drafts: list[dict[str, Any]], boundary: str) -> BoundaryContextPreview:
+        projection = (await self._create_boundary_preview_manager(drafts)).build_session_projection()
+        pending_messages = await self._get_pending_boundary_messages()
+        llm_messages = convert_to_llm(projection.messages)
+        final_role = getattr(llm_messages[-1], "role", None) if llm_messages else None
+        has_non_system_context = any(getattr(message, "role", None) != "system" for message in llm_messages)
+        context_can_continue = has_non_system_context and final_role != "assistant"
+        pending_custom_context = len(self._pending_custom_messages) > 0
+        has_queued = await self.agent.has_queued_messages()
+        return BoundaryContextPreview(
+            context_entries=projection.entries,
+            context_messages=projection.messages,
+            llm_messages=llm_messages,
+            pending_messages=pending_messages,
+            can_continue=(
+                context_can_continue
+                or pending_custom_context
+                or (has_queued if boundary == "turn_end" else final_role == "assistant" and has_queued)
+            ),
+        )
+
+    async def _commit_boundary_drafts(self, drafts: list[dict[str, Any]]) -> None:
+        appended = await self._apply_boundary_drafts(self.session_manager, drafts)
+        self._refresh_finalized_context()
+        for entry in appended:
+            self._emit(EntryAppendedEvent(entry=entry))
+
+    def _report_invalid_boundary_continuation(self, event: str) -> None:
+        self._extension_runner.emit_error(
+            ExtensionError(
+                extension_path="<boundary>",
+                event=event,
+                error=f"{event} requested continuation without runnable model context",
+            )
+        )
 
     def _emit(self, event: Any) -> None:
         for listener in list(self._event_listeners):
@@ -756,11 +993,23 @@ class AgentSession:
         # bash flush (see `_run_agent_prompt`).
         if self._cache_warmer is not None:
             self._cache_warmer.on_agent_settled()
+        self._is_emitting_agent_settled = True
         try:
             await self._extension_runner.emit({"type": "agent_settled"})
             self._emit(AgentSettledEvent())
         finally:
-            self._resolve_idle_wait_if_idle()
+            self._is_emitting_agent_settled = False
+
+        # Runs started from settled handlers were deferred until settlement finished.
+        deferred, self._deferred_settled_actions = self._deferred_settled_actions, []
+        if deferred:
+            try:
+                for action in deferred:
+                    await action()
+            finally:
+                self._resolve_idle_wait_if_idle()
+            return
+        self._resolve_idle_wait_if_idle()
 
     async def _handle_agent_event(self, event: AgentEvent, _cancel=None) -> None:
         """Internal handler for agent events - shared by subscribe and reconnect."""
@@ -792,9 +1041,10 @@ class AgentSession:
         if event.type == "message_end":
             message = event.message
             role = getattr(message, "role", None)
+            entry_id: str | None = None
             if role == "custom":
                 # Persist as CustomMessageEntry
-                await self.session_manager.append_custom_message_entry(
+                entry_id = await self.session_manager.append_custom_message_entry(
                     message.custom_type,
                     message.content,
                     message.display,
@@ -802,7 +1052,9 @@ class AgentSession:
                 )
             elif role in ("system", "user", "assistant", "toolResult"):
                 # Regular LLM message - persist as SessionMessageEntry
-                await self.session_manager.append_message(message)
+                entry_id = await self.session_manager.append_message(message)
+            if entry_id:
+                self._entry_ids_by_message[id(message)] = (message, entry_id)
             # Other message types (bashExecution, compactionSummary, branchSummary)
             # are persisted elsewhere.
 
@@ -825,6 +1077,7 @@ class AgentSession:
         # extension and listener dispatch above also picks up messages that turn_end
         # handlers queued.
         if event.type == "turn_end":
+            self._last_assistant_tool_results = [self._current_message(result) for result in event.tool_results]
             await self._flush_pending_custom_messages()
 
     def _will_retry_after_agent_end(self, event: AgentEndEvent) -> bool:
@@ -838,6 +1091,45 @@ class AgentSession:
             if getattr(message, "role", None) == "assistant":
                 return self._is_retryable_error(message)
         return False
+
+    def _find_persisted_message_entry_id(self, message: Any) -> str | None:
+        mapped = self._entry_ids_by_message.get(id(message))
+        if mapped is not None and mapped[0] is message:
+            return mapped[1]
+        for entry in reversed(self.session_manager.get_branch()):
+            if entry.get("type") == "message" and entry.get("message") is message:
+                return entry["id"]
+
+        messages = self.agent.state.messages
+        message_index = next((index for index, candidate in enumerate(messages) if candidate is message), -1)
+        if message_index < 0:
+            return None
+        projected_index = 0
+        for entry in self.session_manager.build_session_projection().entries:
+            for _ in entry.messages:
+                if projected_index == message_index:
+                    return entry.source_entry["id"]
+                projected_index += 1
+        return None
+
+    async def _omit_recovery_attempt(self, message: AssistantMessage, tool_results: list[Any] | None = None) -> None:
+        targets = [message, *(tool_results or [])]
+        target_ids = [self._find_persisted_message_entry_id(target) for target in targets]
+        messages = self.agent.state.messages
+        unresolved_projected_target = any(
+            target_ids[index] is None and any(candidate is target for candidate in messages)
+            for index, target in enumerate(targets)
+        )
+        if unresolved_projected_target:
+            raise Exception("Cannot persist recovery omission because a projected message has no source entry")
+        for target_id in target_ids:
+            if not target_id:
+                continue
+            edit_id = await self.session_manager.append_context_edit(target_id, None)
+            entry = self.session_manager.get_entry(edit_id)
+            if entry is not None:
+                self._emit(EntryAppendedEvent(entry=entry))
+        self._refresh_finalized_context()
 
     def _find_last_assistant_message(self) -> AssistantMessage | None:
         """Find the last assistant message in agent state (including aborted ones)."""
@@ -857,14 +1149,13 @@ class AgentSession:
         elif event.type == "turn_start":
             await runner.emit({"type": "turn_start", "turnIndex": self._turn_index, "timestamp": _now_ms()})
         elif event.type == "turn_end":
-            await runner.emit(
-                {
-                    "type": "turn_end",
-                    "turnIndex": self._turn_index,
-                    "message": event.message,
-                    "toolResults": event.tool_results,
-                }
-            )
+            # finish_turn already dispatched the boundary for turns the loop finished;
+            # this covers turn_end events that did not pass through it.
+            if (
+                getattr(event.message, "role", None) == "assistant"
+                and self._boundary_dispatched_messages.pop(id(event.message), None) is not event.message
+            ):
+                await self._dispatch_turn_end_boundary(event.message, event.tool_results)
             self._turn_index += 1
         elif event.type == "message_start":
             await runner.emit({"type": "message_start", "message": event.message})
@@ -931,9 +1222,16 @@ class AgentSession:
         messages = self.agent.state.messages
         for index in range(len(messages) - 1, -1, -1):
             if messages[index] is target:
-                messages[index] = replacement
+                # State epochs: messages is a rebind-only tuple.
+                self.agent.state.messages = (*messages[:index], replacement, *messages[index + 1 :])
                 break
+        self._message_replacements[id(target)] = (target, replacement)
         event.message = replacement
+
+    def _current_message(self, message: Any) -> Any:
+        """Resolve a loop-held message to its message_end replacement, if any."""
+        replaced = self._message_replacements.get(id(message))
+        return replaced[1] if replaced is not None and replaced[0] is message else message
 
     def subscribe(self, listener: AgentSessionEventListener) -> Callable[[], None]:
         """Subscribe to agent session events. Session persistence is handled
@@ -975,6 +1273,10 @@ class AgentSession:
     # =========================================================================
     # Read-only State Access
     # =========================================================================
+
+    def refresh_context(self) -> None:
+        """Refresh the public finalized transcript from the canonical session projection."""
+        self._refresh_finalized_context()
 
     @property
     def state(self) -> Any:
@@ -1219,7 +1521,14 @@ class AgentSession:
             self._is_agent_run_active = True
         try:
             await self.agent.prompt(messages)
-            while await self._handle_post_agent_run():
+            while not self._agent_run_abort_requested:
+                if await self._handle_post_agent_run():
+                    if self._agent_run_abort_requested:
+                        break
+                    await self.agent.continue_()
+                    continue
+                if self._agent_run_abort_requested or not await self._run_before_settle_boundary():
+                    break
                 if self._agent_run_abort_requested:
                     break
                 await self.agent.continue_()
@@ -1227,6 +1536,10 @@ class AgentSession:
             if self._agent_run_abort_requested:
                 self._finish_cancelled_retry()
             self._run_system_prompt_options = None
+            # Post-run recovery was the last reader of the run-scoped identity tables.
+            self._entry_ids_by_message = {}
+            self._boundary_dispatched_messages = {}
+            self._message_replacements = {}
             # The flag flips before the flush, under the guard that
             # `record_bash_result` takes for its pending-vs-direct decision:
             # a bash result recorded in the settle window then persists
@@ -1241,15 +1554,17 @@ class AgentSession:
             await self._emit_agent_settled()
 
     async def _handle_post_agent_run(self) -> bool:
-        msg = self._last_assistant_message
+        message = self._last_assistant_message
+        tool_results = self._last_assistant_tool_results
         self._last_assistant_message = None
+        self._last_assistant_tool_results = []
         if self._agent_run_abort_requested:
             self._finish_cancelled_retry()
             return False
-        if msg is None:
-            return False
+        if message is None:
+            return await self.agent.has_queued_messages()
 
-        if self._is_retryable_error(msg) and await self._prepare_retry(msg):
+        if self._is_retryable_error(message) and await self._prepare_retry(message):
             if self._agent_run_abort_requested:
                 self._finish_cancelled_retry()
             return not self._agent_run_abort_requested
@@ -1257,16 +1572,71 @@ class AgentSession:
             self._finish_cancelled_retry()
             return False
 
-        if msg.stop_reason == "error" and self._retry_attempt > 0:
-            self._emit(AutoRetryEndEvent(success=False, attempt=self._retry_attempt, final_error=msg.error_message))
+        if message.stop_reason == "error" and self._retry_attempt > 0:
+            self._emit(AutoRetryEndEvent(success=False, attempt=self._retry_attempt, final_error=message.error_message))
             self._retry_attempt = 0
 
-        if await self._check_compaction(msg):
+        if await self._check_compaction(message, True, tool_results):
             return not self._agent_run_abort_requested
 
-        # The agent loop drains both queues before emitting agent_end. Any messages
-        # here were queued by agent_end extension handlers and need a continuation.
+        # The low-level loop drains both queues before agent_end. Messages queued by
+        # agent_end handlers require a fresh run before pre-settlement handlers fire.
         return not self._agent_run_abort_requested and await self.agent.has_queued_messages()
+
+    async def _run_before_settle_boundary(self) -> bool:
+        if not self._extension_runner.has_handlers("agent_before_settle"):
+            return await self.agent.has_queued_messages()
+        self._is_before_settle = True
+        self._abort_during_before_settle = False
+        try:
+
+            async def build_context(entries: list[dict[str, Any]]) -> BoundaryContextPreview:
+                return await self._build_boundary_context(entries, "agent_before_settle")
+
+            result = await self._extension_runner.emit_boundary(
+                {"type": "agent_before_settle", "outcome": self._last_activity_outcome}, build_context
+            )
+            await self._commit_boundary_drafts(result.entries)
+            await self._flush_pending_custom_messages()
+            final_context = await self._build_boundary_context([], "agent_before_settle")
+            if self._abort_during_before_settle:
+                return False
+            should_continue = result.continue_ or await self.agent.has_queued_messages()
+            if should_continue and not final_context.can_continue:
+                if result.continue_:
+                    self._report_invalid_boundary_continuation("agent_before_settle")
+                return False
+            return should_continue
+        finally:
+            self._is_before_settle = False
+
+    def _model_image_resize_options(self) -> ModelImageResizeOptions | None:
+        limits = self.model.input_limits if self.model is not None else None
+        return limits.images.resize if limits is not None and limits.images is not None else None
+
+    async def _normalize_prompt_images(self, images: list[ImageContent] | None) -> tuple[list[ImageContent], list[str]]:
+        if not images:
+            return [], []
+
+        normalized_images: list[ImageContent] = []
+        hints: list[str] = []
+        auto_resize_images = self.settings_manager.get_image_auto_resize()
+        resize_options = self._model_image_resize_options()
+        for image in images:
+            # Pillow work is CPU-bound, so it stays off the runtime.
+            processed = await tonio.spawn_blocking(
+                process_image,
+                base64.b64decode(image.data),
+                image.mime_type,
+                auto_resize_images=auto_resize_images,
+                resize_options=resize_options,
+            )
+            if not processed.ok:
+                hints.append(processed.message)
+                continue
+            normalized_images.append(ImageContent(data=processed.data, mime_type=processed.mime_type))
+            hints.extend(processed.hints or [])
+        return normalized_images, hints
 
     async def _run_input_handlers(
         self,
@@ -1294,6 +1664,14 @@ class AgentSession:
         - During streaming, queues via steer()/follow_up() based on streaming_behavior
         - Validates model and API key before sending (when not streaming)
         """
+        if self._is_emitting_agent_settled:
+            deferred_options = options
+
+            async def deferred_prompt() -> None:
+                await self.prompt(text, deferred_options)
+
+            self._deferred_settled_actions.append(deferred_prompt)
+            return
         options = options if options is not None else PromptOptions()
         expand_prompt_templates = options.expand_prompt_templates
         preflight_result = options.preflight_result
@@ -1375,19 +1753,8 @@ class AgentSession:
             if last_assistant is not None:
                 await self._check_compaction(last_assistant, False)
 
-            # Build messages array (user message, then pending nextTurn messages)
-            messages = []
-
-            user_content: list[TextContent | ImageContent] = [TextContent(text=expanded_text)]
-            if current_images:
-                user_content.extend(current_images)
-            messages.append(UserMessage(content=user_content, timestamp=_now_ms()))
-
-            # Inject any pending "nextTurn" messages as context alongside the user message
-            messages.extend(self._pending_next_turn_messages)
-            self._pending_next_turn_messages = []
-
-            # Emit before_agent_start extension event
+            # Emit before_agent_start before normalizing images so extension-driven model
+            # selection determines the resize profile used for the request and history.
             selected_tools_before = list(self._base_system_prompt_options.selected_tools or [])
             result = await self._extension_runner.emit_before_agent_start(
                 expanded_text,
@@ -1400,6 +1767,20 @@ class AgentSession:
             # loadout is authoritative, so a set_active_tools() call is not undone here.
             if system_prompt_options.selected_tools == selected_tools_before:
                 system_prompt_options.selected_tools = self.get_active_tool_names()
+
+            normalized_images, image_hints = await self._normalize_prompt_images(current_images)
+            user_text = f"{expanded_text}\n\n{chr(10).join(image_hints)}" if image_hints else expanded_text
+
+            # Build messages only after hooks and image normalization have completed.
+            messages = []
+            user_content: list[TextContent | ImageContent] = [TextContent(text=user_text)]
+            user_content.extend(normalized_images)
+            messages.append(UserMessage(content=user_content, timestamp=_now_ms()))
+
+            # Inject any pending "nextTurn" messages as context alongside the user message
+            messages.extend(self._pending_next_turn_messages)
+            self._pending_next_turn_messages = []
+
             for msg in result["messages"]:
                 content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
                 messages.append(
@@ -1557,6 +1938,18 @@ class AgentSession:
         - Not streaming + trigger_turn: appends to state/session, starts new turn
         - Not streaming + no trigger: appends to state/session, no turn
         """
+        remainder = self._dispatch_custom_message(message, options)
+        if remainder is not None:
+            await remainder()
+
+    def _dispatch_custom_message(
+        self,
+        message: CustomMessage | dict[str, Any],
+        options: dict[str, Any] | None,
+    ) -> Callable[[], Awaitable[None]] | None:
+        """pi's sendCustomMessage queues or defers in its synchronous prefix, so
+        extension actions observe the delivery decision before they return. Returns
+        the async remainder (starting a run or appending to the session), if any."""
         options = options or {}
         if isinstance(message, dict):
             custom_type = message.get("customType", message.get("custom_type"))
@@ -1587,7 +1980,14 @@ class AgentSession:
             else:
                 self.agent.steer(app_message)
         elif trigger_turn:
-            await self._run_agent_prompt(app_message)
+
+            async def run() -> None:
+                await self._run_agent_prompt(app_message)
+
+            if self._is_emitting_agent_settled:
+                self._deferred_settled_actions.append(run)
+                return None
+            return run
         elif self.is_streaming:
             # Appending now would put the message between an assistant tool call and its
             # result, which providers that validate message order reject on replay. Defer
@@ -1595,16 +1995,17 @@ class AgentSession:
             # describe messages the session tree does not contain.
             self._pending_custom_messages.append(app_message)
         else:
-            await self._append_custom_message(app_message)
+            return lambda: self._append_custom_message(app_message)
+        return None
 
     async def _append_custom_message(self, app_message: CustomMessage) -> None:
-        self.agent.state.messages.append(app_message)
         await self.session_manager.append_custom_message_entry(
             app_message.custom_type,
             app_message.content,
             app_message.display,
             app_message.details,
         )
+        self._refresh_finalized_context()
         self._emit(AgentMessageStartEvent(message=app_message))
         self._emit(AgentMessageEndEvent(message=app_message))
 
@@ -1693,6 +2094,8 @@ class AgentSession:
         self.abort_retry()
         self.abort_compaction()
         self.abort_branch_summary()
+        if self._is_before_settle:
+            self._abort_during_before_settle = True
         self.agent.abort()
 
     async def abort(self) -> None:
@@ -2039,9 +2442,8 @@ class AgentSession:
                 summary, first_kept_entry_id, tokens_before, details, from_extension, usage
             )
             new_entries = self.session_manager.get_entries()
-            session_context = self.session_manager.build_session_context()
-            self.agent.state.messages = session_context.messages
-            estimated_tokens_after = _estimate_messages_tokens(session_context.messages)
+            self._refresh_finalized_context()
+            estimated_tokens_after = _estimate_messages_tokens(self.session_manager.build_session_projection().messages)
 
             # Get the saved compaction entry for the extension event
             saved_compaction_entry = next(
@@ -2113,7 +2515,12 @@ class AgentSession:
         if self._branch_summary_cancel is not None:
             self._branch_summary_cancel.cancel()
 
-    async def _check_compaction(self, assistant_message: AssistantMessage, skip_aborted_check: bool = True) -> bool:
+    async def _check_compaction(
+        self,
+        assistant_message: AssistantMessage,
+        skip_aborted_check: bool = True,
+        tool_results: list[Any] | None = None,
+    ) -> bool:
         """Dispatch automatic compaction after `agent_end` or before prompt submission.
         Manual compaction does not call this method; it enters through `compact()`.
 
@@ -2166,9 +2573,43 @@ class AgentSession:
         # Automatic cases 1 and 2: context overflow. A length stop is recoverable when
         # output ended below the model's original desired limit, independent of the
         # configured context size or any context-clamped provider request limit.
-        context_overflow = same_model and is_context_overflow(assistant_message, context_window)
-        recoverable_length = same_model and is_recoverable_length(
-            assistant_message, (self.model.max_tokens if self.model is not None else 0) or 0
+        current_projection = self.session_manager.build_session_projection()
+        assistant_entry_id = self._find_persisted_message_entry_id(assistant_message)
+        assistant_is_projected = assistant_entry_id is None or any(
+            entry.source_entry["id"] == assistant_entry_id
+            and any(getattr(message, "role", None) == "assistant" for message in entry.messages)
+            for entry in current_projection.entries
+        )
+        branch = self.session_manager.get_branch()
+        assistant_index = (
+            next((i for i, entry in enumerate(branch) if entry["id"] == assistant_entry_id), -1)
+            if assistant_entry_id
+            else -1
+        )
+        entries_after_assistant = branch[assistant_index + 1 :] if assistant_index >= 0 else []
+        has_post_assistant_context_edit = any(entry.get("type") == "context_edit" for entry in entries_after_assistant)
+        latest_assistant_edit = next(
+            (
+                entry
+                for entry in reversed(entries_after_assistant)
+                if entry.get("type") == "context_edit" and entry.get("targetId") == assistant_entry_id
+            ),
+            None,
+        )
+        assistant_retained_for_explicit_recovery = assistant_entry_id is None or (
+            not any(entry.get("type") == "compaction" for entry in entries_after_assistant)
+            and (latest_assistant_edit is None or latest_assistant_edit.get("replacement") is not None)
+        )
+        assistant_usage_matches_projection = assistant_is_projected and not has_post_assistant_context_edit
+        explicit_overflow = assistant_message.stop_reason == "error" and is_context_overflow(assistant_message)
+        context_overflow = same_model and (
+            (explicit_overflow and assistant_retained_for_explicit_recovery)
+            or (assistant_usage_matches_projection and is_context_overflow(assistant_message, context_window))
+        )
+        recoverable_length = (
+            same_model
+            and assistant_is_projected
+            and is_recoverable_length(assistant_message, (self.model.max_tokens if self.model is not None else 0) or 0)
         )
         if context_overflow or recoverable_length:
             will_retry = assistant_message.stop_reason != "stop"
@@ -2206,22 +2647,22 @@ class AgentSession:
                 )
                 return False
 
-            # Case 1: remove the failed or truncated message from agent state, compact,
-            # and retry once. The message remains in session history but is excluded
-            # from the retry context.
+            # Persistently omit the selected final attempt before post-run recovery compaction.
             self._overflow_recovery_attempted = True
-            messages = self.agent.state.messages
-            if messages and getattr(messages[-1], "role", None) == "assistant":
-                self.agent.state.messages = messages[:-1]
+            await self._omit_recovery_attempt(assistant_message, tool_results)
             return await self._run_auto_compaction("overflow", will_retry)
 
         # Case 3: threshold compaction without retry. For error messages or all-zero
         # usage messages, estimate from the last valid response so sessions hitting
         # persistent API errors can still compact and do not reset context accounting.
+        projection = current_projection
+        has_context_edits = any(entry.source_entry.get("type") == "context_edit" for entry in projection.entries)
         direct_context_tokens = (
             calculate_context_tokens(assistant_message.usage) if assistant_message.usage is not None else 0
         )
-        if assistant_message.stop_reason == "error" or direct_context_tokens == 0:
+        if has_context_edits:
+            context_tokens = estimate_projected_context_tokens(projection, branch).tokens
+        elif assistant_message.stop_reason == "error" or direct_context_tokens == 0:
             messages = self.agent.state.messages
             estimate = estimate_context_tokens(messages)
             # Without provider usage, estimate.tokens is the pure message-size estimate.
@@ -2332,9 +2773,8 @@ class AgentSession:
                 summary, first_kept_entry_id, tokens_before, details, from_extension, usage
             )
             new_entries = self.session_manager.get_entries()
-            session_context = self.session_manager.build_session_context()
-            self.agent.state.messages = session_context.messages
-            estimated_tokens_after = _estimate_messages_tokens(session_context.messages)
+            self._refresh_finalized_context()
+            estimated_tokens_after = _estimate_messages_tokens(self.session_manager.build_session_projection().messages)
 
             saved_compaction_entry = next(
                 (e for e in new_entries if e.get("type") == "compaction" and e.get("summary") == summary), None
@@ -2362,20 +2802,6 @@ class AgentSession:
             self._emit(CompactionEndEvent(reason=reason, result=result, aborted=False, will_retry=will_retry))
 
             if will_retry:
-                messages = self.agent.state.messages
-                last_msg = messages[-1] if messages else None
-                # The overflow response was persisted on message_end before
-                # _check_compaction() removed it from agent state. Rebuilding state
-                # from the new compaction can restore that kept entry, leaving an
-                # assistant as the final message. agent.continue_() rejects that
-                # state, so remove the retriable error or truncated-length response
-                # again before continuing the interrupted turn.
-                if (
-                    last_msg is not None
-                    and getattr(last_msg, "role", None) == "assistant"
-                    and last_msg.stop_reason in ("error", "length")
-                ):
-                    self.agent.state.messages = messages[:-1]
                 return True
 
             # Auto-compaction can complete while follow-up/steering/custom messages
@@ -2548,13 +2974,23 @@ class AgentSession:
             return [*extension_commands, *templates, *skills]
 
         def send_message_action(message: Any, options: Any = None) -> None:
+            # lazy: import cycle within core
+            from .extensions.types import ExtensionError
+
+            # Queueing and settled deferral happen before returning, as in pi's synchronous
+            # prefix; a spawned dispatch would race the loop's next queue poll.
+            try:
+                remainder = self._dispatch_custom_message(message, options)
+            except Exception as err:
+                runner.emit_error(ExtensionError(extension_path="<runtime>", event="send_message", error=str(err)))
+                return
+            if remainder is None:
+                return
+
             async def run() -> None:
                 try:
-                    await self.send_custom_message(message, options)
+                    await remainder()
                 except Exception as err:
-                    # lazy: import cycle within core
-                    from .extensions.types import ExtensionError
-
                     runner.emit_error(ExtensionError(extension_path="<runtime>", event="send_message", error=str(err)))
 
             tonio.spawn.without_tracking(run())
@@ -2571,6 +3007,10 @@ class AgentSession:
                         ExtensionError(extension_path="<runtime>", event="send_user_message", error=str(err))
                     )
 
+            # A user message always triggers a turn; pi defers it synchronously during agent_settled.
+            if self._is_emitting_agent_settled:
+                self._deferred_settled_actions.append(run)
+                return
             tonio.spawn.without_tracking(run())
 
         async def append_entry_action(custom_type: str, data: Any = None) -> None:
@@ -2903,10 +3343,8 @@ class AgentSession:
             )
         )
 
-        # Remove error message from agent state (keep in session for history)
-        messages = self.agent.state.messages
-        if messages and getattr(messages[-1], "role", None) == "assistant":
-            self.agent.state.messages = messages[:-1]
+        # Keep the failed attempt in raw history while durably omitting it from model projection.
+        await self._omit_recovery_attempt(message)
 
         # Wait with exponential backoff (abortable)
         self._retry_cancel = CancelToken()
@@ -3000,10 +3438,8 @@ class AgentSession:
             if self._is_agent_run_active:
                 self._pending_bash_messages.append(bash_message)
                 return
-        # Add to agent state immediately
-        self.agent.state.messages.append(bash_message)
-        # Save to session
         await self.session_manager.append_message(bash_message)
+        self._refresh_finalized_context()
 
     def abort_bash(self) -> None:
         """Cancel running bash commands."""
@@ -3029,8 +3465,8 @@ class AgentSession:
             if not pending:
                 return
             for bash_message in pending:
-                self.agent.state.messages.append(bash_message)
                 await self.session_manager.append_message(bash_message)
+            self._refresh_finalized_context()
 
     # =========================================================================
     # Session Management
@@ -3200,9 +3636,8 @@ class AgentSession:
             if label and not summary_text:
                 await self.session_manager.append_label_change(target_id, label)
 
-            # Update agent state
-            session_context = self.session_manager.build_session_context()
-            self.agent.state.messages = session_context.messages
+            # Update finalized context from the canonical session projection.
+            self._refresh_finalized_context()
             self._restore_tools_from_transcript()
 
             # Emit session_tree event
@@ -3336,29 +3771,29 @@ class AgentSession:
         # After compaction, the last assistant usage reflects pre-compaction context
         # size. We can only trust usage from an assistant that responded after the
         # latest compaction; until then the context token count is unknown.
-        branch_entries = self.session_manager.get_branch()
-        latest_compaction = get_latest_compaction_entry(branch_entries)
+        projection = self.session_manager.build_session_projection()
+        branch = self.session_manager.get_branch()
+        latest_compaction = get_latest_compaction_entry(branch)
 
         if latest_compaction is not None:
-            compaction_index = max(
-                (i for i, entry in enumerate(branch_entries) if entry is latest_compaction), default=-1
+            projected_assistants = {
+                entry.source_entry["id"]
+                for entry in projection.entries
+                if any(
+                    getattr(message, "role", None) == "assistant"
+                    and message.stop_reason not in ("aborted", "error")
+                    and calculate_context_tokens(message.usage) > 0
+                    for message in entry.messages
+                )
+            }
+            compaction_index = next((i for i, entry in enumerate(branch) if entry["id"] == latest_compaction["id"]), -1)
+            has_post_compaction_usage = any(
+                entry["id"] in projected_assistants for entry in branch[compaction_index + 1 :]
             )
-            has_post_compaction_usage = False
-            for i in range(len(branch_entries) - 1, compaction_index, -1):
-                entry = branch_entries[i]
-                if entry.get("type") == "message" and getattr(entry.get("message"), "role", None) == "assistant":
-                    assistant = entry["message"]
-                    if (
-                        assistant.stop_reason not in ("aborted", "error")
-                        and calculate_context_tokens(assistant.usage) > 0
-                    ):
-                        has_post_compaction_usage = True
-                        break
-
             if not has_post_compaction_usage:
                 return ContextUsage(tokens=None, context_window=context_window, percent=None)
 
-        estimate = estimate_context_tokens(self.messages)
+        estimate = estimate_projected_context_tokens(projection, branch)
         percent = (estimate.tokens / context_window) * 100
 
         return ContextUsage(tokens=estimate.tokens, context_window=context_window, percent=percent)

@@ -18,14 +18,17 @@ from pidrei_ai.api.openai_completions import (
     get_compat,
     stream as stream_completions,
 )
+from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AssistantMessage,
     Context,
+    JsonSchemaConstrainedSampling,
     Model,
     ModelCost,
     OpenAICompletionsCompat,
     TextContent,
     ThinkingContent,
+    Tool,
     ToolResultMessage,
     TranscriptContext,
     Usage,
@@ -350,7 +353,8 @@ def test_detect_compat_openai_defaults():
     assert compat.supports_reasoning_effort is True
     assert compat.max_tokens_field == "max_completion_tokens"
     assert compat.thinking_format == "openai"
-    assert compat.supports_strict_mode is True
+    # 0.87.0 (890f9208): OpenAI compatibility alone does not imply strict tool support.
+    assert compat.supports_strict_mode is False
     assert compat.session_affinity_format == "openai"
 
 
@@ -384,6 +388,45 @@ def test_detect_compat_openrouter_anthropic_models():
     other = detect_compat(make_model(provider="openrouter", base_url="https://openrouter.ai/api/v1", id="meta/llama"))
     assert other.supports_developer_role is False
     assert other.cache_control_format is None
+
+
+def _ping_tool_context() -> TranscriptContext:
+    tool = Tool(
+        name="ping",
+        description="Ping tool",
+        parameters={
+            "type": "object",
+            "properties": {"required": {"type": "string"}, "optional": {"type": "string"}},
+            "required": ["required"],
+        },
+        constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
+    )
+    return normalize_context(
+        Context(messages=[UserMessage(content="Call ping", timestamp=int(time.time() * 1000))], tools=[tool])
+    )
+
+
+def test_defaults_unknown_openai_compatible_endpoints_to_non_strict_tools():
+    # Mirror of openai-completions-tool-choice.test.ts; regression test for #9816.
+    model = make_model(provider="local", base_url="http://127.0.0.1:8080/v1", id="local-model", name="Local Model")
+
+    params = build_params(model, _ping_tool_context(), OpenAICompletionsOptions(api_key="test"))
+
+    function_tool = params["tools"][0]["function"]
+    assert "strict" not in function_tool
+    assert function_tool["parameters"]["required"] == ["required"]
+
+
+def test_preserves_strict_tools_for_capable_built_in_chat_completions_models():
+    # Mirror of openai-completions-tool-choice.test.ts.
+    model = get_builtin_model("groq", "openai/gpt-oss-20b")
+    assert model.compat.supports_strict_mode is True
+
+    params = build_params(model, _ping_tool_context(), OpenAICompletionsOptions(api_key="test"))
+
+    function_tool = params["tools"][0]["function"]
+    assert function_tool["strict"] is True
+    assert function_tool["parameters"]["required"] == ["required", "optional"]
 
 
 def test_detect_compat_moonshot_and_together():

@@ -227,7 +227,7 @@ class AgentSessionRuntime:
         )
         if setup is not None:
             await setup(self.session.session_manager)
-            self.session.agent.state.messages = self.session.session_manager.build_session_context().messages
+            self.session.refresh_context()
         await self._finish_session_replacement(with_session)
         return {"cancelled": False}
 

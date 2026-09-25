@@ -629,7 +629,27 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "queue/lifecycle state (PendingMessageQueue, activeRun, "
                 "abort/signal/waitForIdle, 'already processing' admission) "
                 "is owned by the standing _AgentMailbox actor task; "
-                "hasQueuedMessages is awaited in pidrei"
+                "hasQueuedMessages and peekQueuedMessages are awaited in pidrei"
+            ),
+        ),
+        (
+            "state-epochs",
+            (
+                "AgentState.messages is a rebind-only tuple: upstream push/splice "
+                "on state.messages lands as a rebind; _reduce publishes (*old, msg)"
+            ),
+        ),
+    ),
+    # PROPER_MT_DESIGN.md step 5 (state epochs): writes to agent.state.messages
+    # are rebinds; identity WeakMap/WeakSet become a run-scoped strong id() table.
+    "packages/coding-agent/src/core/agent-session.ts": (
+        (
+            "state-epochs",
+            (
+                "agent.state.messages writes land as rebinds; the _entryIdsByMessage/"
+                "_boundaryDispatchedMessages identity maps land in the run-scoped "
+                "id() table (cleared per prompt-loop iteration) with the positional "
+                "projection walk as fallback"
             ),
         ),
     ),
@@ -861,7 +881,10 @@ TEST_HOMES = {
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": "PARITY GAP: model-runtime auth options unmirrored",
     "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": "PARITY GAP: modifyModels compat unmirrored",
-    "packages/coding-agent/test/suite/agent-session-prompt.test.ts": "PARITY GAP: agent-session prompt characterization suite unmirrored",
+    "packages/coding-agent/test/suite/agent-session-prompt.test.ts": (
+        "partial mirror: test_agent_session_prompt.py holds the 0.87.0 image-normalization case; the rest of "
+        "the prompt characterization suite is a PARITY GAP"
+    ),
     "packages/coding-agent/test/suite/regressions/5303-bash-output-truncation.test.ts": "PARITY GAP: bash output truncation regression unmirrored",
     "packages/coding-agent/test/suite/regressions/6999-models-json-hot-reload.test.ts": "PARITY GAP: models.json hot-reload regression unmirrored",
     "packages/coding-agent/test/http-dispatcher.test.ts": "PARITY GAP: core/http_config.py ported, dispatcher tests unmirrored",

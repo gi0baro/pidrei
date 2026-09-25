@@ -100,6 +100,26 @@ class TestReload:
 
         assert any(prompt.name == "test-prompt" for prompt in loader.get_prompts().prompts)
 
+    # Regression test for #9354.
+    @pytest.mark.tonio
+    async def test_reports_invalid_prompt_frontmatter_while_loading_valid_siblings(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        invalid_prompt_path = agent_dir / "prompts" / "invalid.md"
+        write(invalid_prompt_path, "---\ndescription: Broken: unquoted colon\n---\nDo something.\n")
+        write(agent_dir / "prompts" / "valid.md", "Valid prompt content.")
+
+        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        with fake_home(home):
+            await loader.reload()
+
+        result = loader.get_prompts()
+        assert [prompt.name for prompt in result.prompts] == ["valid"]
+        assert len(result.diagnostics) == 1
+        diagnostic = result.diagnostics[0]
+        assert (diagnostic.type, diagnostic.path) == ("warning", str(invalid_prompt_path))
+        # PyYAML's wording differs from js-yaml's (pi asserts "line 1, column 14").
+        assert "line 1, column" in diagnostic.message
+
     @pytest.mark.tonio
     async def test_prefers_project_resources_over_user_on_name_collisions(self, dirs):
         _tmp, agent_dir, cwd, home = dirs

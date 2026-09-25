@@ -286,7 +286,7 @@ def test_completions_omits_strict_field_on_tools_for_cerebras(model_id):
     params = build_completions_params(model, context, OpenAICompletionsOptions(api_key="fake-key", session_id="test"))
 
     assert model.compat is not None
-    assert model.compat.supports_strict_mode is False
+    assert model.compat.supports_strict_mode is None
     assert params["tools"]
     for tool in params["tools"]:
         assert "strict" not in tool["function"]

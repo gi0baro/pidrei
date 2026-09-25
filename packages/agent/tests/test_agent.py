@@ -1,5 +1,6 @@
 """Mirror of pi agent/test/agent.test.ts."""
 
+import dataclasses
 import os
 import tempfile
 import time
@@ -16,7 +17,7 @@ from pidrei_agent.agent import (
     _AgentMailbox,
 )
 from pidrei_agent.stream_fn import set_default_stream_fn
-from pidrei_agent.types import AgentTool, AgentToolResult
+from pidrei_agent.types import AgentTool, AgentToolResult, AgentTurnDecision
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AssistantMessage,
@@ -30,6 +31,7 @@ from pidrei_ai.types import (
     Tool,
     ToolCall,
     ToolReference,
+    ToolResultMessage,
     Usage,
     UserMessage,
 )
@@ -158,7 +160,7 @@ async def test_should_create_an_agent_instance_with_default_state():
     assert agent.state.model is not None
     assert agent.state.thinking_level == "off"
     assert agent.state.tools == []
-    assert agent.state.messages == []
+    assert agent.state.messages == ()
     assert agent.state.is_streaming is False
     assert agent.state.streaming_message is None
     assert agent.state.pending_tool_calls == set()
@@ -178,7 +180,7 @@ async def test_should_create_an_agent_instance_with_custom_initial_state():
         ),
     )
 
-    assert agent.state.messages == [SystemMessage(content="You are a helpful assistant.", timestamp=0)]
+    assert agent.state.messages == (SystemMessage(content="You are a helpful assistant.", timestamp=0),)
     assert agent.state.model is model
     assert agent.state.thinking_level == "low"
 
@@ -707,16 +709,17 @@ async def test_should_update_state_with_mutators():
 
     messages = [UserMessage(content="Hello", timestamp=int(time.time() * 1000))]
     agent.state.messages = messages
-    assert agent.state.messages == messages
+    assert agent.state.messages == tuple(messages)
     assert agent.state.messages is not messages  # Should be a copy.
 
     new_message = create_assistant_message("Hi")
-    agent.state.messages.append(new_message)
+    # pi pushes onto the live array; messages are rebind-only here (state-epochs recipe).
+    agent.state.messages = [*agent.state.messages, new_message]
     assert len(agent.state.messages) == 2
     assert agent.state.messages[1] is new_message
 
     agent.state.messages = []
-    assert agent.state.messages == []
+    assert agent.state.messages == ()
 
 
 @pytest.mark.tonio
@@ -839,30 +842,44 @@ async def test_continue_should_process_queued_follow_up_messages_after_an_assist
     assert agent.state.messages[-1].role == "assistant"
 
 
+def create_user_message(text: str) -> UserMessage:
+    return UserMessage(content=text, timestamp=int(time.time() * 1000))
+
+
+def recording_stream_fn(requests: list[list[str]]):
+    """Records each request's plain-string user contents, then answers "done"."""
+
+    async def stream_fn(_model, context, _options):
+        requests.append(
+            [
+                message.content
+                for message in context.messages
+                if message.role == "user" and isinstance(message.content, str)
+            ]
+        )
+        return done_stream(create_assistant_message("done"))
+
+    return stream_fn
+
+
 @pytest.mark.tonio
-async def test_continue_should_keep_one_at_a_time_steering_semantics_from_assistant_tail():
-    response_count = 0
-
-    async def stream_fn(_model, _context, _options):
-        nonlocal response_count
-        response_count += 1
-        return done_stream(create_assistant_message(f"Processed {response_count}"))
-
-    agent = Agent(stream_fn=stream_fn)
-
-    agent.state.messages = [
-        UserMessage(content=[TextContent(text="Initial")], timestamp=int(time.time() * 1000) - 10),
-        create_assistant_message("Initial response"),
-    ]
-
-    agent.steer(UserMessage(content=[TextContent(text="Steering 1")], timestamp=int(time.time() * 1000)))
-    agent.steer(UserMessage(content=[TextContent(text="Steering 2")], timestamp=int(time.time() * 1000) + 1))
+@pytest.mark.parametrize(("mode", "expected_requests"), [("one-at-a-time", 2), ("all", 1)])
+async def test_continue_keeps_steering_semantics_for_assistant_tail_fallback(mode, expected_requests):
+    requests: list[list[str]] = []
+    agent = Agent(steering_mode=mode, stream_fn=recording_stream_fn(requests))
+    agent.state.messages = [create_user_message("Initial"), create_assistant_message("Initial response")]
+    agent.steer(create_user_message("Steering 1"))
+    agent.steer(create_user_message("Steering 2"))
 
     await agent.continue_()
 
-    recent_messages = agent.state.messages[-4:]
-    assert [getattr(m, "role", None) for m in recent_messages] == ["user", "assistant", "user", "assistant"]
-    assert response_count == 2
+    assert len(requests) == expected_requests
+    assert "Steering 1" in requests[0]
+    if mode == "one-at-a-time":
+        assert "Steering 2" not in requests[0]
+        assert "Steering 2" in requests[1]
+    else:
+        assert "Steering 2" in requests[0]
 
 
 @pytest.mark.tonio
@@ -900,7 +917,7 @@ async def test_keeps_legacy_prepare_next_turn_signal_callback_behavior():
 
 
 @pytest.mark.tonio
-async def test_forwards_should_stop_after_turn_through_agent_options():
+async def test_forwards_finish_turn_through_agent_options_with_the_active_cancel_token():
     async def execute(_tool_call_id, _params, _cancel, _on_update):
         return AgentToolResult(content=[TextContent(text="tool complete")], details={})
 
@@ -909,11 +926,11 @@ async def test_forwards_should_stop_after_turn_through_agent_options():
     saw_cancel_token = False
     callback_context_roles: list[str] = []
 
-    async def should_stop_after_turn(context, signal):
+    async def finish_turn(context, signal):
         nonlocal saw_cancel_token, callback_context_roles
         saw_cancel_token = isinstance(signal, CancelToken)
         callback_context_roles = [getattr(m, "role", None) for m in context.context.messages]
-        return True
+        return AgentTurnDecision("end")
 
     async def stream_fn(_model, _context, _options):
         nonlocal request_count
@@ -926,7 +943,7 @@ async def test_forwards_should_stop_after_turn_through_agent_options():
 
     agent = Agent(
         initial_state=AgentInitialState(tools=[tool]),
-        should_stop_after_turn=should_stop_after_turn,
+        finish_turn=finish_turn,
         stream_fn=stream_fn,
     )
 
@@ -935,6 +952,167 @@ async def test_forwards_should_stop_after_turn_through_agent_options():
     assert request_count == 1
     assert saw_cancel_token is True
     assert callback_context_roles == ["system", "user", "assistant", "toolResult"]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "messages", [[], [SystemMessage(content="system only", timestamp=1)]], ids=["empty", "system-only"]
+)
+async def test_rejects_a_queued_continuation_without_draining_queues(messages):
+    agent = Agent(initial_state=AgentInitialState(messages=messages), stream_fn=unused_stream_fn)
+    steering = create_user_message("steering")
+    follow_up = create_user_message("follow-up")
+    agent.steer(steering)
+    agent.follow_up(follow_up)
+
+    with pytest.raises(Exception, match="No messages to continue from"):
+        await agent.continue_()
+    assert await agent.peek_queued_messages() == [steering]
+    agent.clear_steering_queue()
+    assert await agent.peek_queued_messages() == [follow_up]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "messages",
+    [
+        [create_user_message("existing user")],
+        [
+            create_user_message("existing user"),
+            create_assistant_tool_use_message([ToolCall(id="call-1", name="noop", arguments={})]),
+            ToolResultMessage(
+                tool_call_id="call-1",
+                tool_name="noop",
+                content=[TextContent(text="done")],
+                is_error=False,
+                timestamp=1,
+            ),
+        ],
+    ],
+    ids=["user", "toolResult"],
+)
+async def test_defers_follow_up_input_on_the_first_continuation_request_from_a_non_assistant_tail(messages):
+    requests: list[list[str]] = []
+    agent = Agent(initial_state=AgentInitialState(messages=messages), stream_fn=recording_stream_fn(requests))
+    agent.follow_up(create_user_message("follow-up"))
+
+    await agent.continue_()
+
+    assert len(requests) == 2
+    assert "follow-up" not in requests[0]
+    assert "follow-up" in requests[1]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(("mode", "expected_requests"), [("one-at-a-time", 2), ("all", 1)])
+async def test_polls_steering_at_continuation_startup(mode, expected_requests):
+    requests: list[list[str]] = []
+    agent = Agent(
+        initial_state=AgentInitialState(messages=[create_user_message("existing")]),
+        steering_mode=mode,
+        stream_fn=recording_stream_fn(requests),
+    )
+    agent.steer(create_user_message("first"))
+    agent.steer(create_user_message("second"))
+
+    await agent.continue_()
+
+    assert len(requests) == expected_requests
+    assert "first" in requests[0]
+    if mode == "one-at-a-time":
+        assert "second" not in requests[0]
+        assert "second" in requests[1]
+    else:
+        assert "second" in requests[0]
+
+
+@pytest.mark.tonio
+async def test_keeps_steering_ahead_of_follow_up_from_a_non_assistant_continuation_tail():
+    requests: list[list[str]] = []
+    agent = Agent(
+        initial_state=AgentInitialState(messages=[create_user_message("existing")]),
+        stream_fn=recording_stream_fn(requests),
+    )
+    agent.steer(create_user_message("steering"))
+    agent.follow_up(create_user_message("follow-up"))
+
+    await agent.continue_()
+
+    assert len(requests) == 2
+    assert "steering" in requests[0]
+    assert "follow-up" not in requests[0]
+    assert "follow-up" in requests[1]
+
+
+def _steer_after_assistant(agent: Agent, message: UserMessage) -> None:
+    async def listener(event, _cancel):
+        if event.type == "message_end" and event.message.role == "assistant":
+            agent.steer(message)
+
+    agent.subscribe(listener)
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("stop_reason", ["error", "aborted"])
+async def test_keeps_queues_on_a_failed_response_even_when_finish_turn_requests_continuation(stop_reason):
+    queued_during_response = create_user_message("steering")
+    follow_up = create_user_message("follow-up")
+
+    async def finish_turn(_turn, _cancel):
+        return AgentTurnDecision("continue")
+
+    async def stream_fn(_model, _context, _options):
+        stream = AssistantMessageEventStream()
+        failed = dataclasses.replace(
+            create_assistant_message(stop_reason), stop_reason=stop_reason, error_message=stop_reason
+        )
+        stream.push(ErrorEvent(reason=stop_reason, error=failed))
+        return stream
+
+    agent = Agent(finish_turn=finish_turn, stream_fn=stream_fn)
+    agent.follow_up(follow_up)
+    _steer_after_assistant(agent, queued_during_response)
+
+    await agent.prompt("start")
+
+    assert await agent.peek_queued_messages() == [queued_during_response]
+    agent.clear_steering_queue()
+    assert await agent.peek_queued_messages() == [follow_up]
+
+
+@pytest.mark.tonio
+async def test_keeps_queues_when_finish_turn_ends_the_run():
+    queued_during_response = create_user_message("steering")
+    follow_up = create_user_message("follow-up")
+
+    async def finish_turn(_turn, _cancel):
+        return AgentTurnDecision("end")
+
+    agent = Agent(finish_turn=finish_turn, stream_fn=const_stream_fn("done"))
+    agent.follow_up(follow_up)
+    _steer_after_assistant(agent, queued_during_response)
+
+    await agent.prompt("start")
+
+    assert await agent.peek_queued_messages() == [queued_during_response]
+    agent.clear_steering_queue()
+    assert await agent.peek_queued_messages() == [follow_up]
+
+
+@pytest.mark.tonio
+async def test_previews_the_next_selected_queued_messages_without_consuming_them():
+    agent = Agent(steering_mode="one-at-a-time", follow_up_mode="all", stream_fn=unused_stream_fn)
+    first = create_user_message("first steering")
+    second = create_user_message("second steering")
+    follow_up = create_user_message("follow-up")
+    agent.steer(first)
+    agent.steer(second)
+    agent.follow_up(follow_up)
+
+    assert await agent.peek_queued_messages() == [first]
+    assert await agent.peek_queued_messages() == [first]
+    agent.clear_steering_queue()
+    assert await agent.peek_queued_messages() == [follow_up]
 
 
 @pytest.mark.tonio

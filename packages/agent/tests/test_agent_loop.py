@@ -1,25 +1,28 @@
 """Mirror of pi agent/test/agent-loop.test.ts."""
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 import tonio.colored as tonio
 
-from pidrei_agent.agent_loop import agent_loop, agent_loop_continue
+from pidrei_agent.agent_loop import agent_loop, agent_loop_continue, run_agent_loop
 from pidrei_agent.stream_fn import set_default_stream_fn
 from pidrei_agent.types import (
     AfterToolCallResult,
     AgentContext,
     AgentLoopConfig,
     AgentLoopTurnUpdate,
+    AgentRequestUpdate,
     AgentTool,
     AgentToolResult,
+    AgentTurnDecision,
     BeforeToolCallResult,
 )
 from pidrei_ai.types import (
     AssistantMessage,
     DoneEvent,
+    ErrorEvent,
     Model,
     ModelCost,
     SystemMessage,
@@ -840,8 +843,393 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
     assert converted_second_turn_has_update is True
 
 
+def _noop_tool() -> FnTool:
+    async def execute(_tool_call_id, _params):
+        return AgentToolResult(content=[TextContent(text="done")], details=None)
+
+    return FnTool("noop", "Noop", "Noop tool", {"type": "object", "properties": {}}, execute)
+
+
+def _noop_call_then_text(provider_calls: int) -> AssistantMessageEventStream:
+    if provider_calls == 1:
+        return done_stream(
+            create_assistant_message([ToolCall(id="tool-1", name="noop", arguments={})], "toolUse"), "toolUse"
+        )
+    return done_stream(create_assistant_message([TextContent(text="done")]))
+
+
 @pytest.mark.tonio
-async def test_should_stop_after_the_current_turn_when_should_stop_after_turn_returns_true():
+async def test_runs_finish_turn_after_tool_result_messages_and_before_turn_end():
+    async def execute(_tool_call_id, params):
+        return AgentToolResult(
+            content=[TextContent(text=params["value"])], details={"value": params["value"]}, terminate=True
+        )
+
+    tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
+    ordering: list[str] = []
+
+    async def finish_turn(turn, _cancel):
+        ordering.append("finishTurn")
+        assert len(turn.tool_results) == 1
+        assert turn.context.messages[-1].role == "toolResult"
+
+    async def emit(event):
+        if event.type == "message_end":
+            ordering.append(f"message_end:{event.message.role}")
+        if event.type == "turn_end":
+            ordering.append("turn_end")
+
+    async def stream_fn(_model, _context, _options):
+        return done_stream(
+            create_assistant_message([ToolCall(id="tool-1", name="echo", arguments={"value": "hello"})], "toolUse"),
+            "toolUse",
+        )
+
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, finish_turn=finish_turn)
+    await run_agent_loop(
+        [create_user_message("echo")], AgentContext(messages=[], tools=[tool]), config, emit, None, stream_fn
+    )
+
+    assert ordering[-3:] == ["message_end:toolResult", "finishTurn", "turn_end"]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("reason", ["error", "aborted"])
+async def test_runs_finish_turn_for_a_failed_assistant_before_turn_end_without_changing_the_hard_exit(reason):
+    ordering: list[str] = []
+    provider_calls = 0
+    steering_polls = 0
+    follow_up_polls = 0
+
+    async def finish_turn(turn, _cancel):
+        assert turn.message.stop_reason == reason
+        ordering.append("finishTurn")
+        return AgentTurnDecision("continue")
+
+    async def get_steering_messages():
+        nonlocal steering_polls
+        steering_polls += 1
+        return []
+
+    async def get_follow_up_messages():
+        nonlocal follow_up_polls
+        follow_up_polls += 1
+        return [create_user_message("queued")]
+
+    async def emit(event):
+        if event.type == "turn_end":
+            ordering.append("turn_end")
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal provider_calls
+        provider_calls += 1
+        stream = AssistantMessageEventStream()
+        failed = replace(create_assistant_message([], reason), error_message=reason)
+        stream.push(ErrorEvent(reason=reason, error=failed))
+        return stream
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        finish_turn=finish_turn,
+        get_steering_messages=get_steering_messages,
+        get_follow_up_messages=get_follow_up_messages,
+    )
+    await run_agent_loop(
+        [create_user_message("run")], AgentContext(messages=[], tools=[]), config, emit, None, stream_fn
+    )
+
+    assert ordering == ["finishTurn", "turn_end"]
+    assert provider_calls == 1
+    assert steering_polls == 1
+    assert follow_up_polls == 0
+
+
+@pytest.mark.tonio
+async def test_action_end_skips_queue_polling_and_next_turn_preparation():
+    provider_calls = 0
+    steering_polls = 0
+    follow_up_polls = 0
+    prepare_next_turn_calls = 0
+
+    async def finish_turn(_turn, _cancel):
+        return AgentTurnDecision("end")
+
+    async def prepare_next_turn(_context):
+        nonlocal prepare_next_turn_calls
+        prepare_next_turn_calls += 1
+
+    async def get_steering_messages():
+        nonlocal steering_polls
+        steering_polls += 1
+        return []
+
+    async def get_follow_up_messages():
+        nonlocal follow_up_polls
+        follow_up_polls += 1
+        return [create_user_message("queued")]
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal provider_calls
+        provider_calls += 1
+        return done_stream(
+            create_assistant_message([ToolCall(id="tool-1", name="noop", arguments={})], "toolUse"), "toolUse"
+        )
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        finish_turn=finish_turn,
+        prepare_next_turn=prepare_next_turn,
+        get_steering_messages=get_steering_messages,
+        get_follow_up_messages=get_follow_up_messages,
+    )
+    stream = agent_loop(
+        [create_user_message("run")], AgentContext(messages=[], tools=[_noop_tool()]), config, None, stream_fn
+    )
+    await stream.result()
+
+    assert provider_calls == 1
+    assert steering_polls == 1
+    assert follow_up_polls == 0
+    assert prepare_next_turn_calls == 0
+
+
+@pytest.mark.tonio
+async def test_makes_exactly_one_context_only_request_when_no_natural_request_satisfies_continuation():
+    provider_calls = 0
+    finish_calls = 0
+
+    async def finish_turn(_turn, _cancel):
+        nonlocal finish_calls
+        finish_calls += 1
+        return AgentTurnDecision("continue") if finish_calls == 1 else None
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal provider_calls
+        provider_calls += 1
+        return done_stream(create_assistant_message([TextContent(text=f"response {provider_calls}")]))
+
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, finish_turn=finish_turn)
+    stream = agent_loop([create_user_message("run")], AgentContext(messages=[], tools=[]), config, None, stream_fn)
+    await stream.result()
+
+    assert provider_calls == 2
+    assert finish_calls == 2
+
+
+@pytest.mark.tonio
+async def test_lets_a_natural_tool_result_request_satisfy_continuation():
+    provider_calls = 0
+    finish_calls = 0
+
+    async def finish_turn(_turn, _cancel):
+        nonlocal finish_calls
+        finish_calls += 1
+        return AgentTurnDecision("continue") if finish_calls == 1 else None
+
+    async def stream_fn(_model, _context, _options):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _noop_call_then_text(provider_calls)
+
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, finish_turn=finish_turn)
+    stream = agent_loop(
+        [create_user_message("run")], AgentContext(messages=[], tools=[_noop_tool()]), config, None, stream_fn
+    )
+    await stream.result()
+
+    assert provider_calls == 2
+    assert finish_calls == 2
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("queue_kind", ["steering", "follow-up"])
+async def test_lets_a_natural_queued_request_satisfy_continuation(queue_kind):
+    queued_message = create_user_message(queue_kind)
+    provider_calls = 0
+    finish_calls = 0
+    steering_polls = 0
+    follow_up_delivered = False
+    second_request_users: list[str] = []
+
+    async def finish_turn(_turn, _cancel):
+        nonlocal finish_calls
+        finish_calls += 1
+        return AgentTurnDecision("continue") if finish_calls == 1 else None
+
+    async def get_steering_messages():
+        nonlocal steering_polls
+        steering_polls += 1
+        return [queued_message] if queue_kind == "steering" and steering_polls == 2 else []
+
+    async def get_follow_up_messages():
+        nonlocal follow_up_delivered
+        if queue_kind != "follow-up" or follow_up_delivered:
+            return []
+        follow_up_delivered = True
+        return [queued_message]
+
+    async def stream_fn(_model, context, _options):
+        nonlocal provider_calls
+        provider_calls += 1
+        if provider_calls == 2:
+            second_request_users.extend(
+                message.content
+                for message in context.messages
+                if message.role == "user" and isinstance(message.content, str)
+            )
+        return done_stream(create_assistant_message([TextContent(text="done")]))
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        finish_turn=finish_turn,
+        get_steering_messages=get_steering_messages,
+        get_follow_up_messages=get_follow_up_messages,
+    )
+    stream = agent_loop([create_user_message("run")], AgentContext(messages=[], tools=[]), config, None, stream_fn)
+    await stream.result()
+
+    assert provider_calls == 2
+    assert finish_calls == 2
+    assert queue_kind in second_request_users
+
+
+@pytest.mark.tonio
+async def test_prepares_the_initial_request_after_pending_messages_and_can_replace_request_state():
+    replacement_model = replace(create_model(), id="replacement", name="replacement")
+    canonical_message = create_user_message("canonical projection")
+    steering_message = create_user_message("steering")
+    completed_messages: list = []
+    steering_delivered = False
+    prepare_calls = 0
+
+    async def get_steering_messages():
+        nonlocal steering_delivered
+        if steering_delivered:
+            return []
+        steering_delivered = True
+        return [steering_message]
+
+    async def prepare_request(request, _cancel):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        assert any(message is steering_message for message in completed_messages)
+        assert any(message is steering_message for message in request.context.messages)
+        return AgentRequestUpdate(
+            context=replace(request.context, messages=[canonical_message]),
+            model=replacement_model,
+            thinking_level="high",
+        )
+
+    async def emit(event):
+        if event.type == "message_end":
+            completed_messages.append(event.message)
+
+    seen: list[tuple] = []
+
+    async def stream_fn(model, context, options):
+        seen.append((model, list(context.messages), options.reasoning))
+        return done_stream(create_assistant_message([TextContent(text="done")]))
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        get_steering_messages=get_steering_messages,
+        prepare_request=prepare_request,
+    )
+    await run_agent_loop(
+        [create_user_message("prompt")], AgentContext(messages=[], tools=[]), config, emit, None, stream_fn
+    )
+
+    assert prepare_calls == 1
+    # Assertions inside a stream fn would be swallowed into an error message, so check afterwards.
+    [(model, messages, reasoning)] = seen
+    assert model is replacement_model
+    assert messages == [canonical_message]
+    assert reasoning == "high"
+
+
+@pytest.mark.tonio
+async def test_does_not_poll_steering_after_prepare_request():
+    queued: list = []
+    late_steering = create_user_message("late steering")
+    request_included_steering: list[bool] = []
+    request_preparations = 0
+    steering_polls = 0
+
+    async def get_steering_messages():
+        nonlocal steering_polls
+        steering_polls += 1
+        drained = list(queued)
+        queued.clear()
+        return drained
+
+    async def prepare_request(_request, _cancel):
+        nonlocal request_preparations
+        request_preparations += 1
+        if request_preparations == 1:
+            queued.append(late_steering)
+
+    async def stream_fn(_model, context, _options):
+        request_included_steering.append(any(message is late_steering for message in context.messages))
+        return done_stream(create_assistant_message([TextContent(text="done")]))
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        get_steering_messages=get_steering_messages,
+        prepare_request=prepare_request,
+    )
+    stream = agent_loop([create_user_message("run")], AgentContext(messages=[], tools=[]), config, None, stream_fn)
+    await stream.result()
+
+    assert request_included_steering == [False, True]
+    assert request_preparations == 2
+    # Startup, post-turn delivery, then the final natural-stop check.
+    assert steering_polls == 3
+
+
+@pytest.mark.tonio
+async def test_picks_up_steering_queued_during_prepare_next_turn_before_the_next_request():
+    queued: list = []
+    late_steering = create_user_message("late steering")
+    provider_calls = 0
+    second_request_included_steering = False
+
+    async def prepare_next_turn(_context):
+        queued.append(late_steering)
+
+    async def get_steering_messages():
+        drained = list(queued)
+        queued.clear()
+        return drained
+
+    async def stream_fn(_model, context, _options):
+        nonlocal provider_calls, second_request_included_steering
+        provider_calls += 1
+        if provider_calls == 2:
+            second_request_included_steering = any(message is late_steering for message in context.messages)
+        return _noop_call_then_text(provider_calls)
+
+    config = AgentLoopConfig(
+        model=create_model(),
+        convert_to_llm=identity_converter,
+        prepare_next_turn=prepare_next_turn,
+        get_steering_messages=get_steering_messages,
+    )
+    stream = agent_loop(
+        [create_user_message("run")], AgentContext(messages=[], tools=[_noop_tool()]), config, None, stream_fn
+    )
+    await stream.result()
+
+    assert provider_calls == 2
+    assert second_request_included_steering is True
+
+
+@pytest.mark.tonio
+async def test_action_end_receives_finalized_turn_context_and_stops_before_queue_polling():
     executed = []
 
     async def execute(_tool_call_id, params):
@@ -868,19 +1256,19 @@ async def test_should_stop_after_the_current_turn_when_should_stop_after_turn_re
         follow_up_polls += 1
         return [create_user_message("follow up should stay queued")]
 
-    async def should_stop_after_turn(ctx):
+    async def finish_turn(ctx, _cancel):
         nonlocal callback_tool_result_ids, callback_context_roles
         assert ctx.message.role == "assistant"
         callback_tool_result_ids = [tool_result.tool_call_id for tool_result in ctx.tool_results]
         callback_context_roles = [getattr(m, "role", None) for m in ctx.context.messages]
-        return True
+        return AgentTurnDecision("end")
 
     config = AgentLoopConfig(
         model=create_model(),
         convert_to_llm=identity_converter,
+        finish_turn=finish_turn,
         get_steering_messages=get_steering_messages,
         get_follow_up_messages=get_follow_up_messages,
-        should_stop_after_turn=should_stop_after_turn,
     )
 
     llm_calls = 0

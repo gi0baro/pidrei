@@ -19,7 +19,7 @@ from pidrei_ai.providers.all import (
 )
 from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.registry import create_models, get_supported_thinking_levels
-from pidrei_ai.types import ModelCost
+from pidrei_ai.types import ModelCost, ModelImageInputLimits, ModelImageResizeOptions, ModelInputLimits
 
 
 def test_find_env_keys_uses_provider_env_overrides():
@@ -109,6 +109,44 @@ def test_stores_native_constrained_sampling_capabilities_in_model_metadata():
     assert gpt54.compat.supports_openai_grammar_tools is True
 
     assert get_builtin_model("anthropic", "claude-haiku-4-5").compat.supports_strict_tools is True
+
+
+DEFAULT_IMAGE_RESIZE = ModelImageResizeOptions(
+    max_width=2000, max_height=2000, max_bytes=int(4.5 * 1024 * 1024), jpeg_quality=80
+)
+
+
+def test_keeps_the_conservative_resize_profile_on_every_vision_model():
+    vision_models = [
+        model
+        for provider in get_builtin_providers()
+        for model in get_builtin_models(provider)
+        if "image" in model.input
+    ]
+    assert vision_models
+    for model in vision_models:
+        assert model.input_limits is not None and model.input_limits.images is not None, model.id
+        assert model.input_limits.images.resize == DEFAULT_IMAGE_RESIZE, model.id
+
+
+def test_records_known_direct_provider_image_request_limits():
+    haiku = get_builtin_model("anthropic", "claude-haiku-4-5").input_limits
+    assert haiku.max_request_bytes == 32 * 1024 * 1024
+    assert haiku.images.max_per_request == 100
+    assert get_builtin_model("anthropic", "claude-opus-5").input_limits.images.max_per_request == 600
+    bedrock = get_builtin_model("amazon-bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0").input_limits
+    assert bedrock.images.max_per_message == 20
+    gpt4o = get_builtin_model("openai", "gpt-4o").input_limits
+    assert gpt4o.max_request_bytes == 512 * 1024 * 1024
+    assert gpt4o.images.max_per_request == 1500
+    gemini = get_builtin_model("google", "gemini-2.5-flash").input_limits
+    assert gemini.max_request_bytes == 20 * 1024 * 1024
+    assert gemini.images.max_per_request == 3600
+
+
+def test_does_not_infer_image_limits_from_gateway_api_compatibility():
+    open_router_model = next(model for model in get_builtin_models("openrouter") if "image" in model.input)
+    assert open_router_model.input_limits == ModelInputLimits(images=ModelImageInputLimits(resize=DEFAULT_IMAGE_RESIZE))
 
 
 def test_uses_models_dev_effort_levels_for_google_thinking_models():

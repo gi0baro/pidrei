@@ -54,6 +54,7 @@ from .types import (
     MessageStartEvent,
     MessageUpdateEvent,
     PrepareNextTurnContext,
+    PrepareRequestContext,
     StreamFn,
     ToolExecutionEndEvent,
     ToolExecutionStartEvent,
@@ -202,6 +203,7 @@ async def _run_loop(
     current_context = initial_context
     config = initial_config
     last_completed_turn: PrepareNextTurnContext | None = None
+    explicit_continuation = False
     # Check for steering messages at start (user may have typed while waiting).
     pending_messages: list[AgentMessage] = []
     if config.get_steering_messages is not None:
@@ -249,11 +251,42 @@ async def _run_loop(
                 new_messages.append(message)
             pending_messages = []
 
+            if config.prepare_request is not None:
+                request_update = await config.prepare_request(
+                    PrepareRequestContext(
+                        context=current_context,
+                        model=config.model,
+                        thinking_level=config.reasoning if config.reasoning is not None else "off",
+                    ),
+                    cancel,
+                )
+                if request_update:
+                    current_context = request_update.context if request_update.context is not None else current_context
+                    config = replace(
+                        config,
+                        model=request_update.model if request_update.model is not None else config.model,
+                        reasoning=(
+                            config.reasoning
+                            if request_update.thinking_level is None
+                            else None
+                            if request_update.thinking_level == "off"
+                            else request_update.thinking_level
+                        ),
+                    )
+
             # Stream assistant response.
             message = await _stream_assistant_response(current_context, config, cancel, emit, stream_function)
             new_messages.append(message)
 
             if message.stop_reason in ("error", "aborted"):
+                last_completed_turn = PrepareNextTurnContext(
+                    message=message,
+                    tool_results=[],
+                    context=current_context,
+                    new_messages=new_messages,
+                )
+                if config.finish_turn is not None:
+                    await config.finish_turn(last_completed_turn, cancel)
                 await emit(TurnEndEvent(message=message, tool_results=[]))
                 await emit(AgentEndEvent(messages=new_messages))
                 return
@@ -279,22 +312,25 @@ async def _run_loop(
                     current_context.messages.append(result)
                     new_messages.append(result)
 
-            await emit(TurnEndEvent(message=message, tool_results=tool_results))
-
             last_completed_turn = PrepareNextTurnContext(
                 message=message,
                 tool_results=tool_results,
                 context=current_context,
                 new_messages=new_messages,
             )
+            decision = await config.finish_turn(last_completed_turn, cancel) if config.finish_turn is not None else None
+            await emit(TurnEndEvent(message=message, tool_results=tool_results))
 
-            if await maybe_call(config.should_stop_after_turn, last_completed_turn):
+            if decision is not None and decision.action == "end":
                 await emit(AgentEndEvent(messages=new_messages))
                 return
 
+            explicit_continuation = decision is not None and decision.action == "continue"
             pending_messages = []
             if config.get_steering_messages is not None:
                 pending_messages = (await config.get_steering_messages()) or []
+            if has_more_tool_calls or pending_messages:
+                explicit_continuation = False
 
         # Agent would stop here. Check for follow-up messages.
         follow_up_messages = []
@@ -302,7 +338,13 @@ async def _run_loop(
             follow_up_messages = (await config.get_follow_up_messages()) or []
         if follow_up_messages:
             # Set as pending so the inner loop processes them.
+            explicit_continuation = False
             pending_messages = follow_up_messages
+            continue
+
+        # No natural request was selected, so fulfill the continuation decision with one context-only turn.
+        if explicit_continuation:
+            explicit_continuation = False
             continue
 
         # No more messages, exit.

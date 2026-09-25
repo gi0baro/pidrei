@@ -11,6 +11,8 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageOps
 
+from pidrei_ai.types import ModelImageResizeOptions
+
 
 # 4.5MB of base64 payload. Provides headroom below Anthropic's 5MB limit.
 DEFAULT_RESIZE_MAX_BYTES = int(4.5 * 1024 * 1024)
@@ -18,10 +20,25 @@ DEFAULT_RESIZE_MAX_BYTES = int(4.5 * 1024 * 1024)
 
 @dataclass(slots=True, kw_only=True)
 class ImageResizeOptions:
+    """pi's `Required<ImageResizeOptions>`: a model profile resolved over the defaults."""
+
     max_width: int = 2000
     max_height: int = 2000
     max_bytes: int = DEFAULT_RESIZE_MAX_BYTES
     jpeg_quality: int = 80
+
+
+def _resolve_resize_options(options: ModelImageResizeOptions | None) -> ImageResizeOptions:
+    """`{ ...DEFAULT_OPTIONS, ...options }`: unset profile fields keep the defaults."""
+    defaults = ImageResizeOptions()
+    if options is None:
+        return defaults
+    return ImageResizeOptions(
+        max_width=options.max_width if options.max_width is not None else defaults.max_width,
+        max_height=options.max_height if options.max_height is not None else defaults.max_height,
+        max_bytes=options.max_bytes if options.max_bytes is not None else defaults.max_bytes,
+        jpeg_quality=options.jpeg_quality if options.jpeg_quality is not None else defaults.jpeg_quality,
+    )
 
 
 @dataclass(slots=True)
@@ -107,11 +124,11 @@ def _encode(image: Image.Image, format: str, quality: int | None = None) -> tupl
 def resize_image(
     input_bytes: bytes,
     mime_type: str,
-    options: ImageResizeOptions | None = None,
+    options: ModelImageResizeOptions | None = None,
 ) -> ResizedImage | None:
     """Resize an image to fit max dimensions and encoded size; None when it
     cannot fit below max_bytes."""
-    opts = options if options is not None else ImageResizeOptions()
+    opts = _resolve_resize_options(options)
     input_base64_size = ((len(input_bytes) + 2) // 3) * 4
 
     try:
@@ -207,7 +224,7 @@ def process_image(
     mime_type: str,
     *,
     auto_resize_images: bool = True,
-    resize_options: ImageResizeOptions | None = None,
+    resize_options: ModelImageResizeOptions | None = None,
 ) -> ProcessImageResult:
     normalized_mime = _normalize_supported_image_mime_type(mime_type)
     converted_from: str | None = None

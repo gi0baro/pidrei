@@ -20,6 +20,7 @@ from pidrei.core.provider_composer import AuthStatus, ExtensionOAuthConfig
 from pidrei_ai.auth.types import ApiKeyCredential
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.registry import get_supported_thinking_levels
+from pidrei_ai.types import ModelImageInputLimits, ModelImageResizeOptions, ModelInputLimits
 from tests.model_runtime_helpers import create_model_registry
 
 
@@ -773,9 +774,61 @@ class TestModelOverrides:
         assert registry.get_error() is None
         assert next(m for m in openrouter if m.id == "custom/cached-model").prompt_cache == {"short": 120}
         assert next(m for m in openrouter if m.id == "anthropic/claude-sonnet-4").prompt_cache == {"short": 300}
-        assert next(m for m in openrouter if m.id == "anthropic/claude-opus-4").prompt_cache is None
+        assert next(m for m in openrouter if m.id == "anthropic/claude-opus-4.1").prompt_cache is None
         # Overrides merge per tier with the built-in catalog.
         assert registry.find("anthropic", "claude-sonnet-4-6").prompt_cache == {"short": 300, "long": 1800}
+
+    # Regression test for https://github.com/earendil-works/pi/issues/9631
+    @pytest.mark.tonio
+    async def test_model_override_deep_merges_image_resize_limits(self, registry_env):
+        _tmp, models_json_path, auth_storage = registry_env
+        write_models_json(
+            models_json_path,
+            {
+                "test": {
+                    "baseUrl": "https://example.com",
+                    "apiKey": "test-key",
+                    "api": "openai-completions",
+                    "models": [
+                        {
+                            "id": "vision-model",
+                            "input": ["text", "image"],
+                            "inputLimits": {
+                                "maxRequestBytes": 32 * 1024 * 1024,
+                                "images": {
+                                    "maxPerRequest": 100,
+                                    "resize": {
+                                        "maxWidth": 2000,
+                                        "maxHeight": 2000,
+                                        "maxBytes": int(4.5 * 1024 * 1024),
+                                        "jpegQuality": 80,
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                    "modelOverrides": {
+                        "vision-model": {
+                            "inputLimits": {
+                                "images": {"resize": {"maxWidth": 1568, "maxBytes": 524288, "jpegQuality": 75}}
+                            }
+                        }
+                    },
+                }
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        model = registry.find("test", "vision-model")
+
+        assert registry.get_error() is None
+        assert model.input_limits == ModelInputLimits(
+            max_request_bytes=32 * 1024 * 1024,
+            images=ModelImageInputLimits(
+                max_per_request=100,
+                resize=ModelImageResizeOptions(max_width=1568, max_height=2000, max_bytes=524288, jpeg_quality=75),
+            ),
+        )
 
     @pytest.mark.tonio
     async def test_model_override_with_compat_open_router_routing(self, registry_env):

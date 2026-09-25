@@ -36,6 +36,7 @@ from pidrei_ai.types import (
     Message,
     Model,
     ModelCost,
+    ModelInputLimits,
     ProviderResponse,
     SimpleStreamOptions,
     StartEvent,
@@ -92,6 +93,7 @@ class FauxModelDefinition:
     name: str | None = None
     reasoning: bool | None = None
     input: list | None = None
+    input_limits: ModelInputLimits | None = None
     cost: ModelCost | None = None
     context_window: int | None = None
     max_tokens: int | None = None
@@ -370,6 +372,7 @@ class FauxCore:
                 base_url=DEFAULT_BASE_URL,
                 reasoning=definition.reasoning if definition.reasoning is not None else False,
                 input=list(definition.input) if definition.input is not None else ["text", "image"],
+                input_limits=definition.input_limits,
                 cost=definition.cost if definition.cost is not None else ModelCost(),
                 context_window=definition.context_window if definition.context_window is not None else 128000,
                 max_tokens=definition.max_tokens if definition.max_tokens is not None else 16384,

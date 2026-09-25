@@ -1611,12 +1611,15 @@ class TuiAltScreen(TuiBase):
             return screen
         scrollbar_geometry = get_scrollbar_geometry(box)
         scrollbar_column = scrollbar_geometry["column"] if scrollbar_geometry is not None else None
-        available_width = max(0, (scrollbar_column if scrollbar_column is not None else clip.x + clip.width) - clip.x)
-        text = truncate_to_width(self._scroll_to_end_indicator(), available_width, "")
+        label = truncate_to_width(self._scroll_to_end_indicator(), clip.width, "")
+        label_width = visible_width(label)
+        column = clip.x + (clip.width - label_width) // 2
+        right_edge = scrollbar_column if scrollbar_column is not None else clip.x + clip.width
+        available_width = max(0, right_edge - column)
+        text = truncate_to_width(label, available_width, "")
         text_width = visible_width(text)
         if text_width == 0:
             return screen
-        column = clip.x + (available_width - text_width) // 2
         result = list(screen)
         result[row] = composite_tui_line(result[row], text, column, text_width, width)
         self._scroll_to_end_indicator_rect = {"row": row, "column": column, "width": text_width}

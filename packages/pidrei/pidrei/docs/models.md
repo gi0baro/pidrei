@@ -69,9 +69,34 @@ adapters pidrei implements. Most third-party endpoints are
 | `contextWindow` | Total context in tokens |
 | `maxTokens` | Maximum output tokens |
 | `cost` | `input` / `output` / `cacheRead` / `cacheWrite` per million tokens, and optional `tiers` |
+| `inputLimits` | Request limits and image preprocessing for this model (see below) |
 | `promptCache` | Best-effort prompt cache lifetime in seconds per retention tier (see below) |
 | `headers` | Extra headers for this model only |
 | `compat` | Per-model compatibility switches |
+
+## Image input limits
+
+`inputLimits.images.resize` configures how new images are encoded before they
+enter conversation history:
+
+```jsonc
+{
+  "id": "vision-model",
+  "input": ["text", "image"],
+  "inputLimits": {
+    "images": { "resize": { "maxWidth": 1568, "maxHeight": 1568, "maxBytes": 524288, "jpegQuality": 75 } }
+  }
+}
+```
+
+`maxBytes` is the maximum base64-encoded payload size. Omitted fields keep the
+conservative defaults (2000×2000, 4.5 MiB encoded, JPEG quality 80). The
+selected model's profile applies to `@file` attachments, the `read` tool and
+images returned by tools; images are encoded once, so switching models does
+not rewrite history. `images.autoResize` in settings disables resizing. A
+`modelOverrides` entry deep-merges `inputLimits`. The catalog may also record
+`maxRequestBytes`, `images.maxPerMessage` and `images.maxPerRequest`; those are
+not enforced yet.
 
 ## Prompt cache lifetimes
 

@@ -135,6 +135,27 @@ class TestInitialSelectionWithMetadataEntries:
         # Should focus on user-2 (parent of model-1), not user-3 (last item)
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
+    def test_hides_context_edits_by_default_and_labels_them_in_all_mode(self):
+        entries = [
+            user_message("user-1", None, "hello"),
+            assistant_message("asst-1", "user-1", "hi"),
+            {
+                "type": "context_edit",
+                "id": "edit-1",
+                "parentId": "asst-1",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "targetId": "asst-1",
+                "replacement": None,
+            },
+        ]
+        tree = build_tree(entries)
+        default_selector = _make_selector(tree, "edit-1")
+        assert default_selector.get_tree_list().get_selected_node().entry["id"] == "asst-1"
+
+        all_selector = TreeSelectorComponent(tree, "edit-1", 24, lambda entry_id: None, lambda: None, None, None, "all")
+        rendered = "\n".join(strip_ansi(line) for line in all_selector.get_tree_list().render(200))
+        assert "[context omit: asst-1]" in rendered
+
     def test_focuses_nearest_visible_ancestor_when_current_leaf_id_is_a_thinking_level_change_entry(self):
         # Similar structure with thinking_level_change instead of model_change
         entries = [

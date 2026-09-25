@@ -27,7 +27,7 @@ Runtime mapping notes:
 
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -68,11 +68,12 @@ from .types import (
     AgentTool,
     BeforeToolCallContext,
     BeforeToolCallResult,
+    FinishTurn,
     MessageEndEvent,
     MessageStartEvent,
     PrepareNextTurnContext,
+    PrepareRequest,
     QueueMode,
-    ShouldStopAfterTurnContext,
     StreamFn,
     ThinkingLevel,
     ToolExecutionMode,
@@ -102,10 +103,14 @@ def _default_model() -> Model:
 class AgentState:
     """Public agent state (pi: `AgentState` + `createMutableAgentState`).
 
-    Assigning `tools` or `messages` copies the provided top-level list; reading
-    them returns the internal list (appending to it is visible, as in pi).
-    `system_prompt` and `tools` seed the leading system message unless
-    `messages` already starts with one.
+    Assigning `tools` copies the provided top-level list; reading it returns the
+    internal list (appending to it is visible, as in pi). `messages` is
+    rebind-only (PROPER_MT_DESIGN step 5, state epochs): it publishes a tuple,
+    assignment stores `tuple(next_messages)`, and every writer — the
+    dispatcher's `_reduce` included — rebinds instead of mutating, so a reader
+    that pins one read never sees the value change under it. `system_prompt`
+    and `tools` seed the leading system message unless `messages` already
+    starts with one.
     """
 
     def __init__(
@@ -119,13 +124,13 @@ class AgentState:
         self.model = model if model is not None else _default_model()
         self.thinking_level: ThinkingLevel = thinking_level
         self._tools: list[AgentTool] = list(tools) if tools is not None else []
-        self._messages: list[AgentMessage] = list(messages) if messages is not None else []
+        self._messages: tuple[AgentMessage, ...] = tuple(messages) if messages is not None else ()
         initial_message = create_initial_system_message(
             system_prompt, [to_tool_declaration(tool) for tool in self._tools]
         )
         first_role = getattr(self._messages[0], "role", None) if self._messages else None
         if first_role != "system" and initial_message is not None:
-            self._messages.insert(0, initial_message)
+            self._messages = (initial_message, *self._messages)
         # True while the agent is processing a prompt or continuation. Remains
         # True until awaited `agent_end` listeners settle.
         self.is_streaming = False
@@ -159,16 +164,16 @@ class AgentState:
         self._tools = list(next_tools)
 
     @property
-    def messages(self) -> list[AgentMessage]:
-        """Conversation transcript. Assigning a new list copies the top-level list.
+    def messages(self) -> tuple[AgentMessage, ...]:
+        """Conversation transcript, published as an immutable tuple.
 
         System messages in the transcript carry the prompt and tool declarations.
         """
         return self._messages
 
     @messages.setter
-    def messages(self, next_messages: list[AgentMessage]) -> None:
-        self._messages = list(next_messages)
+    def messages(self, next_messages: Sequence[AgentMessage]) -> None:
+        self._messages = tuple(next_messages)
 
 
 @dataclass(slots=True)
@@ -206,17 +211,15 @@ class _PendingMessages:
     def has_items(self) -> bool:
         return len(self._messages) > 0
 
-    def drain(self) -> list[AgentMessage]:
+    def peek(self) -> list[AgentMessage]:
         if self.mode == "all":
-            drained = list(self._messages)
-            self._messages = []
-            return drained
+            return list(self._messages)
+        return [self._messages[0]] if self._messages else []
 
-        if not self._messages:
-            return []
-        first = self._messages[0]
-        self._messages = self._messages[1:]
-        return [first]
+    def drain(self) -> list[AgentMessage]:
+        drained = self.peek()
+        self._messages = self._messages[len(drained) :]
+        return drained
 
     def clear(self) -> None:
         self._messages = []
@@ -430,8 +433,8 @@ class Agent:
             Awaitable[AfterToolCallResult | None],
         ]
         | None = None,
-        should_stop_after_turn: Callable[[ShouldStopAfterTurnContext, CancelToken | None], Awaitable[bool]]
-        | None = None,
+        finish_turn: FinishTurn | None = None,
+        prepare_request: PrepareRequest | None = None,
         prepare_next_turn: Callable[[CancelToken | None], Awaitable[AgentLoopTurnUpdate | None]] | None = None,
         prepare_next_turn_with_context: Callable[
             [PrepareNextTurnContext, CancelToken | None],
@@ -469,7 +472,8 @@ class Agent:
         self.on_response = on_response
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
-        self.should_stop_after_turn = should_stop_after_turn
+        self.finish_turn = finish_turn
+        self.prepare_request = prepare_request
         self.prepare_next_turn = prepare_next_turn
         self.prepare_next_turn_with_context = prepare_next_turn_with_context
         # Session identifier forwarded to providers for cache-aware backends.
@@ -569,6 +573,19 @@ class Agent:
         """
         mailbox = self._mailbox
         return await mailbox.run(lambda: mailbox.steering.has_items() or mailbox.follow_up.has_items())
+
+    async def peek_queued_messages(self) -> list[AgentMessage]:
+        """Preview the messages selected for the next turn without consuming them.
+
+        Awaited (pi's call is sync) for the same reason as `has_queued_messages`.
+        """
+        mailbox = self._mailbox
+
+        def peek() -> list[AgentMessage]:
+            steering = mailbox.steering.peek()
+            return steering if steering else mailbox.follow_up.peek()
+
+        return await mailbox.run(peek)
 
     @property
     def signal(self) -> CancelToken | None:
@@ -693,13 +710,6 @@ class Agent:
     def _create_loop_config(self, options: _RunOptions | None = None) -> AgentLoopConfig:
         skip_initial_steering_poll = options is not None and options.skip_initial_steering_poll
 
-        should_stop_after_turn = None
-        if self.should_stop_after_turn is not None:
-            configured_should_stop = self.should_stop_after_turn
-
-            async def should_stop_after_turn(context: ShouldStopAfterTurnContext) -> bool:
-                return await configured_should_stop(context, self.signal)
-
         prepare_next_turn = None
         if self.prepare_next_turn_with_context is not None or self.prepare_next_turn is not None:
 
@@ -732,7 +742,8 @@ class Agent:
             tool_execution=self.tool_execution,
             before_tool_call=self.before_tool_call,
             after_tool_call=self.after_tool_call,
-            should_stop_after_turn=should_stop_after_turn,
+            finish_turn=self.finish_turn,
+            prepare_request=self.prepare_request,
             prepare_next_turn=prepare_next_turn,
             convert_to_llm=self.convert_to_llm,
             transform_context=self.transform_context,
@@ -879,7 +890,8 @@ class Agent:
             self._state.streaming_message = event.message
         elif event.type == "message_end":
             self._state.streaming_message = None
-            self._state.messages.append(event.message)
+            # State epochs: publish a new tuple instead of appending in place.
+            self._state.messages = (*self._state.messages, event.message)
         elif event.type == "tool_execution_start":
             # Copy-on-write (pi's `new Set`): readers on other tasks may be
             # iterating the previous set.

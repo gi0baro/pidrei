@@ -308,9 +308,8 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         chat_template_kwargs={},
         chat_template_args={},
         zai_tool_stream=False,
-        supports_strict_mode=(
-            not is_moonshot and not is_together and not is_cloudflare_ai_gateway and not is_nvidia and not is_cerebras
-        ),
+        # OpenAI compatibility alone does not imply strict JSON-schema tool support.
+        supports_strict_mode=False,
         supports_openai_grammar_tools=False,
         supports_thinking_token_budget=False,
         thinking_token_budget_field=None,

@@ -22,6 +22,9 @@ from pidrei_ai.types import (
     ModelCompat,
     ModelCost,
     ModelCostTier,
+    ModelImageInputLimits,
+    ModelImageResizeOptions,
+    ModelInputLimits,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
 )
@@ -115,6 +118,33 @@ def _parse_cost(raw: dict[str, Any]) -> ModelCost:
     )
 
 
+def parse_input_limits(raw: dict[str, Any]) -> ModelInputLimits:
+    """Parse pi's camelCase `inputLimits` object; absent keys stay None."""
+    images = raw.get("images")
+    resize = images.get("resize") if images is not None else None
+    return ModelInputLimits(
+        max_request_bytes=raw.get("maxRequestBytes"),
+        images=(
+            ModelImageInputLimits(
+                resize=(
+                    ModelImageResizeOptions(
+                        max_width=resize.get("maxWidth"),
+                        max_height=resize.get("maxHeight"),
+                        max_bytes=resize.get("maxBytes"),
+                        jpeg_quality=resize.get("jpegQuality"),
+                    )
+                    if resize is not None
+                    else None
+                ),
+                max_per_message=images.get("maxPerMessage"),
+                max_per_request=images.get("maxPerRequest"),
+            )
+            if images is not None
+            else None
+        ),
+    )
+
+
 def _parse_model(raw: dict[str, Any]) -> Model:
     return Model(
         id=raw["id"],
@@ -127,6 +157,7 @@ def _parse_model(raw: dict[str, Any]) -> Model:
         cost=_parse_cost(raw["cost"]),
         context_window=raw["contextWindow"],
         max_tokens=raw["maxTokens"],
+        input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
         prompt_cache=dict(raw["promptCache"]) if "promptCache" in raw else None,
         thinking_level_map=dict(raw["thinkingLevelMap"]) if "thinkingLevelMap" in raw else None,
         headers=dict(raw["headers"]) if "headers" in raw else None,

@@ -376,7 +376,7 @@ class TestLoadPromptTemplatesArgumentHint:
             'argument-hint: "<PR-URL>"\n---\nYou are given one or more GitHub PR URLs: $@',
         )
 
-        templates = await self.load(tmp_path, prompts_dir)
+        templates = (await self.load(tmp_path, prompts_dir)).templates
         pr = next(t for t in templates if t.name == "pr")
         assert pr.argument_hint == "<PR-URL>"
         assert pr.description == "Review PRs from URLs with structured issue and code analysis"
@@ -390,7 +390,7 @@ class TestLoadPromptTemplatesArgumentHint:
             'argument-hint: "[instructions]"\n---\nWrap it. Additional instructions: $ARGUMENTS',
         )
 
-        templates = await self.load(tmp_path, prompts_dir)
+        templates = (await self.load(tmp_path, prompts_dir)).templates
         wr = next(t for t in templates if t.name == "wr")
         assert wr.argument_hint == "[instructions]"
         assert wr.description == "Finish the current task end-to-end with changelog, commit, and push"
@@ -404,7 +404,7 @@ class TestLoadPromptTemplatesArgumentHint:
             "Audit changelog entries for all commits since the last release.",
         )
 
-        templates = await self.load(tmp_path, prompts_dir)
+        templates = (await self.load(tmp_path, prompts_dir)).templates
         cl = next(t for t in templates if t.name == "cl")
         assert cl.argument_hint is None
 
@@ -416,7 +416,7 @@ class TestLoadPromptTemplatesArgumentHint:
             '---\ndescription: A command with empty hint\nargument-hint: ""\n---\nDo something',
         )
 
-        templates = await self.load(tmp_path, prompts_dir)
+        templates = (await self.load(tmp_path, prompts_dir)).templates
         tmpl = next(t for t in templates if t.name == "empty-hint")
         assert tmpl.argument_hint is None
 
@@ -429,6 +429,32 @@ class TestLoadPromptTemplatesArgumentHint:
             'argument-hint: "<issue>"\n---\nAnalyze GitHub issue(s): $ARGUMENTS',
         )
 
-        templates = await self.load(tmp_path, prompts_dir)
+        templates = (await self.load(tmp_path, prompts_dir)).templates
         is_template = next(t for t in templates if t.name == "is")
         assert is_template.argument_hint == "<issue>"
+
+
+class TestLoadPromptTemplatesDiagnostics:
+    # Regression test for #9354.
+    @pytest.mark.tonio
+    async def test_reports_invalid_yaml_frontmatter_and_keeps_valid_siblings(self, tmp_path):
+        test_dir = tmp_path / "prompts"
+        test_dir.mkdir()
+        invalid_prompt_path = test_dir / "invalid.md"
+        invalid_prompt_path.write_text("---\ndescription: Broken: unquoted colon\n---\nDo something.\n")
+        (test_dir / "valid.md").write_text("Valid prompt content.")
+
+        result = await load_prompt_templates(
+            cwd=str(tmp_path / "cwd"),
+            agent_dir=str(tmp_path / "agent"),
+            prompt_paths=[str(test_dir)],
+            include_defaults=False,
+        )
+
+        assert [template.name for template in result.templates] == ["valid"]
+        assert len(result.diagnostics) == 1
+        diagnostic = result.diagnostics[0]
+        assert (diagnostic.type, diagnostic.path) == ("warning", str(invalid_prompt_path))
+        # PyYAML words the error differently from js-yaml (pi asserts
+        # "line 1, column 14"); the location is still reported.
+        assert "line 1, column" in diagnostic.message

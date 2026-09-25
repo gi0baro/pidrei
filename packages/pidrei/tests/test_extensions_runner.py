@@ -29,8 +29,9 @@ from pidrei.core.extensions.loader import (
     load_extensions,
 )
 from pidrei.core.extensions.runner import ExtensionRunner, emit_project_trust_event
+from pidrei.core.extensions.types import BoundaryContextPreview
 from pidrei.core.keybindings import KeybindingsManager
-from pidrei.core.session_manager import SessionManager
+from pidrei.core.session_manager import ProjectedSessionEntry, SessionManager
 from pidrei.core.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from pidrei_ai.types import ModelCostTier
 
@@ -804,6 +805,142 @@ def extension(pi):
     assert errors == []
     assert chained["messages"] == []
     assert re.search(r"base[\s\S]*\nfirst\nsecond$", build_system_prompt(chained["systemPromptOptions"]))
+
+
+# -- boundary chaining -------------------------------------------------------------
+
+BEFORE_SETTLE = {"type": "agent_before_settle", "outcome": "completed"}
+
+
+def _empty_preview(entries=()) -> BoundaryContextPreview:
+    return BoundaryContextPreview(
+        context_entries=list(entries), context_messages=[], llm_messages=[], pending_messages=[], can_continue=False
+    )
+
+
+async def _load_factories(fx, *factories) -> ExtensionRunner:
+    runtime = create_extension_runtime()
+    extensions = [
+        await load_extension_from_factory(factory, fx.root, create_event_bus(), runtime, f"<inline:{index}>")
+        for index, factory in enumerate(factories)
+    ]
+    return await make_runner(fx, extensions, runtime)
+
+
+@pytest.mark.tonio
+async def test_boundary_chains_shared_draft_proposals_and_preserves_omitted_result_fields(fx):
+    observations: list[dict] = []
+
+    def first(pi) -> None:
+        async def handler(event, _ctx):
+            observations.append(
+                {
+                    "entries": len(event["entries"]),
+                    "continuation": event["continue"],
+                    "preview": len(event["context"].context_entries),
+                }
+            )
+            event["entries"].append({"type": "custom", "customType": "first", "data": 1})
+            return {"continue": True}
+
+        pi.on("agent_before_settle", handler)
+
+    def second(pi) -> None:
+        async def handler(event, _ctx):
+            observations.append(
+                {
+                    "entries": len(event["entries"]),
+                    "continuation": event["continue"],
+                    "preview": len(event["context"].context_entries),
+                }
+            )
+            return {"entries": []}
+
+        pi.on("agent_before_settle", handler)
+
+    runner = await _load_factories(fx, first, second)
+
+    async def build_context(entries):
+        return _empty_preview(
+            ProjectedSessionEntry(
+                source_entry={
+                    "type": "custom",
+                    "id": f"draft-{index}",
+                    "parentId": None,
+                    "timestamp": "",
+                    "customType": entry["type"],
+                },
+                messages=[],
+            )
+            for index, entry in enumerate(entries)
+        )
+
+    result = await runner.emit_boundary(BEFORE_SETTLE, build_context)
+
+    assert observations == [
+        {"entries": 0, "continuation": False, "preview": 0},
+        {"entries": 1, "continuation": True, "preview": 1},
+    ]
+    assert result.entries == []
+    assert result.continue_ is True
+
+
+@pytest.mark.tonio
+async def test_boundary_reports_invalid_previews_and_lets_later_handlers_repair_the_proposal(fx):
+    second_ran = False
+
+    def invalid(pi) -> None:
+        async def handler(_event, _ctx):
+            return {"entries": [{"type": "context_edit", "targetId": "missing", "replacement": None}]}
+
+        pi.on("agent_before_settle", handler)
+
+    def repair(pi) -> None:
+        async def handler(event, _ctx):
+            nonlocal second_ran
+            second_ran = True
+            assert len(event["entries"]) == 1
+            return {"entries": []}
+
+        pi.on("agent_before_settle", handler)
+
+    runner = await _load_factories(fx, invalid, repair)
+    errors: list[str] = []
+    runner.on_error(lambda error: errors.append(error.error))
+
+    async def build_context(entries):
+        if any(entry["type"] == "context_edit" for entry in entries):
+            raise Exception("Entry missing not found")
+        return _empty_preview()
+
+    result = await runner.emit_boundary(BEFORE_SETTLE, build_context)
+
+    assert second_ran is True
+    assert "Invalid boundary entries: Entry missing not found" in errors
+    assert result.entries == []
+    assert result.valid is True
+
+
+@pytest.mark.tonio
+async def test_boundary_keeps_shared_mutations_made_before_a_handler_throws(fx):
+    def failing(pi) -> None:
+        async def handler(event, _ctx):
+            event["entries"].append({"type": "custom", "customType": "kept"})
+            raise Exception("boundary failed")
+
+        pi.on("agent_before_settle", handler)
+
+    runner = await _load_factories(fx, failing)
+    errors: list[str] = []
+    runner.on_error(lambda error: errors.append(error.error))
+
+    async def build_context(_entries):
+        return _empty_preview()
+
+    result = await runner.emit_boundary(BEFORE_SETTLE, build_context)
+
+    assert result.entries == [{"type": "custom", "customType": "kept"}]
+    assert errors == ["boundary failed"]
 
 
 # -- tool_result chaining --------------------------------------------------------

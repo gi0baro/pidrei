@@ -234,15 +234,12 @@ async def _run_auth_command(args: list[str]) -> int | None:
         return 2 if command.kind == "check" else 1
 
 
-async def _prepare_initial_message(
-    parsed: Args, auto_resize_images: bool, stdin_content: str | None = None
-) -> InitialMessageResult:
+async def _prepare_initial_message(parsed: Args, stdin_content: str | None = None) -> InitialMessageResult:
     if not parsed.file_args:
         return build_initial_message(parsed=parsed, stdin_content=stdin_content)
 
-    processed = await tonio.spawn_blocking(
-        lambda: process_file_arguments(parsed.file_args, auto_resize_images=auto_resize_images)
-    )
+    # AgentSession resizes these after extension hooks select the request model.
+    processed = await tonio.spawn_blocking(lambda: process_file_arguments(parsed.file_args, auto_resize_images=False))
     return build_initial_message(
         parsed=parsed,
         file_text=processed.text,
@@ -880,7 +877,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
             app_mode = "print"
     time("readPipedStdin")
 
-    initial = await _prepare_initial_message(parsed, settings_manager.get_image_auto_resize(), stdin_content)
+    initial = await _prepare_initial_message(parsed, stdin_content)
     time("prepareInitialMessage")
     # pi reads user-authored themes, so it opts into full validation before any theme loads.
     set_theme_json_validator(validate_theme_json)

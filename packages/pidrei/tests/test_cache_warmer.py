@@ -236,6 +236,43 @@ async def test_replays_profitable_requests_and_preserves_options_across_repeated
 
 
 @pytest.mark.tonio
+async def test_does_not_issue_refreshes_after_their_safe_deadline():
+    with fake_timers() as fake:
+        runtime = FakeRuntime()
+        runtime.warmer.start(request(), current)
+
+        # A five-minute cache is scheduled for 4m30s and retains 15 seconds of
+        # the 30-second expiry margin. Simulate a timer delayed by sleep.
+        fake.now = 285_001
+        run = runtime.warmer._run
+        assert run is not None, "expected an active cache-warming run"
+        await runtime.warmer._refresh(run)
+
+        assert runtime.calls == []
+        status = runtime.warmer.status
+        assert (status.state, status.reason) == ("inactive", "cache refresh deadline missed")
+
+
+@pytest.mark.tonio
+async def test_rechecks_the_deadline_after_an_extension_decision():
+    with fake_timers() as fake:
+
+        def decide(_event):
+            fake.now = 285_001
+            return "warm"
+
+        runtime = FakeRuntime(decide=decide)
+        runtime.warmer.start(request(), current)
+        run = runtime.warmer._run
+        assert run is not None, "expected an active cache-warming run"
+        await runtime.warmer._refresh(run)
+
+        assert runtime.calls == []
+        status = runtime.warmer.status
+        assert (status.state, status.reason) == ("inactive", "cache refresh deadline missed")
+
+
+@pytest.mark.tonio
 async def test_applies_economic_decisions_and_extension_overrides():
     with fake_timers() as fake:
         unprofitable = FakeRuntime(branch=branch_with_prompt(5_000))

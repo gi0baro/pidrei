@@ -3,13 +3,14 @@
 import os
 import re
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import tonio.colored as tonio
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.frontmatter import parse_frontmatter
 from ..utils.paths import resolve_path
+from .diagnostics import ResourceDiagnostic
 from .source_info import SourceInfo, create_synthetic_source_info
 
 
@@ -102,50 +103,65 @@ def substitute_args(content: str, args: list[str]) -> str:
     return _SUBSTITUTION_RE.sub(replacement, content)
 
 
-def _load_template_from_file(file_path: str, source_info: SourceInfo) -> PromptTemplate | None:
+@dataclass(slots=True)
+class LoadPromptTemplatesResult:
+    templates: list[PromptTemplate] = field(default_factory=list)
+    diagnostics: list[ResourceDiagnostic] = field(default_factory=list)
+
+
+def _load_template_from_file(
+    file_path: str, source_info: SourceInfo
+) -> tuple[PromptTemplate | None, list[ResourceDiagnostic]]:
     try:
         with open(file_path, encoding="utf-8") as f:
             raw_content = f.read()
+    except Exception as error:
+        message = str(error) or "failed to read prompt template file"
+        return None, [ResourceDiagnostic(type="warning", message=message, path=file_path)]
+
+    try:
         frontmatter, body = parse_frontmatter(raw_content)
-        if not isinstance(frontmatter, dict):
-            frontmatter = {}
+    except Exception as error:
+        message = str(error) or "failed to parse prompt template file"
+        return None, [ResourceDiagnostic(type="warning", message=message, path=file_path)]
+    if not isinstance(frontmatter, dict):
+        frontmatter = {}
 
-        name = re.sub(r"\.md$", "", os.path.basename(file_path))
+    name = re.sub(r"\.md$", "", os.path.basename(file_path))
 
-        # Get description from frontmatter or first non-empty line
-        description = frontmatter.get("description") or ""
-        if not description:
-            first_line = next((line for line in body.split("\n") if line.strip()), None)
-            if first_line:
-                # Truncate if too long
-                description = first_line[:60]
-                if len(first_line) > 60:
-                    description += "..."
+    # Get description from frontmatter or first non-empty line
+    description = frontmatter.get("description") if isinstance(frontmatter.get("description"), str) else ""
+    if not description:
+        first_line = next((line for line in body.split("\n") if line.strip()), None)
+        if first_line:
+            # Truncate if too long
+            description = first_line[:60]
+            if len(first_line) > 60:
+                description += "..."
 
-        argument_hint = frontmatter.get("argument-hint")
-        return PromptTemplate(
-            name=name,
-            description=description,
-            argument_hint=argument_hint if argument_hint else None,
-            content=body,
-            source_info=source_info,
-            file_path=file_path,
-        )
-    except Exception:
-        return None
+    argument_hint = frontmatter.get("argument-hint") if isinstance(frontmatter.get("argument-hint"), str) else None
+    template = PromptTemplate(
+        name=name,
+        description=description,
+        argument_hint=argument_hint if argument_hint else None,
+        content=body,
+        source_info=source_info,
+        file_path=file_path,
+    )
+    return template, []
 
 
-def _load_templates_from_dir(dir: str, get_source_info) -> list[PromptTemplate]:
+def _load_templates_from_dir(dir: str, get_source_info) -> LoadPromptTemplatesResult:
     """Scan a directory for .md files (non-recursive) and load them as prompt templates."""
-    templates: list[PromptTemplate] = []
+    result = LoadPromptTemplatesResult()
 
     if not os.path.exists(dir):
-        return templates
+        return result
 
     try:
         entries = sorted(os.scandir(dir), key=lambda entry: entry.name)
     except OSError:
-        return templates
+        return result
 
     for entry in entries:
         full_path = os.path.join(dir, entry.name)
@@ -157,11 +173,12 @@ def _load_templates_from_dir(dir: str, get_source_info) -> list[PromptTemplate]:
             continue  # Broken symlink, skip it
 
         if is_file and entry.name.endswith(".md"):
-            template = _load_template_from_file(full_path, get_source_info(full_path))
+            template, diagnostics = _load_template_from_file(full_path, get_source_info(full_path))
             if template is not None:
-                templates.append(template)
+                result.templates.append(template)
+            result.diagnostics.extend(diagnostics)
 
-    return templates
+    return result
 
 
 def _is_under_path(target: str, root: str) -> bool:
@@ -178,7 +195,7 @@ def load_prompt_templates(
     agent_dir: str,
     prompt_paths: list[str],
     include_defaults: bool,
-) -> Awaitable[list[PromptTemplate]]:
+) -> Awaitable[LoadPromptTemplatesResult]:
     """Load all prompt templates from the global/project prompt dirs and explicit paths.
 
     A directory scan plus one read per template is a single blocking unit, so
@@ -203,11 +220,15 @@ def _load_prompt_templates_sync(
     agent_dir: str,
     prompt_paths: list[str],
     include_defaults: bool,
-) -> list[PromptTemplate]:
+) -> LoadPromptTemplatesResult:
     resolved_cwd = resolve_path(cwd)
     resolved_agent_dir = resolve_path(agent_dir)
 
-    templates: list[PromptTemplate] = []
+    result = LoadPromptTemplatesResult()
+
+    def add_result(loaded: LoadPromptTemplatesResult) -> None:
+        result.templates.extend(loaded.templates)
+        result.diagnostics.extend(loaded.diagnostics)
 
     global_prompts_dir = os.path.join(resolved_agent_dir, "prompts")
     project_prompts_dir = os.path.join(resolved_cwd, CONFIG_DIR_NAME, "prompts")
@@ -228,8 +249,8 @@ def _load_prompt_templates_sync(
         )
 
     if include_defaults:
-        templates.extend(_load_templates_from_dir(global_prompts_dir, get_source_info))
-        templates.extend(_load_templates_from_dir(project_prompts_dir, get_source_info))
+        add_result(_load_templates_from_dir(global_prompts_dir, get_source_info))
+        add_result(_load_templates_from_dir(project_prompts_dir, get_source_info))
 
     # Load explicit prompt paths
     for raw_path in prompt_paths:
@@ -239,15 +260,17 @@ def _load_prompt_templates_sync(
 
         try:
             if os.path.isdir(resolved_path):
-                templates.extend(_load_templates_from_dir(resolved_path, get_source_info))
+                add_result(_load_templates_from_dir(resolved_path, get_source_info))
             elif os.path.isfile(resolved_path) and resolved_path.endswith(".md"):
-                template = _load_template_from_file(resolved_path, get_source_info(resolved_path))
+                template, diagnostics = _load_template_from_file(resolved_path, get_source_info(resolved_path))
                 if template is not None:
-                    templates.append(template)
-        except OSError:
-            pass  # Ignore read failures
+                    result.templates.append(template)
+                result.diagnostics.extend(diagnostics)
+        except OSError as error:
+            message = str(error) or "failed to read prompt template path"
+            result.diagnostics.append(ResourceDiagnostic(type="warning", message=message, path=resolved_path))
 
-    return templates
+    return result
 
 
 _TEMPLATE_INVOCATION_RE = re.compile(r"^/(\S+)(?:\s+([\s\S]*))?$")

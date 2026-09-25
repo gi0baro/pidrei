@@ -173,6 +173,30 @@ _MODEL_PROMPT_CACHE = {
         "long": {"type": "number", "exclusiveMinimum": 0},
     },
 }
+_POSITIVE_INTEGER = {"type": "integer", "minimum": 1}
+_IMAGE_RESIZE = {
+    "type": "object",
+    "properties": {
+        "maxWidth": _POSITIVE_INTEGER,
+        "maxHeight": _POSITIVE_INTEGER,
+        "maxBytes": _POSITIVE_INTEGER,
+        "jpegQuality": {"type": "integer", "minimum": 1, "maximum": 100},
+    },
+}
+_MODEL_INPUT_LIMITS = {
+    "type": "object",
+    "properties": {
+        "maxRequestBytes": _POSITIVE_INTEGER,
+        "images": {
+            "type": "object",
+            "properties": {
+                "resize": _IMAGE_RESIZE,
+                "maxPerMessage": _POSITIVE_INTEGER,
+                "maxPerRequest": _POSITIVE_INTEGER,
+            },
+        },
+    },
+}
 
 _MODEL_COST = {
     "type": "object",
@@ -220,6 +244,7 @@ _MODEL_DEFINITION = {
         "reasoning": _BOOLEAN,
         "thinkingLevelMap": _THINKING_LEVEL_MAP,
         "input": _INPUT_MODALITIES,
+        "inputLimits": _MODEL_INPUT_LIMITS,
         "cost": _MODEL_COST,
         "promptCache": _MODEL_PROMPT_CACHE,
         "contextWindow": _NUMBER,
@@ -238,6 +263,7 @@ _MODEL_OVERRIDE = {
         "reasoning": _BOOLEAN,
         "thinkingLevelMap": _THINKING_LEVEL_MAP,
         "input": _INPUT_MODALITIES,
+        "inputLimits": _MODEL_INPUT_LIMITS,
         "cost": {
             "type": "object",
             "properties": {**_MODEL_COST_RATES, "tiers": {"type": "array", "items": _MODEL_COST_TIER}},

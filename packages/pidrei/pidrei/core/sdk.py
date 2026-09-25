@@ -362,6 +362,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             model=model,
             thinking_level=thinking_level,
             tools=[],
+            messages=existing_session.messages,
         ),
         convert_to_llm=_convert_to_llm_with_block_images(settings_manager),
         stream_fn=stream_fn,
@@ -376,9 +377,8 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         max_retry_delay_ms=settings_manager.get_provider_retry_settings()["max_retry_delay_ms"],
     )
 
-    # Restore messages if session has existing data
+    # Restore missing settings metadata for older sessions.
     if has_existing_session:
-        agent.state.messages = existing_session.messages
         if not has_thinking_entry:
             await session_manager.append_thinking_level_change(thinking_level)
     else:

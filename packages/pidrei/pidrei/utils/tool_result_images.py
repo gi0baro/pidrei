@@ -4,7 +4,7 @@ import base64
 
 import tonio.colored as tonio
 
-from pidrei_ai.types import ImageContent, TextContent
+from pidrei_ai.types import ImageContent, ModelImageResizeOptions, TextContent
 
 from .image_process import process_image
 
@@ -12,7 +12,12 @@ from .image_process import process_image
 __all__ = ["normalize_tool_result_images"]
 
 
-async def normalize_tool_result_images(content: list, *, auto_resize_images: bool = True) -> list:
+async def normalize_tool_result_images(
+    content: list,
+    *,
+    auto_resize_images: bool = True,
+    resize_options: ModelImageResizeOptions | None = None,
+) -> list:
     """Normalize image blocks returned by tool results.
 
     The `read` tool and `@file` CLI attachments run their images through
@@ -43,6 +48,7 @@ async def normalize_tool_result_images(content: list, *, auto_resize_images: boo
             base64.b64decode(block.data),
             block.mime_type,
             auto_resize_images=auto_resize_images,
+            resize_options=resize_options,
         )
         if not processed.ok:
             # Unlike `read`, keep the original block. The tool already produced

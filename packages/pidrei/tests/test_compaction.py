@@ -11,6 +11,8 @@ import time
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from pidrei.core.compaction import (
     DEFAULT_COMPACTION_SETTINGS,
     CompactionSettings,
@@ -76,12 +78,26 @@ def create_assistant_message(text: str, usage: Usage | None = None) -> Assistant
 
 
 _next_id = 0
+_last_id: str | None = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_entry_counter():
+    """pi resets its id counter and parent chain before each test."""
+    global _next_id, _last_id
+    _next_id = 0
+    _last_id = None
 
 
 def create_message_entry(message) -> dict:
-    global _next_id
+    """Entries chain through `parentId` like pi's helper, so projection-based
+    compaction walks the whole list from its last entry."""
+    global _next_id, _last_id
     _next_id += 1
-    return {"type": "message", "id": f"entry-{_next_id}", "parentId": None, "timestamp": _now_ms(), "message": message}
+    entry_id = f"entry-{_next_id}"
+    entry = {"type": "message", "id": entry_id, "parentId": _last_id, "timestamp": _now_ms(), "message": message}
+    _last_id = entry_id
+    return entry
 
 
 # ============================================================================

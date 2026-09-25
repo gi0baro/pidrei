@@ -346,6 +346,7 @@ class TreeList:
             # Entry types hidden in default view (settings/bookkeeping)
             is_settings_entry = entry.get("type") in (
                 "label",
+                "context_edit",
                 "custom",
                 "model_change",
                 "thinking_level_change",
@@ -568,6 +569,10 @@ class TreeList:
             parts.extend(["thinking", entry.get("thinkingLevel", "")])
         elif entry_type == "custom":
             parts.extend(["custom", entry.get("customType", "")])
+        elif entry_type == "context_edit":
+            parts.extend(
+                ["context edit", "omit" if entry.get("replacement") is None else "replace", entry.get("targetId", "")]
+            )
         elif entry_type == "label":
             parts.extend(["label", entry.get("label") or ""])
 
@@ -785,6 +790,9 @@ class TreeList:
             result = theme.fg("dim", f"[thinking: {entry.get('thinkingLevel')}]")
         elif entry_type == "custom":
             result = theme.fg("dim", f"[custom: {entry.get('customType')}]")
+        elif entry_type == "context_edit":
+            action = "omit" if entry.get("replacement") is None else "replace"
+            result = theme.fg("dim", f"[context {action}: {entry.get('targetId')}]")
         elif entry_type == "label":
             result = theme.fg("dim", f"[label: {entry.get('label') or '(cleared)'}]")
         elif entry_type == "session_info":

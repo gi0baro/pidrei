@@ -198,12 +198,12 @@ class AfterToolCallContext:
 
 
 @dataclass(slots=True)
-class ShouldStopAfterTurnContext:
-    """Context passed to `should_stop_after_turn` (and `prepare_next_turn`)."""
+class AgentTurnContext:
+    """Context passed to completed-turn callbacks (`finish_turn`, `prepare_next_turn`)."""
 
     # The assistant message that completed the turn.
     message: AssistantMessage
-    # Tool result messages passed to the preceding `turn_end` event.
+    # Tool result messages emitted for the completed turn.
     tool_results: list[ToolResultMessage]
     # Current agent context after the turn's assistant message and tool results
     # have been appended.
@@ -212,7 +212,22 @@ class ShouldStopAfterTurnContext:
     new_messages: list[AgentMessage]
 
 
-PrepareNextTurnContext = ShouldStopAfterTurnContext
+@dataclass(slots=True, frozen=True)
+class AgentTurnDecision:
+    """Decision returned by `finish_turn`. Returning None preserves normal scheduling."""
+
+    action: Literal["continue", "end"]
+
+
+# Called after a completed assistant turn and all of its tool-result messages, but
+# before `turn_end`. On a normal turn, `AgentTurnDecision("continue")` ensures one next
+# provider request. Tool-result, steering, or follow-up scheduling can satisfy that
+# request and adds no extra request; otherwise the loop continues once with the current
+# context. Error and aborted responses remain hard exits.
+type FinishTurn = Callable[[AgentTurnContext, CancelToken | None], Awaitable[AgentTurnDecision | None]]
+
+
+PrepareNextTurnContext = AgentTurnContext
 
 
 @dataclass(slots=True)
@@ -227,6 +242,31 @@ class AgentLoopTurnUpdate:
     model: Model | None = None
     # Thinking level for the next provider request (None keeps the current one).
     thinking_level: ThinkingLevel | None = None
+
+
+@dataclass(slots=True)
+class PrepareRequestContext:
+    """Runtime state available immediately before a conversational provider request."""
+
+    context: AgentContext
+    model: Model
+    thinking_level: ThinkingLevel
+
+
+@dataclass(slots=True)
+class AgentRequestUpdate:
+    """Replacement runtime state for the provider request being prepared
+    (pi: `Omit<AgentLoopTurnUpdate, "messages">`)."""
+
+    context: AgentContext | None = None
+    model: Model | None = None
+    # None keeps the current thinking level.
+    thinking_level: ThinkingLevel | None = None
+
+
+# Called immediately before every conversational provider request, including the first.
+# Pending messages have already been appended and emitted when this callback runs.
+type PrepareRequest = Callable[[PrepareRequestContext, CancelToken | None], Awaitable[AgentRequestUpdate | None]]
 
 
 @dataclass(slots=True, kw_only=True)
@@ -254,10 +294,20 @@ class AgentLoopConfig(SimpleStreamOptions):
     # Resolves an API key dynamically for each LLM call (short-lived tokens).
     get_api_key: Callable[[str], Awaitable[str | None]] | None = None
 
-    # Called after each turn fully completes; returning True exits the loop
-    # before polling steering/follow-up queues. This callback sees the
-    # completed-turn context and runs before `prepare_next_turn`.
-    should_stop_after_turn: Callable[[ShouldStopAfterTurnContext], Awaitable[bool]] | None = None
+    # Called after the assistant message and all tool-result messages have been
+    # emitted, immediately before `turn_end`. `AgentTurnDecision("end")` ends the run
+    # without polling queues or preparing another request. On a normal turn,
+    # `AgentTurnDecision("continue")` ensures one next provider request; tool-result,
+    # steering, or follow-up scheduling can satisfy it and adds no extra request,
+    # otherwise the loop continues once with the current context. None preserves
+    # normal scheduling. Error and aborted responses remain hard exits.
+    finish_turn: FinishTurn | None = None
+
+    # Called immediately before every conversational provider request, including the
+    # first. Pending messages have already been appended. The returned context, model,
+    # and thinking level replace the runtime values for this and later requests in the
+    # run. This hook does not poll queues.
+    prepare_request: PrepareRequest | None = None
 
     # Called after `turn_end` when the loop will continue, immediately before
     # the next turn starts. Return replacement context/model/thinking state or

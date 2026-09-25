@@ -10,7 +10,11 @@ import re
 from dataclasses import fields
 from typing import Any
 
-from pidrei_ai.models_generated import COMPAT_FIELD_PARSERS as _COMPAT_FIELD_PARSERS, parse_model_dict
+from pidrei_ai.models_generated import (
+    COMPAT_FIELD_PARSERS as _COMPAT_FIELD_PARSERS,
+    parse_input_limits,
+    parse_model_dict,
+)
 from pidrei_ai.types import (
     AnthropicAllowedFallbackModel,
     AnthropicMessagesCompat,
@@ -20,6 +24,7 @@ from pidrei_ai.types import (
     ModelCompat,
     ModelCost,
     ModelCostTier,
+    ModelInputLimits,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
 )
@@ -28,9 +33,12 @@ from pidrei_ai.types import (
 __all__ = [
     "compat_to_dict",
     "cost_from_dict",
+    "input_limits_to_dict",
     "merge_compat",
+    "merge_input_limits",
     "model_to_dict",
     "parse_compat",
+    "parse_input_limits",
     "parse_model_dict",
 ]
 
@@ -176,6 +184,60 @@ def _cost_to_dict(cost: ModelCost) -> dict[str, Any]:
     return raw
 
 
+def input_limits_to_dict(limits: ModelInputLimits) -> dict[str, Any]:
+    """pi's camelCase `inputLimits` object; None fields are omitted (JS undefined)."""
+    raw: dict[str, Any] = {}
+    if limits.max_request_bytes is not None:
+        raw["maxRequestBytes"] = limits.max_request_bytes
+    images = limits.images
+    if images is not None:
+        raw_images: dict[str, Any] = {}
+        if images.resize is not None:
+            resize = images.resize
+            raw_images["resize"] = {
+                key: value
+                for key, value in (
+                    ("maxWidth", resize.max_width),
+                    ("maxHeight", resize.max_height),
+                    ("maxBytes", resize.max_bytes),
+                    ("jpegQuality", resize.jpeg_quality),
+                )
+                if value is not None
+            }
+        if images.max_per_message is not None:
+            raw_images["maxPerMessage"] = images.max_per_message
+        if images.max_per_request is not None:
+            raw_images["maxPerRequest"] = images.max_per_request
+        raw["images"] = raw_images
+    return raw
+
+
+def merge_input_limits(base: ModelInputLimits | None, override: dict[str, Any] | None) -> ModelInputLimits | None:
+    """pi's `mergeInputLimits`: `images` and `images.resize` merge per key; a
+    missing override keeps the base."""
+    if not override:
+        return base
+    base_raw = input_limits_to_dict(base) if base is not None else {}
+    base_images = base_raw.get("images") or {}
+    merged = {**base_raw, **override}
+    override_images = override.get("images")
+    if override_images:
+        override_resize = override_images.get("resize")
+        images = {**base_images, **override_images}
+        if override_resize:
+            images["resize"] = {**(base_images.get("resize") or {}), **override_resize}
+        elif "resize" in base_images:
+            images["resize"] = base_images["resize"]
+        else:
+            images.pop("resize", None)
+        merged["images"] = images
+    elif "images" in base_raw:
+        merged["images"] = base_images
+    else:
+        merged.pop("images", None)
+    return parse_input_limits(merged)
+
+
 def model_to_dict(model: Model) -> dict[str, Any]:
     """Serialize a Model to the pi camelCase wire shape (inverse of parse_model_dict)."""
     raw: dict[str, Any] = {
@@ -190,6 +252,8 @@ def model_to_dict(model: Model) -> dict[str, Any]:
         "contextWindow": model.context_window,
         "maxTokens": model.max_tokens,
     }
+    if model.input_limits is not None:
+        raw["inputLimits"] = input_limits_to_dict(model.input_limits)
     if model.prompt_cache is not None:
         raw["promptCache"] = dict(model.prompt_cache)
     if model.thinking_level_map is not None:

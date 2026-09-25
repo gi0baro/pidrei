@@ -17,6 +17,7 @@ Runtime mapping (PORT_0.87.1.md decision 6):
 """
 
 import dataclasses
+import math
 import re
 import threading
 from collections.abc import Awaitable, Callable
@@ -143,11 +144,14 @@ class _ActiveRun:
     request: CacheWarmRequest
     # False once the session's model or messages no longer match the request.
     is_current: Callable[[], bool]
+    ttl_ms: float
     delay_ms: int
     started_at: int
     cancel: CancelToken
     phase: Literal["streaming", "idle"] = "streaming"
     next_warm_at: int = 0
+    # Latest safe time to send this refresh, leaving half the original expiry margin.
+    refresh_deadline_at: int = 0
     # Set while a refresh that an extension forced is in flight.
     extension_override: bool = False
     # Cancels the armed refresh timer; None while a refresh is running.
@@ -228,6 +232,7 @@ class CacheWarmer:
             self._run = _ActiveRun(
                 request=request,
                 is_current=is_current,
+                ttl_ms=ttl_ms,
                 delay_ms=delay_ms,
                 started_at=clock.now_ms(),
                 cancel=CancelToken(),
@@ -283,6 +288,10 @@ class CacheWarmer:
         run.extension_override = False
         now = clock.now_ms()
         run.next_warm_at = now + run.delay_ms
+        # A timer can run late after sleep or a stalled runtime. Keep half of
+        # the planned pre-expiry margin for that delay and request dispatch; a
+        # late refresh is likely a full-price cache write, not a cache warm.
+        run.refresh_deadline_at = run.next_warm_at + math.floor((run.ttl_ms - run.delay_ms) / 2)
         deadline = run.started_at + (MAX_IDLE_WARMING_AGE_MS if run.phase == "idle" else MAX_WARMING_AGE_MS)
         if run.next_warm_at > deadline or now >= deadline:
             self._stop_locked(
@@ -298,7 +307,7 @@ class CacheWarmer:
     async def _refresh(self, run: _ActiveRun) -> None:
         with self._lock:
             run.cancel_timer = None
-            if not self._validate_run_locked(run):
+            if not self._validate_run_locked(run) or self._refresh_deadline_missed_locked(run):
                 return
         decision = self._evaluate(run)
         action: CacheWarmingAction = decision.action
@@ -316,7 +325,7 @@ class CacheWarmer:
             # Extension failures fall back to the warmer's own decision.
             pass
         with self._lock:
-            if not self._validate_run_locked(run):
+            if not self._validate_run_locked(run) or self._refresh_deadline_missed_locked(run):
                 return
             extension_override = action != decision.action
             if action == "stop":
@@ -359,6 +368,12 @@ class CacheWarmer:
         with self._lock:
             if self._run is run:
                 self._schedule_locked(run)
+
+    def _refresh_deadline_missed_locked(self, run: _ActiveRun) -> bool:
+        if clock.now_ms() <= run.refresh_deadline_at:
+            return False
+        self._stop_locked("cache refresh deadline missed")
+        return True
 
     def _validate_run_locked(self, run: _ActiveRun) -> bool:
         if self._run is not run:

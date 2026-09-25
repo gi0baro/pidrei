@@ -11,6 +11,7 @@ import tonio.colored as tonio
 
 from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.tools.edit import create_edit_tool
+from pidrei_agent.harness.tools.image import detect_supported_image_mime_type
 from pidrei_agent.harness.tools.read import ReadImageProcessorResult, ReadToolOptions, create_read_tool
 from pidrei_agent.harness.tools.tool_context import ExecutionToolContext
 from pidrei_agent.harness.tools.write import create_write_tool
@@ -128,6 +129,17 @@ def create_tiny_bmp() -> bytes:
 
 
 # --- read ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("signature", ["GIF87a", "GIF89a"])
+def test_read_detects_the_complete_gif_signature(signature):
+    assert detect_supported_image_mime_type(signature.encode("ascii")) == "image/gif"
+
+
+def test_read_does_not_classify_text_starting_with_gif_as_an_image():
+    # pidrei-only: pi tests the complete signatures, which the old prefix check
+    # also accepted; this is the #9755 case the fix is for.
+    assert detect_supported_image_mime_type(b"GIF files are animated images\n") is None
 
 
 @pytest.mark.tonio

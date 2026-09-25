@@ -11,7 +11,7 @@ def detect_supported_image_mime_type(buffer: bytes) -> str | None:
         return None if len(buffer) > 3 and buffer[3] == 0xF7 else "image/jpeg"
     if buffer.startswith(_PNG_SIGNATURE):
         return "image/png" if _is_png(buffer) and not _is_animated_png(buffer) else None
-    if buffer.startswith(b"GIF"):
+    if buffer.startswith((b"GIF87a", b"GIF89a")):
         return "image/gif"
     if buffer.startswith(b"RIFF") and buffer[8:12] == b"WEBP":
         return "image/webp"

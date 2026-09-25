@@ -468,7 +468,9 @@ class OpenAICompletionsCompat:
     # `supports_mid_convo_system_messages`. Default: False; the generated model catalog
     # enables it for capable models.
     supports_mid_convo_tool_additions: bool | None = None
-    supports_strict_mode: bool | None = None  # default True
+    # Whether the provider supports the `strict` field in tool definitions. Default: False;
+    # generated capable models enable it explicitly.
+    supports_strict_mode: bool | None = None
     cache_control_format: Literal["anthropic"] | None = None
     send_session_affinity_headers: bool | None = None  # default True for OpenRouter endpoints, False otherwise
     session_affinity_format: SessionAffinityFormat | None = None
@@ -588,6 +590,32 @@ class ModelCost:
 
 
 @dataclass(slots=True)
+class ModelImageResizeOptions:
+    max_width: int | None = None
+    max_height: int | None = None
+    # Maximum base64-encoded payload size in bytes.
+    max_bytes: int | None = None
+    jpeg_quality: int | None = None
+
+
+@dataclass(slots=True)
+class ModelImageInputLimits:
+    # Cache-safe resize profile applied before a new image enters conversation history.
+    resize: ModelImageResizeOptions | None = None
+    # Maximum images accepted in one provider message.
+    max_per_message: int | None = None
+    # Maximum images accepted across one provider request.
+    max_per_request: int | None = None
+
+
+@dataclass(slots=True)
+class ModelInputLimits:
+    # Maximum serialized provider request size in bytes.
+    max_request_bytes: int | None = None
+    images: ModelImageInputLimits | None = None
+
+
+@dataclass(slots=True)
 class Model:
     id: str
     name: str
@@ -599,6 +627,8 @@ class Model:
     cost: ModelCost
     context_window: int
     max_tokens: int
+    # Provider input limits and cache-safe preprocessing metadata.
+    input_limits: ModelInputLimits | None = None
     # Prompt cache lifetimes per retention tier. None when the provider's cache behavior is unknown.
     prompt_cache: ModelPromptCache | None = None
     # Default sampling parameters for this model. See StreamOptions.sampling_params;

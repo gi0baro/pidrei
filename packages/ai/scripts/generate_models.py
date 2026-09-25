@@ -247,6 +247,16 @@ OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.6-luna",
     "gpt-6-astra",
 }
+# Keep the generated default no less restrictive than coding-agent's historical
+# image preprocessing. Provider limits can narrow this profile, but unknown
+# providers retain the cache-safe 2000px / 4.5 MiB behavior.
+DEFAULT_IMAGE_RESIZE = {
+    "maxWidth": 2000,
+    "maxHeight": 2000,
+    "maxBytes": int(4.5 * 1024 * 1024),
+    "jpegQuality": 80,
+}
+
 OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = {
     "gpt-5.4",
     "gpt-5.4-pro",
@@ -501,7 +511,7 @@ OPENAI_COMPLETIONS_DEFAULT_COMPAT: dict[str, Any] = {
     "chatTemplateKwargs": {},
     "chatTemplateArgs": {},
     "zaiToolStream": False,
-    "supportsStrictMode": True,
+    "supportsStrictMode": False,
     "supportsOpenAIGrammarTools": False,
     "supportsMidConvoSystemMessages": False,
     "supportsMidConvoToolAdditions": False,
@@ -594,6 +604,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
         "chatTemplateKwargs": {},
         "chatTemplateArgs": {},
         "zaiToolStream": False,
+        # Preserve built-in behavior as explicit metadata against the conservative runtime default.
         "supportsStrictMode": not (is_moonshot or is_together or is_cloudflare_ai_gateway or is_nvidia or is_cerebras),
         "supportsOpenAIGrammarTools": False,
         "supportsMidConvoSystemMessages": False,
@@ -953,6 +964,38 @@ def apply_prompt_cache_metadata(model: dict[str, Any]) -> None:
     # Do not add OpenAI lifetimes yet. Before enabling warming for explicit
     # OpenAI caches, re-evaluate it using observed expiry, replay, and billing
     # behavior; a documented TTL alone does not establish full cache loss.
+
+
+def apply_image_input_metadata(model: dict[str, Any]) -> None:
+    if "image" not in model["input"]:
+        return
+
+    provider = model["provider"]
+    provider_limits: dict[str, Any] | None
+    if provider == "anthropic":
+        provider_limits = {
+            "maxRequestBytes": 32 * 1024 * 1024,
+            "images": {"maxPerRequest": 100 if model["contextWindow"] == 200000 else 600},
+        }
+    elif provider == "amazon-bedrock":
+        provider_limits = {"images": {"maxPerMessage": 20}}
+    elif provider == "openai":
+        provider_limits = {"maxRequestBytes": 512 * 1024 * 1024, "images": {"maxPerRequest": 1500}}
+    elif provider == "google":
+        provider_limits = {"maxRequestBytes": 20 * 1024 * 1024, "images": {"maxPerRequest": 3600}}
+    else:
+        provider_limits = None
+    configured = model.get("inputLimits") or {}
+    configured_images = configured.get("images") or {}
+    model["inputLimits"] = {
+        **(provider_limits or {}),
+        **configured,
+        "images": {
+            **((provider_limits or {}).get("images") or {}),
+            **configured_images,
+            "resize": {**DEFAULT_IMAGE_RESIZE, **(configured_images.get("resize") or {})},
+        },
+    }
 
 
 def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any] | None:
@@ -2636,6 +2679,7 @@ def apply_model_metadata(all_models: list[dict[str, Any]], reasoning_options: di
         apply_openai_responses_transcript_metadata(model)
         apply_openai_explicit_prompt_cache_metadata(model)
         apply_prompt_cache_metadata(model)
+        apply_image_input_metadata(model)
     apply_anthropic_allowed_fallback_model_metadata(
         [model for model in all_models if is_anthropic_fallback_metadata_model(model)]
     )

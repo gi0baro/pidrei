@@ -10,7 +10,7 @@ resolves through the runner at access time.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 RUNTIME_NOT_INITIALIZED = "Extension runtime not initialized. Action methods cannot be called during extension loading."
@@ -64,6 +64,36 @@ class ToolDefinition:
     execution_mode: str | None = None
     # Extra metadata slot mirroring pi's open object shape.
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+# Outcome of the activity that reached a boundary (`turn_end` / `agent_before_settle`).
+type AgentActivityOutcome = Literal["completed", "aborted", "error"]
+
+
+@dataclass(slots=True, frozen=True)
+class BoundaryContextPreview:
+    """The model context a boundary would leave behind (pi: `BoundaryContextPreview`).
+
+    Boundary events (`turn_end`, `agent_before_settle`) carry this as
+    `event["context"]`, rebuilt after each handler so later handlers see the
+    effect of earlier drafts. Session boundary drafts themselves are plain
+    camelCase dicts, like pi's objects: `{"type": "custom", "customType", "data"?}`,
+    `{"type": "custom_message", "customType", "content", "display", "details"?}`,
+    `{"type": "context_edit", "targetId", "replacement"}` and
+    `{"type": "compaction", "summary", "firstKeptEntryId", "details"?, "usage"?}`
+    (`firstKeptEntryId: None` keeps no preceding entries). Handlers return
+    `{"entries"?, "continue"?}`.
+    """
+
+    # Projected session entries (`ProjectedSessionEntry`) after the drafts are applied.
+    context_entries: list[Any]
+    context_messages: list[Any]
+    # `context_messages` after `convert_to_llm`.
+    llm_messages: list[Any]
+    # Queued steering/follow-up and pending custom messages not yet in context.
+    pending_messages: list[Any]
+    # Whether a continuation would have runnable model context.
+    can_continue: bool
 
 
 @dataclass(slots=True)

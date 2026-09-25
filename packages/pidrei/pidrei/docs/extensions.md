@@ -190,16 +190,22 @@ user sends a prompt
   │
   │   ┌── turn (repeats while the model calls tools) ──┐
   │   ├─► turn_start                                   │
-  │   ├─► context                  (modify messages)   │
+  │   ├─► context                  (modify conversation)
+  │   ├─► context_with_system      (modify full transcript)
   │   ├─► before_provider_headers  (mutate headers)    │
   │   ├─► before_provider_request  (inspect/replace)   │
   │   ├─► after_provider_response  (status/headers)    │
   │   ├─► message_start / message_update / message_end │
   │   ├─► tool_call                (block or rewrite)  │
   │   ├─► tool_result              (rewrite output)    │
-  │   └─► turn_end                                     │
+  │   └─► turn_end                 (append entries, continue)
+  │       └─► threshold compaction before a naturally required next turn
   │
-  └─► agent_end
+  ├─► agent_end
+  ├─► retry backoff or final-attempt recovery (when selected)
+  │   └─► fresh agent_start on successful recovery
+  ├─► agent_before_settle          (append entries, continue)
+  └─► agent_settled                (final, notification only)
 ```
 
 ### Catalogue
@@ -215,9 +221,13 @@ user sends a prompt
 | `resources_discover` | Startup and `/reload` | Add resource paths |
 | `input` | User submitted input | Transform, or handle it entirely |
 | `before_agent_start` | Before the loop starts | Message; prompt sections, tools and rules via the mutable `event["systemPromptOptions"]` (sent as a patch); or the whole system prompt for the run |
-| `agent_start` / `agent_end` | Around the whole run | — |
-| `turn_start` / `turn_end` | Around each provider round-trip | — |
-| `context` | Before each request | The message list |
+| `agent_start` / `agent_end` | Around each low-level run (pidrei may still retry, compact, or continue) | — |
+| `turn_start` | Before each provider round-trip | — |
+| `turn_end` | After a turn's assistant and tool-result messages are persisted | Append session entries; request one continuation (see [Turn boundaries](#turn-boundaries)) |
+| `agent_before_settle` | Last actionable point before the run settles | Append session entries; request one continuation |
+| `agent_settled` | The run has settled; nothing continues automatically | — (runs started here begin after every settled handler finishes) |
+| `context` | Before each request | The conversation, without system messages (see [Request context](#request-context)) |
+| `context_with_system` | Before each request, after every `context` handler | The full transcript, sent as returned |
 | `before_provider_headers` | Before each request | Request headers |
 | `before_provider_request` | Before each request | The payload |
 | `after_provider_response` | After each response arrives | — (inspect status/headers) |
@@ -258,6 +268,100 @@ def extension(pi):
 
     pi.on("input", expand)
 ```
+
+### Turn boundaries
+
+`turn_end` and `agent_before_settle` are actionable boundaries. `turn_end`
+runs after the turn's assistant and tool-result messages are persisted;
+`agent_before_settle` runs after retries and recovery, just before the run
+settles. Each handler receives:
+
+- `event["entries"]` — the session entries proposed so far, as dicts:
+  `{"type": "custom", "customType", "data"}`,
+  `{"type": "custom_message", "customType", "content", "display", "details"}`,
+  `{"type": "context_edit", "targetId", "replacement"}` (`None` omits the
+  target from model context; `{"content": ...}` replaces its content) or
+  `{"type": "compaction", "summary", "firstKeptEntryId"}` (`None` keeps no
+  earlier entries)
+- `event["continue"]` — whether a continuation has been requested
+- `event["context"]` — a `BoundaryContextPreview` (`context_entries`,
+  `context_messages`, `llm_messages`, `pending_messages`, `can_continue`)
+  rebuilt from the proposals
+- `event["outcome"]` — `"completed"`, `"aborted"` or `"error"`; `turn_end`
+  also carries `messageEntryId` and `toolResultEntryIds`
+
+Return `{"entries": ..., "continue": ...}`; an omitted field keeps the current
+proposal. Handlers run in load and registration order, each seeing the
+previous proposals. The complete proposal is validated, then appended in
+order after all handlers finish; a handler error is reported and later
+handlers still run.
+
+```python
+def extension(pi):
+    replaced = False
+
+    async def on_turn_end(event, _ctx):
+        nonlocal replaced
+        if replaced or event["outcome"] != "completed" or event["toolResults"]:
+            return None
+        replaced = True
+        return {
+            "entries": [
+                *event["entries"],
+                {"type": "context_edit", "targetId": event["messageEntryId"], "replacement": None},
+                {
+                    "type": "custom_message",
+                    "customType": "replacement-instruction",
+                    "content": "Answer again using the persisted user request.",
+                    "display": False,
+                },
+            ],
+            "continue": True,
+        }
+
+    pi.on("turn_end", on_turn_end)
+```
+
+`"continue": True` ensures one next provider request: tool results, steering
+or a follow-up satisfy it, otherwise pidrei makes one context-only request.
+Error and aborted responses remain hard exits, and `"continue": False` never
+suppresses natural work. Guard the condition — an unconditional continuation
+fires again after the next response. If the run is aborted while
+`agent_before_settle` handlers run, valid entries are still committed but the
+continuation is dropped.
+
+### Request context
+
+`context` handlers receive a deep copy of the conversation *without* system
+messages; return `{"messages": [...]}` or edit `event["messages"]` in place. The
+prompt and tool declarations belong to pidrei: when the list changed, the
+current prompt sections and tool declarations are replayed into one leading
+system message ahead of it, so filtering, windowing or slicing from a
+compaction summary cannot drop them. An unchanged list keeps mid-conversation
+system messages in place (preserving the cached prefix). System messages a
+handler adds are kept after the head. To change the prompt or tools durably,
+use `before_agent_start` or `pi.set_active_tools()`.
+
+`context_with_system` runs after every `context` handler on the full
+transcript, and its result is sent as returned — the handler owns the prompt
+and tool declarations for that request:
+
+```python
+from pidrei_ai.utils.transcript import get_current_system_message
+
+
+async def on_context_with_system(event, ctx):
+    cut = find_cut_index(event["messages"])
+    # Fold the dropped prefix so its prompt and tool state survives as the new head.
+    head = get_current_system_message(event["messages"][:cut])
+    kept = event["messages"][cut:]
+    return {"messages": [head, *kept] if head is not None else kept}
+```
+
+Keep a system message at index 0: providers read the prompt and initial tool
+declarations there, and dropping it is reported as an extension error (the
+output is still sent). A `systemPrompt` forced from `before_agent_start` is
+still projected onto the request afterwards.
 
 ## ExtensionContext
 

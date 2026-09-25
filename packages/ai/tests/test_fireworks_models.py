@@ -103,6 +103,7 @@ async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effo
     compat = OpenAICompletionsCompat(
         supports_store=False,
         supports_developer_role=False,
+        supports_strict_mode=True,
         requires_reasoning_content_on_assistant_messages=True,
         thinking_format="openai",
         supports_mid_convo_system_messages=True,

@@ -12,6 +12,7 @@ from .loader import (
     resolve_extension_entries,
 )
 from .runner import (
+    BoundaryDispatchResult,
     ExtensionRunner,
     InputEventResult,
     ResourcesDiscoverPaths,
@@ -19,6 +20,8 @@ from .runner import (
     emit_session_shutdown_event,
 )
 from .types import (
+    AgentActivityOutcome,
+    BoundaryContextPreview,
     Extension,
     ExtensionContext,
     ExtensionError,
@@ -36,6 +39,9 @@ from .wrapper import wrap_registered_tool, wrap_registered_tools
 
 
 __all__ = [
+    "AgentActivityOutcome",
+    "BoundaryContextPreview",
+    "BoundaryDispatchResult",
     "Extension",
     "ExtensionAPI",
     "ExtensionContext",

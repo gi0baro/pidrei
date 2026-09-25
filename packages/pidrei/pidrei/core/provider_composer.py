@@ -39,7 +39,14 @@ from pidrei_ai.types import Model, ModelCost, TranscriptContext
 from pidrei_ai.utils.tasks import gather
 
 from .model_config import ModelConfig
-from .model_wire import cost_from_dict, cost_tiers_from_list, merge_compat, parse_compat
+from .model_wire import (
+    cost_from_dict,
+    cost_tiers_from_list,
+    merge_compat,
+    merge_input_limits,
+    parse_compat,
+    parse_input_limits,
+)
 from .resolve_config_value import (
     clear_config_value_cache,
     get_config_value_env_var_names,
@@ -165,6 +172,7 @@ def apply_model_override(model: Model, override: dict[str, Any]) -> Model:
         if override_map
         else model.thinking_level_map,
         input=list(_nn(override.get("input"), model.input)),
+        input_limits=merge_input_limits(model.input_limits, override.get("inputLimits")),
         cost=cost,
         prompt_cache={**(model.prompt_cache or {}), **override["promptCache"]}
         if override.get("promptCache")
@@ -205,6 +213,7 @@ def _model_from_json(
         reasoning=_nn(definition.get("reasoning"), False),
         thinking_level_map=definition.get("thinkingLevelMap"),
         input=list(_nn(definition.get("input"), ["text"])),
+        input_limits=parse_input_limits(definition["inputLimits"]) if definition.get("inputLimits") else None,
         cost=_model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0),
         prompt_cache=definition.get("promptCache"),
         context_window=_nn(definition.get("contextWindow"), 128000),
@@ -298,6 +307,7 @@ def apply_extension(
                 reasoning=_nn(definition.get("reasoning"), False),
                 thinking_level_map=definition.get("thinkingLevelMap"),
                 input=list(_nn(definition.get("input"), ["text"])),
+                input_limits=(parse_input_limits(definition["inputLimits"]) if definition.get("inputLimits") else None),
                 cost=_model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0),
                 prompt_cache=definition.get("promptCache"),
                 context_window=_nn(definition.get("contextWindow"), 128000),
