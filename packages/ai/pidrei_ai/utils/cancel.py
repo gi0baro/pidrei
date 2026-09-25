@@ -88,6 +88,11 @@ class CancelToken:
         return self._event.wait(timeout)
 
     @property
+    def event(self) -> Event:
+        """The token's Event, for composed waits (`Waiter.any(token.event, ...)`)."""
+        return self._event
+
+    @property
     def never(self) -> bool:
         """True for the shared placeholder that can never fire (`NEVER_CANCELLED`)."""
         return False

@@ -73,7 +73,7 @@ def serialize_credential(credential: Credential) -> dict[str, Any]:
 class _AuthFileReload:
     controller: CancelToken
     done: Any  # tonio.Event marking the reload settled
-    box: list  # single-slot result/error holder
+    box: Any  # tonio.Result holding ("value", data) or ("error", exc)
     readers: int = 0
 
 
@@ -486,19 +486,19 @@ class AuthStorage(CredentialStore):
                 if published is not snapshot and revision is not None and revision == published.revision:
                     return published.data
                 controller = CancelToken()
-                reload = _AuthFileReload(controller=controller, done=tonio.Event(), box=[])
+                reload = _AuthFileReload(controller=controller, done=tonio.Event(), box=tonio.Result())
                 state.reload = reload
 
                 async def _run_reload(reload: _AuthFileReload = reload) -> None:
                     try:
-                        reload.box.append(
+                        reload.box.store(
                             (
                                 "value",
                                 await self._reload_from_storage_async(AuthOperationOptions(cancel=reload.controller)),
                             )
                         )
                     except BaseException as error:
-                        reload.box.append(("error", error))
+                        reload.box.store(("error", error))
                     finally:
                         with state.guard:
                             if state.reload is reload:
@@ -513,7 +513,7 @@ class AuthStorage(CredentialStore):
 
             async def _wait(reload: _AuthFileReload = reload) -> dict[str, Credential]:
                 await reload.done.wait()
-                kind, payload = reload.box[0]
+                kind, payload = reload.box.fetch()
                 if kind == "error":
                     raise payload
                 return payload

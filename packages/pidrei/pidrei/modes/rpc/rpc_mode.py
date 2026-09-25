@@ -291,29 +291,27 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
 
         request_id = str(uuid.uuid4())
         event = tonio.Event()
-        slot: dict[str, Any] = {}
+        slot = tonio.Result()
 
         def resolve(response: dict[str, Any]) -> None:
-            slot["response"] = response
+            slot.store(response)
             event.set()
 
         pending_extension_requests[request_id] = resolve
-        unsubscribe_cancel = None
-        if cancel is not None:
-            unsubscribe_cancel = cancel.on_cancel(lambda _reason: event.set())
 
         output(_compact({"type": "extension_ui_request", "id": request_id, **request}))
         try:
-            if timeout:
+            if cancel is not None:
+                # `timeout` is in milliseconds; `Waiter.any` takes microseconds.
+                await tonio.Waiter.any(event, cancel.event, timeout=round(timeout * 1000) if timeout else None)
+            elif timeout:
                 await event.wait(timeout / 1000)
             else:
                 await event.wait()
         finally:
             pending_extension_requests.pop(request_id, None)
-            if unsubscribe_cancel is not None:
-                unsubscribe_cancel()
 
-        response = slot.get("response")
+        response = slot.fetch()
         if response is None:
             return default_value
         return parse_response(response)

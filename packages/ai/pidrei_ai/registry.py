@@ -704,42 +704,37 @@ class Models:
         credential = await race_with_cancel(login(_NormalizedAuthInteraction(interaction, cancel)), cancel)
 
         # The persist is detached on purpose (pi lets a started write finish
-        # even when the caller aborts); `progress` fires on started, done or
-        # abort, whichever comes first.
+        # even when the caller aborts); the wait below resumes on started,
+        # done or abort, whichever comes first.
         mutation_started = tonio.Event()
         mutation_done = tonio.Event()
-        progress = tonio.Event()
-        mutation_box: list[tuple[str, Any]] = []
+        mutation_box = tonio.Result()
 
         async def _persist(_current: Credential | None) -> Credential | None:
             mutation_started.set()
-            progress.set()
             return credential
 
         async def _mutation() -> None:
             try:
-                mutation_box.append(
+                mutation_box.store(
                     (
                         "value",
                         await self._credentials.modify(provider_id, _persist, AuthOperationOptions(cancel=cancel)),
                     )
                 )
             except BaseException as error:
-                mutation_box.append(("error", error))
+                mutation_box.store(("error", error))
             finally:
                 mutation_done.set()
-                progress.set()
 
         tonio.spawn.without_tracking(_mutation())
-        unsubscribe = cancel.on_cancel(lambda _reason: progress.set())
 
         try:
-            await progress.wait()
-            unsubscribe()
+            await tonio.Waiter.any(mutation_started, mutation_done, cancel.event)
             if cancel.cancelled and not mutation_started.is_set() and not mutation_done.is_set():
                 raise cancel.reason  # type: ignore[misc]
             await mutation_done.wait()
-            kind, payload = mutation_box[0]
+            kind, payload = mutation_box.fetch()
             if kind == "error":
                 raise payload
         except Exception as error:

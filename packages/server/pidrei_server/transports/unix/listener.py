@@ -18,7 +18,6 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from posixpath import dirname, join
-from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import fs, net
@@ -441,14 +440,14 @@ async def _is_socket_live(path: str) -> bool:
     # hands its stream over under a lock and closes it itself when the deadline
     # got there first; a connected socket must never be dropped unclosed.
     handoff_guard = threading.Lock()
-    handed: list[Any] = []
+    handed = tonio.Result()
     expired = False
 
     async def _probe() -> None:
         stream = await net.open_unix_socket(path)
         with handoff_guard:
             if not expired:
-                handed.append(stream)
+                handed.store(stream)
                 return
         stream.close()
 
@@ -460,7 +459,7 @@ async def _is_socket_live(path: str) -> bool:
         raise
     with handoff_guard:
         expired = True
-        stream = handed.pop() if handed else None
+        stream = handed.fetch()
     if stream is None:
         # Mirror Node: an unresponsive endpoint is assumed live rather than removed.
         return True

@@ -1055,21 +1055,21 @@ async def _connect_websocket(
     # connect hands its socket over under a lock and closes it itself when the
     # deadline got there first; a socket must never be dropped unclosed.
     handoff_guard = threading.Lock()
-    handed: list[Any] = []
+    handed = tonio.Result()
     expired = False
 
     async def _connect() -> None:
         socket = await websocket.connect(url, ws_headers, cancel=cancel)
         with handoff_guard:
             if not expired:
-                handed.append(socket)
+                handed.store(socket)
                 return
         _close_websocket_silently(socket, 1000, "connect_timeout")
 
     await tonio.time.timeout(_connect(), timeout_ms / 1000)
     with handoff_guard:
         expired = True
-        socket = handed.pop() if handed else None
+        socket = handed.fetch()
     if socket is None:
         raise RuntimeError(f"WebSocket connect timeout after {_format_ms(timeout_ms)}ms")
     return socket

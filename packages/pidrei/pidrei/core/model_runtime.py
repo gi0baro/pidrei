@@ -723,30 +723,26 @@ class ModelRuntime:
 
         started = tonio.Event()
         done = tonio.Event()
-        # Fires on done *or* abort, whichever comes first, without a task per branch.
-        progress = tonio.Event()
-        outcome: list[tuple[str, Any]] = []
+        outcome = tonio.Result()
 
         async def _operation() -> None:
             try:
                 async with lock:
                     cancel.raise_if_cancelled()
                     started.set()
-                    outcome.append(("value", await task()))
+                    outcome.store(("value", await task()))
             except BaseException as error:
-                outcome.append(("error", error))
+                outcome.store(("error", error))
             finally:
                 done.set()
-                progress.set()
 
         tonio.spawn.without_tracking(_operation())
-        unsubscribe = cancel.on_cancel(lambda _reason: progress.set())
-        await progress.wait()
-        unsubscribe()
+        # Resumes on started, done *or* abort, whichever comes first: one suspension.
+        await tonio.Waiter.any(started, done, cancel.event)
         if cancel.cancelled and not started.is_set() and not done.is_set():
             raise cancel.reason  # type: ignore[misc]
         await done.wait()
-        kind, payload = outcome[0]
+        kind, payload = outcome.fetch()
         if kind == "error":
             raise payload
         return payload

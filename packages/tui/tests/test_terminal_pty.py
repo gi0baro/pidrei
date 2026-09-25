@@ -12,7 +12,7 @@ import termios
 
 import pytest
 import tonio.colored as tonio
-from tonio._colored._fd import FdStream
+from tonio.colored.io import FdStream
 
 from pidrei_tui.components import Text
 from pidrei_tui.keys import set_kitty_protocol_active

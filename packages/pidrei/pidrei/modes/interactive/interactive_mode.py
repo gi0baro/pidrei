@@ -5752,27 +5752,25 @@ class InteractiveMode:
         # Promise.race, a cancelled prompt leaves the response awaitable
         # unresolved behind the dialog that is being torn down.
         settled = tonio.Event()
-        outcome: dict = {}
+        outcome = tonio.Result()
 
         async def run_response() -> None:
             try:
-                outcome["value"] = await response
+                outcome.store(("value", await response))
             except Exception as error:
-                outcome["error"] = error
+                outcome.store(("error", error))
             finally:
                 settled.set()
 
-        remove_abort = cancel.on_cancel(lambda _reason: settled.set())
         tonio.spawn.without_tracking(run_response())
-        try:
-            await settled.wait(None)
-        finally:
-            remove_abort()
-        if "error" in outcome:
-            raise outcome["error"]
-        if "value" in outcome:
-            return outcome["value"]
-        raise Exception("Login cancelled")
+        await tonio.Waiter.any(settled, cancel.event)
+        stored = outcome.fetch()
+        if stored is None:
+            raise Exception("Login cancelled")
+        kind, payload = stored
+        if kind == "error":
+            raise payload
+        return payload
 
     def _notify_auth_dialog(self, dialog, event) -> None:
         if event.type == "auth_url":

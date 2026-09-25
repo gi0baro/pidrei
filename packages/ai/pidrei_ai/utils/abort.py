@@ -50,11 +50,11 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
         raise _abort_reason(cancel)
 
     settled = tonio.Event()
-    outcome: list[tuple[bool, Any]] = []
+    outcome = tonio.Result()
 
     async def _child() -> None:
         try:
-            outcome.append((False, await operation))
+            outcome.store((False, await operation))
         except CancelledError:
             raise  # reported as the token's reason below
         except GeneratorExit:
@@ -63,7 +63,7 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
             # Delivery is `raise payload` at the call site below: escaping
             # further would only double-report through tonio's
             # unhandled-coroutine printer on stdout.
-            outcome.append((True, error))
+            outcome.store((True, error))
         finally:
             settled.set()
 
@@ -76,9 +76,10 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
         unsubscribe = cancel.on_cancel(_on_cancel)
         await settled.wait()
     unsubscribe()
-    if not outcome:
+    stored = outcome.fetch()
+    if stored is None:
         raise _abort_reason(cancel)
-    failed, payload = outcome[0]
+    failed, payload = stored
     if failed:
         raise payload
     return payload
@@ -96,12 +97,12 @@ async def race_with_cancel[T](operation: Coroutine[Any, Any, T], cancel: CancelT
         return await operation
 
     settled = tonio.Event()
-    outcome: list[tuple[str, Any]] = []
+    outcome = tonio.Result()
 
     def _settle(kind: str, payload: Any) -> None:
-        if outcome:
+        if settled.is_set():
             return
-        outcome.append((kind, payload))
+        outcome.store((kind, payload))
         settled.set()
 
     async def _run() -> None:
@@ -122,7 +123,7 @@ async def race_with_cancel[T](operation: Coroutine[Any, Any, T], cancel: CancelT
         await settled.wait()
     finally:
         unsubscribe()
-    kind, payload = outcome[0]
+    kind, payload = outcome.fetch()
     if kind == "abort" or kind == "error":
         raise payload
     return payload

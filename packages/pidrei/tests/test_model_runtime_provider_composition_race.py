@@ -106,7 +106,10 @@ def _blocking_compose(provider_id: str, entered, release):
         composed = original(target_id, *args, **kwargs)
         if target_id == provider_id:
             entered.set()
-            release.wait_sync()
+            # Composition runs on the blocking pool: spin until released
+            # (a tonio Event has no sync wait, and no `__dict__` to hang one on).
+            while not release.is_set():
+                pass
         return composed
 
     model_runtime_module.compose_model_provider = stalled
@@ -126,12 +129,6 @@ async def test_a_mutation_cannot_start_while_a_provider_is_mid_composition():
     release = tonio.Event()
     finished = tonio.Event()
     observed: list[bool] = []
-
-    def wait_sync() -> None:
-        while not release.is_set():
-            pass
-
-    release.wait_sync = wait_sync  # type: ignore[attr-defined]
 
     async def recompose() -> None:
         with _blocking_compose("instant-provider", entered, release):

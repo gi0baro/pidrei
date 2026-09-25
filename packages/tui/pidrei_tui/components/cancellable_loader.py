@@ -99,6 +99,11 @@ class CancelToken:
         """Awaitable resolving once the token is cancelled."""
         return self._event.wait(timeout)
 
+    @property
+    def event(self) -> Event:
+        """The token's Event, for composed waits (`Waiter.any(token.event, ...)`)."""
+        return self._event
+
 
 class CancellableLoader(Loader):
     def __init__(self, *args, **kwargs) -> None:

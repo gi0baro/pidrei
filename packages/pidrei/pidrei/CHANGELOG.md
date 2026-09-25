@@ -6,6 +6,12 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.85.1.5] - 2026-09-25
+
+### Changed
+
+- Bumped tonio, httpunk and punkreq dependencies.
+
 ## [0.85.1.4] - 2026-09-16
 
 ### Changed

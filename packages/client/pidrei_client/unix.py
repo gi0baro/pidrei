@@ -21,9 +21,6 @@ from .promise import Deferred, rejected
 from .transport import ByteTransport, ByteTransportFactory, ByteTransportHandlers
 
 
-_CLOSE_SENTINEL = object()
-
-
 @dataclass(slots=True, frozen=True)
 class UnixTransportOptions:
     path: str
@@ -91,7 +88,9 @@ class UnixByteTransport:
         if self._closed:
             return
         self._closed = True
-        self._write_sender.send(_CLOSE_SENTINEL)
+        # Ends the queue after everything already enqueued; the writer drains
+        # the remainder and exits on the closed channel.
+        self._write_sender.close()
         # Only the reader task closes the stream: closing the fd here races
         # the reader re-arming its read waiter on another worker (tonio
         # deregisters then closes; a registration made in between dies with
@@ -104,13 +103,14 @@ class UnixByteTransport:
 
     def _mark_remote_terminal(self) -> None:
         self._closed = True
-        self._write_sender.send(_CLOSE_SENTINEL)
+        self._write_sender.close()
 
     async def _run_writer(self) -> None:
         while True:
-            item = await self._write_receiver.receive()
-            if item is _CLOSE_SENTINEL:
-                return
+            try:
+                item = await self._write_receiver.receive()
+            except BrokenPipeError:
+                return  # sender closed: queue drained
             data, deferred = item
             try:
                 if self._closed:

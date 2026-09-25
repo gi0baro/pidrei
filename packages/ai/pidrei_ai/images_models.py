@@ -189,7 +189,7 @@ class _ImagesProviderImpl:
         self._models = list(models)
         self._api = api
         self._guard = threading.Lock()
-        self._inflight: tuple[Any, list] | None = None
+        self._inflight: tuple[Any, Any] | None = None  # (tonio.Event, tonio.Result holding the leader's error)
 
     def get_models(self) -> list[ImagesModel]:
         with self._guard:
@@ -224,23 +224,22 @@ def create_images_provider(
                 inflight = provider._inflight
                 leader = inflight is None
                 if leader:
-                    inflight = (tonio.Event(), [])
+                    inflight = (tonio.Event(), tonio.Result())
                     provider._inflight = inflight
 
-            event, outcome = inflight
+            event, failure = inflight
             if not leader:
                 await event.wait()
-                if outcome and isinstance(outcome[0], BaseException):
-                    raise outcome[0]
+                if (error := failure.fetch()) is not None:
+                    raise error
                 return
 
             try:
                 fetched = await refresh_models()
                 with provider._guard:
                     provider._models = list(fetched)
-                outcome.append(None)
             except BaseException as error:
-                outcome.append(error)
+                failure.store(error)
                 raise
             finally:
                 with provider._guard:

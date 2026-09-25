@@ -90,8 +90,8 @@ async def run_command(
 
     process = await tonio.open_process(command, stdin=stdin, stdout=stdout, stderr=stderr, **options)
 
-    captured: dict[str, bytes] = {}
-    result: dict[str, Any] = {}
+    captured = tonio.Result(2)  # [stdout, stderr]; None for a stream that was not piped
+    result = tonio.Result()  # ("code", returncode) or ("error", exception), stored by `reap`
     exited = tonio.Event()
 
     async def feed(stream) -> None:
@@ -102,21 +102,21 @@ async def run_command(
         finally:
             stream.close()
 
-    async def drain(name: str, stream) -> None:
+    async def drain(index: int, stream) -> None:
         buffer = bytearray()
         try:
             while chunk := await stream.receive_some():
                 buffer += chunk
         except Exception:
             pass  # stream closed under us; keep whatever arrived
-        captured[name] = bytes(buffer)
+        captured.store(bytes(buffer), index)
 
     async def reap() -> None:
         """Owns `wait()` for the child's whole life, including past our return."""
         try:
-            result["code"] = await process.wait()
-        except BaseException as error:  # surface it, don't KeyError
-            result["error"] = error
+            result.store(("code", await process.wait()))
+        except BaseException as error:  # surface it, don't leave the slot empty
+            result.store(("error", error))
         finally:
             exited.set()
 
@@ -156,9 +156,9 @@ async def run_command(
     if input is not None:
         io.append(feed(process.stdin))
     if process.stdout is not None:
-        io.append(drain("stdout", process.stdout))
+        io.append(drain(0, process.stdout))
     if process.stderr is not None:
-        io.append(drain("stderr", process.stderr))
+        io.append(drain(1, process.stderr))
     io_join = tonio.spawn.without_results(*io) if io else None
     tonio.spawn.without_tracking(reap())
 
@@ -175,7 +175,8 @@ async def run_command(
         # deadline a ceiling — while leaving no half-finished tasks behind.
         if io_join is not None:
             await io_join
-        raise subprocess.TimeoutExpired(command, timeout, output=captured.get("stdout"), stderr=captured.get("stderr"))
+        out, err = captured.fetch()
+        raise subprocess.TimeoutExpired(command, timeout, output=out, stderr=err)
 
     if io_join is not None:
         await io_join
@@ -183,10 +184,11 @@ async def run_command(
         if stream is not None:
             stream.close()
 
-    if "error" in result:
-        raise result["error"]
-    returncode = result["code"]
-    out, err = captured.get("stdout"), captured.get("stderr")
+    kind, payload = result.fetch()
+    if kind == "error":
+        raise payload
+    returncode = payload
+    out, err = captured.fetch()
     if check and returncode != 0:
         raise subprocess.CalledProcessError(returncode, command, output=out, stderr=err)
     return subprocess.CompletedProcess(command, returncode, out, err)
