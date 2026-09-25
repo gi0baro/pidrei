@@ -853,7 +853,9 @@ def convert_messages(
                 content = []
                 for item in msg.content:
                     if item.type == "text":
-                        content.append({"type": "text", "text": sanitize_surrogates(item.text)})
+                        # OpenAI-compatible providers reject empty text parts (image-only prompts).
+                        if item.text:
+                            content.append({"type": "text", "text": sanitize_surrogates(item.text)})
                     else:
                         content.append(
                             {"type": "image_url", "image_url": {"url": f"data:{item.mime_type};base64,{item.data}"}}

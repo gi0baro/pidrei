@@ -43,6 +43,12 @@ def test_applies_copilot_specific_adaptive_thinking_effort_overrides():
     assert "xhigh" in get_supported_thinking_levels(opus5)
     assert "max" in get_supported_thinking_levels(opus5)
 
+    opus55 = get_builtin_model("github-copilot", "claude-opus-5.5")
+    assert opus55 is not None
+    assert opus55.api == "anthropic-messages"
+    assert opus55.context_window == 1000000
+    assert get_supported_thinking_levels(opus55) == ["low", "medium", "high", "xhigh", "max"]
+
     sonnet46 = get_builtin_model("github-copilot", "claude-sonnet-4.6")
     assert sonnet46 is not None
     assert sonnet46.thinking_level_map is not None

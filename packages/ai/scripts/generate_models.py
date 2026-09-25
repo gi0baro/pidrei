@@ -234,10 +234,19 @@ OPENAI_TOOL_SEARCH_MODEL_IDS = {
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
 }
 OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
 OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
-OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}
+OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
+}
 OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000
 OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.4",
@@ -246,6 +255,8 @@ OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
 }
 # Keep the generated default no less restrictive than coding-agent's historical
 # image preprocessing. Provider limits can narrow this profile, but unknown
@@ -266,6 +277,8 @@ OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = {
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
 }
 OPENAI_RESPONSES_NONE_REASONING_MODELS = {
     "gpt-5.1",
@@ -278,6 +291,8 @@ OPENAI_RESPONSES_NONE_REASONING_MODELS = {
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
+    "gpt-6-sol",
+    "gpt-6-luna",
 }
 XAI_BUILTIN_EXCLUDED_MODEL_IDS = {
     "grok-3",
@@ -306,11 +321,15 @@ GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS = {
     "claude-opus-4.7",
     "claude-opus-4.8",
     "claude-opus-5",
+    "claude-opus-5.5",
     "claude-sonnet-4.6",
     "claude-sonnet-5",
     "gpt-5.3-codex",
     "gpt-5.4",
     "gpt-5.5",
+    "gpt-6-astra",
+    "gpt-6-luna",
+    "gpt-6-sol",
 }
 
 # Checked manually against the authenticated GitHub Copilot /models endpoint on
@@ -343,12 +362,16 @@ def with_openai_long_context_pricing(cost: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# OpenAI reduced GPT-5.6 Terra and Luna prices on 2026-07-30. Keep these
-# authoritative values until models.dev and passthrough catalogs catch up.
+# Keep current OpenAI prices authoritative until models.dev and passthrough
+# catalogs catch up.
 # https://developers.openai.com/api/docs/pricing
-OPENAI_GPT_56_STANDARD_COSTS: dict[str, dict[str, Any]] = {
+OPENAI_STANDARD_COSTS: dict[str, dict[str, Any]] = {
     "gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cacheRead": 0.02, "cacheWrite": 0.25},
+    "gpt-5.6-sol": {"input": 4, "output": 20, "cacheRead": 0.4, "cacheWrite": 5},
     "gpt-5.6-terra": {"input": 2, "output": 12, "cacheRead": 0.2, "cacheWrite": 2.5},
+    "gpt-6-astra": {"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5},
+    "gpt-6-luna": {"input": 0.1, "output": 0.5, "cacheRead": 0.01, "cacheWrite": 0.125},
+    "gpt-6-sol": {"input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5},
 }
 
 
@@ -426,9 +449,9 @@ VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = {"anthropic", "openrouter"}
 # reasoning effort (configuration_update) is not supported on anthropic/claude-opus-5-20260723")
 # while accepting them on Fable 5.1, so gate that model there.
 MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = {"openrouter:anthropic/claude-opus-5"}
-_MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-5(?:-\d{8})?$")
+_MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$")
 _MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$")
-_MID_CONVO_SYSTEM_OPUS_RE = re.compile(r"^claude-opus-(?:4[.-]8|5)(?:-\d{8})?$")
+_MID_CONVO_SYSTEM_OPUS_RE = re.compile(r"^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$")
 _MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$")
 
 
@@ -469,11 +492,11 @@ def is_anthropic_temperature_unsupported_model(model_id: str) -> bool:
 
 
 def supports_openai_xhigh(model_id: str) -> bool:
-    return any(marker in model_id for marker in ("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6", "gpt-6-astra"))
+    return any(marker in model_id for marker in ("gpt-5.2", "gpt-5.3", "gpt-5.4", "gpt-5.5", "gpt-5.6", "gpt-6"))
 
 
 def supports_openai_max(model: dict[str, Any]) -> bool:
-    return ("gpt-5.6" in model["id"] or "gpt-6-astra" in model["id"]) and model["api"] in (
+    return ("gpt-5.6" in model["id"] or "gpt-6" in model["id"]) and model["api"] in (
         "openai-responses",
         "azure-openai-responses",
         "openai-codex-responses",
@@ -711,7 +734,7 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
     provider = model["provider"]
     if model["api"] in ("openai-responses", "azure-openai-responses") and model_id.startswith("gpt-5"):
         merge_thinking_level_map(model, {"off": None})
-    if model_id == "gpt-6-astra" and model["api"] in (
+    if model_id in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna") and model["api"] in (
         "openai-responses",
         "azure-openai-responses",
         "openai-codex-responses",
@@ -719,7 +742,7 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
         merge_thinking_level_map(
             model,
             {
-                "off": None,
+                "off": None if model_id == "gpt-6-astra" else "none",
                 "minimal": None,
                 "low": "low",
                 "medium": "medium",
@@ -1050,7 +1073,7 @@ def _cost(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_models_dev_cost(cost: dict[str, Any] | None) -> dict[str, Any]:
-    """pi's tier-aware cost reader; used for GitHub Copilot."""
+    """pi's tier-aware cost reader; used for GitHub Copilot and xAI."""
     cost = cost or {}
     tiers = []
     for tier in cost.get("tiers") or []:
@@ -1537,7 +1560,7 @@ def _load_gateway_providers(
         model |= {
             "reasoning": source.get("reasoning") is True,
             "input": _input(source),
-            "cost": _cost(source),
+            "cost": get_models_dev_cost(source.get("cost")),
             "contextWindow": _context(source),
             "maxTokens": _max_tokens(source),
         }
@@ -2315,7 +2338,31 @@ MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "reasoning": True,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing({"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5}),
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-astra"]),
+        "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+        "maxTokens": 128000,
+    },
+    {
+        "id": "gpt-6-sol",
+        "name": "GPT-6 Sol",
+        "api": "openai-responses",
+        "baseUrl": "https://api.openai.com/v1",
+        "provider": "openai",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-sol"]),
+        "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+        "maxTokens": 128000,
+    },
+    {
+        "id": "gpt-6-luna",
+        "name": "GPT-6 Luna",
+        "api": "openai-responses",
+        "baseUrl": "https://api.openai.com/v1",
+        "provider": "openai",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-luna"]),
         "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
         "maxTokens": 128000,
     },
@@ -2327,7 +2374,7 @@ MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "reasoning": True,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing({"input": 5, "output": 30, "cacheRead": 0.5, "cacheWrite": 6.25}),
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-5.6-sol"]),
         "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
         "maxTokens": 128000,
     },
@@ -2339,7 +2386,7 @@ MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "reasoning": True,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-5.6-terra"]),
         "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
         "maxTokens": 128000,
     },
@@ -2351,7 +2398,7 @@ MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
         "provider": "openai",
         "reasoning": True,
         "input": ["text", "image"],
-        "cost": with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-5.6-luna"]),
         "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
         "maxTokens": 128000,
     },
@@ -2460,7 +2507,7 @@ MINIMAX_DIRECT_SUPPORTED_IDS = {"MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniM
 
 # OpenAI Codex (ChatGPT OAuth) models. Not fetched from models.dev; a small explicit
 # list avoids aliases. Older limits are based on observed server behavior; GPT-5.6
-# and GPT-6 Astra use Codex's 272k default catalog limit.
+# and GPT-6 use Codex's 272k default catalog limit.
 CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 CODEX_CONTEXT = 272000
 CODEX_GPT_56_CONTEXT = 272000
@@ -2494,7 +2541,21 @@ CODEX_MODELS: list[dict[str, Any]] = [
     _codex_model(
         "gpt-6-astra",
         "GPT-6 Astra",
-        with_openai_long_context_pricing({"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5}),
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-astra"]),
+        context_window=CODEX_CONTEXT,
+        model_input=["text", "image"],
+    ),
+    _codex_model(
+        "gpt-6-sol",
+        "GPT-6 Sol",
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-sol"]),
+        context_window=CODEX_CONTEXT,
+        model_input=["text", "image"],
+    ),
+    _codex_model(
+        "gpt-6-luna",
+        "GPT-6 Luna",
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-luna"]),
         context_window=CODEX_CONTEXT,
         model_input=["text", "image"],
     ),
@@ -2515,21 +2576,21 @@ CODEX_MODELS: list[dict[str, Any]] = [
     _codex_model(
         "gpt-5.6-luna",
         "GPT-5.6 Luna",
-        with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-luna"]),
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-5.6-luna"]),
         context_window=CODEX_GPT_56_CONTEXT,
         model_input=["text", "image"],
     ),
     _codex_model(
         "gpt-5.6-sol",
         "GPT-5.6 Sol",
-        with_openai_long_context_pricing({"input": 5, "output": 30, "cacheRead": 0.5, "cacheWrite": 6.25}),
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-5.6-sol"]),
         context_window=CODEX_GPT_56_CONTEXT,
         model_input=["text", "image"],
     ),
     _codex_model(
         "gpt-5.6-terra",
         "GPT-5.6 Terra",
-        with_openai_long_context_pricing(OPENAI_GPT_56_STANDARD_COSTS["gpt-5.6-terra"]),
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-5.6-terra"]),
         context_window=CODEX_GPT_56_CONTEXT,
         model_input=["text", "image"],
     ),
@@ -2563,6 +2624,21 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
         ):
             candidate["contextWindow"] = 1000000
 
+        # models.dev may list Opus 5.5 before its effort metadata is complete.
+        if provider == "anthropic" and model_id == "claude-opus-5-5":
+            merge_thinking_level_map(
+                candidate,
+                {
+                    "off": None,
+                    "minimal": None,
+                    "low": "low",
+                    "medium": "medium",
+                    "high": "high",
+                    "xhigh": "xhigh",
+                    "max": "max",
+                },
+            )
+
         # OpenCode variants list Claude Sonnet 4/4.5 with 1M context; actual limit is 200K.
         if provider in ("opencode", "opencode-go") and model_id in ("claude-sonnet-4-5", "claude-sonnet-4"):
             candidate["contextWindow"] = 200000
@@ -2576,13 +2652,13 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
             candidate["contextWindow"] = OPENAI_LONG_CONTEXT_INPUT_THRESHOLD
             candidate["maxTokens"] = 128000
         if provider == "openai" and model_id in OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS:
-            standard_cost = OPENAI_GPT_56_STANDARD_COSTS.get(model_id)
+            standard_cost = OPENAI_STANDARD_COSTS.get(model_id)
             candidate["cost"] = with_openai_long_context_pricing(
                 standard_cost if standard_cost is not None else candidate["cost"]
             )
         # Cloudflare AI Gateway passes OpenAI usage through at OpenAI list prices.
         if provider == "cloudflare-ai-gateway":
-            standard_cost = OPENAI_GPT_56_STANDARD_COSTS.get(model_id)
+            standard_cost = OPENAI_STANDARD_COSTS.get(model_id)
             if standard_cost:
                 candidate["cost"] = with_openai_long_context_pricing(standard_cost)
         # models.dev reports gpt-5-pro output as 272000 (a duplicate of the input
@@ -2705,6 +2781,79 @@ async def main() -> None:
         if not (model["provider"] == "xai" and model["id"] in XAI_BUILTIN_EXCLUDED_MODEL_IDS)
         and not (model["provider"] in ("opencode", "opencode-go") and model["id"] == "gpt-5.3-codex-spark")
     ]
+
+    # Add Claude Opus 5.5 until models.dev includes it.
+    # https://platform.claude.com/docs/en/models/opus-5-5/overview
+    if not any(m["provider"] == "anthropic" and m["id"] == "claude-opus-5-5" for m in all_models):
+        all_models.append(
+            {
+                "id": "claude-opus-5-5",
+                "name": "Claude Opus 5.5",
+                "api": "anthropic-messages",
+                "provider": "anthropic",
+                "baseUrl": "https://api.anthropic.com",
+                "reasoning": True,
+                "thinkingLevelMap": {
+                    "off": None,
+                    "minimal": None,
+                    "low": "low",
+                    "medium": "medium",
+                    "high": "high",
+                    "xhigh": "xhigh",
+                    "max": "max",
+                },
+                "input": ["text", "image"],
+                "cost": {"input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite": 5},
+                "contextWindow": 1000000,
+                "maxTokens": 128000,
+            }
+        )
+
+    # The authenticated Copilot catalog advertised these models on 2026-09-22,
+    # but models.dev did not include them yet.
+    missing_copilot_models = [
+        {
+            "id": "claude-opus-5.5",
+            "name": "Claude Opus 5.5",
+            "api": "anthropic-messages",
+            "provider": "github-copilot",
+            "baseUrl": "https://api.individual.githubcopilot.com",
+            "reasoning": True,
+            "thinkingLevelMap": {
+                "off": None,
+                "minimal": None,
+                "low": "low",
+                "medium": "medium",
+                "high": "high",
+                "xhigh": "xhigh",
+                "max": "max",
+            },
+            "input": ["text", "image"],
+            "cost": {"input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite": 5},
+            "contextWindow": 1000000,
+            "maxTokens": 128000,
+            "headers": dict(COPILOT_STATIC_HEADERS),
+        },
+        *(
+            {
+                "id": model_id,
+                "name": "GPT-6 Sol" if model_id == "gpt-6-sol" else "GPT-6 Luna",
+                "api": "openai-responses",
+                "provider": "github-copilot",
+                "baseUrl": "https://api.individual.githubcopilot.com",
+                "reasoning": True,
+                "input": ["text", "image"],
+                "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS[model_id]),
+                "contextWindow": 1000000,
+                "maxTokens": 128000,
+                "headers": dict(COPILOT_STATIC_HEADERS),
+            }
+            for model_id in ("gpt-6-sol", "gpt-6-luna")
+        ),
+    ]
+    for model in missing_copilot_models:
+        if not any(m["provider"] == model["provider"] and m["id"] == model["id"] for m in all_models):
+            all_models.append(model)
 
     apply_overrides(all_models)
 

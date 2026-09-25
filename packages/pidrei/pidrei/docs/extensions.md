@@ -2,7 +2,9 @@
 
 Extensions are Python modules that add tools, slash commands, keyboard
 shortcuts, CLI flags, event handlers, providers, and custom UI. They run
-in-process, on the same interpreter as pidrei itself.
+in-process, on the same interpreter as pidrei itself, with your operating
+system permissions: an extension can read prompts, tool calls, files,
+credentials and session history, so load them only from sources you trust.
 
 This is the largest deliberate divergence from pi, whose extensions are
 TypeScript modules loaded through jiti. The hook bus, the event payloads and
@@ -13,6 +15,7 @@ the `pi` object mirror pi's one-for-one; the module format cannot.
 - [Quick start](#quick-start)
 - [The extension ABI](#the-extension-abi)
 - [Where extensions live](#where-extensions-live)
+- [Runtime lifecycle](#runtime-lifecycle)
 - [Imports](#imports)
 - [Events](#events)
 - [ExtensionContext](#extensioncontext)
@@ -129,7 +132,24 @@ them. `--no-extensions` skips all of them.
 
 Project extensions are code, and loading them runs that code. pidrei asks
 before trusting a project the first time; see the `defaultProjectTrust`
-setting.
+setting. Only user and `-e` extensions load early enough to handle the
+`project_trust` event.
+
+## Runtime lifecycle
+
+The factory runs whenever extensions load, and some invocations load them
+without ever starting a session. So don't start processes, sockets, watchers
+or timers in the factory: start them from `session_start`, or from the
+command or tool that needs them, and release them in a `session_shutdown`
+handler. Keep that cleanup idempotent — quit, reload and session replacement
+all converge on it.
+
+An async factory is awaited before startup continues, so it can fetch
+configuration or register providers that startup model selection needs.
+
+`/reload` (or `await ctx.reload()` from a command) replaces the whole
+extension runtime: code that runs after the reload must not reuse objects or
+the `ctx` from the old one.
 
 ## Imports
 
@@ -213,11 +233,12 @@ user sends a prompt
 | Event | Fires | Can change |
 |-------|-------|-----------|
 | `project_trust` | Before project resources load | Grant or refuse trust |
-| `session_start` | Startup, and on new/switched sessions | — |
-| `session_shutdown` | Before the process exits | Block shutdown |
-| `session_before_compact` | Before compaction runs | — |
+| `session_start` | Startup, reload, and new/resumed/forked sessions (`reason`) | — |
+| `session_shutdown` | Before the session is torn down: quit, reload, or session replacement (`reason`) | — (release resources here) |
+| `session_before_compact` | Before compaction runs | `{"cancel": True}`, or supply `{"compaction": CompactionResult(...)}` |
 | `session_compact` / `session_compact_failed` | After compaction succeeds / after it fails or is aborted | — |
-| `session_before_fork` / `session_before_switch` / `session_before_tree` | Before the matching session action | — |
+| `session_before_fork` / `session_before_switch` | Before the matching session action | `{"cancel": True}` |
+| `session_before_tree` | Before `/tree` navigation | `{"cancel": True}`, a `summary`, or `customInstructions` / `replaceInstructions` / `label` |
 | `resources_discover` | Startup and `/reload` | Add resource paths |
 | `input` | User submitted input | Transform, or handle it entirely |
 | `before_agent_start` | Before the loop starts | Message; prompt sections, tools and rules via the mutable `event["systemPromptOptions"]` (sent as a patch); or the whole system prompt for the run |
@@ -235,13 +256,29 @@ user sends a prompt
 | `message_start` / `message_update` / `message_end` | Assistant message stream | `message_end` may rewrite |
 | `tool_call` | Before a tool runs | Block it, or rewrite arguments |
 | `tool_result` | After a tool runs | Rewrite the result |
-| `user_bash` | User ran a `!` command | Return exactly one of `{"operations": ...}` (run through that backend) or a complete `{"result": ...}` (record without running); `None` falls through to local execution; an invalid result or a raise blocks the command |
+| `user_bash` | User ran a `!` command | Return exactly one of `{"operations": ...}` (run through that backend) or a complete `{"result": ...}` (record without running), which stops propagation; `None` passes to the next handler, then to local execution; an invalid result or a raise blocks the command |
 | `ui_prompt_start` / `ui_prompt_end` | Around a blocking `ctx.ui` prompt (`select`, `confirm`, `input`, `editor`, `custom`) — nested prompts coalesce into one outer waiting span; handlers are best-effort and not awaited | — |
 | `model_select` / `thinking_level_select` | Selection changed | — |
 
 Handlers that return `None` leave the event unchanged. Handlers that return a
 value replace the corresponding field — the table's "can change" column says
-which. Ordering follows extension load order.
+which; a return value on a notification-only event has no effect. Ordering
+follows extension load order. `tool_result` handlers compose, each seeing the
+previous handler's changes.
+
+Tool calls from one assistant message can run in parallel, so a `tool_call` or
+`tool_result` handler must not assume a sibling call or its result exists yet.
+For nested work owned by the active turn use `ctx.signal`; commands and idle
+session events usually have none.
+
+### Changing the system prompt
+
+`before_agent_start` receives the prompt as text (`event["systemPrompt"]`) and
+as structured sections (`event["systemPromptOptions"]`). Prefer editing the
+sections, selected tools or guidelines in place: pidrei then records only the
+difference in the transcript. Returning `{"systemPrompt": ...}` (or setting
+`force_system_prompt` on the options) replaces the whole prompt for that run;
+providers receive the forced text as their leading system prompt.
 
 ### Blocking a tool call
 
@@ -370,13 +407,18 @@ The second handler argument. The useful members:
 | Member | Purpose |
 |--------|---------|
 | `ctx.cwd` | Working directory of the session |
-| `ctx.has_ui` | False in print and RPC modes — check before touching `ctx.ui` |
+| `ctx.mode` | `"tui"`, `"print"` or `"json"` |
+| `ctx.has_ui` | False in print and JSON modes — check before waiting on `ctx.ui` |
 | `ctx.ui` | UI surface (below) |
+| `ctx.model` / `ctx.thinking_level` | Current model and reasoning level |
+| `ctx.signal` | Cancel token of the active operation, or `None` when idle |
 | `ctx.session_manager` | Session entries and metadata |
 | `ctx.scoped_models` | Read-only list of models scoped to the session (from `--models` / `enabledModels`, the set `/scoped-models` shows); empty when no scoping is configured |
 | `ctx.model_registry` | Models, providers and resolved authentication, plus streaming model calls (below) |
 | `ctx.is_idle()` | Whether the agent is between runs |
 | `ctx.has_pending_messages()` | Whether queued messages are waiting |
+| `ctx.get_context_usage()` / `ctx.compact(options)` | Context-window usage; start a compaction |
+| `ctx.abort()` / `ctx.shutdown()` | Abort the current operation; request an orderly shutdown |
 
 **Streaming model calls.** Use `ctx.model_registry.stream_simple(model,
 context, options)` for provider-neutral options such as `reasoning`, or
@@ -394,12 +436,19 @@ return the user's choice, or `None` if dismissed. `paste_to_editor` and the
 theme accessors (`get_all_themes`, `get_theme`, `set_theme`) are awaitable
 too; the remaining setters are plain sync calls.
 
-In print and RPC modes `ctx.has_ui` is False and `ctx.ui` is a no-op object, so
-handlers stay safe to call unconditionally — but a handler that *waits* on user
-input should check `ctx.has_ui` first, or it will wait forever on nothing.
+In print and JSON modes `ctx.has_ui` is False and `ctx.ui` is a no-op object,
+so handlers stay safe to call unconditionally — but a handler that *waits* on
+user input should check `ctx.has_ui` first, or it will wait forever on
+nothing.
 
-Command handlers receive a slightly wider context that also carries the command
-arguments.
+Command handlers receive a wider context that adds `wait_for_idle()`,
+`reload()`, `navigate_tree(target_id, options)`, `new_session(options)`,
+`switch_session(path, options)` and `fork(entry_id, options)`. These are
+command-only because calling them from an event handler can deadlock the
+runtime. Replacing the session invalidates the old context (using it raises):
+capture plain data beforehand and do post-replacement work in
+`{"withSession": callback}`, an async callable that receives the fresh
+context.
 
 ## The `pi` object
 
@@ -456,7 +505,8 @@ extension commands and expand skill commands and prompt templates (default:
 `register_provider(provider)` registers a constructed provider object.
 `unregister_provider(name)` removes one. Registrations made while extensions
 are still loading are queued and flushed once the model registry exists, so an
-extension does not need to defer them. See [custom-provider.md](custom-provider.md).
+extension does not need to defer them; later calls take effect immediately.
+See [custom-provider.md](custom-provider.md).
 
 ## Custom tools
 
@@ -496,7 +546,30 @@ the validated arguments, a cancel token, a streaming-update callback, and the
 extension context.
 
 The `content` list is what the model sees. `details` is arbitrary data for your
-own renderers and is not sent to the model.
+own renderers and state reconstruction, not sent to the model; leave it `None`
+when there is nothing structured. A tool that makes nested model calls should
+put their `usage` on the result so session totals stay accurate.
+
+Raise from `execute` to produce a failed tool result — returning a result
+never marks it as an error. Set `terminate=True` only to skip the automatic
+follow-up request; it takes effect only when every finished tool in the batch
+sets it.
+
+Tools run in parallel by default. Set `execution_mode="sequential"` when tools
+share mutable in-memory state, and wrap a file tool's whole read-modify-write
+in `with_file_mutation_queue(path, fn, queue_key=...)` from
+`pidrei.core.tools`, resolving the key first with
+`await resolve_mutation_queue_key(path)` (in
+`pidrei.core.tools.file_mutation_queue`) so no filesystem call runs on the
+runtime. Truncate large outputs and tell the model where to read the rest.
+
+To offer tools on demand, register all of them up front, keep the optional
+ones inactive, and switch with `pi.set_active_tools(names)` — from a loader
+tool, say. Names must already be registered; unknown ones are ignored. The
+change is appended to the transcript as a system message before the model's
+next request; a model that cannot take system messages mid-conversation gets
+them folded into the leading one instead, which can invalidate the cached
+prefix.
 
 Extension tools respect the same filters as built-in ones: `--tools` restricts
 to a list, `--exclude-tools` removes some, and `--no-builtin-tools` drops
@@ -559,8 +632,21 @@ def extension(pi):
     MyExtension(pi).wire()
 ```
 
-For state that must outlive the process, write to a file under `ctx.cwd` or the
-agent directory. For state shared between extensions, use `pi.events`.
+Session-bound state belongs in the session itself; pick the store by how it
+relates to the conversation:
+
+| State | Store |
+|-------|-------|
+| Tool state that should follow the active branch | The tool result's `details` |
+| Durable data kept out of model context | `await pi.append_entry(...)` |
+| Custom content stored *and* sent to the model | `pi.send_message(...)` |
+| Data beyond one session | A file under `ctx.cwd` or the agent directory |
+
+Rebuild branch-sensitive state in `session_start` from
+`ctx.session_manager.get_branch()`, not from every entry in the file —
+abandoned branches are alternative histories. Register an entry or message
+renderer when stored custom content should appear in the transcript. For
+state shared between extensions, use `pi.events`.
 
 ## Custom UI
 
@@ -573,9 +659,13 @@ configured by the outputPad setting — use it as your component's left pad so
 custom messages line up with the rest of the transcript).
 
 Components come from `pidrei_tui` — `Container`, `Text`, `Spacer`,
-`SelectList`, `SettingsList` and friends. See [tui.md](tui.md).
+`SelectList`, `SettingsList` and friends. Use `ctx.ui.custom()` only when an
+interaction needs its own rendering and input; [tui.md](tui.md) covers
+components, focus, overlays, theming and performance.
 
-Guard UI work with `ctx.has_ui`.
+Guard UI work with `ctx.has_ui`, and terminal-only behavior with
+`ctx.mode == "tui"`. Keep tool and event logic independent of rendering so it
+still works without a UI.
 
 ### register_markdown_transformer(transformer)
 
@@ -615,7 +705,12 @@ its bundled `Marked` here) if a transformer needs to inspect the token stream.
 An exception raised while loading an extension is reported as a diagnostic and
 that extension is skipped; the rest still load. An exception inside a handler is
 reported and the run continues — one broken extension does not take down the
-session. Diagnostics appear at startup and in `/extensions`.
+session. Diagnostics appear at startup and after `/reload`.
+
+Two exceptions fail safe rather than continue: a `tool_call` handler that
+raises blocks that tool call, and a `user_bash` handler that raises blocks the
+command instead of falling through to local execution. A tool whose `execute`
+raises becomes an error result for the model.
 
 ## Mode behaviour
 
@@ -624,7 +719,6 @@ session. Diagnostics appear at startup and in `/extensions`.
 | Interactive | Loaded | Full |
 | Print (`-p`) | Loaded | `has_ui` False |
 | JSON (`--mode json`) | Loaded | `has_ui` False |
-| RPC (`--mode rpc`) | Loaded | Requests forwarded to the client |
 
 Commands and shortcuts only make sense in interactive mode; tools and event
 handlers work everywhere.

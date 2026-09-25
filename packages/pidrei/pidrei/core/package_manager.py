@@ -124,7 +124,10 @@ class UnsupportedSourceError(Exception):
 
 
 def is_offline_mode_enabled() -> bool:
-    return bool(os.environ.get("PIDREI_OFFLINE"))
+    value = os.environ.get("PIDREI_OFFLINE")
+    if not value:
+        return False
+    return value == "1" or value.lower() in ("true", "yes")
 
 
 def get_extension_temp_folder(agent_dir: str) -> str:

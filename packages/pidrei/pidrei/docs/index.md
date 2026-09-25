@@ -8,7 +8,11 @@ where this documentation says otherwise.
 
 ## Start here
 
+- [How pidrei works](how-pi-works.md) — the agent loop, context, sessions, and where customization plugs in.
 - [Providers](providers.md) — subscription and API-key setup for the built-in providers.
+- [CLI reference](cli.md) — modes, options, and the package and auth commands.
+- [Slash commands](slash-commands.md) — the built-in interactive commands.
+- [Configuration](configuration.md) — user and project directories, settings files, context files, and project trust.
 - [Custom models](models.md) — add model entries in `models.json`.
 - [Environment variables](environment-variables.md) — process configuration, and what bash tools see.
 - [Keybindings](keybindings.md) — default shortcuts and how to rebind them.
@@ -24,7 +28,9 @@ where this documentation says otherwise.
 
 ## Programmatic use
 
+- [CLI integration](cli-integration.md) — drive pidrei from scripts with print mode and the JSON event stream.
 - [Library use](sdk.md) — embed pidrei's packages in your own Python program.
+- [Message types](message-types.md) — the message shapes in sessions, events, and the JSON stream.
 - [TUI components](tui.md) — build terminal UI for extensions.
 
 ## Differences from pi

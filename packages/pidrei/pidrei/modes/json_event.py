@@ -2,7 +2,7 @@
 
 pi expresses `JsonAgentSessionEvent` as a conditional type over
 `AgentSessionEvent`; Python has no counterpart, so the shape lives only in the
-runtime conversion below and in `docs/json.md`.
+runtime conversion below and in `docs/cli-integration.md` (pi: `docs/json.md`).
 """
 
 import dataclasses

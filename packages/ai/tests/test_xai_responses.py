@@ -25,7 +25,7 @@ from pidrei_ai.api.openai_responses import (
 from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
 from pidrei_ai.providers.xai import xai_provider
 from pidrei_ai.registry import get_supported_thinking_levels
-from pidrei_ai.types import Context, Model, ModelCost, UserMessage
+from pidrei_ai.types import Context, Model, ModelCost, ModelCostTier, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
 from tests.test_openai_responses import FakeClient, make_model
@@ -84,7 +84,24 @@ def test_routes_every_builtin_xai_model_through_responses():
         assert model.api == "openai-responses", model.id
     assert get_supported_thinking_levels(xai_model("grok-4.5")) == ["low", "medium", "high"]
     assert get_supported_thinking_levels(xai_model("grok-4.6")) == ["low", "medium", "high", "xhigh"]
+    assert get_supported_thinking_levels(xai_model("grok-4.7")) == ["low", "medium", "high", "xhigh"]
     assert get_supported_thinking_levels(xai_model("grok-4.3")) == ["off", "low", "medium", "high"]
+
+
+def test_includes_grok_47_capabilities_and_long_context_pricing():
+    model = xai_model("grok-4.7")
+    assert model.api == "openai-responses"
+    assert model.reasoning is True
+    assert model.input == ["text", "image"]
+    assert model.context_window == 500000
+    assert model.max_tokens == 500000
+    assert model.cost == ModelCost(
+        input=2,
+        output=6,
+        cache_read=0.5,
+        cache_write=0,
+        tiers=[ModelCostTier(input_tokens_above=200000, input=4, output=12, cache_read=1, cache_write=0)],
+    )
 
 
 @pytest.mark.tonio
@@ -139,8 +156,8 @@ async def test_requests_encrypted_reasoning_without_an_effort_override():
 
 
 @pytest.mark.tonio
-async def test_uses_responses_for_grok_46_with_xhigh_effort_and_encrypted_reasoning():
-    model = xai_model("grok-4.6")
+async def test_uses_responses_for_grok_47_with_xhigh_effort_and_encrypted_reasoning():
+    model = xai_model("grok-4.7")
     context = Context(
         system_prompt="You are a careful coding assistant.",
         messages=[UserMessage(content="hello", timestamp=1)],
@@ -154,7 +171,7 @@ async def test_uses_responses_for_grok_46_with_xhigh_effort_and_encrypted_reason
     assert create_responses_client(model, context, "xai-test-token", None, None)._url == (
         "https://api.x.ai/v1/responses"
     )
-    assert params["model"] == "grok-4.6"
+    assert params["model"] == "grok-4.7"
     assert params["store"] is False
     assert params["stream"] is True
     assert params["reasoning"]["effort"] == "xhigh"

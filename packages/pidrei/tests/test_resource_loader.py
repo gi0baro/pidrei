@@ -8,11 +8,13 @@ also scans ~/.agents/skills, which must stay hermetic).
 """
 
 import contextlib
+import json
 import os
 from pathlib import Path
 
 import pytest
 
+import pidrei.modes.interactive.theme as theme_module
 from pidrei.core import resource_loader
 from pidrei.core.resource_loader import DefaultResourceLoader, SourcedPath, load_project_context_files
 from pidrei.core.settings_manager import SettingsManager
@@ -275,6 +277,24 @@ class TestReload:
         assert any(file.path == str(cwd / "AGENTS.md") for file in agents_files)
         assert not any(skill.name == "project-skill" for skill in loader.get_skills().skills)
         assert not any(prompt.name == "project" for prompt in loader.get_prompts().prompts)
+
+    @pytest.mark.tonio
+    async def test_skips_project_themes_when_project_is_not_trusted(self, dirs):
+        # pidrei-only: the loader used to scan <cwd>/.pidrei/themes itself, bypassing
+        # the package manager's trust gate (pi calls loadThemes(themePaths, false)).
+        _tmp, agent_dir, cwd, home = dirs
+        builtin = json.loads((Path(theme_module.__file__).parent / "dark.json").read_text())
+        write(agent_dir / "themes" / "user-theme.json", json.dumps({**builtin, "name": "user-theme"}))
+        write(cwd / ".pidrei" / "themes" / "project-theme.json", json.dumps({**builtin, "name": "project-theme"}))
+        settings_manager = await SettingsManager.create(str(cwd), str(agent_dir), project_trusted=False)
+
+        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
+        with fake_home(home):
+            await loader.reload()
+
+        names = [theme.name for theme in loader.get_themes()["themes"]]
+        assert "user-theme" in names
+        assert "project-theme" not in names
 
     @pytest.mark.tonio
     async def test_discovers_append_system_md(self, dirs):

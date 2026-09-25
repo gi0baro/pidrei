@@ -187,7 +187,9 @@ class TestCompaction:
         prompt = "".join(
             block.text for message in request_context.messages if message.role == "user" for block in message.content
         )
-        assert "<conversation>" in prompt
+        # Regression test for #9652: split-turn summaries use a clear Markdown conversation boundary.
+        # pi seeds "message to compact"; this mirror seeds the session by prompting.
+        assert "# Conversation\n[User]: What is 2+2? Reply with just the number." in prompt
         assert request_options.cache_retention == "none"
         assert request_options.session_id != "active-routing-session"
         assert request_options.transport is None

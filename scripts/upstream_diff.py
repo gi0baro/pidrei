@@ -277,6 +277,18 @@ DROPPED_PREFIXES += (
         "Node terminal UI driving RPC mode, not ported",
     ),
     (
+        "packages/coding-agent/examples/rpc-client.ts",
+        "RpcClient example; the RPC surface stays unpublished (PORT_0.87.1.md decision 3)",
+    ),
+    (
+        "packages/coding-agent/docs/rpc-commands.md",
+        "RPC docs stay out of the curated set (PORT_0.87.1.md decision 3; transport remnants are unpublished)",
+    ),
+    (
+        "packages/coding-agent/docs/rpc-extension-ui.md",
+        "RPC docs stay out of the curated set (PORT_0.87.1.md decision 3; transport remnants are unpublished)",
+    ),
+    (
         "packages/coding-agent/examples/sdk/",
         "pi TS-SDK example scripts, not ported",
     ),
@@ -732,6 +744,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "logic); compound getters pin one _settings read"
             ),
         ),
+        ("no-telemetry", "no enableAnalytics/trackingId accessors"),
     ),
     "packages/coding-agent/src/core/auth-storage.ts": (
         (
@@ -804,6 +817,13 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    # No telemetry (2026-09-25): pidrei never asks for an analytics opt-in.
+    "packages/coding-agent/src/modes/interactive/components/first-time-setup.ts": (
+        ("no-telemetry", "theme-only dialog; the analytics opt-in step is not ported"),
+    ),
+    "packages/coding-agent/test/first-time-setup.test.ts": (
+        ("no-telemetry", "analytics-settings cases are not mirrored"),
+    ),
 }
 
 #: pi test files whose pidrei coverage is not a 1:1 mirror. Phase-1 `ai` tests
@@ -874,7 +894,10 @@ TEST_HOMES = {
         "partial mirror: test_openai_completions_prompt_cache.py holds the 0.87.1 session-affinity cases "
         "(OpenRouter default/opt-out, Baseten catalog); the rest of the prompt-cache suite is a PARITY GAP"
     ),
-    "packages/ai/test/openai-completions-tool-result-images.test.ts": "PARITY GAP: openai_completions tool-result image handling unmirrored",
+    "packages/ai/test/openai-completions-tool-result-images.test.ts": (
+        "partial mirror: test_openai_completions_tool_result_images.py holds the 0.87.1 empty-text-part case; "
+        "the tool-result image batching cases are a PARITY GAP"
+    ),
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
     "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": "PARITY GAP: rpc prompt/response semantics suite unmirrored",

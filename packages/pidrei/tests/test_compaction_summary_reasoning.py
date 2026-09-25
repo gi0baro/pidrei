@@ -178,8 +178,9 @@ async def test_preserves_the_previous_summary_without_an_empty_history_request_f
     prompt = "".join(
         block.text for message in contexts[0].messages if message.role == "user" for block in message.content
     )
-    assert "This is the PREFIX of a turn that was too large to keep" in prompt
-    assert "<conversation>" in prompt
+    # Regression test for #9652: clear boundaries and continuation wording avoid the reasoning-extraction false positive.
+    assert "# Conversation\n[User]: Summarize this." in prompt
+    assert "# Instructions\nThe messages above are earlier context from an ongoing conversation." in prompt
 
 
 @pytest.mark.tonio

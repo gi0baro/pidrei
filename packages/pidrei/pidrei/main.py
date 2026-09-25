@@ -635,7 +635,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     startup_settings_manager = await SettingsManager.create(cwd, agent_dir)
     startup_settings_diagnostics = collect_settings_diagnostics(startup_settings_manager)
 
-    # Experimental first-time setup: theme choice and analytics opt-in.
+    # Experimental first-time setup: theme choice (pi's analytics opt-in is not ported).
     # Runs before any runtime services are created so the chosen settings
     # apply everywhere.
     if app_mode == "interactive" and not parsed.help and parsed.list_models is None and should_run_first_time_setup():

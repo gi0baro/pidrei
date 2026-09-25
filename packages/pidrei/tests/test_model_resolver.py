@@ -509,7 +509,7 @@ class TestDefaultModelSelection:
         assert DEFAULT_MODEL_PER_PROVIDER["vercel-ai-gateway"] == "zai/glm-5.1"
 
     def test_xai_default_tracks_current_model(self):
-        assert DEFAULT_MODEL_PER_PROVIDER["xai"] == "grok-4.6"
+        assert DEFAULT_MODEL_PER_PROVIDER["xai"] == "grok-4.7"
 
     def test_qwen_token_plan_individual_default_tracks_current_model(self):
         assert DEFAULT_MODEL_PER_PROVIDER["qwen-token-plan-individual"] == "qwen3.8-max"

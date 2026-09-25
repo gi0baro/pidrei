@@ -32,7 +32,7 @@ DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "github-copilot": "gpt-5.4",
     "openrouter": "moonshotai/kimi-k2.6",
     "vercel-ai-gateway": "zai/glm-5.1",
-    "xai": "grok-4.6",
+    "xai": "grok-4.7",
     "groq": "openai/gpt-oss-120b",
     "cerebras": "gpt-oss-120b",
     "zai": "glm-5.3",

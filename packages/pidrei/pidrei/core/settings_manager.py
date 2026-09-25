@@ -24,7 +24,6 @@ import json
 import math
 import os
 import threading
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -943,25 +942,6 @@ class SettingsManager:
 
     def set_enable_provider_attribution(self, enabled: bool) -> None:
         self._set_global("enableProviderAttribution", enabled)
-
-    def get_enable_analytics(self) -> bool:
-        enabled = self._settings.get("enableAnalytics")
-        return enabled if enabled is not None else False
-
-    def get_tracking_id(self) -> str | None:
-        return self._settings.get("trackingId")
-
-    def set_enable_analytics(self, enabled: bool) -> None:
-        """Set the analytics opt-in preference; generates a tracking identifier on first opt-in."""
-
-        def update(settings: Settings) -> None:
-            settings["enableAnalytics"] = enabled
-            self._mark_modified("enableAnalytics")
-            if enabled and not settings.get("trackingId"):
-                settings["trackingId"] = str(uuid.uuid4())
-                self._mark_modified("trackingId")
-
-        self._update_global_settings(update)
 
     def get_packages(self) -> list[Any]:
         return list(self._settings.get("packages") or [])

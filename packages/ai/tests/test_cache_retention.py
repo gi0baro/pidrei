@@ -160,7 +160,9 @@ async def test_anthropic_1h_ttl_when_cache_retention_option_is_long():
 # --- OpenAI Responses ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("model_id", ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"])
+@pytest.mark.parametrize(
+    "model_id", ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol"]
+)
 def test_responses_does_not_enable_cache_warming_from_the_documented_ttl_alone(model_id):
     assert get_builtin_model("openai", model_id).prompt_cache is None
 
@@ -184,6 +186,8 @@ def test_responses_prompt_cache_retention_when_env_long(monkeypatch):
     [
         ("gpt-4o-mini", "24h", None),
         ("gpt-6-astra", None, {"ttl": "30m"}),
+        ("gpt-6-sol", None, {"ttl": "30m"}),
+        ("gpt-6-luna", None, {"ttl": "30m"}),
     ],
 )
 def test_responses_uses_the_supported_long_cache_field(monkeypatch, model_id, retention, cache_options):

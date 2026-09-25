@@ -1,14 +1,17 @@
 """Mirror of pi coding-agent test/first-time-setup.test.ts and
 test/first-time-setup-fork.test.ts (the fork case patches PACKAGE_NAME like
-pi's vi.mock of config.ts)."""
+pi's vi.mock of config.ts).
 
-import re
+DIVERGED: pi's analytics-settings cases are not mirrored — pidrei sends no
+telemetry, so it has no analytics opt-in or tracking identifier.
+"""
 
 import pytest
 
 from pidrei.cli import startup_ui
 from pidrei.config import ENV_AGENT_DIR
-from pidrei.core.settings_manager import SettingsManager
+from pidrei.modes.interactive.components.first_time_setup import FirstTimeSetupComponent
+from pidrei.modes.interactive.theme import init_theme_sync
 
 
 class TestShouldRunFirstTimeSetup:
@@ -46,35 +49,27 @@ class TestShouldRunFirstTimeSetupInForkedDistributions:
         assert startup_ui.should_run_first_time_setup(str(tmp_path / "settings.json")) is False
 
 
-class TestAnalyticsSettings:
-    def test_defaults_to_disabled_with_no_tracking_identifier(self):
-        manager = SettingsManager.in_memory()
+class TestFirstTimeSetupComponent:
+    @pytest.fixture(autouse=True)
+    def _theme(self):
+        init_theme_sync("dark")
 
-        assert manager.get_enable_analytics() is False
-        assert manager.get_tracking_id() is None
+    @pytest.mark.tonio
+    async def test_confirming_the_theme_finishes_setup_without_an_analytics_step(self):
+        submitted: list[dict] = []
 
-    def test_generates_a_tracking_identifier_on_opt_in(self):
-        manager = SettingsManager.in_memory()
+        async def on_theme_preview(_theme_name: str) -> None:
+            return None
 
-        manager.set_enable_analytics(True)
+        component = FirstTimeSetupComponent(
+            {
+                "detectedTheme": "light",
+                "onThemePreview": on_theme_preview,
+                "onSubmit": submitted.append,
+                "onCancel": lambda: None,
+            }
+        )
 
-        assert manager.get_enable_analytics() is True
-        assert re.fullmatch(r"[0-9a-f-]{36}", manager.get_tracking_id())
+        await component.handle_input("\n")
 
-    def test_does_not_generate_a_tracking_identifier_on_opt_out(self):
-        manager = SettingsManager.in_memory()
-
-        manager.set_enable_analytics(False)
-
-        assert manager.get_enable_analytics() is False
-        assert manager.get_tracking_id() is None
-
-    def test_keeps_the_tracking_identifier_when_toggling_analytics(self):
-        manager = SettingsManager.in_memory()
-
-        manager.set_enable_analytics(True)
-        tracking_id = manager.get_tracking_id()
-        manager.set_enable_analytics(False)
-        manager.set_enable_analytics(True)
-
-        assert manager.get_tracking_id() == tracking_id
+        assert submitted == [{"theme": "light"}]

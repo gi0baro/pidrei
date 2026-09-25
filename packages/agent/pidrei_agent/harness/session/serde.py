@@ -227,6 +227,7 @@ def serialize_message(message: Any) -> Any:
         }
         _put(data, "responseModel", message.response_model)
         _put(data, "responseId", message.response_id)
+        _put(data, "providerThinkingLevel", message.provider_thinking_level)
         if message.diagnostics is not None:
             data["diagnostics"] = [_serialize_diagnostic(diagnostic) for diagnostic in message.diagnostics]
         _put(data, "errorMessage", message.error_message)
@@ -309,6 +310,7 @@ def parse_message(data: Any) -> Any:
             timestamp=data.get("timestamp", 0),
             response_model=data.get("responseModel"),
             response_id=data.get("responseId"),
+            provider_thinking_level=data.get("providerThinkingLevel"),
             diagnostics=(
                 [_parse_diagnostic(diagnostic) for diagnostic in data["diagnostics"]]
                 if isinstance(data.get("diagnostics"), list)

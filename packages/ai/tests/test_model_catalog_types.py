@@ -22,6 +22,11 @@ def test_derives_model_api_id_and_provider_from_grouped_model_data():
     assert grok_46.api == "openai-responses"
     assert grok_46.id == "grok-4.6"
 
+    grok_47 = get_builtin_model("xai", "grok-4.7")
+    assert grok_47 is not None
+    assert grok_47.api == "openai-responses"
+    assert grok_47.id == "grok-4.7"
+
     grok_43 = get_builtin_model("xai", "grok-4.3")
     assert grok_43 is not None
     assert grok_43.api == "openai-responses"
@@ -41,6 +46,15 @@ def test_routes_all_github_copilot_gpt_models_through_the_responses_api():
     astra = get_builtin_model("github-copilot", "gpt-6-astra")
     assert astra is not None
     assert astra.api == "openai-responses"
+    for model_id in ("gpt-6-sol", "gpt-6-luna"):
+        model = get_builtin_model("github-copilot", model_id)
+        assert model is not None, model_id
+        assert model.api == "openai-responses"
+        assert model.context_window == 1000000
+        assert model.max_tokens == 128000
+        assert model.thinking_level_map is not None
+        assert model.thinking_level_map["off"] == "none"
+        assert model.thinking_level_map["max"] == "max"
 
 
 def test_every_catalog_model_matches_its_position():

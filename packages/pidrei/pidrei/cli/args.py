@@ -95,11 +95,18 @@ def parse_args(args: list[str]) -> Args:  # noqa: C901
             result.help = True
         elif arg in ("--version", "-v"):
             result.version = True
-        elif arg == "--mode" and i + 1 < len(args):
-            i += 1
-            mode = args[i]
-            if mode in ("text", "json", "rpc"):
-                result.mode = mode
+        elif arg == "--mode":
+            mode = args[i + 1] if i + 1 < len(args) else None
+            if mode is None or mode.startswith("-"):
+                result.diagnostics.append({"type": "error", "message": "--mode requires text, json, or rpc"})
+            else:
+                i += 1
+                if mode in ("text", "json", "rpc"):
+                    result.mode = mode
+                else:
+                    result.diagnostics.append(
+                        {"type": "error", "message": f'Invalid mode "{mode}". Valid values: text, json, rpc'}
+                    )
         elif arg in ("--continue", "-c"):
             result.continue_ = True
         elif arg in ("--resume", "-r"):

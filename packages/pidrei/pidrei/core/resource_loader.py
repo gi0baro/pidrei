@@ -732,15 +732,9 @@ class DefaultResourceLoader:
         else:
             themes = []
             diagnostics = []
-            # Default theme directories (agent-level and project-level)
-            if not self._no_themes:
-                default_dirs = [
-                    os.path.join(self._agent_dir, "themes"),
-                    os.path.join(self._cwd, CONFIG_DIR_NAME, "themes"),
-                ]
-                for theme_dir in default_dirs:
-                    self._load_themes_from_dir(theme_dir, themes, diagnostics, load_theme_from_path)
-
+            # pi's loadThemes(themePaths, false): the default directories arrive through
+            # the package manager's auto-discovery, which gates project themes on trust
+            # and applies settings overrides; scanning them here would bypass both.
             for path in theme_paths:
                 resolved = self._resolve_resource_path(path)
                 if not os.path.exists(resolved):

@@ -83,7 +83,7 @@ from pidrei_ai.utils.user_agent import set_default_user_agent
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Stealth mode: mimic Claude Code's tool naming exactly.
-CLAUDE_CODE_VERSION = "2.1.251"
+CLAUDE_CODE_VERSION = "2.1.280"
 
 # Claude Code 2.x tool names (canonical casing).
 # Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md

@@ -1,7 +1,8 @@
 # Keybindings
 
 Every binding has an **action id** (`app.model.select`) and a set of keys. Show
-the current bindings with `/keybindings`.
+the active shortcuts for the editor and application with `/hotkeys`; rebind
+them in `~/.pidrei/agent/keybindings.json` (see [Customizing](#customizing)).
 
 ## Defaults
 
@@ -20,8 +21,9 @@ the current bindings with `/keybindings`.
 | `ctrl+p` / `shift+ctrl+p` | `app.model.cycleForward` / `Backward` | Cycle model |
 | `ctrl+l` | `app.model.select` | Open the model selector |
 | `ctrl+o` | `app.tools.expand` | Expand or collapse tool output |
-| `ctrl+g` | `app.editor.external` | Open `$EDITOR` |
-| `ctrl+x` | `app.message.copy` | Copy the selected message in `/tree`; otherwise copy the last assistant message, or the active fullscreen text selection when `fullscreenCopyOnSelect` is disabled |
+| `ctrl+g` | `app.editor.external` | Open the external editor (`externalEditor` setting, `$VISUAL`, `$EDITOR`, else `nano`) |
+| `ctrl+v` | `app.clipboard.pasteImage` | Paste an image, or text, from the clipboard |
+| `ctrl+x` | `app.message.copy` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message |
 | `alt+enter` | `app.message.followUp` | Queue a follow-up message |
 | `alt+up` | `app.message.dequeue` | Restore queued messages |
 | `ctrl+n` | `app.session.toggleNamedFilter` | Toggle the named-session filter |
@@ -51,10 +53,12 @@ without changing `ctrl+p` in selectors.
 
 | Keys | Action |
 |------|--------|
-| `left` / `right` | Fold / unfold |
+| `left` / `right` | Page up / down |
+| `ctrl+left`, `alt+left` / `ctrl+right`, `alt+right` | Fold the branch segment or jump to the previous segment start / unfold or jump to the next (`app.tree.foldOrUp` / `.unfoldOrDown`) |
 | `shift+l` | Edit the entry label |
 | `shift+t` | Toggle label timestamps |
 | `ctrl+d` / `ctrl+t` / `ctrl+u` / `ctrl+l` / `ctrl+a` | Filter: default, no tools, user only, labeled only, all |
+| `ctrl+o` / `shift+ctrl+o` | Cycle the filter forward / backward |
 
 ### Session and model selectors
 
@@ -105,26 +109,51 @@ The routing is just action bindings, so it is configurable:
 `tui.altScreen.halfPageUp`/`halfPageDown` for smaller steps while keeping the
 full-page bindings. A user binding replaces that action's defaults.
 
+### Editor and input
+
+The prompt editor and every list share these `tui.*` actions:
+
+| Keys | Action |
+|------|--------|
+| `left`, `ctrl+b` / `right`, `ctrl+f` | `tui.editor.cursorLeft` / `cursorRight` |
+| `alt+left`, `ctrl+left`, `alt+b` / `alt+right`, `ctrl+right`, `alt+f` | `tui.editor.cursorWordLeft` / `cursorWordRight` |
+| `home`, `ctrl+home`, `ctrl+a` / `end`, `ctrl+end`, `ctrl+e` | `tui.editor.cursorLineStart` / `cursorLineEnd` |
+| `ctrl+]` / `ctrl+alt+]` | `tui.editor.jumpForward` / `jumpBackward` (to a typed character) |
+| `pageUp`, `ctrl+pageUp` / `pageDown`, `ctrl+pageDown` | `tui.editor.pageUp` / `pageDown` |
+| `backspace` / `delete`, `ctrl+d` | `tui.editor.deleteCharBackward` / `deleteCharForward` |
+| `ctrl+w`, `alt+backspace` / `alt+d`, `alt+delete` | `tui.editor.deleteWordBackward` / `deleteWordForward` |
+| `ctrl+u` / `ctrl+k` | `tui.editor.deleteToLineStart` / `deleteToLineEnd` |
+| `ctrl+y` / `alt+y` | `tui.editor.yank` / `yankPop` (kill ring) |
+| `ctrl+-` | `tui.editor.undo` |
+| `shift+enter`, `ctrl+j` / `enter` / `tab` | `tui.input.newLine` / `submit` / `tab` (autocomplete) |
+| `ctrl+c` | `tui.input.copy` |
+| `up` / `down` / `pageUp` / `pageDown` | `tui.select.up` / `down` / `pageUp` / `pageDown` |
+| `enter` / `escape`, `ctrl+c` | `tui.select.confirm` / `cancel` |
+
 ## Customizing
 
-Add a `keybindings` object to `settings.json`, keyed by action id:
+Create `~/.pidrei/agent/keybindings.json` (under `PIDREI_CODING_AGENT_DIR` if
+set), keyed by action id:
 
-```jsonc
+```json
 {
-  "keybindings": {
-    "app.model.select": "ctrl+m",
-    "app.session.tree": ["ctrl+b", "f2"],
-    "app.suspend": []
-  }
+  "app.model.select": "ctrl+m",
+  "app.session.tree": ["ctrl+b", "f2"],
+  "app.suspend": []
 }
 ```
 
-A string binds one key, a list binds several, and an empty list unbinds.
+A string binds one key, a list binds several, and an empty list unbinds. A
+configured value replaces that action's defaults. Run `/reload` after editing
+to apply it to the running session. Pre-namespaced ids from older configs
+(`cursorUp`, `expandTools`) are still accepted.
 
 Key syntax is modifiers plus a key: `ctrl+`, `alt+`, `shift+`, `super+`, then a
-letter, digit, or a named key (`enter`, `escape`, `tab`, `space`, `up`, `down`,
-`left`, `right`, `home`, `end`, `pageup`, `pagedown`, `f1`–`f12`). Modifiers
-combine: `ctrl+shift+x`, `super+k`, `ctrl+super+k`.
+letter, digit, symbol (`` ` ``, `-`, `=`, `[`, `]`, `\`, `;`, `'`, `,`, `.`,
+`/` and the shifted ones), `f1`–`f12`, or a named key (`escape`/`esc`,
+`enter`/`return`, `tab`, `space`, `backspace`, `delete`, `insert`, `clear`,
+`home`, `end`, `pageUp`, `pageDown`, `up`, `down`, `left`, `right`). Modifiers
+combine: `ctrl+shift+x`, `alt+ctrl+x`, `super+k`, `ctrl+super+k`, `ctrl+1`.
 
 `super` bindings need a terminal that reports the modifier separately, in
 practice one speaking the Kitty keyboard protocol; elsewhere they never fire.
@@ -144,7 +173,7 @@ tui.select.confirm, tui.select.cancel, tui.editor.deleteToLineEnd
 ```
 
 Matching is case-insensitive, so `Ctrl+C` collides with `ctrl+c`. Rebinding a
-reserved action yourself in `settings.json` is allowed — the restriction is on
+reserved action yourself in `keybindings.json` is allowed — the restriction is on
 extensions, not on you.
 
 ## Terminal limits

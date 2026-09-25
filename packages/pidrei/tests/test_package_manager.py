@@ -19,7 +19,7 @@ import tempfile
 
 import pytest
 
-from pidrei.core.package_manager import DefaultPackageManager
+from pidrei.core.package_manager import DefaultPackageManager, is_offline_mode_enabled
 from pidrei.core.settings_manager import SettingsManager
 
 
@@ -1100,3 +1100,17 @@ async def test_ignores_invalid_manifest_resource_fields_without_dropping_valid_f
 
     assert skill_path not in paths_of(result.skills)
     assert prompt_path in paths_of(result.prompts)
+
+
+# pidrei-only: pi's isOfflineModeEnabled accepts only 1/true/yes; any other value is online.
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, False), ("", False), ("0", False), ("false", False), ("1", True), ("TRUE", True), ("yes", True)],
+)
+def test_offline_mode_accepts_only_affirmative_values(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("PIDREI_OFFLINE", raising=False)
+    else:
+        monkeypatch.setenv("PIDREI_OFFLINE", value)
+
+    assert is_offline_mode_enabled() is expected

@@ -8,7 +8,7 @@
 | `PIDREI_CODING_AGENT_SESSION_DIR` | Session storage (overridden by `--session-dir`) |
 | `PIDREI_CONFIG_DIR` | Base config directory |
 | `PIDREI_PACKAGE_DIR` | Override where pidrei looks for its own shipped files (Nix/Guix store paths) |
-| `PIDREI_OFFLINE` | Disable every startup network operation when `1`/`true`/`yes` |
+| `PIDREI_OFFLINE` | Disable automatic network activity — model catalog refreshes, the version check, package update checks — when `1`/`true`/`yes` |
 | `PIDREI_SKIP_VERSION_CHECK` | Skip the update check only |
 | `PIDREI_PROVIDER_ATTRIBUTION` | Force provider attribution headers on or off |
 | `PIDREI_SHARE_VIEWER_URL` | Base URL of a session viewer for `/share` (default: none) |
@@ -22,8 +22,8 @@
 | `PIDREI_THREADS` | Runtime worker threads (default: CPU count clamped to 2–8) |
 | `PIDREI_BLOCKING_THREADS` | Blocking thread pool cap (default: 8 per worker) |
 
-Provider credentials are listed in [providers.md](providers.md); `pidrei --help`
-prints them all.
+Provider credentials and cloud-provider configuration are listed in
+[providers.md](providers.md#api-keys); `pidrei --help` prints them all.
 
 ## Available to bash tools
 

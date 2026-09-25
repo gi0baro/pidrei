@@ -185,7 +185,6 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
         settled = True
         if result:
             settings_manager.set_theme(result["theme"])
-            settings_manager.set_enable_analytics(result["shareAnalytics"])
             await settings_manager.flush()
         await _clear_startup_tui(ui)
         await ui.stop()

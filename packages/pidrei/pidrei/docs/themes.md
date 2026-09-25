@@ -1,15 +1,19 @@
 # Themes
 
-A theme is a JSON file mapping semantic colour roles to colours. `dark` and
-`light` ship with pidrei; `/theme` switches between what is loaded.
+A theme is a JSON file mapping semantic colour roles to colours, used by
+interactive mode and HTML exports. `dark` and `light` ship with pidrei; pick one
+in `/settings` → **Theme**, which saves the `theme` setting.
 
 ## Writing one
 
-Create `.pidrei/themes/solar.json`:
+Start from a copy of a built-in theme — `dark.json` and `light.json` ship in
+the installed package under `pidrei/modes/interactive/theme/` — since `colors`
+must define every required role. Save it as
+`~/.pidrei/agent/themes/solar.json`, set `name` to `solar`, adjust `vars` and
+`colors`, then select it in `/settings`. Abridged:
 
 ```jsonc
 {
-  "$schema": "../../theme-schema.json",
   "name": "solar",
   "vars": {
     "base":   "#002b36",
@@ -29,19 +33,37 @@ Create `.pidrei/themes/solar.json`:
     "muted":        "text",
     "dim":          "base",
     "selectedBg":   "base"
+    // …every other required role
   }
 }
 ```
 
+Name the file after the theme. pidrei hot-reloads the active theme only when
+it lives at `~/.pidrei/agent/themes/<name>.json`; run `/reload` after adding or
+changing a theme anywhere else.
+
 | Key | Meaning |
 |-----|---------|
-| `name` | Theme name. **Must not contain `/`** — that separates the light and dark halves of an automatic theme setting |
-| `vars` | Reusable colours: a hex value, a reference to another var, or `""` for the terminal default |
-| `colors` | Semantic roles, each a hex value or a `vars` reference |
-| `export` | Optional terminal palette export |
+| `name` | Theme name, unique among loaded themes. **Must not contain `/`** — that separates the light and dark halves of an automatic theme setting |
+| `vars` | Optional reusable colours; a var may reference another var |
+| `colors` | Semantic roles; the schema marks which are required |
+| `export` | Optional `pageBg`, `cardBg` and `infoBg` for HTML exports; derived from `userMessageBg` when omitted |
+
+A colour value is a `"#rrggbb"` hex string, a 256-colour palette index (`0`–
+`255`), the name of a `vars` entry, or `""` for the terminal's default
+foreground or background. Chained var references resolve; a missing or
+circular reference makes the theme invalid. Invalid themes are reported at
+startup and on `/reload`.
 
 Defining a palette in `vars` and referring to it from `colors` keeps a theme
-readable, but any `colors` entry can be a literal hex value.
+readable, but any `colors` entry can be a literal value.
+
+Roles are named for interface areas rather than widgets: general UI (`accent`,
+`border*`, `text`, `muted`, `dim`, `success`, `error`, `warning`), selection
+and fullscreen (`selectedBg`, `searchMatch*`, `scrollbar*`), messages
+(`userMessage*`, `customMessage*`, `thinkingText`), tool execution (`tool*`),
+markdown (`md*`), diffs (`toolDiff*`), syntax highlighting (`syntax*`), and
+editor modes (`thinking*`, `bashMode`).
 
 The full list of roles is in `theme-schema.json`, shipped next to the built-in
 themes. Point `$schema` at it and an editor will complete and validate as you
@@ -73,15 +95,16 @@ in `/settings` applies it immediately and saves it normally.
 
 ## Automatic light/dark
 
-Set the theme to `light-name/dark-name` and pidrei picks per the terminal's
-reported background:
+Set the theme to `light-name/dark-name` (light first) and pidrei picks per the
+terminal's reported background, switching again when the terminal reports an
+appearance change:
 
 ```jsonc
 { "theme": "solar-light/solar-dark" }
 ```
 
-This is why a theme name may not contain `/`. The `/theme` selector offers this
-as "Automatic".
+This is why a theme name may not contain `/`. The theme selector in
+`/settings` offers this as "Automatic".
 
 ## Locations
 
@@ -89,14 +112,19 @@ as "Automatic".
 |----------|-------|
 | Built-in | `dark`, `light` |
 | `~/.pidrei/agent/themes/` | User |
-| `<project>/.pidrei/themes/` | Project |
-| `--theme <path>` | This run |
+| `<project>/.pidrei/themes/` | Project, once the project is trusted |
+| `themes` array in settings | Files or directories |
+| `--theme <path>` | This run (repeatable) |
 
 Packages may ship themes; see [packages.md](packages.md). `--no-themes`
-disables everything but the built-ins.
+disables everything but the built-ins and paths passed with `--theme`. Two
+loaded themes with the same name are reported as a collision.
 
 ## Colour support
 
 pidrei detects terminal capability and degrades: truecolour where available,
-256-colour otherwise. An empty string means "use the terminal's own default",
+hex colours approximated to the 256-colour palette otherwise. If colours look
+off, check the detection (`PIDREI_TRUE_COLOR`, see
+[environment-variables.md](environment-variables.md)) and your terminal's
+contrast settings. An empty string means "use the terminal's own default",
 which is the right choice for backgrounds you want left alone.

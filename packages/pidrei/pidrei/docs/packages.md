@@ -1,7 +1,13 @@
 # Packages
 
 A package bundles extensions, skills, prompt templates and themes so they can be
-installed as a unit.
+installed as a unit. Use one when a customization should be shared through git,
+or when several resources belong together.
+
+Packages run extension code in the pidrei process and can ship skills that tell
+the model to run programs. Review a third-party package's source before
+installing it, and a project's package declarations before trusting the
+project.
 
 ## Sources
 
@@ -12,16 +18,28 @@ pidrei installs packages from **git** or a **local path**:
 {
   "packages": [
     "https://github.com/someone/pidrei-goodies",
-    "git:github.com/someone/other#v1.2.0",
-    "git@github.com:private/pack.git",
+    "git:github.com/someone/other@v1.2.0",
+    "git:git@github.com:private/pack.git",
     "./local/checkout"
   ]
 }
 ```
 
-Git sources may pin a ref with `#<ref>`. Pinned packages are never updated
-automatically. SSH forms work and share package identity with their HTTPS
-equivalent, so the same repository is one package however it is addressed.
+| Source | Behavior |
+|--------|----------|
+| `git:host/path`, `git:git@host:path`, `git:user/repo` (GitHub) | Cloned under the agent directory (project installs under `.pidrei/`) |
+| `https://`, `ssh://` URL | Treated as a git source |
+| Local path | Loaded in place, not copied |
+
+Git sources may pin a ref with `@<ref>`. A pinned tag or commit is never moved:
+updates reconcile the checkout to it. The scp-like `git@host:path` form needs
+the `git:` prefix — without it the value is read as a local path. SSH forms
+share package identity with their HTTPS equivalent, so the same repository is
+one package however it is addressed.
+
+Relative local paths resolve from the settings file that contains them. A path
+to a `.py` file loads one extension; a directory follows the layout rules
+below.
 
 pi additionally supports `npm:` sources. pidrei does not, and says so rather
 than silently resolving to nothing:
@@ -66,6 +84,11 @@ Globs discover visible paths in lexical order: list dot-prefixed paths
 directly, and list the resource root directly when a glob would have to
 continue through a symlink.
 
+pidrei does not install a package's Python dependencies. Extensions run in
+pidrei's own interpreter, so they can import `pidrei`, `pidrei_ai`,
+`pidrei_tui` and `tonio` directly; anything else must be vendored in the
+package or installed by the user, and the package should say so.
+
 ## Filtering
 
 Take part of a package with a filter:
@@ -82,8 +105,18 @@ Take part of a package with a filter:
 - Patterns match resource filenames; `*` is a wildcard.
 - `!name` excludes; `+name` and `-name` add to or remove from what is already
   selected.
+- `[]` loads none of that type; omitting the key loads everything.
 - `autoload: false` disables everything the package ships *except* what a
   pattern names, so nothing loads unless you ask for it by name.
+
+Filters narrow what the package declares; they never expose resources its
+manifest leaves out.
+
+The same package may appear in user and project settings. The project entry
+normally replaces the user one; with `autoload: false` it instead layers over
+the user entry as a filtering delta. Git packages are identified by host and
+repository path (ignoring the ref), local ones by resolved path, so equivalent
+declarations never load a package twice.
 
 ## Commands
 
@@ -97,9 +130,18 @@ pidrei update --all              # both
 pidrei config [-l]               # enable/disable individual resources (TUI)
 ```
 
-`-l` targets project settings instead of global; it needs project trust, so
+`install` writes to `~/.pidrei/agent/settings.json`; `-l` targets the
+project's `.pidrei/settings.json` instead. Project declarations are read, and
+project packages installed and loaded, only once the project is trusted, so
 `--approve` / `--no-approve` decide that for a single command. Every subcommand
 takes `--help`.
+
+To try a package for one run without adding it to settings, pass it to
+`-e`/`--extension`:
+
+```bash
+pidrei -e git:github.com/someone/pack
+```
 
 **pidrei does not update itself.** pi's `update` also reinstalls pi through
 whichever package manager installed it; pidrei installs from git or Homebrew,
@@ -107,9 +149,7 @@ where updating means re-running the install command with a new version — so
 `pidrei update --self` tells you the command rather than guessing at your
 installation.
 
-Package resources also appear in `/extensions`, `/skills`, `/prompts` and
-`/themes` with the package as their source. `/reload` re-reads them without
-restarting.
+`/reload` re-reads package resources without restarting.
 
 ## Offline
 

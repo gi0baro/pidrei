@@ -4,7 +4,7 @@ import pytest
 
 from pidrei_ai.models_generated import MODELS, parse_model_dict
 from pidrei_ai.registry import get_supported_thinking_levels
-from pidrei_ai.types import AnthropicMessagesCompat, Model, OpenAIResponsesCompat
+from pidrei_ai.types import AnthropicMessagesCompat, Model, ModelCost, ModelCostTier, OpenAIResponsesCompat
 
 
 def test_catalog_contains_phase1_providers():
@@ -48,18 +48,70 @@ def test_includes_xhigh_and_max_for_anthropic_opus_5_on_anthropic_messages_api()
     assert "max" in levels
 
 
+def test_includes_claude_opus_5_5_with_its_always_on_effort_levels_and_official_pricing():
+    model = next(model for model in MODELS["anthropic"] if model.id == "claude-opus-5-5")
+
+    assert (model.cost.input, model.cost.output, model.cost.cache_read, model.cost.cache_write) == (4, 20, 0.2, 5)
+    assert model.context_window == 1_000_000
+    assert model.max_tokens == 128_000
+    assert isinstance(model.compat, AnthropicMessagesCompat)
+    assert model.compat.force_adaptive_thinking is True
+    assert model.compat.supports_mid_convo_effort is True
+    assert model.compat.supports_mid_convo_system_messages is True
+    assert model.compat.supports_mid_convo_tool_changes is True
+    assert get_supported_thinking_levels(model) == ["low", "medium", "high", "xhigh", "max"]
+
+
 def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
     grok = next(model for model in MODELS["xai"] if model.id == "grok-4.6")
 
     assert get_supported_thinking_levels(grok) == ["low", "medium", "high", "xhigh"]
 
 
-@pytest.mark.parametrize("model_id", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"])
+@pytest.mark.parametrize(
+    "model_id", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"]
+)
 def test_includes_xhigh_for_openai_codex_models(model_id):
     model = next((model for model in MODELS["openai-codex"] if model.id == model_id), None)
     assert model is not None
 
     assert "xhigh" in get_supported_thinking_levels(model)
+
+
+@pytest.mark.parametrize(
+    ("model_id", "cost"),
+    [
+        ("gpt-6-sol", ModelCost(input=2, output=10, cache_read=0.2, cache_write=2.5)),
+        ("gpt-6-luna", ModelCost(input=0.1, output=0.5, cache_read=0.01, cache_write=0.125)),
+    ],
+)
+def test_includes_official_metadata_for_openai_and_codex(model_id, cost):
+    for provider in ("openai", "openai-codex"):
+        model = next((model for model in MODELS[provider] if model.id == model_id), None)
+        assert model is not None, provider
+        assert model.input == ["text", "image"]
+        assert model.cost == ModelCost(
+            input=cost.input,
+            output=cost.output,
+            cache_read=cost.cache_read,
+            cache_write=cost.cache_write,
+            tiers=[
+                ModelCostTier(
+                    input_tokens_above=272000,
+                    input=cost.input * 2,
+                    output=cost.output * 1.5,
+                    cache_read=cost.cache_read * 2,
+                    cache_write=cost.cache_write * 2,
+                )
+            ],
+        )
+        assert model.context_window == 272000
+        assert model.max_tokens == 128000
+        assert isinstance(model.compat, OpenAIResponsesCompat)
+        assert model.compat.supports_additional_tools is True
+        assert model.compat.supports_mid_convo_system_messages is True
+        assert model.compat.supports_openai_grammar_tools is True
+        assert model.compat.supports_tool_search is True
 
 
 def test_includes_low_for_deepseek_v4_flash_on_opencode_go():

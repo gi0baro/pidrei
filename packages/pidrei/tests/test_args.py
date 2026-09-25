@@ -99,14 +99,6 @@ class TestFlagsWithValues:
         result = parse_args(["--append-system-prompt", "Context A", "--append-system-prompt", "Context B"])
         assert result.append_system_prompt == ["Context A", "Context B"]
 
-    def test_parses_mode(self):
-        result = parse_args(["--mode", "json"])
-        assert result.mode == "json"
-
-    def test_parses_mode_rpc(self):
-        result = parse_args(["--mode", "rpc"])
-        assert result.mode == "rpc"
-
     def test_parses_session(self):
         result = parse_args(["--session", "/path/to/session.jsonl"])
         assert result.session == "/path/to/session.jsonl"
@@ -131,6 +123,45 @@ class TestFlagsWithValues:
     def test_parses_models_as_comma_separated_list(self):
         result = parse_args(["--models", "gpt-4o,claude-sonnet,gemini-pro"])
         assert result.models == ["gpt-4o", "claude-sonnet", "gemini-pro"]
+
+
+# Issue #9045
+class TestModeFlag:
+    @pytest.mark.parametrize("mode", ["text", "json", "rpc"])
+    def test_parses_mode(self, mode):
+        result = parse_args(["--mode", mode])
+        assert result.mode == mode
+        assert result.diagnostics == []
+
+    @pytest.mark.parametrize("mode", ["yaml", ""])
+    def test_rejects_invalid_mode_value(self, mode):
+        result = parse_args(["--mode", mode, "--version"])
+        assert result.mode is None
+        assert result.version is True
+        assert result.messages == []
+        assert len(result.unknown_flags) == 0
+        assert result.diagnostics == [
+            {"type": "error", "message": f'Invalid mode "{mode}". Valid values: text, json, rpc'}
+        ]
+
+    def test_reports_a_missing_mode_value(self):
+        result = parse_args(["--mode"])
+        assert result.mode is None
+        assert len(result.unknown_flags) == 0
+        assert result.diagnostics == [{"type": "error", "message": "--mode requires text, json, or rpc"}]
+
+    def test_does_not_consume_another_option_as_a_mode_value(self):
+        result = parse_args(["--mode", "--version"])
+        assert result.mode is None
+        assert result.version is True
+        assert len(result.unknown_flags) == 0
+        assert result.diagnostics == [{"type": "error", "message": "--mode requires text, json, or rpc"}]
+
+    def test_reports_an_invalid_mode_value_after_a_valid_one(self):
+        result = parse_args(["--mode", "json", "--mode", "yaml"])
+        assert result.diagnostics == [
+            {"type": "error", "message": 'Invalid mode "yaml". Valid values: text, json, rpc'}
+        ]
 
 
 class TestNameFlag:

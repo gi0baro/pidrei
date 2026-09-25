@@ -1,7 +1,21 @@
 # TUI components
 
 `pidrei_tui` is the terminal UI toolkit pidrei renders itself with. Extensions
-use it for widgets, custom renderers and overlays.
+use it for widgets, custom renderers and overlays — but start with the `ctx.ui`
+helpers ([extensions.md](extensions.md)), and build a component only when the
+interaction needs its own rendering, input, focus or lifecycle:
+
+| Need | Use |
+|------|-----|
+| Select, confirm, input, multi-line edit | `ctx.ui.select()`, `confirm()`, `input()`, `editor()` |
+| Non-blocking feedback | `ctx.ui.notify()` or `set_status()` |
+| Persistent content near the editor | `ctx.ui.set_widget()` |
+| Replace the header, footer or editor | `set_header()`, `set_footer()`, `set_editor_component()` |
+| A temporary screen or overlay | `ctx.ui.custom()` |
+| Custom rendering of a tool or message | An extension renderer |
+
+These receive pidrei's active theme and keybindings; never start a second
+terminal renderer from an extension.
 
 ```python
 from pidrei_tui import Container, Text, SelectList, Spacer
@@ -14,6 +28,15 @@ own.
 
 A UI is a tree of components. Each renders itself into lines for a given width;
 the terminal diffs frames and writes only what changed.
+
+A component implements `render(width) -> list[str]` and `invalidate()`, which
+must drop any cached output — it is called on theme changes and whenever a
+full re-render is needed. Keyboard input (`async handle_input(data)`) and
+mouse input are optional. Every rendered line must fit `width` in terminal
+cells (see [Width and unicode](#width-and-unicode)). Styling and hyperlinks are
+reset after every line, so reapply styles per line. After changing state,
+invalidate what changed and call the injected `tui.request_render()`; requests
+are coalesced.
 
 Two renderers implement that contract. `TuiMainScreen` (the default) renders
 into the terminal's own screen and scrollback. `TuiAltScreen`, selected with
@@ -74,7 +97,9 @@ because the terminal owns its scrollback.
 | `TruncatedText` | Text clipped to the available width |
 | `Markdown` | Rendered markdown, with syntax-highlighted code |
 | `Spacer` | Blank lines |
-| `Box` | A bordered container |
+| `Box` | A container with padding and a background |
+| `VStack` / `HStack` | Flex-style vertical and horizontal layout |
+| `ScrollView` | A bounded, scrollable viewport |
 | `SelectList` | A selectable list with filtering |
 | `SettingsList` | Rows of labelled, cycling values |
 | `MouseRegion` | Adds mouse handling to a component without changing its rendering |
@@ -96,15 +121,23 @@ def extension(pi):
     async def on_turn_end(_event, ctx):
         if not ctx.has_ui:
             return
-        widget = Container()
-        widget.add_child(Text(ctx.ui.theme.fg("accent", "turn complete"), 1, 0))
-        ctx.ui.set_widget("my-widget", widget)
+
+        def build(tui, theme):
+            widget = Container()
+            widget.add_child(Text(theme.fg("accent", "turn complete"), 1, 0))
+            return widget
+
+        ctx.ui.set_widget("my-widget", build)
 
     pi.on("turn_end", on_turn_end)
 ```
 
-`set_widget(key, component)` installs or replaces a widget; passing `None`
-removes it. `set_status(text)` is the one-line version.
+`set_widget(key, content, options=None)` installs or replaces a widget.
+`content` is a list of strings (one `Text` row each) or a factory
+`(tui, theme) -> component`; `None` removes the widget, and
+`{"placement": "belowEditor"}` moves it under the editor (the default is
+`"aboveEditor"`). `set_status(key, text)` is the one-line version, shown in
+the footer.
 
 ## Theming
 
@@ -117,7 +150,12 @@ theme.strikethrough("text")
 ```
 
 Roles come from [themes.md](themes.md), so a widget follows whatever theme the
-user has chosen.
+user has chosen. Use the theme handed to your factory or callback, and don't
+keep themed strings in long-lived state unless `invalidate()` rebuilds them: a
+theme change clears render caches but cannot recolour ANSI already baked into
+your data. Styling during `render()` needs no special care. For Markdown that
+matches the app, pass `get_markdown_theme()` (from
+`pidrei.modes.interactive.theme`) to `Markdown`.
 
 ## Overlays and prompts
 
@@ -131,15 +169,57 @@ text = await ctx.ui.editor("Edit this", "prefill")
 Both return `None` if the user dismisses them. They only work when
 `ctx.has_ui` is true.
 
+When those are not enough, `await ctx.ui.custom(factory, options)` hands the
+interactive area to one component until it finishes. The factory is called
+as `factory(tui, theme, keybindings, done)` and may be async; calling
+`done(result)` resolves `custom()` with `result` and disposes the component.
+By default the component replaces the editor; `{"overlay": True}` draws it on
+top of existing content instead, with `"overlayOptions"` (size, anchor,
+offsets, margins, responsive visibility — a dict or a callable returning one)
+and `"onHandle"` receiving an `OverlayHandle` for `focus()`, `unfocus()` and
+`set_hidden()`. A focused overlay keeps input across ordinary renders; move
+focus through the handle if something else should receive keys. Finish with
+`done()` — never `handle.hide()` an overlay `custom()` created — and create a
+fresh component for each interaction rather than reusing one.
+
+## Keyboard and focus
+
+Match input with `matches_key(data, ...)` and `Key`, which understand the
+supported keyboard protocols and modifiers; for configurable app actions use
+the `KeybindingsManager` the factory receives. A component that shows a text
+cursor sets a `focused` attribute (the `Focusable` protocol) and emits
+`CURSOR_MARKER` right before the cursor, so the hardware cursor — and IME
+candidate windows for Chinese, Japanese, Korean input — land in the right
+place. A container wrapping an `Input` or `Editor` must pass its own `focused`
+state down to that child.
+
+To replace the main editor, subclass `CustomEditor`
+(`pidrei.modes.interactive.components`) so app shortcuts and agent controls
+keep working, forward keys you don't handle to the base class, and install it
+with `ctx.ui.set_editor_component(factory)`; `None` restores the default.
+
+Even with fullscreen mouse support, give every interaction a keyboard path.
+
 ## Capabilities
 
-`get_capabilities()` reports hyperlink support, image protocol, colour depth
-and mouse support. Check before using an optional feature — `Image` degrades to
-a placeholder where images are unsupported, but hyperlinks need a check.
+`get_capabilities()` returns a dict with `images` (the image protocol, or
+`None`), `trueColor` and `hyperlinks`. Check before using an optional
+feature — `Image` degrades to a placeholder where images are unsupported, but
+hyperlinks need a check.
+
+## Responsiveness
+
+Rendering runs on the interactive path. Cache expensive layout or
+highlighting by width and content, and clear that cache in `invalidate()`.
+Keep the default view compact and put detail behind expansion or a dedicated
+screen. `PIDREI_TUI_WRITE_LOG=<path>` captures the raw ANSI stream when
+debugging; test narrow widths, wide characters, resizes, theme changes, focus
+changes, and both TUI modes.
 
 ## Width and unicode
 
 Components lay out in terminal cells, not characters: wide CJK glyphs take two
 cells, combining marks take none, and emoji vary. `pidrei_tui` handles this
-through grapheme segmentation. Measure text with the package's helpers rather
-than `len()`.
+through grapheme segmentation. Measure and cut text with the package's
+helpers — `visible_width`, `truncate_to_width`, `slice_by_column`,
+`wrap_text_with_ansi` — rather than `len()` and slicing.
