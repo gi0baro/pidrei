@@ -136,6 +136,6 @@ def convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
                     timestamp=message.timestamp,
                 )
             )
-        elif role in ("user", "assistant", "toolResult"):
+        elif role in ("system", "user", "assistant", "toolResult"):
             converted.append(message)
     return converted

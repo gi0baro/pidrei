@@ -30,9 +30,9 @@ from pidrei_ai.builders import (
 from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AssistantMessage,
-    Context,
     Model,
     StopReason,
+    SystemMessage,
     TextDeltaEvent,
     TextEndEvent,
     TextStartEvent,
@@ -43,11 +43,14 @@ from pidrei_ai.types import (
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    TranscriptContext,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.json_parse import parse_streaming_json
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
+from pidrei_ai.utils.transcript import resolve_transcript, resolve_transcript_tools
 
 
 # Python has one absent value where JavaScript has two; this stands in for
@@ -110,19 +113,21 @@ def convert_tool_result_output(model: Model, content: list) -> str | list[dict]:
 
 def convert_responses_messages(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     allowed_tool_call_providers: set[str],
     *,
     include_system_prompt: bool = True,
     grammar_tool_input_properties: dict[str, str] | None = None,
-    deferred_tools: dict[str, Tool] | None = None,
-    deferred_tools_mode: str | None = None,
+    supports_mid_convo_system_messages: bool | None = None,
+    supports_additional_tools: bool = False,
+    supports_tool_search: bool = False,
     tool_options: dict | None = None,
 ) -> list[dict]:
+    """`supports_mid_convo_system_messages`: whether later system messages are sent in
+    place; otherwise they are folded into the leading prompt."""
     grammar_tool_input_properties = grammar_tool_input_properties or {}
-    deferred_tools = deferred_tools or {}
+    normalized_context = resolve_transcript(context, supports_mid_convo_system_messages)
     messages: list[dict] = []
-    loaded_tool_names: set[str] = set()
 
     def normalize_id_part(part: str) -> str:
         sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", part)
@@ -149,17 +154,63 @@ def convert_responses_messages(
             normalized_item_id = normalize_id_part(f"fc_{normalized_item_id}")
         return f"{normalized_call_id}|{normalized_item_id}"
 
-    transformed_messages = transform_messages(context.messages, model, normalize_tool_call_id)
+    transformed_messages = transform_messages(normalized_context.messages, model, normalize_tool_call_id)
+    transcript_tools = resolve_transcript_tools(
+        normalized_context.messages, supports_additional_tools or supports_tool_search
+    )
 
-    if include_system_prompt and context.system_prompt:
-        compat = model.compat
-        supports_developer_role = getattr(compat, "supports_developer_role", None)
-        role = "developer" if model.reasoning and supports_developer_role is not False else "system"
-        messages.append({"role": role, "content": sanitize_surrogates(context.system_prompt)})
+    def append_system_tool_additions(message: SystemMessage, seed: str) -> None:
+        tools = (message.tools_added or []) if transcript_tools.anchors_additions else []
+        if not tools:
+            return
+        if supports_additional_tools:
+            messages.append(
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": convert_responses_tools(tools, **(tool_options or {})),
+                }
+            )
+            return
+        if not supports_tool_search:
+            return
+        names = [tool.name for tool in tools]
+        call_id = f"pi_tool_load_{short_hash(f'{seed}:{",".join(names)}')}"
+        messages.append(
+            {
+                "type": "tool_search_call",
+                "call_id": call_id,
+                "execution": "client",
+                "status": "completed",
+                "arguments": {"query": " ".join(names), "limit": len(names)},
+            }
+        )
+        messages.append(
+            {
+                "type": "tool_search_output",
+                "call_id": call_id,
+                "execution": "client",
+                "status": "completed",
+                "tools": convert_responses_tools(tools, **{**(tool_options or {}), "tool_search_result": True}),
+            }
+        )
 
+    supports_developer_role = getattr(model.compat, "supports_developer_role", None)
+    instruction_role = "developer" if model.reasoning and supports_developer_role is not False else "system"
+
+    # pi's `continue`s (empty user content, empty assistant output) skip the trailing
+    # `msgIndex++`; the loop below keeps that: the index only advances at the end.
     msg_index = 0
-    for msg in transformed_messages:
-        if msg.role == "user":
+    for source_index, msg in enumerate(transformed_messages):
+        is_leading_system_message = source_index == 0 and msg.role == "system"
+        if msg.role == "system":
+            if not is_leading_system_message:
+                append_system_tool_additions(msg, f"system:{msg_index}")
+            if not is_leading_system_message or include_system_prompt:
+                text = get_system_message_text(msg) if is_leading_system_message else render_system_message_update(msg)
+                if text:
+                    messages.append({"role": instruction_role, "content": sanitize_surrogates(text)})
+        elif msg.role == "user":
             if isinstance(msg.content, str):
                 messages.append(
                     {"role": "user", "content": [{"type": "input_text", "text": sanitize_surrogates(msg.content)}]}
@@ -178,7 +229,6 @@ def convert_responses_messages(
                             }
                         )
                 if not content:
-                    msg_index += 1
                     continue
                 messages.append({"role": "user", "content": content})
         elif msg.role == "assistant":
@@ -230,8 +280,6 @@ def convert_responses_messages(
                     ):
                         item_id = None
 
-                    can_replay_namespace = is_same_model or block.name in deferred_tools
-
                     if custom_input_property is not None:
                         entry = {
                             "type": "custom_tool_call",
@@ -243,7 +291,7 @@ def convert_responses_messages(
                         }
                         if item_id is not None:
                             entry["id"] = item_id
-                        if can_replay_namespace and block.namespace is not None:
+                        if is_same_model and block.namespace is not None:
                             entry["namespace"] = block.namespace
                         output.append(entry)
                     else:
@@ -255,11 +303,10 @@ def convert_responses_messages(
                         }
                         if item_id is not None:
                             entry["id"] = item_id
-                        if can_replay_namespace and block.namespace is not None:
+                        if is_same_model and block.namespace is not None:
                             entry["namespace"] = block.namespace
                         output.append(entry)
             if not output:
-                msg_index += 1
                 continue
             messages.extend(output)
         elif msg.role == "toolResult":
@@ -270,46 +317,8 @@ def convert_responses_messages(
                 messages.append({"type": "custom_tool_call_output", "call_id": call_id, "output": result_output})
             else:
                 messages.append({"type": "function_call_output", "call_id": call_id, "output": result_output})
-
-            newly_loaded: list[Tool] = []
-            for name in msg.added_tool_names or []:
-                tool = deferred_tools.get(name)
-                if tool is None or name in loaded_tool_names:
-                    continue
-                loaded_tool_names.add(name)
-                newly_loaded.append(tool)
-            if newly_loaded and deferred_tools_mode == "additional-tools":
-                messages.append(
-                    {
-                        "type": "additional_tools",
-                        "role": "developer",
-                        "tools": convert_responses_tools(newly_loaded, **(tool_options or {})),
-                    }
-                )
-            elif newly_loaded and deferred_tools_mode == "tool-search":
-                names = [tool.name for tool in newly_loaded]
-                search_call_id = f"pi_tool_load_{short_hash(msg.tool_call_id + ':' + ','.join(names))}"
-                messages.append(
-                    {
-                        "type": "tool_search_call",
-                        "call_id": search_call_id,
-                        "execution": "client",
-                        "status": "completed",
-                        "arguments": {"query": " ".join(names), "limit": len(names)},
-                    }
-                )
-                messages.append(
-                    {
-                        "type": "tool_search_output",
-                        "call_id": search_call_id,
-                        "execution": "client",
-                        "status": "completed",
-                        "tools": convert_responses_tools(
-                            newly_loaded, **{**(tool_options or {}), "defer_loading": True}
-                        ),
-                    }
-                )
-        msg_index += 1
+        if not is_leading_system_message:
+            msg_index += 1
 
     return messages
 
@@ -325,7 +334,7 @@ def convert_responses_tools(
     strict: bool | None = UNSET,
     supports_strict_mode: bool = True,
     supports_openai_grammar_tools: bool = False,
-    defer_loading: bool = False,
+    tool_search_result: bool = False,
 ) -> list[dict]:
     # pi: `options?.strict === undefined ? false : options.strict` — an explicit
     # `null` (the Codex adapter sends one) must survive as `strict: null`, so
@@ -342,7 +351,7 @@ def convert_responses_tools(
                 "description": tool.description,
                 "format": {"type": "grammar", "syntax": grammar.format, "definition": grammar.definition},
             }
-            if defer_loading:
+            if tool_search_result:
                 entry["defer_loading"] = True
             converted.append(entry)
             continue
@@ -355,7 +364,7 @@ def convert_responses_tools(
             "description": tool.description,
             "parameters": get_json_schema_tool_parameters(tool, strict is True),
         }
-        if defer_loading:
+        if tool_search_result:
             function_tool["defer_loading"] = True
         if supports_strict_mode:
             function_tool["strict"] = strict

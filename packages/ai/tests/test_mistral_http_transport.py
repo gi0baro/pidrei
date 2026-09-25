@@ -30,6 +30,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
 from tests.mistral_helpers import FakeMistralClient, FakeMistralResponse, sse_body
 
@@ -96,7 +97,7 @@ async def test_serializes_sdk_style_payloads_to_the_mistral_wire_format():
 
     message = await stream_mistral(
         MODEL,
-        context,
+        normalize_context(context),
         MistralOptions(
             api_key="secret",
             client=client,
@@ -188,7 +189,9 @@ async def test_serializes_assistant_thinking_tool_calls_and_tool_results_for_rep
     )
     client = sse_client([terminal_event()])
 
-    message = await stream_mistral(MODEL, context, MistralOptions(api_key="test", client=client)).result()
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", client=client)
+    ).result()
 
     assert message.stop_reason == "stop"
     assert client.requests[0]["payload"]["messages"] == [
@@ -276,7 +279,9 @@ async def test_parses_native_thinking_text_fragmented_tool_calls_and_cached_toke
         },
     ]
 
-    message = await stream_mistral(MODEL, context, MistralOptions(api_key="test", client=sse_client(events))).result()
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", client=sse_client(events))
+    ).result()
 
     assert message.stop_reason == "toolUse"
     assert message.raw_stop_reason == "tool_calls"
@@ -305,7 +310,9 @@ async def test_parses_sse_and_utf8_sequences_split_across_transport_chunks():
     body = sse_body([json.dumps(event, ensure_ascii=False)])
     client = FakeMistralClient(FakeMistralResponse(chunks=[bytes([byte]) for byte in body]))
 
-    message = await stream_mistral(MODEL, context, MistralOptions(api_key="test", client=client)).result()
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", client=client)
+    ).result()
 
     assert message.stop_reason == "stop"
     assert message.content == [TextContent(text="héllo 🌍")]
@@ -319,7 +326,7 @@ async def test_honors_case_insensitive_header_overrides_and_explicit_affinity_su
 
     await stream_mistral(
         model,
-        context,
+        normalize_context(context),
         MistralOptions(
             api_key="request-key",
             client=client,
@@ -340,7 +347,9 @@ async def test_aborts_while_waiting_for_an_sse_chunk():
     client = FakeMistralClient(FakeMistralResponse(stall_forever=True))
     cancel = CancelToken()
 
-    result = stream_mistral(MODEL, context, MistralOptions(api_key="test", client=client, cancel=cancel)).result()
+    result = stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", client=client, cancel=cancel)
+    ).result()
     cancel.cancel()
     message = await result
 
@@ -352,7 +361,9 @@ async def test_preserves_http_status_and_response_bodies_in_errors():
     context = Context(messages=[UserMessage(content="hello", timestamp=1)])
     client = FakeMistralClient(FakeMistralResponse(b'{"message":"blocked by gateway"}', status_code=403))
 
-    message = await stream_mistral(MODEL, context, MistralOptions(api_key="test", client=client)).result()
+    message = await stream_mistral(
+        MODEL, normalize_context(context), MistralOptions(api_key="test", client=client)
+    ).result()
 
     assert message.stop_reason == "error"
     assert message.error_message == 'Mistral API error (403): {"message":"blocked by gateway"}'

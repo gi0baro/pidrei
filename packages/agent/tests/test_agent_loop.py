@@ -22,8 +22,10 @@ from pidrei_ai.types import (
     DoneEvent,
     Model,
     ModelCost,
+    SystemMessage,
     TextContent,
     ToolCall,
+    TranscriptContext,
     Usage,
     UsageCost,
     UserMessage,
@@ -94,7 +96,7 @@ def create_user_message(text: str) -> UserMessage:
 
 async def identity_converter(messages):
     """Simple identity converter for tests - passes through standard messages."""
-    return [m for m in messages if getattr(m, "role", None) in ("user", "assistant", "toolResult")]
+    return [m for m in messages if getattr(m, "role", None) in ("system", "user", "assistant", "toolResult")]
 
 
 def done_stream(message: AssistantMessage, reason: str = "stop") -> AssistantMessageEventStream:
@@ -114,7 +116,7 @@ async def test_uses_the_configured_default_when_a_legacy_caller_omits_stream_fn(
 
     set_default_stream_fn(default_fn)
     try:
-        context = AgentContext(system_prompt="", messages=[], tools=[])
+        context = AgentContext(messages=[], tools=[])
         config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
         stream = agent_loop([create_user_message("Hello")], context, config, None)
 
@@ -126,7 +128,7 @@ async def test_uses_the_configured_default_when_a_legacy_caller_omits_stream_fn(
 
 @pytest.mark.tonio
 async def test_should_emit_events_with_agent_message_types():
-    context = AgentContext(system_prompt="You are helpful.", messages=[], tools=[])
+    context = AgentContext(messages=[], tools=[])
     user_prompt = create_user_message("Hello")
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
@@ -148,6 +150,27 @@ async def test_should_emit_events_with_agent_message_types():
         assert expected in event_types
 
 
+@pytest.mark.tonio
+async def test_should_build_provider_context_exclusively_from_transcript_messages():
+    initial_system = SystemMessage(content="Transcript prompt", tools_added=[], timestamp=1)
+    context = AgentContext(messages=[], tools=[])
+    config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
+
+    provider_contexts = []
+
+    async def stream_fn(_model, provider_context, _options):
+        provider_contexts.append(provider_context)
+        return done_stream(create_assistant_message([TextContent(text="done")]))
+
+    stream = agent_loop([initial_system, create_user_message("Hello")], context, config, None, stream_fn)
+
+    await stream.result()
+    # The provider receives a transcript: no top-level prompt or tool fields.
+    assert len(provider_contexts) == 1
+    assert type(provider_contexts[0]) is TranscriptContext
+    assert provider_contexts[0].messages[0] is initial_system
+
+
 @dataclass
 class CustomNotification:
     role: str
@@ -158,7 +181,7 @@ class CustomNotification:
 @pytest.mark.tonio
 async def test_should_handle_custom_message_types_via_convert_to_llm():
     notification = CustomNotification(role="notification", text="This is a notification", timestamp=int(time.time()))
-    context = AgentContext(system_prompt="You are helpful.", messages=[notification], tools=[])
+    context = AgentContext(messages=[notification], tools=[])
     user_prompt = create_user_message("Hello")
 
     converted_messages = []
@@ -190,7 +213,6 @@ async def test_should_handle_custom_message_types_via_convert_to_llm():
 @pytest.mark.tonio
 async def test_should_apply_transform_context_before_convert_to_llm():
     context = AgentContext(
-        system_prompt="You are helpful.",
         messages=[
             create_user_message("old message 1"),
             create_assistant_message([TextContent(text="old response 1")]),
@@ -257,7 +279,7 @@ async def test_should_handle_tool_calls_and_results():
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     user_prompt = create_user_message("echo something")
 
     async def after_tool_call(ctx, _cancel):
@@ -311,7 +333,7 @@ async def test_should_not_execute_tool_calls_from_a_length_truncated_assistant_m
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     call_index = 0
@@ -361,7 +383,7 @@ async def test_should_execute_mutated_before_tool_call_args_without_revalidation
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     user_prompt = create_user_message("echo something")
 
     async def before_tool_call(ctx, _cancel):
@@ -422,7 +444,7 @@ async def test_should_prepare_tool_arguments_for_validation():
         )
 
     tool = FnTool("edit", "Edit", "Edit tool", edit_schema, execute, prepare_arguments=prepare_arguments)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     call_index = 0
@@ -465,7 +487,7 @@ async def test_should_emit_tool_execution_end_in_completion_order_but_persist_re
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, tool_execution="parallel")
 
     async def release_first():
@@ -521,7 +543,7 @@ async def test_should_inject_queued_messages_after_all_tool_calls_complete():
         return AgentToolResult(content=[TextContent(text=f"ok:{params['value']}")], details={"value": params["value"]})
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     user_prompt = create_user_message("start")
     queued_user_message = create_user_message("interrupt")
 
@@ -614,7 +636,7 @@ async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_defa
         )
 
     slow_tool = FnTool("slow", "Slow", "Slow tool", VALUE_SCHEMA, execute, execution_mode="sequential")
-    context = AgentContext(system_prompt="", messages=[], tools=[slow_tool])
+    context = AgentContext(messages=[], tools=[slow_tool])
     # config is parallel (default), but the tool forces sequential.
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
@@ -678,7 +700,7 @@ async def test_should_force_sequential_when_one_of_multiple_tools_has_sequential
 
     slow_tool = FnTool("slow", "Slow", "Slow tool", VALUE_SCHEMA, execute_slow, execution_mode="sequential")
     fast_tool = FnTool("fast", "Fast", "Fast tool", VALUE_SCHEMA, execute_fast)
-    context = AgentContext(system_prompt="", messages=[], tools=[slow_tool, fast_tool])
+    context = AgentContext(messages=[], tools=[slow_tool, fast_tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     async def release_slow():
@@ -731,7 +753,7 @@ async def test_should_allow_parallel_execution_when_all_tools_have_parallel_mode
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute, execution_mode="parallel")
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     async def release_first():
@@ -773,8 +795,8 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="first prompt", messages=[], tools=[tool])
-    converted_second_turn_system_prompt = ""
+    context = AgentContext(messages=[], tools=[tool])
+    converted_second_turn_has_update = False
     prepare_calls = 0
     prepared = False
 
@@ -785,11 +807,8 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
             return None
         prepared = True
         return AgentLoopTurnUpdate(
-            context=AgentContext(
-                system_prompt="second prompt",
-                messages=list(ctx.context.messages),
-                tools=ctx.context.tools,
-            )
+            context=AgentContext(messages=list(ctx.context.messages), tools=ctx.context.tools),
+            messages=[SystemMessage(content="updated guidance", timestamp=1)],
         )
 
     config = AgentLoopConfig(
@@ -799,10 +818,12 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
     llm_calls = 0
 
     async def stream_fn(_model, ctx, _options):
-        nonlocal llm_calls, converted_second_turn_system_prompt
+        nonlocal llm_calls, converted_second_turn_has_update
         llm_calls += 1
         if llm_calls == 2:
-            converted_second_turn_system_prompt = ctx.system_prompt or ""
+            converted_second_turn_has_update = any(
+                message.role == "system" and message.content == "updated guidance" for message in ctx.messages
+            )
         if llm_calls == 1:
             return done_stream(
                 create_assistant_message([ToolCall(id="tool-1", name="echo", arguments={"value": "hello"})], "toolUse"),
@@ -816,7 +837,7 @@ async def test_should_use_prepare_next_turn_snapshot_before_continuing():
 
     assert llm_calls == 2
     assert prepare_calls == 1
-    assert converted_second_turn_system_prompt == "second prompt"
+    assert converted_second_turn_has_update is True
 
 
 @pytest.mark.tonio
@@ -830,7 +851,7 @@ async def test_should_stop_after_the_current_turn_when_should_stop_after_turn_re
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
 
     steering_polls = 0
     follow_up_polls = 0
@@ -885,11 +906,14 @@ async def test_should_stop_after_the_current_turn_when_should_stop_after_turn_re
     assert steering_polls == 1
     assert follow_up_polls == 0
     assert callback_tool_result_ids == ["tool-1"]
-    assert callback_context_roles == ["user", "assistant", "toolResult"]
-    assert [getattr(m, "role", None) for m in messages] == ["user", "assistant", "toolResult"]
+    assert callback_context_roles == ["system", "user", "assistant", "toolResult"]
+    # The context declares no tools, so the loop announces the loadout with a system message.
+    assert [getattr(m, "role", None) for m in messages] == ["system", "user", "assistant", "toolResult"]
     assert [event.type for event in events] == [
         "agent_start",
         "turn_start",
+        "message_start",
+        "message_end",
         "message_start",
         "message_end",
         "message_start",
@@ -913,7 +937,7 @@ async def test_should_stop_after_a_tool_batch_when_every_tool_result_sets_termin
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     llm_calls = 0
@@ -933,7 +957,7 @@ async def test_should_stop_after_a_tool_batch_when_every_tool_result_sets_termin
 
     messages = await stream.result()
     assert llm_calls == 1
-    assert [getattr(m, "role", None) for m in messages] == ["user", "assistant", "toolResult"]
+    assert [getattr(m, "role", None) for m in messages] == ["system", "user", "assistant", "toolResult"]
     assert len([event for event in events if event.type == "turn_end"]) == 1
 
 
@@ -947,7 +971,7 @@ async def test_should_stop_after_a_blocked_tool_call_when_before_tool_call_sets_
         return AgentToolResult(content=[TextContent(text="should not execute")], details={"value": "unexpected"})
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
 
     async def before_tool_call(_context, _cancel):
         return BeforeToolCallResult(block=True, reason="Blocked by policy", terminate=True)
@@ -989,7 +1013,7 @@ async def test_should_continue_after_a_mixed_batch_with_one_terminating_blocked_
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
 
     async def before_tool_call(before_context, _cancel):
         if before_context.args["value"] == "first":
@@ -1040,7 +1064,7 @@ async def test_should_continue_after_parallel_tool_calls_when_not_all_tool_resul
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, tool_execution="parallel")
 
     call_index = 0
@@ -1068,6 +1092,7 @@ async def test_should_continue_after_parallel_tool_calls_when_not_all_tool_resul
     messages = await stream.result()
     assert call_index == 2
     assert [getattr(m, "role", None) for m in messages] == [
+        "system",
         "user",
         "assistant",
         "toolResult",
@@ -1084,7 +1109,7 @@ async def test_should_allow_after_tool_call_to_mark_a_tool_batch_as_terminating(
         )
 
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
-    context = AgentContext(system_prompt="", messages=[], tools=[tool])
+    context = AgentContext(messages=[], tools=[tool])
 
     async def after_tool_call(_ctx, _cancel):
         return AfterToolCallResult(terminate=True)
@@ -1110,7 +1135,7 @@ async def test_should_allow_after_tool_call_to_mark_a_tool_batch_as_terminating(
 
 @pytest.mark.tonio
 async def test_continue_should_throw_when_context_has_no_messages():
-    context = AgentContext(system_prompt="You are helpful.", messages=[], tools=[])
+    context = AgentContext(messages=[], tools=[])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     async def stream_fn(_model, _context, _options):
@@ -1123,7 +1148,7 @@ async def test_continue_should_throw_when_context_has_no_messages():
 @pytest.mark.tonio
 async def test_continue_from_existing_context_without_emitting_user_message_events():
     user_message = create_user_message("Hello")
-    context = AgentContext(system_prompt="You are helpful.", messages=[user_message], tools=[])
+    context = AgentContext(messages=[user_message], tools=[])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
     async def stream_fn(_model, _context, _options):
@@ -1156,7 +1181,7 @@ class CustomMessage:
 @pytest.mark.tonio
 async def test_continue_should_allow_custom_message_types_as_last_message():
     custom_message = CustomMessage(role="custom", text="Hook content", timestamp=int(time.time()))
-    context = AgentContext(system_prompt="You are helpful.", messages=[custom_message], tools=[])
+    context = AgentContext(messages=[custom_message], tools=[])
 
     async def convert(messages):
         out = []

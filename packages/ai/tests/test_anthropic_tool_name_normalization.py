@@ -20,6 +20,7 @@ from pidrei_ai.api.anthropic_messages import (
 )
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, Tool, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 from tests.anthropic_helpers import now_ms
 
 
@@ -62,10 +63,12 @@ def test_inbound_names_without_matching_tool_pass_through():
 @pytest.mark.tonio
 async def test_oauth_params_use_cc_casing_and_claude_code_identity():
     model = get_builtin_model("anthropic", "claude-sonnet-4-6")
-    context = Context(
-        system_prompt="Custom system prompt.",
-        messages=[UserMessage(content="Add a todo.", timestamp=now_ms())],
-        tools=[make_tool("todowrite")],
+    context = normalize_context(
+        Context(
+            system_prompt="Custom system prompt.",
+            messages=[UserMessage(content="Add a todo.", timestamp=now_ms())],
+            tools=[make_tool("todowrite")],
+        )
     )
 
     params = _build_params(model, context, True, AnthropicOptions())

@@ -18,9 +18,10 @@ from pidrei_ai.api.bedrock_converse_stream import (
 from pidrei_ai.api.bedrock_runtime import HttpRequest, MiddlewareArgs, MiddlewareRegistration
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
-CONTEXT = Context(messages=[UserMessage(content="hello", timestamp=1)])
+CONTEXT = normalize_context(Context(messages=[UserMessage(content="hello", timestamp=1)]))
 MIDDLEWARE_NAME = "pidrei-ai-custom-headers"
 
 middleware_registrations: list[MiddlewareRegistration] = []

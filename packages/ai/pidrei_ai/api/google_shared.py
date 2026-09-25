@@ -17,7 +17,6 @@ from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, 
 from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.types import (
     AssistantMessage,
-    Context,
     ImageContent,
     Model,
     ModelThinkingLevel,
@@ -25,9 +24,11 @@ from pidrei_ai.types import (
     StreamOptions,
     TextContent,
     Tool,
+    TranscriptContext,
 )
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.transcript import collapse_system_messages, without_initial_system_message
 
 
 type GoogleApiThinkingLevel = Literal["THINKING_LEVEL_UNSPECIFIED", "MINIMAL", "LOW", "MEDIUM", "HIGH"]
@@ -136,8 +137,10 @@ def _supports_multimodal_function_response(model_id: str) -> bool:
 _TOOL_CALL_ID_DISALLOWED = re.compile(r"[^a-zA-Z0-9_-]")
 
 
-def convert_messages(model: Model, context: Context) -> list[dict[str, Any]]:
+def convert_messages(model: Model, context: TranscriptContext) -> list[dict[str, Any]]:
     """Convert internal messages to Gemini `Content[]` format."""
+    # Gemini has no mid-conversation system messages; the leading prompt is sent as systemInstruction.
+    conversation = without_initial_system_message(collapse_system_messages(context).messages)
     contents: list[dict[str, Any]] = []
 
     def normalize_tool_call_id(id: str, _target_model: Model, _source: AssistantMessage) -> str:
@@ -145,7 +148,7 @@ def convert_messages(model: Model, context: Context) -> list[dict[str, Any]]:
             return id
         return _TOOL_CALL_ID_DISALLOWED.sub("_", id)[:64]
 
-    transformed_messages = transform_messages(context.messages, model, normalize_tool_call_id)
+    transformed_messages = transform_messages(conversation, model, normalize_tool_call_id)
 
     for msg in transformed_messages:
         if msg.role == "user":

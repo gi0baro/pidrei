@@ -8,12 +8,15 @@ observable request headers without a mocked network layer.
 import time
 
 from pidrei_ai.api.openai_responses import OpenAIResponsesOptions, _create_client, build_params
-from pidrei_ai.types import Context, OpenAIResponsesCompat, UserMessage
+from pidrei_ai.types import Context, OpenAIResponsesCompat, TranscriptContext, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 from tests.test_openai_responses import make_model
 
 
-def make_context() -> Context:
-    return Context(system_prompt="sys", messages=[UserMessage(content="hi", timestamp=int(time.time() * 1000))])
+def make_context() -> TranscriptContext:
+    return normalize_context(
+        Context(system_prompt="sys", messages=[UserMessage(content="hi", timestamp=int(time.time() * 1000))])
+    )
 
 
 def transport_headers(model, session_id: str | None = "session-123", options_headers=None) -> dict:
@@ -127,7 +130,7 @@ def test_sets_strict_mode_explicitly_for_cloudflare_openai_responses_tools():
             ),
         ],
     )
-    params = build_params(model, context, OpenAIResponsesOptions())
+    params = build_params(model, normalize_context(context), OpenAIResponsesOptions())
     assert [(tool.get("name"), tool.get("strict")) for tool in params["tools"]] == [
         ("ordinary", False),
         ("constrained", True),

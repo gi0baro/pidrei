@@ -23,6 +23,7 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     TextContent,
     ToolCall,
+    TranscriptContext,
     Usage,
     UsageCost,
     UserMessage,
@@ -30,6 +31,7 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
 from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
+from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.uuid import uuidv7
 
 from ..messages import convert_to_llm
@@ -113,8 +115,10 @@ def _get_message_from_entry_for_compaction(entry: dict[str, Any]) -> Any:
     """Extract the first context message from an entry if it produces one."""
     if entry.get("type") == "compaction":
         return None
+    # System messages are prompt state, not conversation; the compaction entry carries their replay.
     messages = session_entry_to_context_messages(entry)
-    return messages[0] if messages else None
+    message = messages[0] if messages else None
+    return None if getattr(message, "role", None) == "system" else message
 
 
 @dataclass(slots=True)
@@ -510,11 +514,13 @@ def get_summarization_failure(response: AssistantMessage, label: str) -> str | N
     return None
 
 
-def _build_summarization_context(prompt_text: str) -> Context:
+def _build_summarization_context(prompt_text: str) -> TranscriptContext:
     """Build the provider context for a standalone summary request."""
-    return Context(
-        system_prompt=SUMMARIZATION_SYSTEM_PROMPT,
-        messages=[UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))],
+    return normalize_context(
+        Context(
+            system_prompt=SUMMARIZATION_SYSTEM_PROMPT,
+            messages=[UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))],
+        )
     )
 
 
@@ -543,7 +549,7 @@ def _create_summarization_options(
 
 async def complete_summarization(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions,
     stream_fn=None,
     retry: RetryPolicy | None = None,
@@ -817,7 +823,7 @@ async def compact(
     if preparation.is_split_turn and preparation.turn_prefix_messages:
         # The history and turn-prefix summaries are independent LLM calls;
         # run them concurrently so compaction costs max, not sum.
-        history_text = "No prior history."
+        history_text = preparation.previous_summary if preparation.previous_summary is not None else "No prior history."
         history_usage: Usage | None = None
         turn_prefix_call = _generate_turn_prefix_summary(
             preparation.turn_prefix_messages,

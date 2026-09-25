@@ -17,6 +17,7 @@ from pidrei.core.agent_session import AgentSession, AgentSessionConfig
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
+from pidrei.core.system_prompt import normalize_build_system_prompt_options
 from pidrei.core.usage_totals import get_usage_cost_breakdown
 from pidrei_agent.agent import Agent, AgentInitialState
 from pidrei_ai.providers.all import get_builtin_model
@@ -75,8 +76,8 @@ class _MockRunner:
 
         return InputEventResult(action="continue")
 
-    async def emit_before_agent_start(self, _prompt, _images, _system_prompt, _options):
-        return None
+    async def emit_before_agent_start(self, _prompt, _images, system_prompt_options):
+        return {"messages": [], "systemPromptOptions": normalize_build_system_prompt_options(system_prompt_options)}
 
     def invalidate(self, _message=None):
         pass
@@ -210,7 +211,7 @@ class TestConcurrentPromptGuard:
         await session.prompt("hi")
         await session.agent.wait_for_idle()
 
-        assert snapshots == [["user", "assistant"], ["user", "assistant"]]
+        assert snapshots == [["system", "user", "assistant"], ["system", "user", "assistant"]]
         session.dispose()
 
     @pytest.mark.tonio
@@ -267,6 +268,7 @@ class TestConcurrentPromptGuard:
 
         message_entries = [entry for entry in session_manager.get_entries() if entry["type"] == "message"]
         assert [entry["message"].role for entry in message_entries] == [
+            "system",
             "user",
             "assistant",
             "toolResult",

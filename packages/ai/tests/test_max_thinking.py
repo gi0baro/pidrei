@@ -16,6 +16,7 @@ from pidrei_ai.api.openai_codex_responses import stream_simple as stream_simple_
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.registry import clamp_thinking_level, get_supported_thinking_levels
 from pidrei_ai.types import Context, ModelCost, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 from tests.test_registry import make_model
 
 
@@ -85,9 +86,11 @@ def test_supports_a_hole_between_high_and_max():
 async def test_sends_max_to_the_codex_responses_api(model_id):
     model = get_builtin_model("openai-codex", model_id)
     assert model is not None
-    context = Context(
-        system_prompt="You are a helpful assistant.",
-        messages=[UserMessage(content="Hello", timestamp=int(time.time() * 1000))],
+    context = normalize_context(
+        Context(
+            system_prompt="You are a helpful assistant.",
+            messages=[UserMessage(content="Hello", timestamp=int(time.time() * 1000))],
+        )
     )
     captured: list[dict] = []
 

@@ -93,7 +93,7 @@ async def test_still_disables_all_tools_when_no_tools_is_all(dirs):
 
     assert session.get_all_tools() == []
     assert session.get_active_tool_names() == []
-    assert "Available tools:\n(none)" in session.system_prompt
+    assert "<tools>\n(none)\n" in session.system_prompt
     session.dispose()
 
 
@@ -115,6 +115,6 @@ async def test_propagates_no_tools_through_service_based_session_creation(dirs):
     )
 
     assert result.session.get_active_tool_names() == []
-    assert "Available tools:\n(none)" in result.session.system_prompt
+    assert "<tools>\n(none)\n" in result.session.system_prompt
     assert "- read:" not in result.session.system_prompt
     result.session.dispose()

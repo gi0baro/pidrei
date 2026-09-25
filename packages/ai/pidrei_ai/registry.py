@@ -48,11 +48,13 @@ from pidrei_ai.types import (
     ProviderRequestOptions,
     SimpleStreamOptions,
     StreamOptions,
+    TranscriptContext,
 )
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def _now_ms() -> int:
@@ -207,17 +209,18 @@ class Provider:
     def stream(
         self,
         model: Model,
-        context: Context,
+        context: TranscriptContext,
         options: StreamOptions | None = None,
         *,
         into: AssistantMessageEventStream | None = None,
     ):
+        """Stream a normalized transcript. `Models` normalizes the caller's `Context` before dispatching here."""
         return self._dispatch(model, "stream", (model, context), options, into)
 
     def stream_simple(
         self,
         model: Model,
-        context: Context,
+        context: TranscriptContext,
         options: SimpleStreamOptions | None = None,
         *,
         into: AssistantMessageEventStream | None = None,
@@ -801,15 +804,17 @@ class Models:
     def stream(
         self,
         model: Model,
-        context: Context,
+        context: Context | TranscriptContext,
         options: StreamOptions | None = None,
     ) -> AssistantMessageEventStream:
+        transcript = normalize_context(context)
+
         async def _setup(stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             request_model, request_options = await self._apply_auth(
                 provider, model, options if options is not None else StreamOptions()
             )
-            return call_stream_into(provider.stream, request_model, context, request_options, into=stream)
+            return call_stream_into(provider.stream, request_model, transcript, request_options, into=stream)
 
         return lazy_stream(model, _setup, _cancel_of(options))
 
@@ -819,15 +824,17 @@ class Models:
     def stream_simple(
         self,
         model: Model,
-        context: Context,
+        context: Context | TranscriptContext,
         options: SimpleStreamOptions | None = None,
     ) -> AssistantMessageEventStream:
+        transcript = normalize_context(context)
+
         async def _setup(stream: AssistantMessageEventStream):
             provider = self._require_provider(model)
             request_model, request_options = await self._apply_auth(
                 provider, model, options if options is not None else SimpleStreamOptions()
             )
-            return call_stream_into(provider.stream_simple, request_model, context, request_options, into=stream)
+            return call_stream_into(provider.stream_simple, request_model, transcript, request_options, into=stream)
 
         return lazy_stream(model, _setup, _cancel_of(options))
 

@@ -14,6 +14,7 @@ import pytest
 
 from pidrei_ai.api.openai_completions import stream_simple
 from pidrei_ai.types import Context, Model, ModelCost, OpenAICompletionsCompat, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def _load_generate_models():
@@ -28,7 +29,7 @@ def _load_generate_models():
 generate_models = _load_generate_models()
 get_openrouter_thinking_level_map = generate_models.get_openrouter_thinking_level_map
 
-CONTEXT = Context(messages=[UserMessage(content="Hello", timestamp=0)])
+CONTEXT = normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=0)]))
 
 
 def openrouter_model(thinking_level_map: dict | None = None) -> Model:

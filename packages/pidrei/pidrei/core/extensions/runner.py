@@ -14,6 +14,7 @@ import tonio.colored as tonio
 
 from pidrei.core.diagnostics import ResourceDiagnostic
 
+from ..system_prompt import BuildSystemPromptOptions, build_system_prompt, normalize_build_system_prompt_options
 from .types import (
     Extension,
     ExtensionError,
@@ -418,7 +419,7 @@ class ExtensionRunner:
         self._get_context_usage_fn: Callable[[], Any] = lambda: None
         self._compact_fn: Callable[..., None] = lambda options=None: None
         self._get_system_prompt_fn: Callable[[], str] = lambda: ""
-        self._get_system_prompt_options_fn: Callable[[], Any] = lambda: {"cwd": self._cwd}
+        self._get_system_prompt_options_fn: Callable[[], BuildSystemPromptOptions] = self._default_system_prompt_options
         self._shutdown_handler: Callable[[], None] = lambda: None
 
         self._wait_for_idle_fn = _default_async_noop
@@ -463,7 +464,9 @@ class ExtensionRunner:
         self._compact_fn = context_actions["compact"]
         self._get_system_prompt_fn = context_actions["get_system_prompt"]
         get_options = context_actions.get("get_system_prompt_options")
-        self._get_system_prompt_options_fn = get_options if get_options is not None else lambda: {"cwd": self._cwd}
+        self._get_system_prompt_options_fn = (
+            get_options if get_options is not None else self._default_system_prompt_options
+        )
 
         provider_actions = provider_actions or {}
         register_provider = provider_actions.get("register_provider")
@@ -739,6 +742,9 @@ class ExtensionRunner:
         if not self._stale_message:
             self._stale_message = message
             self._runtime.invalidate(message)
+
+    def _default_system_prompt_options(self) -> BuildSystemPromptOptions:
+        return normalize_build_system_prompt_options(BuildSystemPromptOptions(cwd=self._cwd))
 
     def _assert_active(self) -> None:
         if self._stale_message:
@@ -1036,14 +1042,14 @@ class ExtensionRunner:
         self,
         prompt: str,
         images: list[Any] | None,
-        system_prompt: str,
-        system_prompt_options: Any,
-    ) -> dict[str, Any] | None:
-        current_system_prompt = system_prompt
+        system_prompt_options: BuildSystemPromptOptions,
+    ) -> dict[str, Any]:
+        """Combined result from all before_agent_start handlers: `messages` and the
+        (mutated) normalized `systemPromptOptions`."""
+        current_options = normalize_build_system_prompt_options(system_prompt_options)
         ctx = self.create_context()
-        ctx.get_system_prompt = lambda: self._assert_active() or current_system_prompt
+        ctx.get_system_prompt = lambda: self._assert_active() or build_system_prompt(current_options)
         messages: list[Any] = []
-        system_prompt_modified = False
 
         for ext in self._extensions:
             handlers = ext.handlers.get("before_agent_start")
@@ -1052,21 +1058,23 @@ class ExtensionRunner:
 
             for handler in handlers:
                 try:
+                    # pi exposes `systemPrompt` as a getter over the live options; the dict
+                    # event renders it when the handler is called, so it reflects every
+                    # earlier handler's changes.
                     event = {
                         "type": "before_agent_start",
                         "prompt": prompt,
                         "images": images,
-                        "systemPrompt": current_system_prompt,
-                        "systemPromptOptions": system_prompt_options,
+                        "systemPrompt": build_system_prompt(current_options),
+                        "systemPromptOptions": current_options,
                     }
                     handler_result = await handler(event, ctx)
 
                     if isinstance(handler_result, dict):
                         if handler_result.get("message") is not None:
                             messages.append(handler_result["message"])
-                        if "systemPrompt" in handler_result and handler_result["systemPrompt"] is not None:
-                            current_system_prompt = handler_result["systemPrompt"]
-                            system_prompt_modified = True
+                        if handler_result.get("systemPrompt") is not None:
+                            current_options.force_system_prompt = handler_result["systemPrompt"]
                 except Exception as error:
                     self.emit_error(
                         ExtensionError(
@@ -1077,13 +1085,7 @@ class ExtensionRunner:
                         )
                     )
 
-        if messages or system_prompt_modified:
-            return {
-                "messages": messages if messages else None,
-                "systemPrompt": current_system_prompt if system_prompt_modified else None,
-            }
-
-        return None
+        return {"messages": messages, "systemPromptOptions": current_options}
 
     async def emit_resources_discover(self, cwd: str, reason: str) -> ResourcesDiscoverPaths:
         ctx = self.create_context()

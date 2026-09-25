@@ -18,6 +18,7 @@ from dataclasses import replace
 from pidrei_ai.api import anthropic_messages
 from pidrei_ai.api.anthropic_messages import AnthropicOptions, stream, stream_simple
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 class PayloadCaptured(Exception):
@@ -59,7 +60,9 @@ async def capture_payload(
     opts = replace(given, api_key=given.api_key or default_api_key, on_payload=on_payload)
     run = stream if isinstance(opts, AnthropicOptions) else stream_simple
 
-    await run(payload_capture_model, context if context is not None else make_context(), opts).result()
+    await run(
+        payload_capture_model, normalize_context(context if context is not None else make_context()), opts
+    ).result()
 
     if not captured:
         raise AssertionError("Expected payload to be captured before request failure")

@@ -63,7 +63,6 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     CacheRetention,
-    Context,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -85,6 +84,7 @@ from pidrei_ai.types import (
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
@@ -94,6 +94,13 @@ from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.json_parse import parse_streaming_json
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.text import get_system_message_text
+from pidrei_ai.utils.transcript import (
+    collapse_system_messages,
+    get_current_tools,
+    get_initial_system_message,
+    without_initial_system_message,
+)
 
 
 EMPTY_TEXT_PLACEHOLDER = "<empty>"
@@ -144,13 +151,15 @@ def _bedrock_options(options: StreamOptions | None) -> BedrockOptions:
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _bedrock_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    # Bedrock has no mid-conversation system messages; fold them into the leading prompt.
+    normalized_context = collapse_system_messages(context)
 
     output = AssistantMessageBuilder(
         content=[],
@@ -251,16 +260,20 @@ def stream(
                 if opts.max_tokens is not None
                 else (model.max_tokens if _is_anthropic_claude_model(model) else None)
             )
+            initial_system_message = get_initial_system_message(normalized_context.messages)
+            initial_system_prompt = (
+                get_system_message_text(initial_system_message) if initial_system_message is not None else None
+            )
             command_input: dict[str, Any] = {
                 "modelId": model.id,
-                "messages": convert_messages(context, model, cache_retention, opts.env),
-                "system": build_system_prompt(context.system_prompt, model, cache_retention, opts.env),
+                "messages": convert_messages(normalized_context, model, cache_retention, opts.env),
+                "system": build_system_prompt(initial_system_prompt, model, cache_retention, opts.env),
                 "inferenceConfig": {
                     **({"maxTokens": inference_max_tokens} if inference_max_tokens is not None else {}),
                     **({"temperature": opts.temperature} if opts.temperature is not None else {}),
                 },
                 "toolConfig": convert_tool_config(
-                    context.tools,
+                    get_current_tools(normalized_context.messages),
                     opts.tool_choice,
                     bool(getattr(model.compat, "supports_strict_mode", None)),
                 ),
@@ -516,7 +529,7 @@ def add_response_headers_middleware(client, on_response, model: Model, on_observ
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
@@ -871,10 +884,12 @@ def _convert_tool_result_content(content: list) -> list[dict[str, Any]]:
 
 
 def convert_messages(
-    context: Context, model: Model, cache_retention: CacheRetention, env: ProviderEnv | None = None
+    context: TranscriptContext, model: Model, cache_retention: CacheRetention, env: ProviderEnv | None = None
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    transformed_messages = transform_messages(context.messages, model, _normalize_tool_call_id)
+    transformed_messages = transform_messages(
+        without_initial_system_message(context.messages), model, _normalize_tool_call_id
+    )
 
     i = 0
     while i < len(transformed_messages):

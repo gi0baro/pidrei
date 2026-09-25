@@ -25,13 +25,17 @@ from pidrei_ai.types import (
     Model,
     ModelCost,
     StartEvent,
+    SystemMessage,
     TextContent,
+    Tool,
     ToolCall,
+    ToolReference,
     Usage,
     UserMessage,
 )
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.transcript import get_current_system_message, to_tool_declaration
 
 
 EMPTY_SCHEMA = {"type": "object", "properties": {}}
@@ -49,6 +53,13 @@ class FnTool(AgentTool):
 
     async def execute(self, tool_call_id, params, cancel, on_update):
         return await self._execute(tool_call_id, params, cancel, on_update)
+
+
+def create_tool(name: str, description: str | None = None) -> FnTool:
+    async def execute(_tool_call_id, _params, _cancel, _on_update):
+        return AgentToolResult(content=[TextContent(text=name)], details={})
+
+    return FnTool(name, name, description if description is not None else f"{name} tool", EMPTY_SCHEMA, execute)
 
 
 def create_assistant_message(text: str) -> AssistantMessage:
@@ -144,7 +155,6 @@ async def test_should_create_an_agent_instance_with_default_state():
     agent = Agent(stream_fn=unused_stream_fn)
 
     assert agent.state is not None
-    assert agent.state.system_prompt == ""
     assert agent.state.model is not None
     assert agent.state.thinking_level == "off"
     assert agent.state.tools == []
@@ -168,9 +178,145 @@ async def test_should_create_an_agent_instance_with_custom_initial_state():
         ),
     )
 
-    assert agent.state.system_prompt == "You are a helpful assistant."
+    assert agent.state.messages == [SystemMessage(content="You are a helpful assistant.", timestamp=0)]
     assert agent.state.model is model
     assert agent.state.thinking_level == "low"
+
+
+@pytest.mark.tonio
+async def test_converts_initial_prompt_and_tools_into_transcript_state():
+    tool = create_tool("echo", description="Echo input")
+    agent = Agent(
+        stream_fn=unused_stream_fn,
+        initial_state=AgentInitialState(system_prompt="You are helpful.", tools=[tool]),
+    )
+
+    initial = agent.state.messages[0]
+    assert initial.role == "system"
+    assert initial.content == "You are helpful."
+    assert [value.name for value in initial.tools_added] == ["echo"]
+
+
+def _tool_change_lines(context) -> list[str]:
+    lines: list[str] = []
+    for message in context.messages:
+        if message.role == "system":
+            lines.append("+" + ",".join(tool.name for tool in message.tools_added or []))
+            lines.append("-" + ",".join(tool.name for tool in message.tools_removed or []))
+    return lines
+
+
+@pytest.mark.tonio
+async def test_declares_tool_loadout_changes_to_the_model_before_the_next_request():
+    first = create_tool("first")
+    second = create_tool("second")
+    requests: list[list[str]] = []
+
+    async def stream_fn(_model, context, _options):
+        requests.append(_tool_change_lines(context))
+        return done_stream(create_assistant_message("done"))
+
+    agent = Agent(
+        stream_fn=stream_fn,
+        initial_state=AgentInitialState(system_prompt="You are helpful.", tools=[first]),
+    )
+
+    await agent.prompt("one")
+    agent.state.tools = [second]
+    await agent.prompt("two")
+    await agent.prompt("three")
+
+    assert requests == [
+        ["+first", "-"],
+        ["+first", "-", "+second", "-first"],
+        ["+first", "-", "+second", "-first"],
+    ]
+    update = next(message for message in agent.state.messages if message.role == "system" and message.tools_removed)
+    assert update == SystemMessage(
+        content="",
+        tools_added=[Tool(name="second", description="second tool", parameters=EMPTY_SCHEMA)],
+        tools_removed=[ToolReference(name="first")],
+        timestamp=update.timestamp,
+    )
+    assert isinstance(update.timestamp, int)
+    initial = agent.state.messages[0]
+    assert initial.role == "system"
+    assert type(initial.tools_added[0]) is Tool
+
+
+@pytest.mark.tonio
+async def test_merges_tool_changes_into_a_pending_system_message():
+    tool = create_tool("echo", description="Echo input")
+
+    async def stream_fn(_model, context, _options):
+        assert len([message for message in context.messages if message.role == "system"]) == 2
+        return done_stream(create_assistant_message("done"))
+
+    agent = Agent(stream_fn=stream_fn, initial_state=AgentInitialState(system_prompt="You are helpful."))
+
+    agent.state.tools = [tool]
+    await agent.prompt(
+        [
+            SystemMessage(content="", sections={"skills": "<skills>x</skills>"}, timestamp=1),
+            UserMessage(content="hi", timestamp=2),
+        ]
+    )
+
+    assert agent.state.messages[1] == SystemMessage(
+        content="",
+        sections={"skills": "<skills>x</skills>"},
+        tools_added=[Tool(name="echo", description="Echo input", parameters=EMPTY_SCHEMA)],
+        timestamp=1,
+    )
+
+
+@pytest.mark.tonio
+async def test_rewrites_pending_tool_declarations_to_match_the_executable_set():
+    agent = Agent(
+        stream_fn=const_stream_fn("done"),
+        initial_state=AgentInitialState(system_prompt="You are helpful.", tools=[create_tool("first")]),
+    )
+
+    # The pending message claims to add `second` and remove `first`, but the executable
+    # set still has `first` and lacks `second`: the executable set wins.
+    await agent.prompt(
+        [
+            SystemMessage(
+                content="",
+                sections={"note": "<note>x</note>"},
+                tools_added=[to_tool_declaration(create_tool("second"))],
+                tools_removed=[ToolReference(name="first")],
+                timestamp=1,
+            ),
+            UserMessage(content="hi", timestamp=2),
+        ]
+    )
+
+    assert agent.state.messages[1] == SystemMessage(content="", sections={"note": "<note>x</note>"}, timestamp=1)
+    current = get_current_system_message(agent.state.messages)
+    assert current is not None
+    assert [tool.name for tool in current.tools_added] == ["first"]
+
+
+@pytest.mark.tonio
+async def test_restores_the_transcript_baseline_when_reset():
+    tool = create_tool("echo", description="Echo input")
+    agent = Agent(
+        stream_fn=unused_stream_fn,
+        initial_state=AgentInitialState(
+            system_prompt="You are helpful.",
+            tools=[tool],
+            messages=[UserMessage(content="old", timestamp=1)],
+        ),
+    )
+
+    agent.reset()
+
+    assert len(agent.state.messages) == 1
+    initial = agent.state.messages[0]
+    assert initial.role == "system"
+    assert initial.content == "You are helpful."
+    assert [value.name for value in initial.tools_added] == ["echo"]
 
 
 @pytest.mark.tonio
@@ -189,13 +335,13 @@ async def test_should_subscribe_to_events():
     assert event_count == 0
 
     # State mutators don't emit events.
-    agent.state.system_prompt = "Test prompt"
+    agent.state.thinking_level = "low"
     assert event_count == 0
-    assert agent.state.system_prompt == "Test prompt"
+    assert agent.state.thinking_level == "low"
 
     # Unsubscribe should work.
     unsubscribe()
-    agent.state.system_prompt = "Another prompt"
+    agent.state.thinking_level = "high"
     assert event_count == 0
 
 
@@ -547,9 +693,6 @@ async def test_dispatch_stall_meter_records_a_blocked_listener():
 async def test_should_update_state_with_mutators():
     agent = Agent(stream_fn=unused_stream_fn)
 
-    agent.state.system_prompt = "Custom prompt"
-    assert agent.state.system_prompt == "Custom prompt"
-
     new_model = custom_model("gemini-2.5-flash")
     agent.state.model = new_model
     assert agent.state.model is new_model
@@ -791,7 +934,7 @@ async def test_forwards_should_stop_after_turn_through_agent_options():
 
     assert request_count == 1
     assert saw_cancel_token is True
-    assert callback_context_roles == ["user", "assistant", "toolResult"]
+    assert callback_context_roles == ["system", "user", "assistant", "toolResult"]
 
 
 @pytest.mark.tonio

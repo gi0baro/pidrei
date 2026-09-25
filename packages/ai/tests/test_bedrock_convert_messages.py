@@ -28,6 +28,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.transcript import normalize_context
 
 
 BASE_MODEL = get_builtin_model("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
@@ -75,7 +76,7 @@ async def capture_payload(context: Context, model=None) -> dict:
 
     options = BedrockOptions(cache_retention="none", cancel=cancel, on_payload=on_payload)
     with _stubbed_client():
-        stream = stream_bedrock(model or BASE_MODEL, context, options)
+        stream = stream_bedrock(model or BASE_MODEL, normalize_context(context), options)
         async for event in stream:
             if event.type == "error":
                 break
@@ -184,7 +185,7 @@ async def test_preserves_empty_property_names_in_streamed_tool_arguments():
     with _streaming_client(events):
         message = await stream_bedrock(
             BASE_MODEL,
-            Context(messages=[UserMessage(content="Use the tool", timestamp=1)]),
+            normalize_context(Context(messages=[UserMessage(content="Use the tool", timestamp=1)])),
             BedrockOptions(cache_retention="none"),
         ).result()
 

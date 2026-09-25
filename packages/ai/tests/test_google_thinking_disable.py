@@ -21,11 +21,14 @@ import pytest
 from pidrei_ai.api import google_generative_ai, google_vertex
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
-CONTEXT = Context(
-    system_prompt="You are a precise assistant. Follow the requested output format exactly.",
-    messages=[UserMessage(content="Say pong.", timestamp=int(time.time() * 1000))],
+CONTEXT = normalize_context(
+    Context(
+        system_prompt="You are a precise assistant. Follow the requested output format exactly.",
+        messages=[UserMessage(content="Say pong.", timestamp=int(time.time() * 1000))],
+    )
 )
 
 _CHUNK = {

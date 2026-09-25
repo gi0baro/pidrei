@@ -28,8 +28,10 @@ from pidrei_ai.types import (
     Context,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
+    TranscriptContext,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 from tests.test_openai_completions import make_model as make_completions_model
 from tests.test_openai_responses import make_model as make_responses_model
 
@@ -56,10 +58,12 @@ def cache_retention_env(value: str | None):
             os.environ["PIDREI_CACHE_RETENTION"] = original
 
 
-def make_context() -> Context:
-    return Context(
-        system_prompt="You are a helpful assistant.",
-        messages=[UserMessage(content="Hello", timestamp=int(time.time() * 1000))],
+def make_context() -> TranscriptContext:
+    return normalize_context(
+        Context(
+            system_prompt="You are a helpful assistant.",
+            messages=[UserMessage(content="Hello", timestamp=int(time.time() * 1000))],
+        )
     )
 
 

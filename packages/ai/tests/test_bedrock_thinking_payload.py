@@ -14,17 +14,20 @@ import pytest
 from pidrei_ai.api import bedrock_converse_stream as bedrock
 from pidrei_ai.api.bedrock_converse_stream import BedrockOptions, stream as stream_bedrock
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, UserMessage
+from pidrei_ai.types import Context, TranscriptContext, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 class PayloadCaptured(Exception):
     """Aborts the request once the payload has been seen."""
 
 
-def make_context() -> Context:
-    return Context(
-        system_prompt="You are helpful.",
-        messages=[UserMessage(content="Hello", timestamp=1)],
+def make_context() -> TranscriptContext:
+    return normalize_context(
+        Context(
+            system_prompt="You are helpful.",
+            messages=[UserMessage(content="Hello", timestamp=1)],
+        )
     )
 
 

@@ -24,10 +24,17 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored.sync import channel
 
-from pidrei_ai.types import AssistantMessage, Context, TextContent, ToolResultMessage
+from pidrei_ai.types import AssistantMessage, Context, SystemMessage, TextContent, ToolResultMessage
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import EventStream
+from pidrei_ai.utils.transcript import (
+    ToolStateChanges,
+    get_current_tools,
+    get_tool_state_changes,
+    normalize_context,
+    to_tool_declaration,
+)
 from pidrei_ai.utils.validation import validate_tool_arguments
 
 from .stream_fn import get_default_stream_fn
@@ -125,14 +132,15 @@ async def run_agent_loop(
     cancel: CancelToken | None = None,
     stream_fn: StreamFn | None = None,
 ) -> list[AgentMessage]:
-    new_messages: list[AgentMessage] = [*prompts]
-    current_context = replace(context, messages=[*context.messages, *prompts])
+    initial_messages = _declare_tool_changes(context, prompts)
+    new_messages: list[AgentMessage] = [*initial_messages]
+    current_context = replace(context, messages=[*context.messages, *initial_messages])
 
     await emit(AgentStartEvent())
     await emit(TurnStartEvent())
-    for prompt in prompts:
-        await emit(MessageStartEvent(message=prompt))
-        await emit(MessageEndEvent(message=prompt))
+    for message in initial_messages:
+        await emit(MessageStartEvent(message=message))
+        await emit(MessageEndEvent(message=message))
 
     await _run_loop(
         current_context,
@@ -205,12 +213,14 @@ async def _run_loop(
 
         # Inner loop: process tool calls and steering messages.
         while has_more_tool_calls or pending_messages:
+            prepared_messages: list[AgentMessage] = []
             if last_completed_turn is not None:
                 next_turn_snapshot = await maybe_call(config.prepare_next_turn, last_completed_turn)
                 if next_turn_snapshot:
                     current_context = (
                         next_turn_snapshot.context if next_turn_snapshot.context is not None else current_context
                     )
+                    prepared_messages = next_turn_snapshot.messages or []
                     config = replace(
                         config,
                         model=next_turn_snapshot.model if next_turn_snapshot.model is not None else config.model,
@@ -231,14 +241,13 @@ async def _run_loop(
                     pending_messages = (await config.get_steering_messages()) or []
                 await emit(TurnStartEvent())
 
-            # Process pending messages (inject before next assistant response).
-            if pending_messages:
-                for message in pending_messages:
-                    await emit(MessageStartEvent(message=message))
-                    await emit(MessageEndEvent(message=message))
-                    current_context.messages.append(message)
-                    new_messages.append(message)
-                pending_messages = []
+            # Process prepared and queued messages before the next assistant response.
+            for message in _declare_tool_changes(current_context, [*prepared_messages, *pending_messages]):
+                await emit(MessageStartEvent(message=message))
+                await emit(MessageEndEvent(message=message))
+                current_context.messages.append(message)
+                new_messages.append(message)
+            pending_messages = []
 
             # Stream assistant response.
             message = await _stream_assistant_response(current_context, config, cancel, emit, stream_function)
@@ -302,6 +311,66 @@ async def _run_loop(
     await emit(AgentEndEvent(messages=new_messages))
 
 
+def _declare_tool_changes(context: AgentContext, pending_messages: list[AgentMessage]) -> list[AgentMessage]:
+    """Declare tool loadout changes to the model.
+
+    `context.tools` is what the runtime can execute; the transcript's system messages declare
+    what the model may call. Before each request the difference becomes `tools_added` and
+    `tools_removed` on a system message. When a pending system message exists, its tool fields
+    are treated as intent and replaced with the delta between the committed transcript and
+    the executable set, so replay always yields exactly `context.tools`. Otherwise a new
+    system message is inserted before the first non-system pending message.
+    """
+    system_index = -1
+    for i in range(len(pending_messages) - 1, -1, -1):
+        if getattr(pending_messages[i], "role", None) == "system":
+            system_index = i
+            break
+    pending: SystemMessage | None = pending_messages[system_index] if system_index != -1 else None
+    baseline = (
+        [
+            _with_tool_changes(pending, _NO_CHANGES) if index == system_index else message
+            for index, message in enumerate(pending_messages)
+        ]
+        if pending is not None
+        else pending_messages
+    )
+    changes = get_tool_state_changes(
+        get_current_tools([*context.messages, *baseline]),
+        [to_tool_declaration(tool) for tool in context.tools or []],
+    )
+    unchanged = len(changes.tools_added) == 0 and len(changes.tools_removed) == 0
+
+    if pending is not None:
+        # Keep the caller's message object when it already declares no tool changes.
+        if unchanged and not pending.tools_added and not pending.tools_removed:
+            return pending_messages
+        return [
+            _with_tool_changes(pending, changes) if index == system_index else message
+            for index, message in enumerate(baseline)
+        ]
+    if unchanged:
+        return pending_messages
+    update = _with_tool_changes(SystemMessage(content="", timestamp=int(time.time() * 1000)), changes)
+    index = next(
+        (i for i, message in enumerate(pending_messages) if getattr(message, "role", None) != "system"),
+        len(pending_messages),
+    )
+    return [*pending_messages[:index], update, *pending_messages[index:]]
+
+
+_NO_CHANGES = ToolStateChanges(tools_added=[], tools_removed=[])
+
+
+def _with_tool_changes(message: SystemMessage, changes: ToolStateChanges) -> SystemMessage:
+    """Copy a system message with its tool fields replaced by `changes`; empty lists omit the field."""
+    return replace(
+        message,
+        tools_added=changes.tools_added if changes.tools_added else None,
+        tools_removed=changes.tools_removed if changes.tools_removed else None,
+    )
+
+
 async def _stream_assistant_response(
     context: AgentContext,
     config: AgentLoopConfig,
@@ -321,8 +390,7 @@ async def _stream_assistant_response(
     # Convert to LLM-compatible messages (AgentMessage[] → Message[]).
     llm_messages = await config.convert_to_llm(messages)
 
-    # Build LLM context.
-    llm_context = Context(system_prompt=context.system_prompt, messages=llm_messages, tools=context.tools)
+    llm_context = normalize_context(Context(messages=llm_messages))
 
     # Resolve API key (important for expiring tokens).
     resolved_api_key = (await maybe_call(config.get_api_key, config.model.provider)) or config.api_key
@@ -743,7 +811,6 @@ def _create_tool_result_message(finalized: _FinalizedToolCallOutcome) -> ToolRes
         content=finalized.result.content if finalized.result.content is not None else [],
         details=finalized.result.details,
         usage=finalized.result.usage,
-        added_tool_names=(finalized.result.added_tool_names if finalized.result.added_tool_names else None),
         is_error=finalized.is_error,
         timestamp=int(time.time() * 1000),
     )

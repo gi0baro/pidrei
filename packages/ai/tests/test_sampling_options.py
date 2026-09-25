@@ -5,10 +5,11 @@ import pytest
 from pidrei_ai.api.anthropic_messages import stream_simple as stream_simple_anthropic
 from pidrei_ai.api.openai_completions import stream_simple as stream_simple_completions
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def make_context() -> Context:
-    return Context(messages=[UserMessage(content="Hello", timestamp=1)])
+    return normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)]))
 
 
 def make_completions_model(**overrides) -> Model:

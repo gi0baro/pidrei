@@ -27,9 +27,11 @@ from pidrei_ai.types import (
     TextContent,
     ThinkingContent,
     ToolResultMessage,
+    TranscriptContext,
     Usage,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def make_model(provider="openai", base_url="https://api.openai.com/v1", **overrides) -> Model:
@@ -49,8 +51,8 @@ def make_model(provider="openai", base_url="https://api.openai.com/v1", **overri
     return Model(**defaults)
 
 
-def user_context(text: str = "hi") -> Context:
-    return Context(messages=[UserMessage(content=text, timestamp=int(time.time() * 1000))])
+def user_context(text: str = "hi") -> TranscriptContext:
+    return normalize_context(Context(messages=[UserMessage(content=text, timestamp=int(time.time() * 1000))]))
 
 
 def chunk_body(chunks: list[dict], include_done: bool = True) -> bytes:
@@ -492,7 +494,7 @@ def test_build_params_openrouter_reasoning_and_cache_control():
         messages=[UserMessage(content="hello", timestamp=1)],
         tools=[],
     )
-    params = build_params(model, context, opts(reasoning_effort="medium"))
+    params = build_params(model, normalize_context(context), opts(reasoning_effort="medium"))
     assert params["reasoning"] == {"effort": "medium"}
 
     # Anthropic-style cache_control: system prompt + last conversation message.
@@ -512,7 +514,7 @@ def test_build_params_empty_tools_for_tool_history():
             ),
         ]
     )
-    params = build_params(model, context, opts())
+    params = build_params(model, normalize_context(context), opts())
     assert params["tools"] == []
 
 
@@ -533,12 +535,11 @@ def assistant_message(content, model: Model) -> AssistantMessage:
 
 def test_developer_role_for_reasoning_models():
     model = make_model(reasoning=True)
-    params = build_params(model, Context(system_prompt="sys", messages=[UserMessage(content="q", timestamp=1)]), opts())
+    context = normalize_context(Context(system_prompt="sys", messages=[UserMessage(content="q", timestamp=1)]))
+    params = build_params(model, context, opts())
     assert params["messages"][0] == {"role": "developer", "content": "sys"}
 
-    non_reasoning = build_params(
-        make_model(), Context(system_prompt="sys", messages=[UserMessage(content="q", timestamp=1)]), opts()
-    )
+    non_reasoning = build_params(make_model(), context, opts())
     assert non_reasoning["messages"][0] == {"role": "system", "content": "sys"}
 
 
@@ -553,7 +554,7 @@ def test_requires_assistant_after_tool_result_bridges_user_messages():
             UserMessage(content="next", timestamp=3),
         ]
     )
-    params = build_params(model, context, opts())
+    params = build_params(model, normalize_context(context), opts())
     roles = [message["role"] for message in params["messages"]]
     assert roles == ["user", "tool", "assistant", "user"]
     assert params["messages"][2]["content"] == "I have processed the tool results."
@@ -569,7 +570,7 @@ def test_tool_result_name_field_when_required():
             ),
         ]
     )
-    params = build_params(model, context, opts())
+    params = build_params(model, normalize_context(context), opts())
     tool_message = next(message for message in params["messages"] if message["role"] == "tool")
     assert tool_message["name"] == "mytool"
 
@@ -600,7 +601,7 @@ def test_pipe_separated_tool_ids_are_normalized():
             ),
         ]
     )
-    params = build_params(model, context, opts())
+    params = build_params(model, normalize_context(context), opts())
     assistant = next(message for message in params["messages"] if message["role"] == "assistant")
     tool_result = next(message for message in params["messages"] if message["role"] == "tool")
 
@@ -620,7 +621,7 @@ def test_thinking_replay_as_field_and_as_text():
             UserMessage(content="next", timestamp=2),
         ]
     )
-    params = build_params(model, context, opts())
+    params = build_params(model, normalize_context(context), opts())
     assistant = next(message for message in params["messages"] if message["role"] == "assistant")
     assert assistant["content"] == "ans"
     assert assistant["reasoning_content"] == "deep"
@@ -633,7 +634,7 @@ def test_thinking_replay_as_field_and_as_text():
             UserMessage(content="next", timestamp=2),
         ]
     )
-    params = build_params(as_text_model, context_same, opts())
+    params = build_params(as_text_model, normalize_context(context_same), opts())
     assistant = next(message for message in params["messages"] if message["role"] == "assistant")
     assert assistant["content"][0] == {"type": "text", "text": "deep"}
     assert assistant["content"][1] == {"type": "text", "text": "ans"}
@@ -648,5 +649,5 @@ def test_empty_assistant_messages_are_skipped():
             UserMessage(content="next", timestamp=2),
         ]
     )
-    params = build_params(model, context, opts())
+    params = build_params(model, normalize_context(context), opts())
     assert [message["role"] for message in params["messages"]] == ["user", "user"]

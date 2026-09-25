@@ -26,6 +26,7 @@ from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
 from pidrei_ai.providers.xai import xai_provider
 from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import Context, Model, ModelCost, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
 from tests.test_openai_responses import FakeClient, make_model
 
@@ -59,7 +60,7 @@ async def capture_request(model: Model, context: Context, options: OpenAIRespons
     """The params the provider puts on the wire for `model`."""
     client = FakeClient(COMPLETED_EVENTS)
     options.client = client
-    result = await xai_provider().stream(model, context, options).result()
+    result = await xai_provider().stream(model, normalize_context(context), options).result()
     assert result.stop_reason == "stop", result.error_message
     assert len(client.requests) == 1
     return client.requests[0]

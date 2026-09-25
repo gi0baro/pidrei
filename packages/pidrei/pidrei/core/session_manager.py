@@ -54,6 +54,7 @@ from pidrei_agent.harness.session.serde import (
     serialize_usage,
     to_wire_value,
 )
+from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_ai.utils.uuid import uuidv7
 
 from ..config import APP_NAME, get_agent_dir as get_default_agent_dir, get_sessions_dir
@@ -187,8 +188,11 @@ def _generate_id(existing) -> str:
 def _decode_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if entry.get("type") == "message" and isinstance(entry.get("message"), dict):
         entry["message"] = parse_message(entry["message"])
-    elif entry.get("type") in ("compaction", "branch_summary") and isinstance(entry.get("usage"), dict):
-        entry["usage"] = parse_usage(entry["usage"])
+    elif entry.get("type") in ("compaction", "branch_summary"):
+        if isinstance(entry.get("usage"), dict):
+            entry["usage"] = parse_usage(entry["usage"])
+        if isinstance(entry.get("systemMessage"), dict):
+            entry["systemMessage"] = parse_message(entry["systemMessage"])
     return entry
 
 
@@ -211,6 +215,8 @@ def _entry_to_wire(entry: dict[str, Any]) -> dict[str, Any]:
             wire["usage"] = serialize_usage(entry["usage"])
         if entry.get("details") is not None:
             wire["details"] = to_wire_value(entry["details"])
+        if entry.get("systemMessage") is not None:
+            wire["systemMessage"] = serialize_message(entry["systemMessage"])
         return wire
     if entry_type == "custom" and entry.get("data") is not None:
         wire = dict(entry)
@@ -381,6 +387,8 @@ def session_entry_to_context_messages(entry: dict[str, Any]) -> list[Any]:
         message = entry.get("message")
         # Session files are parsed without validation; old versions, forks, or
         # hand-edited files can contain messages with null/missing content.
+        if getattr(message, "role", None) == "system" and message.content is None:
+            return [dataclasses.replace(message, content="")]
         if getattr(message, "role", None) in ("user", "assistant", "toolResult") and message.content is None:
             return [dataclasses.replace(message, content=[])]
         return [message]
@@ -398,9 +406,11 @@ def session_entry_to_context_messages(entry: dict[str, Any]) -> list[Any]:
     if entry_type == "branch_summary" and entry.get("summary"):
         return [create_branch_summary_message(entry["summary"], entry.get("fromId"), entry.get("timestamp"))]
     if entry_type == "compaction":
-        return [
-            create_compaction_summary_message(entry.get("summary"), entry.get("tokensBefore"), entry.get("timestamp"))
-        ]
+        summary = create_compaction_summary_message(
+            entry.get("summary"), entry.get("tokensBefore"), entry.get("timestamp")
+        )
+        system_message = entry.get("systemMessage")
+        return [system_message, summary] if system_message else [summary]
     return []
 
 
@@ -435,7 +445,9 @@ def build_context_entries(
         entry = path[i]
         if entry.get("id") == compaction.get("firstKeptEntryId"):
             found_first_kept = True
-        if found_first_kept:
+        if found_first_kept and not (
+            entry.get("type") == "message" and getattr(entry.get("message"), "role", None) == "system"
+        ):
             context_entries.append(entry)
     context_entries.extend(path[compaction_idx + 1 :])
     return context_entries
@@ -1115,6 +1127,7 @@ class SessionManager:
         async with self._io_lock:
             with self._lock:
                 entry = self._new_entry_base("compaction")
+                system_message = get_current_system_message(self.build_session_context().messages)
                 entry["summary"] = summary
                 entry["firstKeptEntryId"] = first_kept_entry_id
                 entry["tokensBefore"] = tokens_before
@@ -1124,6 +1137,11 @@ class SessionManager:
                     entry["usage"] = usage
                 if from_hook is not None:
                     entry["fromHook"] = from_hook
+                if system_message is not None:
+                    # Complete prompt and tool state at this compaction boundary.
+                    entry["systemMessage"] = dataclasses.replace(
+                        system_message, timestamp=int(_iso_to_epoch_ms(entry["timestamp"]))
+                    )
                 self._append_entry_locked(entry)
             await self._persist_entry(entry)
             return entry["id"]

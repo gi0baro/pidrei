@@ -35,7 +35,7 @@ from pidrei_ai.auth.types import (
     ProviderAuth,
 )
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
-from pidrei_ai.types import Model, ModelCost
+from pidrei_ai.types import Model, ModelCost, TranscriptContext
 from pidrei_ai.utils.tasks import gather
 
 from .model_config import ModelConfig
@@ -621,7 +621,7 @@ class ComposedProvider:
             return False
         return any(entry.api == model.api for entry in self._base.get_models())
 
-    def _stream_with(self, model: Model, context: Any, options: Any, simple: bool, into: Any) -> Any:
+    def _stream_with(self, model: Model, context: TranscriptContext, options: Any, simple: bool, into: Any) -> Any:
         method = "stream_simple" if simple else "stream"
 
         async def setup(stream: Any) -> Any:
@@ -637,10 +637,10 @@ class ComposedProvider:
 
         return lazy_stream(model, setup, _cancel_of(options), into=into)
 
-    def stream(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
+    def stream(self, model: Model, context: TranscriptContext, options: Any = None, *, into: Any = None) -> Any:
         return self._stream_with(model, context, options, False, into)
 
-    def stream_simple(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
+    def stream_simple(self, model: Model, context: TranscriptContext, options: Any = None, *, into: Any = None) -> Any:
         return self._stream_with(model, context, options, True, into)
 
     # Native deferred methods pass straight through to the base provider

@@ -235,11 +235,8 @@ OPENAI_TOOL_SEARCH_MODEL_IDS = {
     "gpt-5.6-luna",
     "gpt-6-astra",
 }
-# Public OpenAI documents additional_tools for applications that load tools
-# outside the normal tool-search flow. Codex currently uses the input item for
-# its Responses Lite GPT-5.6 models.
-# https://developers.openai.com/api/docs/guides/tools-tool-search#add-tools-at-a-specific-point-in-the-input
 OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
+OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
 OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"}
 OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000
 OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
@@ -415,13 +412,23 @@ def get_together_thinking_level_map(model_id: str, reasoning: bool) -> dict[str,
 
 
 VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = {"anthropic", "openrouter"}
+# OpenRouter rejects `configuration_update` system messages on Opus 5 ("Mid-conversation
+# reasoning effort (configuration_update) is not supported on anthropic/claude-opus-5-20260723")
+# while accepting them on Fable 5.1, so gate that model there.
+MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = {"openrouter:anthropic/claude-opus-5"}
 _MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-5(?:-\d{8})?$")
 _MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$")
+_MID_CONVO_SYSTEM_OPUS_RE = re.compile(r"^claude-opus-(?:4[.-]8|5)(?:-\d{8})?$")
+_MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$")
 
 
 def supports_anthropic_mid_convo_effort(model_id: str) -> bool:
     model_id = re.sub(r"^~?anthropic/", "", model_id.lower())
     return bool(_MID_CONVO_EFFORT_OPUS_RE.match(model_id) or _MID_CONVO_EFFORT_FABLE_RE.match(model_id))
+
+
+def supports_anthropic_mid_convo_system_messages(model_id: str) -> bool:
+    return bool(_MID_CONVO_SYSTEM_OPUS_RE.match(model_id) or _MID_CONVO_SYSTEM_FABLE_RE.match(model_id))
 
 
 def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
@@ -496,6 +503,8 @@ OPENAI_COMPLETIONS_DEFAULT_COMPAT: dict[str, Any] = {
     "zaiToolStream": False,
     "supportsStrictMode": True,
     "supportsOpenAIGrammarTools": False,
+    "supportsMidConvoSystemMessages": False,
+    "supportsMidConvoToolAdditions": False,
     "sendSessionAffinityHeaders": False,
     "supportsLongCacheRetention": True,
 }
@@ -587,6 +596,8 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
         "zaiToolStream": False,
         "supportsStrictMode": not (is_moonshot or is_together or is_cloudflare_ai_gateway or is_nvidia),
         "supportsOpenAIGrammarTools": False,
+        "supportsMidConvoSystemMessages": False,
+        "supportsMidConvoToolAdditions": False,
     }
     if cache_control_format is not None:
         detected["cacheControlFormat"] = cache_control_format
@@ -856,6 +867,69 @@ def apply_openai_tool_search_metadata(model: dict[str, Any]) -> None:
     merge_compat(model, compat)
 
 
+# Moonshot Kimi K2.6/K2.7 accept system text after the conversation starts but reject
+# tool-bearing system messages. Kimi K3 accepts both forms; Fireworks and OpenCode pass
+# its tool-bearing form through. GitHub Copilot forwards K3 text but silently drops its
+# tool-bearing message. DeepSeek V4 Pro and OpenAI models behind OpenRouter also accept
+# plain system text in place.
+def apply_openai_completions_transcript_metadata(model: dict[str, Any]) -> None:
+    if model["api"] != "openai-completions":
+        return
+    provider = model["provider"]
+    model_id = model["id"]
+    is_kimi_k3 = (
+        (provider.startswith("moonshot") and model_id == "kimi-k3")
+        or (provider == "fireworks" and "kimi-k3" in model_id)
+        or (provider in ("opencode", "opencode-go") and model_id == "kimi-k3")
+    )
+    is_moonshot_kimi_k2 = provider.startswith("moonshot") and model_id in (
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "kimi-k2.7-code-highspeed",
+    )
+    is_text_only = (
+        is_moonshot_kimi_k2
+        or (provider == "github-copilot" and model_id == "kimi-k3")
+        or (provider == "deepseek" and model_id == "deepseek-v4-pro")
+        or (
+            provider == "openrouter"
+            and model_id.startswith("openai/")
+            and model_id[len("openai/") :] in OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS
+        )
+    )
+    if not is_kimi_k3 and not is_text_only:
+        return
+    merge_compat(
+        model,
+        {"supportsMidConvoSystemMessages": True, **({"supportsMidConvoToolAdditions": True} if is_kimi_k3 else {})},
+    )
+
+
+# Newer OpenAI Responses models accept developer messages after the conversation has started.
+# OpenCode Zen, OpenCode Go, and GitHub Copilot pass both those messages and
+# `additional_tools` items through to OpenAI unchanged; tool search is not verified
+# through those proxies.
+OPENAI_RESPONSES_PROXY_PROVIDERS = {"opencode", "opencode-go", "github-copilot"}
+
+
+def apply_openai_responses_transcript_metadata(model: dict[str, Any]) -> None:
+    is_openai_responses = model["provider"] == "openai" and model["api"] == "openai-responses"
+    is_openai_codex = model["provider"] == "openai-codex" and model["api"] == "openai-codex-responses"
+    is_proxied_responses = model["provider"] in OPENAI_RESPONSES_PROXY_PROVIDERS and model["api"] == "openai-responses"
+    if (
+        not (is_openai_responses or is_openai_codex or is_proxied_responses)
+        or model["id"] not in OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS
+    ):
+        return
+    merge_compat(
+        model,
+        {
+            "supportsMidConvoSystemMessages": True,
+            **({"supportsAdditionalTools": True} if is_proxied_responses else {}),
+        },
+    )
+
+
 # OpenAI charges prompt-cache writes starting with the GPT-5.6 family, and exactly
 # those models accept `prompt_cache_options`; older models reject the parameter.
 def apply_openai_explicit_prompt_cache_metadata(model: dict[str, Any]) -> None:
@@ -868,8 +942,19 @@ def apply_openai_explicit_prompt_cache_metadata(model: dict[str, Any]) -> None:
 
 def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any] | None:
     compat: dict[str, Any] = {}
-    if provider in VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS and supports_anthropic_mid_convo_effort(model_id):
+    if (
+        provider in VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS
+        and supports_anthropic_mid_convo_effort(model_id)
+        and f"{provider}:{model_id}" not in MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS
+    ):
         compat["supportsMidConvoEffort"] = True
+    if provider == "anthropic" and supports_anthropic_mid_convo_system_messages(model_id):
+        compat["supportsMidConvoSystemMessages"] = True
+        compat["supportsMidConvoToolChanges"] = True
+    # OpenCode Zen and GitHub Copilot forward mid-conversation system messages but reject
+    # `tool_addition`/`tool_removal` blocks, so tool changes stay top-level there.
+    if provider in ("opencode", "github-copilot") and supports_anthropic_mid_convo_system_messages(model_id):
+        compat["supportsMidConvoSystemMessages"] = True
     if f"{provider}:{model_id}" in EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS:
         compat["supportsEagerToolInputStreaming"] = False
     if provider == "xiaomi" or provider.startswith("xiaomi-token-plan-"):
@@ -1586,7 +1671,6 @@ def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorde
         **openai_compat,
         "requiresReasoningContentOnAssistantMessages": True,
         "thinkingFormat": "openai",
-        "deferredToolsMode": "kimi",
     }
     models: list[dict[str, Any]] = []
 
@@ -1977,7 +2061,6 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
             compat = dict(moonshot_compat)
             if is_kimi_k3:
                 compat["requiresReasoningContentOnAssistantMessages"] = True
-                compat["deferredToolsMode"] = "kimi"
                 compat["thinkingFormat"] = "openai"
                 compat["supportsReasoningEffort"] = True
             cost = source.get("cost") or {}
@@ -2513,6 +2596,8 @@ def apply_model_metadata(all_models: list[dict[str, Any]], reasoning_options: di
         apply_strict_tool_compat_metadata(model)
         apply_openai_grammar_tool_compat_metadata(model)
         apply_openai_tool_search_metadata(model)
+        apply_openai_completions_transcript_metadata(model)
+        apply_openai_responses_transcript_metadata(model)
         apply_openai_explicit_prompt_cache_metadata(model)
     apply_anthropic_allowed_fallback_model_metadata(
         [model for model in all_models if is_anthropic_fallback_metadata_model(model)]

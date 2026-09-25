@@ -6,6 +6,7 @@ simple-options port (PLAN.md Phase 1).
 
 from pidrei_ai.types import AssistantMessage, Context, TextContent, ToolCall, Usage, UserMessage
 from pidrei_ai.utils.estimate import ContextUsageEstimate, estimate_context_tokens, estimate_message_tokens
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def create_assistant(timestamp: int, total_tokens: int) -> AssistantMessage:
@@ -21,13 +22,15 @@ def create_assistant(timestamp: int, total_tokens: int) -> AssistantMessage:
 
 
 def test_ignores_stale_assistant_usage_after_newer_message_inserted_before_it():
-    context = Context(
-        system_prompt="system",
-        messages=[
-            UserMessage(content="summary", timestamp=200),
-            create_assistant(100, 9_500),
-            UserMessage(content="x" * 4_000, timestamp=300),
-        ],
+    context = normalize_context(
+        Context(
+            system_prompt="system",
+            messages=[
+                UserMessage(content="summary", timestamp=200),
+                create_assistant(100, 9_500),
+                UserMessage(content="x" * 4_000, timestamp=300),
+            ],
+        )
     )
 
     assert estimate_context_tokens(context) == ContextUsageEstimate(
@@ -39,14 +42,16 @@ def test_ignores_stale_assistant_usage_after_newer_message_inserted_before_it():
 
 
 def test_uses_assistant_usage_again_after_response_to_inserted_context():
-    context = Context(
-        messages=[
-            UserMessage(content="summary", timestamp=200),
-            create_assistant(100, 9_500),
-            UserMessage(content="new prompt", timestamp=300),
-            create_assistant(400, 2_000),
-            UserMessage(content="tail", timestamp=500),
-        ],
+    context = normalize_context(
+        Context(
+            messages=[
+                UserMessage(content="summary", timestamp=200),
+                create_assistant(100, 9_500),
+                UserMessage(content="new prompt", timestamp=300),
+                create_assistant(400, 2_000),
+                UserMessage(content="tail", timestamp=500),
+            ],
+        )
     )
 
     assert estimate_context_tokens(context) == ContextUsageEstimate(

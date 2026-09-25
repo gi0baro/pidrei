@@ -23,9 +23,10 @@ from pidrei_ai.types import (
     ThinkingLevelMap,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 
 
-CONTEXT = Context(messages=[UserMessage(content="Hello", timestamp=int(time.time() * 1000))])
+CONTEXT = normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=int(time.time() * 1000))]))
 
 _CHUNK = {
     "candidates": [{"content": {"parts": [{"text": "pong"}]}, "finishReason": "STOP"}],

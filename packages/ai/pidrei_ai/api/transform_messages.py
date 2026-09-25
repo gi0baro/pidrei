@@ -86,7 +86,8 @@ def transform_messages(
     # First pass: thinking/text/toolCall transformation per assistant message.
     transformed: list[Message] = []
     for message in image_aware_messages:
-        if message.role == "user":
+        # System and user messages pass through unchanged
+        if message.role in ("system", "user"):
             transformed.append(message)
             continue
 
@@ -151,8 +152,12 @@ def transform_messages(
     result: list[Message] = []
     pending_tool_calls: list[ToolCall] = []
     existing_tool_result_ids: set[str] = set()
+    # System messages are transparent to tool-call accounting: one that lands between a tool
+    # call and its results is held back and emitted after the results (synthetic ones
+    # included), so it never causes a duplicate result for a call that is answered later.
+    held_system_messages: list[Message] = []
 
-    def insert_synthetic_tool_results() -> None:
+    def close_pending_tool_calls() -> None:
         nonlocal pending_tool_calls, existing_tool_result_ids
         if pending_tool_calls:
             for tool_call in pending_tool_calls:
@@ -168,11 +173,13 @@ def transform_messages(
                     )
             pending_tool_calls = []
             existing_tool_result_ids = set()
+        result.extend(held_system_messages)
+        held_system_messages.clear()
 
     for message in transformed:
         if message.role == "assistant":
             # Pending orphaned tool calls from a previous assistant: insert now.
-            insert_synthetic_tool_results()
+            close_pending_tool_calls()
 
             # Skip errored/aborted assistant messages entirely: incomplete
             # turns that shouldn't be replayed (partial content can cause API
@@ -189,14 +196,19 @@ def transform_messages(
         elif message.role == "toolResult":
             existing_tool_result_ids.add(message.tool_call_id)
             result.append(message)
+        elif message.role == "system":
+            if pending_tool_calls:
+                held_system_messages.append(message)
+            else:
+                result.append(message)
         elif message.role == "user":
-            # User message interrupts tool flow: synthesize orphaned results.
-            insert_synthetic_tool_results()
+            # A new user turn interrupts tool flow: synthesize orphaned results.
+            close_pending_tool_calls()
             result.append(message)
         else:
             result.append(message)
 
     # If the conversation ends with unresolved tool calls, synthesize now.
-    insert_synthetic_tool_results()
+    close_pending_tool_calls()
 
     return result

@@ -23,10 +23,11 @@ from pidrei_ai.types import (
     Tool,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 from pidrei_ai.utils.user_agent import get_user_agent
 
 
-CONTEXT = Context(messages=[UserMessage(content="hello", timestamp=1)])
+CONTEXT = normalize_context(Context(messages=[UserMessage(content="hello", timestamp=1)]))
 
 constructor_calls: list[dict] = []
 last_params: list[dict] = []
@@ -192,16 +193,18 @@ async def test_honors_supports_strict_mode_false():
     compat = base_model.compat or OpenAIResponsesCompat()
     model = replace(base_model, compat=replace(compat, supports_strict_mode=False))
 
-    context = Context(
-        messages=CONTEXT.messages,
-        tools=[
-            Tool(
-                name="preferred",
-                description="Preferred constrained tool",
-                parameters={"type": "object", "properties": {"value": {"type": "string"}}},
-                constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
-            )
-        ],
+    context = normalize_context(
+        Context(
+            messages=CONTEXT.messages,
+            tools=[
+                Tool(
+                    name="preferred",
+                    description="Preferred constrained tool",
+                    parameters={"type": "object", "properties": {"value": {"type": "string"}}},
+                    constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
+                )
+            ],
+        )
     )
 
     with _stubbed_client():

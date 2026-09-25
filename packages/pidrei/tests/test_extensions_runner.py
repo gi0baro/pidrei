@@ -13,6 +13,7 @@ equals `[]` holds vacuously and pidrei has no such accessor.
 """
 
 import os
+import re
 import shutil
 import tempfile
 from types import SimpleNamespace
@@ -28,6 +29,7 @@ from pidrei.core.extensions.loader import (
 from pidrei.core.extensions.runner import ExtensionRunner, emit_project_trust_event
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionManager
+from pidrei.core.system_prompt import BuildSystemPromptOptions, build_system_prompt
 from pidrei_ai.types import ModelCostTier
 
 from .model_runtime_helpers import create_in_memory_model_registry
@@ -677,10 +679,13 @@ def extension(pi):
     runner.on_error(lambda error: errors.append(error.error))
     runner.bind_core(extension_actions(), extension_context_actions())
 
-    chained = await runner.emit_before_agent_start("hello", None, "base", {"cwd": fx.root})
+    chained = await runner.emit_before_agent_start(
+        "hello", None, BuildSystemPromptOptions(custom_prompt="base", cwd=fx.root)
+    )
 
     assert errors == []
-    assert chained == {"messages": None, "systemPrompt": "base\nfirst\nsecond"}
+    assert chained["messages"] == []
+    assert re.search(r"base[\s\S]*\nfirst\nsecond$", build_system_prompt(chained["systemPromptOptions"]))
 
 
 # -- tool_result chaining --------------------------------------------------------

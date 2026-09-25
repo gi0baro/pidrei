@@ -12,11 +12,13 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from pidrei.core.compaction import (
+    DEFAULT_COMPACTION_SETTINGS,
     CompactionSettings,
     calculate_context_tokens,
     estimate_context_tokens,
     estimate_tokens,
     get_last_assistant_usage,
+    prepare_compaction,
     serialize_conversation,
     should_compact,
 )
@@ -24,6 +26,7 @@ from pidrei.core.messages import BashExecutionMessage, BranchSummaryMessage, Com
 from pidrei_ai.types import (
     AssistantMessage,
     ImageContent,
+    SystemMessage,
     TextContent,
     ThinkingContent,
     ToolCall,
@@ -209,6 +212,28 @@ def test_should_return_true_when_context_exceeds_threshold():
 def test_should_return_false_when_disabled():
     settings = CompactionSettings(enabled=False, reserve_tokens=10000, keep_recent_tokens=20000)
     assert should_compact(95000, 100000, settings) is False
+
+
+# ============================================================================
+# prepareCompaction
+# ============================================================================
+
+
+def test_does_not_treat_system_messages_as_conversation_history():
+    system = create_message_entry(
+        SystemMessage(content="", sections={"preamble": "current prompt"}, timestamp=_now_ms())
+    )
+    user = create_message_entry(create_user_message("one long turn"))
+    assistant = create_message_entry(create_assistant_message("assistant suffix"))
+    preparation = prepare_compaction(
+        [system, user, assistant], replace(DEFAULT_COMPACTION_SETTINGS, keep_recent_tokens=1)
+    )
+
+    assert preparation is not None
+    assert preparation.first_kept_entry_id == assistant["id"]
+    assert preparation.is_split_turn is True
+    assert preparation.messages_to_summarize == []
+    assert preparation.turn_prefix_messages == [user["message"]]
 
 
 # ============================================================================

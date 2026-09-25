@@ -60,7 +60,14 @@ async def test_appends_the_message_after_the_turns_tool_results_instead_of_betwe
 
     await harness.session.prompt("hi")
 
-    assert _roles(harness.session.messages) == ["user", "assistant", "toolResult", "custom", "assistant"]
+    assert _roles(harness.session.messages) == [
+        "system",
+        "user",
+        "assistant",
+        "toolResult",
+        "custom",
+        "assistant",
+    ]
 
 
 @pytest.mark.tonio
@@ -81,11 +88,11 @@ async def test_keeps_session_entries_and_message_events_in_the_same_order_as_age
             entry_kinds.append(entry["message"].role)
         elif entry.get("type") == "custom_message":
             entry_kinds.append("custom")
-    assert entry_kinds == ["user", "assistant", "toolResult", "custom", "assistant"]
+    assert entry_kinds == ["system", "user", "assistant", "toolResult", "custom", "assistant"]
 
     # message events must never describe a message the session tree does not contain yet
     message_starts = [event.message.role for event in harness.events if getattr(event, "type", None) == "message_start"]
-    assert message_starts == ["user", "assistant", "toolResult", "custom", "assistant"]
+    assert message_starts == ["system", "user", "assistant", "toolResult", "custom", "assistant"]
 
 
 @pytest.mark.tonio

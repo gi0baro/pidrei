@@ -9,7 +9,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from pidrei_ai.types import Context, Message, Tool, Usage
+from pidrei_ai.types import Message, Tool, ToolReference, TranscriptContext, Usage
+from pidrei_ai.utils.text import get_system_message_text
 
 
 CHARS_PER_TOKEN = 4
@@ -72,6 +73,12 @@ def estimate_text_and_image_content_tokens(content: str | list) -> int:
 
 
 def estimate_message_tokens(message: Message) -> int:
+    if message.role == "system":
+        return (
+            estimate_text_tokens(get_system_message_text(message))
+            + _estimate_tools_tokens(message.tools_added)
+            + _estimate_tools_tokens(message.tools_removed)
+        )
     if message.role in ("user", "toolResult"):
         return estimate_text_and_image_content_tokens(message.content)
 
@@ -106,7 +113,18 @@ def _get_last_assistant_usage_info(messages: list[Message]) -> tuple[Usage, int]
     return usage_info
 
 
-def _estimate_messages(messages: list[Message]) -> ContextUsageEstimate:
+def _estimate_tools_tokens(tools: list[Tool] | list[ToolReference] | None) -> int:
+    if not tools:
+        return 0
+    return estimate_text_tokens(
+        _safe_json_stringify(
+            [_tool_json_shape(tool) if isinstance(tool, Tool) else {"name": tool.name} for tool in tools]
+        )
+    )
+
+
+def estimate_context_tokens(context: TranscriptContext | list[Message]) -> ContextUsageEstimate:
+    messages = context.messages if isinstance(context, TranscriptContext) else context
     usage_info = _get_last_assistant_usage_info(messages)
     if usage_info is not None:
         usage, index = usage_info
@@ -121,42 +139,3 @@ def _estimate_messages(messages: list[Message]) -> ContextUsageEstimate:
 
     tokens = sum(estimate_message_tokens(message) for message in messages)
     return ContextUsageEstimate(tokens=tokens, usage_tokens=0, trailing_tokens=tokens, last_usage_index=None)
-
-
-def _estimate_tools_tokens(tools: list[Tool] | None) -> int:
-    if not tools:
-        return 0
-    return estimate_text_tokens(_safe_json_stringify([_tool_json_shape(tool) for tool in tools]))
-
-
-def estimate_context_tokens(context: Context | list[Message]) -> ContextUsageEstimate:
-    if isinstance(context, list):
-        return _estimate_messages(context)
-
-    estimate = _estimate_messages(context.messages)
-    if estimate.last_usage_index is not None:
-        added_names = {
-            name
-            for message in context.messages[estimate.last_usage_index + 1 :]
-            if message.role == "toolResult"
-            for name in (message.added_tool_names or [])
-        }
-        added_tools = [tool for tool in (context.tools or []) if tool.name in added_names]
-        added_tool_tokens = _estimate_tools_tokens(added_tools or None)
-        return ContextUsageEstimate(
-            tokens=estimate.tokens + added_tool_tokens,
-            usage_tokens=estimate.usage_tokens,
-            trailing_tokens=estimate.trailing_tokens + added_tool_tokens,
-            last_usage_index=estimate.last_usage_index,
-        )
-
-    prefix_tokens = (
-        estimate_text_tokens(context.system_prompt) if context.system_prompt else 0
-    ) + _estimate_tools_tokens(context.tools)
-
-    return ContextUsageEstimate(
-        tokens=estimate.tokens + prefix_tokens,
-        usage_tokens=estimate.usage_tokens,
-        trailing_tokens=estimate.trailing_tokens + prefix_tokens,
-        last_usage_index=estimate.last_usage_index,
-    )

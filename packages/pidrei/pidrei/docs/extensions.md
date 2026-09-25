@@ -199,7 +199,7 @@ user sends a prompt
 | `session_before_fork` / `session_before_switch` / `session_before_tree` | Before the matching session action | — |
 | `resources_discover` | Startup and `/reload` | Add resource paths |
 | `input` | User submitted input | Transform, or handle it entirely |
-| `before_agent_start` | Before the loop starts | Message, system prompt |
+| `before_agent_start` | Before the loop starts | Message; prompt sections, tools and rules via the mutable `event["systemPromptOptions"]` (sent as a patch); or the whole system prompt for the run |
 | `agent_start` / `agent_end` | Around the whole run | — |
 | `turn_start` / `turn_end` | Around each provider round-trip | — |
 | `context` | Before each request | The message list |

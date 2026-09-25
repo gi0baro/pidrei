@@ -847,8 +847,8 @@ TEST_HOMES = {
     "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": "covered by packages/pidrei/tests/test_provider_attribution.py",
     "packages/coding-agent/test/model-runtime-test-utils.ts": "pi test infra; pidrei equivalent is packages/pidrei/tests/model_runtime_helpers.py — absorb deltas where ported tests need them",
     "packages/ai/test/deferred-tools.test.ts": (
-        "partial mirror: test_deferred_tools.py holds the 0.84.2 additional_tools cases; "
-        "the rest of the suite is a PARITY GAP"
+        "deleted upstream in 9e05370b (deferred tools replaced by transcript system messages); "
+        "the test_deferred_tools.py partial mirror was removed with it"
     ),
     "packages/ai/test/openai-completions-prompt-cache.test.ts": (
         "partial mirror: test_openai_completions_prompt_cache.py holds the 0.87.1 session-affinity cases "

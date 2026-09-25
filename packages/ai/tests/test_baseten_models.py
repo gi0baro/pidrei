@@ -19,6 +19,7 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 
 
 GLM52_THINKING_LEVEL_MAP = {
@@ -78,7 +79,7 @@ async def capture_payload(model: Model, reasoning: str | None = None) -> dict:
 
     result = await stream_simple_completions(
         model,
-        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        normalize_context(Context(messages=[UserMessage(content="test", timestamp=0)])),
         SimpleStreamOptions(api_key="test-baseten-key", reasoning=reasoning, on_payload=on_payload),
     ).result()
     assert result.stop_reason == "error"

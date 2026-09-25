@@ -47,6 +47,12 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.transcript import (
+    create_initial_system_message,
+    get_current_system_message,
+    get_current_system_prompt,
+    to_tool_declaration,
+)
 
 from .agent_loop import run_agent_loop, run_agent_loop_continue
 from .stream_fn import get_default_stream_fn
@@ -75,7 +81,7 @@ from .types import (
 
 
 async def default_convert_to_llm(messages: list[AgentMessage]) -> list[Message]:
-    return [m for m in messages if getattr(m, "role", None) in ("user", "assistant", "toolResult")]
+    return [m for m in messages if getattr(m, "role", None) in ("system", "user", "assistant", "toolResult")]
 
 
 def _default_model() -> Model:
@@ -98,21 +104,28 @@ class AgentState:
 
     Assigning `tools` or `messages` copies the provided top-level list; reading
     them returns the internal list (appending to it is visible, as in pi).
+    `system_prompt` and `tools` seed the leading system message unless
+    `messages` already starts with one.
     """
 
     def __init__(
         self,
-        system_prompt: str = "",
+        system_prompt: str | None = None,
         model: Model | None = None,
         thinking_level: ThinkingLevel = "off",
         tools: list[AgentTool] | None = None,
         messages: list[AgentMessage] | None = None,
     ):
-        self.system_prompt = system_prompt
         self.model = model if model is not None else _default_model()
         self.thinking_level: ThinkingLevel = thinking_level
         self._tools: list[AgentTool] = list(tools) if tools is not None else []
         self._messages: list[AgentMessage] = list(messages) if messages is not None else []
+        initial_message = create_initial_system_message(
+            system_prompt, [to_tool_declaration(tool) for tool in self._tools]
+        )
+        first_role = getattr(self._messages[0], "role", None) if self._messages else None
+        if first_role != "system" and initial_message is not None:
+            self._messages.insert(0, initial_message)
         # True while the agent is processing a prompt or continuation. Remains
         # True until awaited `agent_end` listeners settle.
         self.is_streaming = False
@@ -124,7 +137,21 @@ class AgentState:
         self.error_message: str | None = None
 
     @property
+    def system_prompt(self) -> str:
+        """Current system prompt, replayed from the transcript's system messages.
+
+        Read-only: to change the prompt, append a system message with `content`
+        or `sections`. In the initial state, this seeds the leading system message.
+        """
+        return get_current_system_prompt(self._messages)
+
+    @property
     def tools(self) -> list[AgentTool]:
+        """Executable tools. Assigning a new list copies the top-level list.
+
+        Differences from the tools declared in the transcript are announced to
+        the model with a system message before the next request.
+        """
         return self._tools
 
     @tools.setter
@@ -133,6 +160,10 @@ class AgentState:
 
     @property
     def messages(self) -> list[AgentMessage]:
+        """Conversation transcript. Assigning a new list copies the top-level list.
+
+        System messages in the transcript carry the prompt and tool declarations.
+        """
         return self._messages
 
     @messages.setter
@@ -142,7 +173,9 @@ class AgentState:
 
 @dataclass(slots=True)
 class AgentInitialState:
-    """Initial state subset accepted by `Agent` (pi: `AgentOptions.initialState`)."""
+    """Initial state for `Agent` (pi: `AgentInitialState`). `system_prompt` and
+    `tools` become the leading system message unless `messages` already starts
+    with one."""
 
     system_prompt: str | None = None
     model: Model | None = None
@@ -415,7 +448,7 @@ class Agent:
     ):
         initial = initial_state if initial_state is not None else AgentInitialState()
         self._state = AgentState(
-            system_prompt=initial.system_prompt if initial.system_prompt is not None else "",
+            system_prompt=initial.system_prompt,
             model=initial.model,
             thinking_level=initial.thinking_level if initial.thinking_level is not None else "off",
             tools=initial.tools,
@@ -560,11 +593,12 @@ class Agent:
         await run.done.wait(None)
 
     def reset(self) -> None:
-        """Clear transcript state, runtime state, and queued messages."""
+        """Clear conversation state and queues while retaining the replayed prompt/tool baseline."""
         if self._mailbox.current is not None:
             raise Exception("Agent is already processing. Wait for completion before resetting.")
 
-        self._state.messages = []
+        baseline = get_current_system_message(self._state.messages)
+        self._state.messages = [baseline] if baseline is not None else []
         self._state.is_streaming = False
         self._state.streaming_message = None
         self._state.pending_tool_calls = set()
@@ -593,7 +627,7 @@ class Agent:
             raise Exception("Agent is already processing. Wait for completion before continuing.")
 
         last_message = self._state.messages[-1] if self._state.messages else None
-        if last_message is None:
+        if last_message is None or all(getattr(message, "role", None) == "system" for message in self._state.messages):
             raise Exception("No messages to continue from")
 
         if getattr(last_message, "role", None) == "assistant":
@@ -652,7 +686,6 @@ class Agent:
 
     def _create_context_snapshot(self) -> AgentContext:
         return AgentContext(
-            system_prompt=self._state.system_prompt,
             messages=list(self._state.messages),
             tools=list(self._state.tools),
         )

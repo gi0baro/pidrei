@@ -19,6 +19,7 @@ from pidrei_ai.api.constrained_sampling import make_strict_json_schema
 from pidrei_ai.api.mistral_conversations import stream as stream_mistral
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, JsonSchemaConstrainedSampling, Tool, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 captured: list[dict] = []
@@ -40,16 +41,18 @@ async def test_tool_schemas_reach_the_payload_intact_and_strict():
         "properties": {"nested": {"type": "object", "properties": {"value": {"type": "string"}}}},
         "required": ["nested"],
     }
-    context = Context(
-        messages=[UserMessage(content="Hi", timestamp=1)],
-        tools=[
-            Tool(
-                name="inspect_schema",
-                description="Inspect the schema",
-                parameters=parameters,
-                constrained_sampling=JsonSchemaConstrainedSampling(strict="require"),
-            )
-        ],
+    context = normalize_context(
+        Context(
+            messages=[UserMessage(content="Hi", timestamp=1)],
+            tools=[
+                Tool(
+                    name="inspect_schema",
+                    description="Inspect the schema",
+                    parameters=parameters,
+                    constrained_sampling=JsonSchemaConstrainedSampling(strict="require"),
+                )
+            ],
+        )
     )
 
     response = await stream_mistral(
@@ -64,7 +67,7 @@ async def test_tool_schemas_reach_the_payload_intact_and_strict():
     # payload — here the checks are the strict conversion and that the tool's
     # own definition stays untouched.
     assert function["parameters"] == make_strict_json_schema(parameters)
-    assert context.tools[0].parameters == parameters
+    assert context.messages[0].tools_added[0].parameters == parameters
     # The payload must be JSON-serializable end to end, nesting included.
     wire = json.loads(json.dumps(mistral.to_mistral_wire_payload(captured[0])))
     assert wire["tools"][0]["function"]["parameters"] == function["parameters"]

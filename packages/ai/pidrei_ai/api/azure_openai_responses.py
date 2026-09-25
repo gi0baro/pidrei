@@ -36,7 +36,6 @@ from pidrei_ai.api.simple_options import build_base_options
 from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
-    Context,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -44,6 +43,7 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
+    TranscriptContext,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -52,6 +52,7 @@ from pidrei_ai.utils.error_body import format_provider_error, normalize_provider
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
+from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
@@ -169,13 +170,14 @@ def _azure_options(options: StreamOptions | None) -> AzureOpenAIResponsesOptions
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _azure_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    normalized_context = resolve_transcript(context, getattr(model.compat, "supports_mid_convo_system_messages", None))
 
     output = AssistantMessageBuilder(
         content=[],
@@ -197,9 +199,10 @@ def stream(
                 raise RuntimeError(f"No API key for provider: {model.provider}")
             client = create_client(model, api_key, opts)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
-                context.tools, bool(getattr(model.compat, "supports_openai_grammar_tools", None))
+                get_declared_tools(normalized_context.messages),
+                bool(getattr(model.compat, "supports_openai_grammar_tools", None)),
             )
-            params = build_params(model, context, opts, deployment_name, grammar_tool_input_properties)
+            params = build_params(model, normalized_context, opts, deployment_name, grammar_tool_input_properties)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
@@ -248,7 +251,7 @@ def stream(
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
@@ -343,21 +346,34 @@ def create_client(model: Model, api_key: str, options: AzureOpenAIResponsesOptio
 
 def build_params(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: AzureOpenAIResponsesOptions | None,
     deployment_name: str,
     grammar_tool_input_properties: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     compat = model.compat
     supports_grammar_tools = bool(getattr(compat, "supports_openai_grammar_tools", None))
+    supports_strict = getattr(compat, "supports_strict_mode", None)
     if grammar_tool_input_properties is None:
-        grammar_tool_input_properties = create_grammar_tool_input_properties(context.tools, supports_grammar_tools)
+        grammar_tool_input_properties = create_grammar_tool_input_properties(
+            get_declared_tools(context.messages), supports_grammar_tools
+        )
 
+    supports_additional_tools = bool(getattr(compat, "supports_additional_tools", None))
+    supports_tool_search = bool(getattr(compat, "supports_tool_search", None))
+    transcript_tools = resolve_transcript_tools(context.messages, supports_additional_tools or supports_tool_search)
     messages = convert_responses_messages(
         model,
         context,
         AZURE_TOOL_CALL_PROVIDERS,
         grammar_tool_input_properties=grammar_tool_input_properties,
+        supports_mid_convo_system_messages=bool(getattr(compat, "supports_mid_convo_system_messages", None)),
+        supports_additional_tools=supports_additional_tools,
+        supports_tool_search=supports_tool_search,
+        tool_options={
+            "supports_strict_mode": True if supports_strict is None else supports_strict,
+            "supports_openai_grammar_tools": supports_grammar_tools,
+        },
     )
 
     params: dict[str, Any] = {
@@ -374,10 +390,9 @@ def build_params(
     if options is not None and options.temperature is not None:
         params["temperature"] = options.temperature
 
-    if context.tools:
-        supports_strict = getattr(compat, "supports_strict_mode", None)
+    if transcript_tools.request_tools:
         params["tools"] = convert_responses_tools(
-            context.tools,
+            transcript_tools.request_tools,
             supports_strict_mode=True if supports_strict is None else supports_strict,
             supports_openai_grammar_tools=supports_grammar_tools,
         )

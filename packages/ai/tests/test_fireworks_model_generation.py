@@ -20,6 +20,7 @@ from pidrei_ai.api.anthropic_messages import stream_simple
 from pidrei_ai.models_generated import parse_model_dict
 from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def _load_generate_models():
@@ -112,7 +113,7 @@ async def test_automatically_sends_native_effort_for_newly_cataloged_messages_mo
 
     await stream_simple(
         model,
-        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        normalize_context(Context(messages=[UserMessage(content="test", timestamp=0)])),
         SimpleStreamOptions(api_key="test-fireworks-key", reasoning="max", on_payload=on_payload),
     ).result()
 

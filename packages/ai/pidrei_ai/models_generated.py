@@ -17,6 +17,7 @@ from pidrei_ai.types import (
     AnthropicAllowedFallbackModel,
     AnthropicMessagesCompat,
     BedrockCompat,
+    MistralConversationsCompat,
     Model,
     ModelCompat,
     ModelCost,
@@ -41,6 +42,7 @@ _COMPAT_CLASSES: dict[str, type] = {
     "openai-codex-responses": OpenAIResponsesCompat,
     "anthropic-messages": AnthropicMessagesCompat,
     "bedrock-converse-stream": BedrockCompat,
+    "mistral-conversations": MistralConversationsCompat,
 }
 
 

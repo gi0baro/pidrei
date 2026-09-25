@@ -15,6 +15,7 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def vllm_model(compat: OpenAICompletionsCompat | None = None) -> Model:
@@ -45,7 +46,7 @@ async def capture(model: Model, **option_kwargs) -> dict:
 
     await stream_simple_completions(
         model,
-        Context(messages=[UserMessage(content="Hi", timestamp=1)]),
+        normalize_context(Context(messages=[UserMessage(content="Hi", timestamp=1)])),
         SimpleStreamOptions(api_key="test", on_payload=on_payload, **option_kwargs),
     ).result()
 

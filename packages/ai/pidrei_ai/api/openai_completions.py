@@ -46,7 +46,6 @@ from pidrei_ai.builders import (
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
     CacheRetention,
-    Context,
     DoneEvent,
     ErrorEvent,
     Message,
@@ -70,6 +69,7 @@ from pidrei_ai.types import (
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    TranscriptContext,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -82,6 +82,8 @@ from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
+from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
@@ -209,9 +211,10 @@ class _ResolvedCompat:
     supports_openai_grammar_tools: bool
     supports_thinking_token_budget: bool
     thinking_token_budget_field: str | None
+    supports_mid_convo_system_messages: bool | None
+    supports_mid_convo_tool_additions: bool | None
     cache_control_format: str | None
     send_session_affinity_headers: bool
-    deferred_tools_mode: str | None
     session_affinity_format: str
     supports_long_cache_retention: bool
     vllm_priority: int | None = None
@@ -309,9 +312,10 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         supports_openai_grammar_tools=False,
         supports_thinking_token_budget=False,
         thinking_token_budget_field=None,
+        supports_mid_convo_system_messages=False,
+        supports_mid_convo_tool_additions=False,
         cache_control_format=cache_control_format,
         send_session_affinity_headers=is_openrouter,
-        deferred_tools_mode=None,
         session_affinity_format="openrouter" if is_openrouter else "openai",
         supports_long_cache_retention=not (
             is_together or is_cloudflare_workers_ai or is_cloudflare_ai_gateway or is_nvidia or is_ant_ling
@@ -370,11 +374,16 @@ def get_compat(model: Model) -> _ResolvedCompat:
             compat.supports_thinking_token_budget, detected.supports_thinking_token_budget
         ),
         thinking_token_budget_field=pick(compat.thinking_token_budget_field, detected.thinking_token_budget_field),
+        supports_mid_convo_system_messages=pick(
+            compat.supports_mid_convo_system_messages, detected.supports_mid_convo_system_messages
+        ),
+        supports_mid_convo_tool_additions=pick(
+            compat.supports_mid_convo_tool_additions, detected.supports_mid_convo_tool_additions
+        ),
         cache_control_format=pick(compat.cache_control_format, detected.cache_control_format),
         send_session_affinity_headers=pick(
             compat.send_session_affinity_headers, detected.send_session_affinity_headers
         ),
-        deferred_tools_mode=pick(compat.deferred_tools_mode, detected.deferred_tools_mode),
         session_affinity_format=pick(compat.session_affinity_format, detected.session_affinity_format),
         supports_long_cache_retention=pick(
             compat.supports_long_cache_retention, detected.supports_long_cache_retention
@@ -408,22 +417,6 @@ def _has_tool_history(messages: list[Message]) -> bool:
         if msg.role == "assistant" and any(block.type == "toolCall" for block in msg.content):
             return True
     return False
-
-
-def _get_deferred_tool_names(messages: list[Message]) -> set[str]:
-    names: set[str] = set()
-    for message in messages:
-        if message.role == "toolResult":
-            for name in message.added_tool_names or []:
-                names.add(name)
-    return names
-
-
-def _get_tools_by_name(tools: list[Tool] | None, names) -> list[Tool]:
-    if not tools:
-        return []
-    by_name = {tool.name: tool for tool in tools}
-    return [by_name[name] for name in names if name in by_name]
 
 
 # Assistant-message fields an OpenAI-compatible server accepts reasoning text in.
@@ -633,7 +626,7 @@ async def _iterate_chunks(response: OpenAIResponseLike, cancel: CancelToken | No
 
 def _create_client(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     api_key: str,
     options_headers: ProviderHeaders | None,
     session_id: str | None,
@@ -799,11 +792,12 @@ def convert_tools(tools: list[Tool], compat: _ResolvedCompat) -> list[dict]:
 
 def convert_messages(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     compat: _ResolvedCompat,
     grammar_tool_input_properties: dict[str, str] | None = None,
 ) -> list[dict]:
     grammar_tool_input_properties = grammar_tool_input_properties or {}
+    normalized_context = resolve_transcript(context, compat.supports_mid_convo_system_messages)
     params: list[dict] = []
 
     def normalize_tool_call_id(id: str) -> str:
@@ -825,13 +819,13 @@ def convert_messages(
         return id
 
     transformed_messages = transform_messages(
-        context.messages, model, lambda id, _model, _source: normalize_tool_call_id(id)
+        normalized_context.messages, model, lambda id, _model, _source: normalize_tool_call_id(id)
     )
-
-    if context.system_prompt:
-        use_developer_role = model.reasoning and compat.supports_developer_role
-        role = "developer" if use_developer_role else "system"
-        params.append({"role": role, "content": sanitize_surrogates(context.system_prompt)})
+    transcript_tools = resolve_transcript_tools(
+        normalized_context.messages,
+        compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True,
+    )
+    instruction_role = "developer" if model.reasoning and compat.supports_developer_role else "system"
 
     last_role: str | None = None
 
@@ -843,7 +837,15 @@ def convert_messages(
         if compat.requires_assistant_after_tool_result and last_role == "toolResult" and msg.role == "user":
             params.append({"role": "assistant", "content": "I have processed the tool results."})
 
-        if msg.role == "user":
+        if msg.role == "system":
+            added_tools = (msg.tools_added or []) if i > 0 and transcript_tools.anchors_additions else []
+            if added_tools:
+                # Kimi accepts a system message with tools but omits the standard content field.
+                params.append({"role": "system", "tools": convert_tools(added_tools, compat)})
+            text = get_system_message_text(msg) if i == 0 else render_system_message_update(msg)
+            if text:
+                params.append({"role": instruction_role, "content": sanitize_surrogates(text)})
+        elif msg.role == "user":
             if isinstance(msg.content, str):
                 params.append({"role": "user", "content": sanitize_surrogates(msg.content)})
             else:
@@ -961,7 +963,6 @@ def convert_messages(
             params.append(assistant_msg)
         elif msg.role == "toolResult":
             image_blocks: list[dict] = []
-            deferred_tool_names: set[str] = set()
             j = i
 
             while j < len(transformed_messages) and transformed_messages[j].role == "toolResult":
@@ -981,10 +982,6 @@ def convert_messages(
                 if compat.requires_tool_result_name and tool_msg.tool_name:
                     tool_result_msg["name"] = tool_msg.tool_name
                 params.append(tool_result_msg)
-
-                if compat.deferred_tools_mode == "kimi":
-                    for name in tool_msg.added_tool_names or []:
-                        deferred_tool_names.add(name)
 
                 if has_images and "image" in model.input:
                     for block in tool_msg.content:
@@ -1012,11 +1009,6 @@ def convert_messages(
             else:
                 last_role = "toolResult"
 
-            if deferred_tool_names:
-                deferred_tools = _get_tools_by_name(context.tools, deferred_tool_names)
-                if deferred_tools:
-                    # Kimi accepts a system message with tools but no content field.
-                    params.append({"role": "system", "tools": convert_tools(deferred_tools, compat)})
             i += 1
             continue
 
@@ -1028,7 +1020,7 @@ def convert_messages(
 
 def build_params(  # noqa: C901 (mirrors pi's compat ladder)
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: OpenAICompletionsOptions,
     compat: _ResolvedCompat | None = None,
     cache_retention: CacheRetention | None = None,
@@ -1042,9 +1034,13 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
     )
     if grammar_tool_input_properties is None:
         grammar_tool_input_properties = create_grammar_tool_input_properties(
-            context.tools, compat.supports_openai_grammar_tools
+            get_declared_tools(context.messages), compat.supports_openai_grammar_tools
         )
 
+    transcript_tools = resolve_transcript_tools(
+        context.messages,
+        compat.supports_mid_convo_system_messages is True and compat.supports_mid_convo_tool_additions is True,
+    )
     messages = convert_messages(model, context, compat, grammar_tool_input_properties)
     cache_control = _get_compat_cache_control(compat, cache_retention)
 
@@ -1071,10 +1067,8 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
     if options.temperature is not None:
         params["temperature"] = options.temperature
 
-    deferred_tool_names = _get_deferred_tool_names(context.messages) if compat.deferred_tools_mode == "kimi" else set()
-    active_tools = [tool for tool in context.tools or [] if tool.name not in deferred_tool_names]
-    if active_tools:
-        params["tools"] = convert_tools(active_tools, compat)
+    if transcript_tools.request_tools:
+        params["tools"] = convert_tools(transcript_tools.request_tools, compat)
         if compat.zai_tool_stream:
             params["tool_stream"] = True
     elif _has_tool_history(context.messages):
@@ -1210,13 +1204,14 @@ def _openai_options(options: StreamOptions | None) -> OpenAICompletionsOptions:
 
 def stream(  # noqa: C901
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _openai_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    normalized_context = resolve_transcript(context, get_compat(model).supports_mid_convo_system_messages)
 
     output = AssistantMessageBuilder(
         content=[],
@@ -1242,7 +1237,7 @@ def stream(  # noqa: C901
         try:
             compat = get_compat(model)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
-                context.tools, compat.supports_openai_grammar_tools
+                get_declared_tools(normalized_context.messages), compat.supports_openai_grammar_tools
             )
             if opts.client is not None:
                 client: OpenAICompletionsClient = opts.client
@@ -1250,9 +1245,11 @@ def stream(  # noqa: C901
                 api_key = _get_client_api_key(model.provider, opts.api_key, opts.headers)
                 cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
                 cache_session_id = None if cache_retention == "none" else opts.session_id
-                client = _create_client(model, context, api_key, opts.headers, cache_session_id, compat, opts.env)
+                client = _create_client(
+                    model, normalized_context, api_key, opts.headers, cache_session_id, compat, opts.env
+                )
 
-            params = build_params(model, context, opts, compat, None, grammar_tool_input_properties)
+            params = build_params(model, normalized_context, opts, compat, None, grammar_tool_input_properties)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
@@ -1539,7 +1536,7 @@ def stream(  # noqa: C901
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,

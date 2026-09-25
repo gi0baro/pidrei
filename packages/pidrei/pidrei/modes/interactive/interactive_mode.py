@@ -3578,6 +3578,8 @@ class InteractiveMode:
             component = BranchSummaryMessageComponent(message, self._get_markdown_theme_with_settings())
             component.set_expanded(self._tool_output_expanded)
             self._chat_container.add_child(component)
+        elif role == "system":
+            pass
         elif role == "user":
             text_content = self._get_user_message_text(message)
             if text_content:

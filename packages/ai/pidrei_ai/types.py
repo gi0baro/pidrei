@@ -236,6 +236,33 @@ class DeferredHandle:
 
 
 @dataclass(slots=True, frozen=True)
+class SystemMessage:
+    """System instructions and tool declarations at one point in the transcript.
+
+    The leading system message is the system prompt. Later system messages change it:
+    `content` adds instructions from that point on, `sections` replace or remove named
+    prompt sections, and `tools_added`/`tools_removed` change the tool set. Replaying
+    every system message in order yields the current prompt and tools. Providers that
+    accept system messages mid-conversation send each one in place; other providers
+    rebuild the leading system message from the replayed state.
+    """
+
+    # Instruction text. On the leading message this is the base prompt; later, additional instructions.
+    content: str | list[TextContent]
+    timestamp: int  # Unix timestamp in milliseconds
+    # Named, ordered prompt sections rendered verbatim after `content`. The leading message
+    # declares them; later messages replace sections by name, and None removes one. Keep
+    # each section self-delimiting (a tag, a heading) so the model can relate an update to
+    # the original.
+    sections: dict[str, str | None] | None = None
+    # Complete definitions of tools that become available at this point.
+    tools_added: list[Tool] | None = None
+    # Tools that stop being available at this point.
+    tools_removed: list[ToolReference] | None = None
+    role: Literal["system"] = "system"
+
+
+@dataclass(slots=True, frozen=True)
 class UserMessage:
     content: str | list[UserContent]
     timestamp: int  # Unix timestamp in milliseconds
@@ -277,13 +304,10 @@ class ToolResultMessage:
     details: Any = None
     # Usage from the tool execution itself, if available. Not part of main LLM context accounting.
     usage: Usage | None = None
-    # Names from `Context.tools` that became available after this result. Providers with
-    # native deferred tool loading use this as the load point; others ignore it.
-    added_tool_names: list[str] | None = None
     role: Literal["toolResult"] = "toolResult"
 
 
-type Message = UserMessage | AssistantMessage | ToolResultMessage
+type Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage
 
 
 # --- tools / context ----------------------------------------------------------
@@ -317,11 +341,33 @@ class Tool:
     constrained_sampling: ConstrainedSamplingConfig | Literal[False] | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class ToolReference:
+    name: str
+
+
 @dataclass(slots=True)
 class Context:
+    """Request input accepted by the public stream entry points (`Models.stream()`,
+    `stream_simple()`, ...). `system_prompt` and `tools` are shorthand for a leading
+    system message; `normalize_context()` folds them into one before the request
+    reaches a provider."""
+
     messages: list[Message] = field(default_factory=list)
     system_prompt: str | None = None
     tools: list[Tool] | None = None
+
+
+@dataclass(slots=True)
+class TranscriptContext:
+    """Normalized request context passed to providers and API implementations.
+
+    The prompt and tool declarations are carried by the transcript's system messages.
+    Only `normalize_context()` produces this type, so a raw `Context` cannot reach
+    provider code by accident (pi brands the type; here it is a distinct class).
+    """
+
+    messages: list[Message]
 
 
 # --- compat matrices ----------------------------------------------------------
@@ -409,10 +455,17 @@ class OpenAICompletionsCompat:
     # Prefer `thinking_token_budget_field`. Default: False.
     supports_thinking_token_budget: bool | None = None
     supports_openai_grammar_tools: bool | None = None  # default False
+    # Whether the exact model accepts system or developer messages after the conversation
+    # has started. When False, later system messages are folded into the leading system
+    # message. Default: False; the generated model catalog enables it for verified models.
+    supports_mid_convo_system_messages: bool | None = None
+    # Whether system messages can introduce additional tools mid-conversation. Requires
+    # `supports_mid_convo_system_messages`. Default: False; the generated model catalog
+    # enables it for capable models.
+    supports_mid_convo_tool_additions: bool | None = None
     supports_strict_mode: bool | None = None  # default True
     cache_control_format: Literal["anthropic"] | None = None
     send_session_affinity_headers: bool | None = None  # default True for OpenRouter endpoints, False otherwise
-    deferred_tools_mode: Literal["kimi"] | None = None
     session_affinity_format: SessionAffinityFormat | None = None
     supports_long_cache_retention: bool | None = None  # default True
 
@@ -422,6 +475,10 @@ class OpenAIResponsesCompat:
     """Compatibility settings for OpenAI Responses APIs."""
 
     supports_developer_role: bool | None = None  # default True
+    # Whether the exact model accepts developer or system messages after the conversation
+    # has started. When False, later system messages are folded into the leading system
+    # message. Default: False; the generated model catalog enables it for verified models.
+    supports_mid_convo_system_messages: bool | None = None
     session_affinity_format: SessionAffinityFormat | None = None
     # Whether the provider supports long prompt cache retention. This uses
     # `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"`
@@ -431,7 +488,8 @@ class OpenAIResponsesCompat:
     supports_openai_grammar_tools: bool | None = None  # default False
     # Whether the model supports message-anchored `additional_tools` input items. Default: False.
     supports_additional_tools: bool | None = None
-    supports_tool_search: bool | None = None  # default False
+    # Whether the model supports client-executed tool search for transcript-anchored additions. Default: False.
+    supports_tool_search: bool | None = None
     # Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching).
     # Older OpenAI models reject the parameter. Default: False.
     supports_explicit_prompt_cache_mode: bool | None = None
@@ -463,14 +521,17 @@ class AnthropicMessagesCompat:
     # Whether the exact model transport supports effort-only system messages and
     # thinking binding controls. Default False.
     supports_mid_convo_effort: bool | None = None
+    # Whether the exact model accepts system-role messages inside the conversation. When
+    # False, later system messages are folded into the top-level system prompt. Default False.
+    supports_mid_convo_system_messages: bool | None = None
+    # Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal`
+    # blocks. Requires `supports_mid_convo_system_messages`. Default False.
+    supports_mid_convo_tool_changes: bool | None = None
     # Models Anthropic accepts in `fallbacks` for server-side refusal fallback, with
     # local pricing metadata for returned fallback responses. When absent or empty,
     # callers must omit `fallbacks`; Anthropic rejects the field for models with no
     # permitted fallback targets.
     allowed_fallback_models: list[AnthropicAllowedFallbackModel] | None = None
-    # Deferred tools loaded by `tool_reference` blocks in tool results. Default True for
-    # first-party Anthropic models except Haiku and pre-4.5 models; False elsewhere.
-    supports_tool_references: bool | None = None
 
 
 @dataclass(slots=True)
@@ -480,7 +541,22 @@ class BedrockCompat:
     supports_strict_mode: bool | None = None  # default False
 
 
-type ModelCompat = OpenAICompletionsCompat | OpenAIResponsesCompat | AnthropicMessagesCompat | BedrockCompat
+@dataclass(slots=True)
+class MistralConversationsCompat:
+    """Compatibility settings for the Mistral chat API."""
+
+    # Whether the exact model accepts system messages after the conversation has started.
+    # When False, later system messages are folded into the leading system message. Default False.
+    supports_mid_convo_system_messages: bool | None = None
+
+
+type ModelCompat = (
+    OpenAICompletionsCompat
+    | OpenAIResponsesCompat
+    | AnthropicMessagesCompat
+    | BedrockCompat
+    | MistralConversationsCompat
+)
 
 
 # --- model / cost -------------------------------------------------------------
@@ -760,14 +836,17 @@ class ProviderStreams(Protocol):
     optional `ProviderStreams` members.
     """
 
-    def stream(self, model: Model, context: Context, options: StreamOptions | None = None) -> Any: ...
+    def stream(self, model: Model, context: TranscriptContext, options: StreamOptions | None = None) -> Any: ...
 
-    def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None) -> Any: ...
+    def stream_simple(
+        self, model: Model, context: TranscriptContext, options: SimpleStreamOptions | None = None
+    ) -> Any: ...
 
 
-# StreamFunction contract (pi types.ts:303-315): must return an
-# AssistantMessageEventStream; once invoked, failures are encoded in the stream
-# (an `error` event with stopReason "error"/"aborted"), never thrown.
+# StreamFunction contract (pi types.ts:303-315): receives a normalized transcript (the
+# system prompt and tools live in the leading system message, never on the context
+# itself); must return an AssistantMessageEventStream; once invoked, failures are
+# encoded in the stream (an `error` event with stopReason "error"/"aborted"), never thrown.
 type StreamFunction = Callable[..., Any]
 
 

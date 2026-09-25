@@ -137,7 +137,6 @@ _OPENAI_COMPLETIONS_COMPAT = {
         "supportsOpenAIGrammarTools": _BOOLEAN,
         "supportsStrictMode": _BOOLEAN,
         "sendSessionAffinityHeaders": _BOOLEAN,
-        "deferredToolsMode": {"const": "kimi"},
         "sessionAffinityFormat": _SESSION_AFFINITY_FORMAT,
         "supportsLongCacheRetention": _BOOLEAN,
         "vllmPriority": _NUMBER,
@@ -152,8 +151,6 @@ _OPENAI_RESPONSES_COMPAT = {
         "supportsLongCacheRetention": _BOOLEAN,
         "supportsStrictMode": _BOOLEAN,
         "supportsOpenAIGrammarTools": _BOOLEAN,
-        "supportsAdditionalTools": _BOOLEAN,
-        "supportsToolSearch": _BOOLEAN,
         "supportsMaxOutputTokens": _BOOLEAN,
     },
 }
@@ -187,7 +184,6 @@ _ANTHROPIC_MESSAGES_COMPAT = {
         "allowEmptySignature": _BOOLEAN,
         "supportsStrictTools": _BOOLEAN,
         "supportsMidConvoEffort": _BOOLEAN,
-        "supportsToolReferences": _BOOLEAN,
         "allowedFallbackModels": {
             "type": "array",
             "items": {

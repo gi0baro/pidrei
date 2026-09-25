@@ -66,7 +66,6 @@ class Harness:
 async def create_harness(
     *,
     settings: dict | None = None,
-    system_prompt: str = "You are a test assistant.",
     tools: list | None = None,
     initial_active_tool_names: list[str] | None = None,
     allowed_tool_names: list[str] | None = None,
@@ -142,7 +141,7 @@ async def create_harness(
     agent = Agent(
         stream_fn=stream_fn,
         get_api_key=get_api_key,
-        initial_state=AgentInitialState(model=model, system_prompt=system_prompt, tools=[]),
+        initial_state=AgentInitialState(model=model, system_prompt="", tools=[]),
         convert_to_llm=convert_context_to_llm,
         transform_context=transform_context,
         on_payload=on_payload,

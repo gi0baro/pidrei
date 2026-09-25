@@ -40,11 +40,11 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.registry import Provider, create_provider
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
-    Context,
     Model,
     ModelCost,
     SimpleStreamOptions,
     StreamOptions,
+    TranscriptContext,
 )
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
@@ -345,13 +345,13 @@ class _GitLabDuoApi:
     def __init__(self, inner):
         self._inner = inner
 
-    def stream(self, model: Model, context: Context, options: StreamOptions | None = None):
+    def stream(self, model: Model, context: TranscriptContext, options: StreamOptions | None = None):
         return self._delegate("stream", model, context, options)
 
-    def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
+    def stream_simple(self, model: Model, context: TranscriptContext, options: SimpleStreamOptions | None = None):
         return self._delegate("stream_simple", model, context, options)
 
-    def _delegate(self, method: str, model: Model, context: Context, options) -> AssistantMessageEventStream:
+    def _delegate(self, method: str, model: Model, context: TranscriptContext, options) -> AssistantMessageEventStream:
         async def _setup(stream):
             opts = options if options is not None else SimpleStreamOptions()
             gitlab_access_token = opts.api_key

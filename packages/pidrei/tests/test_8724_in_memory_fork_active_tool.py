@@ -81,8 +81,12 @@ async def test_does_not_append_the_aborted_turn_to_the_replacement_session():
         await runtime.session.bind_extensions(ExtensionBindings())
 
         assert fork_result == {"cancelled": False, "selectedText": "first prompt"}
-        assert runtime.session.messages == []
-        assert [entry for entry in runtime.session.session_manager.get_entries() if entry["type"] == "message"] == []
+        assert [message.role for message in runtime.session.messages] == ["system"]
+        assert [
+            entry["message"].role
+            for entry in runtime.session.session_manager.get_entries()
+            if entry["type"] == "message"
+        ] == ["system"]
 
         captured_roles: list[str] = []
 
@@ -93,7 +97,7 @@ async def test_does_not_append_the_aborted_turn_to_the_replacement_session():
         harness.set_responses([respond])
         await runtime.session.prompt("next prompt")
 
-        assert captured_roles == ["user"]
+        assert captured_roles == ["system", "system", "user"]
     finally:
         if runtime.session is not harness.session:
             await runtime.dispose()

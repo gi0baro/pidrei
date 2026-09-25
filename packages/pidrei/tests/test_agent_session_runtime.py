@@ -279,6 +279,7 @@ class TestRuntimeSessionLifecycleEvents:
         outgoing_manager = await SessionManager.open(outgoing_session.session_file)
         outgoing_entries = [entry for entry in outgoing_manager.get_entries() if entry["type"] == "message"]
         assert [entry["message"].role for entry in outgoing_entries] == [
+            "system",
             "user",
             "assistant",
             "toolResult",
@@ -426,7 +427,10 @@ class TestForkingSuite:
         session = runtime_host.session
         assert result["selectedText"] == "Say hello"
 
-        assert len(session.messages) == 0
+        # pi's live-API-gated suite still asserts an empty transcript; since 9e05370b the
+        # fork keeps the leading system message persisted before the first user message
+        # (pi's own 8724 regression asserts the same).
+        assert [message.role for message in session.messages] == ["system"]
         assert session.session_file is not None
         assert not os.path.exists(session.session_file)
         await runtime_host.dispose()
@@ -484,7 +488,7 @@ class TestForkingSuite:
         session = runtime_host.session
         assert result["selectedText"] == "Say hi"
 
-        assert len(session.messages) == 0
+        assert [message.role for message in session.messages] == ["system"]
         assert session.session_file is None
         await runtime_host.dispose()
 
@@ -509,9 +513,7 @@ class TestForkingSuite:
         session = runtime_host.session
         assert result["selectedText"] == "Say two"
 
-        assert len(session.messages) == 2
-        assert session.messages[0].role == "user"
-        assert session.messages[1].role == "assistant"
+        assert [message.role for message in session.messages] == ["system", "user", "assistant"]
         await runtime_host.dispose()
 
 
@@ -573,7 +575,7 @@ class TestSdkSessionManagerDefaults:
         session = result.session
 
         assert session.session_manager is session_manager
-        assert f"Current working directory: {session_cwd}" in session.system_prompt
+        assert f"<cwd>\n{session_cwd}\n</cwd>" in session.system_prompt
 
         bash_tool = next((tool for tool in session.agent.state.tools if tool.name == "bash"), None)
         assert bash_tool is not None

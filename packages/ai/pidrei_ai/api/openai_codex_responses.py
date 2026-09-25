@@ -46,12 +46,12 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
+    TranscriptContext,
     Usage,
 )
 from pidrei_ai.utils import clock, http, websocket
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import AbortError, CancelToken
-from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.diagnostics import (
     append_assistant_message_diagnostic,
     create_assistant_message_diagnostic,
@@ -61,6 +61,14 @@ from pidrei_ai.utils.error_body import format_provider_error, normalize_provider
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.session_resources import register_session_resource_cleanup
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.text import get_system_message_text
+from pidrei_ai.utils.transcript import (
+    get_declared_tools,
+    get_initial_system_message,
+    normalize_context,
+    resolve_transcript,
+    resolve_transcript_tools,
+)
 from pidrei_ai.utils.user_agent import ORIGINATOR, get_user_agent
 from pidrei_ai.utils.uuid import uuidv7
 
@@ -449,13 +457,14 @@ def _assert_successful_output(output: AssistantMessage) -> None:
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _codex_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    normalized_context = resolve_transcript(context, _get_compat(model).supports_mid_convo_system_messages)
 
     output = AssistantMessageBuilder(
         content=[],
@@ -479,11 +488,11 @@ def stream(
             account_id = _extract_account_id(api_key)
             compat = _get_compat(model)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
-                context.tools, compat.supports_openai_grammar_tools
+                get_declared_tools(normalized_context.messages), compat.supports_openai_grammar_tools
             )
             cache_session_id = None if opts.cache_retention == "none" else opts.session_id
             codex_session_id = clamp_openai_prompt_cache_key(cache_session_id)
-            body = build_request_body(model, context, opts, codex_session_id, grammar_tool_input_properties)
+            body = build_request_body(model, normalized_context, opts, codex_session_id, grammar_tool_input_properties)
             next_body = await maybe_call(opts.on_payload, body, model)
             if next_body is not None:
                 body = next_body
@@ -689,7 +698,7 @@ def _format_ms(value: float | None) -> str:
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
@@ -717,6 +726,7 @@ class _ResolvedCompat:
     supports_openai_grammar_tools: bool
     supports_additional_tools: bool
     supports_tool_search: bool
+    supports_mid_convo_system_messages: bool
 
 
 def _get_compat(model: Model) -> _ResolvedCompat:
@@ -730,12 +740,13 @@ def _get_compat(model: Model) -> _ResolvedCompat:
         supports_openai_grammar_tools=pick(compat.supports_openai_grammar_tools if compat else None, False),
         supports_additional_tools=pick(compat.supports_additional_tools if compat else None, False),
         supports_tool_search=pick(compat.supports_tool_search if compat else None, False),
+        supports_mid_convo_system_messages=pick(compat.supports_mid_convo_system_messages if compat else None, False),
     )
 
 
 def build_request_body(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: OpenAICodexResponsesOptions | None,
     cache_session_id: str | None,
     grammar_tool_input_properties: dict[str, str] | None = None,
@@ -743,23 +754,21 @@ def build_request_body(
     compat = _get_compat(model)
     if grammar_tool_input_properties is None:
         grammar_tool_input_properties = create_grammar_tool_input_properties(
-            context.tools, compat.supports_openai_grammar_tools
+            get_declared_tools(context.messages), compat.supports_openai_grammar_tools
         )
 
-    deferred_tools_mode = (
-        "additional-tools"
-        if compat.supports_additional_tools
-        else ("tool-search" if compat.supports_tool_search else None)
+    transcript_tools = resolve_transcript_tools(
+        context.messages, compat.supports_additional_tools or compat.supports_tool_search
     )
-    immediate_tools, deferred_map = split_deferred_tools(context, deferred_tools_mode is not None)
     messages = convert_responses_messages(
         model,
         context,
         set(CODEX_TOOL_CALL_PROVIDERS),
         include_system_prompt=False,
         grammar_tool_input_properties=grammar_tool_input_properties,
-        deferred_tools=deferred_map,
-        deferred_tools_mode=deferred_tools_mode,
+        supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
+        supports_additional_tools=compat.supports_additional_tools,
+        supports_tool_search=compat.supports_tool_search,
         tool_options={
             "strict": None,
             "supports_strict_mode": compat.supports_strict_mode,
@@ -767,11 +776,13 @@ def build_request_body(
         },
     )
 
+    initial_system_message = get_initial_system_message(context.messages)
+    instructions = get_system_message_text(initial_system_message) if initial_system_message is not None else ""
     body: dict[str, Any] = {
         "model": model.id,
         "store": False,
         "stream": True,
-        "instructions": context.system_prompt or "You are a helpful assistant.",
+        "instructions": instructions or "You are a helpful assistant.",
         "input": messages,
         "text": {"verbosity": (options.text_verbosity if options else None) or "low"},
         "include": ["reasoning.encrypted_content"],
@@ -787,9 +798,9 @@ def build_request_body(
     if options is not None and options.service_tier is not None:
         body["service_tier"] = options.service_tier
 
-    if immediate_tools:
+    if transcript_tools.request_tools:
         body["tools"] = convert_responses_tools(
-            immediate_tools,
+            transcript_tools.request_tools,
             strict=None,
             supports_strict_mode=compat.supports_strict_mode,
             supports_openai_grammar_tools=compat.supports_openai_grammar_tools,
@@ -1405,7 +1416,7 @@ async def _process_websocket_stream(
                 item
                 for item in convert_responses_messages(
                     model,
-                    Context(messages=[output]),
+                    normalize_context(Context(messages=[output])),
                     set(CODEX_TOOL_CALL_PROVIDERS),
                     include_system_prompt=False,
                     grammar_tool_input_properties=grammar_tool_input_properties,

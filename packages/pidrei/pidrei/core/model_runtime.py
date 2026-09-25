@@ -37,9 +37,10 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.models_store import ModelsStore
 from pidrei_ai.providers.all import builtin_providers, get_builtin_model_data_generated_at
 from pidrei_ai.registry import ModelsRefreshOptions, ModelsRefreshResult, Provider, create_models
-from pidrei_ai.types import Context, DeferredHandle, Model, SimpleStreamOptions, StreamOptions
+from pidrei_ai.types import Context, DeferredHandle, Model, SimpleStreamOptions, StreamOptions, TranscriptContext
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.transcript import normalize_context
 
 from ..config import get_agent_dir
 from ..utils.abort import operation_cancel
@@ -867,20 +868,26 @@ class ModelRuntime:
         )
         return provider, request_model, request_options
 
-    def stream(self, model: Model, context: Context, options: StreamOptions | None = None):
+    def stream(self, model: Model, context: Context | TranscriptContext, options: StreamOptions | None = None):
+        transcript = normalize_context(context)
+
         async def setup(stream):
             provider, request_model, request_options = await self._prepare_request(model, options)
-            return call_stream_into(provider.stream, request_model, context, request_options, into=stream)
+            return call_stream_into(provider.stream, request_model, transcript, request_options, into=stream)
 
         return lazy_stream(model, setup, _cancel_of(options))
 
     async def complete(self, model: Model, context: Context, options: StreamOptions | None = None):
         return await self.stream(model, context, options).result()
 
-    def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
+    def stream_simple(
+        self, model: Model, context: Context | TranscriptContext, options: SimpleStreamOptions | None = None
+    ):
+        transcript = normalize_context(context)
+
         async def setup(stream):
             provider, request_model, request_options = await self._prepare_request(model, options)
-            return call_stream_into(provider.stream_simple, request_model, context, request_options, into=stream)
+            return call_stream_into(provider.stream_simple, request_model, transcript, request_options, into=stream)
 
         return lazy_stream(model, setup, _cancel_of(options))
 

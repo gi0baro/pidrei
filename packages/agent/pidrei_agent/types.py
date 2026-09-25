@@ -7,7 +7,6 @@ from typing import Any, Literal
 from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageEvent,
-    Context,
     ImageContent,
     Message,
     Model,
@@ -15,6 +14,7 @@ from pidrei_ai.types import (
     TextContent,
     ToolCall,
     ToolResultMessage,
+    TranscriptContext,
     Usage,
 )
 from pidrei_ai.utils.cancel import CancelToken
@@ -23,12 +23,15 @@ from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 # Stream function used by the agent loop. Async-only (async-only callback
 # policy): `Models.stream_simple` returns the stream handle synchronously, so
-# wiring it here takes a thin `async def` adapter. Contract: must not raise
-# for request/model/runtime failures — failures must be encoded in the
-# returned stream via protocol events and a final AssistantMessage with
-# stop_reason "error"/"aborted" and error_message.
+# wiring it here takes a thin `async def` adapter. The loop passes a
+# normalized transcript: the system prompt and tool declarations are carried
+# by the transcript's system messages, never by `context.system_prompt` or
+# `context.tools`. Contract: must not raise for request/model/runtime
+# failures — failures must be encoded in the returned stream via protocol
+# events and a final AssistantMessage with stop_reason "error"/"aborted" and
+# error_message.
 type StreamFn = Callable[
-    [Model, Context, SimpleStreamOptions | None],
+    [Model, TranscriptContext, SimpleStreamOptions | None],
     Awaitable[AssistantMessageEventStream],
 ]
 
@@ -68,9 +71,6 @@ class AgentToolResult[TDetails]:
     # Usage from the final tool execution itself, if available. Not used for
     # main LLM context accounting.
     usage: Usage | None = None
-    # Names of tools introduced by this result and available from this
-    # transcript point onward.
-    added_tool_names: list[str] | None = None
     # Hint that the agent should stop after the current tool batch. Early
     # termination only happens when every finalized tool result in the batch
     # sets this to True.
@@ -121,11 +121,9 @@ class AgentTool[TDetails]:
 class AgentContext:
     """Context snapshot passed into the low-level agent loop."""
 
-    # System prompt included with the request.
-    system_prompt: str
     # Transcript visible to the model.
     messages: list[AgentMessage]
-    # Tools available for this run.
+    # Tools available for execution in this run.
     tools: list[AgentTool] | None = None
 
 
@@ -223,6 +221,8 @@ class AgentLoopTurnUpdate:
 
     # Context for the next provider request.
     context: AgentContext | None = None
+    # Messages to append before the next provider request, with normal lifecycle events.
+    messages: list[AgentMessage] | None = None
     # Model for the next provider request.
     model: Model | None = None
     # Thinking level for the next provider request (None keeps the current one).
@@ -242,8 +242,9 @@ class AgentLoopConfig(SimpleStreamOptions):
 
     model: Model
 
-    # Converts AgentMessage[] to LLM-compatible Message[] before each LLM call;
-    # messages that cannot be converted must be filtered out.
+    # Converts AgentMessage[] to LLM-compatible Message[] (SystemMessage,
+    # UserMessage, AssistantMessage, or ToolResultMessage) before each LLM
+    # call; messages that cannot be converted must be filtered out.
     convert_to_llm: Callable[[list[AgentMessage]], Awaitable[list[Message]]]
 
     # Optional transform applied to the context before `convert_to_llm`
@@ -259,7 +260,8 @@ class AgentLoopConfig(SimpleStreamOptions):
     should_stop_after_turn: Callable[[ShouldStopAfterTurnContext], Awaitable[bool]] | None = None
 
     # Called after `turn_end` when the loop will continue, immediately before
-    # the next turn starts. Return replacement state or None to keep current.
+    # the next turn starts. Return replacement context/model/thinking state or
+    # messages to append to affect that turn, or None to keep current.
     prepare_next_turn: Callable[[PrepareNextTurnContext], Awaitable[AgentLoopTurnUpdate | None]] | None = None
 
     # Returns steering messages to inject into the conversation mid-run.
@@ -327,7 +329,7 @@ class TurnEndEvent:
 
 @dataclass(slots=True)
 class MessageStartEvent:
-    # Emitted for user, assistant, and toolResult messages.
+    # Emitted for system, user, assistant, and toolResult messages.
     message: AgentMessage
     type: Literal["message_start"] = "message_start"
 

@@ -13,6 +13,7 @@ import pytest
 from pidrei_ai.api import mistral_conversations as mistral
 from pidrei_ai.api.mistral_conversations import stream_simple as stream_simple_mistral
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 captured: list[dict] = []
@@ -48,7 +49,7 @@ def make_model(model_id: str, reasoning: bool) -> Model:
 
 
 def make_context() -> Context:
-    return Context(messages=[UserMessage(content="Hello", timestamp=1)])
+    return normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)]))
 
 
 async def capture_payload(model, options: SimpleStreamOptions | None = None) -> dict:

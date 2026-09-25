@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 
-from pidrei_ai.types import Context, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel
+from pidrei_ai.types import Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel, TranscriptContext
 from pidrei_ai.utils.estimate import estimate_context_tokens
 
 
@@ -10,7 +10,7 @@ CONTEXT_SAFETY_TOKENS = 4096
 MIN_MAX_TOKENS = 1
 
 
-def clamp_max_tokens_to_context(model: Model, context: Context, max_tokens: int) -> int:
+def clamp_max_tokens_to_context(model: Model, context: TranscriptContext, max_tokens: int) -> int:
     if model.context_window <= 0:
         return max(MIN_MAX_TOKENS, max_tokens)
     available = model.context_window - estimate_context_tokens(context).tokens - CONTEXT_SAFETY_TOKENS
@@ -19,7 +19,7 @@ def clamp_max_tokens_to_context(model: Model, context: Context, max_tokens: int)
 
 def build_base_options(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     api_key: str | None = None,
 ) -> StreamOptions:

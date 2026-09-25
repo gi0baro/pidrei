@@ -23,10 +23,15 @@ from pidrei_ai.types import (
     AssistantMessageDiagnostic,
     DeferredHandle,
     DiagnosticErrorInfo,
+    GrammarConstrainedSampling,
     ImageContent,
+    JsonSchemaConstrainedSampling,
+    SystemMessage,
     TextContent,
     ThinkingContent,
+    Tool,
     ToolCall,
+    ToolReference,
     ToolResultMessage,
     Usage,
     UsageCost,
@@ -157,6 +162,38 @@ def _parse_content(content: Any) -> Any:
     return content
 
 
+# --- tool declarations ------------------------------------------------------------
+
+
+def serialize_tool(tool: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {"name": tool.name, "description": tool.description, "parameters": tool.parameters}
+    constrained_sampling = tool.constrained_sampling
+    if constrained_sampling is False:
+        data["constrainedSampling"] = False
+    elif isinstance(constrained_sampling, JsonSchemaConstrainedSampling):
+        data["constrainedSampling"] = {"type": "json_schema", "strict": constrained_sampling.strict}
+    elif isinstance(constrained_sampling, GrammarConstrainedSampling):
+        data["constrainedSampling"] = {"type": "grammar", "variants": dict(constrained_sampling.variants)}
+    return data
+
+
+def parse_tool(data: dict[str, Any]) -> Tool:
+    raw = data.get("constrainedSampling")
+    constrained_sampling: Any = None
+    if raw is False:
+        constrained_sampling = False
+    elif isinstance(raw, dict) and raw.get("type") == "json_schema":
+        constrained_sampling = JsonSchemaConstrainedSampling(strict=raw.get("strict", "prefer"))
+    elif isinstance(raw, dict) and raw.get("type") == "grammar":
+        constrained_sampling = GrammarConstrainedSampling(variants=raw.get("variants") or {})
+    return Tool(
+        name=data.get("name", ""),
+        description=data.get("description", ""),
+        parameters=data.get("parameters") or {},
+        constrained_sampling=constrained_sampling,
+    )
+
+
 # --- messages -------------------------------------------------------------------
 
 
@@ -164,10 +201,21 @@ def serialize_message(message: Any) -> Any:
     if message is None or isinstance(message, dict):
         return message
     role = getattr(message, "role", None)
+    if role == "system":
+        # Key order follows the agent loop's `withToolChanges`, which writes every persisted
+        # system message: the tool fields land after `timestamp`.
+        data: dict[str, Any] = {"role": "system", "content": serialize_content(message.content)}
+        _put(data, "sections", message.sections)
+        data["timestamp"] = message.timestamp
+        if message.tools_added is not None:
+            data["toolsAdded"] = [serialize_tool(tool) for tool in message.tools_added]
+        if message.tools_removed is not None:
+            data["toolsRemoved"] = [{"name": tool.name} for tool in message.tools_removed]
+        return data
     if role == "user":
         return {"role": "user", "content": serialize_content(message.content), "timestamp": message.timestamp}
     if role == "assistant":
-        data: dict[str, Any] = {
+        data = {
             "role": "assistant",
             "content": serialize_content(message.content),
             "api": message.api,
@@ -195,8 +243,6 @@ def serialize_message(message: Any) -> Any:
         }
         _put(data, "details", to_wire_value(message.details))
         _put(data, "usage", serialize_usage(message.usage))
-        if message.added_tool_names:
-            data["addedToolNames"] = message.added_tool_names
         data["isError"] = message.is_error
         data["timestamp"] = message.timestamp
         return data
@@ -236,6 +282,20 @@ def parse_message(data: Any) -> Any:
     if not isinstance(data, dict):
         return data
     role = data.get("role")
+    if role == "system":
+        tools_added = data.get("toolsAdded")
+        tools_removed = data.get("toolsRemoved")
+        return SystemMessage(
+            content=_parse_content(data.get("content", "")),
+            timestamp=data.get("timestamp", 0),
+            sections=data.get("sections"),
+            tools_added=[parse_tool(tool) for tool in tools_added] if isinstance(tools_added, list) else None,
+            tools_removed=(
+                [ToolReference(name=tool.get("name", "")) for tool in tools_removed]
+                if isinstance(tools_removed, list)
+                else None
+            ),
+        )
     if role == "user":
         return UserMessage(content=_parse_content(data.get("content")), timestamp=data.get("timestamp", 0))
     if role == "assistant":
@@ -268,7 +328,6 @@ def parse_message(data: Any) -> Any:
             timestamp=data.get("timestamp", 0),
             details=data.get("details"),
             usage=parse_usage(data.get("usage")),
-            added_tool_names=data.get("addedToolNames"),
         )
     if role == "custom":
         return CustomMessage(

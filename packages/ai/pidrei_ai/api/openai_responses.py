@@ -19,7 +19,6 @@ from pidrei_ai.builders import AssistantMessageBuilder, UsageBuilder
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
     CacheRetention,
-    Context,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -30,16 +29,17 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     StartEvent,
     StreamOptions,
+    TranscriptContext,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
-from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
@@ -193,6 +193,7 @@ def _resolve_cache_retention(cache_retention: CacheRetention | None, env: Provid
 @dataclass(slots=True)
 class _ResolvedCompat:
     supports_developer_role: bool
+    supports_mid_convo_system_messages: bool
     session_affinity_format: str
     supports_long_cache_retention: bool
     supports_strict_mode: bool
@@ -211,6 +212,7 @@ def get_compat(model: Model) -> _ResolvedCompat:
 
     return _ResolvedCompat(
         supports_developer_role=pick(compat.supports_developer_role if compat else None, True),
+        supports_mid_convo_system_messages=pick(compat.supports_mid_convo_system_messages if compat else None, False),
         session_affinity_format=pick(
             compat.session_affinity_format if compat else None, _detect_session_affinity_format(model)
         ),
@@ -258,7 +260,7 @@ def _responses_options(options: StreamOptions | None) -> OpenAIResponsesOptions:
 
 def _create_client(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     api_key: str,
     options_headers: ProviderHeaders | None,
     session_id: str | None,
@@ -288,7 +290,7 @@ def _create_client(
 
 def build_params(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: OpenAIResponsesOptions,
     compat: _ResolvedCompat | None = None,
     grammar_tool_input_properties: dict[str, str] | None = None,
@@ -296,22 +298,20 @@ def build_params(
     compat = compat if compat is not None else get_compat(model)
     if grammar_tool_input_properties is None:
         grammar_tool_input_properties = create_grammar_tool_input_properties(
-            context.tools, compat.supports_openai_grammar_tools
+            get_declared_tools(context.messages), compat.supports_openai_grammar_tools
         )
 
-    deferred_tools_mode = (
-        "additional-tools"
-        if compat.supports_additional_tools
-        else ("tool-search" if compat.supports_tool_search else None)
+    transcript_tools = resolve_transcript_tools(
+        context.messages, compat.supports_additional_tools or compat.supports_tool_search
     )
-    immediate_tools, deferred_map = split_deferred_tools(context, deferred_tools_mode is not None)
     messages = convert_responses_messages(
         model,
         context,
         set(OPENAI_TOOL_CALL_PROVIDERS),
         grammar_tool_input_properties=grammar_tool_input_properties,
-        deferred_tools=deferred_map,
-        deferred_tools_mode=deferred_tools_mode,
+        supports_mid_convo_system_messages=compat.supports_mid_convo_system_messages,
+        supports_additional_tools=compat.supports_additional_tools,
+        supports_tool_search=compat.supports_tool_search,
         tool_options={
             "supports_strict_mode": compat.supports_strict_mode,
             "supports_openai_grammar_tools": compat.supports_openai_grammar_tools,
@@ -340,9 +340,9 @@ def build_params(
     if options.service_tier is not None:
         params["service_tier"] = options.service_tier
 
-    if immediate_tools:
+    if transcript_tools.request_tools:
         params["tools"] = convert_responses_tools(
-            immediate_tools,
+            transcript_tools.request_tools,
             supports_strict_mode=compat.supports_strict_mode,
             supports_openai_grammar_tools=compat.supports_openai_grammar_tools,
         )
@@ -397,13 +397,14 @@ def _apply_service_tier_pricing(usage: UsageBuilder, service_tier: str | None, m
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _responses_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    normalized_context = resolve_transcript(context, get_compat(model).supports_mid_convo_system_messages)
 
     output = AssistantMessageBuilder(
         content=[],
@@ -425,14 +426,14 @@ def stream(
             cache_session_id = None if cache_retention == "none" else opts.session_id
             compat = get_compat(model)
             grammar_tool_input_properties = create_grammar_tool_input_properties(
-                context.tools, compat.supports_openai_grammar_tools
+                get_declared_tools(normalized_context.messages), compat.supports_openai_grammar_tools
             )
             client = (
                 opts.client
                 if opts.client is not None
-                else _create_client(model, context, api_key, opts.headers, cache_session_id, opts.env)
+                else _create_client(model, normalized_context, api_key, opts.headers, cache_session_id, opts.env)
             )
-            params = build_params(model, context, opts, compat, grammar_tool_input_properties)
+            params = build_params(model, normalized_context, opts, compat, grammar_tool_input_properties)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
@@ -486,7 +487,7 @@ def stream(
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,

@@ -37,7 +37,6 @@ from pidrei_ai.builders import (
 )
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
-    Context,
     DoneEvent,
     ErrorEvent,
     Model,
@@ -55,12 +54,15 @@ from pidrei_ai.types import (
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    TranscriptContext,
 )
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_ai.utils.text import get_system_message_text
+from pidrei_ai.utils.transcript import collapse_system_messages, get_current_tools, get_initial_system_message
 from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
@@ -99,13 +101,14 @@ def _google_options(options: StreamOptions | None) -> GoogleOptions:
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _google_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    normalized_context = collapse_system_messages(context)
 
     output = AssistantMessageBuilder(
         content=[],
@@ -124,7 +127,7 @@ def stream(
             if not api_key:
                 raise RuntimeError(f"No API key for provider: {model.provider}")
             client = create_client(model, api_key, opts.headers)
-            params = build_params(model, context, opts)
+            params = build_params(model, normalized_context, opts)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
@@ -310,7 +313,7 @@ def _usage_from_metadata(metadata: dict[str, Any]) -> UsageBuilder:
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
@@ -372,9 +375,11 @@ def create_client(model: Model, api_key: str | None = None, options_headers: Pro
     return GoogleGenAI({"apiKey": api_key, "httpOptions": http_options if http_options else None})
 
 
-def build_params(model: Model, context: Context, options: GoogleOptions | None = None) -> dict[str, Any]:
+def build_params(model: Model, context: TranscriptContext, options: GoogleOptions | None = None) -> dict[str, Any]:
     options = options if options is not None else GoogleOptions()
     contents = convert_messages(model, context)
+    initial_system_message = get_initial_system_message(context.messages)
+    current_tools = get_current_tools(context.messages)
 
     generation_config: dict[str, Any] = {}
     if options.temperature is not None:
@@ -384,14 +389,15 @@ def build_params(model: Model, context: Context, options: GoogleOptions | None =
 
     supports_strict_mode = supports_google_strict_tool_sampling(model.id)
     function_calling_mode = (
-        resolve_google_function_calling_mode(context.tools, options.tool_choice, supports_strict_mode)
-        if context.tools
+        resolve_google_function_calling_mode(current_tools, options.tool_choice, supports_strict_mode)
+        if current_tools
         else None
     )
+    system_instruction = get_system_message_text(initial_system_message) if initial_system_message is not None else ""
     config: dict[str, Any] = {
         **generation_config,
-        **({"systemInstruction": sanitize_surrogates(context.system_prompt)} if context.system_prompt else {}),
-        **({"tools": convert_tools(context.tools, False, supports_strict_mode)} if context.tools else {}),
+        **({"systemInstruction": sanitize_surrogates(system_instruction)} if system_instruction else {}),
+        **({"tools": convert_tools(current_tools, False, supports_strict_mode)} if current_tools else {}),
         **(
             {"toolConfig": {"functionCallingConfig": {"mode": function_calling_mode}}}
             if function_calling_mode is not None

@@ -3,6 +3,7 @@ from pi's context-estimate.test.ts)."""
 
 from pidrei_ai.api.simple_options import adjust_max_tokens_for_thinking, build_base_options, clamp_reasoning
 from pidrei_ai.types import Context, ModelCost, SimpleStreamOptions, ThinkingBudgets, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 from tests.test_estimate import create_assistant
 from tests.test_registry import make_model
 
@@ -22,13 +23,15 @@ def estimate_model():
 def test_build_base_options_clamps_max_tokens_to_context():
     # The remaining assertion from pi's context-estimate.test.ts: window 10_000
     # minus 1_005 estimated tokens minus 4_096 safety -> 4_899.
-    context = Context(
-        system_prompt="system",
-        messages=[
-            UserMessage(content="summary", timestamp=200),
-            create_assistant(100, 9_500),
-            UserMessage(content="x" * 4_000, timestamp=300),
-        ],
+    context = normalize_context(
+        Context(
+            system_prompt="system",
+            messages=[
+                UserMessage(content="summary", timestamp=200),
+                create_assistant(100, 9_500),
+                UserMessage(content="x" * 4_000, timestamp=300),
+            ],
+        )
     )
     assert build_base_options(estimate_model(), context).max_tokens == 4_899
 
@@ -37,7 +40,7 @@ def test_build_base_options_min_floor_and_model_cap():
     from dataclasses import replace
 
     model = estimate_model()
-    empty = Context(messages=[])
+    empty = normalize_context(Context(messages=[]))
     # Small window: clamped to window minus the 4096-token safety margin.
     assert build_base_options(model, empty).max_tokens == 5_904
 
@@ -46,13 +49,13 @@ def test_build_base_options_min_floor_and_model_cap():
     assert build_base_options(roomy, empty).max_tokens == 8_000
 
     # Overflowing context still yields at least the minimum.
-    huge = Context(messages=[UserMessage(content="x" * 100_000, timestamp=1)])
+    huge = normalize_context(Context(messages=[UserMessage(content="x" * 100_000, timestamp=1)]))
     assert build_base_options(model, huge).max_tokens == 1
 
 
 def test_build_base_options_api_key_precedence_is_falsy():
     model = estimate_model()
-    context = Context(messages=[])
+    context = normalize_context(Context(messages=[]))
     options = SimpleStreamOptions(api_key="from-options")
     # pi: `apiKey: apiKey || options?.apiKey` — empty string falls through.
     assert build_base_options(model, context, options, "").api_key == "from-options"

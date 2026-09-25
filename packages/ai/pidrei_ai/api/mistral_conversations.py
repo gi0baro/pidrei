@@ -34,10 +34,10 @@ from pidrei_ai.builders import (
 )
 from pidrei_ai.registry import calculate_cost, clamp_thinking_level
 from pidrei_ai.types import (
-    Context,
     DoneEvent,
     ErrorEvent,
     Message,
+    MistralConversationsCompat,
     Model,
     ProviderResponse,
     SimpleStreamOptions,
@@ -56,6 +56,7 @@ from pidrei_ai.types import (
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
+    TranscriptContext,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
@@ -65,6 +66,8 @@ from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.json_parse import parse_streaming_json
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
+from pidrei_ai.utils.transcript import get_current_tools, resolve_transcript
 from pidrei_ai.utils.user_agent import get_user_agent
 
 
@@ -259,13 +262,15 @@ def _mistral_options(options: StreamOptions | None) -> MistralOptions:
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _mistral_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    compat = model.compat if isinstance(model.compat, MistralConversationsCompat) else None
+    normalized_context = resolve_transcript(context, compat.supports_mid_convo_system_messages if compat else None)
 
     output = create_output(model)
     out_stream.partial = output
@@ -278,10 +283,10 @@ def stream(
 
             normalize = _create_mistral_tool_call_id_normalizer()
             transformed_messages = transform_messages(
-                context.messages, model, lambda id, _model, _source: normalize(id)
+                normalized_context.messages, model, lambda id, _model, _source: normalize(id)
             )
 
-            payload = build_chat_payload(model, context, transformed_messages, opts)
+            payload = build_chat_payload(model, normalized_context, transformed_messages, opts)
             next_payload = await maybe_call(opts.on_payload, payload, model)
             if next_payload is not None:
                 payload = next_payload
@@ -311,7 +316,7 @@ def stream(
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
@@ -407,7 +412,7 @@ def safe_json_stringify(value: Any) -> str:
 
 
 def build_chat_payload(
-    model: Model, context: Context, messages: list[Message], options: MistralOptions | None = None
+    model: Model, context: TranscriptContext, messages: list[Message], options: MistralOptions | None = None
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model.id,
@@ -415,8 +420,9 @@ def build_chat_payload(
         "messages": to_chat_messages(messages, "image" in model.input),
     }
 
-    if context.tools:
-        payload["tools"] = to_function_tools(context.tools)
+    current_tools = get_current_tools(context.messages)
+    if current_tools:
+        payload["tools"] = to_function_tools(current_tools)
     if options is not None and options.temperature is not None:
         payload["temperature"] = options.temperature
     if options is not None and options.max_tokens is not None:
@@ -429,9 +435,6 @@ def build_chat_payload(
         payload["reasoningEffort"] = options.reasoning_effort
     if _should_use_prompt_caching(options):
         payload["promptCacheKey"] = options.session_id
-
-    if context.system_prompt:
-        payload["messages"].insert(0, {"role": "system", "content": sanitize_surrogates(context.system_prompt)})
 
     return payload
 
@@ -618,7 +621,13 @@ def to_function_tools(tools: list[Tool]) -> list[dict[str, Any]]:
 def to_chat_messages(messages: list[Message], supports_images: bool) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
 
-    for msg in messages:
+    for index, msg in enumerate(messages):
+        if msg.role == "system":
+            text = get_system_message_text(msg) if index == 0 else render_system_message_update(msg)
+            if len(text) > 0:
+                result.append({"role": "system", "content": sanitize_surrogates(text)})
+            continue
+
         if msg.role == "user":
             if isinstance(msg.content, str):
                 result.append({"role": "user", "content": sanitize_surrogates(msg.content)})

@@ -129,6 +129,85 @@ def test_uses_models_dev_effort_levels_for_google_thinking_models():
     assert get_supported_thinking_levels(get_builtin_model("google", "gemma-4-31b-it")) == ["minimal", "high"]
 
 
+def _compat_flag(provider: str, model_id: str, field: str):
+    """pi's `toHaveProperty("compat.<field>")`: None when the model, its compat, or the field is absent."""
+    model = get_builtin_model(provider, model_id)
+    assert model is not None, f"{provider}/{model_id}"
+    return getattr(model.compat, field, None) if model.compat is not None else None
+
+
+def test_enables_mid_conversation_system_messages_only_for_verified_models():
+    supported = [
+        ("moonshotai", "kimi-k2.6"),
+        ("moonshotai", "kimi-k2.7-code"),
+        ("moonshotai", "kimi-k2.7-code-highspeed"),
+        ("moonshotai", "kimi-k3"),
+        ("moonshotai-cn", "kimi-k2.6"),
+        ("moonshotai-cn", "kimi-k2.7-code"),
+        ("moonshotai-cn", "kimi-k2.7-code-highspeed"),
+        ("moonshotai-cn", "kimi-k3"),
+        ("fireworks", "accounts/fireworks/models/kimi-k3"),
+        ("fireworks", "accounts/fireworks/routers/kimi-k3-fast"),
+        ("openai", "gpt-5.4"),
+        ("openai", "gpt-5.5"),
+        ("openai", "gpt-6-astra"),
+        ("openai-codex", "gpt-5.5"),
+        ("anthropic", "claude-opus-5"),
+        ("opencode", "gpt-5.4"),
+        ("opencode", "gpt-5.6-terra"),
+        ("opencode-go", "gpt-5.6-luna"),
+        ("opencode", "claude-opus-4-8"),
+        ("opencode", "claude-opus-5"),
+        ("opencode", "kimi-k3"),
+        ("opencode-go", "kimi-k3"),
+        ("github-copilot", "gpt-5.6-terra"),
+        ("github-copilot", "claude-opus-5"),
+        ("github-copilot", "claude-opus-4.8"),
+        ("github-copilot", "kimi-k3"),
+        ("deepseek", "deepseek-v4-pro"),
+        ("openrouter", "openai/gpt-5.6-terra"),
+    ]
+    unsupported = [
+        ("fireworks", "accounts/fireworks/models/kimi-k2p6"),
+        ("openai", "gpt-4.1"),
+        ("openai", "gpt-5.2"),
+        ("anthropic", "claude-sonnet-4-5"),
+        ("google", "gemini-2.5-pro"),
+        ("opencode", "gpt-5.2"),
+        ("opencode", "claude-sonnet-4-5"),
+        ("github-copilot", "claude-sonnet-4.6"),
+        ("deepseek", "deepseek-flash"),
+        ("openrouter", "anthropic/claude-opus-5"),
+        ("openrouter", "moonshotai/kimi-k3"),
+        ("openrouter", "openai/gpt-5.6-terra:batch"),
+    ]
+    for provider, model_id in supported:
+        assert _compat_flag(provider, model_id, "supports_mid_convo_system_messages") is True, f"{provider}/{model_id}"
+    for provider, model_id in unsupported:
+        assert _compat_flag(provider, model_id, "supports_mid_convo_system_messages") is None, f"{provider}/{model_id}"
+
+
+def test_routes_proxied_tool_changes_through_verified_transports_only():
+    for provider, model_id in (("opencode", "gpt-5.6-terra"), ("github-copilot", "gpt-5.6-terra")):
+        # Proxies pass `additional_tools` through to OpenAI but are not verified for tool search.
+        assert _compat_flag(provider, model_id, "supports_additional_tools") is True, f"{provider}/{model_id}"
+        assert _compat_flag(provider, model_id, "supports_tool_search") is None, f"{provider}/{model_id}"
+    # Proxied Anthropic endpoints reject `tool_addition`/`tool_removal` blocks.
+    for provider in ("opencode", "github-copilot"):
+        assert _compat_flag(provider, "claude-opus-5", "supports_mid_convo_tool_changes") is None, provider
+    assert _compat_flag("anthropic", "claude-opus-5", "supports_mid_convo_tool_changes") is True
+    # Kimi-style tool-bearing system messages survive Moonshot and OpenCode but not Copilot.
+    for provider in ("moonshotai", "moonshotai-cn", "opencode", "opencode-go"):
+        assert _compat_flag(provider, "kimi-k3", "supports_mid_convo_tool_additions") is True, provider
+    for provider in ("moonshotai", "moonshotai-cn"):
+        for model_id in ("kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed"):
+            assert _compat_flag(provider, model_id, "supports_mid_convo_tool_additions") is None, (
+                f"{provider}/{model_id}"
+            )
+    assert _compat_flag("github-copilot", "kimi-k3", "supports_mid_convo_tool_additions") is None
+    assert _compat_flag("openrouter", "openai/gpt-5.6-terra", "supports_mid_convo_tool_additions") is None
+
+
 @pytest.mark.parametrize("provider", ["moonshotai", "moonshotai-cn"])
 def test_uses_official_kimi_k3_pricing_for_moonshot_providers(provider):
     model = get_builtin_model(provider, "kimi-k3")

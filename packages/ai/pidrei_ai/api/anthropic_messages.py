@@ -33,7 +33,6 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     CacheRetention,
-    Context,
     DoneEvent,
     ErrorEvent,
     Message,
@@ -58,11 +57,11 @@ from pidrei_ai.types import (
     ToolCallEndEvent,
     ToolCallStartEvent,
     ToolResultMessage,
+    TranscriptContext,
 )
 from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
-from pidrei_ai.utils.deferred_tools import split_deferred_tools
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.json_parse import parse_json_with_repair, parse_streaming_json
@@ -70,6 +69,14 @@ from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
+from pidrei_ai.utils.transcript import (
+    get_current_tools,
+    get_declared_tools,
+    get_initial_system_message,
+    has_tool_redefinitions,
+    resolve_transcript,
+)
 from pidrei_ai.utils.user_agent import set_default_user_agent
 
 
@@ -106,6 +113,19 @@ INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
 SERVER_SIDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01"
 THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
+MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
+
+# Stable deferred tool declared whenever native tool changes are in use. Anthropic adds
+# hidden prompt scaffolding as soon as any tool has `defer_loading`; declaring this
+# placeholder from the first request keeps that scaffolding in the cached prefix, so the
+# first real late tool does not invalidate the cache (measured: full miss without it).
+# It is never activated and the model cannot see it.
+_DEFERRED_TOOL_PLACEHOLDER: dict[str, Any] = {
+    "name": "__pi_deferred_placeholder__",
+    "description": "Reserved placeholder. Never available. Never call this.",
+    "input_schema": {"type": "object", "properties": {}, "required": []},
+    "defer_loading": True,
+}
 
 
 def _should_use_server_side_fallback_beta(model: Model) -> bool:
@@ -177,19 +197,8 @@ class _ResolvedCompat:
     supports_temperature: bool
     allow_empty_signature: bool
     supports_strict_tools: bool
-    supports_tool_references: bool
-
-
-def _default_supports_tool_references(model: Model) -> bool:
-    """First-party Anthropic models except Haiku and pre-tool-search models."""
-    if model.provider != "anthropic" or "haiku" in model.id:
-        return False
-    version = re.match(r"^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)", model.id)
-    if not version:
-        return False
-    major = int(version.group(1))
-    minor = int(version.group(2)) if version.group(2) and len(version.group(2)) < 8 else 0
-    return major > 4 or (major == 4 and minor >= 5)
+    supports_mid_convo_system_messages: bool
+    supports_mid_convo_tool_changes: bool
 
 
 def _get_compat(model: Model) -> _ResolvedCompat:
@@ -212,9 +221,10 @@ def _get_compat(model: Model) -> _ResolvedCompat:
         supports_temperature=resolved(compat.supports_temperature if compat else None, True),
         allow_empty_signature=resolved(compat.allow_empty_signature if compat else None, False),
         supports_strict_tools=resolved(compat.supports_strict_tools if compat else None, False),
-        supports_tool_references=resolved(
-            compat.supports_tool_references if compat else None, _default_supports_tool_references(model)
+        supports_mid_convo_system_messages=resolved(
+            compat.supports_mid_convo_system_messages if compat else None, False
         ),
+        supports_mid_convo_tool_changes=resolved(compat.supports_mid_convo_tool_changes if compat else None, False),
     )
 
 
@@ -403,8 +413,8 @@ def _is_oauth_token(api_key: str) -> bool:
     return "sk-ant-oat" in api_key
 
 
-def _should_use_fine_grained_beta(model: Model, context: Context) -> bool:
-    return bool(context.tools) and not _get_compat(model).supports_eager_tool_input_streaming
+def _should_use_fine_grained_beta(model: Model, context: TranscriptContext) -> bool:
+    return bool(get_current_tools(context.messages)) and not _get_compat(model).supports_eager_tool_input_streaming
 
 
 def _create_client(
@@ -563,13 +573,15 @@ def _anthropic_options(options: StreamOptions | None) -> AnthropicOptions:
 
 def stream(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: StreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
 ) -> AssistantMessageEventStream:
     opts = _anthropic_options(options)
     out_stream = into if into is not None else AssistantMessageEventStream()
+    normalized_context = resolve_transcript(context, _get_compat(model).supports_mid_convo_system_messages)
+    current_tools = get_current_tools(normalized_context.messages)
 
     provider_thinking_level = (opts.effort or "high") if _supports_mid_convo_effort(model) else None
     output = AssistantMessageBuilder(
@@ -603,7 +615,7 @@ def stream(
                 copilot_dynamic_headers: dict[str, str] | None = None
                 if model.provider == "github-copilot":
                     copilot_dynamic_headers = build_copilot_dynamic_headers(
-                        context.messages, has_copilot_vision_input(context.messages)
+                        normalized_context.messages, has_copilot_vision_input(normalized_context.messages)
                     )
                 cache_retention = _resolve_cache_retention(opts.cache_retention, opts.env)
                 cache_session_id = None if cache_retention == "none" else opts.session_id
@@ -616,7 +628,7 @@ def stream(
                     opts.env,
                 )
 
-            params = _build_params(model, context, is_oauth, opts)
+            params = _build_params(model, normalized_context, is_oauth, opts)
             next_params = await maybe_call(opts.on_payload, params, model)
             if next_params is not None:
                 params = next_params
@@ -700,7 +712,7 @@ def stream(
                         blocks.append(
                             ToolCallBuilder(
                                 id=content_block.get("id", ""),
-                                name=_from_claude_code_name(name, context.tools) if is_oauth else name,
+                                name=_from_claude_code_name(name, current_tools) if is_oauth else name,
                                 arguments=content_block.get("input") or {},
                             )
                         )
@@ -825,7 +837,7 @@ def _map_thinking_level_to_effort(model: Model, level: ThinkingLevel | None) -> 
 
 def stream_simple(
     model: Model,
-    context: Context,
+    context: TranscriptContext,
     options: SimpleStreamOptions | None = None,
     *,
     into: AssistantMessageEventStream | None = None,
@@ -876,38 +888,13 @@ def _normalize_tool_call_id(id: str, model: Model, source: AssistantMessage) -> 
     return re.sub(r"[^a-zA-Z0-9_-]", "_", id)[:64]
 
 
-def _convert_tool_result(
-    msg: ToolResultMessage,
-    is_oauth_token: bool,
-    deferred_tool_names: set[str],
-    loaded_tool_names: set[str],
-    normalize_tool_name,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    references: list[dict[str, str]] = []
-    for name in msg.added_tool_names or []:
-        normalized_name = normalize_tool_name(name)
-        if normalized_name not in deferred_tool_names or normalized_name in loaded_tool_names:
-            continue
-        loaded_tool_names.add(normalized_name)
-        references.append(
-            {"type": "tool_reference", "tool_name": _to_claude_code_name(name) if is_oauth_token else name}
-        )
-
-    converted_content = _convert_content_blocks(msg.content)
-    # Anthropic rejects tool references mixed with ordinary tool-result content.
-    tool_result = {
+def _convert_tool_result(msg: ToolResultMessage) -> dict[str, Any]:
+    return {
         "type": "tool_result",
         "tool_use_id": msg.tool_call_id,
-        "content": references if references else converted_content,
+        "content": _convert_content_blocks(msg.content),
         "is_error": msg.is_error,
     }
-    if not references:
-        sibling_content: list[dict[str, Any]] = []
-    elif isinstance(converted_content, str):
-        sibling_content = [{"type": "text", "text": converted_content}]
-    else:
-        sibling_content = converted_content
-    return tool_result, sibling_content
 
 
 @dataclass(slots=True)
@@ -922,19 +909,43 @@ def _convert_messages(
     is_oauth_token: bool,
     cache_control: dict | None,
     allow_empty_signature: bool,
-    deferred_tool_names: set[str],
-    normalize_tool_name,
     managed_provider: str | None = None,
+    native_tool_changes: bool = False,
 ) -> _ConvertedAnthropicMessages:
     params: list[dict[str, Any]] = []
     assistant_levels: dict[int, AnthropicEffort] = {}
-    loaded_tool_names: set[str] = set()
+    # Later system messages are held back and emitted directly before the next assistant
+    # message (or at the end of the transcript). Anthropic requires `tool_result` blocks to
+    # immediately follow their `tool_use`, so a system message between them is rejected; this
+    # also mirrors where the managed-effort system messages are inserted. As a result an
+    # update placed before a user message in the transcript lands after it on the wire.
+    pending_system_messages: list[dict[str, Any]] = []
+
+    def flush_pending_system_messages() -> None:
+        params.extend(pending_system_messages)
+        pending_system_messages.clear()
 
     i = 0
     while i < len(transformed_messages):
         msg = transformed_messages[i]
 
-        if msg.role == "user":
+        if msg.role == "system":
+            # Later system messages only reach this point when the model accepts them natively;
+            # otherwise the transcript was collapsed into the leading message before conversion.
+            text = render_system_message_update(msg)
+            system_blocks: list[dict[str, Any]] = []
+            if text:
+                system_blocks.append({"type": "text", "text": sanitize_surrogates(text)})
+            if native_tool_changes:
+                for tool in msg.tools_removed or []:
+                    name = _to_claude_code_name(tool.name) if is_oauth_token else tool.name
+                    system_blocks.append({"type": "tool_removal", "tool": {"type": "tool_reference", "name": name}})
+                for tool in msg.tools_added or []:
+                    name = _to_claude_code_name(tool.name) if is_oauth_token else tool.name
+                    system_blocks.append({"type": "tool_addition", "tool": {"type": "tool_reference", "name": name}})
+            if system_blocks:
+                pending_system_messages.append({"role": "system", "content": system_blocks})
+        elif msg.role == "user":
             if isinstance(msg.content, str):
                 if msg.content.strip():
                     params.append({"role": "user", "content": sanitize_surrogates(msg.content)})
@@ -954,6 +965,7 @@ def _convert_messages(
                 if blocks:
                     params.append({"role": "user", "content": blocks})
         elif msg.role == "assistant":
+            flush_pending_system_messages()
             blocks = []
             for block in msg.content:
                 if block.type == "text":
@@ -1008,33 +1020,25 @@ def _convert_messages(
         elif msg.role == "toolResult":
             # Collect consecutive toolResult messages (z.ai Anthropic endpoint).
             tool_results: list[dict[str, Any]] = []
-            sibling_content: list[dict[str, Any]] = []
             j = i
             while j < len(transformed_messages) and transformed_messages[j].role == "toolResult":
-                tool_result, siblings = _convert_tool_result(
-                    transformed_messages[j],  # type: ignore[arg-type]
-                    is_oauth_token,
-                    deferred_tool_names,
-                    loaded_tool_names,
-                    normalize_tool_name,
-                )
-                tool_results.append(tool_result)
-                sibling_content.extend(siblings)
+                tool_results.append(_convert_tool_result(transformed_messages[j]))  # type: ignore[arg-type]
                 j += 1
             i = j - 1
 
-            # Displaced reference-bearing results must follow every tool_result block.
-            params.append({"role": "user", "content": [*tool_results, *sibling_content]})
+            params.append({"role": "user", "content": tool_results})
         i += 1
 
-    # Cache the conversation history via the last user message.
+    flush_pending_system_messages()
+
+    # Cache the conversation history via the last user or system message.
     if cache_control and params:
         last_message = params[-1]
-        if last_message["role"] == "user":
+        if last_message["role"] in ("user", "system"):
             if isinstance(last_message["content"], list):
                 if last_message["content"]:
                     last_block = last_message["content"][-1]
-                    if last_block.get("type") in ("text", "image", "tool_result"):
+                    if last_block.get("type") in ("text", "image", "tool_result", "tool_addition", "tool_removal"):
                         last_block["cache_control"] = cache_control
             elif isinstance(last_message["content"], str):
                 last_message["content"] = [
@@ -1061,7 +1065,13 @@ def _insert_thinking_level_messages(
     return messages
 
 
-def _get_beta_features(model: Model, context: Context, is_oauth_token: bool, options: AnthropicOptions) -> list[str]:
+def _get_beta_features(
+    model: Model,
+    context: TranscriptContext,
+    is_oauth_token: bool,
+    native_tool_changes: bool,
+    options: AnthropicOptions,
+) -> list[str]:
     """The `betas` request param (pi's SDK turns it into the `anthropic-beta` header).
 
     An explicit `anthropic-beta` header on the model or the options replaces
@@ -1094,6 +1104,8 @@ def _get_beta_features(model: Model, context: Context, is_oauth_token: bool, opt
         features.append(SERVER_SIDE_FALLBACK_BETA)
     if _supports_mid_convo_effort(model):
         features.extend([MID_CONVERSATION_OUTPUT_CONFIG_BETA, THINKING_BINDING_CONTROLS_BETA])
+    if native_tool_changes:
+        features.append(MID_CONVERSATION_TOOL_CHANGES_BETA)
     return list(dict.fromkeys(features))
 
 
@@ -1102,8 +1114,7 @@ def _convert_tools(
     is_oauth_token: bool,
     supports_eager_tool_input_streaming: bool,
     supports_strict_tools: bool,
-    cache_control: dict | None,
-    defer_loading: bool = False,
+    cache_control: dict | None = None,
 ) -> list[dict[str, Any]]:
     converted: list[dict[str, Any]] = []
     for index, tool in enumerate(tools):
@@ -1125,8 +1136,6 @@ def _convert_tools(
         if strict is True:
             entry["strict"] = True
         entry["input_schema"] = input_schema
-        if defer_loading:
-            entry["defer_loading"] = True
         if cache_control and index == len(tools) - 1:
             entry["cache_control"] = cache_control
         converted.append(entry)
@@ -1142,34 +1151,37 @@ def _find_fallback_cost(model: Model, served_model: str) -> ModelCost | None:
     return None
 
 
-def _build_params(model: Model, context: Context, is_oauth_token: bool, options: AnthropicOptions) -> dict[str, Any]:
+def _build_params(
+    model: Model, context: TranscriptContext, is_oauth_token: bool, options: AnthropicOptions
+) -> dict[str, Any]:
     cache_control = _get_cache_control(model, options.cache_retention, options.env)
     compat = _get_compat(model)
+    initial_system_message = get_initial_system_message(context.messages)
+    initial_system_text = get_system_message_text(initial_system_message) if initial_system_message is not None else ""
     transformed_messages = transform_messages(context.messages, model, _normalize_tool_call_id)
-    normalize_tool_name = _to_claude_code_name if is_oauth_token else (lambda name: name)
-    immediate_tools, deferred_map = split_deferred_tools(
-        Context(messages=transformed_messages, system_prompt=context.system_prompt, tools=context.tools),
-        compat.supports_tool_references,
-        normalize_tool_name,
+    conversation_messages = transformed_messages[1:] if initial_system_message is not None else transformed_messages
+    # Native tool changes reference tools by name, so a redefined name cannot be expressed,
+    # and Anthropic rejects a tool list where every tool is deferred, so there must be an
+    # initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
+    initial_tools = (initial_system_message.tools_added if initial_system_message is not None else None) or []
+    native_tool_changes = (
+        compat.supports_mid_convo_system_messages
+        and compat.supports_mid_convo_tool_changes
+        and len(initial_tools) > 0
+        and not has_tool_redefinitions(context.messages)
     )
-    deferred_tools = list(deferred_map.values())
-    if not immediate_tools and deferred_tools:
-        immediate_tools = deferred_tools
-        deferred_tools = []
-    deferred_tool_names = {normalize_tool_name(tool.name) for tool in deferred_tools}
 
     supports_mid_convo_effort = _supports_mid_convo_effort(model)
     converted = _convert_messages(
-        transformed_messages,
+        conversation_messages,
         is_oauth_token,
         cache_control,
         compat.allow_empty_signature,
-        deferred_tool_names,
-        normalize_tool_name,
         model.provider if supports_mid_convo_effort else None,
+        native_tool_changes,
     )
     active_effort: AnthropicEffort = options.effort or "high"
-    beta_features = _get_beta_features(model, context, is_oauth_token, options)
+    beta_features = _get_beta_features(model, context, is_oauth_token, native_tool_changes, options)
     params: dict[str, Any] = {
         "model": model.id,
         "messages": _insert_thinking_level_messages(converted, active_effort)
@@ -1189,19 +1201,20 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
                 **({"cache_control": cache_control} if cache_control else {}),
             }
         ]
-        if context.system_prompt:
+        if initial_system_text:
             params["system"].append(
                 {
                     "type": "text",
-                    "text": sanitize_surrogates(context.system_prompt),
+                    "text": sanitize_surrogates(initial_system_text),
                     **({"cache_control": cache_control} if cache_control else {}),
                 }
             )
-    elif context.system_prompt:
+    elif initial_system_text:
+        # Add cache control to system prompt for non-OAuth tokens
         params["system"] = [
             {
                 "type": "text",
-                "text": sanitize_surrogates(context.system_prompt),
+                "text": sanitize_surrogates(initial_system_text),
                 **({"cache_control": cache_control} if cache_control else {}),
             }
         ]
@@ -1215,24 +1228,43 @@ def _build_params(model: Model, context: Context, is_oauth_token: bool, options:
     ):
         params["temperature"] = options.temperature
 
-    if immediate_tools or deferred_tools:
+    tool_cache_control = cache_control if compat.supports_cache_control_on_tools else None
+    if native_tool_changes:
+        # Initial tools stay active with the cache breakpoint on the last one. Every later
+        # declaration is deferred and only surfaced by its `tool_addition` block; removed
+        # tools stay declared and are withdrawn by `tool_removal`. The request-level list
+        # therefore only grows, keeping the cached prefix intact across tool changes.
+        initial_names = {tool.name for tool in initial_tools}
+        later_tools = [tool for tool in get_declared_tools(context.messages) if tool.name not in initial_names]
         params["tools"] = [
             *_convert_tools(
-                immediate_tools,
+                initial_tools,
                 is_oauth_token,
                 compat.supports_eager_tool_input_streaming,
                 compat.supports_strict_tools,
-                cache_control if compat.supports_cache_control_on_tools else None,
+                tool_cache_control,
             ),
-            *_convert_tools(
-                deferred_tools,
-                is_oauth_token,
-                compat.supports_eager_tool_input_streaming,
-                compat.supports_strict_tools,
-                None,
-                True,
+            dict(_DEFERRED_TOOL_PLACEHOLDER),
+            *(
+                {**tool, "defer_loading": True}
+                for tool in _convert_tools(
+                    later_tools,
+                    is_oauth_token,
+                    compat.supports_eager_tool_input_streaming,
+                    compat.supports_strict_tools,
+                )
             ),
         ]
+    else:
+        tools = get_current_tools(context.messages)
+        if tools:
+            params["tools"] = _convert_tools(
+                tools,
+                is_oauth_token,
+                compat.supports_eager_tool_input_streaming,
+                compat.supports_strict_tools,
+                tool_cache_control,
+            )
 
     # Managed effort models always use adaptive thinking so prefix mismatches can
     # be dropped instead of surfacing as persistent 400 responses.

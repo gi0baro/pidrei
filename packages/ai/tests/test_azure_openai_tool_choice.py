@@ -8,7 +8,8 @@ is never dialled.
 import pytest
 
 from pidrei_ai.api.azure_openai_responses import AzureOpenAIResponsesOptions, stream, stream_simple
-from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, Tool, UserMessage
+from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, Tool, TranscriptContext, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
 MODEL = Model(
@@ -25,16 +26,18 @@ MODEL = Model(
 )
 
 
-def _context() -> Context:
-    return Context(
-        messages=[UserMessage(content="Summarize this", timestamp=1)],
-        tools=[
-            Tool(
-                name="read",
-                description="Read a file",
-                parameters={"type": "object", "properties": {"path": {"type": "string"}}},
-            )
-        ],
+def _context() -> TranscriptContext:
+    return normalize_context(
+        Context(
+            messages=[UserMessage(content="Summarize this", timestamp=1)],
+            tools=[
+                Tool(
+                    name="read",
+                    description="Read a file",
+                    parameters={"type": "object", "properties": {"path": {"type": "string"}}},
+                )
+            ],
+        )
     )
 
 

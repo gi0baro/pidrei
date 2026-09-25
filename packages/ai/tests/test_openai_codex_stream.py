@@ -52,10 +52,12 @@ from pidrei_ai.types import (
     TextContent,
     Tool,
     ToolResultMessage,
+    TranscriptContext,
     UserMessage,
 )
 from pidrei_ai.utils import clock, http, websocket
 from pidrei_ai.utils.cancel import CancelToken
+from pidrei_ai.utils.transcript import normalize_context
 
 
 # --- shared fixtures ----------------------------------------------------------
@@ -85,10 +87,12 @@ def make_model(model_id: str = "gpt-5.1-codex", **overrides) -> Model:
     return Model(**defaults)
 
 
-def hello_context() -> Context:
-    return Context(
-        system_prompt="You are a helpful assistant.",
-        messages=[UserMessage(content="Say hello", timestamp=int(time.time() * 1000))],
+def hello_context() -> TranscriptContext:
+    return normalize_context(
+        Context(
+            system_prompt="You are a helpful assistant.",
+            messages=[UserMessage(content="Say hello", timestamp=int(time.time() * 1000))],
+        )
     )
 
 
@@ -608,15 +612,17 @@ async def test_clamps_minimal_reasoning_effort_to_low(model_id):
 @pytest.mark.tonio
 async def test_forwards_required_tool_choice():
     client = sse_client()
-    context = Context(
-        messages=[UserMessage(content="Do not call ping. Respond with text instead.", timestamp=1)],
-        tools=[
-            Tool(
-                name="ping",
-                description="Ping",
-                parameters={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
-            )
-        ],
+    context = normalize_context(
+        Context(
+            messages=[UserMessage(content="Do not call ping. Respond with text instead.", timestamp=1)],
+            tools=[
+                Tool(
+                    name="ping",
+                    description="Ping",
+                    parameters={"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]},
+                )
+            ],
+        )
     )
     await stream_codex(
         make_model("gpt-5.5"),
@@ -658,7 +664,7 @@ async def test_sets_codex_strict_mode_explicitly_and_honors_constrained_sampling
     )
     await stream_codex(
         make_model("gpt-5.5"),
-        context,
+        normalize_context(context),
         OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", on_payload=on_payload, client=sse_client()),
     ).result()
 
@@ -727,9 +733,11 @@ async def test_zstd_compresses_sse_request_bodies():
     large_text = "compress me " * 400
     await stream_codex(
         make_model(),
-        Context(
-            system_prompt="You are a helpful assistant.",
-            messages=[UserMessage(content=large_text, timestamp=1)],
+        normalize_context(
+            Context(
+                system_prompt="You are a helpful assistant.",
+                messages=[UserMessage(content=large_text, timestamp=1)],
+            )
         ),
         OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", client=client),
     ).result()
@@ -741,7 +749,9 @@ async def test_zstd_compresses_sse_request_bodies():
 
     await stream_codex(
         make_model(),
-        Context(system_prompt="You are a helpful assistant.", messages=[UserMessage(content="hi", timestamp=1)]),
+        normalize_context(
+            Context(system_prompt="You are a helpful assistant.", messages=[UserMessage(content="hi", timestamp=1)])
+        ),
         OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", client=client),
     ).result()
     assert client.requests[1].headers["content-encoding"] == "zstd"
@@ -851,9 +861,11 @@ async def test_forwards_auto_transport_from_simple_options_and_uses_cached_webso
     with stub_websocket(connect) as calls:
         result = await stream_simple_codex(
             make_model(),
-            Context(
-                system_prompt="You are a helpful assistant.",
-                messages=[UserMessage(content="Say hello", timestamp=1)],
+            normalize_context(
+                Context(
+                    system_prompt="You are a helpful assistant.",
+                    messages=[UserMessage(content="Say hello", timestamp=1)],
+                )
             ),
             SimpleStreamOptions(api_key=mock_token(), session_id="session-auto", transport="auto"),
         ).result()
@@ -881,7 +893,7 @@ async def test_scopes_cached_websockets_to_the_authenticated_account():
         lambda socket, _body: [completion_event(id=f"resp_{socket.connection_id}")]
     )
     sse = unexpected_sse_client()
-    context = Context(system_prompt="", messages=[])
+    context = normalize_context(Context(system_prompt="", messages=[]))
 
     def options(account_id: str) -> OpenAICodexResponsesOptions:
         return OpenAICodexResponsesOptions(
@@ -1004,7 +1016,7 @@ async def test_reconnects_once_when_the_websocket_connection_limit_is_reached_be
     with stub_websocket(connect):
         result = await stream_codex(
             make_model(),
-            Context(system_prompt="", messages=[]),
+            normalize_context(Context(system_prompt="", messages=[])),
             OpenAICodexResponsesOptions(api_key=mock_token(), client=sse),
         ).result()
 
@@ -1062,9 +1074,11 @@ async def test_opens_a_fresh_cached_websocket_before_the_backend_connection_age_
 
     connect, sockets = responding_websocket(events_for)
     session_id = "aged-ws-session"
-    first_context = Context(
-        system_prompt="You are a helpful assistant.",
-        messages=[UserMessage(content="Say hello", timestamp=1)],
+    first_context = normalize_context(
+        Context(
+            system_prompt="You are a helpful assistant.",
+            messages=[UserMessage(content="Say hello", timestamp=1)],
+        )
     )
 
     with frozen_now() as now, stub_websocket(connect):
@@ -1074,9 +1088,8 @@ async def test_opens_a_fresh_cached_websocket_before_the_backend_connection_age_
             OpenAICodexResponsesOptions(api_key=mock_token(), session_id=session_id, transport="websocket-cached"),
         ).result()
         now["now"] += 56 * 60 * 1000
-        second_context = Context(
-            system_prompt="You are a helpful assistant.",
-            messages=[*first_context.messages, first, UserMessage(content="Now finish", timestamp=2)],
+        second_context = normalize_context(
+            Context(messages=[*first_context.messages, first, UserMessage(content="Now finish", timestamp=2)])
         )
         await stream_codex(
             make_model(),
@@ -1155,11 +1168,11 @@ async def test_sends_only_response_input_deltas_in_websocket_cached_mode():
     with stub_websocket(connect):
         first = await stream_codex(
             model,
-            first_context,
+            normalize_context(first_context),
             OpenAICodexResponsesOptions(api_key=mock_token(), session_id="session-1", transport="websocket-cached"),
         ).result()
         second_context = Context(
-            system_prompt="You are a helpful assistant.",
+            system_prompt=first_context.system_prompt,
             messages=[
                 *first_context.messages,
                 first,
@@ -1176,7 +1189,7 @@ async def test_sends_only_response_input_deltas_in_websocket_cached_mode():
         )
         await stream_codex(
             model,
-            second_context,
+            normalize_context(second_context),
             OpenAICodexResponsesOptions(api_key=mock_token(), session_id="session-1", transport="websocket-cached"),
         ).result()
 
@@ -1287,9 +1300,11 @@ async def test_recovers_a_missing_cached_websocket_continuation(recovery_transpo
 
         return FakeWebSocket(index, on_send)
 
-    first_context = Context(
-        system_prompt="You are a helpful assistant.",
-        messages=[UserMessage(content="Say hello", timestamp=1)],
+    first_context = normalize_context(
+        Context(
+            system_prompt="You are a helpful assistant.",
+            messages=[UserMessage(content="Say hello", timestamp=1)],
+        )
     )
     with stub_websocket(connect) as calls:
         first = await stream_codex(
@@ -1299,9 +1314,8 @@ async def test_recovers_a_missing_cached_websocket_continuation(recovery_transpo
                 api_key=mock_token(), session_id=session_id, transport="websocket-cached", client=client
             ),
         ).result()
-        second_context = Context(
-            system_prompt="You are a helpful assistant.",
-            messages=[*first_context.messages, first, UserMessage(content="Now finish", timestamp=2)],
+        second_context = normalize_context(
+            Context(messages=[*first_context.messages, first, UserMessage(content="Now finish", timestamp=2)])
         )
         second_stream = stream_codex(
             make_model(),

@@ -22,6 +22,7 @@ from pidrei_ai.types import (
     Tool,
     UserMessage,
 )
+from pidrei_ai.utils.transcript import normalize_context
 from tests.anthropic_helpers import capture_request, now_ms
 
 
@@ -79,7 +80,7 @@ async def test_omits_unsupported_long_cache_retention_for_glm_52(model_id):
 
     await stream_simple_completions(
         model,
-        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        normalize_context(Context(messages=[UserMessage(content="test", timestamp=0)])),
         SimpleStreamOptions(
             api_key="test-fireworks-key",
             cache_retention="long",
@@ -104,7 +105,8 @@ async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effo
         supports_developer_role=False,
         requires_reasoning_content_on_assistant_messages=True,
         thinking_format="openai",
-        deferred_tools_mode="kimi",
+        supports_mid_convo_system_messages=True,
+        supports_mid_convo_tool_additions=True,
         send_session_affinity_headers=True,
         supports_long_cache_retention=False,
     )
@@ -136,7 +138,7 @@ async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effo
 
     result = await stream_simple_completions(
         base,
-        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        normalize_context(Context(messages=[UserMessage(content="test", timestamp=0)])),
         SimpleStreamOptions(api_key="test-fireworks-key", reasoning="max", on_payload=on_payload),
     ).result()
     assert result.stop_reason == "error"
@@ -153,7 +155,7 @@ async def _capture_messages_payload(model: Model, reasoning: str | None) -> dict
 
     await stream_simple_messages(
         model,
-        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        normalize_context(Context(messages=[UserMessage(content="test", timestamp=0)])),
         SimpleStreamOptions(api_key="test-fireworks-key", reasoning=reasoning, on_payload=on_payload),
     ).result()
     assert captured, "payload was not captured"

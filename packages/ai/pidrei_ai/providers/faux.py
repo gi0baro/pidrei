@@ -28,7 +28,6 @@ from pidrei_ai.builders import AssistantMessageBuilder, TextContentBuilder, Thin
 from pidrei_ai.registry import Provider, create_provider
 from pidrei_ai.types import (
     AssistantMessage,
-    Context,
     DeferredCancelOptions,
     DeferredFetchOptions,
     DeferredHandle,
@@ -55,10 +54,12 @@ from pidrei_ai.types import (
     ToolCallEndEvent,
     ToolCallStartEvent,
     ToolResultMessage,
+    TranscriptContext,
     Usage,
 )
 from pidrei_ai.utils.estimate import _tool_json_shape
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.text import get_system_message_text
 
 
 DEFAULT_API = "faux"
@@ -177,6 +178,19 @@ def _tool_result_to_text(message: ToolResultMessage) -> str:
 
 
 def _message_to_text(message: Message) -> str:
+    if message.role == "system":
+        parts = [
+            get_system_message_text(message),
+            *(
+                f"tool-:{json.dumps({'name': tool.name}, separators=(',', ':'), ensure_ascii=False)}"
+                for tool in message.tools_removed or []
+            ),
+            *(
+                f"tool+:{json.dumps(_tool_json_shape(tool), separators=(',', ':'), ensure_ascii=False)}"
+                for tool in message.tools_added or []
+            ),
+        ]
+        return "\n".join(part for part in parts if len(part) > 0)
     if message.role == "user":
         return _content_to_text(message.content)
     if message.role == "assistant":
@@ -184,18 +198,8 @@ def _message_to_text(message: Message) -> str:
     return _tool_result_to_text(message)
 
 
-def serialize_faux_context(context: Context) -> str:
-    parts: list[str] = []
-    if context.system_prompt:
-        parts.append(f"system:{context.system_prompt}")
-    for message in context.messages:
-        parts.append(f"{message.role}:{_message_to_text(message)}")
-    if context.tools:
-        tools_json = json.dumps(
-            [_tool_json_shape(tool) for tool in context.tools], separators=(",", ":"), ensure_ascii=False
-        )
-        parts.append(f"tools:{tools_json}")
-    return "\n\n".join(parts)
+def serialize_faux_context(context: TranscriptContext) -> str:
+    return "\n\n".join(f"{message.role}:{_message_to_text(message)}" for message in context.messages)
 
 
 def _common_prefix_length(a: str, b: str) -> int:
@@ -318,7 +322,7 @@ async def _stream_with_deltas(
 class _FauxDeferredEntry:
     handle: DeferredHandle
     step: FauxResponseStep
-    context: Context
+    context: TranscriptContext
     options: SimpleStreamOptions | None
     model: Model
     pending_fetches: int
@@ -397,7 +401,7 @@ class FauxCore:
     def _with_usage_estimate(
         self,
         message: AssistantMessage,
-        context: Context,
+        context: TranscriptContext,
         options: StreamOptions | None,
     ) -> AssistantMessage:
         prompt_text = serialize_faux_context(context)
@@ -462,7 +466,7 @@ class FauxCore:
     async def _resolve_response(
         self,
         step: FauxResponseStep,
-        context: Context,
+        context: TranscriptContext,
         stream_options: SimpleStreamOptions | None,
         request_model: Model,
     ) -> AssistantMessage:
@@ -478,7 +482,7 @@ class FauxCore:
     def stream(
         self,
         request_model: Model,
-        context: Context,
+        context: TranscriptContext,
         stream_options: StreamOptions | None = None,
     ) -> AssistantMessageEventStream:
         outer = AssistantMessageEventStream()
@@ -544,7 +548,7 @@ class FauxCore:
     def stream_simple(
         self,
         request_model: Model,
-        context: Context,
+        context: TranscriptContext,
         stream_options: SimpleStreamOptions | None = None,
     ) -> AssistantMessageEventStream:
         return self.stream(request_model, context, stream_options)

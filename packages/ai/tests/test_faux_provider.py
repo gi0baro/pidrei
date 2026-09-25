@@ -29,18 +29,20 @@ from pidrei_ai.types import (
     TextContent,
     ThinkingContent,
     Tool,
+    TranscriptContext,
     UserMessage,
 )
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.estimate import _tool_json_shape
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def user_context(text: str = "hi") -> Context:
-    return Context(messages=[UserMessage(content=text, timestamp=now_ms())])
+def user_context(text: str = "hi") -> TranscriptContext:
+    return normalize_context(Context(messages=[UserMessage(content=text, timestamp=now_ms())]))
 
 
 async def collect_events(stream) -> list:
@@ -48,7 +50,7 @@ async def collect_events(stream) -> list:
 
 
 async def complete(faux, model, context, options=None):
-    return await faux.provider.stream(model, context, options).result()
+    return await faux.provider.stream(model, normalize_context(context), options).result()
 
 
 @pytest.mark.tonio

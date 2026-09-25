@@ -97,6 +97,6 @@ async def test_disables_all_tools_when_the_allowlist_is_empty(dirs):
 
     assert session.get_all_tools() == []
     assert session.get_active_tool_names() == []
-    assert "Available tools:\n(none)" in session.system_prompt
+    assert "<tools>\n(none)\n" in session.system_prompt
     assert "dynamic_tool" not in session.system_prompt
     session.dispose()

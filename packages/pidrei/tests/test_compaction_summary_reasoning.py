@@ -35,6 +35,7 @@ from pidrei_ai.types import (
     UserMessage,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def create_model(reasoning: bool, max_tokens: int = 8192) -> Model:
@@ -137,7 +138,7 @@ async def test_honors_caller_supplied_routing_session_and_tool_choice_without_pr
 
     await complete_summarization(
         create_model(False),
-        Context(system_prompt="Summarize", messages=[]),
+        normalize_context(Context(system_prompt="Summarize", messages=[])),
         SimpleStreamOptions(session_id="current-routing-session", cache_retention="long", tool_choice="auto"),
         stream_fn,
     )
@@ -148,7 +149,7 @@ async def test_honors_caller_supplied_routing_session_and_tool_choice_without_pr
 
 
 @pytest.mark.tonio
-async def test_preserves_the_standalone_split_turn_summary_prompt():
+async def test_preserves_the_previous_summary_without_an_empty_history_request_for_a_split_turn():
     contexts: list = []
 
     async def stream_fn(model, context, options=None):
@@ -164,14 +165,19 @@ async def test_preserves_the_standalone_split_turn_summary_prompt():
         turn_prefix_messages=messages(),
         is_split_turn=True,
         tokens_before=100,
+        previous_summary="previous checkpoint",
         file_ops=FileOperations(),
         settings=CompactionSettings(enabled=True, reserve_tokens=2000, keep_recent_tokens=20),
     )
 
-    await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
+    result = await compact(preparation, create_model(False), "test-key", stream_fn=stream_fn)
 
-    # pi stringifies the request messages; the port reads the text blocks directly.
-    prompt = "".join(block.text for message in contexts[0].messages for block in message.content)
+    assert len(contexts) == 1
+    assert "previous checkpoint" in result.summary
+    # pi stringifies the request messages; the port reads the user text blocks directly.
+    prompt = "".join(
+        block.text for message in contexts[0].messages if message.role == "user" for block in message.content
+    )
     assert "This is the PREFIX of a turn that was too large to keep" in prompt
     assert "<conversation>" in prompt
 

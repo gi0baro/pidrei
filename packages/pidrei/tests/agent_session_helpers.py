@@ -114,7 +114,7 @@ async def create_agent_session(
     base_tools_override: dict | None = None,
     in_memory_session: bool = True,
     settings_overrides: dict | None = None,
-    system_prompt: str = "Test",
+    system_prompt: str = "",
     resource_loader: Any = None,
     session_manager: SessionManager | None = None,
     model: Any = None,

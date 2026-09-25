@@ -6,7 +6,7 @@ import pytest
 
 from pidrei.core.skills import Skill
 from pidrei.core.source_info import create_synthetic_source_info
-from pidrei.core.system_prompt import BuildSystemPromptOptions, build_system_prompt
+from pidrei.core.system_prompt import BuildSystemPromptOptions, ContextFile, build_system_prompt
 
 
 TEST_SKILL = Skill(
@@ -22,11 +22,47 @@ TEST_SKILL = Skill(
 class TestEmptyTools:
     def test_shows_none_for_empty_tools_list(self):
         prompt = build_system_prompt(BuildSystemPromptOptions(selected_tools=[], cwd=os.getcwd()))
-        assert "Available tools:\n(none)" in prompt
+        assert "<tools>\n(none)\n" in prompt
 
     def test_shows_file_paths_guideline_even_with_no_tools(self):
         prompt = build_system_prompt(BuildSystemPromptOptions(selected_tools=[], cwd=os.getcwd()))
         assert "Show file paths clearly" in prompt
+
+
+class TestPromptStructure:
+    def test_keeps_the_default_and_custom_prompt_prefixes_exact(self):
+        default_prompt = build_system_prompt(
+            BuildSystemPromptOptions(cwd="/tmp", selected_tools=[], context_files=[], skills=[])
+        )
+        custom_prompt = build_system_prompt(
+            BuildSystemPromptOptions(
+                custom_prompt="You are Exact.", cwd="/tmp", selected_tools=[], context_files=[], skills=[]
+            )
+        )
+
+        assert default_prompt.startswith("You are an expert coding assistant operating inside pidrei")
+        assert custom_prompt.startswith("You are Exact.\n\n<cwd>")
+
+    def test_preserves_an_exact_forced_prompt_without_sections(self):
+        assert build_system_prompt(BuildSystemPromptOptions(force_system_prompt="exact", cwd="/tmp")) == "exact"
+
+    def test_maps_appended_instructions_and_project_context_to_stable_sections(self):
+        prompt = build_system_prompt(
+            BuildSystemPromptOptions(
+                custom_prompt="You are Exact.",
+                append_system_prompt="Additional instructions.",
+                context_files=[ContextFile(path="/tmp/AGENTS.md", content="Project instructions.")],
+                selected_tools=[],
+                skills=[],
+                cwd="/tmp",
+            )
+        )
+
+        assert "<addendum>\nAdditional instructions.\n</addendum>" in prompt
+        assert (
+            '<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path="/tmp/AGENTS.md">'
+        ) in prompt
+        assert "<cwd>\n/tmp\n</cwd>" in prompt
 
 
 class TestDefaultTools:
@@ -117,6 +153,7 @@ class TestSkills:
             )
         )
 
+        assert "<skills>" in prompt
         assert "<available_skills>" in prompt
         assert "<name>test-skill</name>" in prompt
         assert "Use bash to load a skill's file" in prompt

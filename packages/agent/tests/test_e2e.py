@@ -88,10 +88,11 @@ async def test_handles_a_basic_text_prompt():
     await agent.prompt("What is 2+2? Answer with just the number.")
 
     assert agent.state.is_streaming is False
-    assert len(agent.state.messages) == 2
-    assert agent.state.messages[0].role == "user"
-    assert agent.state.messages[1].role == "assistant"
-    assert "4" in get_text_content(agent.state.messages[1])
+    assert len(agent.state.messages) == 3
+    assert agent.state.messages[0].role == "system"
+    assert agent.state.messages[1].role == "user"
+    assert agent.state.messages[2].role == "assistant"
+    assert "4" in get_text_content(agent.state.messages[2])
 
 
 @pytest.mark.tonio
@@ -198,7 +199,7 @@ async def test_emits_lifecycle_updates_while_streaming():
     assert events.index("message_end") < (len(events) - 1 - events[::-1].index("agent_end"))
 
     assert agent.state.is_streaming is False
-    assert len(agent.state.messages) == 2
+    assert len(agent.state.messages) == 3
 
 
 @pytest.mark.tonio
@@ -221,12 +222,12 @@ async def test_maintains_context_across_multiple_turns():
     agent = create_agent(faux.get_model(), "You are a helpful assistant.")
 
     await agent.prompt("My name is Alice.")
-    assert len(agent.state.messages) == 2
+    assert len(agent.state.messages) == 3
 
     await agent.prompt("What is my name?")
-    assert len(agent.state.messages) == 4
+    assert len(agent.state.messages) == 5
 
-    last_message = agent.state.messages[3]
+    last_message = agent.state.messages[4]
     assert last_message.role == "assistant"
     assert "alice" in get_text_content(last_message).lower()
 
@@ -240,7 +241,7 @@ async def test_preserves_thinking_content_blocks():
 
     await agent.prompt("What is 2+2?")
 
-    assistant_message = agent.state.messages[1]
+    assistant_message = agent.state.messages[2]
     assert assistant_message.role == "assistant"
     assert assistant_message.content == [ThinkingContent(thinking="step by step"), TextContent(text="4")]
 

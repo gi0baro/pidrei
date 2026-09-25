@@ -31,7 +31,6 @@ extension, so it shows the `__init__.py` layout and relative imports.
 |---------|-------|
 | [`extensions/dynamic_tools.py`](extensions/dynamic_tools.py) | Registering tools after startup — one at `session_start`, more at runtime from a command |
 | [`extensions/tools.py`](extensions/tools.py) | A `/tools` toggle dialog with `SettingsList`, persisted per branch and restored on `session_tree` navigation |
-| [`extensions/kimi_deferred_tools.py`](extensions/kimi_deferred_tools.py) | Deferred tool loading: a `tool_search` tool that activates other tools via `set_active_tools` |
 | [`extensions/built_in_tool_renderer.py`](extensions/built_in_tool_renderer.py) | Re-registering built-in tools with delegated execution and compact custom renderers |
 | [`extensions/minimal_mode.py`](extensions/minimal_mode.py) | Overriding all built-in tools with minimal renderers: call-only collapsed, full output expanded |
 | [`extensions/tool_override.py`](extensions/tool_override.py) | Overriding the built-in `read` tool for auditing and access control |

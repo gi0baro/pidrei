@@ -15,11 +15,27 @@ from pidrei.core.compaction import SUMMARIZATION_SYSTEM_PROMPT
 from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.registry import create_provider
-from pidrei_ai.types import DoneEvent, ErrorEvent, StartEvent, TextContent, Usage, UsageCost, UserMessage
+from pidrei_ai.types import (
+    DoneEvent,
+    ErrorEvent,
+    StartEvent,
+    SystemMessage,
+    TextContent,
+    ToolReference,
+    Usage,
+    UsageCost,
+    UserMessage,
+)
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_ai.utils.transcript import get_current_system_prompt, get_current_tools
 
 from .agent_session_helpers import create_agent_session, create_assistant_message
+from .coding_session_helpers import now_ms
 from .harness import create_harness
+
+
+def _is_summarization_request(context) -> bool:
+    return get_current_system_prompt(context.messages).startswith(SUMMARIZATION_SYSTEM_PROMPT[:40])
 
 
 def _make_llm_stream_fn(*, summary_text="## Goal\nSummarized work.", answer_prefix="answer"):
@@ -28,7 +44,7 @@ def _make_llm_stream_fn(*, summary_text="## Goal\nSummarized work.", answer_pref
 
     async def stream_fn(_model, context, options=None):
         stream = AssistantMessageEventStream()
-        if (context.system_prompt or "").startswith(SUMMARIZATION_SYSTEM_PROMPT[:40]):
+        if _is_summarization_request(context):
             state["summarization_requests"].append((context, options))
             message = create_assistant_message(
                 summary_text,
@@ -86,8 +102,10 @@ class TestCompaction:
         messages = session.messages
         assert len(messages) > 0
 
-        # First message should be the summary
-        assert messages[0].role == "compactionSummary"
+        # The compaction's system checkpoint leads, then the summary (pi's characterization
+        # suite asserts the same; its live-API-gated original predates 9e05370b).
+        assert messages[0].role == "system"
+        assert messages[1].role == "compactionSummary"
         session.dispose()
 
     @pytest.mark.tonio
@@ -163,10 +181,12 @@ class TestCompaction:
         assert state["summarization_requests"]
         request_context, request_options = state["summarization_requests"][0]
         assert transform_calls == []
-        assert request_context.system_prompt != session.agent.state.system_prompt
-        assert request_context.tools is None
-        # pi stringifies the request messages; the port reads the text blocks directly.
-        prompt = "".join(block.text for message in request_context.messages for block in message.content)
+        assert get_current_system_prompt(request_context.messages) != session.agent.state.system_prompt
+        assert get_current_tools(request_context.messages) == []
+        # pi stringifies the request messages; the port reads the user text blocks directly.
+        prompt = "".join(
+            block.text for message in request_context.messages if message.role == "user" for block in message.content
+        )
         assert "<conversation>" in prompt
         assert request_options.cache_retention == "none"
         assert request_options.session_id != "active-routing-session"
@@ -258,6 +278,57 @@ class TestCompaction:
         session.dispose()
 
 
+@pytest.mark.tonio
+async def test_checkpoints_the_replayed_system_state_and_folds_summarized_and_retained_system_patches_into_it():
+    # From pi's characterization suite (suite/agent-session-compaction.test.ts).
+    harness = await create_harness()
+    try:
+        harness.set_responses([faux_assistant_message("declared")])
+        await harness.session.prompt("declare the prompt")
+        declared = harness.session.messages[0]
+        assert declared.role == "system"
+
+        await harness.session_manager.append_message(
+            SystemMessage(
+                content="summarized instruction",
+                sections={"early": "<early>1</early>"},
+                tools_removed=[ToolReference(name="bash")],
+                timestamp=now_ms(),
+            )
+        )
+        first_kept_entry_id = await harness.session_manager.append_message(
+            UserMessage(content=[TextContent(text="kept before patch")], timestamp=now_ms())
+        )
+        await harness.session_manager.append_message(
+            SystemMessage(
+                content="retained instruction",
+                sections={"extra": "<extra>late</extra>"},
+                tools_removed=[ToolReference(name="read")],
+                timestamp=now_ms(),
+            )
+        )
+        await harness.session_manager.append_message(
+            UserMessage(content=[TextContent(text="kept after patch")], timestamp=now_ms())
+        )
+        await harness.session_manager.append_compaction("compacted", first_kept_entry_id, 100)
+
+        messages = harness.session_manager.build_session_context().messages
+        assert [message.role for message in messages] == ["system", "compactionSummary", "user", "user"]
+        checkpoint = messages[0]
+        assert checkpoint.role == "system"
+        assert checkpoint.content == "summarized instruction\n\nretained instruction"
+        assert checkpoint.sections == {
+            **declared.sections,
+            "early": "<early>1</early>",
+            "extra": "<extra>late</extra>",
+        }
+        assert [tool.name for tool in checkpoint.tools_added] == [
+            name for name in harness.session.get_active_tool_names() if name not in ("read", "bash")
+        ]
+    finally:
+        harness.cleanup()
+
+
 class TestTreeNavigation:
     @pytest.mark.tonio
     async def test_navigates_to_user_message_and_puts_text_in_editor(self, tmp_path):
@@ -271,16 +342,21 @@ class TestTreeNavigation:
         tree = session_manager.get_tree()
         assert len(tree) == 1
 
+        # The first request persists the prompt/tool system message ahead of the first
+        # user message (pi's live-API-gated original predates 9e05370b and still treats
+        # the user message as the root).
         root_node = tree[0]
         assert root_node.entry["type"] == "message"
+        assert root_node.entry["message"].role == "system"
+        user_node = root_node.children[0]
 
-        result = await session.navigate_tree(root_node.entry["id"], {"summarize": False})
+        result = await session.navigate_tree(user_node.entry["id"], {"summarize": False})
 
         assert result.cancelled is False
         assert result.editor_text == "First message"
 
-        # After navigating to root user message, leaf should be None
-        assert session_manager.get_leaf_id() is None
+        # After navigating to the first user message, the leaf is the system message before it
+        assert session_manager.get_leaf_id() == root_node.entry["id"]
         session.dispose()
 
     @pytest.mark.tonio
@@ -314,8 +390,9 @@ class TestTreeNavigation:
 
         tree = session_manager.get_tree()
         root_node = tree[0]
+        user_node = root_node.children[0]
 
-        result = await session.navigate_tree(root_node.entry["id"], {"summarize": True})
+        result = await session.navigate_tree(user_node.entry["id"], {"summarize": True})
 
         assert result.cancelled is False
         assert result.editor_text == "What is 2+2?"
@@ -323,8 +400,8 @@ class TestTreeNavigation:
         assert result.summary_entry["type"] == "branch_summary"
         assert result.summary_entry["summary"]
 
-        # Summary should be a root entry (parentId None) since we navigated to root user
-        assert result.summary_entry["parentId"] is None
+        # The summary attaches to the system message ahead of the first user message
+        assert result.summary_entry["parentId"] == root_node.entry["id"]
 
         # Leaf should be the summary entry
         assert session_manager.get_leaf_id() == result.summary_entry["id"]
@@ -397,7 +474,7 @@ class TestTreeNavigation:
         base_stream_fn, state = _make_llm_stream_fn()
 
         async def stream_fn(model, context, options=None):
-            if (context.system_prompt or "").startswith(SUMMARIZATION_SYSTEM_PROMPT[:40]):
+            if _is_summarization_request(context):
                 # Summarization hangs until aborted, then reports an aborted result.
                 cancel = getattr(options, "cancel", None)
                 stream = AssistantMessageEventStream()
@@ -505,7 +582,7 @@ class TestTreeNavigation:
         # instructions must reach the summarization request payload.
         assert len(state["summarization_requests"]) == 1
         request_context, _options = state["summarization_requests"][0]
-        request_text = request_context.messages[0].content[0].text
+        request_text = next(message for message in request_context.messages if message.role == "user").content[0].text
         assert f"Additional focus: {custom}" in request_text
         session.dispose()
 

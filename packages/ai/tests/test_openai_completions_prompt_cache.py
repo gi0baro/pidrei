@@ -12,9 +12,10 @@ import pytest
 from pidrei_ai.api.openai_completions import _create_client, get_compat, stream_simple
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, Model, ModelCost, OpenAICompletionsCompat, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils.transcript import normalize_context
 
 
-CONTEXT = Context(messages=[UserMessage(content="hi", timestamp=0)])
+CONTEXT = normalize_context(Context(messages=[UserMessage(content="hi", timestamp=0)]))
 
 
 def create_model(**overrides) -> Model:

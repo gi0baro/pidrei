@@ -41,12 +41,13 @@ from pidrei_agent.types import (
     PrepareNextTurnContext,
 )
 from pidrei_ai.registry import clamp_thinking_level, get_supported_thinking_levels, models_are_equal
-from pidrei_ai.types import AssistantMessage, ImageContent, Model, TextContent, Usage, UserMessage
+from pidrei_ai.types import AssistantMessage, ImageContent, Model, SystemMessage, TextContent, Usage, UserMessage
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
 from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.text import content_text
+from pidrei_ai.utils.transcript import get_current_system_message
 
 from ..utils.frontmatter import strip_frontmatter
 from ..utils.sleep import sleep
@@ -74,7 +75,14 @@ from .model_registry import ModelRegistry
 from .prompt_templates import expand_prompt_template
 from .session_manager import get_latest_compaction_entry
 from .source_info import create_synthetic_source_info
-from .system_prompt import BuildSystemPromptOptions, build_system_prompt
+from .system_prompt import (
+    BuildSystemPromptOptions,
+    NormalizedBuildSystemPromptOptions,
+    build_system_prompt,
+    build_system_prompt_sections,
+    diff_system_prompt_sections,
+    normalize_build_system_prompt_options,
+)
 from .tools import create_all_tool_definitions, create_local_bash_operations
 from .tools.tool_definition_wrapper import create_tool_definition_from_agent_tool
 
@@ -472,10 +480,11 @@ class AgentSession:
         self._tool_prompt_snippets: dict[str, str] = {}
         self._tool_prompt_guidelines: dict[str, list[str]] = {}
 
-        # Base system prompt (without extension appends)
-        self._base_system_prompt = ""
-        self._base_system_prompt_options = BuildSystemPromptOptions(cwd=self._cwd)
-        self._system_prompt_override: str | None = None
+        self._base_system_prompt_options: NormalizedBuildSystemPromptOptions = normalize_build_system_prompt_options(
+            BuildSystemPromptOptions(cwd=self._cwd)
+        )
+        # Prompt options after before_agent_start mutations for the active run.
+        self._run_system_prompt_options: NormalizedBuildSystemPromptOptions | None = None
 
         # Track last assistant message for auto-compaction check
         self._last_assistant_message: AssistantMessage | None = None
@@ -485,11 +494,14 @@ class AgentSession:
         self._unsubscribe_agent = self.agent.subscribe(self._handle_agent_event)
         self._install_agent_tool_hooks()
         self._install_agent_next_turn_refresh()
+        self._install_agent_forced_prompt_projection()
 
         self._build_runtime(
             active_tool_names=self._initial_active_tool_names,
             include_all_extension_tools=True,
         )
+        if self._initial_active_tool_names is None:
+            self._restore_tools_from_transcript()
 
     @property
     def model_runtime(self) -> Any:
@@ -644,16 +656,35 @@ class AgentSession:
             next_context = (
                 previous_snapshot.context if previous_snapshot is not None and previous_snapshot.context else context
             )
-
-            system_prompt = (
-                self._system_prompt_override if self._system_prompt_override is not None else self._base_system_prompt
+            run_options = (
+                self._run_system_prompt_options
+                if self._run_system_prompt_options is not None
+                else self._base_system_prompt_options
             )
+            options = normalize_build_system_prompt_options(
+                dataclass_replace(
+                    run_options,
+                    selected_tools=self.get_active_tool_names(),
+                    tool_snippets={
+                        **(self._base_system_prompt_options.tool_snippets or {}),
+                        **(run_options.tool_snippets or {}),
+                    },
+                    tool_guidelines={
+                        **(self._base_system_prompt_options.tool_guidelines or {}),
+                        **(run_options.tool_guidelines or {}),
+                    },
+                )
+            )
+            update_message = self._prepare_prompt_and_tool_loadout(options, next_context.messages)
+            # Keep session.system_prompt and ctx.get_system_prompt() in step with what the provider sees.
+            self._run_system_prompt_options = options
+
+            previous_messages = previous_snapshot.messages if previous_snapshot is not None else None
             return AgentLoopTurnUpdate(
-                context=AgentContext(
-                    system_prompt=system_prompt,
-                    messages=next_context.messages,
-                    tools=list(self.agent.state.tools),
-                ),
+                context=AgentContext(messages=next_context.messages, tools=list(self.agent.state.tools)),
+                messages=[*(previous_messages or []), update_message]
+                if update_message is not None
+                else previous_messages,
                 model=self.agent.state.model,
                 thinking_level=self.agent.state.thinking_level,
             )
@@ -753,7 +784,7 @@ class AgentSession:
                     message.display,
                     message.details,
                 )
-            elif role in ("user", "assistant", "toolResult"):
+            elif role in ("system", "user", "assistant", "toolResult"):
                 # Regular LLM message - persist as SessionMessageEntry
                 await self.session_manager.append_message(message)
             # Other message types (bashExecution, compactionSummary, branchSummary)
@@ -948,8 +979,12 @@ class AgentSession:
 
     @property
     def system_prompt(self) -> str:
-        """Current effective system prompt (includes per-turn extension modifications)."""
-        return self.agent.state.system_prompt
+        """Current effective system prompt, including changes not yet sent to the model."""
+        return build_system_prompt(
+            self._run_system_prompt_options
+            if self._run_system_prompt_options is not None
+            else self._base_system_prompt_options
+        )
 
     @property
     def retry_attempt(self) -> int:
@@ -985,12 +1020,7 @@ class AgentSession:
                 tools.append(tool)
                 valid_tool_names.append(name)
         self.agent.state.tools = tools
-
-        # Rebuild base system prompt with new tool set
-        self._base_system_prompt = self._rebuild_system_prompt(valid_tool_names)
-        self.agent.state.system_prompt = (
-            self._system_prompt_override if self._system_prompt_override is not None else self._base_system_prompt
-        )
+        self._rebuild_system_prompt(valid_tool_names)
 
     @property
     def is_compacting(self) -> bool:
@@ -1052,36 +1082,100 @@ class AgentSession:
                 unique[normalized] = None
         return list(unique)
 
-    def _rebuild_system_prompt(self, tool_names: list[str]) -> str:
+    def _rebuild_system_prompt(self, tool_names: list[str]) -> None:
         valid_tool_names = [name for name in tool_names if name in self._tool_registry]
         tool_snippets: dict[str, str] = {}
-        prompt_guidelines: list[str] = []
-        for name in valid_tool_names:
+        for name in self._tool_registry:
             snippet = self._tool_prompt_snippets.get(name)
             if snippet:
                 tool_snippets[name] = snippet
 
-            tool_guidelines = self._tool_prompt_guidelines.get(name)
-            if tool_guidelines:
-                prompt_guidelines.extend(tool_guidelines)
-
         loader_system_prompt = self._resource_loader.get_system_prompt()
         loader_append_system_prompt = self._resource_loader.get_append_system_prompt()
-        append_system_prompt = "\n\n".join(loader_append_system_prompt) if loader_append_system_prompt else None
+        append_system_prompt = "\n\n".join(loader_append_system_prompt) if loader_append_system_prompt else ""
         loaded_skills = self._resource_loader.get_skills().skills
         loaded_context_files = self._resource_loader.get_agents_files()
 
-        self._base_system_prompt_options = BuildSystemPromptOptions(
-            cwd=self._cwd,
-            skills=loaded_skills,
-            context_files=loaded_context_files,
-            custom_prompt=loader_system_prompt,
-            append_system_prompt=append_system_prompt,
-            selected_tools=valid_tool_names,
-            tool_snippets=tool_snippets,
-            prompt_guidelines=prompt_guidelines,
+        self._base_system_prompt_options = normalize_build_system_prompt_options(
+            BuildSystemPromptOptions(
+                cwd=self._cwd,
+                skills=loaded_skills,
+                context_files=loaded_context_files,
+                custom_prompt=loader_system_prompt,
+                append_system_prompt=append_system_prompt,
+                selected_tools=valid_tool_names,
+                tool_snippets=tool_snippets,
+                tool_guidelines=dict(self._tool_prompt_guidelines),
+            )
         )
-        return build_system_prompt(self._base_system_prompt_options)
+
+    def _prepare_prompt_and_tool_loadout(
+        self, options: NormalizedBuildSystemPromptOptions, messages: list[Any] | None = None
+    ) -> SystemMessage | None:
+        """Apply a prompt and tool loadout for the next request. Sets the executable tools and
+        returns a system message patching the prompt sections the model currently has (replayed
+        from `messages`), or None when the prompt is unchanged. Tool changes are declared by
+        the agent loop before the request.
+
+        A forced prompt does not affect the transcript: the structured sections are still diffed
+        and persisted, and the forced text is projected onto the request by
+        `_install_agent_forced_prompt_projection`.
+        """
+        options.selected_tools = [
+            name for name in dict.fromkeys(options.selected_tools or []) if name in self._tool_registry
+        ]
+        self.agent.state.tools = [self._tool_registry[name] for name in options.selected_tools]
+        current = get_current_system_message(messages if messages is not None else self.agent.state.messages)
+        sections = diff_system_prompt_sections(
+            (current.sections if current is not None else None) or {}, build_system_prompt_sections(options)
+        )
+        if sections is None:
+            return None
+        return SystemMessage(content="", sections=sections, timestamp=_now_ms())
+
+    def _install_agent_forced_prompt_projection(self) -> None:
+        """Send a forced prompt as the provider's leading system prompt without recording it.
+
+        A `before_agent_start` handler that returns `systemPrompt` needs that exact text at the
+        head of the request; a mid-conversation system message would leave the original prompt
+        in place. The forced text is a rendering of the current prompt, so the transcript keeps
+        its structured sections and the request is projected instead: the system messages
+        collapse into one head holding the forced text and the current tools. Runs after the
+        `context` extension handlers.
+        """
+        previous_transform_context = self.agent.transform_context
+
+        async def transform_context(messages: list[Any], cancel=None) -> list[Any]:
+            transformed = (
+                await previous_transform_context(messages, cancel)
+                if previous_transform_context is not None
+                else messages
+            )
+            forced = (
+                self._run_system_prompt_options.force_system_prompt
+                if self._run_system_prompt_options is not None
+                else None
+            )
+            if forced is None:
+                return transformed
+            current = get_current_system_message(transformed)
+            head = SystemMessage(
+                content=forced,
+                tools_added=current.tools_added if current is not None else None,
+                timestamp=current.timestamp if current is not None else _now_ms(),
+            )
+            return [head, *(message for message in transformed if getattr(message, "role", None) != "system")]
+
+        self.agent.transform_context = transform_context
+
+    def _restore_tools_from_transcript(self) -> None:
+        """Restore the active tool loadout declared by the session transcript, if it declares one."""
+        current = get_current_system_message(self.session_manager.build_session_context().messages)
+        if current is None:
+            return
+        tool_names = [tool.name for tool in current.tools_added or [] if tool.name in self._tool_registry]
+        self.agent.state.tools = [self._tool_registry[name] for name in tool_names]
+        self._rebuild_system_prompt(tool_names)
 
     # =========================================================================
     # Prompting
@@ -1094,7 +1188,7 @@ class AgentSession:
             while await self._handle_post_agent_run():
                 await self.agent.continue_()
         finally:
-            self._system_prompt_override = None
+            self._run_system_prompt_options = None
             # The flag flips before the flush, under the guard that
             # `record_bash_result` takes for its pending-vs-direct decision:
             # a bash result recorded in the settle window then persists
@@ -1248,34 +1342,34 @@ class AgentSession:
             self._pending_next_turn_messages = []
 
             # Emit before_agent_start extension event
+            selected_tools_before = list(self._base_system_prompt_options.selected_tools or [])
             result = await self._extension_runner.emit_before_agent_start(
                 expanded_text,
                 current_images,
-                self._base_system_prompt,
                 self._base_system_prompt_options,
             )
-            # Add all custom messages from extensions
-            if result and result.get("messages"):
-                for msg in result["messages"]:
-                    content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
-                    messages.append(
-                        CustomMessage(
-                            custom_type=msg.get("customType") if isinstance(msg, dict) else msg.custom_type,
-                            # Untyped extensions can pass null content; normalize at ingestion.
-                            content=content if content is not None else [],
-                            display=msg.get("display") if isinstance(msg, dict) else msg.display,
-                            details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
-                            timestamp=_now_ms(),
-                        )
+            system_prompt_options = result["systemPromptOptions"]
+            # Handlers may edit event["systemPromptOptions"].selected_tools or call set_active_tools(),
+            # which updates the live loadout instead. An explicit edit wins; otherwise the live
+            # loadout is authoritative, so a set_active_tools() call is not undone here.
+            if system_prompt_options.selected_tools == selected_tools_before:
+                system_prompt_options.selected_tools = self.get_active_tool_names()
+            for msg in result["messages"]:
+                content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+                messages.append(
+                    CustomMessage(
+                        custom_type=msg.get("customType") if isinstance(msg, dict) else msg.custom_type,
+                        # Untyped extensions can pass null content; normalize at ingestion.
+                        content=content if content is not None else [],
+                        display=msg.get("display") if isinstance(msg, dict) else msg.display,
+                        details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
+                        timestamp=_now_ms(),
                     )
-            # Apply extension-modified system prompt, or reset to base
-            if result and result.get("systemPrompt") is not None:
-                self._system_prompt_override = result["systemPrompt"]
-                self.agent.state.system_prompt = result["systemPrompt"]
-            else:
-                # Ensure we're using the base prompt (in case previous turn had modifications)
-                self._system_prompt_override = None
-                self.agent.state.system_prompt = self._base_system_prompt
+                )
+            update_message = self._prepare_prompt_and_tool_loadout(system_prompt_options)
+            self._run_system_prompt_options = system_prompt_options
+            if update_message is not None:
+                messages.insert(0, update_message)
         except Exception:
             if preflight_result:
                 preflight_result(False)
@@ -2315,8 +2409,7 @@ class AgentSession:
         }
 
         await self._resource_loader.extend_resources(extension_paths)
-        self._base_system_prompt = self._rebuild_system_prompt(self.get_active_tool_names())
-        self.agent.state.system_prompt = self._base_system_prompt
+        self._rebuild_system_prompt(self.get_active_tool_names())
 
     def _build_extension_resource_paths(self, entries: list[dict[str, str]]) -> list[dict[str, Any]]:
         results = []
@@ -3053,6 +3146,7 @@ class AgentSession:
             # Update agent state
             session_context = self.session_manager.build_session_context()
             self.agent.state.messages = session_context.messages
+            self._restore_tools_from_transcript()
 
             # Emit session_tree event
             await self._extension_runner.emit(

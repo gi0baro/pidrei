@@ -21,6 +21,7 @@ from pidrei.core.extensions import ToolDefinition
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
 from pidrei_ai.types import TextContent, Usage, UsageCost
+from pidrei_ai.utils.transcript import get_current_system_prompt
 
 from .harness import create_harness, get_assistant_texts
 
@@ -459,7 +460,7 @@ async def test_allows_before_agent_start_handlers_to_inject_messages_and_modify_
     seen: dict = {"systemPrompt": "", "injected": False}
 
     async def capture(context, *_rest):
-        seen["systemPrompt"] = context.system_prompt or ""
+        seen["systemPrompt"] = get_current_system_prompt(context.messages)
         seen["injected"] = any(
             getattr(message, "role", None) == "user" and "injected" in _message_texts(message)
             for message in context.messages

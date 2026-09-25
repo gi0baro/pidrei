@@ -12,6 +12,7 @@ from typing import Any
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, ToolCall, Usage, UserMessage
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy
 from pidrei_ai.utils.text import content_text
+from pidrei_ai.utils.transcript import normalize_context
 
 from ..messages import (
     convert_to_llm,
@@ -269,7 +270,7 @@ async def generate_branch_summary(
     # behavior (timeouts, retries, attribution headers) stays consistent without
     # running through agent state/events. Retried via complete_summarization so
     # transient stream drops reuse the configured retry policy.
-    context = Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages)
+    context = normalize_context(Context(system_prompt=SUMMARIZATION_SYSTEM_PROMPT, messages=summarization_messages))
     max_tokens = min(4096, model.max_tokens if model.max_tokens > 0 else float("inf"))
     request_options = SimpleStreamOptions(
         api_key=api_key, headers=headers, env=env, cancel=cancel, max_tokens=max_tokens

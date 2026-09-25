@@ -15,6 +15,7 @@ from pidrei_ai.api import anthropic_messages, openai_completions, openai_respons
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
 from pidrei_ai.utils import http
 from pidrei_ai.utils.http_proxy import UNSUPPORTED_PROXY_PROTOCOL_MESSAGE, resolve_http_proxy_url_for_target
+from pidrei_ai.utils.transcript import normalize_context
 
 
 PROXY_ENV_KEYS = [
@@ -182,7 +183,7 @@ async def test_adapters_resolve_their_client_from_the_scoped_env(api, base_url, 
         "openai-completions": openai_completions,
         "openai-responses": openai_responses,
     }[api]
-    context = Context(messages=[UserMessage(content="hi", timestamp=int(time.time() * 1000))])
+    context = normalize_context(Context(messages=[UserMessage(content="hi", timestamp=int(time.time() * 1000))]))
     scoped_env = {"HTTPS_PROXY": "http://scoped.example:8080"}
 
     with recording_client_for() as calls, process_proxy_env():
