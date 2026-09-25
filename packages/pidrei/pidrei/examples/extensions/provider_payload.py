@@ -22,7 +22,7 @@ def _append(path: str, text: str) -> None:
         handle.write(text)
 
 
-def extension(pi):
+async def extension(pi):
     async def log(ctx, text: str) -> None:
         log_file = os.path.join(ctx.cwd, CONFIG_DIR_NAME, "provider-payload.log")
         # pi appends with appendFileSync; blocking the event loop is not an

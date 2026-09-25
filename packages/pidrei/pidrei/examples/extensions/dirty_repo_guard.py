@@ -37,7 +37,7 @@ async def check_dirty_repo(pi, ctx, action: str) -> dict[str, bool] | None:
     return None
 
 
-def extension(pi):
+async def extension(pi):
     async def on_before_switch(event, ctx):
         action = "new session" if event["reason"] == "new" else "switch session"
         return await check_dirty_repo(pi, ctx, action)

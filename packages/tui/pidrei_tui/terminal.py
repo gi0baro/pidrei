@@ -54,7 +54,7 @@ import tonio.colored as tonio
 from tonio.colored import io as tonio_io, signals as tonio_signals
 from tonio.colored.sync import channel as tonio_channel
 
-from ._owner import OwnerTask, TimerHandle
+from ._owner import OwnerStopped, OwnerTask, TimerHandle
 from ._timers import Interval
 from .keys import set_kitty_protocol_active
 from .stdin_buffer import StdinBuffer
@@ -126,6 +126,12 @@ class Terminal(Protocol):
 
     async def write(self, data: str) -> None:
         """Write output to terminal."""
+        ...
+
+    def write_sync(self, data: str) -> None:
+        """Queue output without waiting for it: ordered with every other
+        write (never inside a frame), callable from any task. pidrei-only
+        (pi writes synchronously on its one thread)."""
         ...
 
     @property
@@ -277,7 +283,7 @@ class ProcessTerminal:
         self._out_scope.spawn(self._output_pump())
 
         # Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
-        self._write_stdout("\x1b[?2004h")
+        self.write_sync("\x1b[?2004h")
 
         # Set up the resize watcher and input pump; the pump plays the role of
         # node's process.stdin "data" listener.
@@ -332,8 +338,9 @@ class ProcessTerminal:
 
         # Re-wrap paste content with bracketed paste markers for existing editor handling
         async def on_paste(content: str) -> None:
-            if self._input_handler is not None:
-                await self._input_handler(f"\x1b[200~{content}\x1b[201~")
+            handler = self._input_handler
+            if handler is not None:
+                await handler(f"\x1b[200~{content}\x1b[201~")
 
         self._stdin_buffer.on_paste(on_paste)
 
@@ -357,7 +364,7 @@ class ProcessTerminal:
         self._setup_stdin_buffer()
         self._keyboard_protocol_pushed = True
         self._clear_negotiation_buffer()
-        self._write_stdout(KITTY_KEYBOARD_PROTOCOL_QUERY)
+        self.write_sync(KITTY_KEYBOARD_PROTOCOL_QUERY)
 
     def _handle_keyboard_protocol_negotiation_sequence(
         self, negotiation_sequence: KeyboardProtocolNegotiationSequence | None
@@ -443,7 +450,8 @@ class ProcessTerminal:
         self._negotiation_flush_timer = None
 
     async def _forward_input_sequence(self, sequence: str) -> None:
-        if self._input_handler is None:
+        handler = self._input_handler
+        if handler is None:
             return
         is_apple_terminal = sequence == "\r" and is_apple_terminal_session()
         input_ = normalize_apple_terminal_input(
@@ -451,18 +459,18 @@ class ProcessTerminal:
             is_apple_terminal,
             is_apple_terminal and _is_native_modifier_pressed("shift"),
         )
-        await self._input_handler(input_)
+        await handler(input_)
 
     def _enable_modify_other_keys(self) -> None:
         if self._kitty_protocol_active or self._modify_other_keys_active:
             return
-        self._write_stdout("\x1b[>4;2m")
+        self.write_sync("\x1b[>4;2m")
         self._modify_other_keys_active = True
 
     def _disable_modify_other_keys(self) -> None:
         if not self._modify_other_keys_active:
             return
-        self._write_stdout("\x1b[>4;0m")
+        self.write_sync("\x1b[>4;0m")
         self._modify_other_keys_active = False
 
     async def _input_pump(self) -> None:
@@ -515,20 +523,47 @@ class ProcessTerminal:
                     break  # stop() requested; exit through the receiver's cleanup
                 handler()
 
-    async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
+    def _disable_keyboard_protocols(self) -> None:
+        """Owner-confined: the negotiation buffer, its flush timer and the protocol
+        flags belong to the input owner."""
         should_disable_kitty_protocol = self._keyboard_protocol_pushed or self._kitty_protocol_active
         self._clear_negotiation_buffer()
         if should_disable_kitty_protocol:
             # Disable Kitty keyboard protocol first so any late key releases
             # do not generate new Kitty escape sequences.
-            self._write_stdout("\x1b[<u")
+            self.write_sync("\x1b[<u")
             self._keyboard_protocol_pushed = False
             self._kitty_protocol_active = False
             set_kitty_protocol_active(False)
         self._disable_modify_other_keys()
 
-        previous_handler = self._input_handler
-        self._input_handler = None
+    async def _run_on_input_owner(self, fn) -> None:
+        """Run input-owner state changes on the owner and wait for them. Callers
+        must be off the owner (`run` from the owner deadlocks): the shutdown paths
+        are — Ctrl+C/Ctrl+D and editor submits spawn it, and the signal watcher is
+        its own task. A crashed owner runs nothing anymore, so the changes are made
+        here directly."""
+
+        async def job() -> None:
+            fn()
+
+        try:
+            await self.input_owner.run(job)
+        except OwnerStopped:
+            fn()
+
+    async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
+        """Must be called off the input owner (see `_run_on_input_owner`)."""
+        previous_handler: list[Any] = []
+
+        def detach() -> None:
+            # On the owner, between chunks: input handled before this is complete,
+            # input after it finds no handler — pi's synchronous cut.
+            self._disable_keyboard_protocols()
+            previous_handler.append(self._input_handler)
+            self._input_handler = None
+
+        await self._run_on_input_owner(detach)
 
         # The running input pump stamps _last_read_time on every read; pi
         # attaches a dedicated stdin listener for the same bookkeeping.
@@ -546,34 +581,42 @@ class ProcessTerminal:
                     break
                 await tonio.sleep(min(idle_s, time_left))
         finally:
-            self._input_handler = previous_handler
+            handler = previous_handler[0]
+
+            async def restore() -> None:
+                self._input_handler = handler
+
+            # Posted (sync): served even if this task is being cancelled, and FIFO
+            # puts it after every chunk read during the drain — those are dropped,
+            # as in pi. With no owner serving nothing races the write.
+            if self.input_owner.serving:
+                self.input_owner.post(restore)
+            else:
+                self._input_handler = handler
 
     async def stop(self) -> None:
         if self._clear_progress_interval():
-            self._write_stdout(TERMINAL_PROGRESS_CLEAR_SEQUENCE)
+            self.write_sync(TERMINAL_PROGRESS_CLEAR_SEQUENCE)
 
         # Disable bracketed paste mode
-        self._write_stdout("\x1b[?2004l")
+        self.write_sync("\x1b[?2004l")
 
-        should_disable_kitty_protocol = self._keyboard_protocol_pushed or self._kitty_protocol_active
-        self._clear_negotiation_buffer()
+        def detach_input() -> None:
+            # On the owner (like `drain_input`'s cut): the chunk being handled
+            # completes, later ones find no handler.
+            # Disable Kitty keyboard protocol if not already done by drain_input()
+            self._disable_keyboard_protocols()
 
-        # Disable Kitty keyboard protocol if not already done by drain_input()
-        if should_disable_kitty_protocol:
-            self._write_stdout("\x1b[<u")
-            self._keyboard_protocol_pushed = False
-            self._kitty_protocol_active = False
-            set_kitty_protocol_active(False)
-        self._disable_modify_other_keys()
+            # Clean up StdinBuffer (its flush timer fires on the owner)
+            if self._stdin_buffer is not None:
+                self._stdin_buffer.destroy()
+                self._stdin_buffer = None
 
-        # Clean up StdinBuffer
-        if self._stdin_buffer is not None:
-            self._stdin_buffer.destroy()
-            self._stdin_buffer = None
+            # Remove event handlers
+            self._stdin_data_handler = None
+            self._input_handler = None
 
-        # Remove event handlers
-        self._stdin_data_handler = None
-        self._input_handler = None
+        await self._run_on_input_owner(detach_input)
         # No nudge needed for the resize watcher: the scope cancel below
         # unwinds it through `signal_receiver.__exit__` (sync `with` cleanup
         # runs on cancellation), which removes the SIGWINCH registration. A
@@ -600,7 +643,7 @@ class ProcessTerminal:
 
         # Every restore sequence above is queued; wait for the pump to put
         # them on the wire, then retire it. Later writes (none expected) take
-        # the direct path in `_write_stdout`.
+        # the direct path in `write_sync`.
         if self._out_tx is not None:
             await self.write("")
             self._out_tx.close()
@@ -625,10 +668,10 @@ class ProcessTerminal:
         The wait is what gives the render loop backpressure: a terminal that
         drains slowly (SSH) paces rendering instead of piling frames up in the
         queue. Writers that need ordering but not completion use the sync
-        `_write_stdout`.
+        `write_sync`.
         """
         if self._out_tx is None:
-            self._write_stdout(data)
+            self.write_sync(data)
             return
         done = tonio.Event()
         self._out_tx.send((data, done))
@@ -658,36 +701,36 @@ class ProcessTerminal:
     def move_by(self, lines: int) -> None:
         if lines > 0:
             # Move down
-            self._write_stdout(f"\x1b[{lines}B")
+            self.write_sync(f"\x1b[{lines}B")
         elif lines < 0:
             # Move up
-            self._write_stdout(f"\x1b[{-lines}A")
+            self.write_sync(f"\x1b[{-lines}A")
         # lines == 0: no movement
 
     def hide_cursor(self) -> None:
-        self._write_stdout("\x1b[?25l")
+        self.write_sync("\x1b[?25l")
 
     def show_cursor(self) -> None:
-        self._write_stdout("\x1b[?25h")
+        self.write_sync("\x1b[?25h")
 
     def clear_line(self) -> None:
-        self._write_stdout("\x1b[K")
+        self.write_sync("\x1b[K")
 
     def clear_from_cursor(self) -> None:
-        self._write_stdout("\x1b[J")
+        self.write_sync("\x1b[J")
 
     def clear_screen(self) -> None:
-        self._write_stdout("\x1b[2J\x1b[H")  # Clear screen and move to home (1,1)
+        self.write_sync("\x1b[2J\x1b[H")  # Clear screen and move to home (1,1)
 
     def set_title(self, title: str) -> None:
         # OSC 0;title BEL - set terminal window title
-        self._write_stdout(f"\x1b]0;{title}\x07")
+        self.write_sync(f"\x1b]0;{title}\x07")
 
     def set_progress(self, active: bool) -> None:
         with self._lock:
             if active:
                 # OSC 9;4;3 - indeterminate progress
-                self._write_stdout(TERMINAL_PROGRESS_ACTIVE_SEQUENCE)
+                self.write_sync(TERMINAL_PROGRESS_ACTIVE_SEQUENCE)
                 if self._progress_interval is None:
                     interval: Interval | None = None
 
@@ -697,14 +740,14 @@ class ProcessTerminal:
                             # callback past its cancellation check.
                             if self._progress_interval is not interval:
                                 return
-                            self._write_stdout(TERMINAL_PROGRESS_ACTIVE_SEQUENCE)
+                            self.write_sync(TERMINAL_PROGRESS_ACTIVE_SEQUENCE)
 
                     interval = Interval(TERMINAL_PROGRESS_KEEPALIVE_MS, fire)
                     self._progress_interval = interval
             else:
                 self._clear_progress_interval()
                 # OSC 9;4;0 - clear progress
-                self._write_stdout(TERMINAL_PROGRESS_CLEAR_SEQUENCE)
+                self.write_sync(TERMINAL_PROGRESS_CLEAR_SEQUENCE)
 
     def _clear_progress_interval(self) -> bool:
         with self._lock:
@@ -739,8 +782,10 @@ class ProcessTerminal:
             pass
         self._saved_termios = None
 
-    def _write_stdout(self, data: str) -> None:
-        """Queue ``data`` without waiting for it (sync; callable under `_lock`).
+    def write_sync(self, data: str) -> None:
+        """Queue ``data`` without waiting for it (sync; callable under `_lock`
+        and from any task): ordered with every other write through the output
+        pump, so it never lands inside a frame.
 
         Before `start()` / after `stop()` there is no pump and the fd is in
         its original blocking mode, so the bytes go straight out.

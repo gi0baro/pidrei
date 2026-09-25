@@ -15,7 +15,7 @@ import time
 from pidrei_tui import Box, Text
 
 
-def extension(pi):
+async def extension(pi):
     # Register custom renderer for "status-update" messages
     def render_status(message, options, theme):
         details = message.details or {}

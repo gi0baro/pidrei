@@ -80,21 +80,21 @@ def _runtime_host(session) -> SimpleNamespace:
     )
 
 
-def _throwing_extension(pi) -> None:
+async def _throwing_extension(pi) -> None:
     async def handler(_event, _ctx):
         raise Exception("Routing failed")
 
     pi.on("user_bash", handler)
 
 
-def _empty_result_extension(pi) -> None:
+async def _empty_result_extension(pi) -> None:
     async def handler(_event, _ctx):
         return {}
 
     pi.on("user_bash", handler)
 
 
-def _undefined_extension(pi) -> None:
+async def _undefined_extension(pi) -> None:
     async def handler(_event, _ctx):
         return None
 
@@ -148,13 +148,18 @@ async def test_rpc_user_bash_failure_handling(monkeypatch, extension, error, exe
             _pump_stdin_commands=fake_pump,
         ):
             run = tonio.spawn(rpc_mode.run_rpc_mode(_runtime_host(harness.session)))
-            await ready.wait()
-            handler["on_line"](json.dumps({"id": "bash-request", "type": "bash", "command": "pwd"}))
+            try:
+                await ready.wait(5)
+                assert ready.is_set()
+                handler["on_line"](json.dumps({"id": "bash-request", "type": "bash", "command": "pwd"}))
 
-            response = await _wait_for_record(
-                lines, lambda record: record.get("type") == "response" and record.get("id") == "bash-request"
-            )
-            stop.set()
+                response = await _wait_for_record(
+                    lines, lambda record: record.get("type") == "response" and record.get("id") == "bash-request"
+                )
+            finally:
+                # Also on a failed wait: the RPC loop must not stay parked once the
+                # seams are restored.
+                stop.set()
             await run
 
         assert response["command"] == "bash"
@@ -182,7 +187,7 @@ async def test_interactive_user_bash_fails_closed_when_a_handler_returns_an_empt
 ):
     events: list[dict[str, Any]] = []
 
-    def extension(pi) -> None:
+    async def extension(pi) -> None:
         async def handler(event, _ctx):
             events.append(event)
             return {}
@@ -206,6 +211,7 @@ async def test_interactive_user_bash_fails_closed_when_a_handler_returns_an_empt
             show_warning=lambda _message: None,
             _update_editor_border_color=lambda: None,
             _set_editor_text=lambda _text: None,
+            ui=SimpleNamespace(post_ui=lambda fn: fn()),
         )
         context._add_editor_history = context.history.append
         context._handle_bash_command = partial(InteractiveMode._handle_bash_command, context)

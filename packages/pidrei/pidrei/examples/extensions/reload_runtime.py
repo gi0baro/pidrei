@@ -12,7 +12,7 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 
 
-def extension(pi):
+async def extension(pi):
     # Command entrypoint for reload.
     # Treat reload as terminal for this handler.
     async def handle_reload(_args, ctx) -> None:

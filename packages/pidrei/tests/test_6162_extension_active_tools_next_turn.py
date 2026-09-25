@@ -19,7 +19,7 @@ def get_provider_tool_names(context: TranscriptContext) -> list[str]:
     return sorted(tool.name for tool in get_current_tools(context.messages))
 
 
-def register_switch_tools(pi) -> None:
+async def register_switch_tools(pi) -> None:
     """Register `switch_tools`, which swaps the active set to `after_switch` when executed."""
 
     async def switch(*_args):
@@ -115,12 +115,12 @@ async def test_reports_the_refreshed_system_prompt_during_the_run(harnesses):
 
 @pytest.mark.tonio
 async def test_preserves_before_agent_start_system_prompt_overrides_when_tools_change_mid_run(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_agent_start(event, _ctx):
             return {"systemPrompt": f"{event['systemPrompt']}\n\nkeep this run override"}
 
         pi.on("before_agent_start", on_before_agent_start)
-        register_switch_tools(pi)
+        await register_switch_tools(pi)
 
     harness = await create_harness(extension_factories=[factory])
     harnesses.append(harness)

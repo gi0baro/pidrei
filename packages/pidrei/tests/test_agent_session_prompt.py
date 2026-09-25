@@ -52,7 +52,7 @@ def process_image_calls(monkeypatch) -> list[tuple]:
 async def test_uses_the_model_selected_by_before_agent_start_for_image_normalization(harnesses, process_image_calls):
     strict_model = None
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_agent_start(_event, _ctx):
             if strict_model is None:
                 raise Exception("Expected strict model")
@@ -60,11 +60,18 @@ async def test_uses_the_model_selected_by_before_agent_start_for_image_normaliza
 
         pi.on("before_agent_start", on_before_agent_start)
 
-    harness = await create_harness(models=[{"id": "wide"}, {"id": "strict"}], extension_factories=[factory])
+    resize_options = ModelImageResizeOptions(max_width=1000, max_height=1000, max_bytes=500000, jpeg_quality=70)
+    # The limits are part of the model definition: `Model`s are shared with the
+    # provider and the model runtime, so tests never assign to one in place.
+    harness = await create_harness(
+        models=[
+            {"id": "wide"},
+            {"id": "strict", "input_limits": ModelInputLimits(images=ModelImageInputLimits(resize=resize_options))},
+        ],
+        extension_factories=[factory],
+    )
     harnesses.append(harness)
     strict_model = harness.get_model("strict")
-    resize_options = ModelImageResizeOptions(max_width=1000, max_height=1000, max_bytes=500000, jpeg_quality=70)
-    strict_model.input_limits = ModelInputLimits(images=ModelImageInputLimits(resize=resize_options))
     harness.set_responses([faux_assistant_message("done")])
 
     await harness.session.prompt(

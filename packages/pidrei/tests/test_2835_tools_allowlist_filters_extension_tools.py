@@ -19,7 +19,7 @@ async def _ok(*_args):
     return {"content": [{"type": "text", "text": "ok"}], "details": {}}
 
 
-def dynamic_tool_factory(pi) -> None:
+async def dynamic_tool_factory(pi) -> None:
     def on_session_start(_event, _ctx):
         pi.register_tool(
             ToolDefinition(

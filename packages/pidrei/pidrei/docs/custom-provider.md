@@ -46,7 +46,7 @@ headers or provider payloads.
 from pidrei_ai.registry import create_provider
 
 
-def extension(pi):
+async def extension(pi):
     provider = create_provider(
         id="my-provider",
         name="My Provider",

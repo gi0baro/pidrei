@@ -75,7 +75,7 @@ async def _log_access(path: str, allowed: bool, reason: str | None = None) -> No
         pass
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel=None, _on_update=None, ctx=None):
         path = params["path"]
         offset = params.get("offset")

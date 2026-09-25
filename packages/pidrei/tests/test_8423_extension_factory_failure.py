@@ -37,12 +37,12 @@ async def test_discards_runtime_changes_and_disables_the_failed_api():
 
     event_bus.on("factory-failure", on_host)
 
-    def working_factory(pi) -> None:
+    async def working_factory(pi) -> None:
         pi.register_provider("working-provider", PROVIDER_CONFIG)
 
     await load_extension_from_factory(working_factory, os.getcwd(), event_bus, runtime, "<working>")
 
-    def failing_factory(pi) -> None:
+    async def failing_factory(pi) -> None:
         captured.append(pi)
 
         async def on_factory_failure(_data) -> None:
@@ -91,7 +91,7 @@ async def test_does_not_discard_a_concurrently_loaded_factorys_provider():
     async def load_working() -> None:
         await registered.wait()
 
-        def working_factory(pi) -> None:
+        async def working_factory(pi) -> None:
             pi.register_provider("working-provider", PROVIDER_CONFIG)
 
         await load_extension_from_factory(working_factory, os.getcwd(), event_bus, runtime, "<working>")

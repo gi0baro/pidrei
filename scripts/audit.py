@@ -28,6 +28,11 @@ itself instead.
      defined `show_new_version_notification`), which only bites on the code
      path that happens to run. Classes with a non-local base or dynamic
      `setattr(self, ...)` are skipped rather than guessed at.
+  6. probing whether a value is awaitable — `hasattr(x, "__await__")`,
+     `inspect.isawaitable`/`iscoroutine`/`iscoroutinefunction`,
+     `asyncio.iscoroutine`, `isinstance(x, Awaitable | Coroutine)`. Every
+     callback contract is async-only (pi's `T | Promise<T>` unions are a
+     JS-ism); a probe is how a union creeps back in during a port.
 
 Run via `make audit`. Exit code 1 on any finding.
 """
@@ -139,6 +144,39 @@ def _collect_module_functions(paths: list[pathlib.Path]) -> tuple[set[str], set[
     return async_names - sync_names, sync_names
 
 
+_AWAITABLE_PROBE_FUNCTIONS = {"isawaitable", "iscoroutine", "iscoroutinefunction"}
+_AWAITABLE_TYPES = {"Awaitable", "Coroutine"}
+
+
+def _awaitable_probe(call: ast.Call) -> str | None:
+    """The source of `call` when it tests whether a value is awaitable (check 6)."""
+    func = call.func
+    name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+    if name in _AWAITABLE_PROBE_FUNCTIONS:
+        return ast.unparse(call)
+    if (
+        name == "hasattr"
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Constant)
+        and call.args[1].value == "__await__"
+    ):
+        return ast.unparse(call)
+    if name == "isinstance" and len(call.args) == 2:
+        types = call.args[1]
+        candidates = types.elts if isinstance(types, ast.Tuple) else [types]
+        for candidate in candidates:
+            type_name = (
+                candidate.attr
+                if isinstance(candidate, ast.Attribute)
+                else candidate.id
+                if isinstance(candidate, ast.Name)
+                else None
+            )
+            if type_name in _AWAITABLE_TYPES:
+                return ast.unparse(call)
+    return None
+
+
 def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str]) -> None:
     source = path.read_text()
     tree = ast.parse(source, str(path))
@@ -154,6 +192,8 @@ def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str
     module_async |= file_imports & imported_async
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and (probe := _awaitable_probe(node)) is not None:
+            findings.append(f"{rel}:{node.lineno}: `{probe}` probes for an awaitable (callbacks are async-only)")
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(("tonio._", "tonio.colored._")):
             findings.append(f"{rel}:{node.lineno}: imports private tonio API `{node.module}`")
         if isinstance(node, ast.Import):

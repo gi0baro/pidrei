@@ -1,6 +1,7 @@
 """Port of pi's xAI device-code flow (packages/ai/src/auth/oauth/xai.ts)."""
 
 import math
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -143,7 +144,7 @@ async def _request_device_code(cancel: CancelToken) -> _XaiDeviceCode:
     return _parse_device_code(body)
 
 
-async def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken) -> OAuthCredential:
+def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken) -> Awaitable[OAuthCredential]:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _post_form(
             XAI_TOKEN_URL,
@@ -178,7 +179,7 @@ async def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken) -> OAuth
             status="failed", message=str(_request_failure("device token polling", response.status, body))
         )
 
-    return await poll_oauth_device_code_flow(
+    return poll_oauth_device_code_flow(
         poll=poll,
         interval_seconds=device.interval_seconds,
         expires_in_seconds=device.expires_in_seconds,

@@ -120,14 +120,17 @@ async def test_honors_image_auto_resize_being_disabled(harnesses):
 async def test_passes_the_current_model_profile_to_tool_result_normalization(harnesses):
     # pi asserts the options its mocked normalizer receives; here the real
     # normalizer runs, so the profile shows up in the resized dimensions.
-    harness = await create_harness(tools=[_screenshot_tool()])
-    harnesses.append(harness)
-    assert harness.session.model is not None, "Expected a model"
-    harness.session.model.input_limits = ModelInputLimits(
+    # The limits are part of the model definition: `Model`s are shared with the
+    # provider and the model runtime, so tests never assign to one in place.
+    input_limits = ModelInputLimits(
         images=ModelImageInputLimits(
             resize=ModelImageResizeOptions(max_width=1200, max_height=1000, max_bytes=500000, jpeg_quality=70)
         )
     )
+    harness = await create_harness(tools=[_screenshot_tool()], models=[{"id": "vision", "input_limits": input_limits}])
+    harnesses.append(harness)
+    assert harness.session.model is not None, "Expected a model"
+    assert harness.session.model.input_limits == input_limits
     harness.set_responses(
         [
             faux_assistant_message([faux_tool_call("screenshot", {})], stop_reason="toolUse"),

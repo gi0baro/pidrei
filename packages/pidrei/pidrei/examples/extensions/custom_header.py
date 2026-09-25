@@ -69,7 +69,7 @@ class MascotHeader:
         pass
 
 
-def extension(pi):
+async def extension(pi):
     # Set custom header immediately on load (if UI is available)
     async def on_session_start(_event, ctx) -> None:
         if ctx.mode == "tui":

@@ -136,7 +136,7 @@ def test_keeps_the_preamble_untagged_and_replaces_it_like_any_section():
 async def test_a_forced_prompt_is_sent_as_the_leading_prompt_for_the_run_and_never_recorded(harnesses):
     turn = 0
 
-    def extension(pi) -> None:
+    async def extension(pi) -> None:
         async def on_before_agent_start(event, _ctx):
             nonlocal turn
             turn += 1
@@ -208,7 +208,7 @@ def _register_named_tools(pi, *, with_prompt: bool) -> None:
 
 @pytest.mark.tonio
 async def test_set_active_tools_emits_prompt_sections_and_tool_changes_before_the_next_request(harnesses):
-    def extension(pi) -> None:
+    async def extension(pi) -> None:
         _register_named_tools(pi, with_prompt=True)
 
     harness = await create_harness(extension_factories=[extension], initial_active_tool_names=["first"])
@@ -254,7 +254,7 @@ async def test_set_active_tools_emits_prompt_sections_and_tool_changes_before_th
 
 @pytest.mark.tonio
 async def test_set_active_tools_in_before_agent_start_controls_the_same_request(harnesses):
-    def extension(pi) -> None:
+    async def extension(pi) -> None:
         _register_named_tools(pi, with_prompt=False)
         turn = 0
 

@@ -153,7 +153,12 @@ class AgentSessionRuntime:
         if self._rebind_session is not None:
             await self._rebind_session(self.session)
         if with_session is not None:
-            await with_session(self.session.create_replaced_session_context())
+            context = self.session.create_replaced_session_context()
+            try:
+                await with_session(context)
+            finally:
+                # Prompt options the callback checked out publish when it returns.
+                context.publish_system_prompt_options()
 
     async def switch_session(
         self,

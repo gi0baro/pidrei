@@ -136,7 +136,10 @@ class InteractiveThemeController:
         return result
 
     def _notify_changed(self) -> None:
-        self._ui.invalidate()
+        # Reached off the owner (settings, extension and /reload tasks): the
+        # cache walk is posted, resolved at apply time; `onChanged` posts its
+        # own work behind it.
+        self._ui.post_ui(lambda: self._ui.invalidate())
         self._on_changed()
 
     async def _set_auto_sync(self, enabled: bool) -> None:

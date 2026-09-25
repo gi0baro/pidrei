@@ -165,6 +165,9 @@ class _RpcExtensionUIContext:
         # Fire and forget - host can implement terminal title control
         self._output({"type": "extension_ui_request", "id": str(uuid.uuid4()), "method": "setTitle", "title": title})
 
+    def write_terminal(self, sequence: str) -> None:
+        """Raw terminal output not supported in RPC mode - the host owns the terminal."""
+
     async def custom(self, *_args, **_kwargs):
         # Custom UI not supported in RPC mode
         return None
@@ -179,9 +182,9 @@ class _RpcExtensionUIContext:
             {"type": "extension_ui_request", "id": str(uuid.uuid4()), "method": "set_editor_text", "text": text}
         )
 
-    def get_editor_text(self) -> str:
-        # Synchronous method can't wait for RPC response
-        # Host should track editor state locally if needed
+    async def get_editor_text(self) -> str:
+        # No request round-trip (pi's method is sync and returns ""): the
+        # host should track editor state locally if needed.
         return ""
 
     async def editor(self, title: str, prefill: str | None = None) -> str | None:

@@ -55,13 +55,15 @@ Project-scoped resources live in `.pidrei/` inside the project:
 
 ## Extending
 
-pidrei extensions are Python modules that define an `extension(pi)` function:
+pidrei extensions are Python modules that define an `async def extension(pi)`
+function:
 
 ```python
-def extension(pi):
-    @pi.on("session_start")
+async def extension(pi):
     async def on_start(event, ctx):
         ctx.ui.notify("hello from an extension", "info")
+
+    pi.on("session_start", on_start)
 ```
 
 Drop that in `.pidrei/extensions/hello.py` and it loads on the next start.

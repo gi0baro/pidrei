@@ -29,7 +29,7 @@ async def test_allows_an_extension_command_to_use_the_model_registry_stream(meth
     outcome: dict = {}
     model = faux.get_model()
 
-    def register_provider(pi) -> None:
+    async def register_provider(pi) -> None:
         pi.register_provider(
             faux.provider.id,
             {
@@ -51,7 +51,7 @@ async def test_allows_an_extension_command_to_use_the_model_registry_stream(meth
             },
         )
 
-    def register_command(pi) -> None:
+    async def register_command(pi) -> None:
         async def handler(_args, ctx):
             registered = ctx.model_registry.find(faux.provider.id, model.id)
             stream = getattr(ctx.model_registry, method)(

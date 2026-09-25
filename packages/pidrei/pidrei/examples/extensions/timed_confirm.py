@@ -16,7 +16,7 @@ import tonio.colored as tonio
 from pidrei_ai.utils.cancel import CancelToken
 
 
-def extension(pi):
+async def extension(pi):
     # Simple approach: use the timeout option (recommended). Timeouts are in
     # milliseconds, mirroring pi.
     async def run_timed(_args, ctx):

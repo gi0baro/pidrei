@@ -18,7 +18,6 @@ pi uses @xterm/headless; pyte differences the harness papers over:
 
 import re
 import threading
-import time
 
 import pyte
 import tonio.colored as tonio
@@ -45,10 +44,20 @@ class VirtualTerminal:
         # worker threads, which raises "generator already executing" — or
         # silently corrupts the screen. pi never has this: one JS thread.
         self._feed_lock = threading.Lock()
+        # `until` waiters, re-checked after every write (from the render
+        # loop's writer task as well as test tasks).
+        self._waiters_lock = threading.Lock()
+        self._waiters: list[_Waiter] = []
+        # The TUI driving this terminal, for `settle()`. `TUI.start` passes
+        # its bound `request_render` as the resize callback, so it is the
+        # callback's `__self__`; a restart by another TUI (mode switch)
+        # re-points it at the renderer now in charge.
+        self._tui = None
 
     async def start(self, on_input, on_resize) -> None:
         self._input_handler = on_input
         self._resize_handler = on_resize
+        self._tui = getattr(on_resize, "__self__", None)
         # Enable bracketed paste mode for consistency with ProcessTerminal
         self._feed("\x1b[?2004h")
 
@@ -78,6 +87,38 @@ class VirtualTerminal:
         # that way: `start()`'s enter sequence satisfied its first wait).
         if "\x1b[?2026h" in data:
             self._frames += 1
+        self._notify_waiters()
+
+    def _notify_waiters(self) -> None:
+        with self._waiters_lock:
+            waiters = list(self._waiters)
+        for waiter in waiters:
+            waiter.check()
+
+    async def until(self, predicate, timeout: float = 5.0) -> bool:
+        """Wait until `predicate()` holds, re-checked after every write.
+
+        Event-driven replacement for sleep-polling: fits any state that is
+        visible no later than a terminal write — the viewport, a recording
+        subclass's write log (they log before delegating here), the frame
+        counter, and TUI state published before its frame goes out (focus,
+        `_previous_screen`, the layout: `_do_render` publishes them, then the
+        frame is written). Registered first, then checked, so a write landing
+        in between is not missed. Bounded: a condition that never holds
+        returns False to the caller's assertion instead of hanging the suite.
+        """
+        waiter = _Waiter(predicate)
+        with self._waiters_lock:
+            self._waiters.append(waiter)
+        try:
+            waiter.check()
+            await waiter.reached.wait(timeout)
+        finally:
+            with self._waiters_lock:
+                self._waiters.remove(waiter)
+        if waiter.error is not None:
+            raise waiter.error
+        return waiter.reached.is_set()
 
     @property
     def frames(self) -> int:
@@ -121,6 +162,9 @@ class VirtualTerminal:
     def set_title(self, title: str) -> None:
         self._feed(f"\x1b]0;{title}\x07")
 
+    def write_sync(self, data: str) -> None:
+        self._feed(data)
+
     def set_progress(self, active: bool) -> None:
         pass
 
@@ -149,6 +193,7 @@ class VirtualTerminal:
             self._stream = pyte.Stream(self._screen)
             if buffer_lines:
                 self._stream.feed("\r\n".join(buffer_lines))
+        self._notify_waiters()
         if self._resize_handler is not None:
             self._resize_handler()
 
@@ -214,10 +259,10 @@ class VirtualTerminal:
         originally misdiagnosed as order-dependent.
 
         Pass `since` — the frame count captured *before* requesting the render
-        — to actually wait for that frame. Without it this keeps the original
-        settle-sleep, because most callers do not request a render at all and
-        waiting for a frame that never comes would cost the timeout each time
-        (measured: 152 tests went from ~3s to 41s).
+        — to wait for that frame. Without it this waits for the TUI to settle
+        (`settle()`): most callers do not request a render at all, so waiting
+        for a frame that never comes would cost the timeout each time. (It
+        used to be a 50ms settle-sleep, the same hope in a smaller dose.)
 
         `timeout` bounds the wait so a render that never lands fails the
         assertion it was blocking, rather than hanging the suite.
@@ -225,36 +270,64 @@ class VirtualTerminal:
         if since is None:
             if self._frames == 0:
                 # Nothing has been drawn yet, so the caller is waiting for the
-                # first frame `start()` requested — wait for that one rather
-                # than hoping it lands inside the settle sleep (on a slow
-                # runner it did not, and a search typed before the first
-                # layout anchored on the implicit scroll view).
-                since = 0
-            else:
-                await tonio.sleep(0.05)
+                # first frame `start()` requested — wait for that one (on a
+                # slow runner a search typed before the first layout anchored
+                # on the implicit scroll view).
+                await self.until(lambda: self._frames > 0, timeout)
+            await self.settle()
+            return
+        await self.until(lambda: self._frames > since, timeout)
+
+    async def settle(self) -> None:
+        """Wait until the TUI is render-idle: every render requested so far
+        has been drawn, and every frame is on the wire.
+
+        Probes on the TUI's input owner, where render requests are scheduled
+        (`request_render` posts `_schedule_render`; FIFO puts the probe behind
+        every request made before it). A pending render is either queued
+        behind the probe or parked in the 16ms throttle timer; the probe folds
+        the latter into an immediate render — the same single frame with the
+        same coalescing, only the wait dropped — and the next probe queues
+        behind it. An idle probe flushes the frame writer. Work the TUI does
+        off its owner (a detached copy, a spawned query) is not covered:
+        wait for its own signal.
+        """
+        tui = self._tui
+        assert tui is not None, "settle() needs a TUI started on this terminal"
+        idle = tonio.Event()
+
+        async def probe() -> None:
+            if tui._render_scheduled and tui._render_active:
+                await tui._schedule_render(False, True)
                 return
-        deadline = time.monotonic() + timeout
-        while self._frames <= since:
-            if time.monotonic() >= deadline:
-                return
-            await tonio.sleep(0.001)
+            await tui._flush_frames()
+            idle.set()
+
+        while not idle.is_set():
+            await tui.input_owner.run(probe)
 
 
-async def poll_until(check, timeout: float = 2.0):
-    """Poll `check` until it returns a truthy value and return that value.
+class _Waiter:
+    """One `VirtualTerminal.until` registration."""
 
-    For asynchronous effects with no completion signal (untracked spawns,
-    debounced requests, the render loop's state publish): wait on the
-    observable state itself instead of sleeping and hoping. Bounded like
-    `wait_for_render` so a condition that never holds hands the last (falsy)
-    value to the caller's assertion rather than hanging the suite.
-    """
-    deadline = time.monotonic() + timeout
-    while True:
-        value = check()
-        if value or time.monotonic() >= deadline:
-            return value
-        await tonio.sleep(0.001)
+    __slots__ = ("error", "predicate", "reached")
+
+    def __init__(self, predicate) -> None:
+        self.predicate = predicate
+        self.reached = tonio.Event()
+        self.error: BaseException | None = None
+
+    def check(self) -> None:
+        if self.reached.is_set():
+            return
+        try:
+            hit = self.predicate()
+        except Exception as error:
+            # Raised to the waiting test, never into the TUI's frame writer.
+            self.error = error
+            hit = True
+        if hit:
+            self.reached.set()
 
 
 class LoggingVirtualTerminal(VirtualTerminal):

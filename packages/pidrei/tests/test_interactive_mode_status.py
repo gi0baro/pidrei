@@ -9,6 +9,7 @@ The Windows npm-sibling labeling test is not ported (POSIX-only port).
 import os
 import re
 import sys
+import threading
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,9 +31,11 @@ from pidrei.modes.interactive.theme import get_editor_theme, init_theme, init_th
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScreen, visible_width
 
+from .ui_timer_helpers import manual_ui_timers
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tui" / "tests"))
-from virtual_terminal import VirtualTerminal, poll_until
+from virtual_terminal import VirtualTerminal
 
 
 @pytest.fixture(autouse=True)
@@ -158,11 +161,12 @@ class TestSetToolsExpanded:
         status_calls: list = []
         fake = SimpleNamespace(
             _tool_output_expanded=False,
+            _tool_output_expanded_guard=threading.Lock(),
             _custom_header=None,
             _built_in_header=SimpleNamespace(set_expanded=header_calls.append),
             _loaded_resources_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=loaded_calls.append)]),
             _chat_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=chat_calls.append)]),
-            ui=SimpleNamespace(request_render=lambda force=False: None),
+            ui=SimpleNamespace(request_render=lambda force=False: None, post_ui=lambda fn: fn()),
             show_status=status_calls.append,
         )
 
@@ -286,23 +290,24 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
     await ui.start()
     try:
 
-        def overlay_factory(_tui, _theme, _keybindings, done):
+        async def overlay_factory(_tui, _theme, _keybindings, done):
             closers["overlay"] = done
             return overlay
 
         overlay_done = await show_extension_custom("overlay", overlay_factory, {"overlay": True})
         # `run()` is untracked, so a render flush does not order its
-        # `set_focus` before this task — wait on the focus state itself.
-        await poll_until(lambda: overlay.focused)
+        # `set_focus` before this task — wait on the focus state itself
+        # (set before the render it requests, so the frame write re-checks it).
+        await terminal.until(lambda: overlay.focused)
         await flush_tui(ui, terminal)
         assert overlay.focused is True
 
-        def replacement_factory(_tui, _theme, _keybindings, done):
+        async def replacement_factory(_tui, _theme, _keybindings, done):
             closers["replacement"] = done
             return replacement
 
         replacement_done = await show_extension_custom("replacement", replacement_factory)
-        await poll_until(lambda: replacement.focused)
+        await terminal.until(lambda: replacement.focused)
         await flush_tui(ui, terminal)
         assert replacement.focused is True
 
@@ -329,13 +334,13 @@ class TestCreateExtensionUIContextAddAutocompleteProvider:
             return current
 
         setup_calls: list = []
-        fake = SimpleNamespace(_autocomplete_provider_wrappers=[])
+        fake = SimpleNamespace(_autocomplete_provider_wrappers=(), _extension_registry_guard=threading.Lock())
         fake._setup_autocomplete_provider = lambda: setup_calls.append(True)
 
         ui_context = InteractiveMode._create_extension_ui_context(fake)
         ui_context.add_autocomplete_provider(wrapper)
 
-        assert fake._autocomplete_provider_wrappers == [wrapper]
+        assert list(fake._autocomplete_provider_wrappers) == [wrapper]
         assert setup_calls == [True]
 
 
@@ -376,7 +381,8 @@ class TestSetupAutocompleteProvider:
         fake._default_editor = SimpleNamespace(set_autocomplete_provider=default_editor_providers.append)
         fake.editor = SimpleNamespace(set_autocomplete_provider=custom_editor_providers.append)
 
-        InteractiveMode._setup_autocomplete_provider(fake)
+        # pidrei: `_setup_autocomplete_provider` posts this body to the UI owner.
+        InteractiveMode._apply_autocomplete_provider(fake)
 
         assert len(default_editor_providers) == 1
         assert len(custom_editor_providers) == 1
@@ -405,7 +411,8 @@ class TestSetupAutocompleteProvider:
         fake._default_editor = SimpleNamespace(set_autocomplete_provider=default_editor_providers.append)
         fake.editor = SimpleNamespace(set_autocomplete_provider=lambda provider: None)
 
-        InteractiveMode._setup_autocomplete_provider(fake)
+        # pidrei: `_setup_autocomplete_provider` posts this body to the UI owner.
+        InteractiveMode._apply_autocomplete_provider(fake)
 
         provider = default_editor_providers[0]
         assert provider.trigger_characters == ["$", "!"]
@@ -492,6 +499,8 @@ def create_show_loaded_resources_fake(
     use_real_scope_groups=False,
 ):
     fake = _BareInteractiveMode()
+    # No UI owner here: posted UI work applies inline (island relaxation).
+    fake.ui = SimpleNamespace(post_ui=lambda fn: fn())
     fake._options = {"verbose": verbose}
     fake._tool_output_expanded = tool_output_expanded
     fake._loaded_resources_container = Container()
@@ -1042,7 +1051,8 @@ class TestWorkingStatusEmbedding:
         editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
         assert editor.embed_working_status is True
         editor.border_color = theme.get_thinking_border_color("high")
-        indicator = WorkingStatusIndicator(tui, "Working", None, lambda text: editor.border_color(text))
+        with manual_ui_timers():
+            indicator = WorkingStatusIndicator(tui, "Working", None, lambda text: editor.border_color(text))
         editor.set_working_status_indicator(indicator)
 
         top_border = editor.render(20)[0]
@@ -1056,14 +1066,16 @@ class TestWorkingStatusEmbedding:
         init_theme_sync("dark")
         tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
         editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
-        retry = RetryStatusIndicator(tui, 1, 3, 3000)
-        indicators = [
-            CompactionStatusIndicator(tui, "manual"),
-            CompactionStatusIndicator(tui, "threshold"),
-            CompactionStatusIndicator(tui, "overflow"),
-            BranchSummaryStatusIndicator(tui),
-            retry,
-        ]
+        # Spinners and the retry countdown stay put until the test ticks them.
+        with manual_ui_timers():
+            retry = RetryStatusIndicator(tui, 1, 3, 3000)
+            indicators = [
+                CompactionStatusIndicator(tui, "manual"),
+                CompactionStatusIndicator(tui, "threshold"),
+                CompactionStatusIndicator(tui, "overflow"),
+                BranchSummaryStatusIndicator(tui),
+                retry,
+            ]
         try:
             for indicator in indicators:
                 editor.set_working_status_indicator(indicator)

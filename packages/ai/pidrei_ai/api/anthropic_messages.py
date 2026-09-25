@@ -115,17 +115,21 @@ MID_CONVERSATION_OUTPUT_CONFIG_BETA = "mid-conversation-output-config-2026-07-01
 THINKING_BINDING_CONTROLS_BETA = "thinking-binding-controls-2026-08-01"
 MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
 
+
 # Stable deferred tool declared whenever native tool changes are in use. Anthropic adds
 # hidden prompt scaffolding as soon as any tool has `defer_loading`; declaring this
 # placeholder from the first request keeps that scaffolding in the cached prefix, so the
 # first real late tool does not invalidate the cache (measured: full miss without it).
 # It is never activated and the model cannot see it.
-_DEFERRED_TOOL_PLACEHOLDER: dict[str, Any] = {
-    "name": "__pi_deferred_placeholder__",
-    "description": "Reserved placeholder. Never available. Never call this.",
-    "input_schema": {"type": "object", "properties": {}, "required": []},
-    "defer_loading": True,
-}
+# Built per request: params reach the user `on_payload` hook, so no nested dict of it may
+# be shared between concurrent requests.
+def _deferred_tool_placeholder() -> dict[str, Any]:
+    return {
+        "name": "__pi_deferred_placeholder__",
+        "description": "Reserved placeholder. Never available. Never call this.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "defer_loading": True,
+    }
 
 
 def _should_use_server_side_fallback_beta(model: Model) -> bool:
@@ -1245,7 +1249,7 @@ def _build_params(
                 compat.supports_strict_tools,
                 tool_cache_control,
             ),
-            dict(_DEFERRED_TOOL_PLACEHOLDER),
+            _deferred_tool_placeholder(),
             *(
                 {**tool, "defer_loading": True}
                 for tool in _convert_tools(

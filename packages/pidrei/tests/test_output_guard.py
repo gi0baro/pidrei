@@ -18,6 +18,7 @@ import threading
 import pytest
 import tonio.colored as tonio
 
+from pidrei.core import output_guard
 from pidrei.core.output_guard import (
     flush_raw_stdout,
     restore_stdout,
@@ -26,6 +27,19 @@ from pidrei.core.output_guard import (
     write_raw_stdout,
 )
 from pidrei.utils.fd_io import FdReader
+
+
+class _SignallingWaiters(list):
+    """Replaces `output_guard._drain_waiters`: `registered` is set when a wait
+    enrols for the drain (the writer reads the same module global)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.registered = tonio.Event()
+
+    def append(self, waiter) -> None:
+        super().append(waiter)
+        self.registered.set()
 
 
 class _RecordingStream:
@@ -78,21 +92,35 @@ async def test_backpressure_waits_until_every_queued_chunk_reached_the_stream():
     gate = threading.Event()
     stream = _RecordingStream(gate)
     original = _install(stream)
+    saved_waiters = output_guard._drain_waiters
+    drain_waiters = output_guard._drain_waiters = _SignallingWaiters()
     try:
         for index in range(5):
             write_raw_stdout(f"chunk-{index}\n")
 
-        # Writer thread is stalled inside write(), so the caller must not resume.
-        _, completed = await tonio.time.timeout(wait_for_raw_stdout_backpressure(), 0.05)
-        assert not completed, "resumed while writes were still queued"
+        # The writer thread is stalled inside write(). Instead of a quiet window
+        # (which an early resume slower than the window passes): the wait must
+        # register for the drain while the writes are queued, and what the stream
+        # held at the moment it resumed is recorded — a resume before the last
+        # chunk was written shows up as a shorter count.
+        written_at_resume: list[int] = []
 
+        async def wait_and_record() -> None:
+            await wait_for_raw_stdout_backpressure()
+            written_at_resume.append(len(stream.chunks))
+
+        waiting = tonio.spawn(wait_and_record())
+        await drain_waiters.registered.wait(5)
+        assert drain_waiters.registered.is_set(), "did not wait for the queued writes"
         gate.set()
-        _, completed = await tonio.time.timeout(wait_for_raw_stdout_backpressure(), 5.0)
+        _, completed = await tonio.time.timeout(waiting, 5.0)
         assert completed
+        assert written_at_resume == [5], "resumed while writes were still queued"
         assert stream.chunks == [f"chunk-{index}\n" for index in range(5)]
     finally:
         gate.set()
         _uninstall(original)
+        output_guard._drain_waiters = saved_waiters
 
 
 @pytest.mark.tonio

@@ -179,7 +179,7 @@ class QuestionComponent:
         return lines
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel=None, _on_update=None, ctx=None):
         question = params["question"]
         simple_options = [opt["label"] for opt in params["options"]]
@@ -198,9 +198,10 @@ def extension(pi):
 
         all_options = [*params["options"], {"label": "Type something.", "isOther": True}]
 
-        result = await ctx.ui.custom(
-            lambda tui, theme, _kb, done: QuestionComponent(tui, theme, question, all_options, done)
-        )
+        async def factory(tui, theme, _kb, done):
+            return QuestionComponent(tui, theme, question, all_options, done)
+
+        result = await ctx.ui.custom(factory)
 
         if result is None:
             return AgentToolResult(

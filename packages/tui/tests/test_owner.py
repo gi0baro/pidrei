@@ -4,6 +4,24 @@ import tonio.colored as tonio
 from pidrei_tui._owner import OwnerStopped, OwnerTask
 
 
+class _PostSignal:
+    """Wraps an owner's queue sender: `posted` is set once something is
+    posted through it (a timer delivers its fire this way)."""
+
+    def __init__(self, owner: OwnerTask) -> None:
+        self._owner = owner
+        self._sender = owner._sender
+        self.posted = tonio.Event()
+        owner._sender = self
+
+    def send(self, item) -> None:
+        self._sender.send(item)
+        self.posted.set()
+
+    def restore(self) -> None:
+        self._owner._sender = self._sender
+
+
 @pytest.mark.tonio
 async def test_a_timer_cancelled_by_owner_work_never_fires():
     # The fire is delivered as posted work. If it lands while the owner is
@@ -18,10 +36,18 @@ async def test_a_timer_cancelled_by_owner_work_never_fires():
         async def fire() -> None:
             fired.append(True)
 
-        handle = owner.after(10, fire)
+        # Never due on its own: the owner job below wakes it, so the fire is
+        # posted while the owner is busy — not whenever 10ms of wall clock
+        # happened to elapse relative to the job (before it, the fire simply
+        # ran; after the cancel, the skip was vacuous).
+        handle = owner.after(60_000, fire)
 
         async def busy_then_cancel() -> None:
-            await tonio.sleep(0.05)  # the timer posts its fire meanwhile
+            posts = _PostSignal(owner)
+            handle._wake.set()  # the timer's deadline, now
+            await posts.posted.wait(5)
+            assert posts.posted.is_set(), "the timer never posted its fire"
+            posts.restore()
             handle.cancel()
 
         await owner.run(busy_then_cancel)
@@ -88,8 +114,13 @@ async def test_run_jobs_behind_the_close_sentinel_settle_instead_of_hanging():
     async def marker() -> None:
         ran.append(True)
 
+    release = tonio.Event()
+
     async def stall() -> None:
-        await tonio.sleep(0.05)  # keep the consumer busy while we close
+        # Keep the consumer busy while we close and enroll the racing job:
+        # were it to reach the sentinel first, its shutdown sweep would miss
+        # the job (a 50ms sleep here only made that unlikely).
+        await release.wait(5)
 
     async with tonio.scope() as scope:
         owner.start(scope)
@@ -103,6 +134,85 @@ async def test_run_jobs_behind_the_close_sentinel_settle_instead_of_hanging():
         job = _Job(marker, done=job_done)
         owner._pending.add(job)
         owner._sender.send(job)  # lands behind the sentinel
-        await job_done.wait(None)
+        release.set()
+        await job_done.wait(5)
+        assert job_done.is_set()
         assert isinstance(job.error, OwnerStopped)
         assert ran == []
+
+    # The queue outlives the stop: after a restart the settled job is not
+    # run behind its waiter's back.
+    async with tonio.scope() as scope:
+        owner.start(scope)
+        await owner.run(_noop)
+        owner.close()
+    assert ran == []
+
+
+async def _noop() -> None:
+    pass
+
+
+@pytest.mark.tonio
+async def test_work_posted_across_a_stop_runs_in_order_after_the_restart():
+    # A TUI suspend (Ctrl+Z, external editor) or renderer switch stops and
+    # restarts the same owner; an agent event posted in between must not be
+    # dropped with the stopped consumer's queue.
+    log = []
+    owner = OwnerTask()
+
+    def job(name: str):
+        async def run() -> None:
+            log.append(name)
+
+        return run
+
+    release = tonio.Event()
+
+    async def stall() -> None:
+        await release.wait(5)
+
+    async with tonio.scope() as scope:
+        owner.start(scope)
+        owner.post(stall)
+        owner.close()  # sentinel queued behind `stall`
+        owner.post(job("behind-sentinel"))
+        release.set()
+    owner.post(job("while-stopped"))
+
+    async with tonio.scope() as scope:
+        owner.start(scope)
+        owner.post(job("after-restart"))
+        await owner.run(_noop)
+        owner.close()
+    assert log == ["behind-sentinel", "while-stopped", "after-restart"]
+
+
+@pytest.mark.tonio
+async def test_a_sentinel_left_by_a_cancelled_consumer_does_not_stop_the_next_one():
+    # ProcessTerminal.stop closes the owner, then cancels its scope: a
+    # consumer unwound before reaching its sentinel leaves it queued.
+    owner = OwnerTask()
+    parked = tonio.Event()
+
+    async def park() -> None:
+        parked.set()
+        await tonio.Event().wait(5)
+
+    async with tonio.scope() as scope:
+        owner.start(scope)
+        owner.post(park)
+        await parked.wait(5)
+        owner.close()  # sentinel behind the parked job
+        scope.cancel()
+
+    ran = []
+
+    async def marker() -> None:
+        ran.append(True)
+
+    async with tonio.scope() as scope:
+        owner.start(scope)
+        await owner.run(marker)
+        owner.close()
+    assert ran == [True]

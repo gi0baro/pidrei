@@ -84,7 +84,7 @@ def format_conflicts(ref: str, blocks: list[ConflictBlock]) -> str:
     return "\n".join(lines)
 
 
-def extension(pi):
+async def extension(pi):
     async def on_agent_end(_event, ctx) -> None:
         if (await pi.exec("git", ["rev-parse", "--git-dir"])).code != 0:
             return

@@ -8,7 +8,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     async def on_session_shutdown(_event, ctx) -> None:
         # Check for uncommitted changes.
         status = await pi.exec("git", ["status", "--porcelain"])

@@ -105,18 +105,31 @@ def const_stream_fn(text: str):
     return stream_fn
 
 
-async def abort_responsive_stream_fn(_model, _context, options):
-    """Stream that starts a partial and errors once the run's cancel fires."""
-    stream = AssistantMessageEventStream()
+def abort_responsive_stream_fn(started: tonio.Event | None = None):
+    """Stream fn that starts a partial and errors once the run's cancel fires.
 
-    async def driver():
-        stream.push(StartEvent(partial=create_assistant_message("")))
-        while options is None or options.cancel is None or not options.cancel.cancelled:
-            await tonio.sleep(0.005)
-        stream.push(ErrorEvent(reason="aborted", error=create_assistant_message("Aborted")))
+    `started` is set once the partial is pushed, i.e. once the run is
+    admitted and streaming; the driver waits on the run's token instead of
+    polling it.
+    """
 
-    tonio.spawn.without_tracking(driver())
-    return stream
+    async def stream_fn(_model, _context, options):
+        stream = AssistantMessageEventStream()
+
+        async def driver():
+            stream.push(StartEvent(partial=create_assistant_message("")))
+            if started is not None:
+                started.set()
+            await options.cancel.wait(5)
+            if options.cancel.cancelled:
+                stream.push(ErrorEvent(reason="aborted", error=create_assistant_message("Aborted")))
+            else:
+                stream.push(ErrorEvent(reason="error", error=create_assistant_message("Never aborted")))
+
+        tonio.spawn.without_tracking(driver())
+        return stream
+
+    return stream_fn
 
 
 def custom_model(model_id: str) -> Model:
@@ -385,10 +398,12 @@ async def test_should_await_async_subscribers_before_prompt_resolves():
     agent = Agent(stream_fn=const_stream_fn("ok"))
 
     listener_finished = False
+    listener_parked = tonio.Event()
 
     async def listener(event, _signal):
         nonlocal listener_finished
         if event.type == "agent_end":
+            listener_parked.set()
             await barrier.wait(None)
             listener_finished = True
 
@@ -403,7 +418,10 @@ async def test_should_await_async_subscribers_before_prompt_resolves():
 
     handle = tonio.spawn(run_prompt())
 
-    await tonio.sleep(0.01)
+    # pidrei: pi's microtask flush becomes "the agent_end listener is parked";
+    # from there only the barrier can let prompt() resolve.
+    await listener_parked.wait(5)
+    assert listener_parked.is_set()
     assert prompt_resolved is False
     assert listener_finished is False
     assert agent.state.is_streaming is True
@@ -421,25 +439,37 @@ async def test_wait_for_idle_should_wait_for_async_subscribers():
     barrier = tonio.Event()
     agent = Agent(stream_fn=const_stream_fn("ok"))
 
+    listener_parked = tonio.Event()
+    order: list[str] = []
+
     async def listener(event, _signal):
         if event.type == "message_end" and getattr(event.message, "role", None) == "assistant":
+            listener_parked.set()
             await barrier.wait(None)
+            order.append("listener")
 
     agent.subscribe(listener)
 
     prompt_handle = tonio.spawn(agent.prompt("hello"))
     idle_resolved = False
+    idle_called = tonio.Event()
 
     async def run_idle():
         nonlocal idle_resolved
-        # Give the prompt a beat to register the active run first.
-        await tonio.sleep(0.001)
+        idle_called.set()
         await agent.wait_for_idle()
+        order.append("idle")
         idle_resolved = True
 
+    # pidrei: pi calls waitForIdle() synchronously while the listener is
+    # pending. Here the run is known active once the listener is parked, and
+    # the barrier is released only after wait_for_idle() has been entered;
+    # the recorded order proves idle resolved after the listener finished.
+    await listener_parked.wait(5)
+    assert listener_parked.is_set()
     idle_handle = tonio.spawn(run_idle())
-
-    await tonio.sleep(0.01)
+    await idle_called.wait(5)
+    assert idle_called.is_set()
     assert idle_resolved is False
     assert agent.state.is_streaming is True
 
@@ -448,23 +478,27 @@ async def test_wait_for_idle_should_wait_for_async_subscribers():
     await idle_handle
 
     assert idle_resolved is True
+    assert order == ["listener", "idle"]
     assert agent.state.is_streaming is False
 
 
 @pytest.mark.tonio
 async def test_should_pass_the_active_abort_signal_to_subscribers():
     received_signal = None
-    agent = Agent(stream_fn=abort_responsive_stream_fn)
+    signal_received = tonio.Event()
+    agent = Agent(stream_fn=abort_responsive_stream_fn())
 
     async def listener(event, signal):
         nonlocal received_signal
         if event.type == "agent_start":
             received_signal = signal
+            signal_received.set()
 
     agent.subscribe(listener)
 
     handle = tonio.spawn(agent.prompt("hello"))
-    await tonio.sleep(0.01)
+    await signal_received.wait(5)
+    assert signal_received.is_set()
 
     assert received_signal is not None
     assert received_signal.cancelled is False
@@ -504,8 +538,10 @@ async def test_should_ignore_tool_updates_after_the_tool_execution_settles():
     await agent.prompt("run tool")
     event_count_after_prompt = len(events)
 
+    # pidrei: no settle window needed. `on_update` is sync and the tool's
+    # update forwarder was joined when the tool settled, so a late update has
+    # no path to a listener once this call returns.
     delayed_update(AgentToolResult(content=[TextContent(text="late")], details={"status": "late"}))
-    await tonio.sleep(0.005)
 
     assert len([event for event in events if event.type == "tool_execution_update"]) == 1
     assert len(events) == event_count_after_prompt
@@ -595,8 +631,9 @@ async def test_should_ignore_a_settled_parallel_tool_update_while_another_tool_i
     await settled_tool_ended.wait(None)
     event_count_before_late_update = len(events)
 
+    # pidrei: no settle window needed (see the test above); the final
+    # assertion after the run completes covers the whole run.
     settled_tool_update(AgentToolResult(content=[TextContent(text="late")], details={"status": "late"}))
-    await tonio.sleep(0.005)
     assert len(events) == event_count_before_late_update
 
     release_slow.set()
@@ -651,9 +688,26 @@ async def test_listeners_never_overlap_under_parallel_tools():
         in_flight -= 1
 
     agent.subscribe(listener)
+
+    # Record when each tool's update reaches the run's emit, so the test can
+    # hold the parked observation until the other tool's update is queued
+    # behind it (instead of sleeping and hoping it got there).
+    emitted = {"alpha": tonio.Event(), "beta": tonio.Event()}
+    process_events = agent._process_events
+
+    async def recording_emit(event):
+        if event.type == "tool_execution_update":
+            emitted[event.tool_name].set()
+        await process_events(event)
+
+    agent._process_events = recording_emit
+
     handle = tonio.spawn(agent.prompt("run tools"))
-    await parked.wait(None)
-    await tonio.sleep(0.02)
+    await parked.wait(5)
+    assert parked.is_set()
+    other = "beta" if observed[0].startswith("alpha") else "alpha"
+    await emitted[other].wait(5)
+    assert emitted[other].is_set()
     release.set()
     await handle
 
@@ -789,11 +843,13 @@ async def test_should_reject_reset_while_processing_without_corrupting_the_trans
 
 @pytest.mark.tonio
 async def test_should_throw_when_prompt_called_while_streaming():
-    agent = Agent(stream_fn=abort_responsive_stream_fn)
+    started = tonio.Event()
+    agent = Agent(stream_fn=abort_responsive_stream_fn(started))
 
     handle = tonio.spawn(agent.prompt("First message"))
 
-    await tonio.sleep(0.01)
+    await started.wait(5)
+    assert started.is_set()
     assert agent.state.is_streaming is True
 
     with pytest.raises(Exception, match="Agent is already processing a prompt"):
@@ -805,10 +861,12 @@ async def test_should_throw_when_prompt_called_while_streaming():
 
 @pytest.mark.tonio
 async def test_should_throw_when_continue_called_while_streaming():
-    agent = Agent(stream_fn=abort_responsive_stream_fn)
+    started = tonio.Event()
+    agent = Agent(stream_fn=abort_responsive_stream_fn(started))
 
     handle = tonio.spawn(agent.prompt("First message"))
-    await tonio.sleep(0.01)
+    await started.wait(5)
+    assert started.is_set()
     assert agent.state.is_streaming is True
 
     with pytest.raises(Exception, match="Agent is already processing. Wait for completion before continuing."):

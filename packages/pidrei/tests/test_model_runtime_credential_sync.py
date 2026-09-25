@@ -7,6 +7,7 @@ pi's forever-pending promises (`new Promise(() => {})`) become gated
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import sync
 
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.model_runtime import CredentialSynchronizationError, ModelRuntime
@@ -14,6 +15,7 @@ from pidrei_ai.auth.types import ApiKeyCredential, AuthCheck, AuthResult, ModelA
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.types import Model, ModelCost
 from pidrei_ai.utils.cancel import CancelToken
+from tests.auth_lock_helpers import ObservedLock
 
 
 def make_model(provider: str) -> Model:
@@ -131,14 +133,21 @@ async def test_orders_same_provider_credential_operations_through_local_synchron
         return ApiKeyCredential(key="ordered-key")
 
     runtime = await runtime_with_provider(ProviderDouble("ordered", login=blocked_login_fn), credentials)
+    # The per-provider operation lock (pi's promise chain), observed so the
+    # test knows when the logout is queued.
+    operations = ObservedLock(sync.Lock())
+    runtime._credential_operations["ordered"] = operations
 
     async def run_login() -> None:
         await runtime.login("ordered", "api_key", Interaction())
 
     async def run_logout() -> None:
         await login_started.wait()
-        logout = runtime.logout("ordered")
-        await tonio.time.sleep(0.01)
+        # pi's `runtime.logout(...)` promise queues at once; a coroutine does
+        # not run until awaited, so the logout is spawned and the check waits
+        # until it is queued behind the login.
+        logout = tonio.spawn(runtime.logout("ordered"))
+        await operations.until(lambda lock: lock.arrived == 2)
         assert await credentials.read("ordered") is None
         blocked_login.set()
         await logout
@@ -322,6 +331,7 @@ async def test_waits_for_a_committed_credential_mutation_to_settle_before_report
                 state["stored"] = next_credential
             committed.set()
             await mutation_finished.wait()
+            state["settled_before_mutation_finished"] = outcome["settled"]
             return state["stored"]
 
         async def delete(self, _provider_id, options=None):
@@ -345,11 +355,18 @@ async def test_waits_for_a_committed_credential_mutation_to_settle_before_report
     async def drive() -> None:
         await committed.wait()
         controller.cancel()
-        await tonio.time.sleep(0.01)
-        assert outcome["settled"] is False
         mutation_finished.set()
 
+    # pidrei adaptation: rather than pausing after the abort and asserting
+    # the login is still pending (a window a slow runner overruns), the
+    # mutation records whether the login had settled by the time it finished.
+    # Correct code cannot fail this. A regression that settles on the cancel is
+    # caught only if it settles before the mutation resumes: correct code does
+    # nothing observable on cancel (the caller stays parked on the operation's
+    # `done`), so there is no event to wait for, and adding one would be a
+    # test-only production hook.
     await tonio.spawn(run_login(), drive())
+    assert state["settled_before_mutation_finished"] is False
     assert isinstance(outcome["error"], CredentialSynchronizationError)
     assert outcome["error"].credential == ApiKeyCredential(key="delayed-commit-key")
     assert state["stored"] == ApiKeyCredential(key="delayed-commit-key")

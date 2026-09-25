@@ -171,40 +171,48 @@ class ModelSelectorComponent(Container):
             self._refresh_abort_controller.cancel()
 
         self._refresh_timeout = Timeout(timeout_ms, on_timeout)
+        # Detached: the refresh is awaited here, its outcome applied on the UI
+        # owner, where the list takes input (and the timeout fires).
         try:
             result = await refresh_model_catalogs(self._model_runtime, self._refresh_abort_controller)
-            if self._closed:
-                return
-            self._refresh_status_message = ""
-            if result.aborted and timed_out:
-                self._error_message = "Model refresh timed out; showing cached models."
-            elif len(result.errors) == 1:
-                provider = next(iter(result.errors))
-                self._error_message = f"Could not refresh {provider}; showing cached models."
-            elif len(result.errors) > 1:
-                self._error_message = (
-                    f"Could not refresh {len(result.errors)} model catalogs "
-                    f"({', '.join(result.errors)}); showing cached models."
-                )
-            else:
-                self._error_message = self._model_runtime.get_error()
-                if not self._error_message:
-                    self._refresh_status_message = "Model catalogs refreshed."
-                    self._refresh_status_success = True
-            self._load_models_from_snapshot()
-            self._filter_models(self._search_input.get_value())
-            self._tui.request_render()
         except Exception as error:
-            if self._closed:
-                return
-            self._refresh_status_message = ""
-            self._error_message = (
-                "Model refresh timed out; showing cached models."
-                if timed_out
-                else f"Could not refresh model catalogs: {error}"
-            )
-            self._filter_models(self._search_input.get_value())
-            self._tui.request_render()
+            failure = f"Could not refresh model catalogs: {error}"  # `error` is unbound past this block
+
+            def show_failure() -> None:
+                if self._closed:
+                    return
+                self._refresh_status_message = ""
+                self._error_message = "Model refresh timed out; showing cached models." if timed_out else failure
+                self._filter_models(self._search_input.get_value())
+                self._tui.request_render()
+
+            self._tui.post_ui(show_failure)
+        else:
+
+            def apply() -> None:
+                if self._closed:
+                    return
+                self._refresh_status_message = ""
+                if result.aborted and timed_out:
+                    self._error_message = "Model refresh timed out; showing cached models."
+                elif len(result.errors) == 1:
+                    provider = next(iter(result.errors))
+                    self._error_message = f"Could not refresh {provider}; showing cached models."
+                elif len(result.errors) > 1:
+                    self._error_message = (
+                        f"Could not refresh {len(result.errors)} model catalogs "
+                        f"({', '.join(result.errors)}); showing cached models."
+                    )
+                else:
+                    self._error_message = self._model_runtime.get_error()
+                    if not self._error_message:
+                        self._refresh_status_message = "Model catalogs refreshed."
+                        self._refresh_status_success = True
+                self._load_models_from_snapshot()
+                self._filter_models(self._search_input.get_value())
+                self._tui.request_render()
+
+            self._tui.post_ui(apply)
         finally:
             if self._refresh_timeout is not None:
                 self._refresh_timeout.cancel()

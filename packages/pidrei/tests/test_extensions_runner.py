@@ -1,7 +1,7 @@
 """Mirror of pi's extensions-runner.test.ts.
 
 Two translations run through the file. Extensions are `.py` modules with an
-`extension(pi)` factory (see `loader.py` for why). And where pi spies on
+`async def extension(pi)` factory (see `loader.py` for why). And where pi spies on
 `console.warn` to observe shortcut conflicts, this asserts on
 `runner.get_shortcut_diagnostics()` — the same messages, from the list the
 runner keeps for the UI, rather than through a stderr capture that would
@@ -150,7 +150,7 @@ async def make_runner(fx, extensions=None, runtime=None) -> ExtensionRunner:
 
 def shortcut_extension(shortcut: str, description: str) -> str:
     return f"""
-def extension(pi):
+async def extension(pi):
     pi.register_shortcut({shortcut!r}, description={description!r}, handler=lambda ctx: None)
 """
 
@@ -164,7 +164,7 @@ async def run(*args):
     return {{"content": [{{"type": "text", "text": "ok"}}], "details": {{}}}}
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_tool(
         ToolDefinition(
             name={name!r},
@@ -183,7 +183,7 @@ async def run(args, ctx):
     return None
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_command({name!r}, description={description!r}, handler=run)
 """
 
@@ -201,14 +201,14 @@ async def test_continues_past_undecided_handlers_and_returns_the_first_decision(
         "undecided.py",
         "\nasync def handler(event, ctx):\n"
         '    return {"trusted": "undecided", "remember": True}\n'
-        "\n\ndef extension(pi):\n"
+        "\n\nasync def extension(pi):\n"
         '    pi.on("project_trust", handler)\n',
     )
     decided = fx.write(
         "decided.py",
         "\nasync def handler(event, ctx):\n"
         '    return {"trusted": "no", "remember": True}\n'
-        "\n\ndef extension(pi):\n"
+        "\n\nasync def extension(pi):\n"
         '    pi.on("project_trust", handler)\n',
     )
 
@@ -366,7 +366,7 @@ async def run(*args):
     return {"content": [{"type": "text", "text": "ok"}]}
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_tool(ToolDefinition(name="noop", label="No-op", description="Do nothing", parameters=None, execute=run))
 """,
     )
@@ -530,7 +530,7 @@ async def boom(event, ctx):
     raise RuntimeError("Handler error!")
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("context", boom)
 """,
     )
@@ -560,7 +560,7 @@ async def handler(event, ctx):
     raise RuntimeError("Routing failed")
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("user_bash", handler)
 """,
     )
@@ -613,7 +613,7 @@ async def handler(event, ctx):
     return {handler_result}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("user_bash", handler)
 """,
     )
@@ -647,7 +647,7 @@ async def handler(event, ctx):
     return {"result": {"output": "handled", "exitCode": 0, "cancelled": False, "truncated": False}}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("user_bash", handler)
 """,
     )
@@ -667,7 +667,7 @@ def extension(pi):
 
 @pytest.mark.tonio
 async def test_gets_markdown_transformers_in_extension_load_order(fx):
-    source = "\ndef extension(pi):\n    pi.register_markdown_transformer(lambda markdown, context: markdown)\n"
+    source = "\nasync def extension(pi):\n    pi.register_markdown_transformer(lambda markdown, context: markdown)\n"
     fx.write("markdown-renderer-a.py", source)
     fx.write("markdown-renderer-b.py", source)
 
@@ -679,7 +679,7 @@ async def test_gets_markdown_transformers_in_extension_load_order(fx):
 async def test_gets_message_renderer_by_type(fx):
     fx.write(
         "renderer.py",
-        '\ndef extension(pi):\n    pi.register_message_renderer("my-type", lambda *args: None)\n',
+        '\nasync def extension(pi):\n    pi.register_message_renderer("my-type", lambda *args: None)\n',
     )
 
     runner = await make_runner(fx)
@@ -691,7 +691,7 @@ async def test_gets_message_renderer_by_type(fx):
 async def test_gets_entry_renderer_by_type(fx):
     fx.write(
         "entry-renderer.py",
-        '\ndef extension(pi):\n    pi.register_entry_renderer("my-entry", lambda *args: None)\n',
+        '\nasync def extension(pi):\n    pi.register_entry_renderer("my-entry", lambda *args: None)\n',
     )
 
     runner = await make_runner(fx)
@@ -706,7 +706,7 @@ async def test_gets_entry_renderer_by_type(fx):
 async def test_collects_flags_from_extensions(fx):
     fx.write(
         "with-flag.py",
-        '\ndef extension(pi):\n    pi.register_flag("my-flag", type="boolean", description="My flag")\n',
+        '\nasync def extension(pi):\n    pi.register_flag("my-flag", type="boolean", description="My flag")\n',
     )
 
     runner = await make_runner(fx)
@@ -717,11 +717,11 @@ async def test_collects_flags_from_extensions(fx):
 async def test_keeps_first_flag_when_two_extensions_register_the_same_name(fx):
     fx.write(
         "a-first.py",
-        '\ndef extension(pi):\n    pi.register_flag("shared-flag", type="boolean", description="first", default=True)\n',
+        '\nasync def extension(pi):\n    pi.register_flag("shared-flag", type="boolean", description="first", default=True)\n',
     )
     fx.write(
         "b-second.py",
-        '\ndef extension(pi):\n    pi.register_flag("shared-flag", type="boolean", description="second", default=False)\n',
+        '\nasync def extension(pi):\n    pi.register_flag("shared-flag", type="boolean", description="second", default=False)\n',
     )
 
     result = await discover_and_load_extensions([], fx.root, fx.root)
@@ -736,7 +736,7 @@ async def test_keeps_first_flag_when_two_extensions_register_the_same_name(fx):
 async def test_rejects_default_values_that_do_not_match_the_flag_type(fx):
     fx.write(
         "bad-flag-default.py",
-        '\ndef extension(pi):\n    pi.register_flag("safe-mode", type="boolean", default="false")\n',
+        '\nasync def extension(pi):\n    pi.register_flag("safe-mode", type="boolean", default="false")\n',
     )
 
     result = await discover_and_load_extensions([], fx.root, fx.root)
@@ -750,7 +750,7 @@ async def test_rejects_default_values_that_do_not_match_the_flag_type(fx):
 async def test_can_set_flag_values(fx):
     fx.write(
         "flag.py",
-        '\ndef extension(pi):\n    pi.register_flag("test-flag", type="boolean", description="Test flag")\n',
+        '\nasync def extension(pi):\n    pi.register_flag("test-flag", type="boolean", description="Test flag")\n',
     )
 
     result = await discover_and_load_extensions([], fx.root, fx.root)
@@ -773,7 +773,7 @@ async def handler(event, ctx):
     return {"systemPrompt": ctx.get_system_prompt() + "\\nfirst"}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("before_agent_start", handler)
 """,
     )
@@ -784,7 +784,7 @@ async def handler(event, ctx):
     return {"systemPrompt": ctx.get_system_prompt() + "\\nsecond"}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("before_agent_start", handler)
 """,
     )
@@ -831,7 +831,7 @@ async def _load_factories(fx, *factories) -> ExtensionRunner:
 async def test_boundary_chains_shared_draft_proposals_and_preserves_omitted_result_fields(fx):
     observations: list[dict] = []
 
-    def first(pi) -> None:
+    async def first(pi) -> None:
         async def handler(event, _ctx):
             observations.append(
                 {
@@ -845,7 +845,7 @@ async def test_boundary_chains_shared_draft_proposals_and_preserves_omitted_resu
 
         pi.on("agent_before_settle", handler)
 
-    def second(pi) -> None:
+    async def second(pi) -> None:
         async def handler(event, _ctx):
             observations.append(
                 {
@@ -889,13 +889,13 @@ async def test_boundary_chains_shared_draft_proposals_and_preserves_omitted_resu
 async def test_boundary_reports_invalid_previews_and_lets_later_handlers_repair_the_proposal(fx):
     second_ran = False
 
-    def invalid(pi) -> None:
+    async def invalid(pi) -> None:
         async def handler(_event, _ctx):
             return {"entries": [{"type": "context_edit", "targetId": "missing", "replacement": None}]}
 
         pi.on("agent_before_settle", handler)
 
-    def repair(pi) -> None:
+    async def repair(pi) -> None:
         async def handler(event, _ctx):
             nonlocal second_ran
             second_ran = True
@@ -923,7 +923,7 @@ async def test_boundary_reports_invalid_previews_and_lets_later_handlers_repair_
 
 @pytest.mark.tonio
 async def test_boundary_keeps_shared_mutations_made_before_a_handler_throws(fx):
-    def failing(pi) -> None:
+    async def failing(pi) -> None:
         async def handler(event, _ctx):
             event["entries"].append({"type": "custom", "customType": "kept"})
             raise Exception("boundary failed")
@@ -955,7 +955,7 @@ async def handler(event, ctx):
     return {"content": [*event["content"], {"type": "text", "text": "ext1"}]}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("tool_result", handler)
 """,
     )
@@ -966,7 +966,7 @@ async def handler(event, ctx):
     return {"content": [*event["content"], {"type": "text", "text": "ext2"}]}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("tool_result", handler)
 """,
     )
@@ -1000,7 +1000,7 @@ async def handler(event, ctx):
     return {"content": [{"type": "text", "text": "first"}], "details": {"source": "ext1"}}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("tool_result", handler)
 """,
     )
@@ -1011,7 +1011,7 @@ async def handler(event, ctx):
     return {"isError": True}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("tool_result", handler)
 """,
     )
@@ -1179,7 +1179,7 @@ AGENT_END = {"type": "agent_end", "messages": []}
 async def test_allows_self_removal_without_skipping_neighboring_handlers(fx):
     calls: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def first(_event, _ctx):
             calls.append("A")
             unsubscribe()
@@ -1201,7 +1201,7 @@ async def test_removes_duplicate_registrations_independently_and_cleans_up_the_l
     calls: list[str] = []
     unsubscribers = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         shared = recorder(calls, "shared")
         unsubscribers.append(pi.on("agent_end", shared))
         unsubscribers.append(pi.on("agent_end", recorder(calls, "B")))
@@ -1227,7 +1227,7 @@ async def test_removes_duplicate_registrations_independently_and_cleans_up_the_l
 async def test_keeps_removed_pending_handlers_in_the_current_dispatch(fx):
     calls: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def first(_event, _ctx):
             calls.append("A")
             stop_b()
@@ -1248,7 +1248,7 @@ async def test_keeps_removed_pending_handlers_in_the_current_dispatch(fx):
 async def test_defers_registrations_made_during_dispatch_until_the_next_dispatch(fx):
     calls: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def first(_event, _ctx):
             calls.append("A")
             pi.on("agent_end", recorder(calls, "C"))
@@ -1269,7 +1269,7 @@ async def test_uses_a_fresh_handler_list_for_nested_dispatches(fx):
     calls: list[str] = []
     holder: dict = {}
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def first(_event, _ctx):
             calls.append("A")
             stop_a()
@@ -1294,7 +1294,7 @@ async def test_uses_a_fresh_handler_list_for_nested_dispatches(fx):
 async def test_returns_true_when_handlers_exist_for_event_type(fx):
     fx.write(
         "handler.py",
-        '\nasync def handler(event, ctx):\n    return None\n\n\ndef extension(pi):\n    pi.on("tool_call", handler)\n',
+        '\nasync def handler(event, ctx):\n    return None\n\n\nasync def extension(pi):\n    pi.on("tool_call", handler)\n',
     )
 
     runner = await make_runner(fx)
@@ -1315,7 +1315,7 @@ async def handler(event, ctx):
     event["headers"]["X-Turn-Index"] = "3"
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("before_provider_headers", handler)
 """,
     )
@@ -1337,7 +1337,7 @@ async def handler(event, ctx):
     raise RuntimeError("header handler boom")
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("before_provider_headers", handler)
 """,
     )
@@ -1348,7 +1348,7 @@ async def handler(event, ctx):
     event["headers"]["X-Good"] = "yes"
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("before_provider_headers", handler)
 """,
     )

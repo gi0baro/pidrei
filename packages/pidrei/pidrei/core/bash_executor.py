@@ -5,13 +5,12 @@ AgentSession.executeBash and modes that need direct bash execution.
 """
 
 import codecs
-import os
 import secrets
-import tempfile
 import threading
 from dataclasses import dataclass
 from typing import Any
 
+from ..config import TEMP_DIR
 from ..utils.ansi import strip_ansi
 from ..utils.shell import sanitize_binary_output
 from ..utils.temp_file_writer import TempFileWriter
@@ -53,7 +52,7 @@ async def execute_bash_with_operations(
         nonlocal temp_file_path, temp_file
         if temp_file_path is not None:
             return
-        temp_file_path = os.path.join(tempfile.gettempdir(), f"pidrei-bash-{secrets.token_hex(8)}.log")
+        temp_file_path = str(TEMP_DIR / f"pidrei-bash-{secrets.token_hex(8)}.log")
         # Channel-backed, so `write` below stays non-blocking on the
         # streaming path — pi uses createWriteStream here for the same reason.
         temp_file = TempFileWriter(temp_file_path)

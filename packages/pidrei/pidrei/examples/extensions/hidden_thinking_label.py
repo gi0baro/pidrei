@@ -17,27 +17,36 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/hidden_thinking_label.py
 """
 
+import threading
+
+
 DEFAULT_LABEL = "Pondering..."
 
 
-def extension(pi):
+async def extension(pi):
     state = {"label": DEFAULT_LABEL}
+    # Commands run concurrently (each submit on its own task): a label write
+    # and the post made from it are one step, so the shown label always
+    # matches the stored one.
+    label_guard = threading.Lock()
 
     async def on_session_start(_event, ctx) -> None:
-        ctx.ui.set_hidden_thinking_label(state["label"])
+        with label_guard:
+            ctx.ui.set_hidden_thinking_label(state["label"])
 
     async def set_label(args: str, ctx) -> None:
         next_label = args.strip()
 
-        if not next_label:
-            state["label"] = DEFAULT_LABEL
-            ctx.ui.set_hidden_thinking_label()
-            ctx.ui.notify(f"Hidden thinking label reset to: {DEFAULT_LABEL}")
-            return
+        with label_guard:
+            if not next_label:
+                state["label"] = DEFAULT_LABEL
+                ctx.ui.set_hidden_thinking_label()
+                ctx.ui.notify(f"Hidden thinking label reset to: {DEFAULT_LABEL}")
+                return
 
-        state["label"] = next_label
-        ctx.ui.set_hidden_thinking_label(next_label)
-        ctx.ui.notify(f"Hidden thinking label set to: {next_label}")
+            state["label"] = next_label
+            ctx.ui.set_hidden_thinking_label(next_label)
+            ctx.ui.notify(f"Hidden thinking label set to: {next_label}")
 
     pi.on("session_start", on_session_start)
     pi.register_command(

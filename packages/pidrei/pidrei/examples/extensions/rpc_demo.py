@@ -25,7 +25,7 @@ import re
 _DANGEROUS_RE = re.compile(r"\brm\s+(-rf?|--recursive)|\bsudo\b", re.IGNORECASE)
 
 
-def extension(pi):
+async def extension(pi):
     state = {"turn_count": 0}
 
     # -- set_title, set_widget, set_status on session lifecycle --

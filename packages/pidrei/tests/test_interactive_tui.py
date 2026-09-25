@@ -12,7 +12,7 @@ against plain attributes.
 
 import contextlib
 import sys
-import time
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +30,8 @@ from pidrei.modes.interactive.components.status_indicator import (
 from pidrei.modes.interactive.interactive_mode import InteractiveMode, create_interactive_tui
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei_tui import Container, ScrollView, Text, get_keybindings, is_viewport_tui, set_keybindings
+
+from .ui_timer_helpers import manual_ui_timers
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tui" / "tests"))
@@ -132,6 +134,7 @@ class _SwitchContext(_BareInteractiveMode):
         self._options = {"tuiMode": "regular"}
         self._theme_controller = SimpleNamespace(rebind_tui=_noop_async)
         self._extension_terminal_input_subscriptions = set()
+        self._extension_registry_guard = threading.Lock()
         self.runtime_host = SimpleNamespace(
             session=SimpleNamespace(settings_manager=SimpleNamespace(get_fullscreen_copy_on_select=lambda: True))
         )
@@ -185,6 +188,108 @@ async def test_replaces_the_renderer_and_restores_the_previous_screen_for_resume
 
     assert context.ui.mode == "fullscreen"
     assert [terminal.start_count, terminal.stop_count] == [2, 2]
+
+
+@pytest.mark.tonio
+async def test_a_settings_tui_mode_change_made_on_the_owner_switches_the_renderer():
+    # The settings list runs its change callback on the owner (it is input
+    # handling), and the switch stops the renderer, whose barrier waits on
+    # that owner: awaited there, the switch never returned.
+    terminal = RecordingTerminal(40, 8)
+    renderer = create_interactive_tui(
+        tui_mode="regular", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
+    )
+    context = _SwitchContext(renderer, None)
+    component = _InvalidationProbe(lambda: context.ui.mode)
+    context._fullscreen_layout_root = component
+    renderer.add_child(component)
+    saved_modes: list[str] = []
+    context.runtime_host.session.settings_manager.set_tui_mode = saved_modes.append
+    context.runtime_host.session.settings_manager.get_show_terminal_progress = lambda: False
+    context._active_status_indicator = None
+    context._status_container = Container()
+    statuses: list[str] = []
+    announced = tonio.Event()
+
+    def show_status(message: str) -> None:
+        statuses.append(message)
+        announced.set()
+
+    context.show_status = show_status
+
+    await renderer.start()
+    await terminal.wait_for_render()
+
+    async def settings_input() -> None:
+        context._on_settings_tui_mode_change("fullscreen", selector=None)
+
+    renderer.input_owner.post(settings_input)
+    await announced.wait(5)
+
+    assert statuses == ["TUI mode: fullscreen"]
+    assert saved_modes == ["fullscreen"]
+    assert context.ui.mode == "fullscreen"
+    assert context._renderer.children == [component]
+    await context._stop_interactive_tui("resume-hint")
+
+
+@pytest.mark.tonio
+async def test_an_overlay_opened_while_the_switch_stops_the_renderer_keeps_the_previous_one():
+    # Overlays cannot be carried to the next renderer. One whose opening was
+    # queued on the owner when the switch began is shown by the time the
+    # renderer has stopped: the switch must see it, and resume the previous
+    # renderer with it instead of dropping it.
+    terminal = RecordingTerminal(40, 8)
+    renderer = create_interactive_tui(
+        tui_mode="regular", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
+    )
+    context = _SwitchContext(renderer, None)
+    base = _InvalidationProbe(lambda: context.ui.mode)
+    renderer.add_child(base)
+    await renderer.start()
+    await terminal.wait_for_render()
+
+    owner = renderer.input_owner
+    release = tonio.Event()
+
+    async def busy() -> None:
+        await release.wait(5)
+
+    overlay = _InvalidationProbe(lambda: context.ui.mode)
+
+    async def open_overlay() -> None:
+        renderer.show_overlay(overlay)
+
+    owner.post(busy)
+    owner.post(open_overlay)
+
+    # The stop's barrier queues behind the busy job: release it only once
+    # the switch has committed to stopping.
+    stopping = tonio.Event()
+    owner_run = owner.run
+
+    async def run(fn) -> None:
+        stopping.set()
+        await owner_run(fn)
+
+    owner.run = run
+    switched = tonio.Result()
+
+    async def switch() -> None:
+        switched.store(await context._switch_tui_mode("fullscreen", restore_progress=False))
+
+    async with tonio.scope() as scope:
+        scope.spawn(switch())
+        await stopping.wait(5)
+        del owner.run
+        release.set()
+
+    assert switched.fetch() is False
+    assert context._renderer is renderer
+    assert renderer.has_overlay_entries
+    assert renderer.children == [base]
+    assert [terminal.start_count, terminal.stop_count] == [2, 1]
+    await renderer.stop()
 
 
 class _CopyRecorder:
@@ -373,14 +478,16 @@ async def test_routes_every_status_through_the_editor_opt_in(embed_working_statu
         default_editor=_StatusEditor(embed_working_status=True),
         editor=editor,
     )
-    indicators = [
-        WorkingStatusIndicator(tui, "Working"),
-        CompactionStatusIndicator(tui, "manual"),
-        CompactionStatusIndicator(tui, "threshold"),
-        CompactionStatusIndicator(tui, "overflow"),
-        BranchSummaryStatusIndicator(tui),
-        RetryStatusIndicator(tui, 1, 3, 1000),
-    ]
+    # The retry countdown would expire on another task while the test disposes it.
+    with manual_ui_timers():
+        indicators = [
+            WorkingStatusIndicator(tui, "Working"),
+            CompactionStatusIndicator(tui, "manual"),
+            CompactionStatusIndicator(tui, "threshold"),
+            CompactionStatusIndicator(tui, "overflow"),
+            BranchSummaryStatusIndicator(tui),
+            RetryStatusIndicator(tui, 1, 3, 1000),
+        ]
     try:
         for indicator in indicators:
             mode._show_status_indicator(indicator)
@@ -448,10 +555,9 @@ async def test_shows_the_configured_jump_to_bottom_shortcut_while_scrolled_up():
     try:
         await terminal.wait_for_render()
         await terminal.send_input("\x1b[<64;1;1M")
-        deadline = time.monotonic() + 2.0
-        while "↓ Jump to latest message · Ctrl+J" not in terminal.get_viewport()[3]:
-            assert time.monotonic() < deadline, terminal.get_viewport()
-            await tonio.sleep(0.005)
+        assert await terminal.until(lambda: "↓ Jump to latest message · Ctrl+J" in terminal.get_viewport()[3]), (
+            terminal.get_viewport()
+        )
     finally:
         await ui.stop()
         set_keybindings(previous_keybindings)

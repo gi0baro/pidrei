@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent test/interactive-mode-compaction.test.ts."""
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -203,21 +204,20 @@ def test_updates_the_working_state_when_the_same_agent_run_resumes_after_compact
 @pytest.mark.tonio
 async def test_routes_interactive_response_aborts_through_agent_session():
     # Regression test for #9340.
-    aborted = tonio.Event()
-
-    async def abort() -> None:
-        aborted.set()
+    # pi spies `session.abort()`, whose cancel runs before its first await;
+    # pidrei routes to that synchronous prefix (`_request_abort`) directly, so
+    # the abort must have landed by the time the call returns (regression #8935).
+    abort_calls: list[bool] = []
 
     context = SimpleNamespace(
         _clear_all_queues=lambda: {"steering": [], "followUp": []},
         _update_pending_messages_display=lambda: None,
-        session=SimpleNamespace(abort=abort),
+        session=SimpleNamespace(_request_abort=lambda: abort_calls.append(True)),
     )
 
     InteractiveMode._restore_queued_messages_to_editor(context, {"abort": True})
 
-    await aborted.wait(5)
-    assert aborted.is_set()
+    assert abort_calls == [True]
 
 
 @pytest.mark.tonio
@@ -237,6 +237,7 @@ async def test_preserves_steering_behavior_when_flushing_into_an_active_agent_ru
 
     fake = SimpleNamespace(
         _compaction_queued_messages=[{"text": "change direction", "mode": "steer"}],
+        _compaction_queue_guard=threading.Lock(),
         session=SimpleNamespace(
             clear_queue=lambda: {"steering": [], "followUp": []},
             prompt=prompt,

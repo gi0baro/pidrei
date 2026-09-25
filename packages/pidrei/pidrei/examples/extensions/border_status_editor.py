@@ -10,15 +10,17 @@ Start pidrei with this extension:
 """
 
 import os
+import threading
 
 import tonio.colored as tonio
 
 from pidrei.modes.interactive.components import CustomEditor
 from pidrei_tui import truncate_to_width, visible_width
+from pidrei_tui._timers import Interval
 
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-SPINNER_INTERVAL_S = 0.08
+SPINNER_INTERVAL_MS = 80
 
 
 def fit_border(left: str, right: str, width: int, border, fill=None) -> str:
@@ -76,36 +78,36 @@ class EmptyFooter:
         pass
 
 
-def extension(pi):
-    state = {"is_working": False, "spinner_index": 0, "spinner_stop": None, "tui": None}
+async def extension(pi):
+    state = {"is_working": False, "spinner_index": 0, "spinner": None, "tui": None}
+    # Start/stop run from agent events and from session_shutdown (quit does
+    # not abort the agent first), so they can overlap: the spinner handle is
+    # swapped under this lock.
+    spinner_guard = threading.Lock()
 
     def request_render() -> None:
         if state["tui"] is not None:
             state["tui"].request_render()
 
+    def swap_spinner(spinner: Interval | None) -> None:
+        with spinner_guard:
+            previous, state["spinner"] = state["spinner"], spinner
+        if previous is not None:
+            previous.cancel()
+
     def stop_spinner() -> None:
-        if state["spinner_stop"] is not None:
-            state["spinner_stop"].set()
-            state["spinner_stop"] = None
+        swap_spinner(None)
 
     async def on_agent_start(_event, _ctx) -> None:
         state["is_working"] = True
-        stop_spinner()
 
-        # pi drives the spinner with setInterval; here it is a background task
-        # that ends cooperatively through the Event.
-        stop = tonio.Event()
-        state["spinner_stop"] = stop
-
+        # pi's setInterval: the ticks fire on the UI owner, where the editor
+        # renders the spinner.
         async def spin() -> None:
-            while True:
-                await stop.wait(SPINNER_INTERVAL_S)
-                if stop.is_set():
-                    return
-                state["spinner_index"] = (state["spinner_index"] + 1) % len(SPINNER_FRAMES)
-                request_render()
+            state["spinner_index"] = (state["spinner_index"] + 1) % len(SPINNER_FRAMES)
+            request_render()
 
-        tonio.spawn.without_tracking(spin())
+        swap_spinner(Interval(SPINNER_INTERVAL_MS, spin))
         request_render()
 
     async def on_agent_settled(_event, _ctx) -> None:

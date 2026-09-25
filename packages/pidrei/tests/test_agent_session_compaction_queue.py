@@ -26,7 +26,7 @@ def harnesses(request):
     return created
 
 
-def _compaction_factory(pi) -> None:
+async def _compaction_factory(pi) -> None:
     async def on_before_compact(event, _ctx):
         preparation = event["preparation"]
         return {
@@ -108,7 +108,7 @@ async def test_compacts_after_an_oversized_tool_result_in_the_same_run(harnesses
     order: list[str] = []
     observed_settings: list = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             order.append("compaction")
             preparation = event["preparation"]
@@ -179,7 +179,7 @@ async def test_includes_steering_queued_during_compaction_in_the_resumed_assista
     compaction_started = tonio.Event()
     compaction_released = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             compaction_started.set()
             await compaction_released.wait(None)
@@ -232,7 +232,7 @@ async def test_includes_steering_queued_during_compaction_in_the_resumed_assista
 
 @pytest.mark.tonio
 async def test_does_not_compact_after_a_terminating_tool_result(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             preparation = event["preparation"]
             return {

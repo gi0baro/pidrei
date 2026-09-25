@@ -1,14 +1,16 @@
 """Mirror of pi's suite/regressions/7193-event-bus-lifecycle.test.ts.
 
-`EventBus.emit` spawns each handler, so pi's `setImmediate` drain becomes a
-short real sleep (the plugin's `sleep(0)` would not let the spawned handler
-run).
+`EventBus.emit` spawns each handler's awaitable, so no part of an `async def`
+handler runs inside `emit` and pi's `setImmediate` drain has no equivalent
+wait (any fixed pause can be overrun). The handlers here are plain callables
+that count when `emit` calls them — the part of pi's async handlers that runs
+before their first await — and return an already-finished awaitable, so the
+counts are final once `emit` returns.
 """
 
 import os
 
 import pytest
-import tonio.colored as tonio
 
 from pidrei.core.agent_session import ExtensionBindings
 from pidrei.core.event_bus import EventBus
@@ -25,23 +27,29 @@ def harnesses(request):
     return created
 
 
+async def _handled() -> None:
+    pass
+
+
 @pytest.mark.tonio
 async def test_removes_extension_owned_event_bus_listeners_on_reload_and_dispose(harnesses):
     event_bus = EventBus()
     counts = {"extension": 0, "host": 0}
     first_api: list = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         if not first_api:
             first_api.append(pi)
 
-        async def on_reload_test(_data) -> None:
+        def on_reload_test(_data):
             counts["extension"] += 1
+            return _handled()
 
         pi.events.on("reload:test", on_reload_test)
 
-    async def on_host(_data) -> None:
+    def on_host(_data):
         counts["host"] += 1
+        return _handled()
 
     event_bus.on("reload:test", on_host)
 
@@ -90,7 +98,6 @@ async def test_removes_extension_owned_event_bus_listeners_on_reload_and_dispose
     async def emit() -> dict:
         before = dict(counts)
         event_bus.emit("reload:test", None)
-        await tonio.time.sleep(0.01)
         return {key: counts[key] - before[key] for key in counts}
 
     assert await emit() == {"extension": 1, "host": 1}

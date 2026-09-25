@@ -12,7 +12,7 @@ Start pidrei with this extension:
 import time
 
 
-def extension(pi):
+async def extension(pi):
     async def bookmark(args, ctx):
         label = args.strip() or f"bookmark-{int(time.time() * 1000)}"
 

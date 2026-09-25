@@ -481,7 +481,8 @@ async def test_should_emit_tool_execution_end_in_completion_order_but_persist_re
     async def execute(_tool_call_id, params):
         nonlocal first_resolved, parallel_observed
         if params["value"] == "first":
-            await first_done.wait(None)
+            # Bounded: a sequential regression never releases the gate.
+            await first_done.wait(5)
             first_resolved = True
         if params["value"] == "second" and not first_resolved:
             parallel_observed = True
@@ -492,10 +493,6 @@ async def test_should_emit_tool_execution_end_in_completion_order_but_persist_re
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute)
     context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter, tool_execution="parallel")
-
-    async def release_first():
-        await tonio.sleep(0.02)
-        first_done.set()
 
     call_index = 0
 
@@ -510,16 +507,20 @@ async def test_should_emit_tool_execution_end_in_completion_order_but_persist_re
                 "toolUse",
             )
             stream = done_stream(message, "toolUse")
-            tonio.spawn.without_tracking(release_first())
         else:
             stream = done_stream(create_assistant_message([TextContent(text="done")]))
         call_index += 1
         return stream
 
+    # pidrei: pi releases the first tool after a 20 ms timer. Here it is
+    # released once the second tool's end has been emitted, which is the
+    # completion order the test asserts, without a wall-clock race.
     events = []
     stream = agent_loop([create_user_message("echo both")], context, config, None, stream_fn)
     async for event in stream:
         events.append(event)
+        if event.type == "tool_execution_end" and event.tool_call_id == "tool-2":
+            first_done.set()
 
     tool_execution_end_ids = [e.tool_call_id for e in events if e.type == "tool_execution_end"]
     tool_result_ids = [
@@ -625,11 +626,13 @@ async def test_should_inject_queued_messages_after_all_tool_calls_complete():
 async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_default_parallel_config():
     first_resolved = False
     parallel_observed = False
+    first_started = tonio.Event()
     first_done = tonio.Event()
 
     async def execute(_tool_call_id, params):
         nonlocal first_resolved, parallel_observed
         if params["value"] == "first":
+            first_started.set()
             await first_done.wait(None)
             first_resolved = True
         if params["value"] == "second" and not first_resolved:
@@ -643,8 +646,11 @@ async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_defa
     # config is parallel (default), but the tool forces sequential.
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
+    # pidrei: pi releases the first tool after a 20 ms timer; here once it is
+    # parked. `parallel_observed` alone would need a timing window to catch a
+    # parallel regression, so the event order below is the deterministic check.
     async def release_first():
-        await tonio.sleep(0.02)
+        await first_started.wait(None)
         first_done.set()
 
     call_index = 0
@@ -673,6 +679,13 @@ async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_defa
 
     # With sequential execution, second tool should NOT start before first finishes.
     assert parallel_observed is False
+    tool_lifecycle = [(e.type, e.tool_call_id) for e in events if e.type.startswith("tool_execution_")]
+    assert tool_lifecycle == [
+        ("tool_execution_start", "tool-1"),
+        ("tool_execution_end", "tool-1"),
+        ("tool_execution_start", "tool-2"),
+        ("tool_execution_end", "tool-2"),
+    ]
 
     tool_result_ids = [
         e.message.tool_call_id
@@ -685,11 +698,13 @@ async def test_should_force_sequential_when_a_tool_has_sequential_mode_with_defa
 @pytest.mark.tonio
 async def test_should_force_sequential_when_one_of_multiple_tools_has_sequential_mode():
     execution_order = []
+    slow_started = tonio.Event()
     slow_done = tonio.Event()
 
     async def execute_slow(_tool_call_id, params):
         execution_order.append(f"slow:{params['value']}")
         if params["value"] == "a":
+            slow_started.set()
             await slow_done.wait(None)
         return AgentToolResult(
             content=[TextContent(text=f"slow: {params['value']}")], details={"value": params["value"]}
@@ -706,8 +721,10 @@ async def test_should_force_sequential_when_one_of_multiple_tools_has_sequential
     context = AgentContext(messages=[], tools=[slow_tool, fast_tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
 
+    # pidrei: released once parked instead of after pi's 20 ms timer; the
+    # event order below is the deterministic check against parallel dispatch.
     async def release_slow():
-        await tonio.sleep(0.02)
+        await slow_started.wait(None)
         slow_done.set()
 
     call_index = 0
@@ -729,13 +746,21 @@ async def test_should_force_sequential_when_one_of_multiple_tools_has_sequential
         call_index += 1
         return stream
 
+    events = []
     stream = agent_loop([create_user_message("run both")], context, config, None, stream_fn)
-    async for _event in stream:
-        pass
+    async for event in stream:
+        events.append(event)
 
     # Fast tool should NOT run before slow tool finishes.
     assert execution_order[0] == "slow:a"
     assert "fast:b" in execution_order
+    tool_lifecycle = [(e.type, e.tool_call_id) for e in events if e.type.startswith("tool_execution_")]
+    assert tool_lifecycle == [
+        ("tool_execution_start", "tool-1"),
+        ("tool_execution_end", "tool-1"),
+        ("tool_execution_start", "tool-2"),
+        ("tool_execution_end", "tool-2"),
+    ]
 
 
 @pytest.mark.tonio
@@ -747,7 +772,8 @@ async def test_should_allow_parallel_execution_when_all_tools_have_parallel_mode
     async def execute(_tool_call_id, params):
         nonlocal first_resolved, parallel_observed
         if params["value"] == "first":
-            await first_done.wait(None)
+            # Bounded: a sequential regression never releases the gate.
+            await first_done.wait(5)
             first_resolved = True
         if params["value"] == "second" and not first_resolved:
             parallel_observed = True
@@ -758,10 +784,6 @@ async def test_should_allow_parallel_execution_when_all_tools_have_parallel_mode
     tool = FnTool("echo", "Echo", "Echo tool", VALUE_SCHEMA, execute, execution_mode="parallel")
     context = AgentContext(messages=[], tools=[tool])
     config = AgentLoopConfig(model=create_model(), convert_to_llm=identity_converter)
-
-    async def release_first():
-        await tonio.sleep(0.02)
-        first_done.set()
 
     call_index = 0
 
@@ -776,15 +798,17 @@ async def test_should_allow_parallel_execution_when_all_tools_have_parallel_mode
                 "toolUse",
             )
             stream = done_stream(message, "toolUse")
-            tonio.spawn.without_tracking(release_first())
         else:
             stream = done_stream(create_assistant_message([TextContent(text="done")]))
         call_index += 1
         return stream
 
+    # pidrei: the first tool is released once the second has ended instead of
+    # after pi's 20 ms timer, so `parallel_observed` does not race the clock.
     stream = agent_loop([create_user_message("echo both")], context, config, None, stream_fn)
-    async for _event in stream:
-        pass
+    async for event in stream:
+        if event.type == "tool_execution_end" and event.tool_call_id == "tool-2":
+            first_done.set()
 
     # With execution_mode="parallel", second tool should start before first finishes.
     assert parallel_observed is True

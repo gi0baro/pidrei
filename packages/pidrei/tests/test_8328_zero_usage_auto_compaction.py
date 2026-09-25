@@ -36,7 +36,8 @@ def zero_usage_assistant(harness: Harness) -> AssistantMessage:
 def record_auto_compaction(session) -> list[tuple]:
     calls: list[tuple] = []
 
-    async def fake(reason, will_retry):
+    # `_abort_generation`: pidrei-only (the abort baseline `_check_compaction` hands over).
+    async def fake(reason, will_retry, _abort_generation=None):
         calls.append((reason, will_retry))
         return False
 

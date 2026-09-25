@@ -16,7 +16,7 @@ POLL_SECONDS = 2.0
 _APPEARANCE_SCRIPT = 'tell application "System Events" to tell appearance preferences to return dark mode'
 
 
-def extension(pi):
+async def extension(pi):
     stopped = tonio.Event()
     state = {"polling": False}
 

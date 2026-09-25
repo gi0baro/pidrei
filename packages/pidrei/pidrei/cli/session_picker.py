@@ -65,6 +65,7 @@ async def select_session(
         on_exit,
         lambda: ui.request_render(),
         {"showRenameHint": False, "keybindings": keybindings},
+        post_ui=ui.post_ui,
     )
 
     ui.add_child(selector)

@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent test/interactive-mode-anthropic-warning.test.ts."""
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -26,11 +27,15 @@ def _create_model_runtime(credential, api_key=None):
 def _create_fake(model_runtime, warnings=None):
     fake = SimpleNamespace(
         _anthropic_subscription_warning_shown=False,
+        _anthropic_subscription_warning_guard=threading.Lock(),
         settings_manager=SimpleNamespace(get_warnings=lambda: warnings or {}),
         session=SimpleNamespace(model_runtime=model_runtime),
         warnings_shown=[],
     )
     fake.show_warning = fake.warnings_shown.append
+    fake._show_anthropic_subscription_warning_once = lambda: InteractiveMode._show_anthropic_subscription_warning_once(
+        fake
+    )
     return fake
 
 

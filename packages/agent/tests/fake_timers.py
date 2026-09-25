@@ -11,12 +11,18 @@ seams after every test.
 """
 
 import contextlib
+import threading
 
 from pidrei_ai.utils import clock, timers
 
 
 class FakeTimers:
+    """Thread-safe like the `timers.set_timeout` it replaces, which production
+    calls from any task: the queue and clock are guarded, and callbacks run
+    outside the lock (they may arm or cancel timers)."""
+
     def __init__(self, start_ms: int = 0) -> None:
+        self._lock = threading.Lock()
         self.now = start_ms
         self._timers: list[tuple[int, int, object]] = []
         self._sequence = 0
@@ -25,20 +31,32 @@ class FakeTimers:
         return self.now
 
     def set_timeout(self, delay_ms: float, callback):
-        self._sequence += 1
-        entry = (self.now + int(delay_ms), self._sequence, callback)
-        self._timers.append(entry)
+        with self._lock:
+            self._sequence += 1
+            entry = (self.now + int(delay_ms), self._sequence, callback)
+            self._timers.append(entry)
 
         def cancel() -> None:
-            if entry in self._timers:
-                self._timers.remove(entry)
+            with self._lock:
+                if entry in self._timers:
+                    self._timers.remove(entry)
 
         return cancel
 
     @property
     def pending(self) -> int:
         """`vi.getTimerCount()`: timers armed and not yet fired or cancelled."""
-        return len(self._timers)
+        with self._lock:
+            return len(self._timers)
+
+    def _pop_due_locked(self, target_ms: int) -> tuple[int, int, object] | None:
+        due = sorted((entry for entry in self._timers if entry[0] <= target_ms), key=lambda e: (e[0], e[1]))
+        if not due:
+            return None
+        entry = due[0]
+        self._timers.remove(entry)
+        self.now = max(self.now, entry[0])
+        return entry
 
     def pop_due(self, target_ms: int) -> object | None:
         """Remove the earliest timer due by `target_ms` and return its callback
@@ -46,26 +64,22 @@ class FakeTimers:
 
         For timers whose callback only spawns async work: the test awaits that
         work itself instead of racing a detached task."""
-        due = sorted((entry for entry in self._timers if entry[0] <= target_ms), key=lambda e: (e[0], e[1]))
-        if not due:
-            return None
-        entry = due[0]
-        self._timers.remove(entry)
-        self.now = max(self.now, entry[0])
-        return entry[2]
+        with self._lock:
+            entry = self._pop_due_locked(target_ms)
+        return entry[2] if entry is not None else None
 
     def advance(self, ms: int) -> None:
         """`vi.advanceTimersByTime`: fire every timer due within `ms`, in order."""
-        target = self.now + ms
+        with self._lock:
+            target = self.now + ms
         while True:
-            due = sorted((entry for entry in self._timers if entry[0] <= target), key=lambda e: (e[0], e[1]))
-            if not due:
+            with self._lock:
+                entry = self._pop_due_locked(target)
+            if entry is None:
                 break
-            entry = due[0]
-            self._timers.remove(entry)
-            self.now = max(self.now, entry[0])
             entry[2]()
-        self.now = target
+        with self._lock:
+            self.now = target
 
 
 @contextlib.contextmanager

@@ -4,7 +4,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -299,7 +299,12 @@ class SessionList:
         name_filter: str,
         keybindings,
         current_session_file_path: str | None = None,
+        *,
+        post_ui,
     ) -> None:
+        # The UI owner's front door (`TUI.post_ui`): list state is owner-confined,
+        # and `set_sessions` finishes off the runtime.
+        self._post_ui = post_ui
         self._all_sessions = sessions
         # Populated by `set_sessions`; empty here because a constructor cannot
         # await, and `build_session_tree` falls back to resolving inline.
@@ -371,7 +376,8 @@ class SessionList:
         pi's setSessions is synchronous; here the canonical-path map is built
         off the runtime first, so progressive loads can have several calls in
         flight. The call order is taken synchronously and only the latest call
-        applies, whichever finishes last.
+        applies, whichever finishes last. The awaitable resolves once the apply
+        is posted to the UI owner; anything posted after it sees the new list.
         """
         with self._set_sessions_guard:
             self._set_sessions_seq += 1
@@ -382,21 +388,28 @@ class SessionList:
         # Resolve every session path once here, off the runtime, so the
         # per-keystroke filter below never touches the filesystem.
         canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map, sessions)
-        if seq != self._set_sessions_seq:
-            return
-        selected_path = self.get_selected_session_path() if self._selection_touched else None
-        self._all_sessions = sessions
-        self._show_cwd = show_cwd
-        self._canonical_by_path = canonical_by_path
-        self._filter_sessions(self._search_input.get_value())
-        if not self._selection_touched:
-            self._selected_index = 0
-        elif selected_path:
-            selected_index = next(
-                (i for i, node in enumerate(self._filtered_sessions) if node["session"].path == selected_path), -1
-            )
-            if selected_index >= 0:
-                self._selected_index = selected_index
+
+        def apply() -> None:
+            # On the owner, where input handling and rendering read this state;
+            # the sequence check there is what makes the latest call win.
+            if seq != self._set_sessions_seq:
+                return
+            selected_path = self.get_selected_session_path() if self._selection_touched else None
+            self._all_sessions = sessions
+            self._show_cwd = show_cwd
+            self._canonical_by_path = canonical_by_path
+            self._filter_sessions(self._search_input.get_value())
+            if not self._selection_touched:
+                self._selected_index = 0
+            elif selected_path:
+                selected_index = next(
+                    (i for i, node in enumerate(self._filtered_sessions) if node["session"].path == selected_path),
+                    -1,
+                )
+                if selected_index >= 0:
+                    self._selected_index = selected_index
+
+        self._post_ui(apply)
 
     def _filter_sessions(self, query: str) -> None:
         trimmed = query.strip()
@@ -702,9 +715,15 @@ class SessionSelectorComponent(Container):
         request_render,
         options: dict | None = None,
         current_session_file_path: str | None = None,
+        *,
+        post_ui,
     ) -> None:
+        """`post_ui` is the UI owner's front door (`TUI.post_ui`), a pidrei-only
+        argument: loads, deletes and renames finish on detached tasks, and every
+        selector mutation they make is posted to the owner (tui-island contract)."""
         super().__init__()
         options = options or {}
+        self._post_ui = post_ui
         # Construction-time reads are hoisted out of constructors (PLAN: never
         # block the runtime). Both callers pass `keybindings`; the fallback is
         # the already-loaded global rather than a fresh read from disk.
@@ -740,6 +759,7 @@ class SessionSelectorComponent(Container):
             self._name_filter,
             self._keybindings,
             current_session_file_path,
+            post_ui=post_ui,
         )
 
         self._build_base_layout(self._session_list)
@@ -801,30 +821,33 @@ class SessionSelectorComponent(Container):
         self._session_list.on_delete_confirmation_change = handle_delete_confirmation_change
         self._session_list.on_error = handle_error
 
-        # Handle session deletion
+        # Handle session deletion (runs detached; the outcome is applied on the owner)
         async def handle_delete_session(session_path: str) -> None:
             result = await delete_session_file(session_path)
 
-            if result["ok"]:
-                if self._current_sessions is not None:
-                    self._current_sessions = [s for s in self._current_sessions if s.path != session_path]
-                if self._all_sessions is not None:
-                    self._all_sessions = [s for s in self._all_sessions if s.path != session_path]
+            def apply() -> None:
+                if result["ok"]:
+                    if self._current_sessions is not None:
+                        self._current_sessions = [s for s in self._current_sessions if s.path != session_path]
+                    if self._all_sessions is not None:
+                        self._all_sessions = [s for s in self._all_sessions if s.path != session_path]
 
-                sessions = (self._all_sessions or []) if self._scope == "all" else (self._current_sessions or [])
-                show_cwd = self._scope == "all"
-                await self._session_list.set_sessions(sessions, show_cwd)
+                    sessions = (self._all_sessions or []) if self._scope == "all" else (self._current_sessions or [])
+                    show_cwd = self._scope == "all"
+                    self._show_sessions(sessions, show_cwd)
 
-                msg = "Session moved to trash" if result["method"] == "trash" else "Session deleted"
-                self._header.set_status_message({"type": "info", "message": msg}, 2000)
-                await self._refresh_sessions_after_mutation()
-            else:
-                error_message = result.get("error") or "Unknown error"
-                self._header.set_status_message(
-                    {"type": "error", "message": f"Failed to delete: {error_message}"}, 3000
-                )
+                    msg = "Session moved to trash" if result["method"] == "trash" else "Session deleted"
+                    self._header.set_status_message({"type": "info", "message": msg}, 2000)
+                    self._refresh_sessions_after_mutation()
+                else:
+                    error_message = result.get("error") or "Unknown error"
+                    self._header.set_status_message(
+                        {"type": "error", "message": f"Failed to delete: {error_message}"}, 3000
+                    )
 
-            self._request_render()
+                self._request_render()
+
+            self._post_ui(apply)
 
         self._session_list.on_delete_session = handle_delete_session
 
@@ -914,24 +937,27 @@ class SessionSelectorComponent(Container):
         self._request_render()
 
     async def _confirm_rename(self, value: str) -> None:
+        # Spawned from the rename input's submit: selector mutations are posted.
         next_name = value.strip()
         if not next_name:
             return
         target = self._rename_target_path
         if not target:
-            self._exit_rename_mode()
+            self._post_ui(self._exit_rename_mode)
             return
 
         rename_session = self._rename_session
         if rename_session is None:
-            self._exit_rename_mode()
+            self._post_ui(self._exit_rename_mode)
             return
 
         try:
             await rename_session(target, next_name)
-            await self._refresh_sessions_after_mutation()
-        finally:
-            self._exit_rename_mode()
+        except BaseException:
+            self._post_ui(self._exit_rename_mode)
+            raise
+        # pi awaits the reload before leaving rename mode.
+        self._refresh_sessions_after_mutation(then=self._exit_rename_mode)
 
     def _load_scope(self, scope: str) -> Awaitable[None]:
         """Start a scope load; returns the awaitable remainder.
@@ -959,59 +985,81 @@ class SessionSelectorComponent(Container):
         else:
             self._all_sessions = sessions
 
+    def _show_sessions(self, sessions: list, show_cwd: bool) -> None:
+        """pi's `sessionList.setSessions(...)` + `requestRender()`, called on the
+        owner: the call order is taken now, and the list applies and renders
+        once its canonical-path map is built off the runtime."""
+        update = self._session_list.set_sessions(sessions, show_cwd)
+
+        async def finish() -> None:
+            await update
+            self._request_render()
+
+        tonio.spawn.without_tracking(finish())
+
     async def _load_scope_rest(self, scope: str, cancel: CancelToken) -> None:
+        # Runs detached, and progress arrives from the loader's parallel tasks:
+        # every selector read and write below happens in a closure posted to the
+        # owner, whose FIFO orders them against input and `_cancel_loads()`.
         show_cwd = scope == "all"
 
         def is_active() -> bool:
             return (self._current_load if scope == "current" else self._all_load) is cancel
 
-        def on_progress(loaded: int, total: int, partial_sessions: list | None) -> None:
-            if not is_active():
-                return
-            if partial_sessions is not None:
-                sessions = [*partial_sessions]
-                self._set_scope_sessions(scope, sessions)
-                if scope == self._scope:
-                    # Progress arrives on a sync callback; `set_sessions` orders
-                    # calls at call time, so the final list still wins.
-                    tonio.spawn.without_tracking(self._session_list.set_sessions(sessions, show_cwd))
-            if scope != self._scope:
-                return
-            self._header.set_progress(loaded, total)
-            self._request_render()
-
-        loader = self._current_sessions_loader if scope == "current" else self._all_sessions_loader
-        try:
-            sessions = await loader(on_progress, cancel)
-            if not is_active():
-                return
-
+        def finish_load(sessions: list | None) -> None:
             self._set_scope_sessions(scope, sessions)
             if scope == "current":
                 self._current_load = None
             else:
                 self._all_load = None
 
-            if scope != self._scope:
-                return
-            self._header.set_loading(False)
-            await self._session_list.set_sessions(sessions, show_cwd)
-            self._request_render()
+        def on_progress(loaded: int, total: int, partial_sessions: list | None) -> None:
+            sessions = [*partial_sessions] if partial_sessions is not None else None
+
+            def apply() -> None:
+                if not is_active():
+                    return
+                if sessions is not None:
+                    self._set_scope_sessions(scope, sessions)
+                    if scope == self._scope:
+                        self._show_sessions(sessions, show_cwd)
+                if scope != self._scope:
+                    return
+                self._header.set_progress(loaded, total)
+                self._request_render()
+
+            self._post_ui(apply)
+
+        loader = self._current_sessions_loader if scope == "current" else self._all_sessions_loader
+        try:
+            sessions = await loader(on_progress, cancel)
         except Exception as err:
+            # `err` is unbound when the except block ends; the posted closure keeps the text.
+            failure = f"Failed to load sessions: {err}"
+
+            def apply_failure() -> None:
+                if not is_active():
+                    return
+                finish_load(None)
+                if scope != self._scope:
+                    return
+                self._header.set_loading(False)
+                self._header.set_status_message({"type": "error", "message": failure}, 4000)
+                self._show_sessions([], show_cwd)
+
+            self._post_ui(apply_failure)
+            return
+
+        def apply_loaded() -> None:
             if not is_active():
                 return
-            self._set_scope_sessions(scope, None)
-            if scope == "current":
-                self._current_load = None
-            else:
-                self._all_load = None
+            finish_load(sessions)
             if scope != self._scope:
                 return
-
             self._header.set_loading(False)
-            self._header.set_status_message({"type": "error", "message": f"Failed to load sessions: {err}"}, 4000)
-            await self._session_list.set_sessions([], show_cwd)
-            self._request_render()
+            self._show_sessions(sessions, show_cwd)
+
+        self._post_ui(apply_loaded)
 
     def _toggle_sort_mode(self) -> None:
         # Cycle: threaded -> recent -> relevance -> threaded
@@ -1031,11 +1079,29 @@ class SessionSelectorComponent(Container):
         self._session_list.set_name_filter(self._name_filter)
         self._request_render()
 
-    async def _refresh_sessions_after_mutation(self) -> None:
-        self._cancel_loads()
-        self._current_sessions = None
-        self._all_sessions = None
-        await self._load_scope(self._scope)
+    def _refresh_sessions_after_mutation(self, then: Callable[[], None] | None = None) -> None:
+        """Post pi's refresh (cancel loads, reload the scope) to the owner. pi's
+        callers await the reload before their follow-up; `then` is that
+        follow-up, posted once the reload has settled."""
+
+        def apply() -> None:
+            self._cancel_loads()
+            self._current_sessions = None
+            self._all_sessions = None
+            load = self._load_scope(self._scope)
+            if then is None:
+                tonio.spawn.without_tracking(load)
+                return
+
+            async def reload_then() -> None:
+                try:
+                    await load
+                finally:
+                    self._post_ui(then)
+
+            tonio.spawn.without_tracking(reload_then())
+
+        self._post_ui(apply)
 
     async def _toggle_scope(self) -> None:
         self._scope = "all" if self._scope == "current" else "current"

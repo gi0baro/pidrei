@@ -15,6 +15,9 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/working_indicator.py
 """
 
+import threading
+
+
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 PASTEL_RAINBOW = [
     "\x1b[38;2;255;179;186m",
@@ -67,15 +70,20 @@ def get_indicator(mode: str) -> dict | None:
     return None
 
 
-def extension(pi):
+async def extension(pi):
     state = {"mode": "spinner"}
+    # Commands run concurrently (each submit on its own task): a mode write
+    # and the UI posts made from it are one step, so what is shown always
+    # matches the stored mode.
+    mode_guard = threading.Lock()
 
-    def apply_indicator(ctx) -> None:
-        ctx.ui.set_working_indicator(get_indicator(state["mode"]))
-        ctx.ui.set_status("working-indicator", ctx.ui.theme.fg("dim", f"Indicator: {MODE_LABELS[state['mode']]}"))
+    def apply_indicator(ctx, mode: str) -> None:
+        ctx.ui.set_working_indicator(get_indicator(mode))
+        ctx.ui.set_status("working-indicator", ctx.ui.theme.fg("dim", f"Indicator: {MODE_LABELS[mode]}"))
 
     async def on_session_start(_event, ctx) -> None:
-        apply_indicator(ctx)
+        with mode_guard:
+            apply_indicator(ctx, state["mode"])
 
     async def run_command(args: str, ctx) -> None:
         next_mode = args.strip().lower()
@@ -87,9 +95,10 @@ def extension(pi):
             ctx.ui.notify("Usage: /working-indicator [dot|pulse|none|spinner|reset]", "error")
             return
 
-        state["mode"] = "default" if next_mode == "reset" else next_mode
-        apply_indicator(ctx)
-        ctx.ui.notify(f"Working indicator set to: {MODE_LABELS[state['mode']]}", "info")
+        with mode_guard:
+            mode = state["mode"] = "default" if next_mode == "reset" else next_mode
+            apply_indicator(ctx, mode)
+            ctx.ui.notify(f"Working indicator set to: {MODE_LABELS[mode]}", "info")
 
     pi.on("session_start", on_session_start)
     pi.register_command(

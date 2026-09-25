@@ -123,7 +123,7 @@ def is_interactive_command(command: str) -> bool:
     return False
 
 
-def extension(pi):
+async def extension(pi):
     async def on_user_bash(event, ctx):
         command = event["command"]
         force_interactive = False

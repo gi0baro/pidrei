@@ -21,7 +21,7 @@ TRIGGER_FILE = "/tmp/agent-trigger.txt"  # noqa: S108 - a well-known path is the
 POLL_INTERVAL_SECONDS = 1.0
 
 
-def extension(pi):
+async def extension(pi):
     state = {"watching": False}
 
     async def watch_loop() -> None:

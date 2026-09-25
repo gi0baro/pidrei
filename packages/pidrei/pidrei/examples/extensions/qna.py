@@ -34,7 +34,7 @@ A:\x20
 Keep questions in the order they appeared. Be concise."""
 
 
-def extension(pi):
+async def extension(pi):
     async def qna(_args, ctx):
         if ctx.mode != "tui":
             ctx.ui.notify("qna requires interactive mode", "error")
@@ -66,7 +66,7 @@ def extension(pi):
             return
 
         # Run extraction with loader UI
-        def factory(tui, theme, _kb, done):
+        async def factory(tui, theme, _kb, done):
             loader = BorderedLoader(tui, theme, f"Extracting questions using {model.id}...")
             loader.on_abort = lambda: done(None)
 

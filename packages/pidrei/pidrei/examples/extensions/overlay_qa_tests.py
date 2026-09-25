@@ -21,6 +21,7 @@ Start pidrei with this extension:
 """
 
 import colorsys
+import functools
 import math
 import subprocess
 import time
@@ -229,10 +230,18 @@ class StreamingOverflowComponent(BaseOverlay):
         await self._process.wait()
         if self._disposed:  # Guard against callbacks after dispose
             return
-        self._finished = True
-        self._tui.request_render()
+
+        # Posted like the lines, so it lands after the last of them.
+        def finish() -> None:
+            self._finished = True
+            self._tui.request_render()
+
+        self._tui.post_ui(finish)
 
     async def _pump(self, stream, *, is_error: bool) -> None:
+        # The pumps run on their own tasks while the UI owner renders and
+        # scrolls this component: the lines are split here, and appended
+        # (with the auto-scroll) on the owner.
         buffer = ""
         with stream as source:
             while True:
@@ -243,12 +252,16 @@ class StreamingOverflowComponent(BaseOverlay):
                     return
                 buffer += bytes(chunk).decode("utf-8", "replace")
                 *complete, buffer = buffer.split("\n")
-                for line in complete:
-                    if line:
-                        self._lines.append(self._theme.fg("error", line.strip()) if is_error else line)
-                # Auto-scroll to bottom
-                self._scroll_offset = max(0, len(self._lines) - self._max_visible_lines)
-                self._tui.request_render()
+                lines = [self._theme.fg("error", line.strip()) if is_error else line for line in complete if line]
+                self._tui.post_ui(functools.partial(self._append_lines, lines))
+
+    def _append_lines(self, lines: list[str]) -> None:
+        if self._disposed:
+            return
+        self._lines.extend(lines)
+        # Auto-scroll to bottom
+        self._scroll_offset = max(0, len(self._lines) - self._max_visible_lines)
+        self._tui.request_render()
 
     async def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
@@ -593,10 +606,18 @@ class PassiveDemoController(BaseOverlay):
         self._input_count = 0
         self._last_input_debug = ""
         self._timer_component = TimerPanel(theme)
-        self._timer_handle = tui.show_overlay(
-            self._timer_component,
-            {"nonCapturing": True, "anchor": "top-right", "width": 22, "margin": {"top": 1, "right": 2}},
-        )
+        self._timer_handle = None
+
+        # Built inside the `ctx.ui.custom` factory, off the UI owner: the
+        # overlay is shown on the owner, posted ahead of this controller's
+        # mount (so the handle is set before any input reaches it).
+        def show_timer() -> None:
+            self._timer_handle = tui.show_overlay(
+                self._timer_component,
+                {"nonCapturing": True, "anchor": "top-right", "width": 22, "margin": {"top": 1, "right": 2}},
+            )
+
+        tui.post_ui(show_timer)
 
         async def on_tick() -> None:
             self._timer_component.tick()
@@ -680,13 +701,18 @@ class FocusDemoController(BaseOverlay):
         self._done = done
         self._entries: list[dict] = []
         self._closed = False
+        panels = [(FocusPanel(theme=theme, config=config, controller=self), config) for config in FOCUS_PANEL_CONFIGS]
 
-        for config in FOCUS_PANEL_CONFIGS:
-            panel = FocusPanel(theme=theme, config=config, controller=self)
-            handle = tui.show_overlay(panel, {"nonCapturing": True, **config["options"]})
-            self._entries.append({"panel": panel, "handle": handle})
+        # Built inside the `ctx.ui.custom` factory, off the UI owner: the
+        # overlays are shown and focused on the owner, posted ahead of this
+        # controller's mount.
+        def show_panels() -> None:
+            for panel, config in panels:
+                handle = tui.show_overlay(panel, {"nonCapturing": True, **config["options"]})
+                self._entries.append({"panel": panel, "handle": handle})
+            self._focus_first_open_panel()
 
-        self._focus_first_open_panel()
+        tui.post_ui(show_panels)
 
     def focus_next(self, current, direction: int = 1) -> None:
         open_entries = self._open_entries()
@@ -857,12 +883,19 @@ class StreamingInputController(BaseOverlay):
         colors = ["error", "success", "accent"]
         labels = ["Panel A", "Panel B", "Panel C"]
 
-        for i in range(3):
-            panel = StreamingInputPanel(theme, labels[i], colors[i], self._cycle_focus, self._close)
-            handle = tui.show_overlay(panel, {"nonCapturing": True, "row": 1 + i * 9, "col": 2, "width": 35})
-            panel.handle = handle
-            self._panels.append(panel)
-            self._handles.append(handle)
+        panels = [StreamingInputPanel(theme, labels[i], colors[i], self._cycle_focus, self._close) for i in range(3)]
+
+        # Built inside the `ctx.ui.custom` factory, off the UI owner: the
+        # overlays are shown on the owner, posted ahead of this controller's
+        # mount.
+        def show_panels() -> None:
+            for i, panel in enumerate(panels):
+                handle = tui.show_overlay(panel, {"nonCapturing": True, "row": 1 + i * 9, "col": 2, "width": 35})
+                panel.handle = handle
+                self._panels.append(panel)
+                self._handles.append(handle)
+
+        tui.post_ui(show_panels)
 
         # Start with controller focused (focus_index = -1)
 
@@ -996,7 +1029,7 @@ class StreamingInputPanel:
         pass
 
 
-def extension(pi):
+async def extension(pi):
     # Handle for the toggle demo, shared between the command's onHandle
     # callback and the component (kept in the factory closure, not a module
     # global, so it survives /reload semantics cleanly)
@@ -1004,8 +1037,11 @@ def extension(pi):
 
     # Animation demo - proves overlays can handle real-time updates
     async def overlay_animation(_args: str, ctx) -> None:
+        async def factory(tui, theme, _kb, done):
+            return AnimationDemoComponent(tui, theme, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: AnimationDemoComponent(tui, theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "center", "width": 50, "maxHeight": 20}},
         )
 
@@ -1014,8 +1050,12 @@ def extension(pi):
         index = 0
         while True:
             anchor = ANCHORS[index]
+
+            async def factory(_tui, theme, _kb, done, anchor=anchor):
+                return AnchorTestComponent(theme, anchor, done)
+
             result = await ctx.ui.custom(
-                lambda _tui, theme, _kb, done, anchor=anchor: AnchorTestComponent(theme, anchor, done),
+                factory,
                 {"overlay": True, "overlayOptions": {"anchor": anchor, "width": 40}},
             )
 
@@ -1045,10 +1085,11 @@ def extension(pi):
         index = 0
         while True:
             config = configs[index]
-            result = await ctx.ui.custom(
-                lambda _tui, theme, _kb, done, config=config: MarginTestComponent(theme, config, done),
-                {"overlay": True, "overlayOptions": config["options"]},
-            )
+
+            async def factory(_tui, theme, _kb, done, config=config):
+                return MarginTestComponent(theme, config, done)
+
+            result = await ctx.ui.custom(factory, {"overlay": True, "overlayOptions": config["options"]})
 
             if result == "next":
                 index = (index + 1) % len(configs)
@@ -1061,11 +1102,14 @@ def extension(pi):
         # Each offset slightly so you can see the stacking
 
         def show(num: int, position: str, offset_x: int, offset_y: int):
+            async def factory(_tui, theme, _kb, done):
+                return StackOverlayComponent(theme, num, position, done)
+
             # tonio.spawn starts the coroutine eagerly, so the overlay shows
             # now and the join handle is awaited later (JS Promise.all shape)
             return tonio.spawn(
                 ctx.ui.custom(
-                    lambda _tui, theme, _kb, done: StackOverlayComponent(theme, num, position, done),
+                    factory,
                     {
                         "overlay": True,
                         "overlayOptions": {
@@ -1096,15 +1140,21 @@ def extension(pi):
 
     # Test width overflow scenarios (original crash case) - streams real process output
     async def overlay_overflow(_args: str, ctx) -> None:
+        async def factory(tui, theme, _kb, done):
+            return StreamingOverflowComponent(tui, theme, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: StreamingOverflowComponent(tui, theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "center", "width": 90, "maxHeight": 20}},
         )
 
     # Test overlay at terminal edge
     async def overlay_edge(_args: str, ctx) -> None:
+        async def factory(_tui, theme, _kb, done):
+            return EdgeTestComponent(theme, done)
+
         await ctx.ui.custom(
-            lambda _tui, theme, _kb, done: EdgeTestComponent(theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "right-center", "width": 40, "margin": {"right": 0}}},
         )
 
@@ -1121,8 +1171,12 @@ def extension(pi):
         index = 0
         while True:
             config = configs[index]
+
+            async def factory(_tui, theme, _kb, done, config=config):
+                return PercentTestComponent(theme, config, done)
+
             result = await ctx.ui.custom(
-                lambda _tui, theme, _kb, done, config=config: PercentTestComponent(theme, config, done),
+                factory,
                 {
                     "overlay": True,
                     "overlayOptions": {"width": 30, "row": f"{config['row']}%", "col": f"{config['col']}%"},
@@ -1136,15 +1190,21 @@ def extension(pi):
 
     # Test maxHeight
     async def overlay_maxheight(_args: str, ctx) -> None:
+        async def factory(_tui, theme, _kb, done):
+            return MaxHeightTestComponent(theme, done)
+
         await ctx.ui.custom(
-            lambda _tui, theme, _kb, done: MaxHeightTestComponent(theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "center", "width": 50, "maxHeight": 10}},
         )
 
     # Test responsive sidepanel - only shows when terminal is wide enough
     async def overlay_sidepanel(_args: str, ctx) -> None:
+        async def factory(tui, theme, _kb, done):
+            return SidepanelComponent(tui, theme, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: SidepanelComponent(tui, theme, done),
+            factory,
             {
                 "overlay": True,
                 "overlayOptions": {
@@ -1166,8 +1226,11 @@ def extension(pi):
             # visibility control
             toggle_state["handle"] = handle
 
+        async def factory(tui, theme, _kb, done):
+            return ToggleDemoComponent(tui, theme, toggle_state, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: ToggleDemoComponent(tui, theme, toggle_state, done),
+            factory,
             {
                 "overlay": True,
                 "overlayOptions": {"anchor": "center", "width": 50},
@@ -1179,8 +1242,12 @@ def extension(pi):
     # Non-capturing overlay demo - passive info panel that doesn't steal focus
     async def overlay_passive(_args: str, ctx) -> None:
         ctx.ui.set_editor_text("")
+
+        async def factory(tui, theme, _kb, done):
+            return PassiveDemoController(tui, theme, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: PassiveDemoController(tui, theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "center", "width": 48}},
         )
 
@@ -1188,16 +1255,24 @@ def extension(pi):
     # dismissal, and rendering order
     async def overlay_focus(_args: str, ctx) -> None:
         ctx.ui.set_editor_text("")
+
+        async def factory(tui, theme, _kb, done):
+            return FocusDemoController(tui, theme, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: FocusDemoController(tui, theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "bottom-center", "width": 55, "margin": {"bottom": 1}}},
         )
 
     # Test multiple input panels with simulated streaming
     async def overlay_streaming(_args: str, ctx) -> None:
         ctx.ui.set_editor_text("")
+
+        async def factory(tui, theme, _kb, done):
+            return StreamingInputController(tui, theme, done)
+
         await ctx.ui.custom(
-            lambda tui, theme, _kb, done: StreamingInputController(tui, theme, done),
+            factory,
             {"overlay": True, "overlayOptions": {"anchor": "bottom-center", "width": 60, "margin": {"bottom": 1}}},
         )
 

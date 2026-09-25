@@ -5,9 +5,11 @@ dataclass `repr` carries the same content here.
 """
 
 import dataclasses
+import json
 import time
 
 import pytest
+from tonio.colored import fs
 
 from pidrei.core.compaction import (
     DEFAULT_COMPACTION_SETTINGS,
@@ -125,15 +127,22 @@ async def test_normalizes_string_replacements_for_array_only_assistant_and_tool_
 
 
 @pytest.mark.tonio
-async def test_normalizes_imported_string_replacements_while_projecting_array_only_roles():
-    session = SessionManager.in_memory()
+async def test_normalizes_imported_string_replacements_while_projecting_array_only_roles(tmp_path):
+    # pi rewrites the entry `getEntry()` returns to stand in for an imported file.
+    # The returned entry is live session storage here (read from other tasks), so
+    # the imported shape is written to a session file and loaded instead.
+    session = await SessionManager.create(str(tmp_path), str(tmp_path))
     assistant_id = await session.append_message(assistant("original"))
     edit_id = await session.append_context_edit(assistant_id, None)
-    edit = session.get_entry(edit_id)
-    assert edit is not None and edit["type"] == "context_edit", "expected context edit"
+    session_file = fs.Path(session.get_session_file())
+    records = [json.loads(line) for line in (await session_file.read_text(encoding="utf-8")).splitlines()]
+    edit = next(record for record in records if record.get("id") == edit_id)
+    assert edit["type"] == "context_edit", "expected context edit"
     edit["replacement"] = {"content": "imported replacement"}
+    await session_file.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
 
-    projected = session.build_session_projection().messages[0]
+    imported = await SessionManager.open(str(session_file), str(tmp_path))
+    projected = imported.build_session_projection().messages[0]
     assert (projected.role, projected.content) == ("assistant", [TextContent(text="imported replacement")])
 
 

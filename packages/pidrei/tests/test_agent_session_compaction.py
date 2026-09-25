@@ -474,16 +474,17 @@ class TestTreeNavigation:
     @pytest.mark.tonio
     async def test_handles_abort_during_summarization(self, tmp_path):
         base_stream_fn, state = _make_llm_stream_fn()
+        summarizing = tonio.Event()
 
         async def stream_fn(model, context, options=None):
             if _is_summarization_request(context):
                 # Summarization hangs until aborted, then reports an aborted result.
                 cancel = getattr(options, "cancel", None)
+                assert cancel is not None
                 stream = AssistantMessageEventStream()
 
                 async def watch_abort() -> None:
-                    while cancel is None or not cancel.cancelled:
-                        await tonio.time.sleep(0.005)
+                    await cancel.wait()
                     stream.push(
                         ErrorEvent(
                             reason="aborted",
@@ -492,6 +493,7 @@ class TestTreeNavigation:
                     )
 
                 tonio.spawn.without_tracking(watch_abort())
+                summarizing.set()
                 return stream
             return await base_stream_fn(model, context, options)
 
@@ -510,7 +512,8 @@ class TestTreeNavigation:
 
         navigation = tonio.spawn(session.navigate_tree(root_node.entry["id"], {"summarize": True}))
 
-        await tonio.time.sleep(0.1)
+        await summarizing.wait(5)
+        assert summarizing.is_set()
 
         # is_compacting should be True during branch summarization
         assert session.is_compacting is True
@@ -622,7 +625,7 @@ async def _create_abortable_compaction_harness():
     that parks until its signal fires, then cancels the compaction."""
     compaction_started = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             compaction_started.set()
             await event["signal"].wait()

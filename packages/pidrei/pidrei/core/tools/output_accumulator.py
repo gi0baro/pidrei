@@ -1,18 +1,17 @@
 """Mirror of pi coding-agent src/core/tools/output-accumulator.ts."""
 
 import codecs
-import os
 import secrets
-import tempfile
 import threading
 from dataclasses import replace
 
+from ...config import TEMP_DIR
 from ...utils.temp_file_writer import TempFileWriter
 from .truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, truncate_tail
 
 
 def _default_temp_file_path(prefix: str) -> str:
-    return os.path.join(tempfile.gettempdir(), f"{prefix}-{secrets.token_hex(8)}.log")
+    return str(TEMP_DIR / f"{prefix}-{secrets.token_hex(8)}.log")
 
 
 def _byte_length(text: str) -> int:

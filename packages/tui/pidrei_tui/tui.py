@@ -415,6 +415,10 @@ def is_viewport_tui(tui) -> bool:
     return getattr(tui, VIEWPORT_TUI, False) is True
 
 
+def _without(listeners: tuple, listener) -> tuple:
+    return tuple(registered for registered in listeners if registered != listener)
+
+
 # TuiMode: "regular" (main screen) | "fullscreen" (alternate screen).
 
 # pi streams renders through a BoundedTerminalWriter so a full render never
@@ -442,7 +446,11 @@ class TuiBase(Container, ABC):
         # and crash dumps fall back to the OS temp directory.
         self._log_directory = log_directory
         self._focused_component = None
-        self._input_listeners: list = []
+        # Listener registries: (un)registered from any task (extensions, the
+        # theme controller), iterated on the owner. Copy-on-write tuples under
+        # the guard, so a reader's reference never changes under it.
+        self._listeners_guard = threading.Lock()
+        self._input_listeners: tuple = ()
 
         # Global callback for debug key (Shift+Ctrl+D). Called before input is
         # forwarded to the focused component.
@@ -482,7 +490,7 @@ class TuiBase(Container, ABC):
         self._query_lock = threading.Lock()
         self._pending_osc11_replies = 0
         self._pending_osc11_queries: list[_PendingOsc11Query] = []
-        self._color_scheme_listeners: list = []
+        self._color_scheme_listeners: tuple = ()  # under `_listeners_guard`
         self._color_scheme_notifications_enabled = False
 
         # Overlay stack for modal components rendered on top of base content
@@ -947,8 +955,9 @@ class TuiBase(Container, ABC):
         self.request_render()
 
     def add_input_listener(self, listener):
-        if listener not in self._input_listeners:
-            self._input_listeners.append(listener)
+        with self._listeners_guard:
+            if listener not in self._input_listeners:
+                self._input_listeners = (*self._input_listeners, listener)
 
         def unsubscribe() -> None:
             self.remove_input_listener(listener)
@@ -956,16 +965,17 @@ class TuiBase(Container, ABC):
         return unsubscribe
 
     def remove_input_listener(self, listener) -> None:
-        if listener in self._input_listeners:
-            self._input_listeners.remove(listener)
+        with self._listeners_guard:
+            self._input_listeners = _without(self._input_listeners, listener)
 
     def on_terminal_color_scheme_change(self, listener):
-        if listener not in self._color_scheme_listeners:
-            self._color_scheme_listeners.append(listener)
+        with self._listeners_guard:
+            if listener not in self._color_scheme_listeners:
+                self._color_scheme_listeners = (*self._color_scheme_listeners, listener)
 
         def unsubscribe() -> None:
-            if listener in self._color_scheme_listeners:
-                self._color_scheme_listeners.remove(listener)
+            with self._listeners_guard:
+                self._color_scheme_listeners = _without(self._color_scheme_listeners, listener)
 
         return unsubscribe
 
@@ -1243,9 +1253,10 @@ class TuiBase(Container, ABC):
         if await self._handle_pointer_input(data):
             return
 
-        if self._input_listeners:
+        input_listeners = self._input_listeners
+        if input_listeners:
             current = data
-            for listener in list(self._input_listeners):
+            for listener in input_listeners:
                 result = listener(current)
                 if result and result.get("consume"):
                     return
@@ -1323,7 +1334,7 @@ class TuiBase(Container, ABC):
         if not scheme:
             return False
 
-        for listener in list(self._color_scheme_listeners):
+        for listener in self._color_scheme_listeners:
             # Listeners are awaitable-returning (async-only policy): reacting
             # to a scheme change can mean loading a theme from disk.
             await listener(scheme)

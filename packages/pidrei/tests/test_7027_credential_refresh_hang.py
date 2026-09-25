@@ -149,6 +149,8 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
     harnesses.append(harness)
     runtime = harness.session.model_runtime
     refresh_options: list = []
+    parked = tonio.Event()
+    refreshed = tonio.Event()
 
     async def bounded_refresh(options=None, *, _requested_only=False):
         refresh_options.append(options)
@@ -157,7 +159,8 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
             return ModelsRefreshResult(aborted=False, errors={})
         gate = tonio.Event()
         options.cancel.on_cancel(lambda _reason: gate.set())
-        await gate.wait()
+        parked.set()
+        await gate.wait(5)
         return ModelsRefreshResult(aborted=True, errors={})
 
     runtime.refresh = bounded_refresh
@@ -185,7 +188,9 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
         show_warning=warning_calls.append,
         _maybe_warn_about_anthropic_subscription_auth=noop_async,
         _check_daxnuts_easter_egg=lambda model: None,
-        ui=SimpleNamespace(request_render=lambda force=False: None),
+        # The refresh continuation ends with the render request (the login flow's
+        # own UI updates here are stubbed and do not render).
+        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), post_ui=lambda fn: fn()),
     )
 
     original_timeout = interactive_mode_module._TimeoutCancel
@@ -194,7 +199,9 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
         await InteractiveMode._complete_provider_authentication(
             context, DYNAMIC_MODEL.provider, "Stalled Login", "api_key", harness.get_model()
         )
-        await tonio.time.sleep(0.01)
+        # The detached catalog refresh is parked on its cancel token.
+        await parked.wait(5)
+        assert parked.is_set()
         scoped = [options for options in refresh_options if options is not None and options.providers]
         assert len(scoped) == 1
         assert scoped[0].providers == [DYNAMIC_MODEL.provider]
@@ -204,7 +211,8 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
         timeout = FakeTimeout.instances[-1]
         timeout.timed_out = True
         timeout.token.cancel(TimeoutError("The operation timed out."))
-        await tonio.time.sleep(0.01)
+        await refreshed.wait(5)
+        assert refreshed.is_set()
         assert warning_calls == [
             "Saved API key for Stalled Login, but its model catalog refresh timed out; using cached models."
         ]
@@ -347,8 +355,9 @@ async def _start_login():
         _update_editor_border_color=lambda: None,
         _maybe_warn_about_anthropic_subscription_auth=noop_async,
         _check_daxnuts_easter_egg=lambda model: None,
-        # The refresh continuation ends with the render request.
-        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set()),
+        # The refresh continuation ends with the render request. No UI owner here:
+        # posted UI updates apply inline.
+        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), post_ui=lambda fn: fn()),
     )
     context.show_status = context.status_calls.append
     context.show_error = context.error_calls.append

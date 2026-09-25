@@ -905,11 +905,11 @@ def _sort_session_infos(sessions: list[SessionInfo]) -> list[SessionInfo]:
     return sessions
 
 
-async def _build_session_infos_with_concurrency(
+def _build_session_infos_with_concurrency(
     files: list[_SessionFileCandidate],
     on_loaded: Callable[[SessionInfo | None, int], None],
     cancel: CancelToken | None = None,
-) -> list[SessionInfo | None]:
+) -> Awaitable[list[SessionInfo | None]]:
     async def load(file: _SessionFileCandidate, index: int) -> SessionInfo | None:
         try:
             info = await tonio.spawn_blocking(_build_session_info, file.path, cancel, file.stat_result)
@@ -918,7 +918,7 @@ async def _build_session_infos_with_concurrency(
         on_loaded(info, index)
         return info
 
-    return await _map_with_concurrency(files, _MAX_CONCURRENT_SESSION_INFO_LOADS, load, cancel)
+    return _map_with_concurrency(files, _MAX_CONCURRENT_SESSION_INFO_LOADS, load, cancel)
 
 
 async def _list_sessions_from_dir(
@@ -1902,31 +1902,31 @@ class SessionManager:
 
             dirs = await tonio.spawn_blocking(_project_dirs)
 
-            def list_jsonl(directory: str) -> list[str]:
+            # One pool hop per project directory: the listing plus the stat of each
+            # session file are one blocking unit.
+            def list_candidates(directory: str) -> list[_SessionFileCandidate]:
                 try:
                     names = os.listdir(directory)
                 except Exception:
                     return []  # skip unreadable project dirs like pi's
-                return [os.path.join(directory, name) for name in names if name.endswith(".jsonl")]
+                candidates: list[_SessionFileCandidate] = []
+                for name in names:
+                    if cancel is not None and cancel.cancelled:
+                        break  # `_map_with_concurrency` raises once its workers drain
+                    if not name.endswith(".jsonl"):
+                        continue
+                    path = os.path.join(directory, name)
+                    try:
+                        candidates.append(_SessionFileCandidate(path, os.stat(path)))
+                    except OSError:
+                        candidates.append(_SessionFileCandidate(path))
+                return candidates
 
-            async def list_dir(directory: str, _index: int) -> list[str]:
-                return await tonio.spawn_blocking(list_jsonl, directory)
+            def list_dir(directory: str, _index: int) -> Awaitable[list[_SessionFileCandidate]]:
+                return tonio.spawn_blocking(list_candidates, directory)
 
-            dir_files = await _map_with_concurrency(dirs, _MAX_CONCURRENT_SESSION_DISCOVERY_LOADS, list_dir, cancel)
-            all_files = [path for listing in dir_files for path in listing]
-
-            def stat_candidate(path: str) -> _SessionFileCandidate:
-                try:
-                    return _SessionFileCandidate(path, os.stat(path))
-                except OSError:
-                    return _SessionFileCandidate(path)
-
-            async def load_candidate(path: str, _index: int) -> _SessionFileCandidate:
-                return await tonio.spawn_blocking(stat_candidate, path)
-
-            candidates = await _map_with_concurrency(
-                all_files, _MAX_CONCURRENT_SESSION_DISCOVERY_LOADS, load_candidate, cancel
-            )
+            listings = await _map_with_concurrency(dirs, _MAX_CONCURRENT_SESSION_DISCOVERY_LOADS, list_dir, cancel)
+            candidates = [candidate for listing in listings for candidate in listing]
             # Most recently written first, so the first partial update holds the
             # sessions the user most likely wants.
             candidates.sort(

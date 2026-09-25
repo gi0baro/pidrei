@@ -133,12 +133,12 @@ class OverlayTestComponent:
         pass
 
 
-def extension(pi):
+async def extension(pi):
     async def handle(_args: str, ctx) -> None:
-        result = await ctx.ui.custom(
-            lambda _tui, theme, _keybindings, done: OverlayTestComponent(theme, done),
-            {"overlay": True},
-        )
+        async def factory(_tui, theme, _keybindings, done):
+            return OverlayTestComponent(theme, done)
+
+        result = await ctx.ui.custom(factory, {"overlay": True})
 
         if result:
             msg = '{}: "{}"'.format(result["action"], result["query"]) if result["query"] else result["action"]

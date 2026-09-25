@@ -28,6 +28,9 @@ class _FakeUi:
     def invalidate(self) -> None:
         pass
 
+    def post_ui(self, fn) -> None:
+        fn()
+
     def request_render(self) -> None:
         pass
 

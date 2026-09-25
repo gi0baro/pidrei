@@ -206,7 +206,7 @@ MODELS = [
 # =============================================================================
 
 
-def extension(pi):
+async def extension(pi):
     provider = create_provider(
         id=PROVIDER_ID,
         name="Custom Anthropic",

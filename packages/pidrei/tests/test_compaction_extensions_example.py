@@ -50,7 +50,7 @@ async def make_runner(extension, runtime) -> ExtensionRunner:
 async def test_the_custom_compaction_example_reads_every_documented_field():
     observed: dict = {}
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, ctx):
             preparation = event["preparation"]
             observed["branch_entries"] = event["branchEntries"]
@@ -116,7 +116,7 @@ async def test_the_custom_compaction_example_reads_every_documented_field():
 async def test_the_compact_event_carries_the_documented_fields():
     observed: dict = {}
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_compact(event, _ctx):
             observed["entry"] = event["compactionEntry"]
             observed["from_extension"] = event["fromExtension"]

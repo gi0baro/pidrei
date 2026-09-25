@@ -18,6 +18,9 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/tic_tac_toe.py
 """
 
+import copy
+import threading
+
 import tonio.colored as tonio
 
 from pidrei.core.extensions.types import ToolDefinition
@@ -306,10 +309,14 @@ def render_visual_board(state: dict, max_width: int) -> list[str]:
 
 
 class TicTacToeComponent:
-    def __init__(self, tui, on_close, on_user_play, state: dict) -> None:
+    # The game state is shared with the tool, which runs off the UI owner:
+    # every read-modify-write of it (and of `_version`) holds `guard`, the
+    # extension's state lock — pi's run-to-completion blocks, made explicit.
+    def __init__(self, tui, on_close, on_user_play, state: dict, guard) -> None:
         self._tui = tui
         self._on_close = on_close
         self._on_user_play = on_user_play  # async (row, col) -> None
+        self._guard = guard
         self._state = state
         self._cached_lines: list[str] = []
         self._cached_width = 0
@@ -317,21 +324,31 @@ class TicTacToeComponent:
         self._cached_version = -1
 
     def update_state(self, state: dict) -> None:
-        self._state = state
-        self._version += 1
+        with self._guard:
+            self._state = state
+            self._version += 1
         self._tui.request_render()
 
     async def handle_input(self, data: str) -> None:
-        state = self._state
         if matches_key(data, "escape") or data in ("q", "Q"):
             self._on_close()
             return
+        with self._guard:
+            outcome = self._apply_key(data)
+        # Outside the guard: the play awaits, and takes the guard itself.
+        if outcome == "close":
+            self._on_close()
+        elif outcome is not None:
+            await self._on_user_play(*outcome)
+
+    def _apply_key(self, data: str):
+        """The key's effect, under the guard: "close", the (row, col) to
+        play, or None. Cursor moves are applied here."""
+        state = self._state
         if state["status"] != "playing":
-            if data in ("r", "R"):
-                self._on_close()
-            return
+            return "close" if data in ("r", "R") else None
         if state["currentTurn"] != state["userMark"]:
-            return
+            return None
 
         if matches_key(data, "up") and state["userCursorRow"] > 0:
             state["userCursorRow"] -= 1
@@ -343,22 +360,24 @@ class TicTacToeComponent:
             state["userCursorCol"] += 1
         elif matches_key(data, "return") or data == " ":
             row, col = state["userCursorRow"], state["userCursorCol"]
-            if state["board"][row][col] == " ":
-                await self._on_user_play(row, col)
-            return
+            return (row, col) if state["board"][row][col] == " " else None
         else:
-            return
+            return None
         self._version += 1
         self._tui.request_render()
+        return None
 
     def invalidate(self) -> None:
         self._cached_width = 0
 
     def render(self, width: int) -> list[str]:
-        if width == self._cached_width and self._cached_version == self._version:
-            return self._cached_lines
-
-        state = self._state
+        # The frame is built from a copy taken with its version, so a frame is
+        # never cached under a newer version than the state it shows.
+        with self._guard:
+            version = self._version
+            if width == self._cached_width and self._cached_version == version:
+                return self._cached_lines
+            state = copy.deepcopy(self._state)
 
         # Raw ANSI on purpose: this component owns its whole look.
         def bold(s: str) -> str:
@@ -414,7 +433,7 @@ class TicTacToeComponent:
 
         self._cached_lines = lines
         self._cached_width = width
-        self._cached_version = self._version
+        self._cached_version = version
         return lines
 
 
@@ -572,6 +591,12 @@ class TicTacToe:
     def __init__(self, pi) -> None:
         self.pi = pi
         self.state = create_initial_state()
+        # pi's handlers each run to completion on one thread; here the tool
+        # (off the UI owner), the board's input (on it) and session events
+        # interleave, so every read-modify-write of the state holds this.
+        # Reentrant: the details snapshot and `update_state` are also taken
+        # from inside locked sections.
+        self.state_guard = threading.RLock()
         self.component: TicTacToeComponent | None = None
         self.game_active = False
 
@@ -587,25 +612,26 @@ class TicTacToe:
     # -- state ---------------------------------------------------------------
 
     def reconstruct_state(self, ctx) -> None:
-        self.state = create_initial_state()
-        self.game_active = False
+        with self.state_guard:
+            self.state = create_initial_state()
+            self.game_active = False
 
-        for entry in ctx.session_manager.get_branch():
-            if entry.get("type") != "message":
-                continue
-            msg = entry.get("message")
-            if getattr(msg, "role", None) != "toolResult":
-                continue
-            if msg.tool_name not in ("tic_tac_toe", "tic_tac_toe_see_board"):
-                continue
+            for entry in ctx.session_manager.get_branch():
+                if entry.get("type") != "message":
+                    continue
+                msg = entry.get("message")
+                if getattr(msg, "role", None) != "toolResult":
+                    continue
+                if msg.tool_name not in ("tic_tac_toe", "tic_tac_toe_see_board"):
+                    continue
 
-            details = msg.details
-            if details:
-                self.state["board"] = [list(row) for row in details["board"]]
-                self.state["agentCursorRow"] = details["agentCursorRow"]
-                self.state["agentCursorCol"] = details["agentCursorCol"]
-                self.state["status"] = details["status"]
-                self.state["currentTurn"] = details["currentTurn"]
+                details = msg.details
+                if details:
+                    self.state["board"] = [list(row) for row in details["board"]]
+                    self.state["agentCursorRow"] = details["agentCursorRow"]
+                    self.state["agentCursorCol"] = details["agentCursorCol"]
+                    self.state["status"] = details["status"]
+                    self.state["currentTurn"] = details["currentTurn"]
 
     async def on_session_event(self, _event, ctx) -> None:
         self.reconstruct_state(ctx)
@@ -614,23 +640,26 @@ class TicTacToe:
         """Persisted with each toolResult for state reconstruction AND sent to
         the agent as `details`. Only the agent cursor is included: the user
         cursor is private to the TUI."""
-        return {
-            "board": [list(row) for row in self.state["board"]],
-            "agentCursorRow": self.state["agentCursorRow"],
-            "agentCursorCol": self.state["agentCursorCol"],
-            "status": self.state["status"],
-            "currentTurn": self.state["currentTurn"],
-        }
+        with self.state_guard:
+            return {
+                "board": [list(row) for row in self.state["board"]],
+                "agentCursorRow": self.state["agentCursorRow"],
+                "agentCursorCol": self.state["agentCursorCol"],
+                "status": self.state["status"],
+                "currentTurn": self.state["currentTurn"],
+            }
 
     def emit_game_over_message(self) -> None:
         """Sent once per game at end-of-game. The custom renderer paints the
         banner; `content` is a plain-text fallback for any non-TUI consumer
         and for the LLM (in case the message ends up in future context)."""
+        with self.state_guard:
+            status = self.state["status"]
         label = {
             "win_X": "Player X (human) wins",
             "win_O": "Player O (agent) wins",
             "draw": "Draw",
-        }.get(self.state["status"], "Game over")
+        }.get(status, "Game over")
         self.pi.send_message(
             {
                 "customType": GAME_OVER_MESSAGE_TYPE,
@@ -672,37 +701,49 @@ class TicTacToe:
             return
 
         self.reconstruct_state(ctx)
-        if self.state["status"] != "playing":
-            self.state = create_initial_state()
-        self.game_active = True
+        with self.state_guard:
+            if self.state["status"] != "playing":
+                self.state = create_initial_state()
+            self.game_active = True
         await self.pi.set_session_name("Tic-Tac-Toe")
 
         async def on_user_play(row: int, col: int) -> None:
-            state = self.state
-            state["board"][row][col] = state["userMark"]
-            state["status"] = check_win(state["board"])
-            if state["status"] == "playing":
-                state["currentTurn"] = state["agentMark"]
-            if self.component is not None:
-                self.component.update_state(state)
-            await self.pi.append_entry(SAVE_TYPE, self.get_board_details())
+            # The play and everything read from it happen under the guard; the
+            # save and the message use what was captured there.
+            with self.state_guard:
+                state = self.state
+                # Re-checked: the key was read in an earlier locked step.
+                if state["status"] != "playing" or state["board"][row][col] != " ":
+                    return
+                state["board"][row][col] = state["userMark"]
+                state["status"] = check_win(state["board"])
+                if state["status"] == "playing":
+                    state["currentTurn"] = state["agentMark"]
+                component = self.component
+                if component is not None:
+                    component.update_state(state)
+                status = state["status"]
+                agent_row, agent_col = state["agentCursorRow"], state["agentCursorCol"]
+                board_ascii = board_to_ascii(state["board"], agent_row, agent_col)
+                save_details = self.get_board_details()
+                message_details = self.get_board_details()
+            await self.pi.append_entry(SAVE_TYPE, save_details)
 
-            if state["status"] == "playing":
+            if status == "playing":
                 # IMPORTANT: user play does NOT touch the agent cursor.
                 # The agent cursor is only reset after a successful agent play.
-                board_ascii = board_to_ascii(state["board"], state["agentCursorRow"], state["agentCursorCol"])
                 self.pi.send_message(
                     {
                         "customType": MOVE_MESSAGE_TYPE,
                         "content": (
                             f"Player X played at (row={row}, col={col}). It is now Player O's turn.\n\n"
                             f"Board (your cursor marked with <>):\n{board_ascii}\n\n"
-                            f"Your cursor is at (row={state['agentCursorRow']}, col={state['agentCursorCol']}). "
+                            f"Your cursor is at (row={agent_row}, col={agent_col}). "
                             "Decide your target cell, then emit every move_* and the final play "
                             "as separate tic_tac_toe tool calls in THIS response."
                         ),
                         "display": True,
-                        "details": self.get_board_details(),
+                        "details": message_details,
                     },
                     {"triggerTurn": True},
                 )
@@ -710,14 +751,16 @@ class TicTacToe:
                 self.emit_game_over_message()
                 self.game_active = False
 
-        def factory(tui, _theme, _kb, done):
+        async def factory(tui, _theme, _kb, done):
             def close() -> None:
                 self.component = None
                 self.game_active = False
                 done(None)
 
-            self.component = TicTacToeComponent(tui, close, on_user_play, self.state)
-            return self.component
+            with self.state_guard:
+                component = TicTacToeComponent(tui, close, on_user_play, self.state, self.state_guard)
+                self.component = component
+            return component
 
         await ctx.ui.custom(factory)
 
@@ -729,6 +772,22 @@ class TicTacToe:
         if delay > 0:
             await tonio.time.sleep(delay)
 
+        # The action runs under the guard (the board takes input on the UI
+        # owner meanwhile); the save and the result use what it captured.
+        with self.state_guard:
+            result, error, game_over, save_details, result_details = self._apply_action(action)
+        if game_over:
+            self.emit_game_over_message()
+        if save_details is not None:
+            await self.pi.append_entry(SAVE_TYPE, save_details)
+        if error is not None:
+            raise error
+        return AgentToolResult(content=[TextContent(text=result)], details=result_details)
+
+    def _apply_action(self, action: str):
+        """`execute_action`'s state change, under the guard. Returns (result
+        text, error to raise, whether the game just ended, details to save or
+        None, result details)."""
         state = self.state
 
         if action == "move_up":
@@ -749,25 +808,25 @@ class TicTacToe:
             result = f"Moved right. Cursor: ({state['agentCursorRow']}, {state['agentCursorCol']})"
         else:  # play
             if state["status"] != "playing":
-                raise TicTacToeError(f"Game is over ({state['status']}).")
+                return None, TicTacToeError(f"Game is over ({state['status']})."), False, None, None
             if state["currentTurn"] != state["agentMark"]:
-                raise TicTacToeError("It is not your turn.")
+                return None, TicTacToeError("It is not your turn."), False, None, None
             r, c = state["agentCursorRow"], state["agentCursorCol"]
             if state["board"][r][c] != " ":
                 # Do NOT reset the cursor on failure. The agent can retry
                 # from the cursor's current position.
-                if self.component is not None:
-                    self.component.update_state(state)
-                await self.pi.append_entry(SAVE_TYPE, self.get_board_details())
-                raise TicTacToeError(
+                self._show_state(state)
+                error = TicTacToeError(
                     f"Cell ({r},{c}) is already {state['board'][r][c]}. Your cursor is still at "
                     f"({r},{c}). Move to an empty cell and retry play."
                 )
+                return None, error, False, self.get_board_details(), None
             state["board"][r][c] = state["agentMark"]
             state["status"] = check_win(state["board"])
             # Reset agent cursor to home ONLY on successful play.
             state["agentCursorRow"] = AGENT_CURSOR_HOME_ROW
             state["agentCursorCol"] = AGENT_CURSOR_HOME_COL
+            game_over = False
             if state["status"] == "playing":
                 state["currentTurn"] = state["userMark"]
                 result = (
@@ -777,31 +836,38 @@ class TicTacToe:
             elif state["status"] == "win_O":
                 result = f"Placed O at ({r},{c}). Player O wins!"
                 self.game_active = False
-                self.emit_game_over_message()
+                game_over = True
             elif state["status"] == "draw":
                 result = f"Placed O at ({r},{c}). It's a draw!"
                 self.game_active = False
-                self.emit_game_over_message()
+                game_over = True
             else:
                 result = f"Placed O at ({r},{c})."
+            self._show_state(state)
+            return result, None, game_over, self.get_board_details(), self.get_board_details()
 
-        if self.component is not None:
-            self.component.update_state(state)
-        await self.pi.append_entry(SAVE_TYPE, self.get_board_details())
+        self._show_state(state)
+        return result, None, False, self.get_board_details(), self.get_board_details()
 
-        return AgentToolResult(content=[TextContent(text=result)], details=self.get_board_details())
+    def _show_state(self, state: dict) -> None:
+        # Read once: the board's Esc (on the owner) clears the field.
+        component = self.component
+        if component is not None:
+            component.update_state(state)
 
     async def execute_see_board(self, _tool_call_id, _params, _cancel=None, _on_update=None, _ctx=None):
-        state = self.state
-        board_ascii = board_to_ascii(state["board"], state["agentCursorRow"], state["agentCursorCol"])
-        turn = "Player O (you)" if state["currentTurn"] == state["agentMark"] else "Player X"
-        text = (
-            f"Board (your cursor marked with <>):\n{board_ascii}\n\n"
-            f"Your cursor: (row={state['agentCursorRow']}, col={state['agentCursorCol']})\n"
-            f"Status: {state['status']}\n"
-            f"Turn: {turn}"
-        )
-        return AgentToolResult(content=[TextContent(text=text)], details=self.get_board_details())
+        with self.state_guard:
+            state = self.state
+            board_ascii = board_to_ascii(state["board"], state["agentCursorRow"], state["agentCursorCol"])
+            turn = "Player O (you)" if state["currentTurn"] == state["agentMark"] else "Player X"
+            text = (
+                f"Board (your cursor marked with <>):\n{board_ascii}\n\n"
+                f"Your cursor: (row={state['agentCursorRow']}, col={state['agentCursorCol']})\n"
+                f"Status: {state['status']}\n"
+                f"Turn: {turn}"
+            )
+            details = self.get_board_details()
+        return AgentToolResult(content=[TextContent(text=text)], details=details)
 
     def register_tools(self) -> None:
         def render_action_call(args, theme, _context):
@@ -898,5 +964,5 @@ class TicTacToe:
         )
 
 
-def extension(pi):
+async def extension(pi):
     TicTacToe(pi).wire()

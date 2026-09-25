@@ -13,6 +13,7 @@ Two ways to stop waiting on an operation when a token fires:
 Both are free when the token is `None` or the shared placeholder.
 """
 
+import threading
 from collections.abc import Coroutine
 from typing import Any
 
@@ -51,9 +52,17 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
 
     settled = tonio.Event()
     outcome = tonio.Result()
+    # Who owns `operation`: the child claims it before awaiting it; after the
+    # scope, the caller closes it only if the child never did (see below).
+    claim_guard = threading.Lock()
+    claim = {"child": False, "abandoned": False}
 
     async def _child() -> None:
         try:
+            with claim_guard:
+                if claim["abandoned"]:
+                    return
+                claim["child"] = True
             outcome.store((False, await operation))
         except CancelledError:
             raise  # reported as the token's reason below
@@ -76,6 +85,17 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
         unsubscribe = cancel.on_cancel(_on_cancel)
         await settled.wait()
     unsubscribe()
+    # A cancel landing before the child first runs aborts it unstarted, so the
+    # operation is never awaited: close it (no body runs) rather than leave a
+    # dropped coroutine to the garbage collector. Leaving the scope does not
+    # interrupt a child already running on another worker, so a state probe
+    # could close the coroutine the child is about to await: ownership is
+    # settled under the claim lock instead — a child that starts late sees
+    # the abandonment and leaves the operation alone.
+    with claim_guard:
+        claim["abandoned"] = not claim["child"]
+    if claim["abandoned"]:
+        operation.close()
     stored = outcome.fetch()
     if stored is None:
         raise _abort_reason(cancel)

@@ -1,14 +1,11 @@
 """Mirror of pi's suite/regressions/3217-scoped-model-order.test.ts.
 
-pi waits for the catalog refresh with `vi.waitFor`; here the render output is
-polled the way the other model-selector mirrors do — but bounded, so a broken
-refresh fails the test instead of hanging the run.
+pi waits for the catalog refresh with `vi.waitFor`; here the fake TUI re-checks
+the rendered state on each render request (the refresh's last step), bounded
+so a broken refresh fails the test instead of hanging the run.
 """
 
-from types import SimpleNamespace
-
 import pytest
-import tonio.colored as tonio
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.model_selector import ModelSelectorComponent
@@ -18,15 +15,7 @@ from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 from .harness import create_harness
-
-
-async def _wait_until(condition, timeout=2.0):
-    waited = 0.0
-    while not condition():
-        await tonio.time.sleep(0.005)
-        waited += 0.005
-        if waited >= timeout:
-            raise AssertionError("condition not reached before timeout")
+from .render_request_helpers import RenderRequests
 
 
 THREE_MODELS = [
@@ -48,10 +37,6 @@ def harnesses(request):
     created: list = []
     request.addfinalizer(lambda: [harness.cleanup() for harness in created])
     return created
-
-
-def fake_tui():
-    return SimpleNamespace(request_render=lambda: None)
 
 
 @pytest.mark.tonio
@@ -83,8 +68,9 @@ async def test_preserves_scoped_model_order_in_the_model_scoped_tab(harnesses):
     model_one = harness.get_model("faux-1")
     model_two = harness.get_model("faux-2")
     model_three = harness.get_model("faux-3")
+    tui = RenderRequests()
     selector = ModelSelectorComponent(
-        fake_tui(),
+        tui,
         model_one,
         harness.session.model_runtime,
         [{"model": model_two}, {"model": model_one}, {"model": model_three}],
@@ -95,7 +81,7 @@ async def test_preserves_scoped_model_order_in_the_model_scoped_tab(harnesses):
     def render() -> str:
         return strip_ansi("\n".join(selector.render(120)))
 
-    await _wait_until(lambda: f"[{model_one.provider}]" in render() and "Model catalogs refreshed." in render())
+    await tui.until(lambda: f"[{model_one.provider}]" in render() and "Model catalogs refreshed." in render())
 
     rendered_lines = [line for line in render().split("\n") if f"[{model_one.provider}]" in line]
     ordered_ids = [

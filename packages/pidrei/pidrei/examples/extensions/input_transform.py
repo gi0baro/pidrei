@@ -14,7 +14,7 @@ Then type these inside pidrei:
 from datetime import datetime
 
 
-def extension(pi):
+async def extension(pi):
     async def on_input(event, ctx):
         # Source-based logic: skip processing for extension-injected messages
         if event["source"] == "extension":

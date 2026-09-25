@@ -12,7 +12,7 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 
 
-def extension(pi):
+async def extension(pi):
     # Register a /quit command that cleanly exits pidrei.
     async def handle_quit(_args, ctx) -> None:
         ctx.shutdown()

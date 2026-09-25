@@ -19,7 +19,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     async def on_model_select(event, ctx) -> None:
         model = event["model"]
         previous = event["previousModel"]

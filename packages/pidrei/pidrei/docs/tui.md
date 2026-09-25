@@ -117,7 +117,7 @@ Helpers: `fuzzy_filter` / `fuzzy_match` for list filtering,
 from pidrei_tui import Container, Text
 
 
-def extension(pi):
+async def extension(pi):
     async def on_turn_end(_event, ctx):
         if not ctx.has_ui:
             return
@@ -170,9 +170,10 @@ Both return `None` if the user dismisses them. They only work when
 `ctx.has_ui` is true.
 
 When those are not enough, `await ctx.ui.custom(factory, options)` hands the
-interactive area to one component until it finishes. The factory is called
-as `factory(tui, theme, keybindings, done)` and may be async; calling
-`done(result)` resolves `custom()` with `result` and disposes the component.
+interactive area to one component until it finishes. The factory must be an
+`async def` returning the component; it is awaited as
+`await factory(tui, theme, keybindings, done)`, and calling `done(result)`
+resolves `custom()` with `result` and disposes the component.
 By default the component replaces the editor; `{"overlay": True}` draws it on
 top of existing content instead, with `"overlayOptions"` (size, anchor,
 offsets, margins, responsive visibility — a dict or a callable returning one)

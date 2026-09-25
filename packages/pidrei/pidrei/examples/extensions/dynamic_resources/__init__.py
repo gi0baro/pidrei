@@ -14,7 +14,7 @@ import os
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def extension(pi):
+async def extension(pi):
     async def on_resources_discover(_event, _ctx):
         return {
             "skillPaths": [os.path.join(_BASE_DIR, "SKILL.md")],

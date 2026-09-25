@@ -4,18 +4,18 @@ pi's upstream note: based on code from OpenTUI
 (https://github.com/anomalyco/opentui), MIT License, Copyright (c) 2025
 opentui.
 
-pi drives the 10ms flush timeout with mocked timers; here the timers are real
-tonio tasks, so the ticks become short real-time sleeps.
+pi drives the 10ms flush timeout with mocked timers; here the flush timer is
+an `OwnerTask` timer, ticked by hand through `ManualOwnerTimers` in the cases
+that wait on it (`_make_manual_buffer`).
 """
 
 import pytest
-import tonio.colored as tonio
 
+from pidrei_tui._owner import OwnerTask
 from pidrei_tui.keys import matches_key
 from pidrei_tui.stdin_buffer import StdinBuffer
 
-
-FLUSH_WAIT = 0.05  # pi waits 15ms for the 10ms timer; leave real-time margin
+from .tui_helpers import ManualOwnerTimers
 
 
 def _make_buffer():
@@ -27,6 +27,21 @@ def _make_buffer():
 
     buffer.on_data(record)
     return buffer, emitted_sequences
+
+
+def _make_manual_buffer(**options):
+    """A buffer whose flush timers fire only on `timers.tick` (pi's mocked
+    timers), recording what it emits."""
+    owner = OwnerTask()
+    timers = ManualOwnerTimers(owner)
+    buffer = StdinBuffer(owner=owner, **options)
+    emitted_sequences = []
+
+    async def record(sequence):
+        emitted_sequences.append(sequence)
+
+    buffer.on_data(record)
+    return buffer, emitted_sequences, timers
 
 
 # Regular Characters
@@ -139,12 +154,12 @@ async def test_buffers_split_across_many_chunks():
 
 @pytest.mark.tonio
 async def test_flushes_incomplete_sequence_after_timeout():
-    buffer, emitted = _make_buffer()
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
     await buffer.process("\x1b[<35")
     assert emitted == []
 
     # Wait for timeout
-    await tonio.sleep(FLUSH_WAIT)
+    await timers.tick(15)
 
     assert emitted == ["\x1b[<35"]
 
@@ -155,9 +170,9 @@ async def test_flushes_a_lone_esc_as_escape_when_cr_arrives_after_the_timeout():
     # the bytes further apart than the timeout, ESC is flushed alone and the
     # host sees Escape (interrupt) instead of Alt+Enter. This locks in the
     # behavior so the configurable timeout in ProcessTerminal stays honest.
-    buffer, emitted = _make_buffer()
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
     await buffer.process("\x1b")
-    await tonio.sleep(FLUSH_WAIT)
+    await timers.tick(15)
     await buffer.process("\r")
 
     assert emitted == ["\x1b", "\r"]
@@ -166,16 +181,10 @@ async def test_flushes_a_lone_esc_as_escape_when_cr_arrives_after_the_timeout():
 
 @pytest.mark.tonio
 async def test_merges_esc_plus_cr_split_across_chunks_within_a_larger_escape_timeout():
-    buffer = StdinBuffer(escape_timeout=100)
-    emitted = []
-
-    async def record(sequence):
-        emitted.append(sequence)
-
-    buffer.on_data(record)
+    buffer, emitted, timers = _make_manual_buffer(escape_timeout=100)
 
     await buffer.process("\x1b")
-    await tonio.sleep(0.02)  # > 10ms default escape timeout, < 100ms configured
+    await timers.tick(20)  # > 10ms default escape timeout, < 100ms configured
     await buffer.process("\r")
 
     assert emitted == ["\x1b\r"]
@@ -185,16 +194,10 @@ async def test_merges_esc_plus_cr_split_across_chunks_within_a_larger_escape_tim
 
 @pytest.mark.tonio
 async def test_does_not_apply_the_sequence_timeout_to_a_lone_esc():
-    buffer = StdinBuffer(timeout=100)
-    emitted = []
-
-    async def record(sequence):
-        emitted.append(sequence)
-
-    buffer.on_data(record)
+    buffer, emitted, timers = _make_manual_buffer(timeout=100)
 
     await buffer.process("\x1b")
-    await tonio.sleep(0.02)
+    await timers.tick(20)
     await buffer.process("\r")
 
     assert emitted == ["\x1b", "\r"]
@@ -204,16 +207,10 @@ async def test_does_not_apply_the_sequence_timeout_to_a_lone_esc():
 
 @pytest.mark.tonio
 async def test_keeps_fragmented_mouse_sequences_buffered_across_delayed_chunks_by_default():
-    delayed_buffer = StdinBuffer()
-    delayed_sequences = []
-
-    async def record(sequence):
-        delayed_sequences.append(sequence)
-
-    delayed_buffer.on_data(record)
+    delayed_buffer, delayed_sequences, timers = _make_manual_buffer()
 
     await delayed_buffer.process("\x1b[")
-    await tonio.sleep(0.02)
+    await timers.tick(20)
     assert delayed_sequences == []
     await delayed_buffer.process("<65;48;39M")
     assert delayed_sequences == ["\x1b[<65;48;39M"]
@@ -449,27 +446,21 @@ async def test_handles_empty_input():
 
 @pytest.mark.tonio
 async def test_handles_lone_escape_character_with_timeout():
-    buffer, emitted = _make_buffer()
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
     await buffer.process("\x1b")
     assert emitted == []
 
     # After timeout, should emit
-    await tonio.sleep(FLUSH_WAIT)
+    await timers.tick(15)
     assert emitted == ["\x1b"]
 
 
 @pytest.mark.tonio
 async def test_flushes_a_lone_escape_promptly_with_the_longer_default_sequence_timeout():
-    default_buffer = StdinBuffer()
-    default_sequences = []
-
-    async def record(sequence):
-        default_sequences.append(sequence)
-
-    default_buffer.on_data(record)
+    default_buffer, default_sequences, timers = _make_manual_buffer()
 
     await default_buffer.process("\x1b")
-    await tonio.sleep(0.02)
+    await timers.tick(20)
     assert default_sequences == ["\x1b"]
     default_buffer.destroy()
 
@@ -520,12 +511,12 @@ async def test_returns_empty_list_if_nothing_to_flush():
 
 @pytest.mark.tonio
 async def test_emits_flushed_data_via_timeout():
-    buffer, emitted = _make_buffer()
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
     await buffer.process("\x1b[<35")
     assert emitted == []
 
     # Wait for timeout to flush
-    await tonio.sleep(FLUSH_WAIT)
+    await timers.tick(15)
 
     assert emitted == ["\x1b[<35"]
 
@@ -629,12 +620,12 @@ async def test_clears_buffer_on_destroy():
 
 @pytest.mark.tonio
 async def test_clears_pending_timeouts_on_destroy():
-    buffer, emitted = _make_buffer()
+    buffer, emitted, timers = _make_manual_buffer(timeout=10)
     await buffer.process("\x1b[<35")
     buffer.destroy()
 
     # Wait longer than timeout
-    await tonio.sleep(FLUSH_WAIT)
+    await timers.tick(15)
 
     # Should not have emitted anything
     assert emitted == []

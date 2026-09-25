@@ -8,7 +8,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     async def on_before_switch(event, ctx):
         if not ctx.has_ui:
             return None

@@ -27,9 +27,21 @@ microseconds, whereas a pool-backed writer can lag, and the path this produces
 exists precisely to be read afterwards.
 """
 
+import contextlib
+
 import tonio.colored as tonio
+from tonio.colored import fs
 from tonio.colored.sync import channel
 from tonio.exceptions import RuntimeNotInitializedError
+
+
+async def discard_temp_file(path: fs.Path) -> None:
+    """Remove a temp file, ignoring errors (it may never have been created).
+
+    From a cancelled task, hand it to `tonio.spawn.without_tracking` instead of
+    awaiting it: an await there is not served."""
+    with contextlib.suppress(OSError):
+        await path.unlink()
 
 
 def _open_binary(path: str):

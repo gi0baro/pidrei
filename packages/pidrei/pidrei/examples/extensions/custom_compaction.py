@@ -35,7 +35,7 @@ history, so include all information needed to continue the work effectively.
 Format the summary as structured markdown with clear sections."""
 
 
-def extension(pi):
+async def extension(pi):
     async def on_before_compact(event, ctx):
         ctx.ui.notify("Custom compaction extension triggered", "info")
 

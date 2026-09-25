@@ -4,11 +4,9 @@ save-entry,migration,custom-session-id,file-operations,labels}.test.ts."""
 import json
 import os
 import re
-import time
 from dataclasses import replace
 
 import pytest
-import tonio.colored as tonio
 
 from pidrei.core.session_manager import (
     SessionContextModel,
@@ -1279,6 +1277,13 @@ class TestLoadEntriesFromFile:
         assert session_manager.build_session_context().messages == [UserMessage(content="hi", timestamp=1)]
 
 
+def _age(path, seconds: float = 60.0) -> None:
+    """Backdate `path`'s mtime: a short pause between writes can leave equal
+    mtimes on a coarse-grained filesystem, which breaks newest-first order."""
+    mtime = os.stat(path).st_mtime - seconds
+    os.utime(path, (mtime, mtime))
+
+
 class TestFindMostRecentSession:
     def test_returns_none_for_empty_directory(self, tmp_path):
         assert find_most_recent_session(str(tmp_path)) is None
@@ -1305,8 +1310,8 @@ class TestFindMostRecentSession:
         file2 = tmp_path / "newer.jsonl"
 
         file1.write_text('{"type":"session","id":"old","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
-        time.sleep(0.01)
         file2.write_text('{"type":"session","id":"new","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
+        _age(file1)
 
         assert find_most_recent_session(str(tmp_path)) == str(file2)
 
@@ -1315,8 +1320,8 @@ class TestFindMostRecentSession:
         valid = tmp_path / "valid.jsonl"
 
         invalid.write_text('{"type":"not-session"}\n')
-        time.sleep(0.01)
         valid.write_text('{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
+        _age(invalid)
 
         assert find_most_recent_session(str(tmp_path)) == str(valid)
 
@@ -1336,10 +1341,10 @@ class TestFindMostRecentSession:
         file_a.write_text(
             json.dumps({"type": "session", "id": "a", "timestamp": "2025-01-01T00:00:00Z", "cwd": project_a}) + "\n"
         )
-        time.sleep(0.01)
         file_b.write_text(
             json.dumps({"type": "session", "id": "b", "timestamp": "2025-01-01T00:00:00Z", "cwd": project_b}) + "\n"
         )
+        _age(file_a)
 
         assert find_most_recent_session(str(tmp_path), project_a) == str(file_a)
         assert find_most_recent_session(str(tmp_path), project_b) == str(file_b)
@@ -1363,7 +1368,6 @@ async def test_scopes_current_folder_apis_by_cwd_while_listing_all_flat_sessions
     os.makedirs(project_b)
 
     session_a = await _create_persisted_session(project_a, tmp_path, "from A")
-    await tonio.time.sleep(0.01)
     session_b = await _create_persisted_session(project_b, tmp_path, "from B")
 
     current_a = await SessionManager.list(project_a, tmp_path)

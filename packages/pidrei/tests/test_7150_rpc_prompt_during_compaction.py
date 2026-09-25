@@ -27,7 +27,7 @@ async def test_rejects_an_rpc_prompt_while_manual_compaction_is_in_progress(harn
     compaction_started = tonio.Event()
     compaction_released = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             compaction_started.set()
             await compaction_released.wait(None)

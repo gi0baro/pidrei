@@ -196,6 +196,9 @@ class _NoOpUIContext:
     def set_title(self, *args: Any, **kwargs: Any) -> None:
         pass
 
+    def write_terminal(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
     async def custom(self, *args: Any, **kwargs: Any) -> None:
         return None
 
@@ -205,7 +208,7 @@ class _NoOpUIContext:
     def set_editor_text(self, *args: Any, **kwargs: Any) -> None:
         pass
 
-    def get_editor_text(self) -> str:
+    async def get_editor_text(self) -> str:
         return ""
 
     async def editor(self, *args: Any, **kwargs: Any) -> None:
@@ -376,9 +379,31 @@ class _RunnerContext:
 
 
 class _RunnerCommandContext(_RunnerContext):
+    def __init__(self, runner: ExtensionRunner):
+        super().__init__(runner)
+        # (source, private copy) handed out by `get_system_prompt_options`.
+        self._system_prompt_options_checkout: tuple[Any, BuildSystemPromptOptions] | None = None
+
     def get_system_prompt_options(self) -> Any:
+        """The session's base prompt options, as a private copy for this command.
+
+        pi hands out the live object, so a command's mutations take effect as it
+        makes them. The published options are read from other tasks here, so the
+        command gets a copy (the same one on every call) and its mutations are
+        published when the handler returns (`publish_system_prompt_options`)."""
         self._runner._assert_active()
-        return self._runner._get_system_prompt_options_fn()
+        if self._system_prompt_options_checkout is None:
+            self._system_prompt_options_checkout = self._runner._check_out_system_prompt_options_fn()
+        return self._system_prompt_options_checkout[1]
+
+    def publish_system_prompt_options(self) -> None:
+        """pidrei-only, called by whoever ran the handler once it returns: publish the
+        copy the command received. Nothing happens if it never asked for one."""
+        checkout = self._system_prompt_options_checkout
+        if checkout is None:
+            return
+        self._system_prompt_options_checkout = None
+        self._runner._publish_system_prompt_options_fn(*checkout)
 
     async def wait_for_idle(self) -> None:
         self._runner._assert_active()
@@ -479,7 +504,13 @@ class ExtensionRunner:
         self._get_context_usage_fn: Callable[[], Any] = lambda: None
         self._compact_fn: Callable[..., None] = lambda options=None: None
         self._get_system_prompt_fn: Callable[[], str] = lambda: ""
-        self._get_system_prompt_options_fn: Callable[[], BuildSystemPromptOptions] = self._default_system_prompt_options
+        self._check_out_system_prompt_options_fn: Callable[[], tuple[Any, BuildSystemPromptOptions]] = lambda: (
+            None,
+            self._default_system_prompt_options(),
+        )
+        self._publish_system_prompt_options_fn: Callable[[Any, BuildSystemPromptOptions], None] = (
+            lambda _source, _options: None
+        )
         self._shutdown_handler: Callable[[], None] = lambda: None
 
         self._wait_for_idle_fn = _default_async_noop
@@ -523,10 +554,10 @@ class ExtensionRunner:
         self._get_context_usage_fn = context_actions["get_context_usage"]
         self._compact_fn = context_actions["compact"]
         self._get_system_prompt_fn = context_actions["get_system_prompt"]
-        get_options = context_actions.get("get_system_prompt_options")
-        self._get_system_prompt_options_fn = (
-            get_options if get_options is not None else self._default_system_prompt_options
-        )
+        check_out_options = context_actions.get("check_out_system_prompt_options")
+        if check_out_options is not None:
+            self._check_out_system_prompt_options_fn = check_out_options
+            self._publish_system_prompt_options_fn = context_actions["publish_system_prompt_options"]
 
         provider_actions = provider_actions or {}
         register_provider = provider_actions.get("register_provider")

@@ -9,12 +9,13 @@ read a stale viewport.
 import base64
 import os
 import re
-import time
 from contextlib import contextmanager
 
 import pytest
 import tonio.colored as tonio
 
+from pidrei_tui import tui_alt_screen as tui_alt_screen_module
+from pidrei_tui.components import alt_screen_flash as alt_screen_flash_module
 from pidrei_tui.components.h_stack import HStack
 from pidrei_tui.components.image import Image
 from pidrei_tui.components.mouse_region import MouseRegion
@@ -38,7 +39,7 @@ from pidrei_tui.terminal_image import (
 from pidrei_tui.tui import TuiMouseEventResult
 from pidrei_tui.tui_alt_screen import TuiAltScreen
 
-from .virtual_terminal import VirtualTerminal, poll_until
+from .virtual_terminal import VirtualTerminal
 
 
 OSC133_ZONE_START = "\x1b]133;A\x07"
@@ -78,8 +79,8 @@ class RecordingTerminal(VirtualTerminal):
     def writes_containing(self, needle: str) -> list[str]:
         return [event["data"] for event in self.events if event["type"] == "write" and needle in event["data"]]
 
-    async def wait_for_write(self, needle: str, count: int = 1, timeout: float = 2.0) -> list[str]:
-        """Poll until `count` writes contain `needle`, bounded so a miss fails.
+    async def wait_for_write(self, needle: str, count: int = 1, timeout: float = 5.0) -> list[str]:
+        """Wait until `count` writes contain `needle`, bounded so a miss fails.
 
         `wait_for_render(since)` waits for *a* frame after `since`, which is not
         the same as the frame that reflects the input just sent: the render loop
@@ -90,12 +91,8 @@ class RecordingTerminal(VirtualTerminal):
         whenever the assertion is that a write *did* happen; `wait_for_render`
         still fits assertions that nothing further happens.
         """
-        deadline = time.monotonic() + timeout
-        while True:
-            found = self.writes_containing(needle)
-            if len(found) >= count or time.monotonic() >= deadline:
-                return found
-            await tonio.sleep(0.005)
+        await self.until(lambda: len(self.writes_containing(needle)) >= count, timeout)
+        return self.writes_containing(needle)
 
 
 class RenderComponent:
@@ -128,39 +125,90 @@ def _lines(count: int) -> str:
     return "\n".join(f"line {index + 1}" for index in range(count))
 
 
+async def _owner_barrier() -> None:
+    """Run on the owner: returns once everything posted before it applied."""
+
+
 def _viewport(terminal: VirtualTerminal) -> list[str]:
     return [line.rstrip() for line in terminal.get_viewport()]
 
 
-async def _wait_until(predicate, timeout: float = 2.0) -> bool:
-    """Poll `predicate` until true, bounded so a miss fails.
+def _record_copies(tui: TuiAltScreen) -> list[str]:
+    """Record each selection copy as the release starts it.
 
-    `wait_for_render(since)` returns on *a* frame, which is not necessarily the
-    frame reflecting the input just sent (the render loop is a separate
-    throttled task) — assertions on state or viewport content driven by an
-    input must poll the condition itself. Same rationale as
-    `RecordingTerminal.wait_for_write`.
+    The copy runs detached (see the `tui_alt_screen` module docstring), so
+    its OSC 52 write can land after any wait a test does. Whether a release
+    copies is decided while `send_input` is still awaited, though, so a "no
+    copy" check reads this list instead of sleeping and hoping a stray
+    write would have shown up by then.
     """
-    deadline = time.monotonic() + timeout
-    while True:
-        if predicate():
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        await tonio.sleep(0.005)
+    started: list[str] = []
+    copy = tui._copy_text_to_clipboard
+
+    def recording(text: str):
+        started.append(text)
+        return copy(text)
+
+    tui._copy_text_to_clipboard = recording
+    return started
 
 
-async def _wait_for_viewport_text(terminal: VirtualTerminal, needle: str, timeout: float = 2.0) -> bool:
-    """Poll until `needle` shows in the viewport, bounded so a miss fails.
+class _ManualTimer:
+    """A recorded `Timeout`/`Interval` that fires only when the test fires it."""
+
+    def __init__(self, delay_ms: float, fn) -> None:
+        self.delay_ms = delay_ms
+        self.fn = fn
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    async def fire(self, tui) -> None:
+        """One fire, on the TUI's owner like a real one (ordered with input
+        handling and renders; a cancelled timer does not run)."""
+
+        async def run() -> None:
+            if not self.cancelled:
+                await self.fn()
+
+        await tui.input_owner.run(run)
+
+
+@contextmanager
+def _manual_timers(module, name: str):
+    """Swap `module.<name>` (a `Timeout`/`Interval` alias) for `_ManualTimer`s
+    and yield the ones created while swapped."""
+    timers: list[_ManualTimer] = []
+
+    def create(delay_ms: float, fn) -> _ManualTimer:
+        timer = _ManualTimer(delay_ms, fn)
+        timers.append(timer)
+        return timer
+
+    original = getattr(module, name)
+    setattr(module, name, create)
+    try:
+        yield timers
+    finally:
+        setattr(module, name, original)
+
+
+# `wait_for_render(since)` returns on *a* frame, which is not necessarily the
+# frame reflecting the input just sent (the render loop is a separate
+# throttled task) — assertions on state or viewport content driven by an
+# input wait on the condition itself with `terminal.until`, re-checked on
+# every write. Same rationale as `RecordingTerminal.wait_for_write`.
+
+
+async def _wait_for_viewport_text(terminal: VirtualTerminal, needle: str, timeout: float = 5.0) -> bool:
+    """Wait until `needle` shows in the viewport, bounded so a miss fails.
 
     Selection copy runs as a detached task (pi: `void copySelectionToClipboard()`),
     so its "Copied!"/"Copy failed" flash can land after the frame that
     `wait_for_render` observed.
     """
-    return await _wait_until(
-        lambda: any(needle in line for line in terminal.get_viewport()),
-        timeout,
-    )
+    return await terminal.until(lambda: any(needle in line for line in terminal.get_viewport()), timeout)
 
 
 @pytest.mark.tonio
@@ -209,9 +257,9 @@ async def test_shows_a_clickable_jump_to_end_indicator_on_the_transcripts_last_r
     assert not any("Jump to end" in line for line in terminal.get_viewport())
 
     await terminal.send_input("\x1b[<64;1;1M")
-    assert await _wait_until(lambda: transcript.is_following_end is False)
+    assert await terminal.until(lambda: transcript.is_following_end is False)
     # The virtual terminal trims trailing blanks; pi compares the padded row.
-    assert await _wait_until(lambda: terminal.get_viewport()[3].rstrip() == "line 7  ↓ Jump to end")
+    assert await terminal.until(lambda: terminal.get_viewport()[3].rstrip() == "line 7  ↓ Jump to end")
     assert terminal.get_viewport()[4].rstrip() == "editor"
 
     # Pressing next to the label starts a selection instead of jumping.
@@ -222,8 +270,8 @@ async def test_shows_a_clickable_jump_to_end_indicator_on_the_transcripts_last_r
 
     await terminal.send_input("\x1b[<0;15;4M")
     await terminal.send_input("\x1b[<0;15;4m")
-    assert await _wait_until(lambda: transcript.is_following_end is True)
-    assert await _wait_until(
+    assert await terminal.until(lambda: transcript.is_following_end is True)
+    assert await terminal.until(
         lambda: _viewport(terminal) == ["line 5", "line 6", "line 7", "line 8", "editor", "footer"]
     )
     await tui.stop()
@@ -249,7 +297,7 @@ async def test_keeps_the_jump_to_end_indicator_centered_as_the_auto_scrollbar_hi
 
         # Scrolling over the track keeps the scrollbar visible until the pointer leaves.
         await terminal.send_input("\x1b[<64;80;1M")
-        assert await _wait_until(lambda: shown in terminal.get_viewport()[5])
+        assert await terminal.until(lambda: shown in terminal.get_viewport()[5])
         assert transcript.is_scrollbar_visible is True
         assert transcript.is_following_end is False
         scroll_top = transcript.scroll_top
@@ -257,13 +305,13 @@ async def test_keeps_the_jump_to_end_indicator_centered_as_the_auto_scrollbar_hi
 
         # Leaving the track lets the auto-hide timer expire without changing the content.
         await terminal.send_input("\x1b[<35;79;1M")
-        assert await _wait_until(lambda: not terminal.get_viewport()[0].endswith("│"))
+        assert await terminal.until(lambda: not terminal.get_viewport()[0].endswith("│"))
         assert transcript.is_scrollbar_visible is False
         assert transcript.scroll_top == scroll_top
         hidden_column = terminal.get_viewport()[5].index(shown)
 
         await terminal.send_input("\x1b[<35;80;1M")
-        assert await _wait_until(lambda: terminal.get_viewport()[0].endswith("│"))
+        assert await terminal.until(lambda: terminal.get_viewport()[0].endswith("│"))
         assert transcript.is_scrollbar_visible is True
         assert transcript.scroll_top == scroll_top
         revealed_column = terminal.get_viewport()[5].index(shown)
@@ -291,10 +339,10 @@ async def test_leaves_the_scrollbar_visible_and_clickable_when_the_jump_to_end_i
     await terminal.wait_for_render()
 
     await terminal.send_input("\x1b[<64;1;1M")
-    assert await _wait_until(lambda: transcript.is_following_end is False)
+    assert await terminal.until(lambda: transcript.is_following_end is False)
 
     # The indicator must not intercept a press on the scrollbar's last column.
-    assert await _wait_until(lambda: terminal.get_viewport()[3] == f"{'↓' * 29}┃")
+    assert await terminal.until(lambda: terminal.get_viewport()[3] == f"{'↓' * 29}┃")
     await terminal.send_input("\x1b[<0;30;4M")
     await terminal.send_input("\x1b[<0;30;4m")
     await terminal.wait_for_render()
@@ -461,12 +509,12 @@ async def test_reveals_an_auto_scrollbar_when_the_pointer_enters_its_hidden_trac
     assert scroll_view.is_scrollbar_visible is False
 
     await terminal.send_input("\x1b[<35;10;3M")
-    assert await _wait_until(lambda: scroll_view.is_scrollbar_visible is True)
+    assert await terminal.until(lambda: scroll_view.is_scrollbar_visible is True)
     assert scroll_view.is_scrollbar_active is True
-    assert await _wait_until(lambda: any(re.search(r"[│█]", line) for line in terminal.get_viewport()))
+    assert await terminal.until(lambda: any(re.search(r"[│█]", line) for line in terminal.get_viewport()))
 
     await terminal.send_input("\x1b[<35;9;3M")
-    assert await _wait_until(lambda: scroll_view.is_scrollbar_visible is False)
+    assert await terminal.until(lambda: scroll_view.is_scrollbar_visible is False)
     await tui.stop()
 
 
@@ -481,10 +529,10 @@ async def test_jumps_to_a_scrollbar_track_position_and_continues_dragging_from_t
     assert scroll_view.scroll_top == 0
 
     await terminal.send_input("\x1b[<0;10;6M")
-    assert await _wait_until(lambda: scroll_view.scroll_top == 20)
+    assert await terminal.until(lambda: scroll_view.scroll_top == 20)
 
     await terminal.send_input("\x1b[<32;10;10M")
-    assert await _wait_until(lambda: scroll_view.scroll_top == 40)
+    assert await terminal.until(lambda: scroll_view.scroll_top == 40)
 
     await terminal.send_input("\x1b[<0;10;10m")
     await terminal.wait_for_render()
@@ -686,7 +734,7 @@ async def test_navigates_transcript_search_with_hoverable_arrow_buttons_and_togg
     assert any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport())
 
     await terminal.send_input("\x1b[102;6u")
-    assert await _wait_until(lambda: not any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport()))
+    assert await terminal.until(lambda: not any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport()))
     await tui.stop()
 
 
@@ -790,7 +838,7 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
 
     await terminal.send_input("\x1b[102;6u")
     await terminal.send_input("needle")
-    assert await _wait_until(lambda: transcript.is_following_end is False)
+    assert await terminal.until(lambda: transcript.is_following_end is False)
     assert await _wait_for_viewport_text(terminal, "2/2")
     assert any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport())
     assert any("line 10 needle two" in line for line in terminal.get_viewport())
@@ -799,8 +847,8 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
 
     for _ in range(6):
         await terminal.send_input("\x1b[<64;1;4M")
-    assert await _wait_until(lambda: transcript.scroll_top == 0)
-    assert await _wait_until(lambda: any("needle" in line and "2/2" in line for line in terminal.get_viewport()))
+    assert await terminal.until(lambda: transcript.scroll_top == 0)
+    assert await terminal.until(lambda: any("needle" in line and "2/2" in line for line in terminal.get_viewport()))
 
     await terminal.send_input("\x07")
     assert await _wait_for_viewport_text(terminal, "1/2")
@@ -812,8 +860,8 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
 
     await terminal.send_input("\x1b")
     await terminal.send_input("x")
-    assert await _wait_until(lambda: not any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport()))
-    assert await _wait_until(lambda: editor_inputs == ["x"])
+    assert await terminal.until(lambda: not any("↑ Shift+Enter · ↓ Enter" in line for line in terminal.get_viewport()))
+    assert await terminal.until(lambda: editor_inputs == ["x"])
 
     await tui.stop()
 
@@ -1210,10 +1258,9 @@ async def test_opens_an_osc8_hyperlink_with_specific_or_generic_release_codes_bu
     )
     await tui.start()
     # The press handler hit-tests the last *published* frame
-    # (`_previous_screen`), which lands after the terminal write — the no-arg
-    # settle-wait can lose the race against the first paint, so wait until
-    # the frame carrying the links is actually there.
-    assert await poll_until(lambda: any(url in line for line in tui._previous_screen))
+    # (`_previous_screen`, published before that frame is written): wait
+    # until the frame carrying the links is actually there.
+    assert await terminal.until(lambda: any(url in line for line in tui._previous_screen))
 
     for column, row, release_button in ((2, 1, 3), (2, 2, 0), (2, 3, 0)):
         since = terminal.frames
@@ -1526,6 +1573,7 @@ async def test_does_not_repaint_idle_or_zero_width_selections_on_focus_loss():
     terminal = RecordingTerminal(20, 4)
     tui = TuiAltScreen(terminal)
     tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    copies = _record_copies(tui)
     await tui.start()
     await terminal.wait_for_render()
 
@@ -1535,13 +1583,14 @@ async def test_does_not_repaint_idle_or_zero_width_selections_on_focus_loss():
     def clipboard_write_count() -> int:
         return len(terminal.writes_containing("\x1b]52;c;"))
 
-    # pi asserts "no repaint" by comparing write counts after waitForRender;
-    # wait_for_render here blocks until a NEW frame, so absence is asserted
-    # after a settle sleep instead.
+    # pi asserts "no repaint" by comparing write counts after waitForRender.
+    # Here `settle()` draws and writes every render the handled input
+    # requested, so an unchanged count after it means none was requested;
+    # a "no copy" check reads `copies` (the copy itself runs detached).
     idle_write_count = write_count()
     await terminal.send_input("\x1b[O")
     await terminal.send_input("\x1b[I")
-    await tonio.sleep(0.1)
+    await terminal.settle()
     assert write_count() == idle_write_count
 
     # A completed click leaves a zero-width anchor, but later orphaned
@@ -1552,20 +1601,23 @@ async def test_does_not_repaint_idle_or_zero_width_selections_on_focus_loss():
     await terminal.send_input("\x1b[<32;4;2M")
     await terminal.send_input("\x1b[<0;4;2m")
     await terminal.wait_for_render(since)
+    assert copies == []
     assert clipboard_write_count() == 0
 
     # Losing focus after a press without a drag cancels the press without repainting.
     since = terminal.frames
     await terminal.send_input("\x1b[<0;1;3M")
     await terminal.wait_for_render(since)
+    await terminal.settle()
     pressed_write_count = write_count()
     await terminal.send_input("\x1b[O")
     await terminal.send_input("\x1b[I")
-    await tonio.sleep(0.1)
+    await terminal.settle()
     assert write_count() == pressed_write_count
     await terminal.send_input("\x1b[<32;4;2M")
     await terminal.send_input("\x1b[<0;4;2m")
-    await tonio.sleep(0.1)
+    await terminal.settle()
+    assert copies == []
     assert clipboard_write_count() == 0
     assert terminal.writes_containing("\x1b[?1004h")
 
@@ -1597,9 +1649,12 @@ async def test_clears_an_active_visible_selection_on_focus_loss_and_ignores_orph
     assert "beta" in focus_loss_writes
     assert "\x1b[7m" not in focus_loss_writes
 
+    # The copy runs detached: whether the orphan release started one is
+    # decided while `send_input` is awaited (see `_record_copies`).
+    copies = _record_copies(tui)
     await terminal.send_input("\x1b[<32;4;2M")
     await terminal.send_input("\x1b[<0;4;2m")
-    await tonio.sleep(0.1)
+    assert copies == []
     assert not terminal.writes_containing("\x1b]52;c;")
     await tui.stop()
 
@@ -1612,29 +1667,31 @@ async def test_retains_a_completed_visible_selection_across_focus_changes():
     await tui.start()
     await terminal.wait_for_render()
 
-    since = terminal.frames
-    await terminal.send_input("\x1b[<0;1;1M")
-    await terminal.send_input("\x1b[<32;4;2M")
-    await terminal.send_input("\x1b[<0;4;2m")
-    await terminal.wait_for_render(since)
     # The release-triggered copy runs as a detached task (pi voids the
     # promise, but its OSC 52 path is synchronous inside the handler), so
     # drain its whole lifecycle — OSC 52 write, "Copied!" flash, flash expiry
     # repaint — before opening the no-repaint window; any of those would
-    # otherwise land inside it as a "write".
-    assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
-    assert await _wait_for_viewport_text(terminal, "Copied!")
-    assert await _wait_until(
-        lambda: not any("Copied!" in line for line in terminal.get_viewport()),
-        timeout=3.0,
-    )
-    # One settle beat: the expiry frame we just observed is the last requested
-    # render, but its write may still be draining when the count is sampled.
-    await tonio.sleep(0.05)
+    # otherwise land inside it as a "write". The flash expires by hand
+    # rather than after a real second.
+    with _manual_timers(alt_screen_flash_module, "Timeout") as flash_timers:
+        since = terminal.frames
+        await terminal.send_input("\x1b[<0;1;1M")
+        await terminal.send_input("\x1b[<32;4;2M")
+        await terminal.send_input("\x1b[<0;4;2m")
+        await terminal.wait_for_render(since)
+        assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
+        assert await _wait_for_viewport_text(terminal, "Copied!")
+    assert len(flash_timers) == 1
+    await flash_timers[0].fire(tui)
+    assert await terminal.until(lambda: not any("Copied!" in line for line in terminal.get_viewport()))
+    # The expiry frame we just observed is the last requested render, but its
+    # write may still be draining when the count is sampled: settle first.
+    await terminal.settle()
     completed_write_count = len([event for event in terminal.events if event["type"] == "write"])
     await terminal.send_input("\x1b[O")
     await terminal.send_input("\x1b[I")
-    await tonio.sleep(0.1)
+    # Every render the focus change requested is drawn and written by now.
+    await terminal.settle()
     assert len([event for event in terminal.events if event["type"] == "write"]) == completed_write_count
 
     redraw_event_count = len(terminal.events)
@@ -1656,15 +1713,23 @@ async def test_stacks_flash_messages_and_collapses_them_as_they_expire():
     await tui.start()
     await terminal.wait_for_render()
 
-    since = terminal.frames
-    tui.flash("First", 80)
-    tui.flash("Second", 500)
+    # pi sleeps past the first flash's 80ms on real timers; here the flash
+    # timers fire by hand, so "First expired, Second not yet" is exact rather
+    # than a race between the runner and a 500ms deadline.
+    with _manual_timers(alt_screen_flash_module, "Timeout") as timers:
+        since = terminal.frames
+        tui.flash("First", 80)
+        tui.flash("Second", 500)
+        # `flash` posts its push: the timers are created when the owner
+        # applies it, so wait for that inside the manual-timer window.
+        await tui.input_owner.run(_owner_barrier)
+    assert [timer.delay_ms for timer in timers] == [80, 500]
     await terminal.wait_for_render(since)
     viewport = terminal.get_viewport()
     assert viewport[0].rstrip().endswith(" First")
     assert viewport[1].rstrip().endswith(" Second")
 
-    await tonio.sleep(0.1)
+    await timers[0].fire(tui)
     await terminal.wait_for_render()
     viewport = terminal.get_viewport()
     assert viewport[0].rstrip().endswith(" Second")
@@ -1682,9 +1747,16 @@ async def test_auto_scrolls_and_extends_a_drag_selection_held_at_the_viewport_ed
     await terminal.wait_for_render()
     assert tui.viewport_top == 6
 
-    await terminal.send_input("\x1b[<0;1;3M")
-    await terminal.send_input("\x1b[<32;1;1M")
-    await tonio.sleep(0.13)
+    # pi sleeps 130ms so its 50ms auto-scroll interval ticks a couple of
+    # times. Here the interval ticks by hand: on real time it kept ticking
+    # between sampling `viewport_top` and the release, changing the copied
+    # text under the assertion.
+    with _manual_timers(tui_alt_screen_module, "Interval") as intervals:
+        await terminal.send_input("\x1b[<0;1;3M")
+        await terminal.send_input("\x1b[<32;1;1M")
+    assert [interval.delay_ms for interval in intervals] == [50]
+    await intervals[0].fire(tui)
+    await intervals[0].fire(tui)
     await terminal.wait_for_render()
 
     selection_top = tui.viewport_top
@@ -1870,7 +1942,7 @@ async def test_keeps_viewport_scrolling_while_transcript_search_is_focused():
     await terminal.send_input("\x1b[5~")
     await terminal.send_input("\x1b[<64;1;4M")
     await terminal.wait_for_render(since)
-    assert await _wait_until(lambda: tui.viewport_top < top_before)
+    assert await terminal.until(lambda: tui.viewport_top < top_before)
     assert any("↑ ↓" in line for line in terminal.get_viewport())
     await tui.stop()
 

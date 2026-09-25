@@ -98,42 +98,57 @@ class LoginDialogComponent(Container):
             event.set()
         self._on_complete(False, "Login cancelled")
 
+    # The show_* steps are driven by the login task, off the UI owner: each
+    # one's content change is posted to the owner (the dialog may be mounted
+    # and taking input), in call order.
+
+    def _post_content(self, apply) -> None:
+        def with_render() -> None:
+            apply()
+            self._tui.request_render()
+
+        self._tui.post_ui(with_render)
+
     def show_auth(self, url: str, instructions: str | None = None) -> None:
         """Called by on_auth callback - show URL and optional instructions."""
-        self._content_container.clear()
-        self._content_container.add_child(Spacer(1))
-        linked_url = f"\x1b]8;;{url}\x07{url}\x1b]8;;\x07"
-        self._content_container.add_child(Text(theme.fg("accent", linked_url), 1, 0))
 
-        click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
-        hyperlink = f"\x1b]8;;{url}\x07{click_hint}\x1b]8;;\x07"
-        self._content_container.add_child(Text(theme.fg("dim", hyperlink), 1, 0))
-
-        if instructions:
+        def apply() -> None:
+            self._content_container.clear()
             self._content_container.add_child(Spacer(1))
-            self._content_container.add_child(Text(theme.fg("warning", instructions), 1, 0))
+            linked_url = f"\x1b]8;;{url}\x07{url}\x1b]8;;\x07"
+            self._content_container.add_child(Text(theme.fg("accent", linked_url), 1, 0))
 
+            click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
+            hyperlink = f"\x1b]8;;{url}\x07{click_hint}\x1b]8;;\x07"
+            self._content_container.add_child(Text(theme.fg("dim", hyperlink), 1, 0))
+
+            if instructions:
+                self._content_container.add_child(Spacer(1))
+                self._content_container.add_child(Text(theme.fg("warning", instructions), 1, 0))
+
+        self._post_content(apply)
         open_browser(url)
-        self._tui.request_render()
 
     def show_device_code(self, info: dict) -> None:
         """Called by on_device_code callback - show URL and user code.
 
         ``info`` is a ``{"verificationUri", "userCode"}`` record.
         """
-        self._content_container.clear()
-        self._content_container.add_child(Spacer(1))
-        verification_uri = info["verificationUri"]
-        linked_url = f"\x1b]8;;{verification_uri}\x07{verification_uri}\x1b]8;;\x07"
-        self._content_container.add_child(Text(theme.fg("accent", linked_url), 1, 0))
 
-        click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
-        hyperlink = f"\x1b]8;;{verification_uri}\x07{click_hint}\x1b]8;;\x07"
-        self._content_container.add_child(Text(theme.fg("dim", hyperlink), 1, 0))
-        self._content_container.add_child(Spacer(1))
-        self._content_container.add_child(Text(theme.fg("warning", f"Enter code: {info['userCode']}"), 1, 0))
+        def apply() -> None:
+            self._content_container.clear()
+            self._content_container.add_child(Spacer(1))
+            verification_uri = info["verificationUri"]
+            linked_url = f"\x1b]8;;{verification_uri}\x07{verification_uri}\x1b]8;;\x07"
+            self._content_container.add_child(Text(theme.fg("accent", linked_url), 1, 0))
 
-        self._tui.request_render()
+            click_hint = "Cmd+click to open" if sys.platform == "darwin" else "Ctrl+click to open"
+            hyperlink = f"\x1b]8;;{verification_uri}\x07{click_hint}\x1b]8;;\x07"
+            self._content_container.add_child(Text(theme.fg("dim", hyperlink), 1, 0))
+            self._content_container.add_child(Spacer(1))
+            self._content_container.add_child(Text(theme.fg("warning", f"Enter code: {info['userCode']}"), 1, 0))
+
+        self._post_content(apply)
 
     def _await_input(self):
         self._input_event = tonio.Event()
@@ -153,14 +168,18 @@ class LoginDialogComponent(Container):
 
         Returns an awaitable resolving to the submitted value.
         """
-        self._input.set_value("")
-        self._content_container.add_child(Spacer(1))
-        self._content_container.add_child(Text(theme.fg("dim", prompt), 1, 0))
-        self._content_container.add_child(self._input)
-        self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to cancel')})", 1, 0))
-        self._tui.request_render()
+        # The wait is published before the input can be shown (and submitted).
+        response = self._await_input()
 
-        return self._await_input()
+        def apply() -> None:
+            self._input.set_value("")
+            self._content_container.add_child(Spacer(1))
+            self._content_container.add_child(Text(theme.fg("dim", prompt), 1, 0))
+            self._content_container.add_child(self._input)
+            self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to cancel')})", 1, 0))
+
+        self._post_content(apply)
+        return response
 
     def show_prompt(self, message: str, placeholder: str | None = None):
         """Called by on_prompt callback - show prompt and wait for input.
@@ -168,31 +187,37 @@ class LoginDialogComponent(Container):
         Does NOT clear content, appends to existing (preserves URL from
         show_auth). Returns an awaitable resolving to the submitted value.
         """
-        self._content_container.add_child(Spacer(1))
-        self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
-        if placeholder:
-            self._content_container.add_child(Text(theme.fg("dim", f"e.g., {placeholder}"), 1, 0))
-        self._content_container.add_child(self._input)
-        self._content_container.add_child(
-            Text(
-                f"({key_hint('tui.select.cancel', 'to cancel,')} {key_hint('tui.select.confirm', 'to submit')})",
-                1,
-                0,
+        # The wait is published before the input can be shown (and submitted).
+        response = self._await_input()
+
+        def apply() -> None:
+            self._content_container.add_child(Spacer(1))
+            self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
+            if placeholder:
+                self._content_container.add_child(Text(theme.fg("dim", f"e.g., {placeholder}"), 1, 0))
+            self._content_container.add_child(self._input)
+            self._content_container.add_child(
+                Text(
+                    f"({key_hint('tui.select.cancel', 'to cancel,')} {key_hint('tui.select.confirm', 'to submit')})",
+                    1,
+                    0,
+                )
             )
-        )
+            self._input.set_value("")
 
-        self._input.set_value("")
-        self._tui.request_render()
-
-        return self._await_input()
+        self._post_content(apply)
+        return response
 
     def show_details(self, lines: list) -> None:
         """Show informational text before another login step."""
-        self._content_container.clear()
-        self._content_container.add_child(Spacer(1))
-        for line in lines:
-            self._content_container.add_child(Text(line, 1, 0))
-        self._tui.request_render()
+
+        def apply() -> None:
+            self._content_container.clear()
+            self._content_container.add_child(Spacer(1))
+            for line in lines:
+                self._content_container.add_child(Text(line, 1, 0))
+
+        self._post_content(apply)
 
     def show_info(self, message: str, links: list | None = None, show_close_hint: bool = False) -> None:
         """Show provider-owned information and links without an auth flow.
@@ -200,28 +225,33 @@ class LoginDialogComponent(Container):
         Links are ``{"url", "label"?}`` records.
         """
         links = links or []
-        self._content_container.add_child(Spacer(1))
-        self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
-        for link in links:
-            text = f"{link['label']}: {link['url']}" if link.get("label") else link["url"]
-            hyperlink = f"\x1b]8;;{link['url']}\x07{text}\x1b]8;;\x07"
-            self._content_container.add_child(Text(theme.fg("accent", hyperlink), 1, 0))
-        if show_close_hint:
+
+        def apply() -> None:
             self._content_container.add_child(Spacer(1))
-            self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to close')})", 1, 0))
-        self._tui.request_render()
+            self._content_container.add_child(Text(theme.fg("text", message), 1, 0))
+            for link in links:
+                text = f"{link['label']}: {link['url']}" if link.get("label") else link["url"]
+                hyperlink = f"\x1b]8;;{link['url']}\x07{text}\x1b]8;;\x07"
+                self._content_container.add_child(Text(theme.fg("accent", hyperlink), 1, 0))
+            if show_close_hint:
+                self._content_container.add_child(Spacer(1))
+                self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to close')})", 1, 0))
+
+        self._post_content(apply)
 
     def show_waiting(self, message: str) -> None:
         """Show waiting message (for polling flows like GitHub Copilot)."""
-        self._content_container.add_child(Spacer(1))
-        self._content_container.add_child(Text(theme.fg("dim", message), 1, 0))
-        self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to cancel')})", 1, 0))
-        self._tui.request_render()
+
+        def apply() -> None:
+            self._content_container.add_child(Spacer(1))
+            self._content_container.add_child(Text(theme.fg("dim", message), 1, 0))
+            self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to cancel')})", 1, 0))
+
+        self._post_content(apply)
 
     def show_progress(self, message: str) -> None:
         """Called by on_progress callback."""
-        self._content_container.add_child(Text(theme.fg("dim", message), 1, 0))
-        self._tui.request_render()
+        self._post_content(lambda: self._content_container.add_child(Text(theme.fg("dim", message), 1, 0)))
 
     async def handle_input(self, data: str) -> None:
         kb = get_keybindings()

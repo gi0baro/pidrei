@@ -23,6 +23,15 @@ class TestTerminal:
         self._input_handler = None
         self._resize_handler = None
         self.writes = []
+        self._expected_writes: list[tuple[str, tonio.Event]] = []
+
+    def expect_write(self, text):
+        """An Event set once `text` has been written. A query registers the reply
+        it waits for before writing itself, so a test replies after this, never
+        after a sleep."""
+        written = tonio.Event()
+        self._expected_writes.append((text, written))
+        return written
 
     async def start(self, on_input, on_resize):
         self._input_handler = on_input
@@ -37,6 +46,9 @@ class TestTerminal:
 
     async def write(self, data):
         self.writes.append(data)
+        for text, written in self._expected_writes:
+            if text in data:
+                written.set()
 
     @property
     def columns(self):
@@ -105,13 +117,14 @@ async def test_writes_osc11_query_and_resolves_with_the_parsed_rgb_reply():
     terminal = TestTerminal()
     tui = TuiMainScreen(terminal)
     await tui.start()
+    query_written = terminal.expect_write("\x1b]11;?\x07")
     try:
 
         async def query():
             return await tui.query_terminal_background_color(timeout_ms=1000)
 
         async def reply():
-            await tonio.sleep(0.01)
+            await query_written.wait(5)
             assert "\x1b]11;?\x07" in terminal.writes
             await terminal.send_input("\x1b]11;#ffffff\x07")
 
@@ -131,13 +144,15 @@ async def test_consumes_osc11_replies_before_input_listeners_and_focused_compone
     tui.set_focus(component)
     tui.add_input_listener(lambda data: listener_inputs.append(data))
     await tui.start()
+    query_written = terminal.expect_write("\x1b]11;?\x07")
     try:
 
         async def query():
             return await tui.query_terminal_background_color(timeout_ms=1000)
 
         async def reply():
-            await tonio.sleep(0.01)
+            await query_written.wait(5)
+            assert query_written.is_set()
             await terminal.send_input("\x1b]11;#000000\x07")
 
         result, _ = await tonio.spawn(query(), reply())
@@ -158,13 +173,15 @@ async def test_consumes_unparseable_strict_osc11_replies_and_resolves_none():
     tui.set_focus(component)
     tui.add_input_listener(lambda data: listener_inputs.append(data))
     await tui.start()
+    query_written = terminal.expect_write("\x1b]11;?\x07")
     try:
 
         async def query():
             return await tui.query_terminal_background_color(timeout_ms=1000)
 
         async def reply():
-            await tonio.sleep(0.01)
+            await query_written.wait(5)
+            assert query_written.is_set()
             await terminal.send_input("\x1b]11;not-a-color\x07")
 
         result, _ = await tonio.spawn(query(), reply())
@@ -185,6 +202,7 @@ async def test_dispatches_non_matching_input_normally_while_waiting_for_an_osc11
     tui.set_focus(component)
     tui.add_input_listener(lambda data: listener_inputs.append(data))
     await tui.start()
+    query_written = terminal.expect_write("\x1b]11;?\x07")
     try:
         state = {"settled": False}
 
@@ -194,9 +212,10 @@ async def test_dispatches_non_matching_input_normally_while_waiting_for_an_osc11
             return result
 
         async def interact():
-            await tonio.sleep(0.01)
+            await query_written.wait(5)
+            assert query_written.is_set()
+            # `send_input` returns once the owner has handled the input.
             await terminal.send_input("x")
-            await tonio.sleep(0.01)
             assert state["settled"] is False
             assert listener_inputs == ["x"]
             assert component.inputs == ["x"]

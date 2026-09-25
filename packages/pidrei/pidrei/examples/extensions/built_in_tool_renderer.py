@@ -73,7 +73,7 @@ def _details_get(result, key: str):
     return getattr(details, key, None)
 
 
-def extension(pi):
+async def extension(pi):
     cwd = os.getcwd()
 
     # --- Read tool: show path and line count ---

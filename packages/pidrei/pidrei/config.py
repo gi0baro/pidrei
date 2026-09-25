@@ -9,7 +9,10 @@ Not ported (Node-ecosystem machinery with no pidrei equivalent):
 
 import importlib.metadata
 import os
+import tempfile
 from pathlib import Path
+
+from tonio.colored import fs
 
 from .utils.paths import normalize_path
 
@@ -27,6 +30,11 @@ except importlib.metadata.PackageNotFoundError:
 # e.g., PIDREI_CODING_AGENT_DIR
 ENV_AGENT_DIR = f"{APP_NAME.upper()}_CODING_AGENT_DIR"
 ENV_SESSION_DIR = f"{APP_NAME.upper()}_CODING_AGENT_SESSION_DIR"
+
+# The OS temp directory (pi's `os.tmpdir()`). The first `tempfile.gettempdir()` probes
+# the filesystem, so it is resolved once here, at import time — outside the
+# never-block rule by construction, while this module stays eagerly imported.
+TEMP_DIR = fs.Path(tempfile.gettempdir())
 
 
 def expand_tilde_path(path: str) -> str:

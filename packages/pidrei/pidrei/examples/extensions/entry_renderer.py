@@ -15,7 +15,7 @@ import time
 from pidrei_tui import Box, Text
 
 
-def extension(pi):
+async def extension(pi):
     def render_status_card(entry, options, theme):
         data = entry.get("data") or {"message": "No data", "timestamp": int(time.time() * 1000)}
         box = Box(1, 1, lambda text: theme.bg("customMessageBg", text))

@@ -11,7 +11,7 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel, _on_update, _ctx):
         return AgentToolResult(
             content=[TextContent(text=f"Hello, {params['name']}!")],

@@ -34,7 +34,7 @@ the `pi` object mirror pi's one-for-one; the module format cannot.
 Create `.pidrei/extensions/hello.py` in your project:
 
 ```python
-def extension(pi):
+async def extension(pi):
     async def handle(_args, ctx):
         ctx.ui.notify("hello", "info")
 
@@ -56,12 +56,16 @@ Three rules, and they are the whole contract.
 module-level name `extension` is the factory:
 
 ```python
-def extension(pi):
-    pi.on("session_start", lambda event, ctx: None)
+async def extension(pi):
+    async def on_start(event, ctx): ...
+
+    pi.on("session_start", on_start)
 ```
 
-The factory may be `async def` — it is awaited if so. It receives one argument,
-the [`pi` object](#the-pi-object). Its return value is ignored.
+The factory must be an `async def`; it is awaited. A plain `def extension(pi)`
+is not accepted — pi's `void | Promise<void>` union is not ported — and fails
+to load like any other factory error. It receives one argument, the
+[`pi` object](#the-pi-object). Its return value is ignored.
 
 A module that does not define `extension`, or defines it as something not
 callable, fails to load with:
@@ -144,7 +148,7 @@ command or tool that needs them, and release them in a `session_shutdown`
 handler. Keep that cleanup idempotent — quit, reload and session replacement
 all converge on it.
 
-An async factory is awaited before startup continues, so it can fetch
+The factory is awaited before startup continues, so it can fetch
 configuration or register providers that startup model selection needs.
 
 `/reload` (or `await ctx.reload()` from a command) replaces the whole
@@ -283,7 +287,7 @@ providers receive the forced text as their leading system prompt.
 ### Blocking a tool call
 
 ```python
-def extension(pi):
+async def extension(pi):
     async def guard(event, _ctx):
         if event["toolName"] == "bash" and "rm -rf" in event["input"].get("command", ""):
             return {"block": True, "reason": "refusing a destructive command"}
@@ -298,7 +302,7 @@ finalized tool result in that batch sets it.
 ### Transforming input
 
 ```python
-def extension(pi):
+async def extension(pi):
     async def expand(event, _ctx):
         if event["text"].startswith("??"):
             return {"text": f"Explain in detail: {event['text'][2:]}"}
@@ -334,7 +338,7 @@ order after all handlers finish; a handler error is reported and later
 handlers still run.
 
 ```python
-def extension(pi):
+async def extension(pi):
     replaced = False
 
     async def on_turn_end(event, _ctx):
@@ -432,9 +436,23 @@ final message. Setup failures produce error events and error results.
 `select(title, options)`, `confirm(title, message)`,
 `input(title, placeholder)`, `editor(title, prefill)` and `theme`.
 The `select`/`confirm`/`input`/`editor`/`custom` calls are awaitable and
-return the user's choice, or `None` if dismissed. `paste_to_editor` and the
-theme accessors (`get_all_themes`, `get_theme`, `set_theme`) are awaitable
-too; the remaining setters are plain sync calls.
+return the user's choice, or `None` if dismissed. `paste_to_editor`,
+`get_editor_text` and the theme accessors (`get_all_themes`, `get_theme`,
+`set_theme`) are awaitable too; the remaining setters are plain sync calls.
+
+To send raw escape sequences to the terminal (desktop notifications via OSC
+777/99, for instance), use `ctx.ui.write_terminal(sequence)`, not
+`sys.stdout`: while the TUI runs, its output pump is the terminal's only
+writer, and a direct write can land in the middle of a frame.
+`write_terminal` queues behind the pump; it does nothing without a UI.
+
+The TUI runs its components on a single task. Code it calls there — a
+custom component's `handle_input`, a custom editor from
+`set_editor_component` — must not await the `ctx.ui` calls that wait on the
+TUI (`select`/`confirm`/`input`/`editor`/`custom`, `paste_to_editor`,
+`get_editor_text`): they would wait for the very task running them. Start
+the work with `tonio.spawn.without_tracking(...)` instead. Event and command handlers run on their
+own tasks and can await them freely.
 
 In print and JSON modes `ctx.has_ui` is False and `ctx.ui` is a no-op object,
 so handlers stay safe to call unconditionally — but a handler that *waits* on
@@ -519,7 +537,7 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel, _on_update, _ctx):
         return AgentToolResult(
             content=[TextContent(type="text", text=f"echo: {params['text']}")],
@@ -578,16 +596,20 @@ pidrei's own tools while keeping extension tools.
 ## Commands, shortcuts and flags
 
 ```python
-def extension(pi):
+async def extension(pi):
     async def handle(args, ctx):
         ctx.ui.notify(f"ran with {args!r}", "info")
 
+    async def on_key(ctx):
+        ctx.ui.notify("pressed", "info")
+
     pi.register_command("mycmd", handler=handle, description="Does a thing")
-    pi.register_shortcut("ctrl+shift+k", handler=handle, description="Same, by key")
+    pi.register_shortcut("ctrl+shift+k", handler=on_key, description="Same idea, by key")
     pi.register_flag("aggressive", type="boolean", description="Go faster", default=False)
 ```
 
-Command handlers receive `(args_string, ctx)`. Supply
+Command handlers receive `(args_string, ctx)`; shortcut handlers receive `ctx`.
+Both are async functions (they are awaited). Supply
 `get_argument_completions` to offer completions after the command name.
 
 Shortcut strings are `ctrl+`, `alt+`, `shift+` prefixes plus a key. A shortcut
@@ -603,7 +625,7 @@ Because a reload re-executes the module, module-level globals reset. Keep state
 in the factory closure:
 
 ```python
-def extension(pi):
+async def extension(pi):
     seen = []
 
     async def remember(event, _ctx):
@@ -628,7 +650,7 @@ class MyExtension:
         self.count += 1
 
 
-def extension(pi):
+async def extension(pi):
     MyExtension(pi).wire()
 ```
 
@@ -662,6 +684,22 @@ Components come from `pidrei_tui` — `Container`, `Text`, `Spacer`,
 `SelectList`, `SettingsList` and friends. Use `ctx.ui.custom()` only when an
 interaction needs its own rendering and input; [tui.md](tui.md) covers
 components, focus, overlays, theming and performance.
+
+The factory passed to `ctx.ui.custom(factory, options)` must be an
+`async def` returning the component; it is awaited, and a plain function or a
+lambda is not accepted:
+
+```python
+async def factory(tui, theme, keybindings, done):
+    return MyComponent(theme, done)
+
+
+result = await ctx.ui.custom(factory)
+```
+
+Footer, header and editor factories (`set_footer`, `set_header`,
+`set_editor_component`) are the exception: they stay plain synchronous
+functions.
 
 Guard UI work with `ctx.has_ui`, and terminal-only behavior with
 `ctx.mode == "tui"`. Keep tool and event logic independent of rendering so it

@@ -8,6 +8,7 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/space_invaders.py
 """
 
+import copy
 import random
 
 from pidrei_tui import Key, is_key_release, matches_key, visible_width
@@ -408,26 +409,28 @@ class SpaceInvadersComponent:
             self._interval = None
 
 
-def extension(pi):
+async def extension(pi):
     async def handle(_args: str, ctx) -> None:
         if ctx.mode != "tui":
             ctx.ui.notify("Space Invaders requires interactive mode", "error")
             return
 
-        # Load saved state from session
+        # Load saved state from session. A copy: the game changes its state on
+        # every tick, and the stored entry is also serialized by the session's
+        # writes on another task (pi's JS thread serializes it in between).
         saved_state = None
         for entry in reversed(ctx.session_manager.get_entries()):
             if entry.get("type") == "custom" and entry.get("customType") == INVADERS_SAVE_TYPE:
-                saved_state = entry.get("data")
+                saved_state = copy.deepcopy(entry.get("data"))
                 break
 
         async def on_save(state: dict | None) -> None:
-            await pi.append_entry(INVADERS_SAVE_TYPE, state)
+            # A copy for the same reason: the entry keeps what is passed.
+            await pi.append_entry(INVADERS_SAVE_TYPE, copy.deepcopy(state))
 
-        await ctx.ui.custom(
-            lambda tui, _theme, _keybindings, done: SpaceInvadersComponent(
-                tui, lambda: done(None), on_save, saved_state
-            )
-        )
+        async def factory(tui, _theme, _keybindings, done):
+            return SpaceInvadersComponent(tui, lambda: done(None), on_save, saved_state)
+
+        await ctx.ui.custom(factory)
 
     pi.register_command("invaders", handler=handle, description="Play Space Invaders!")

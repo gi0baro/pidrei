@@ -20,6 +20,7 @@ views.
 """
 
 import os
+import threading
 
 from pidrei.core.extensions.types import ToolDefinition
 from pidrei.core.tools import (
@@ -56,17 +57,21 @@ def _create_built_in_tools(cwd: str) -> dict:
     }
 
 
-def extension(pi):
+async def extension(pi):
     # Cache for built-in tools by cwd (in the closure: module globals reset
     # on /reload)
     tool_cache: dict[str, dict] = {}
+    # The tools of one message execute in parallel: the check-and-create is
+    # one step, so each cwd gets one set.
+    tool_cache_guard = threading.Lock()
 
     def get_built_in_tools(cwd: str) -> dict:
-        tools = tool_cache.get(cwd)
-        if tools is None:
-            tools = _create_built_in_tools(cwd)
-            tool_cache[cwd] = tools
-        return tools
+        with tool_cache_guard:
+            tools = tool_cache.get(cwd)
+            if tools is None:
+                tools = _create_built_in_tools(cwd)
+                tool_cache[cwd] = tools
+            return tools
 
     # The parameter schemas and descriptions are taken verbatim from the
     # built-ins at registration time; execution re-resolves against the

@@ -4,6 +4,7 @@ Multi-line editor component for extensions. Supports Ctrl+G for external
 editor.
 """
 
+import functools
 import os
 
 import tonio.colored as tonio
@@ -92,19 +93,21 @@ class ExtensionEditorComponent(Container):
 
         # External editor (app keybinding)
         if self._keybindings.matches(key_data, "app.editor.external"):
-            tonio.spawn.without_tracking(self._handle_open_external_editor())
+            # Read here, on the owner; the edit stops the TUI, so it cannot
+            # run on the owner and is detached.
+            tonio.spawn.without_tracking(self._handle_open_external_editor(self._editor.get_text()))
             return
 
         # Forward to editor
         await self._editor.handle_input(key_data)
 
-    async def _handle_open_external_editor(self) -> None:
-        content = self._editor.get_text()
+    async def _handle_open_external_editor(self, content: str) -> None:
         await self._tui.stop()
         try:
             result = await edit_in_external_editor({"command": self._external_editor_command, "content": content})
             if result["status"] == "complete":
-                self._editor.set_text(result["content"])
+                # Posted: applied first thing once the owner is back.
+                self._tui.post_ui(functools.partial(self._editor.set_text, result["content"]))
         finally:
             await self._tui.start()
             self._tui.request_render(True)

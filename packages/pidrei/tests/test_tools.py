@@ -743,11 +743,8 @@ class TestBashTool:
         assert re.search(r"\[Showing lines \d+-\d+ of \d+\. Full output: ", output)
         assert "Full output: None" not in output
 
-        for _ in range(20):
-            if os.path.exists(full_output_path):
-                break
-            await tonio_time.sleep(0.01)
-
+        # No polling: the tool drains and closes the temp file before it
+        # returns (`OutputAccumulator.close_temp_file`).
         assert os.path.exists(full_output_path)
         with open(full_output_path, encoding="utf-8") as f:
             full_output = f.read()
@@ -771,15 +768,24 @@ class TestBashTool:
     async def test_abort_kills_running_command(self, tmp_path):
         bash = create_bash_tool(str(tmp_path))
         cancel = CancelToken()
+        running = tonio.Event()
 
-        async def abort_later():
-            await tonio_time.sleep(0.05)
+        # The command announces itself so the abort lands while it runs (a
+        # fixed delay could abort before the spawn on a slow runner).
+        def on_update(result) -> None:
+            if any("started" in getattr(block, "text", "") for block in result.content):
+                running.set()
+
+        async def abort_once_running():
+            await running.wait(5)
             cancel.cancel()
 
-        tonio.spawn.without_tracking(abort_later())
+        aborter = tonio.spawn(abort_once_running())
 
         with pytest.raises(Exception, match="Command aborted"):
-            await bash.execute("test-call-abort", {"command": "sleep 5"}, cancel)
+            await bash.execute("test-call-abort", {"command": "echo started; sleep 5"}, cancel, on_update)
+        await aborter
+        assert running.is_set()
 
     def test_shell_tool_config_drives_the_shared_definition(self, tmp_path):
         """pi shares one implementation between `bash` and its Windows-only

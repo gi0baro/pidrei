@@ -165,7 +165,7 @@ class FakeCodexResponse:
         *,
         status: int = 200,
         headers: dict[str, str] | None = None,
-        chunk_delay: float = 0.0,
+        chunk_gate: tonio.Event | None = None,
         stay_open: bool = False,
     ):
         self.status = status
@@ -174,13 +174,15 @@ class FakeCodexResponse:
         self.closed_event = tonio.Event()
         self.drained = False
         self._chunks = chunks
-        self._chunk_delay = chunk_delay
+        self._chunk_gate = chunk_gate
         self._stay_open = stay_open
 
     async def aiter_bytes(self):
         for index, chunk in enumerate(self._chunks):
-            if index and self._chunk_delay:
-                await tonio_time.sleep(self._chunk_delay)
+            if index and self._chunk_gate is not None:
+                # Chunks after the first wait for the gate (bounded, so a
+                # missed cancellation fails the test rather than hanging it).
+                await self._chunk_gate.wait(5)
             yield chunk
         if self._stay_open:
             # pi's "SSE body stays open" cases: the stream must finish on
@@ -474,7 +476,10 @@ async def test_aborts_sse_body_reads_after_response_headers_arrive():
         + "\n\n"
     ).encode()
     second = (f"data: {json.dumps({'type': 'response.output_text.delta', 'delta': 'two'})}\n\n").encode()
-    response = FakeCodexResponse([first, second, sse_payload()], chunk_delay=0.05)
+    # pidrei: pi spaces the chunks with a 50 ms timer; here the body parks
+    # after the first chunk on a gate nobody opens, so the abort always lands
+    # between the chunks and must unwind the parked read.
+    response = FakeCodexResponse([first, second, sse_payload()], chunk_gate=tonio.Event())
     client = FakeCodexClient(lambda _request: response)
 
     cancel = CancelToken()

@@ -130,7 +130,7 @@ extension, so it shows the `__init__.py` layout and relative imports.
 version:
 
 ```python
-def extension(pi):
+async def extension(pi):
     async def handle(_args, ctx):
         ctx.ui.notify("hello", "info")
 
@@ -138,6 +138,8 @@ def extension(pi):
 ```
 
 Save as `.pidrei/extensions/hello.py` in a project and it loads on next start.
+The entry point must be an `async def`, and so must every factory passed to
+`ctx.ui.custom()`.
 
 ## A note on style
 

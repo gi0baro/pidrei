@@ -50,7 +50,7 @@ def _message_texts(message) -> str:
 async def test_set_model_saves_the_model_to_the_session_and_emits_model_select(harnesses):
     model_events: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_model_select(event, _ctx) -> None:
             previous = event.get("previousModel")
             model_events.append(
@@ -247,7 +247,7 @@ async def test_allows_extension_tool_call_handlers_to_block_tool_execution(harne
         execute=execute,
     )
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def block(_event, _ctx):
             return {"block": True, "reason": "Blocked by test"}
 
@@ -305,7 +305,7 @@ async def test_allows_extension_tool_result_handlers_to_modify_tool_results(harn
         execute=execute,
     )
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_tool_result(event, _ctx):
             observed["usage"] = event.get("usage")
             return {
@@ -348,7 +348,7 @@ async def test_allows_extension_tool_result_handlers_to_modify_tool_results(harn
 
 @pytest.mark.tonio
 async def test_allows_extension_context_handlers_to_modify_messages_before_the_llm_call(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_context(event, _ctx):
             return {
                 "messages": [
@@ -384,7 +384,7 @@ async def test_allows_extension_context_handlers_to_modify_messages_before_the_l
 async def test_allows_extension_input_handlers_to_transform_or_handle_input(harnesses):
     seen_api: dict = {}
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         seen_api["pi"] = pi
 
         async def on_input(event, _ctx):
@@ -417,7 +417,7 @@ async def test_allows_extension_input_handlers_to_transform_or_handle_input(harn
 async def test_allows_extension_commands_to_inspect_live_system_prompt_options(harnesses):
     seen_options: list = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def handler(_args, ctx) -> None:
             options = ctx.get_system_prompt_options()
             seen_options.append(options)
@@ -433,15 +433,62 @@ async def test_allows_extension_commands_to_inspect_live_system_prompt_options(h
     await harness.session.prompt("/inspect-options")
 
     assert len(seen_options) == 2
-    assert seen_options[0] is seen_options[1]
+    # Relaxation: pi hands every command the same live object. pidrei hands each
+    # command a private copy and publishes its mutations when the handler returns
+    # (the options are read from other tasks), so the objects differ but the first
+    # command's edit is in the second command's copy before it appends its own.
+    assert seen_options[0] is not seen_options[1]
     assert seen_options[0].cwd == harness.temp_dir
     assert "read" in seen_options[0].selected_tools
     assert "mutated_tool" in seen_options[1].selected_tools
+    assert seen_options[1].selected_tools.count("mutated_tool") == 2
+
+
+# pidrei-only: a command's prompt-options edits are private until its handler returns;
+# other tasks keep reading the published options meanwhile.
+@pytest.mark.tonio
+async def test_publishes_command_prompt_option_edits_when_the_handler_returns(harnesses):
+    during: list = []
+
+    async def factory(pi) -> None:
+        async def handler(_args, ctx) -> None:
+            ctx.get_system_prompt_options().selected_tools.append("mutated_tool")
+            during.append(list(harness.session._base_system_prompt_options.selected_tools))
+
+        pi.register_command("edit-options", handler=handler, description="Edit system prompt options")
+
+    harness = await create_harness(extension_factories=[factory])
+    harnesses.append(harness)
+
+    await harness.session.prompt("/edit-options")
+
+    assert "mutated_tool" not in during[0]
+    assert "mutated_tool" in harness.session._base_system_prompt_options.selected_tools
+
+
+# pidrei-only: in pi, a rebuild replaces the options object, so a command's later edits
+# of the old one have no effect; a copy checked out before a rebuild is dropped the same way.
+@pytest.mark.tonio
+async def test_drops_command_prompt_option_edits_made_on_options_superseded_by_a_rebuild(harnesses):
+    async def factory(pi) -> None:
+        async def handler(_args, ctx) -> None:
+            options = ctx.get_system_prompt_options()
+            pi.set_active_tools(["read"])
+            options.selected_tools.append("mutated_tool")
+
+        pi.register_command("stale-options", handler=handler, description="Edit superseded options")
+
+    harness = await create_harness(extension_factories=[factory])
+    harnesses.append(harness)
+
+    await harness.session.prompt("/stale-options")
+
+    assert harness.session._base_system_prompt_options.selected_tools == ["read"]
 
 
 @pytest.mark.tonio
 async def test_allows_before_agent_start_handlers_to_inject_messages_and_modify_the_system_prompt(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_agent_start(event, _ctx):
             return {
                 "message": {
@@ -482,7 +529,7 @@ async def test_allows_before_agent_start_handlers_to_inject_messages_and_modify_
 async def test_bind_extensions_emits_session_start_and_reload_emits_shutdown_then_start(harnesses):
     lifecycle_events: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_start(event, _ctx) -> None:
             lifecycle_events.append(f"start:{event['reason']}")
 

@@ -1,8 +1,13 @@
 """Tests for the models registry port (registry.py)."""
 
+import threading
+
 import pytest
 import tonio.colored as tonio
 
+import pidrei_ai.auth.credential_store as credential_store_module
+import pidrei_ai.auth.resolve as resolve_module
+import pidrei_ai.registry as registry_module
 from pidrei_ai.auth.credential_store import InMemoryCredentialStore
 from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError
 from pidrei_ai.auth.types import (
@@ -39,6 +44,7 @@ from pidrei_ai.types import (
     StartEvent,
     StreamOptions,
 )
+from pidrei_ai.utils.abort import race_with_cancel
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
@@ -83,6 +89,71 @@ def _far_future_ms() -> int:
     import time
 
     return int(time.time() * 1000) + 60_000
+
+
+class RacedOperations:
+    """Tracks every operation passed to `race_with_cancel`.
+
+    A cancelled race abandons its operation, which keeps running detached
+    (pi's abandoned promise). Tests that assert such late work changed
+    nothing wait for it to finish via `settle()` instead of sleeping, and
+    `called(n)` signals the n-th raced operation has been registered.
+    """
+
+    def __init__(self, original) -> None:
+        self._original = original
+        self._guard = threading.Lock()
+        self._done: list[tonio.Event] = []
+        self._registered: list[tonio.Event] = []
+
+    def _registered_event(self, index: int) -> tonio.Event:
+        # Caller holds `_guard`.
+        while len(self._registered) <= index:
+            self._registered.append(tonio.Event())
+        return self._registered[index]
+
+    def __call__(self, operation, cancel):
+        done = tonio.Event()
+        with self._guard:
+            self._done.append(done)
+            registered = self._registered_event(len(self._done) - 1)
+
+        async def tracked():
+            try:
+                return await operation
+            finally:
+                done.set()
+
+        race = self._original(tracked(), cancel)
+        registered.set()
+        return race
+
+    def called(self, count: int) -> tonio.Event:
+        with self._guard:
+            return self._registered_event(count - 1)
+
+    async def settle(self, timeout: float = 5) -> None:
+        """Wait until every raced operation, including abandoned ones, finished.
+
+        Races an operation awaits register before it finishes, so looping
+        until nothing is pending also covers nested races (work an operation
+        spawns without awaiting is not covered).
+        """
+        while True:
+            with self._guard:
+                pending = next((done for done in self._done if not done.is_set()), None)
+            if pending is None:
+                return
+            await pending.wait(timeout)
+            assert pending.is_set(), "a raced operation never finished"
+
+
+@pytest.fixture
+def raced_operations(monkeypatch) -> RacedOperations:
+    tracker = RacedOperations(race_with_cancel)
+    for module in (registry_module, credential_store_module, resolve_module):
+        monkeypatch.setattr(module, "race_with_cancel", tracker)
+    return tracker
 
 
 class DynamicTestProvider:
@@ -657,7 +728,7 @@ async def test_returns_aborted_state_without_reporting_cancellation_as_a_provide
 
 
 @pytest.mark.tonio
-async def test_stops_waiting_on_abort_when_a_provider_ignores_its_cancel():
+async def test_stops_waiting_on_abort_when_a_provider_ignores_its_cancel(raced_operations):
     controller = CancelToken()
     started = tonio.Event()
     release = tonio.Event()
@@ -690,12 +761,13 @@ async def test_stops_waiting_on_abort_when_a_provider_ignores_its_cancel():
 
     state["fail_late"] = True
     release.set()
-    await tonio.time.sleep(0.01)
+    # pidrei: wait for the abandoned refresh to fail instead of sleeping.
+    await raced_operations.settle()
     assert result.errors == {}
 
 
 @pytest.mark.tonio
-async def test_rejects_late_publication_from_a_superseded_non_cooperative_provider():
+async def test_rejects_late_publication_from_a_superseded_non_cooperative_provider(raced_operations):
     store = InMemoryModelsStore()
     state = {"value": "initial", "calls": 0}
     first_started = tonio.Event()
@@ -739,9 +811,10 @@ async def test_rejects_late_publication_from_a_superseded_non_cooperative_provid
     await tonio.spawn(run_first(), drive())
     first_blocked.set()
     # Wait for the superseded provider's late publication to settle — a parked
-    # leftover would outlive the test (and wedge interpreter shutdown).
+    # leftover would outlive the test (and wedge interpreter shutdown). The
+    # rejected publication itself runs detached; settle() awaits it.
     await first_finished.wait()
-    await tonio.time.sleep(0.01)
+    await raced_operations.settle()
 
     assert state["value"] == "generation-2"
     entry = await store.read("dynamic")
@@ -750,7 +823,7 @@ async def test_rejects_late_publication_from_a_superseded_non_cooperative_provid
 
 
 @pytest.mark.tonio
-async def test_lets_a_newer_dynamic_refresh_bypass_and_supersede_older_network_work():
+async def test_lets_a_newer_dynamic_refresh_bypass_and_supersede_older_network_work(raced_operations):
     state = {"fetches": 0}
     first_started = tonio.Event()
     first_blocked = tonio.Event()
@@ -791,7 +864,8 @@ async def test_lets_a_newer_dynamic_refresh_bypass_and_supersede_older_network_w
     assert [model.id for model in (await store.read("dynamic")).models] == ["listed-2"]
 
     first_blocked.set()
-    await tonio.time.sleep(0.01)
+    # pidrei: wait for the superseded (detached) first refresh to finish.
+    await raced_operations.settle()
     assert [model.id for model in provider.get_models()] == ["listed-2"]
     assert [model.id for model in (await store.read("dynamic")).models] == ["listed-2"]
 
@@ -898,7 +972,7 @@ async def test_stops_waiting_for_non_cooperative_auth_callbacks():
 
 
 @pytest.mark.tonio
-async def test_cancels_queued_credential_mutations_without_running_them_later():
+async def test_cancels_queued_credential_mutations_without_running_them_later(raced_operations):
     credentials = InMemoryCredentialStore()
     first_entered = tonio.Event()
     first_blocked = tonio.Event()
@@ -932,13 +1006,16 @@ async def test_cancels_queued_credential_mutations_without_running_them_later():
             outcome["second_error"] = error
 
     async def drive() -> None:
-        await first_entered.wait()
-        await tonio.time.sleep(0.01)
+        # pidrei: cancel once the second mutation is queued (the store's
+        # second raced operation), not after a sleep.
+        await raced_operations.called(2).wait(5)
+        assert raced_operations.called(2).is_set()
         controller.cancel()
         first_blocked.set()
 
     await tonio.spawn(run_first(), run_second(), drive())
-    await tonio.time.sleep(0.01)
+    # The cancelled second mutation still runs detached up to its lock.
+    await raced_operations.settle()
 
     assert isinstance(outcome["second_error"], AbortError)
     assert state["second_ran"] is False
@@ -946,7 +1023,7 @@ async def test_cancels_queued_credential_mutations_without_running_them_later():
 
 
 @pytest.mark.tonio
-async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_credential():
+async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_credential(raced_operations):
     credentials = InMemoryCredentialStore()
     previous = OAuthCredential(access="old", refresh="old-refresh", expires=0)
 
@@ -1000,7 +1077,8 @@ async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_c
     assert received["cancel"].cancelled is True
     assert received["cancel"].reason is controller.reason
     blocked_refresh.set()
-    await tonio.time.sleep(0.01)
+    # pidrei: wait for the abandoned refresh to finish instead of sleeping.
+    await raced_operations.settle()
     assert await credentials.read("p1") == previous
 
 

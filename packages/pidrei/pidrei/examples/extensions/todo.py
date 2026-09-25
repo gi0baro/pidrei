@@ -12,6 +12,8 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/todo.py
 """
 
+import threading
+
 from pidrei.core.extensions.types import ToolDefinition
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
@@ -81,10 +83,15 @@ class TodoListComponent:
         self._cached_lines = None
 
 
-def extension(pi):
+async def extension(pi):
     # In-memory state (reconstructed from session on load). The `nextId` key
     # matches the persisted details, so state round-trips unchanged.
     state: dict = {"todos": [], "nextId": 1}
+    # pi's execute runs to completion on one thread; here the tool calls of
+    # one message run in parallel and session events arrive on other tasks,
+    # so every read-modify-write of `state` (and the details snapshot taken
+    # with it) holds this.
+    state_guard = threading.Lock()
 
     def details(action: str, error: str | None = None) -> dict:
         d = {"action": action, "todos": [dict(t) for t in state["todos"]], "nextId": state["nextId"]}
@@ -112,7 +119,8 @@ def extension(pi):
 
     # Reconstruct state on session events
     async def on_session_event(_event, ctx) -> None:
-        reconstruct_state(ctx)
+        with state_guard:
+            reconstruct_state(ctx)
 
     pi.on("session_start", on_session_event)
     pi.on("session_tree", on_session_event)
@@ -122,6 +130,10 @@ def extension(pi):
 
     # The tool the LLM calls
     async def execute(_tool_call_id, params, _cancel=None, _on_update=None, _ctx=None):
+        with state_guard:
+            return run_action(params)
+
+    def run_action(params) -> AgentToolResult:
         action = params["action"]
         todos: list[dict] = state["todos"]
 
@@ -232,6 +244,14 @@ def extension(pi):
             ctx.ui.notify("/todos requires interactive mode", "error")
             return
 
-        await ctx.ui.custom(lambda _tui, theme, _kb, done: TodoListComponent(state["todos"], theme, lambda: done(None)))
+        # A snapshot: the component renders on the UI owner while the tool
+        # changes the list (pi's view is cached too, so it never was live).
+        with state_guard:
+            todos = [dict(t) for t in state["todos"]]
+
+        async def factory(_tui, theme, _kb, done):
+            return TodoListComponent(todos, theme, lambda: done(None))
+
+        await ctx.ui.custom(factory)
 
     pi.register_command("todos", handler=todos_command, description="Show all todos on the current branch")

@@ -24,7 +24,7 @@ def harnesses(request):
     return created
 
 
-def _compaction_factory(pi) -> None:
+async def _compaction_factory(pi) -> None:
     async def on_before_compact(event, _ctx):
         preparation = event["preparation"]
         return {
@@ -121,7 +121,8 @@ async def test_keeps_overflow_wording_when_a_repeated_length_stop_fills_the_cont
 
     run_calls: list[tuple[str, bool]] = []
 
-    async def run_auto_compaction_spy(reason, will_retry):
+    # `_abort_generation`: pidrei-only (the abort baseline `_check_compaction` hands over).
+    async def run_auto_compaction_spy(reason, will_retry, _abort_generation=None):
         run_calls.append((reason, will_retry))
         return False
 

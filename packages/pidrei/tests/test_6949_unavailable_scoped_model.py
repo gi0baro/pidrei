@@ -50,7 +50,9 @@ def make_model(model_id: str, name: str) -> Model:
 
 def create_interactive_context(*, all_models, enabled_model_ids, scoped_models=None):
     """The attribute surface `_show_models_selector` touches, as a stub."""
-    holder = {"selector": None}
+    # `scoped_updated` is set by every `set_scoped_models` call (onChange
+    # applies the session scope on a spawned task).
+    holder = {"selector": None, "scoped_updated": tonio.Event()}
     get_available_calls = {"count": 0}
     set_scoped_models_calls = []
 
@@ -63,6 +65,7 @@ def create_interactive_context(*, all_models, enabled_model_ids, scoped_models=N
 
     def set_scoped_models(scoped):
         set_scoped_models_calls.append(scoped)
+        holder["scoped_updated"].set()
 
     def show_selector(factory):
         holder["selector"] = factory(lambda: None)["component"]
@@ -181,7 +184,7 @@ class TestUnavailableScopedModels:
         await selector.handle_input(ALT_DOWN)
 
         # onChange resolves the session scope in a spawned task.
-        await tonio.time.sleep(0.01)
+        await holder["scoped_updated"].wait(5)
         assert scoped_calls, "Expected the session scope to be updated"
         last = scoped_calls[-1]
         assert [scoped.model for scoped in last] == [two, one]

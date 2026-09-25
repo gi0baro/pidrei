@@ -10,7 +10,7 @@ Start pidrei with this extension:
 PROTECTED_PATHS = [".env", ".git/", "node_modules/"]
 
 
-def extension(pi):
+async def extension(pi):
     async def on_tool_call(event, ctx):
         if event["toolName"] not in ("write", "edit"):
             return None

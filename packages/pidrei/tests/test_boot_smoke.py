@@ -19,18 +19,20 @@ import json
 import os
 import pty
 import re
+import select
 import signal
 import struct
 import subprocess
 import sys
 import termios
+import time
 
 import pyte
 import pytest
 import tonio.colored as tonio
 from tonio.colored import net
 
-from pidrei.config import ENV_AGENT_DIR
+from pidrei.config import APP_TITLE, ENV_AGENT_DIR
 
 
 COLS, ROWS = 100, 30
@@ -147,6 +149,23 @@ class _Screen:
             self.raw += text
             self._stream.feed(_APC_RE.sub("", text))
 
+    async def wait_readable(self, timeout: float) -> None:
+        """Block (on the pool) until the child writes, hangs up, or `timeout`
+        passes — the wake-up for every wait below, instead of a polling sleep."""
+        await tonio.spawn_blocking(select.select, [self._fd], [], [], timeout)
+
+    async def until(self, predicate, timeout: float) -> bool:
+        """Re-check `predicate` whenever the child's output arrives."""
+        deadline = time.monotonic() + timeout
+        while True:
+            self.pump()
+            if predicate():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            await self.wait_readable(remaining)
+
     @property
     def text(self) -> str:
         return "\n".join(line.rstrip() for line in self._screen.display)
@@ -161,46 +180,40 @@ def _assert_no_child_error(raw: str, marker: str) -> None:
 
 
 async def _wait_for(screen: _Screen, needle: str, timeout: float) -> None:
-    waited = 0.0
-    while waited < timeout:
-        screen.pump()
-        if needle in screen.text:
-            return
-        await tonio.sleep(0.1)
-        waited += 0.1
-    raise AssertionError(f"timed out waiting for {needle!r}; screen was:\n{screen.text}")
+    if not await screen.until(lambda: needle in screen.text, timeout):
+        raise AssertionError(f"timed out waiting for {needle!r}; screen was:\n{screen.text}")
 
 
-STARTUP_IN_PROGRESS = "Startup is still in progress"
+# The terminal title (OSC 0) is first written at the end of the startup
+# session bind, after the submit handler is installed.
+STARTUP_DONE = f"\x1b]0;{APP_TITLE} - "
 
 
 async def _submit_until(screen: _Screen, master: int, line: bytes, needle: str, timeout: float) -> None:
-    """Type `line`, then wait for `needle`, re-pressing Enter whenever the
-    child answers with its startup status instead.
+    """Type `line` once startup has finished, then wait for `needle`.
 
     The banner and footer render before startup finishes (pi's staged
     startup: managed tools, extensions, session bind), and until then a
-    submit only restores the text and shows "Startup is still in progress".
-    A slow runner (macOS CI) can reach that window; a user would just press
-    Enter again, and so does this.
+    submit only restores the text and shows "Startup is still in progress";
+    a slow runner (macOS CI) reaches that window. Re-pressing Enter after a
+    pause raced the startup (a repeated status repaints nothing, so a second
+    early press went unnoticed); waiting for the startup bind's title write
+    does not.
     """
+    if not await screen.until(lambda: STARTUP_DONE in screen.raw, timeout):
+        raise AssertionError(f"startup never finished; screen was:\n{screen.text}")
     os.write(master, line)
-    seen_status = screen.raw.count(STARTUP_IN_PROGRESS)
-    waited = 0.0
-    while waited < timeout:
-        screen.pump()
-        if needle in screen.text:
-            return
-        status_count = screen.raw.count(STARTUP_IN_PROGRESS)
-        if status_count > seen_status:
-            seen_status = status_count
-            await tonio.sleep(0.5)
-            waited += 0.5
-            os.write(master, b"\r")
-            continue
-        await tonio.sleep(0.1)
-        waited += 0.1
-    raise AssertionError(f"timed out waiting for {needle!r}; screen was:\n{screen.text}")
+    await _wait_for(screen, needle, timeout)
+
+
+async def _exit_with_double_ctrl_c(screen: _Screen, master: int, process: subprocess.Popen) -> None:
+    """Two Ctrl+C within 500ms exit. One write carries both: pacing them with
+    a pause only shrinks that window for a slow child. The exit (or hang-up)
+    is awaited through the pty, which is also drained so the child never
+    blocks on a full buffer while shutting down."""
+    os.write(master, b"\x03\x03")
+    await screen.until(lambda: process.poll() is not None, EXIT_TIMEOUT)
+    screen.pump()
 
 
 @pytest.mark.tonio
@@ -249,16 +262,7 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
         await _submit_until(screen, master, b"say pong\r", "pong", REPLY_TIMEOUT)
 
         # Two Ctrl+C exit cleanly.
-        os.write(master, b"\x03")
-        await tonio.sleep(0.3)
-        os.write(master, b"\x03")
-
-        waited = 0.0
-        while process.poll() is None and waited < EXIT_TIMEOUT:
-            screen.pump()
-            await tonio.sleep(0.1)
-            waited += 0.1
-        screen.pump()
+        await _exit_with_double_ctrl_c(screen, master, process)
 
         assert process.poll() == 0, f"exit code {process.poll()}; screen was:\n{screen.text}"
         _assert_no_child_error(screen.raw, "Traceback")
@@ -277,12 +281,12 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
 
 
 _UI_PROBE_EXTENSION = """
-def extension(pi):
+async def extension(pi):
     async def on_session_start(_event, ctx):
         # Exercise the documented `ctx.ui` surface against the real TUI:
         # awaitable theme accessors, the theme object, and the sync setters.
         themes = await ctx.ui.get_all_themes()
-        ctx.ui.get_editor_text()
+        await ctx.ui.get_editor_text()
         marker = "EXT-STATUS-OK" if themes else "EXT-STATUS-NO-THEMES"
         ctx.ui.set_status("ui-probe", ctx.ui.theme.fg("accent", marker))
         ctx.ui.set_widget("ui-probe", ["EXT-WIDGET-OK"])
@@ -344,16 +348,7 @@ async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_path):
         await _wait_for(screen, "EXT-STATUS-OK", BOOT_TIMEOUT)
         await _wait_for(screen, "EXT-WIDGET-OK", BOOT_TIMEOUT)
 
-        os.write(master, b"\x03")
-        await tonio.sleep(0.3)
-        os.write(master, b"\x03")
-
-        waited = 0.0
-        while process.poll() is None and waited < EXIT_TIMEOUT:
-            screen.pump()
-            await tonio.sleep(0.1)
-            waited += 0.1
-        screen.pump()
+        await _exit_with_double_ctrl_c(screen, master, process)
 
         assert process.poll() == 0, f"exit code {process.poll()}; screen was:\n{screen.text}"
         _assert_no_child_error(screen.raw, "Traceback")

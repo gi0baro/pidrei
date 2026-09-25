@@ -8,7 +8,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     state = {"turn_count": 0}
 
     async def on_session_start(_event, ctx) -> None:

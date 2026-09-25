@@ -10,6 +10,7 @@ Start pidrei with this extension:
 """
 
 import re
+import threading
 
 from pidrei.core.extensions import ToolDefinition
 from pidrei_agent.types import AgentToolResult
@@ -32,14 +33,17 @@ def normalize_tool_name(input_text: str) -> str | None:
     return trimmed
 
 
-def extension(pi):
+async def extension(pi):
     registered_tool_names: set[str] = set()
+    # Commands run concurrently (each submit on its own task): the
+    # check-and-add is one step.
+    names_guard = threading.Lock()
 
     def register_echo_tool(name: str, label: str, prefix: str) -> bool:
-        if name in registered_tool_names:
-            return False
-
-        registered_tool_names.add(name)
+        with names_guard:
+            if name in registered_tool_names:
+                return False
+            registered_tool_names.add(name)
 
         async def execute(_tool_call_id, params, *_rest):
             return AgentToolResult(

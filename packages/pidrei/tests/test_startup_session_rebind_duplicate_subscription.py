@@ -28,13 +28,18 @@ async def test_does_not_subscribe_from_the_stale_startup_rebind():
     subscribe_calls: list[bool] = []
     title_calls: list[bool] = []
     bind_count = 0
+    # Set as each bind parks on its gate, so the test waits for it instead of polling.
+    startup_bind_reached = tonio.Event()
+    replacement_bind_reached = tonio.Event()
 
     async def bind_current_session_extensions() -> None:
         nonlocal bind_count
         bind_count += 1
         if bind_count == 1:
+            startup_bind_reached.set()
             await startup_bind.wait()
         else:
+            replacement_bind_reached.set()
             await replacement_bind.wait()
 
     context = SimpleNamespace(
@@ -50,14 +55,12 @@ async def test_does_not_subscribe_from_the_stale_startup_rebind():
     )
 
     startup_rebind = tonio.spawn(InteractiveMode._rebind_current_session(context))
-    while bind_count < 1:
-        await tonio.time.sleep(0.005)
+    await startup_bind_reached.wait(5)
     assert bind_count == 1
 
     context.session = replacement_session
     replacement_rebind = tonio.spawn(InteractiveMode._rebind_current_session(context, {"renderBeforeBind": True}))
-    while bind_count < 2:
-        await tonio.time.sleep(0.005)
+    await replacement_bind_reached.wait(5)
 
     assert bind_count == 2
     assert len(subscribe_calls) == 1

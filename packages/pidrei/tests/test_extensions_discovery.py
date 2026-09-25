@@ -1,7 +1,7 @@
 """Mirror of pi's extensions-discovery.test.ts.
 
 Translated to the pidrei ABI: `.ts`/`.js` files become `.py` modules whose
-factory is a module-level `extension(pi)`, `index.ts` becomes `__init__.py`,
+factory is a module-level `async def extension(pi)`, `index.ts` becomes `__init__.py`,
 and `package.json`'s `pi.extensions` becomes `pyproject.toml`'s
 `[tool.pidrei] extensions`.
 
@@ -23,7 +23,7 @@ from pidrei.core.extensions.loader import discover_and_load_extensions, load_ext
 
 
 EXTENSION_CODE = """
-def extension(pi):
+async def extension(pi):
     pi.register_command("test", handler=lambda args, ctx: None)
 """
 
@@ -33,7 +33,7 @@ def extension_code_with_tool(tool_name: str) -> str:
 from pidrei.core.extensions import ToolDefinition
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_tool(
         ToolDefinition(
             name={tool_name!r},
@@ -275,7 +275,7 @@ async def test_registers_message_and_entry_renderers(temp):
     write(
         os.path.join(temp.extensions, "with-renderer.py"),
         """
-def extension(pi):
+async def extension(pi):
     pi.register_markdown_transformer(lambda markdown, context: markdown)
     pi.register_message_renderer("my-custom-type", lambda *args: None)
     pi.register_entry_renderer("my-entry-type", lambda *args: None)
@@ -295,7 +295,7 @@ def extension(pi):
 async def test_reports_error_when_extension_raises_during_initialization(temp):
     write(
         os.path.join(temp.extensions, "throws.py"),
-        '\ndef extension(pi):\n    raise RuntimeError("Initialization failed!")\n',
+        '\nasync def extension(pi):\n    raise RuntimeError("Initialization failed!")\n',
     )
 
     result = await discover_and_load_extensions([], temp.root, temp.root)
@@ -343,7 +343,7 @@ async def noop(event, ctx):
     return None
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("agent_start", noop)
     pi.on("tool_call", noop)
     pi.on("agent_end", noop)
@@ -365,7 +365,7 @@ async def test_loads_extension_with_shortcuts(temp):
     write(
         os.path.join(temp.extensions, "with-shortcut.py"),
         """
-def extension(pi):
+async def extension(pi):
     pi.register_shortcut("ctrl+t", description="Test shortcut", handler=lambda ctx: None)
 """,
     )
@@ -381,7 +381,7 @@ async def test_loads_extension_with_flags(temp):
     write(
         os.path.join(temp.extensions, "with-flag.py"),
         """
-def extension(pi):
+async def extension(pi):
     pi.register_flag("my-flag", type="boolean", description="My custom flag")
 """,
     )
@@ -429,7 +429,7 @@ async def test_underscore_prefixed_modules_are_helpers_not_extensions(temp):
 from . import _helper
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_command(str(_helper.VALUE), handler=lambda args, ctx: None)
 """,
     )
@@ -452,7 +452,7 @@ async def test_a_package_extension_can_import_its_own_submodules(temp):
 from .inner import NAME
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_command(NAME, handler=lambda args, ctx: None)
 """,
     )
@@ -481,6 +481,23 @@ async def extension(pi):
 
     assert result.errors == []
     assert "late" in result.extensions[0].commands
+
+
+@pytest.mark.tonio
+async def test_a_sync_factory_is_a_load_error_and_its_registrations_are_discarded(temp):
+    # Factories are async-only: a plain `def` runs to completion, then awaiting
+    # its None result fails like any other factory failure, rolling back what
+    # it registered.
+    write(
+        os.path.join(temp.extensions, "sync-factory.py"),
+        '\ndef extension(pi):\n    pi.register_command("sync", handler=lambda args, ctx: None)\n',
+    )
+
+    result = await discover_and_load_extensions([], temp.root, temp.root)
+
+    assert len(result.errors) == 1
+    assert result.errors[0].error.startswith("Failed to load extension:")
+    assert result.extensions == []
 
 
 @pytest.mark.tonio

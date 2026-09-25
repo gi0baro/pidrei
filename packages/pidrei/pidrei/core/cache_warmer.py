@@ -194,17 +194,21 @@ class CacheWarmer:
             run = self._run
             if run is None:
                 return self._inactive
+            # The run's fields are written under the lock; read one consistent set.
+            phase = run.phase
+            refreshing = run.cancel_timer is None
+            next_warm_at = run.next_warm_at
+            extension_override = run.extension_override
         if not run.is_current():
             return CacheWarmingStatus(state="inactive", reason="conversation context changed")
-        decision = self._evaluate(run)
-        refreshing = run.cancel_timer is None
+        decision = self._evaluate(run.request.model, phase)
         if not decision.economics_available and not refreshing:
             return CacheWarmingStatus(state="inactive", reason="cache economics unavailable")
         return CacheWarmingStatus(
             state="refreshing" if refreshing else "scheduled",
-            next_warm_at=run.next_warm_at,
+            next_warm_at=next_warm_at,
             decision=decision,
-            extension_override=run.extension_override,
+            extension_override=extension_override,
         )
 
     def start(self, request: CacheWarmRequest, is_current: Callable[[], bool]) -> None:
@@ -309,7 +313,8 @@ class CacheWarmer:
             run.cancel_timer = None
             if not self._validate_run_locked(run) or self._refresh_deadline_missed_locked(run):
                 return
-        decision = self._evaluate(run)
+            phase = run.phase
+        decision = self._evaluate(run.request.model, phase)
         action: CacheWarmingAction = decision.action
         try:
             action = await self._decide(
@@ -392,8 +397,8 @@ class CacheWarmer:
             return "agent run settled"
         return None
 
-    def _evaluate(self, run: _ActiveRun) -> CacheWarmingDecision:
-        model = run.request.model
+    def _evaluate(self, model: Model, phase: Literal["streaming", "idle"]) -> CacheWarmingDecision:
+        """`phase` is read by the caller under the lock (`on_agent_settled` writes it)."""
         prompt_tokens = _last_prompt_tokens(self._session_manager.get_branch())
         cache_hit_cost = _price(model, cache_read=prompt_tokens)
         cache_miss_cost = (
@@ -403,11 +408,11 @@ class CacheWarmer:
         )
         warm_cost = _price(model, cache_read=prompt_tokens, output=1)
         miss_cost = max(0.0, cache_miss_cost - cache_hit_cost)
-        continuation_probability = IDLE_CONTINUATION_PROBABILITY if run.phase == "idle" else 1
+        continuation_probability = IDLE_CONTINUATION_PROBABILITY if phase == "idle" else 1
         economics_available = prompt_tokens > 0 and (cache_hit_cost > 0 or cache_miss_cost > 0)
         expected_savings = continuation_probability * miss_cost - warm_cost
         return CacheWarmingDecision(
-            phase=run.phase,
+            phase=phase,
             warm_cost=warm_cost,
             miss_cost=miss_cost,
             continuation_probability=continuation_probability,

@@ -16,12 +16,17 @@ overlays) gets one owner task instead of a lock per site:
   identity re-checks the detached `_timers` needed.
 - The timer tasks are children of the scope passed to `start()`, so stopping
   the owner reaps them; nothing ticks after `close()`.
+- One queue for the owner's lifetime: posted work the consumer did not reach
+  before a `close()` (behind the shutdown sentinel, or left by a cancelled
+  consumer) runs in order after the next `start()` — the TUI suspend/resume
+  and renderer switches stop and restart the same owner.
 
 An owner that was never started (a TUI that is never `start()`ed — tests)
 runs `run` work on the caller and timer fires inline; `post`ed work waits in
 the queue for a `start()` that may never come.
 """
 
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -75,7 +80,18 @@ class OwnerTask:
         #  A crashed owner is an error state, not headless mode: `run` raises
         #  instead of degrading to the never-started inline fallback.
         self._crashed: BaseException | None = None
+        #: `run()` jobs nobody has claimed yet. Leaving the set under the
+        #  guard is the claim: the consumer takes a job to run it, a stopped
+        #  owner's sweep or `run()` itself to settle it with `OwnerStopped` —
+        #  never both, even when a restarted consumer meets a job a stopped
+        #  one left queued.
         self._pending: set[_Job] = set()
+        #: sync sections only: sends, the restart's queue swap, the claim
+        #  set and the stop/generation state the shutdown sweep publishes.
+        self._guard = threading.Lock()
+        #: bumped by each `start()`; a consumer's shutdown path touches the
+        #  owner's state only while it is still the current generation.
+        self._generation = 0
         self._timers: set[TimerHandle] = set()
         # Called with an exception escaping posted work (a timer callback,
         # a fire-and-forget mutation). `None` lets it kill the owner.
@@ -97,25 +113,56 @@ class OwnerTask:
         return self.started and not self._stopped and self._crashed is None
 
     def start(self, scope) -> None:
-        """Run the owner loop as a child of `scope` (restartable after `close()`)."""
-        if self._closed:
-            self._sender, self._receiver = channel.unbounded()
-            self._closed = False
-            self._stopped = False
-            self._crashed = None
-        self._scope = scope
-        scope.spawn(self._consume(self._receiver))
+        """Run the owner loop as a child of `scope` (restartable after `close()`).
+
+        A restart keeps the queue: work the previous consumer did not reach
+        runs first, in post order. Callers restart only after the scope that
+        ran the previous consumer has exited.
+        """
+        with self._guard:
+            if self._closed:
+                self._closed = False
+                self._stopped = False
+                self._crashed = None
+                self._requeue()
+            self._generation += 1
+            generation = self._generation
+            receiver = self._receiver
+            self._scope = scope
+        scope.spawn(self._consume(receiver, generation))
+
+    def _requeue(self) -> None:
+        """Carry what the stopped consumer left queued over to a fresh channel.
+
+        A fresh channel, not the old one: a consumer unwound by cancellation
+        is not known to have released its receive, and its sentinel may still
+        be queued. Under `_guard`, so no send lands in the old channel after
+        the move.
+        """
+        stale = self._receiver
+        self._sender, self._receiver = channel.unbounded()
+        while True:
+            item = stale.receive_nowait()
+            if item is stale.Empty or item is stale.Closed:
+                return
+            if item is not None:  # a previous generation's sentinel
+                self._sender.send(item)
 
     def close(self) -> None:
         """Stop after the work already queued; cancel every live timer."""
-        if self._closed:
-            return
-        self._closed = True
+        with self._guard:
+            if self._closed:
+                return
+            self._closed = True
+            if self._scope is not None:
+                self._sender.send(None)
         for handle in list(self._timers):
             handle.cancel()
         self._timers.clear()
-        if self._scope is not None:
-            self._sender.send(None)
+
+    def _send(self, item: _Job) -> None:
+        with self._guard:
+            self._sender.send(item)
 
     def post(self, fn: Thunk) -> None:
         """Run `fn` on the owner, fire-and-forget, in post order.
@@ -123,10 +170,10 @@ class OwnerTask:
         Always enqueues: work posted before `start()` runs when the owner
         starts, still in order. An owner that never starts never runs it —
         tests drive a started owner or stub the posting seam; production
-        owners span the terminal's lifetime. After `close()` the job lands
-        behind the shutdown sentinel and is dropped with the channel.
+        owners span the terminal's lifetime. After `close()` the job waits
+        behind the shutdown sentinel and runs after the next `start()`.
         """
-        self._sender.send(_Job(fn))
+        self._send(_Job(fn))
 
     async def run(self, fn: Thunk) -> None:
         """Run `fn` on the owner and wait for it; its error surfaces here.
@@ -147,14 +194,18 @@ class OwnerTask:
         job = _Job(fn, done=tonio.Event())
         # Enrolled before the send so the consumer's shutdown sweep can never
         # miss it: either we observe the stop below, or the sweep — which
-        # runs after the stop is published — observes the job.
-        self._pending.add(job)
-        self._sender.send(job)
-        if self._stopped and not job.done.is_set():
-            # The consumer stopped between our `started` check and the send;
-            # nothing will drain the channel again. (The sweep may settle the
-            # job concurrently — both sides write the same outcome.)
-            self._pending.discard(job)
+        # publishes the stop under the same guard — observes the job.
+        with self._guard:
+            self._pending.add(job)
+            self._sender.send(job)
+        with self._guard:
+            # The consumer stopped between our `started` check and the send:
+            # settle here instead of parking until a restart. The job stays
+            # queued; a restarted consumer finds it claimed and skips it.
+            stranded = self._stopped and job in self._pending
+            if stranded:
+                self._pending.discard(job)
+        if stranded:
             job.error = self._stop_error()
             job.done.set()
         await job.done.wait(None)
@@ -207,7 +258,7 @@ class OwnerTask:
                 if handle.cancelled:
                     return
                 if self.started:
-                    self._sender.send(_Job(self._fire(handle, fn)))
+                    self._send(_Job(self._fire(handle, fn)))
                 elif not self._closed:
                     await fn()
                 if not repeat:
@@ -224,7 +275,14 @@ class OwnerTask:
 
         return fire
 
-    async def _consume(self, receiver) -> None:
+    def _claim(self, job: _Job) -> bool:
+        with self._guard:
+            if job not in self._pending:
+                return False
+            self._pending.discard(job)
+            return True
+
+    async def _consume(self, receiver, generation: int) -> None:
         crash: BaseException | None = None
         try:
             while True:
@@ -241,12 +299,13 @@ class OwnerTask:
                             raise
                         self.on_error(error)
                     continue
+                if not self._claim(job):
+                    continue  # settled `OwnerStopped` while no consumer served it
                 try:
                     await job.fn()
                 except BaseException as error:
                     job.error = error
                 finally:
-                    self._pending.discard(job)
                     job.done.set()
         except BaseException as error:
             crash = error
@@ -263,13 +322,20 @@ class OwnerTask:
             # parked on a queue nobody drains. Publish the stop first, then
             # settle; `run()` enrolls before sending, so one side always sees
             # the job. Runs on the clean sentinel exit too, settling `run`
-            # jobs that landed behind it.
-            if crash is not None and not isinstance(crash, GeneratorExit):
-                self._crashed = crash
-            self._closed = True
-            self._stopped = True
-            for job in list(self._pending):
-                self._pending.discard(job)
-                if job.error is None:
-                    job.error = self._stop_error()
+            # jobs that landed behind it. A consumer unwound by cancellation
+            # may get here only after a restart: the owner is then another
+            # generation's, and its state and claims are left alone.
+            with self._guard:
+                current = generation == self._generation
+                if current:
+                    if crash is not None and not isinstance(crash, GeneratorExit):
+                        self._crashed = crash
+                    self._closed = True
+                    self._stopped = True
+                    stranded = list(self._pending)
+                    self._pending.clear()
+                else:
+                    stranded = []
+            for job in stranded:
+                job.error = self._stop_error()
                 job.done.set()
