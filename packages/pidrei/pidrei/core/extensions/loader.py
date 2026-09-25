@@ -236,6 +236,11 @@ class ExtensionAPI:
 
     def register_tool(self, tool: ToolDefinition) -> None:
         self._assert_active()
+        if not isinstance(tool.parameters, dict):
+            raise Exception(  # noqa: TRY004 - pi throws a plain Error
+                f'Tool "{tool.name}" registered by extension "{self._extension.path}" '
+                "must define an object parameter schema."
+            )
         self._extension.tools[tool.name] = RegisteredTool(definition=tool, source_info=self._extension.source_info)
         self._runtime.refresh_tools()
 

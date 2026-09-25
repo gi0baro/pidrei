@@ -192,7 +192,7 @@ def test_selects_additional_tools_tool_search_or_top_level_tools_for_codex_model
         context,
     )
     tool_search_payload = codex_payload(
-        make_codex_model("gpt-5.4", OpenAIResponsesCompat(supports_tool_search=True)),
+        make_codex_model("gpt-5.5", OpenAIResponsesCompat(supports_tool_search=True)),
         context,
     )
     top_level_payload = codex_payload(make_codex_model("gpt-5.3-codex-spark", None), context)

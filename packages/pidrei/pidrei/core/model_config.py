@@ -158,24 +158,6 @@ _OPENAI_RESPONSES_COMPAT = {
     },
 }
 
-_ANTHROPIC_MESSAGES_COMPAT = {
-    "type": "object",
-    "properties": {
-        "supportsEagerToolInputStreaming": _BOOLEAN,
-        "supportsLongCacheRetention": _BOOLEAN,
-        "sendSessionAffinityHeaders": _BOOLEAN,
-        "supportsCacheControlOnTools": _BOOLEAN,
-        "supportsTemperature": _BOOLEAN,
-        "forceAdaptiveThinking": _BOOLEAN,
-        "allowEmptySignature": _BOOLEAN,
-        "supportsStrictTools": _BOOLEAN,
-        "supportsMidConvoEffort": _BOOLEAN,
-        "supportsToolReferences": _BOOLEAN,
-    },
-}
-
-_PROVIDER_COMPAT = {"anyOf": [_OPENAI_COMPLETIONS_COMPAT, _OPENAI_RESPONSES_COMPAT, _ANTHROPIC_MESSAGES_COMPAT]}
-
 _MODEL_COST_RATES = {
     "input": _NUMBER,
     "output": _NUMBER,
@@ -192,6 +174,33 @@ _MODEL_COST = {
     "properties": {**_MODEL_COST_RATES, "tiers": {"type": "array", "items": _MODEL_COST_TIER}},
     "required": ["input", "output", "cacheRead", "cacheWrite"],
 }
+
+_ANTHROPIC_MESSAGES_COMPAT = {
+    "type": "object",
+    "properties": {
+        "supportsEagerToolInputStreaming": _BOOLEAN,
+        "supportsLongCacheRetention": _BOOLEAN,
+        "sendSessionAffinityHeaders": _BOOLEAN,
+        "supportsCacheControlOnTools": _BOOLEAN,
+        "supportsTemperature": _BOOLEAN,
+        "forceAdaptiveThinking": _BOOLEAN,
+        "allowEmptySignature": _BOOLEAN,
+        "supportsStrictTools": _BOOLEAN,
+        "supportsMidConvoEffort": _BOOLEAN,
+        "supportsToolReferences": _BOOLEAN,
+        "allowedFallbackModels": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"provider": _NON_EMPTY_STRING, "model": _NON_EMPTY_STRING, "cost": _MODEL_COST},
+                "required": ["provider", "model", "cost"],
+            },
+            "maxItems": 3,
+        },
+    },
+}
+
+_PROVIDER_COMPAT = {"anyOf": [_OPENAI_COMPLETIONS_COMPAT, _OPENAI_RESPONSES_COMPAT, _ANTHROPIC_MESSAGES_COMPAT]}
 
 _STRING_RECORD = {"type": "object", "additionalProperties": _STRING}
 

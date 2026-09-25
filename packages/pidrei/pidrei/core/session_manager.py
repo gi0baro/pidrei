@@ -1594,6 +1594,38 @@ class SessionManager:
         return SessionManager(resolved_target_cwd, directory, new_session_file, True, _internal=True)
 
     @staticmethod
+    def find_by_id(cwd: str, session_id: str, session_dir: str | None = None) -> Awaitable[str | None]:
+        """Find an exact session ID without loading transcript bodies.
+
+        `session_dir` defaults to the per-cwd directory under the agent dir.
+        pi's scan is synchronous; here it runs on the blocking pool, like the
+        other static factories.
+        """
+        return tonio.spawn_blocking(SessionManager._find_by_id_sync, cwd, session_id, session_dir)
+
+    @staticmethod
+    def _find_by_id_sync(cwd: str, session_id: str, session_dir: str | None = None) -> str | None:
+        directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
+        filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+        resolved_cwd = resolve_path(cwd)
+
+        try:
+            for name in os.listdir(directory):
+                if not name.endswith(".jsonl"):
+                    continue
+                path = os.path.join(directory, name)
+                header = _read_session_header_for_discovery(path)
+                if header is None or header.get("id") != session_id:
+                    continue
+                if filter_cwd and not _session_cwd_matches(_get_session_header_cwd(header), resolved_cwd):
+                    continue
+                return path
+        except OSError:
+            # Exact session discovery is best-effort, matching list().
+            pass
+        return None
+
+    @staticmethod
     async def list(
         cwd: str,
         session_dir: str | None = None,

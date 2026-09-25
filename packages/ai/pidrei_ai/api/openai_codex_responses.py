@@ -795,15 +795,20 @@ def build_request_body(
             supports_openai_grammar_tools=compat.supports_openai_grammar_tools,
         )
 
+    mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}
     if options is not None and options.reasoning_effort is not None:
-        mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}
-        # pi's `??` chains never yield null here (`null ?? "none"` is "none"), so
-        # a mapped-to-None level falls back like an absent one.
+        # An absent `off` entry is pi's `undefined` ("none"); an explicit None
+        # is pi's `null` (the model has no Off level: send no reasoning).
         if options.reasoning_effort == "none":
-            effort = mapping.get("off") or "none"
+            effort = mapping.get("off", "none")
         else:
-            effort = mapping.get(options.reasoning_effort) or options.reasoning_effort
-        body["reasoning"] = {"effort": effort, "summary": options.reasoning_summary or "auto"}
+            mapped = mapping.get(options.reasoning_effort)
+            effort = mapped if mapped is not None else options.reasoning_effort
+        if effort is not None:
+            body["reasoning"] = {"effort": effort, "summary": options.reasoning_summary or "auto"}
+    elif model.reasoning and not ("off" in mapping and mapping["off"] is None):
+        off = mapping.get("off")
+        body["reasoning"] = {"effort": off if off is not None else "none"}
 
     return body
 

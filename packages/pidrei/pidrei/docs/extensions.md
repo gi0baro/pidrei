@@ -254,8 +254,17 @@ The second handler argument. The useful members:
 | `ctx.ui` | UI surface (below) |
 | `ctx.session_manager` | Session entries and metadata |
 | `ctx.scoped_models` | Read-only list of models scoped to the session (from `--models` / `enabledModels`, the set `/scoped-models` shows); empty when no scoping is configured |
+| `ctx.model_registry` | Models, providers and resolved authentication, plus streaming model calls (below) |
 | `ctx.is_idle()` | Whether the agent is between runs |
 | `ctx.has_pending_messages()` | Whether queued messages are waiting |
+
+**Streaming model calls.** Use `ctx.model_registry.stream_simple(model,
+context, options)` for provider-neutral options such as `reasoning`, or
+`stream()` for API-specific options. Both use the configured providers and
+resolve authentication, including for providers registered with
+`pi.register_provider()`. Both return an `AssistantMessageEventStream`: iterate
+it with `async for` for response events and `await stream.result()` for the
+final message. Setup failures produce error events and error results.
 
 `ctx.ui` offers `notify(text, level)`, `set_status(...)`, `set_widget(...)`,
 `select(title, options)`, `confirm(title, message)`,

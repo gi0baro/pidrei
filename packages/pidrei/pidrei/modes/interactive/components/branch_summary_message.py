@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/branch-summary-message.ts."""
 
-from pidrei_tui import Box, Markdown, Spacer, Text
+from pidrei_tui import Box, Container, Markdown, MouseRegion, Spacer, Text, TuiMouseEvent, TuiMouseEventResult
 
 from ..theme import get_markdown_theme, theme
 from .keybinding_hints import key_text
@@ -29,14 +29,15 @@ class BranchSummaryMessageComponent(Box):
 
     def _update_display(self) -> None:
         self.clear()
+        content = Container()
 
         label = theme.fg("customMessageLabel", "\x1b[1m[branch]\x1b[22m")
-        self.add_child(Text(label, 0, 0))
-        self.add_child(Spacer(1))
+        content.add_child(Text(label, 0, 0))
+        content.add_child(Spacer(1))
 
         if self._expanded:
             header = "**Branch Summary**\n\n"
-            self.add_child(
+            content.add_child(
                 Markdown(
                     header + self._message.summary,
                     0,
@@ -46,7 +47,7 @@ class BranchSummaryMessageComponent(Box):
                 )
             )
         else:
-            self.add_child(
+            content.add_child(
                 Text(
                     theme.fg("customMessageText", "Branch summary (")
                     + theme.fg("dim", key_text("app.tools.expand"))
@@ -55,3 +56,11 @@ class BranchSummaryMessageComponent(Box):
                     0,
                 )
             )
+
+        def on_mouse(event: TuiMouseEvent) -> TuiMouseEventResult | None:
+            if event.type != "click" or event.button != "left":
+                return None
+            self.set_expanded(not self._expanded)
+            return TuiMouseEventResult(handled=True)
+
+        self.add_child(MouseRegion(content, on_mouse))

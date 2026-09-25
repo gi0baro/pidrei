@@ -244,10 +244,6 @@ def _get_prompt_cache_options(compat: _ResolvedCompat, cache_retention: str) -> 
     return None
 
 
-def _format_openai_responses_error(error: Any) -> str:
-    return format_provider_error(normalize_provider_error(error), "OpenAI API error")
-
-
 def _responses_options(options: StreamOptions | None) -> OpenAIResponsesOptions:
     if isinstance(options, OpenAIResponsesOptions):
         return options
@@ -477,7 +473,10 @@ def stream(
             out_stream.end()
         except Exception as error:
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
-            output.error_message = _format_openai_responses_error(error)
+            output.error_message = format_provider_error(
+                normalize_provider_error(error),
+                f"{'OpenAI' if model.provider == 'openai' else model.provider} API error",
+            )
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()
 

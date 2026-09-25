@@ -1,3 +1,14 @@
+"""`EventStream` tests; mirrors pi's event-stream.test.ts (0.86.0, #9055).
+
+pi's buffered-drain and end-with-result cases are
+`test_push_after_completion_is_ignored` / `test_end_with_result_resolves_result`;
+its "order after draining starts" case is mirrored below. Deviation: pi's
+queue-plus-waiters stream serves several concurrent iterators ("delivers events
+to waiting consumers in registration order", "wakes all waiting consumers when
+ended without a result"); pidrei's stream is a single-consumer tonio channel —
+every producer has exactly one consumer — so those two cases are not mirrored.
+"""
+
 import pytest
 import tonio.colored as tonio
 
@@ -52,6 +63,24 @@ async def test_push_after_completion_is_ignored():
 
     assert received == [{"type": "done", "value": 1}]
     assert await stream.result() == 1
+
+
+@pytest.mark.tonio
+async def test_preserves_order_when_events_arrive_after_buffered_draining_starts():
+    stream: EventStream[int, int] = EventStream(lambda _event: False, lambda event: event)
+    stream.push(1)
+    stream.push(2)
+
+    iterator = aiter(stream)
+    assert await anext(iterator) == 1
+
+    stream.push(3)
+    assert await anext(iterator) == 2
+    assert await anext(iterator) == 3
+
+    stream.end(3)
+    with pytest.raises(StopAsyncIteration):
+        await anext(iterator)
 
 
 @pytest.mark.tonio

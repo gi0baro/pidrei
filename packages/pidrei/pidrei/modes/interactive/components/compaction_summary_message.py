@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/compaction-summary-message.ts."""
 
-from pidrei_tui import Box, Markdown, Spacer, Text
+from pidrei_tui import Box, Container, Markdown, MouseRegion, Spacer, Text, TuiMouseEvent, TuiMouseEventResult
 
 from ..theme import get_markdown_theme, theme
 from .keybinding_hints import key_text
@@ -29,16 +29,17 @@ class CompactionSummaryMessageComponent(Box):
 
     def _update_display(self) -> None:
         self.clear()
+        content = Container()
 
         # JS toLocaleString() thousands separators
         token_str = f"{self._message.tokens_before:,}"
         label = theme.fg("customMessageLabel", "\x1b[1m[compaction]\x1b[22m")
-        self.add_child(Text(label, 0, 0))
-        self.add_child(Spacer(1))
+        content.add_child(Text(label, 0, 0))
+        content.add_child(Spacer(1))
 
         if self._expanded:
             header = f"**Compacted from {token_str} tokens**\n\n"
-            self.add_child(
+            content.add_child(
                 Markdown(
                     header + self._message.summary,
                     0,
@@ -48,7 +49,7 @@ class CompactionSummaryMessageComponent(Box):
                 )
             )
         else:
-            self.add_child(
+            content.add_child(
                 Text(
                     theme.fg("customMessageText", f"Compacted from {token_str} tokens (")
                     + theme.fg("dim", key_text("app.tools.expand"))
@@ -57,3 +58,11 @@ class CompactionSummaryMessageComponent(Box):
                     0,
                 )
             )
+
+        def on_mouse(event: TuiMouseEvent) -> TuiMouseEventResult | None:
+            if event.type != "click" or event.button != "left":
+                return None
+            self.set_expanded(not self._expanded)
+            return TuiMouseEventResult(handled=True)
+
+        self.add_child(MouseRegion(content, on_mouse))

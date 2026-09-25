@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/skill-invocation-message.ts."""
 
-from pidrei_tui import Box, Markdown, Text
+from pidrei_tui import Box, Container, Markdown, MouseRegion, Text, TuiMouseEvent, TuiMouseEventResult
 
 from ..theme import get_markdown_theme, theme
 from .keybinding_hints import key_text
@@ -31,13 +31,14 @@ class SkillInvocationMessageComponent(Box):
 
     def _update_display(self) -> None:
         self.clear()
+        content = Container()
 
         if self._expanded:
             # Expanded: label + skill name header + full content
             label = theme.fg("customMessageLabel", "\x1b[1m[skill]\x1b[22m")
-            self.add_child(Text(label, 0, 0))
+            content.add_child(Text(label, 0, 0))
             header = f"**{self._skill_block.name}**\n\n"
-            self.add_child(
+            content.add_child(
                 Markdown(
                     header + self._skill_block.content,
                     0,
@@ -53,4 +54,12 @@ class SkillInvocationMessageComponent(Box):
                 + theme.fg("customMessageText", self._skill_block.name)
                 + theme.fg("dim", f" ({key_text('app.tools.expand')} to expand)")
             )
-            self.add_child(Text(line, 0, 0))
+            content.add_child(Text(line, 0, 0))
+
+        def on_mouse(event: TuiMouseEvent) -> TuiMouseEventResult | None:
+            if event.type != "click" or event.button != "left":
+                return None
+            self.set_expanded(not self._expanded)
+            return TuiMouseEventResult(handled=True)
+
+        self.add_child(MouseRegion(content, on_mouse))

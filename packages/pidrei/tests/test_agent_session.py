@@ -280,7 +280,9 @@ def _usage(total: int) -> Usage:
 
 
 class TestRetry:
-    async def _create_session(self, tmp_path, *, fail_count=1, max_retries=3, delay_assistant_message_end_ms=0):
+    async def _create_session(
+        self, tmp_path, *, fail_count=1, max_retries=3, max_agent_delay_ms=60000, delay_assistant_message_end_ms=0
+    ):
         call_count = {"value": 0}
 
         async def stream_fn(_model, _context, _options=None):
@@ -299,7 +301,14 @@ class TestRetry:
         session = await create_agent_session(
             tmp_path,
             stream_fn=stream_fn,
-            settings_overrides={"retry": {"enabled": True, "maxRetries": max_retries, "baseDelayMs": 1}},
+            settings_overrides={
+                "retry": {
+                    "enabled": True,
+                    "maxRetries": max_retries,
+                    "baseDelayMs": 1,
+                    "maxAgentDelayMs": max_agent_delay_ms,
+                }
+            },
         )
 
         if delay_assistant_message_end_ms > 0:
@@ -354,6 +363,23 @@ class TestRetry:
         assert "start:2" in events
         assert "end:success=False" in events
         assert session.is_retrying is False
+        session.dispose()
+
+    @pytest.mark.tonio
+    async def test_caps_agent_retry_delay(self, tmp_path):
+        # Regression for #8826.
+        session, _call_count = await self._create_session(tmp_path, fail_count=4, max_retries=5, max_agent_delay_ms=5)
+        delays: list = []
+
+        def listener(event):
+            if event.type == "auto_retry_start":
+                delays.append(event.delay_ms)
+
+        session.subscribe(listener)
+
+        await session.prompt("Test")
+
+        assert delays == [1, 2, 4, 5]
         session.dispose()
 
     @pytest.mark.tonio

@@ -172,6 +172,7 @@ class _ResolvedCompat:
     supports_eager_tool_input_streaming: bool
     supports_long_cache_retention: bool
     send_session_affinity_headers: bool
+    session_affinity_format: str | None
     supports_cache_control_on_tools: bool
     supports_temperature: bool
     allow_empty_signature: bool
@@ -193,8 +194,9 @@ def _default_supports_tool_references(model: Model) -> bool:
 
 def _get_compat(model: Model) -> _ResolvedCompat:
     compat = model.compat if isinstance(model.compat, AnthropicMessagesCompat) else None
+    is_openrouter = model.provider == "openrouter" or "openrouter.ai" in model.base_url
 
-    def resolved(value: bool | None, default: bool) -> bool:
+    def resolved(value: Any, default: Any) -> Any:
         return value if value is not None else default
 
     return _ResolvedCompat(
@@ -202,7 +204,10 @@ def _get_compat(model: Model) -> _ResolvedCompat:
             compat.supports_eager_tool_input_streaming if compat else None, True
         ),
         supports_long_cache_retention=resolved(compat.supports_long_cache_retention if compat else None, True),
-        send_session_affinity_headers=resolved(compat.send_session_affinity_headers if compat else None, False),
+        send_session_affinity_headers=resolved(compat.send_session_affinity_headers if compat else None, is_openrouter),
+        session_affinity_format=resolved(
+            compat.session_affinity_format if compat else None, "openrouter" if is_openrouter else None
+        ),
         supports_cache_control_on_tools=resolved(compat.supports_cache_control_on_tools if compat else None, True),
         supports_temperature=resolved(compat.supports_temperature if compat else None, True),
         allow_empty_signature=resolved(compat.allow_empty_signature if compat else None, False),
@@ -448,9 +453,11 @@ def _create_client(
         return _PunkreqAnthropicClient(model.base_url, headers, env), True
 
     # API key or header-owned auth.
-    session_affinity: dict[str, str] = (
-        {"x-session-affinity": session_id} if session_id and _get_compat(model).send_session_affinity_headers else {}
-    )
+    compat = _get_compat(model)
+    session_affinity: dict[str, str] = {}
+    if session_id and compat.send_session_affinity_headers:
+        header = "x-session-id" if compat.session_affinity_format == "openrouter" else "x-session-affinity"
+        session_affinity[header] = session_id
     merged = _merge_client_headers(
         base,
         {"x-api-key": api_key} if api_key else None,

@@ -5,10 +5,14 @@ send; pi captures it with a local HTTP server, `capture_request` records the sam
 headers and payload from the adapter's own transport (see anthropic_helpers).
 """
 
+from dataclasses import replace
+
 import pytest
 
+from pidrei_ai.api.anthropic_messages import stream_simple as stream_simple_messages
 from pidrei_ai.env_api_keys import find_env_keys, get_env_api_key
 from pidrei_ai.providers.all import get_builtin_model
+from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     Context,
@@ -24,6 +28,7 @@ from tests.anthropic_helpers import capture_request, now_ms
 KIMI_K2P6 = "accounts/fireworks/models/kimi-k2p6"
 
 FIREWORKS_ANTHROPIC_COMPAT = AnthropicMessagesCompat(
+    allow_empty_signature=True,
     send_session_affinity_headers=True,
     supports_eager_tool_input_streaming=False,
     supports_cache_control_on_tools=False,
@@ -107,7 +112,7 @@ async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effo
         "off": None,
         "minimal": None,
         "low": "low",
-        "medium": "medium",
+        "medium": None,
         "high": "high",
         "xhigh": None,
         "max": "max",
@@ -139,6 +144,72 @@ async def test_routes_kimi_k3_through_the_openai_compatible_api_with_native_effo
     assert captured["payload"].get("reasoning_effort") == "max"
 
 
+async def _capture_messages_payload(model: Model, reasoning: str | None) -> dict:
+    captured: list[dict] = []
+
+    async def on_payload(payload, _model):
+        captured.append(payload)
+        raise RuntimeError("payload captured")
+
+    await stream_simple_messages(
+        model,
+        Context(messages=[UserMessage(content="test", timestamp=0)]),
+        SimpleStreamOptions(api_key="test-fireworks-key", reasoning=reasoning, on_payload=on_payload),
+    ).result()
+    assert captured, "payload was not captured"
+    return captured[0]
+
+
+# Regression for #9323: native effort must reach Messages without budget-based fallback.
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("model_id", "levels"),
+    [
+        ("accounts/fireworks/models/deepseek-v4-flash-0731", ["off", "low", "high", "max"]),
+        ("accounts/fireworks/models/deepseek-v4-flash-vision-exp", ["off", "low", "high", "max"]),
+        ("accounts/fireworks/models/deepseek-v4-pro-0813", ["off", "low", "high", "max"]),
+        ("accounts/fireworks/models/qwen3p8-max", ["off", "low", "medium", "xhigh"]),
+        ("accounts/fireworks/models/qwen3p8-2p4t-a95b", ["off", "low", "medium", "xhigh"]),
+    ],
+)
+async def test_sends_native_messages_effort_levels(model_id, levels):
+    model = get_builtin_model("fireworks", model_id)
+    assert model is not None
+    assert model.api == "anthropic-messages"
+    assert model.compat.force_adaptive_thinking is True
+    assert get_supported_thinking_levels(model) == levels
+
+    for level in levels:
+        payload = await _capture_messages_payload(model, None if level == "off" else level)
+        assert payload.get("thinking") == (
+            {"type": "disabled"} if level == "off" else {"type": "adaptive", "display": "summarized"}
+        )
+        assert payload.get("output_config") == (None if level == "off" else {"effort": level})
+
+
+# Regression for #9323: accepted aliases are not distinct native effort levels.
+@pytest.mark.parametrize(
+    ("model_id", "levels"),
+    [
+        ("accounts/fireworks/models/glm-5p2", ["off", "high", "max"]),
+        ("accounts/fireworks/routers/glm-5p2-fast", ["off", "high", "max"]),
+        ("accounts/fireworks/models/kimi-k3", ["low", "high", "max"]),
+        ("accounts/fireworks/routers/kimi-k3-fast", ["low", "high", "max"]),
+    ],
+)
+def test_exposes_distinct_native_effort_levels(model_id, levels):
+    assert get_supported_thinking_levels(get_builtin_model("fireworks", model_id)) == levels
+
+
+@pytest.mark.tonio
+async def test_keeps_toggle_only_messages_models_without_a_verified_fallback_on_budget_based_thinking():
+    model = get_builtin_model("fireworks", KIMI_K2P6)
+    assert model.compat.force_adaptive_thinking is None
+    payload = await _capture_messages_payload(model, "high")
+    assert payload.get("thinking") == {"type": "enabled", "budget_tokens": 16384, "display": "summarized"}
+    assert "output_config" not in payload
+
+
 @pytest.mark.tonio
 async def test_resolves_fireworks_api_key_from_the_environment():
     env = {"FIREWORKS_API_KEY": "test-fireworks-key"}
@@ -156,6 +227,7 @@ def test_sets_fireworks_compat_for_session_affinity_and_unsupported_tool_fields(
     assert model.compat.supports_eager_tool_input_streaming is False
     assert model.compat.supports_cache_control_on_tools is False
     assert model.compat.supports_long_cache_retention is False
+    assert model.compat.allow_empty_signature is True
 
 
 # --- session affinity and tool compat on the wire -----------------------------
@@ -198,6 +270,16 @@ def make_anthropic_model() -> Model:
     )
 
 
+def make_openrouter_model(compat: AnthropicMessagesCompat | None = None) -> Model:
+    return replace(
+        make_anthropic_model(),
+        id="anthropic/claude-opus-4.8",
+        provider="openrouter",
+        base_url="https://openrouter.ai/api",
+        compat=compat,
+    )
+
+
 def make_tool_context() -> Context:
     return Context(messages=[UserMessage(content="Use the tool", timestamp=now_ms())], tools=[TOOL])
 
@@ -233,6 +315,40 @@ async def test_omits_session_affinity_header_when_cache_retention_is_none():
     )
 
     assert "x-session-affinity" not in headers
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/9102
+@pytest.mark.tonio
+async def test_sends_only_x_session_id_for_openrouter_models():
+    headers, _ = await capture_request(
+        make_openrouter_model(), SimpleStreamOptions(session_id="openrouter-session-1"), make_tool_context()
+    )
+
+    assert headers["x-session-id"] == "openrouter-session-1"
+    assert "x-session-affinity" not in headers
+
+
+@pytest.mark.tonio
+async def test_omits_openrouter_session_headers_when_cache_retention_is_none():
+    headers, _ = await capture_request(
+        make_openrouter_model(),
+        SimpleStreamOptions(session_id="openrouter-session-2", cache_retention="none"),
+        make_tool_context(),
+    )
+
+    assert "x-session-id" not in headers
+    assert "x-session-affinity" not in headers
+
+
+@pytest.mark.tonio
+async def test_allows_openrouter_session_headers_to_be_disabled():
+    headers, _ = await capture_request(
+        make_openrouter_model(AnthropicMessagesCompat(send_session_affinity_headers=False)),
+        SimpleStreamOptions(session_id="openrouter-session-3"),
+        make_tool_context(),
+    )
+
+    assert "x-session-id" not in headers
 
 
 @pytest.mark.tonio

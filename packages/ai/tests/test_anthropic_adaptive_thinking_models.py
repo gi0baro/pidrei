@@ -15,6 +15,9 @@ EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
     "anthropic/claude-opus-4-8",
     "anthropic/claude-opus-5",
     "anthropic/claude-sonnet-5",
+    "fireworks/accounts/fireworks/models/deepseek-v4-flash-0731",
+    "fireworks/accounts/fireworks/models/gpt-oss-120b",
+    "fireworks/accounts/fireworks/models/qwen3p8-max",
 ]
 
 _ADAPTIVE_ID_PATTERN = re.compile(r"(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|fable[-.]5|kimi-coding/)")
@@ -34,4 +37,10 @@ def test_marks_builtin_anthropic_messages_models_that_use_adaptive_thinking():
     )
 
     assert set(EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS) <= set(flagged_models)
-    assert flagged_models == [model_id for model_id in flagged_models if _ADAPTIVE_ID_PATTERN.search(model_id)]
+    assert flagged_models == [
+        model_id
+        for model_id in flagged_models
+        # Regression for #9323: Fireworks uses catalog effort metadata and
+        # verified fallbacks, not a fixed set of adaptive model names.
+        if model_id.startswith("fireworks/") or _ADAPTIVE_ID_PATTERN.search(model_id)
+    ]

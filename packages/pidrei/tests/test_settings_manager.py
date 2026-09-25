@@ -310,6 +310,19 @@ class TestTerminalCapabilityOverrides:
         assert get_overrides({"images": "auto", "trueColor": "auto", "hyperlinks": "auto"}) == {}
 
 
+class TestRetrySettings:
+    def test_defaults_and_overrides_agent_retry_delay_cap(self):
+        assert SettingsManager.in_memory().get_retry_settings() == {
+            "enabled": True,
+            "max_retries": 3,
+            "base_delay_ms": 2000,
+            "max_agent_delay_ms": 60000,
+        }
+        assert SettingsManager.in_memory(
+            {"retry": {"enabled": True, "maxRetries": 10, "baseDelayMs": 500, "maxAgentDelayMs": 5000}}
+        ).get_retry_settings() == {"enabled": True, "max_retries": 10, "base_delay_ms": 500, "max_agent_delay_ms": 5000}
+
+
 class TestHttpIdleTimeoutMs:
     @pytest.mark.tonio
     async def test_defaults_to_5_minutes(self, dirs):

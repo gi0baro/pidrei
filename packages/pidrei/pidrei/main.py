@@ -252,9 +252,8 @@ async def _prepare_initial_message(
 
 
 async def _find_local_session_by_exact_id(session_id: str, cwd: str, session_dir: str | None) -> dict[str, str] | None:
-    local_sessions = await SessionManager.list(cwd, session_dir)
-    local_match = next((s for s in local_sessions if s.id == session_id), None)
-    return {"type": "local", "path": local_match.path} if local_match else None
+    path = await SessionManager.find_by_id(cwd, session_id, session_dir)
+    return {"type": "local", "path": path} if path else None
 
 
 async def _resolve_session_path(session_arg: str, cwd: str, session_dir: str | None) -> dict[str, str]:

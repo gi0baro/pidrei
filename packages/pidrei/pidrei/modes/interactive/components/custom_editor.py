@@ -22,8 +22,9 @@ class CustomEditor(Editor):
     """Editor that handles app-level keybindings for the coding agent.
 
     ``options`` is pi's ``CustomEditorOptions``: the ``Editor`` options plus
-    ``embedWorkingStatus`` — render the streaming working status in the
-    editor's top border instead of the standalone status row.
+    ``embedWorkingStatus`` — render working, compaction, summarization, and
+    retry status in the editor's top border instead of the standalone status
+    row.
     """
 
     def __init__(self, tui, theme: dict, keybindings, options: dict | None = None) -> None:

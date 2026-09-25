@@ -204,6 +204,22 @@ async def test_timeout_reports_the_command_and_drains_what_it_has():
 
 
 @pytest.mark.tonio
+async def test_output_past_the_cap_abandons_the_child_without_waiting_for_the_deadline():
+    """`max_output_bytes` gives up like the deadline does, but on its own trigger.
+
+    The child writes forever and the timeout is a minute away, so only the cap
+    can end this before `_NEVER`.
+    """
+
+    async def attempt() -> None:
+        with pytest.raises(process_module.OutputLimitExceeded):
+            await run_command(["yes"], capture_output=True, timeout=60, max_output_bytes=16)
+
+    _, completed = await tonio.time.timeout(attempt(), _NEVER)
+    assert completed, "run_command waited for the deadline instead of the cap"
+
+
+@pytest.mark.tonio
 async def test_rejects_contradictory_redirection_arguments():
     with pytest.raises(ValueError):
         await run_command(["true"], capture_output=True, stdout=subprocess.DEVNULL)

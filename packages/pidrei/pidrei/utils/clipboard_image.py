@@ -1,14 +1,17 @@
 """Mirror of pi coding-agent src/utils/clipboard-image.ts (POSIX only).
 
-Deviation: pi's optional native clipboard addon (clipboard-rs) has no Python
-counterpart; the platform tools (wl-paste, xclip, PowerShell on WSL) carry
-the whole load here, and Pillow replaces Photon for PNG conversion.
+Deviation: pi's native platform clipboard helper (pi-tui `getNativeClipboard`)
+has no Python counterpart. On Linux pi only reaches it after every platform
+tool reported a failure, so here that last resort reads as "no image"; on
+macOS `pngpaste` stands in for it. Pillow replaces Photon for PNG conversion.
 Clipboard images are ``{"bytes", "mimeType"}`` records.
+
+The readers keep pi's tri-state: ``_FAILED`` means the backend failed (try the
+next one), ``None`` means it answered with no image (stop).
 """
 
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import uuid
@@ -16,15 +19,17 @@ import uuid
 import tonio.colored as tonio
 from tonio.colored import fs
 
+from .clipboard_command import run_clipboard_command
 from .image_process import convert_image_bytes_to_png
-from .process import run_command
 
 
 SUPPORTED_IMAGE_MIME_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
-_DEFAULT_LIST_TIMEOUT_S = 1.0
-_DEFAULT_READ_TIMEOUT_S = 3.0
-_DEFAULT_POWERSHELL_TIMEOUT_S = 5.0
+_DEFAULT_LIST_TIMEOUT_MS = 1000
+_DEFAULT_POWERSHELL_TIMEOUT_MS = 5000
+
+#: pi's `undefined` reader result: the backend failed, so the chain continues.
+_FAILED = object()
 
 
 def is_wayland_session(env=None) -> bool:
@@ -65,34 +70,26 @@ def _is_supported_image_mime_type(mime_type: str) -> bool:
     return _base_mime_type(mime_type) in SUPPORTED_IMAGE_MIME_TYPES
 
 
-async def _run_command(command: list, *, timeout_s: float = _DEFAULT_READ_TIMEOUT_S, env=None) -> dict:
-    try:
-        result = await run_command(command, capture_output=True, timeout=timeout_s, env=env)
-    except OSError, subprocess.TimeoutExpired:
-        return {"ok": False, "stdout": b""}
+# _FAILED means the backend failed; None means it has no image. An empty
+# Wayland clipboard must not fall through to stale X11 clipboard contents.
+async def _read_clipboard_image_via_wl_paste() -> dict | object | None:
+    listed = await run_clipboard_command("wl-paste", ["--list-types"], timeout_ms=_DEFAULT_LIST_TIMEOUT_MS)
+    if listed is None:
+        return _FAILED
 
-    if result.returncode != 0:
-        return {"ok": False, "stdout": b""}
-
-    return {"ok": True, "stdout": result.stdout}
-
-
-async def _read_clipboard_image_via_wl_paste() -> dict | None:
-    listed = await _run_command(["wl-paste", "--list-types"], timeout_s=_DEFAULT_LIST_TIMEOUT_S)
-    if not listed["ok"]:
-        return None
-
-    types = [t.strip() for t in re.split(r"\r?\n", listed["stdout"].decode("utf-8", "replace")) if t.strip()]
+    types = [t.strip() for t in re.split(r"\r?\n", listed.decode("utf-8", "replace")) if t.strip()]
 
     selected_type = _select_preferred_image_mime_type(types)
     if not selected_type:
         return None
 
-    data = await _run_command(["wl-paste", "--type", selected_type, "--no-newline"])
-    if not data["ok"] or len(data["stdout"]) == 0:
+    data = await run_clipboard_command("wl-paste", ["--type", selected_type, "--no-newline"])
+    if data is None:
+        return _FAILED
+    if len(data) == 0:
         return None
 
-    return {"bytes": data["stdout"], "mimeType": _base_mime_type(selected_type)}
+    return {"bytes": data, "mimeType": _base_mime_type(selected_type)}
 
 
 def _is_wsl(env=None) -> bool:
@@ -117,11 +114,11 @@ async def _read_clipboard_image_via_powershell() -> dict | None:
     tmp_file = os.path.join(tempfile.gettempdir(), f"pidrei-wsl-clip-{uuid.uuid4()}.png")
 
     try:
-        win_path_result = await _run_command(["wslpath", "-w", tmp_file], timeout_s=_DEFAULT_LIST_TIMEOUT_S)
-        if not win_path_result["ok"]:
+        win_path_result = await run_clipboard_command("wslpath", ["-w", tmp_file], timeout_ms=_DEFAULT_LIST_TIMEOUT_MS)
+        if win_path_result is None:
             return None
 
-        win_path = win_path_result["stdout"].decode("utf-8", "replace").strip()
+        win_path = win_path_result.decode("utf-8", "replace").strip()
         if not win_path:
             return None
 
@@ -139,14 +136,13 @@ async def _read_clipboard_image_via_powershell() -> dict | None:
             ]
         )
 
-        result = await _run_command(
-            ["powershell.exe", "-NoProfile", "-Command", ps_script],
-            timeout_s=_DEFAULT_POWERSHELL_TIMEOUT_S,
+        result = await run_clipboard_command(
+            "powershell.exe", ["-NoProfile", "-Command", ps_script], timeout_ms=_DEFAULT_POWERSHELL_TIMEOUT_MS
         )
-        if not result["ok"]:
+        if result is None:
             return None
 
-        output = result["stdout"].decode("utf-8", "replace").strip()
+        output = result.decode("utf-8", "replace").strip()
         if output != "ok":
             return None
 
@@ -164,33 +160,34 @@ async def _read_clipboard_image_via_powershell() -> dict | None:
             pass
 
 
-async def _read_clipboard_image_via_xclip() -> dict | None:
-    targets = await _run_command(
-        ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"], timeout_s=_DEFAULT_LIST_TIMEOUT_S
+async def _read_clipboard_image_via_xclip() -> dict | object | None:
+    targets = await run_clipboard_command(
+        "xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"], timeout_ms=_DEFAULT_LIST_TIMEOUT_MS
     )
 
     candidate_types: list = []
-    if targets["ok"]:
-        candidate_types = [
-            t.strip() for t in re.split(r"\r?\n", targets["stdout"].decode("utf-8", "replace")) if t.strip()
-        ]
+    if targets is not None:
+        candidate_types = [t.strip() for t in re.split(r"\r?\n", targets.decode("utf-8", "replace")) if t.strip()]
 
-    preferred = _select_preferred_image_mime_type(candidate_types) if candidate_types else None
-    try_types = [preferred, *SUPPORTED_IMAGE_MIME_TYPES] if preferred else list(SUPPORTED_IMAGE_MIME_TYPES)
+    preferred = _select_preferred_image_mime_type(candidate_types)
+    if targets is not None and not preferred:
+        return None
+    # dict.fromkeys: ordered de-duplication (pi's `new Set`).
+    try_types = dict.fromkeys([preferred, *SUPPORTED_IMAGE_MIME_TYPES] if preferred else SUPPORTED_IMAGE_MIME_TYPES)
 
     for mime_type in try_types:
-        data = await _run_command(["xclip", "-selection", "clipboard", "-t", mime_type, "-o"])
-        if data["ok"] and len(data["stdout"]) > 0:
-            return {"bytes": data["stdout"], "mimeType": _base_mime_type(mime_type)}
+        data = await run_clipboard_command("xclip", ["-selection", "clipboard", "-t", mime_type, "-o"])
+        if data is not None and len(data) > 0:
+            return {"bytes": data, "mimeType": _base_mime_type(mime_type)}
 
-    return None
+    return _FAILED
 
 
 async def _read_clipboard_image_via_pngpaste() -> dict | None:
-    """macOS: pngpaste if installed (stand-in for pi's native addon)."""
-    data = await _run_command(["pngpaste", "-"])
-    if data["ok"] and len(data["stdout"]) > 0:
-        return {"bytes": data["stdout"], "mimeType": "image/png"}
+    """macOS: pngpaste if installed (stand-in for pi's native reader)."""
+    data = await run_clipboard_command("pngpaste", ["-"])
+    if data:
+        return {"bytes": data, "mimeType": "image/png"}
     return None
 
 
@@ -210,27 +207,26 @@ async def read_clipboard_image(options: dict | None = None) -> dict | None:
     if env.get("TERMUX_VERSION"):
         return None
 
-    image: dict | None = None
+    image: dict | object | None = _FAILED
 
     if platform == "linux":
         wsl = await tonio.spawn_blocking(_is_wsl, env)
-        wayland = is_wayland_session(env)
-
-        if wayland or wsl:
-            image = await _read_clipboard_image_via_wl_paste() or await _read_clipboard_image_via_xclip()
-
-        if image is None and wsl:
-            image = await _read_clipboard_image_via_powershell()
-
-        if image is None and not wayland:
+        if is_wayland_session(env) or wsl:
+            image = await _read_clipboard_image_via_wl_paste()
+        if image is _FAILED:
             image = await _read_clipboard_image_via_xclip()
+        # Preserve Linux's empty/unavailable distinction if Windows has no image.
+        if not isinstance(image, dict) and wsl:
+            image = await _read_clipboard_image_via_powershell() or image
+        # pi's native X11 reader is the last resort here; with none, a
+        # failed chain reads as "no image".
     else:
         image = await _read_clipboard_image_via_pngpaste()
 
-    if image is None:
+    if not isinstance(image, dict):
         return None
 
-    # Convert unsupported formats (e.g., BMP from WSLg) to PNG
+    # Convert unsupported formats (e.g., Windows DIB data wrapped as BMP) to PNG
     if not _is_supported_image_mime_type(image["mimeType"]):
         png_bytes = await tonio.spawn_blocking(convert_image_bytes_to_png, image["bytes"])
         if png_bytes is None:

@@ -5,12 +5,14 @@ The Kimi Coding case joins when that provider's catalog lands (PLAN.md).
 
 import pytest
 
+from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     AssistantMessage,
     Context,
     Model,
     ModelCost,
+    TextContent,
     ThinkingContent,
     Usage,
     UserMessage,
@@ -36,12 +38,18 @@ def make_model(allow_empty_signature: bool | None = None) -> Model:
     )
 
 
-def make_context(thinking_signature: str, thinking: str = "internal reasoning") -> Context:
+def make_context(
+    thinking_signature: str,
+    thinking: str = "internal reasoning",
+    provider: str = "xiaomi-token-plan-ams",
+    model_id: str = "mimo-v2.5-pro",
+    extra_content: list | None = None,
+) -> Context:
     assistant = AssistantMessage(
-        content=[ThinkingContent(thinking=thinking, thinking_signature=thinking_signature)],
-        provider="xiaomi-token-plan-ams",
+        content=[ThinkingContent(thinking=thinking, thinking_signature=thinking_signature), *(extra_content or [])],
+        provider=provider,
         api="anthropic-messages",
-        model="mimo-v2.5-pro",
+        model=model_id,
         timestamp=now_ms(),
         usage=Usage(),
         stop_reason="stop",
@@ -76,3 +84,38 @@ async def test_preserves_empty_thinking_text_when_the_signature_is_present():
 async def test_preserves_empty_signature_thinking_when_allow_empty_signature_is_enabled():
     payload = await capture_payload(make_model(True), context=make_context(" "))
     assert assistant_content(payload) == [{"type": "thinking", "thinking": "internal reasoning", "signature": ""}]
+
+
+# Regression for #9323: Fireworks emits unsigned thinking that must survive replay.
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "accounts/fireworks/models/deepseek-v4-flash-0731",
+        "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
+        "accounts/fireworks/models/deepseek-v4-pro-0813",
+        "accounts/fireworks/models/qwen3p8-max",
+        "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+        "accounts/fireworks/models/kimi-k2p6",
+    ],
+)
+async def test_preserves_unsigned_thinking_for_fireworks(model_id):
+    model = get_builtin_model("fireworks", model_id)
+    assert model.compat.allow_empty_signature is True
+    context = make_context("", "internal reasoning", "fireworks", model_id, [TextContent(text="answer")])
+    payload = await capture_payload(model, context=context)
+    assert assistant_content(payload) == [
+        {"type": "thinking", "thinking": "internal reasoning", "signature": ""},
+        {"type": "text", "text": "answer"},
+    ]
+
+
+# Regression for #9323: opting into unsigned replay must not change cross-model conversion.
+@pytest.mark.tonio
+async def test_still_converts_cross_model_fireworks_thinking_to_text():
+    model = get_builtin_model("fireworks", "accounts/fireworks/models/deepseek-v4-flash-0731")
+    payload = await capture_payload(
+        model,
+        context=make_context("", "internal reasoning", "fireworks", "accounts/fireworks/models/kimi-k2p6"),
+    )
+    assert assistant_content(payload) == [{"type": "text", "text": "internal reasoning"}]

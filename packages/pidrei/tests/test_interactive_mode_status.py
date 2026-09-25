@@ -19,7 +19,12 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.source_info import SourceInfo
 from pidrei.modes.interactive.components.custom_editor import CustomEditor
-from pidrei.modes.interactive.components.status_indicator import WorkingStatusIndicator
+from pidrei.modes.interactive.components.status_indicator import (
+    BranchSummaryStatusIndicator,
+    CompactionStatusIndicator,
+    RetryStatusIndicator,
+    WorkingStatusIndicator,
+)
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import get_editor_theme, init_theme, init_theme_sync, theme
 from pidrei.utils.ansi import strip_ansi
@@ -1045,6 +1050,36 @@ class TestWorkingStatusEmbedding:
         assert visible_width(top_border) == 20
         assert len(top_border.split(theme.get_fg_ansi("thinkingHigh"))) == 5
         indicator.dispose()
+
+    @pytest.mark.tonio
+    async def test_embeds_compaction_summary_and_retry_labels_within_the_border_width(self):
+        init_theme_sync("dark")
+        tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
+        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
+        retry = RetryStatusIndicator(tui, 1, 3, 3000)
+        indicators = [
+            CompactionStatusIndicator(tui, "manual"),
+            CompactionStatusIndicator(tui, "threshold"),
+            CompactionStatusIndicator(tui, "overflow"),
+            BranchSummaryStatusIndicator(tui),
+            retry,
+        ]
+        try:
+            for indicator in indicators:
+                editor.set_working_status_indicator(indicator)
+                label = strip_ansi(indicator.render(120)[1]).strip()
+                assert f"── {label} " in strip_ansi(editor.render(120)[0])
+                for width in (1, 4, 10, 20, 80, 120):
+                    assert visible_width(editor.render(width)[0]) == width
+            # pi advances fake timers by one second; the countdown's tick is
+            # what that fires.
+            await retry._countdown._tick()
+            assert "Retrying (1/3) in 2s" in strip_ansi(editor.render(120)[0])
+            editor.set_working_status_indicator(None)
+            assert strip_ansi(editor.render(120)[0]) == "─" * 120
+        finally:
+            for indicator in indicators:
+                indicator.dispose()
 
 
 class TestShowManagedToolStatus:

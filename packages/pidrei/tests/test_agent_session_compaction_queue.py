@@ -10,7 +10,7 @@ than mixing two harness styles into one file.
 import pytest
 import tonio.colored as tonio
 
-from pidrei.core.compaction import CompactionResult
+from pidrei.core.compaction import CompactionResult, CompactionSettings
 from pidrei.core.extensions import ToolDefinition
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.providers.faux import faux_assistant_message, faux_tool_call
@@ -98,14 +98,18 @@ _THRESHOLD_SETTINGS = {"compaction": {"enabled": True, "reserveTokens": 400, "ke
 _THRESHOLD_MODELS = [{"id": "faux-1", "context_window": 2600, "max_tokens": 100}]
 
 
+# Regression coverage for #8133: model overrides must also apply between assistant turns.
 @pytest.mark.tonio
-async def test_compacts_after_a_tool_result_before_the_next_assistant_request_in_the_same_run(harnesses):
+@pytest.mark.parametrize("model_override", [False, True])
+async def test_compacts_after_a_tool_result_in_the_same_run(harnesses, model_override):
     order: list[str] = []
+    observed_settings: list = []
 
     def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             order.append("compaction")
             preparation = event["preparation"]
+            observed_settings.append(preparation.settings)
             return {
                 "compaction": CompactionResult(
                     summary="compacted history",
@@ -117,9 +121,21 @@ async def test_compacts_after_a_tool_result_before_the_next_assistant_request_in
 
         pi.on("session_before_compact", on_before_compact)
 
+    settings = (
+        {
+            "compaction": {
+                "enabled": True,
+                "reserveTokens": 0,
+                "keepRecentTokens": 20000,
+                "modelOverrides": {"faux/faux-1": {"reserveTokens": 400, "keepRecentTokens": 1750}},
+            }
+        }
+        if model_override
+        else _THRESHOLD_SETTINGS
+    )
     harness = await create_harness(
         models=_THRESHOLD_MODELS,
-        settings=_THRESHOLD_SETTINGS,
+        settings=settings,
         tools=[_large_result_tool()],
         extension_factories=[factory],
     )
@@ -146,6 +162,7 @@ async def test_compacts_after_a_tool_result_before_the_next_assistant_request_in
     await harness.session.prompt("run the large tool")
 
     assert order == ["compaction", "provider"]
+    assert observed_settings == [CompactionSettings(enabled=True, reserve_tokens=400, keep_recent_tokens=1750)]
     assert len(harness.events_of_type("agent_start")) == agent_starts_before + 1
     last_compaction_start = harness.events_of_type("compaction_start")[-1]
     assert last_compaction_start.reason == "threshold"

@@ -21,6 +21,12 @@ import tonio.colored as tonio
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive import interactive_mode, tui_renderer
+from pidrei.modes.interactive.components.status_indicator import (
+    BranchSummaryStatusIndicator,
+    CompactionStatusIndicator,
+    RetryStatusIndicator,
+    WorkingStatusIndicator,
+)
 from pidrei.modes.interactive.interactive_mode import InteractiveMode, create_interactive_tui
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei_tui import Container, ScrollView, Text, get_keybindings, is_viewport_tui, set_keybindings
@@ -80,9 +86,8 @@ class _BareInteractiveMode(InteractiveMode):
 
 
 class _DisposeRecorder:
-    kind = "working"
-
-    def __init__(self) -> None:
+    def __init__(self, kind: str = "working") -> None:
+        self.kind = kind
         self.calls = 0
 
     def dispose(self) -> None:
@@ -355,8 +360,45 @@ def _clear_status_context(*, tui_mode: str, indicator, embedded: bool, default_e
     return mode
 
 
-def test_does_not_reserve_separate_status_height_for_the_editor_border_working_indicator():
-    indicator = _DisposeRecorder()
+@pytest.mark.tonio
+@pytest.mark.parametrize("embed_working_status", [True, False])
+async def test_routes_every_status_through_the_editor_opt_in(embed_working_status):
+    init_theme_sync("dark")
+    tui = SimpleNamespace(request_render=lambda force=False: None)
+    editor = _StatusEditor(embed_working_status=embed_working_status)
+    mode = _clear_status_context(
+        tui_mode="regular",
+        indicator=None,
+        embedded=False,
+        default_editor=_StatusEditor(embed_working_status=True),
+        editor=editor,
+    )
+    indicators = [
+        WorkingStatusIndicator(tui, "Working"),
+        CompactionStatusIndicator(tui, "manual"),
+        CompactionStatusIndicator(tui, "threshold"),
+        CompactionStatusIndicator(tui, "overflow"),
+        BranchSummaryStatusIndicator(tui),
+        RetryStatusIndicator(tui, 1, 3, 1000),
+    ]
+    try:
+        for indicator in indicators:
+            mode._show_status_indicator(indicator)
+            assert mode._active_status_indicator is indicator
+            assert mode._active_working_indicator_embedded is embed_working_status
+            if embed_working_status:
+                assert editor.indicators[-1] is indicator
+                assert len(mode._status_container.children) == 0
+            else:
+                assert mode._status_container.children == [indicator]
+    finally:
+        for indicator in indicators:
+            indicator.dispose()
+
+
+@pytest.mark.parametrize("kind", ["working", "compaction", "branchSummary", "retry"])
+def test_does_not_reserve_separate_status_height_for_an_embedded_indicator(kind):
+    indicator = _DisposeRecorder(kind)
     editor = _StatusEditor(embed_working_status=True)
     mode = _clear_status_context(
         tui_mode="regular", indicator=indicator, embedded=True, default_editor=editor, editor=editor

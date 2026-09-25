@@ -661,6 +661,62 @@ class TestModelOverrides:
         assert next(model for model in models if model.id == second_id).name != "Custom Sonnet Name"
 
     @pytest.mark.tonio
+    async def test_anthropic_model_override_replaces_allowed_fallback_metadata(self, registry_env):
+        _tmp, models_json_path, auth_storage = registry_env
+        allowed_fallback_models = [
+            {
+                "provider": "anthropic",
+                "model": "claude-opus-5",
+                "cost": {"input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25},
+            },
+            {
+                "provider": "anthropic",
+                "model": "claude-opus-4-8",
+                "cost": {"input": 4, "output": 20, "cacheRead": 0.4, "cacheWrite": 5},
+            },
+        ]
+        write_models_json(
+            models_json_path,
+            {
+                "anthropic": {
+                    "modelOverrides": {"claude-fable-5": {"compat": {"allowedFallbackModels": allowed_fallback_models}}}
+                }
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        compat = registry.find("anthropic", "claude-fable-5").compat
+
+        assert registry.get_error() is None
+        assert [
+            {
+                "provider": fallback.provider,
+                "model": fallback.model,
+                "cost": {
+                    "input": fallback.cost.input,
+                    "output": fallback.cost.output,
+                    "cacheRead": fallback.cost.cache_read,
+                    "cacheWrite": fallback.cost.cache_write,
+                },
+            }
+            for fallback in compat.allowed_fallback_models
+        ] == allowed_fallback_models
+
+    @pytest.mark.tonio
+    async def test_empty_allowed_fallback_model_override_disables_server_side_fallback(self, registry_env):
+        _tmp, models_json_path, auth_storage = registry_env
+        write_models_json(
+            models_json_path,
+            {"anthropic": {"modelOverrides": {"claude-fable-5": {"compat": {"allowedFallbackModels": []}}}}},
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        compat = registry.find("anthropic", "claude-fable-5").compat
+
+        assert registry.get_error() is None
+        assert compat.allowed_fallback_models == []
+
+    @pytest.mark.tonio
     async def test_custom_model_and_model_override_carry_sampling_params(self, registry_env):
         """Adapted: pi exercises both halves on the openrouter builtin; here the
         custom model lives on a demo provider and the override targets an

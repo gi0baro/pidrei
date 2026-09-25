@@ -5,6 +5,8 @@ seam is `interactive_mode._TimeoutCancel`, replaced with a manually-fired
 fake for the second case.
 """
 
+import contextlib
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import ClassVar
 
@@ -293,3 +295,145 @@ async def test_a_credential_pass_overtaken_by_a_later_one_still_returns_with_its
             gates[1].set()
 
     await tonio.spawn(run_pass(first_returned), drive())
+
+
+# -- post-login model discovery ------------------------------------------------
+#
+# pi's cases log in to Radius, whose catalog is empty until the first
+# authenticated refresh; pidrei has no Radius provider, so the same deferral is
+# driven through `openai` with an empty snapshot. pi's second "selects" case
+# ("fast" from ["fast", "powerful"]) is the Radius-only catalog-order fallback
+# and is not mirrored. The session is a stub: the flow only touches its
+# `model`, `model_runtime` and `set_model`.
+
+_POST_LOGIN_PROVIDER = "openai"
+_POST_LOGIN_DEFAULT = interactive_mode_module.DEFAULT_MODEL_PER_PROVIDER[_POST_LOGIN_PROVIDER]
+
+
+async def _start_login():
+    unknown_model = replace(DYNAMIC_MODEL, id="unknown", provider="unknown", api="unknown")
+    # Released by `discover` (pi's `finishRefresh`) or by the timeout token.
+    # Created up front: the detached refresh task may not have started yet
+    # when `discover` runs.
+    refresh_gate = tonio.Event()
+    refreshed = tonio.Event()
+    available: list = []
+    set_model_calls: list = []
+
+    async def refresh(options=None):
+        options.cancel.on_cancel(lambda _reason: refresh_gate.set())
+        await refresh_gate.wait()
+        return ModelsRefreshResult(aborted=options.cancel.cancelled, errors={})
+
+    async def set_model(model, persist=False):
+        set_model_calls.append((model, persist))
+
+    session = SimpleNamespace(
+        model=unknown_model,
+        model_runtime=SimpleNamespace(get_available_snapshot=lambda: list(available), refresh=refresh),
+        set_model=set_model,
+    )
+
+    async def noop_async(*_args):
+        return None
+
+    context = SimpleNamespace(
+        session=session,
+        status_calls=[],
+        error_calls=[],
+        warning_calls=[],
+        _update_available_provider_count=lambda: None,
+        _footer=SimpleNamespace(invalidate=lambda: None),
+        _update_editor_border_color=lambda: None,
+        _maybe_warn_about_anthropic_subscription_auth=noop_async,
+        _check_daxnuts_easter_egg=lambda model: None,
+        # The refresh continuation ends with the render request.
+        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set()),
+    )
+    context.show_status = context.status_calls.append
+    context.show_error = context.error_calls.append
+    context.show_warning = context.warning_calls.append
+
+    await InteractiveMode._complete_provider_authentication(
+        context, _POST_LOGIN_PROVIDER, "OpenAI", "oauth", unknown_model
+    )
+    assert any("Credentials saved" in message for message in context.status_calls)
+    assert context.error_calls == []
+    assert set_model_calls == []
+
+    async def discover(ids: list[str]) -> None:
+        available[:] = [replace(DYNAMIC_MODEL, provider=_POST_LOGIN_PROVIDER, id=model_id) for model_id in ids]
+        refresh_gate.set()
+        await refreshed.wait(5)
+        assert refreshed.is_set(), "the refresh continuation never ran"
+
+    return SimpleNamespace(context=context, session=session, set_model_calls=set_model_calls, discover=discover)
+
+
+class _ManualTimeout:
+    instances: ClassVar[list] = []
+
+    def __init__(self, _ms):
+        self.token = CancelToken()
+        self.timed_out = False
+        _ManualTimeout.instances.append(self)
+
+
+@contextlib.contextmanager
+def _manual_timeout():
+    _ManualTimeout.instances = []
+    original = interactive_mode_module._TimeoutCancel
+    interactive_mode_module._TimeoutCancel = _ManualTimeout
+    try:
+        yield _ManualTimeout.instances
+    finally:
+        interactive_mode_module._TimeoutCancel = original
+
+
+@pytest.mark.tonio
+async def test_selects_the_default_model_from_the_refreshed_catalog():
+    with _manual_timeout():
+        login = await _start_login()
+        await login.discover(["fast", _POST_LOGIN_DEFAULT])
+
+    assert [(model.provider, model.id, persist) for model, persist in login.set_model_calls] == [
+        (_POST_LOGIN_PROVIDER, _POST_LOGIN_DEFAULT, True)
+    ]
+    assert login.context.error_calls == []
+
+
+@pytest.mark.tonio
+async def test_reports_an_empty_catalog_only_after_refresh():
+    with _manual_timeout():
+        login = await _start_login()
+        await login.discover([])
+
+    assert login.set_model_calls == []
+    assert any("no models are available" in message for message in login.context.error_calls)
+
+
+@pytest.mark.tonio
+async def test_preserves_a_model_selected_during_refresh():
+    with _manual_timeout():
+        login = await _start_login()
+        login.session.model = DYNAMIC_MODEL
+        await login.discover(["fast", _POST_LOGIN_DEFAULT])
+
+    assert login.set_model_calls == []
+    assert login.context.error_calls == []
+
+
+@pytest.mark.tonio
+async def test_bounds_refresh_to_15_seconds():
+    with _manual_timeout() as timeouts:
+        login = await _start_login()
+        refreshed = tonio.Event()
+        login.context.ui.request_render = lambda force=False: refreshed.set()
+        timeouts[-1].timed_out = True
+        timeouts[-1].token.cancel(TimeoutError("The operation timed out."))
+        await refreshed.wait(5)
+        assert refreshed.is_set()
+
+    assert any("timed out" in message for message in login.context.warning_calls)
+    assert any("no models are available" in message for message in login.context.error_calls)
+    assert login.set_model_calls == []

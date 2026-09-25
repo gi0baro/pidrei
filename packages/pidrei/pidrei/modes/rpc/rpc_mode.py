@@ -463,11 +463,11 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 return None
 
             case "steer":
-                await session.steer(command.get("message"), _parse_images(command.get("images")))
+                await session.steer(command.get("message"), _parse_images(command.get("images")), source="rpc")
                 return success(id, "steer")
 
             case "follow_up":
-                await session.follow_up(command.get("message"), _parse_images(command.get("images")))
+                await session.follow_up(command.get("message"), _parse_images(command.get("images")), source="rpc")
                 return success(id, "follow_up")
 
             case "abort":

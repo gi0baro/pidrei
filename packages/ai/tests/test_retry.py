@@ -6,7 +6,13 @@ import tonio.colored as tonio
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.types import TextContent
 from pidrei_ai.utils.cancel import CancelToken
-from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_assistant_call
+from pidrei_ai.utils.retry import (
+    RetryCallbacks,
+    RetryPolicy,
+    is_retryable_assistant_error,
+    retry_assistant_call,
+    retry_delay_ms,
+)
 
 
 OPENAI_EXPLICIT_RETRY_MESSAGE = (
@@ -69,6 +75,15 @@ class TestProviderRetryClassification:
         assert is_retryable_assistant_error(error_message("overloaded_error")) is True
         assert is_retryable_assistant_error(error_message("524 status code (no body)")) is True
         assert is_retryable_assistant_error(faux_assistant_message("not an error")) is False
+
+
+def test_caps_agent_retry_delay():
+    # Regression for #8826.
+    assert retry_delay_ms(RetryPolicy(enabled=True, max_retries=3, base_delay_ms=2000), 6) == 60000
+    assert (
+        retry_delay_ms(RetryPolicy(enabled=True, max_retries=3, base_delay_ms=2000, max_agent_delay_ms=5000), 5) == 5000
+    )
+    assert retry_delay_ms(RetryPolicy(enabled=True, max_retries=3, base_delay_ms=2000, max_agent_delay_ms=0), 5) == 0
 
 
 DISABLED = RetryPolicy(enabled=False, max_retries=3, base_delay_ms=0)
@@ -160,6 +175,23 @@ async def test_retries_transient_error_up_to_max_retries_then_returns_final_erro
     assert calls == 4  # 1 initial + 3 retries
     assert len(recorder.scheduled) == 3
     assert recorder.finished == [(False, 3, "terminated")]
+
+
+@pytest.mark.tonio
+async def test_reports_capped_retry_delays():
+    # Regression for #8826.
+    calls = 0
+    recorder = Recorder()
+    policy = RetryPolicy(enabled=True, max_retries=4, base_delay_ms=10, max_agent_delay_ms=15)
+
+    async def produce():
+        nonlocal calls
+        calls += 1
+        return error_message("terminated") if calls < 5 else faux_assistant_message("recovered")
+
+    await retry_assistant_call(produce, policy, None, recorder.callbacks())
+
+    assert [call[2] for call in recorder.scheduled] == [10, 15, 15, 15]
 
 
 @pytest.mark.tonio

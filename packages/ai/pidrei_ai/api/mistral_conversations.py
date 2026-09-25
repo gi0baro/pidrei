@@ -720,7 +720,11 @@ def build_tool_result_text(text: str, has_images: bool, supports_images: bool, i
 
 
 def _uses_reasoning_effort(model: Model) -> bool:
-    return model.id in ("mistral-small-2603", "mistral-small-latest", "mistral-medium-3.5")
+    return (
+        model.id in ("mistral-small-2603", "mistral-small-latest")
+        or model.id.startswith("mistral-medium-")
+        or model.id == "zai-glm-5-2"
+    )
 
 
 def _uses_prompt_mode_reasoning(model: Model) -> bool:

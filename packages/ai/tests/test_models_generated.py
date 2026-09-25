@@ -54,9 +54,7 @@ def test_includes_xhigh_but_not_off_or_max_for_xai_grok_46():
     assert get_supported_thinking_levels(grok) == ["low", "medium", "high", "xhigh"]
 
 
-@pytest.mark.parametrize(
-    "model_id", ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"]
-)
+@pytest.mark.parametrize("model_id", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-astra"])
 def test_includes_xhigh_for_openai_codex_models(model_id):
     model = next((model for model in MODELS["openai-codex"] if model.id == model_id), None)
     assert model is not None

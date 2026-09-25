@@ -33,6 +33,8 @@ import tonio.colored as tonio
 from tonio.colored.sync import channel
 from tonio.exceptions import RuntimeNotInitializedError
 
+from pidrei_ai.utils.retry import DEFAULT_MAX_AGENT_RETRY_DELAY_MS
+
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.lockfile import acquire_lock_sync_with_retry
 from ..utils.paths import normalize_path, resolve_path
@@ -46,6 +48,74 @@ type SettingsScope = Literal["global", "project"]
 
 def _is_mergeable_object(value: Any) -> bool:
     return isinstance(value, dict)
+
+
+_DEFAULT_COMPACTION_TOKEN_SETTINGS = {"reserveTokens": 16384, "keepRecentTokens": 20000}
+_MAX_SAFE_INTEGER = 2**53 - 1
+_MISSING = object()
+
+
+def _js_string(value: Any) -> str:
+    """JS `String(value)` for the JSON-shaped values a settings file can hold."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "NaN"
+        if math.isinf(value):
+            return "Infinity" if value > 0 else "-Infinity"
+        return str(int(value)) if value.is_integer() else repr(value)
+    if isinstance(value, dict):
+        return "[object Object]"
+    if isinstance(value, list):
+        return ",".join("" if item is None else _js_string(item) for item in value)
+    return str(value)
+
+
+def _is_non_negative_safe_integer(value: Any) -> bool:
+    """pi's `typeof value === "number" && Number.isSafeInteger(value) && value >= 0`."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    if isinstance(value, float) and not value.is_integer():  # also rejects NaN and ±Infinity
+        return False
+    return 0 <= value <= _MAX_SAFE_INTEGER
+
+
+def _compaction_token_setting(compaction: Any, field: str, model: Any) -> int:
+    """Resolve one compaction token field: exact "provider/modelId" override,
+    ordinary setting, then built-in default. A key that is present but invalid
+    (including JSON null, which pi's `!== undefined` checks keep) raises."""
+    compaction = compaction or {}
+    ordinary = compaction.get(field, _MISSING)
+    if ordinary is not _MISSING and not _is_non_negative_safe_integer(ordinary):
+        raise Exception(
+            f"Invalid compaction.{field} setting: {_js_string(ordinary)}. Expected a non-negative safe integer."
+        )
+
+    model_key = f"{model.provider}/{model.id}" if model is not None else None
+    model_overrides = compaction.get("modelOverrides")
+    entry = (
+        model_overrides.get(model_key, _MISSING)
+        if model_key is not None and _is_mergeable_object(model_overrides)
+        else _MISSING
+    )
+    if entry is not _MISSING and not _is_mergeable_object(entry):
+        raise Exception(
+            f'Invalid compaction.modelOverrides["{model_key}"] setting: {_js_string(entry)}. Expected an object.'
+        )
+    override = entry.get(field, _MISSING) if entry is not _MISSING else _MISSING
+    if override is not _MISSING and not _is_non_negative_safe_integer(override):
+        raise Exception(
+            f'Invalid compaction.modelOverrides["{model_key}"].{field} setting: {_js_string(override)}. '
+            "Expected a non-negative safe integer."
+        )
+    if override is not _MISSING:
+        return override
+    if ordinary is not _MISSING:
+        return ordinary
+    return _DEFAULT_COMPACTION_TOKEN_SETTINGS[field]
 
 
 def _deep_merge_objects(base: dict, overrides: dict) -> dict:
@@ -718,25 +788,22 @@ class SettingsManager:
     def set_compaction_enabled(self, enabled: bool) -> None:
         self._set_global_nested("compaction", "enabled", enabled)
 
-    def get_compaction_reserve_tokens(self) -> int:
-        reserve = (self._settings.get("compaction") or {}).get("reserveTokens")
-        return reserve if reserve is not None else 16384
+    def get_compaction_reserve_tokens(self, model: Any = None) -> int:
+        return _compaction_token_setting(self._settings.get("compaction"), "reserveTokens", model)
 
-    def get_compaction_keep_recent_tokens(self) -> int:
-        keep = (self._settings.get("compaction") or {}).get("keepRecentTokens")
-        return keep if keep is not None else 20000
+    def get_compaction_keep_recent_tokens(self, model: Any = None) -> int:
+        return _compaction_token_setting(self._settings.get("compaction"), "keepRecentTokens", model)
 
-    def get_compaction_settings(self) -> dict[str, Any]:
+    def get_compaction_settings(self, model: Any = None) -> dict[str, Any]:
+        """Resolve each token setting through model override, ordinary setting, then built-in default."""
         # One pinned snapshot read: the three values cannot mix epochs the way
         # delegating to the single-key getters would under a concurrent swap.
-        compaction = self._settings.get("compaction") or {}
-        enabled = compaction.get("enabled")
-        reserve = compaction.get("reserveTokens")
-        keep = compaction.get("keepRecentTokens")
+        compaction = self._settings.get("compaction")
+        enabled = (compaction or {}).get("enabled")
         return {
             "enabled": enabled if enabled is not None else True,
-            "reserve_tokens": reserve if reserve is not None else 16384,
-            "keep_recent_tokens": keep if keep is not None else 20000,
+            "reserve_tokens": _compaction_token_setting(compaction, "reserveTokens", model),
+            "keep_recent_tokens": _compaction_token_setting(compaction, "keepRecentTokens", model),
         }
 
     def get_branch_summary_settings(self) -> dict[str, Any]:
@@ -765,10 +832,14 @@ class SettingsManager:
         enabled = retry.get("enabled")
         max_retries = retry.get("maxRetries")
         base_delay_ms = retry.get("baseDelayMs")
+        max_agent_delay_ms = retry.get("maxAgentDelayMs")
         return {
             "enabled": enabled if enabled is not None else True,
             "max_retries": max_retries if max_retries is not None else 3,
             "base_delay_ms": base_delay_ms if base_delay_ms is not None else 2000,
+            "max_agent_delay_ms": (
+                max_agent_delay_ms if max_agent_delay_ms is not None else DEFAULT_MAX_AGENT_RETRY_DELAY_MS
+            ),
         }
 
     def get_http_idle_timeout_ms(self) -> int:

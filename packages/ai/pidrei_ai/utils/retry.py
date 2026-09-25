@@ -98,13 +98,30 @@ _RETRYABLE_PROVIDER_ERROR_PATTERN = _build_provider_error_pattern(
 
 @dataclass(slots=True)
 class RetryPolicy:
-    """Bounded attempts with exponential backoff (`base_delay_ms * 2^(attempt-1)`)."""
+    """Bounded attempts with exponential backoff (`base_delay_ms * 2^(attempt-1)`).
+
+    `max_agent_delay_ms` caps each computed delay and defaults to 60 seconds.
+    """
 
     enabled: bool
     # Max retry attempts (0 = no retries). The initial call never counts as a retry.
     max_retries: int
     # Base delay in ms; per-attempt delay is `base_delay_ms * 2^(attempt-1)` before jitter.
     base_delay_ms: float
+    # Optional cap for agent-level retry delays in ms. Defaults to 60 seconds.
+    max_agent_delay_ms: float | None = None
+
+
+DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000
+
+
+def retry_delay_ms(policy: RetryPolicy, attempt: int) -> float:
+    cap = policy.max_agent_delay_ms if policy.max_agent_delay_ms is not None else DEFAULT_MAX_AGENT_RETRY_DELAY_MS
+    try:
+        delay = policy.base_delay_ms * 2 ** max(0, attempt - 1)
+    except OverflowError:  # pi's Number.isSafeInteger guard: an unrepresentable delay is capped
+        return cap
+    return min(delay, cap)
 
 
 @dataclass(slots=True)
@@ -179,7 +196,7 @@ async def retry_assistant_call(
 
         attempt += 1
         last_retry = (attempt, response.error_message or "Unknown error")
-        delay_ms = policy.base_delay_ms * 2 ** (attempt - 1)  # type: ignore[union-attr]
+        delay_ms = retry_delay_ms(policy, attempt)  # type: ignore[arg-type]
         await maybe_call(callbacks.on_retry_scheduled, attempt, max_attempts, delay_ms, last_retry[1])
 
         try:

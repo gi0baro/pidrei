@@ -44,7 +44,7 @@ from pidrei_ai.registry import clamp_thinking_level, get_supported_thinking_leve
 from pidrei_ai.types import AssistantMessage, ImageContent, Model, TextContent, Usage, UserMessage
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
-from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error
+from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
 from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.text import content_text
 
@@ -385,6 +385,7 @@ def _retry_policy_from(settings: dict[str, Any]) -> RetryPolicy:
         enabled=settings["enabled"],
         max_retries=settings["max_retries"],
         base_delay_ms=settings["base_delay_ms"],
+        max_agent_delay_ms=settings["max_agent_delay_ms"],
     )
 
 
@@ -613,7 +614,7 @@ class AgentSession:
 
     async def _compact_before_next_assistant_response(self, context: AgentContext) -> AgentContext:
         model = self.model
-        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
+        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
 
         if (
             model is None
@@ -1127,6 +1128,24 @@ class AgentSession:
         # here were queued by agent_end extension handlers and need a continuation.
         return await self.agent.has_queued_messages()
 
+    async def _run_input_handlers(
+        self,
+        text: str,
+        images: list[ImageContent] | None,
+        source: str,
+        streaming_behavior: str | None = None,
+    ) -> tuple[str, list[ImageContent] | None] | None:
+        """Run `input` extension handlers; None when a handler handled the input."""
+        if not self._extension_runner.has_handlers("input"):
+            return text, images
+
+        input_result = await self._extension_runner.emit_input(text, images, source, streaming_behavior)
+        if input_result.action == "handled":
+            return None
+        if input_result.action == "transform":
+            return input_result.text, input_result.images if input_result.images is not None else images
+        return text, images
+
     async def prompt(self, text: str, options: PromptOptions | None = None) -> None:
         """Send a prompt to the agent.
 
@@ -1156,22 +1175,17 @@ class AgentSession:
                 )
 
             # Emit input event for extension interception (before skill/template expansion)
-            current_text = text
-            current_images = options.images
-            if self._extension_runner.has_handlers("input"):
-                input_result = await self._extension_runner.emit_input(
-                    current_text,
-                    current_images,
-                    options.source,
-                    options.streaming_behavior if self.is_streaming else None,
-                )
-                if input_result.action == "handled":
-                    if preflight_result:
-                        preflight_result(True)
-                    return
-                if input_result.action == "transform":
-                    current_text = input_result.text
-                    current_images = input_result.images if input_result.images is not None else current_images
+            processed_input = await self._run_input_handlers(
+                text,
+                options.images,
+                options.source,
+                options.streaming_behavior if self.is_streaming else None,
+            )
+            if processed_input is None:
+                if preflight_result:
+                    preflight_result(True)
+                return
+            current_text, current_images = processed_input
 
             # Expand skill commands (/skill:name args) and prompt templates (/template args)
             expanded_text = current_text
@@ -1329,29 +1343,40 @@ class AgentSession:
             )
             return text  # Return original on error
 
-    async def steer(self, text: str, images: list[ImageContent] | None = None) -> None:
+    async def _queue_user_input(self, text: str, images: list[ImageContent] | None, behavior: str, source: str) -> None:
+        if text.startswith("/"):
+            self._throw_if_extension_command(text)
+
+        processed_input = await self._run_input_handlers(text, images, source, behavior if self.is_streaming else None)
+        if processed_input is None:
+            return
+        processed_text, processed_images = processed_input
+
+        expanded_text = await self._expand_skill_command(processed_text)
+        expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
+
+        if behavior == "steer":
+            await self._queue_steer(expanded_text, processed_images)
+        else:
+            await self._queue_follow_up(expanded_text, processed_images)
+
+    async def steer(self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive") -> None:
         """Queue a steering message while the agent is running. Delivered after the
         current assistant turn finishes executing its tool calls, before the next
-        LLM call. Errors on extension commands."""
-        if text.startswith("/"):
-            self._throw_if_extension_command(text)
+        LLM call. Runs input handlers, expands skill commands and prompt
+        templates. Errors on extension commands. `source` is the input source
+        reported to input handlers."""
+        await self._queue_user_input(text, images, "steer", source)
 
-        expanded_text = await self._expand_skill_command(text)
-        expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
-
-        await self._queue_steer(expanded_text, images)
-
-    async def follow_up(self, text: str, images: list[ImageContent] | None = None) -> None:
+    async def follow_up(
+        self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive"
+    ) -> None:
         """Queue a follow-up message to be processed after the agent finishes.
         Delivered only when agent has no more tool calls or steering messages.
-        Errors on extension commands."""
-        if text.startswith("/"):
-            self._throw_if_extension_command(text)
-
-        expanded_text = await self._expand_skill_command(text)
-        expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
-
-        await self._queue_follow_up(expanded_text, images)
+        Runs input handlers, expands skill commands and prompt templates. Errors
+        on extension commands. `source` is the input source reported to input
+        handlers."""
+        await self._queue_user_input(text, images, "followUp", source)
 
     async def _queue_steer(self, text: str, images: list[ImageContent] | None = None) -> None:
         self._steering_messages.append(text)
@@ -1797,13 +1822,14 @@ class AgentSession:
         from_extension = False
 
         try:
-            if self.model is None:
+            model = self.model
+            if model is None:
                 raise Exception(format_no_model_selected_message())
 
-            auth = await self._get_summarization_request_auth(self.model)
+            settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
+            auth = await self._get_summarization_request_auth(model)
 
             path_entries = self.session_manager.get_branch()
-            settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
 
             preparation = prepare_compaction(path_entries, settings)
             if preparation is None:
@@ -1961,7 +1987,7 @@ class AgentSession:
         `skip_aborted_check`: when False, include aborted messages (for the pre-prompt
         check). Returns whether the post-run loop should call `agent.continue_()` for
         overflow recovery or queued messages."""
-        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
+        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(self.model))
         if not settings.enabled:
             return False
 
@@ -2082,15 +2108,16 @@ class AgentSession:
         `will_retry`: whether to continue the interrupted turn after overflow
         compaction. Returns whether the post-run loop should call
         `agent.continue_()`."""
-        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings())
+        model = self.model
+        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
         started = False
         from_extension = False
 
         try:
-            if self.model is None:
+            if model is None:
                 return False
 
-            auth = await self._get_summarization_request_auth(self.model)
+            auth = await self._get_summarization_request_auth(model)
 
             path_entries = self.session_manager.get_branch()
 
@@ -2713,7 +2740,7 @@ class AgentSession:
             self._retry_attempt -= 1
             return False
 
-        delay_ms = settings["base_delay_ms"] * 2 ** (self._retry_attempt - 1)
+        delay_ms = retry_delay_ms(_retry_policy_from(settings), self._retry_attempt)
 
         self._emit(
             AutoRetryStartEvent(
@@ -2876,6 +2903,10 @@ class AgentSession:
         options = options or {}
         if self.is_streaming:
             raise RuntimeError("Wait for the current response to finish before navigating the session tree.")
+        if self.is_compacting:
+            raise RuntimeError(
+                "Wait for the current compaction or tree navigation to finish before navigating the session tree."
+            )
 
         old_leaf_id = self.session_manager.get_leaf_id()
 

@@ -7,11 +7,10 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
-from pidrei_ai.types import ImageContent, TextContent
+from pidrei_ai.types import ImageContent, JsonSchemaConstrainedSampling, TextContent
 
 from ...utils.image_process import process_image
 from ...utils.mime import detect_supported_image_mime_type_from_file
-from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .path_utils import resolve_read_path
 from .renderers.read import read_renderers
@@ -193,7 +192,7 @@ def create_read_tool_definition(
         prompt_snippet=READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=list(READ_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=READ_SCHEMA,
-        constrained_sampling=get_experimental_tool_sampling(),
+        constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
         execute=execute,
         render_call=read_renderers.render_call,
         render_result=read_renderers.render_result,

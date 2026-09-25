@@ -164,6 +164,16 @@ DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP: dict[str, str | None] = {
     **DEEPSEEK_V4_THINKING_LEVEL_MAP,
     "low": "low",
 }
+# Verified against Fireworks Messages raw_output on 2026-09-10 (#9323).
+# Fall back to verified support when models.dev omits effort metadata; this is
+# not an allowlist. Any Fireworks Messages model advertising effort uses adaptive thinking.
+FIREWORKS_ADAPTIVE_THINKING_FALLBACK_MODELS = {
+    "accounts/fireworks/models/deepseek-v4-flash-0731",
+    "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
+    "accounts/fireworks/models/deepseek-v4-pro-0813",
+    "accounts/fireworks/models/qwen3p8-max",
+    "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+}
 
 QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP: dict[str, str | None] = {
     "minimal": None,
@@ -307,8 +317,6 @@ GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES: dict[str, dict[str, str | None]] = {
 
 THINKING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
-_GEMINI_3_PRO_RE = re.compile(r"gemini-3(?:\.\d+)?-pro")
-_GEMINI_3_FLASH_RE = re.compile(r"gemini-3(?:\.\d+)?-flash")
 _GEMMA_4_RE = re.compile(r"gemma-?4")
 _COPILOT_CLAUDE_RE = re.compile(r"^claude-(haiku|sonnet|opus|fable)-[45]([.\-]|$)")
 
@@ -456,8 +464,15 @@ def supports_openai_max(model: dict[str, Any]) -> bool:
     )
 
 
-def is_google_thinking_api(model: dict[str, Any]) -> bool:
-    return model["api"] in ("google-generative-ai", "google-vertex")
+def get_google_thinking_level_map(
+    model_id: str, reasoning_options: list[dict[str, Any]]
+) -> dict[str, str | None] | None:
+    effort_map = get_effort_thinking_level_map(reasoning_options)
+    if effort_map:
+        return effort_map
+    if _GEMMA_4_RE.search(model_id.lower()):
+        return {"off": None, "minimal": "MINIMAL", "low": None, "medium": None, "high": "HIGH"}
+    return None
 
 
 # --- openai-completions compat auto-detection (pi: generate-models.ts:502-647) -
@@ -575,7 +590,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
     }
     if cache_control_format is not None:
         detected["cacheControlFormat"] = cache_control_format
-    detected["sendSessionAffinityHeaders"] = False
+    detected["sendSessionAffinityHeaders"] = is_openrouter
     detected["supportsLongCacheRetention"] = not (
         is_together or is_cloudflare_workers_ai or is_cloudflare_ai_gateway or is_nvidia or is_ant_ling
     )
@@ -667,7 +682,9 @@ def apply_models_dev_reasoning_option_metadata(model: dict[str, Any], reasoning_
         merge_thinking_level_map(model, mapping)
 
 
-def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
+def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict[str, list] | None = None) -> None:
+    """`reasoning_options` is the models.dev map `load_models_dev_data` records
+    (pi reads its module-level `modelsDevReasoningOptions`)."""
     model_id = model["id"]
     provider = model["provider"]
     if model["api"] in ("openai-responses", "azure-openai-responses") and model_id.startswith("gpt-5"):
@@ -733,17 +750,6 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
         else:
             level_map = dict(DEEPSEEK_V4_THINKING_LEVEL_MAP)
         merge_thinking_level_map(model, level_map)
-    if is_google_thinking_api(model) and _GEMINI_3_PRO_RE.search(model_id.lower()):
-        merge_thinking_level_map(model, {"off": None, "minimal": None, "low": "LOW", "medium": None, "high": "HIGH"})
-    if is_google_thinking_api(model) and (
-        _GEMINI_3_FLASH_RE.search(model_id.lower())
-        or model_id.lower() in ("gemini-flash-latest", "gemini-flash-lite-latest")
-    ):
-        merge_thinking_level_map(model, {"off": None})
-    if is_google_thinking_api(model) and _GEMMA_4_RE.search(model_id.lower()):
-        merge_thinking_level_map(
-            model, {"off": None, "minimal": "MINIMAL", "low": None, "medium": None, "high": "HIGH"}
-        )
     if provider == "groq" and model_id == "qwen/qwen3.6-27b":
         merge_thinking_level_map(model, {"minimal": None, "low": None, "medium": None, "high": "default"})
     if provider == "openai-codex" and supports_openai_xhigh(model_id):
@@ -760,8 +766,30 @@ def apply_thinking_level_metadata(model: dict[str, Any]) -> None:
         merge_thinking_level_map(model, {"off": None})
     if provider == "openrouter" and model_id == "z-ai/glm-5.2":
         merge_thinking_level_map(model, {"xhigh": "xhigh"})
-    if provider == "fireworks" and "glm-5p2" in model_id:
-        merge_thinking_level_map(model, {"off": "none", "minimal": None, "low": "high", "medium": "high", "max": "max"})
+    if provider == "fireworks":
+        if model["api"] == "anthropic-messages" and model.get("compat", {}).get("forceAdaptiveThinking"):
+            # Qwen Max currently advertises only a toggle. Prefer upstream effort
+            # metadata once available instead of replacing it with this fallback.
+            if model_id == "accounts/fireworks/models/qwen3p8-max" and not model.get("thinkingLevelMap"):
+                model["thinkingLevelMap"] = get_effort_thinking_level_map(
+                    [{"type": "effort", "values": ["low", "medium", "xhigh"]}]
+                )
+            options = (reasoning_options or {}).get(f"{provider}:{model_id}")
+            if (
+                any(option.get("type") == "toggle" for option in options or [])
+                # The 2.4T alias omits the verified toggle in models.dev.
+                or model_id == "accounts/fireworks/models/qwen3p8-2p4t-a95b"
+            ):
+                merge_thinking_level_map(model, {"off": "none"})
+            if model_id == "accounts/fireworks/models/deepseek-v4-pro-0813":
+                merge_thinking_level_map(model, {"low": "low"})
+        if "glm-5p2" in model_id:
+            # GLM 5.2 and its fast router support off/high/max. Fireworks maps low
+            # and medium to high, so do not expose those aliases as distinct levels.
+            merge_thinking_level_map(model, {"off": "none", "minimal": None, "low": None, "medium": None, "max": "max"})
+        if "kimi-k3" in model_id:
+            # Fireworks maps medium to high on both APIs; do not expose it as a distinct level.
+            merge_thinking_level_map(model, {"medium": None})
     if provider == "opencode-go" and model_id == "glm-5.2":
         merge_thinking_level_map(model, dict(OPENCODE_GO_GLM52_THINKING_LEVEL_MAP))
     if provider == "opencode-go" and model_id == "kimi-k2.6":
@@ -1058,6 +1086,84 @@ async def fetch_ai_gateway_models(client: Client) -> list[dict[str, Any]]:
 type _Recorder = Callable[[str, str, dict[str, Any]], None]
 
 
+def _process_google_models(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    """Google (Generative AI) and Google Vertex Gemini models; thinking levels
+    come straight from models.dev effort metadata (plus the Gemma 4 toggle map)."""
+    models: list[dict[str, Any]] = []
+
+    google_models = _models_of(catalog, "google")
+    for model_id, entry in google_models.items():
+        if not _tool_capable(entry):
+            continue
+        source = entry
+        if model_id == "gemini-flash-latest":
+            source = google_models.get("gemini-3.5-flash") or entry
+        elif model_id == "gemini-flash-lite-latest":
+            source = google_models.get("gemini-3.1-flash-lite") or entry
+        thinking_level_map = get_google_thinking_level_map(model_id, source.get("reasoning_options") or [])
+        model: dict[str, Any] = {
+            "id": model_id,
+            "name": entry.get("name") or model_id,
+            "api": "google-generative-ai",
+            "provider": "google",
+            "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+            "reasoning": source.get("reasoning") is True,
+        }
+        if thinking_level_map:
+            model["thinkingLevelMap"] = thinking_level_map
+        model |= {
+            "input": _input(source),
+            "cost": _cost(source),
+            "contextWindow": _context(source),
+            "maxTokens": _max_tokens(source),
+        }
+        models.append(model)
+
+    # The google-vertex models.dev catalog also includes Claude, OpenAI, and other
+    # MaaS models that do not use the Gemini streaming path.
+    vertex_models = _models_of(catalog, "google-vertex")
+    for model_id, entry in vertex_models.items():
+        if not _tool_capable(entry) or not model_id.startswith("gemini-"):
+            continue
+        if model_id == "gemini-3.1-flash-lite-preview":
+            continue
+        source = entry
+        if model_id == "gemini-flash-latest":
+            source = vertex_models.get("gemini-3.5-flash") or entry
+        elif model_id == "gemini-flash-lite-latest":
+            source = vertex_models.get("gemini-3.1-flash-lite") or entry
+        thinking_level_map = get_google_thinking_level_map(model_id, source.get("reasoning_options") or [])
+        # models.dev reports Vertex cache_read/cache_write values for Gemini 2.5 Flash that
+        # do not match the official Gemini API standard pricing table. pi only accounts
+        # cachedContentTokenCount as cacheRead.
+        source_cost = source.get("cost") or {}
+        cache_read = 0.03 if model_id == "gemini-2.5-flash" else source_cost.get("cache_read") or 0
+        model = {
+            "id": model_id,
+            "name": entry.get("name") or model_id,
+            "api": "google-vertex",
+            "provider": "google-vertex",
+            "baseUrl": VERTEX_BASE_URL,
+            "reasoning": source.get("reasoning") is True,
+        }
+        if thinking_level_map:
+            model["thinkingLevelMap"] = thinking_level_map
+        model |= {
+            "input": _input(source),
+            "cost": {
+                "input": source_cost.get("input") or 0,
+                "output": source_cost.get("output") or 0,
+                "cacheRead": cache_read,
+                "cacheWrite": 0,
+            },
+            "contextWindow": _context(source),
+            "maxTokens": _max_tokens(source),
+        }
+        models.append(model)
+
+    return models
+
+
 def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[dict[str, Any]]:
     """First-party endpoints: Bedrock, Anthropic, Google (+Vertex), OpenAI, Groq, Cerebras."""
     models: list[dict[str, Any]] = []
@@ -1109,73 +1215,7 @@ def _load_direct_providers(catalog: dict[str, Any], record: _Recorder) -> list[d
         )
         record("anthropic", model_id, source)
 
-    # Google (Generative AI)
-    google_models = _models_of(catalog, "google")
-    for model_id, entry in google_models.items():
-        if not _tool_capable(entry):
-            continue
-        source = entry
-        if model_id == "gemini-flash-latest":
-            source = google_models.get("gemini-3.5-flash") or entry
-        if model_id == "gemini-flash-lite-latest":
-            source = google_models.get("gemini-3.1-flash-lite") or entry
-        models.append(
-            {
-                "id": model_id,
-                "name": entry.get("name") or model_id,
-                "api": "google-generative-ai",
-                "provider": "google",
-                "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-                "reasoning": source.get("reasoning") is True,
-                "input": _input(source),
-                "cost": _cost(source),
-                "contextWindow": _context(source),
-                "maxTokens": _max_tokens(source),
-            }
-        )
-        record("google", model_id, source)
-
-    # Google Vertex — Gemini only. The models.dev google-vertex catalog also lists
-    # Claude/OpenAI MaaS models that do not use the Gemini streaming path.
-    vertex_models = _models_of(catalog, "google-vertex")
-    for model_id, entry in vertex_models.items():
-        if not _tool_capable(entry):
-            continue
-        if not model_id.startswith("gemini-"):
-            continue
-        if model_id == "gemini-3.1-flash-lite-preview":
-            continue
-        source = entry
-        if model_id == "gemini-flash-latest":
-            source = vertex_models.get("gemini-3.5-flash") or entry
-        if model_id == "gemini-flash-lite-latest":
-            source = vertex_models.get("gemini-3.1-flash-lite") or entry
-
-        # models.dev reports Vertex cache_read/cache_write for Gemini 2.5 Flash that
-        # do not match the official Gemini pricing table. pi only accounts
-        # cachedContentTokenCount as cacheRead.
-        source_cost = source.get("cost") or {}
-        cache_read = 0.03 if model_id == "gemini-2.5-flash" else source_cost.get("cache_read") or 0
-        models.append(
-            {
-                "id": model_id,
-                "name": entry.get("name") or model_id,
-                "api": "google-vertex",
-                "provider": "google-vertex",
-                "baseUrl": VERTEX_BASE_URL,
-                "reasoning": source.get("reasoning") is True,
-                "input": _input(source),
-                "cost": {
-                    "input": source_cost.get("input") or 0,
-                    "output": source_cost.get("output") or 0,
-                    "cacheRead": cache_read,
-                    "cacheWrite": 0,
-                },
-                "contextWindow": _context(source),
-                "maxTokens": _max_tokens(source),
-            }
-        )
-        record("google-vertex", model_id, source)
+    models.extend(_process_google_models(catalog))
 
     # OpenAI
     for model_id, source in _models_of(catalog, "openai").items():
@@ -1530,6 +1570,7 @@ def _load_gateway_providers(
 
 def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorder) -> list[dict[str, Any]]:
     anthropic_compat = {
+        "allowEmptySignature": True,
         "sendSessionAffinityHeaders": True,
         "supportsEagerToolInputStreaming": False,
         "supportsCacheControlOnTools": False,
@@ -1593,7 +1634,17 @@ def _process_fireworks_models(fireworks_models: dict[str, Any], record: _Recorde
                     # affinity: x-session-affinity routes requests to the same replica for
                     # cache hits, and cache_control on tools / eager_input_streaming are
                     # unsupported. https://docs.fireworks.ai/tools-sdks/anthropic-compatibility
-                    "compat": dict(anthropic_compat),
+                    # Use adaptive thinking for cataloged effort controls, with verified
+                    # fallbacks where models.dev is incomplete. New models need no allowlist entry.
+                    "compat": {
+                        **anthropic_compat,
+                        **(
+                            {"forceAdaptiveThinking": True}
+                            if any(option.get("type") == "effort" for option in source.get("reasoning_options") or [])
+                            or model_id in FIREWORKS_ADAPTIVE_THINKING_FALLBACK_MODELS
+                            else {}
+                        ),
+                    },
                 }
             )
         record("fireworks", model_id, source)
@@ -1610,6 +1661,10 @@ def _process_baseten_models(baseten_models: dict[str, Any], record: _Recorder) -
         "supportsUsageInStreaming": True,
         "maxTokensField": "max_tokens",
         "supportsStrictMode": True,
+        # Baseten automatic prompt caching needs session affinity so related
+        # requests land on the same replica. See:
+        # https://docs.baseten.co/inference/model-apis/pricing-and-limits
+        "sendSessionAffinityHeaders": True,
         "supportsLongCacheRetention": False,
     }
     reasoning_effort_compat = {**base_compat, "supportsReasoningEffort": True, "thinkingFormat": "openai"}
@@ -1757,6 +1812,11 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
                 if f"{provider}:{model_id}" in OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS:
                     compat = {**compat, "supportsLongCacheRetention": False}
 
+            thinking_level_map = (
+                get_google_thinking_level_map(model_id, source.get("reasoning_options") or [])
+                if api == "google-generative-ai"
+                else None
+            )
             model = {
                 "id": model_id,
                 "name": source.get("name") or model_id,
@@ -1764,9 +1824,10 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
                 "provider": provider,
                 "baseUrl": base_url,
                 "reasoning": source.get("reasoning") is True,
-                "input": _input(source),
-                "cost": _cost(source),
             }
+            if thinking_level_map:
+                model["thinkingLevelMap"] = thinking_level_map
+            model |= {"input": _input(source), "cost": _cost(source)}
             if compat:
                 model["compat"] = compat
             model |= {"contextWindow": _context(source), "maxTokens": _max_tokens(source)}
@@ -1782,8 +1843,8 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
 
         # Claude 4.x and 5.x models route to the Anthropic Messages API.
         is_copilot_claude = _COPILOT_CLAUDE_RE.match(model_id) is not None
-        # Grok, gpt-5, oswe and MAI-Code models are only served through /responses.
-        needs_responses_api = model_id.startswith(("grok-", "gpt-5", "oswe", "mai-"))
+        # GPT, Grok, OSWE, and MAI-Code models are only served through /responses.
+        needs_responses_api = model_id.startswith(("gpt-", "grok-", "oswe", "mai-"))
         api = (
             "anthropic-messages"
             if is_copilot_claude
@@ -2151,29 +2212,18 @@ DEEPSEEK_COMPAT: dict[str, Any] = {
     "thinkingFormat": "deepseek",
 }
 
-DEEPSEEK_V4_MODELS: list[dict[str, Any]] = [
+DEEPSEEK_MODELS: list[dict[str, Any]] = [
     {
-        "id": "deepseek-v4-flash",
-        "name": "DeepSeek V4 Flash",
+        "id": "deepseek-flash",
+        "name": "DeepSeek V4.1 Flash",
         "api": "openai-completions",
         "baseUrl": "https://api.deepseek.com",
         "provider": "deepseek",
         "reasoning": True,
-        "input": ["text"],
-        "cost": {"input": 0.14, "output": 0.28, "cacheRead": 0.0028, "cacheWrite": 0},
-        "contextWindow": 1000000,
-        "maxTokens": 384000,
-        "compat": DEEPSEEK_COMPAT,
-    },
-    {
-        "id": "deepseek-v4-flash-vision-exp",
-        "name": "DeepSeek V4 Flash Vision Exp",
-        "api": "openai-completions",
-        "baseUrl": "https://api.deepseek.com",
-        "provider": "deepseek",
-        "reasoning": True,
+        "thinkingLevelMap": DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP,
         "input": ["text", "image"],
-        "cost": {"input": 0.14, "output": 0.28, "cacheRead": 0.0028, "cacheWrite": 0},
+        # DeepSeek also offers time-based off-peak rates, which the cost schema cannot represent yet.
+        "cost": {"input": 0.3, "output": 1.2, "cacheRead": 0.006, "cacheWrite": 0},
         "contextWindow": 1000000,
         "maxTokens": 384000,
         "compat": DEEPSEEK_COMPAT,
@@ -2186,7 +2236,8 @@ DEEPSEEK_V4_MODELS: list[dict[str, Any]] = [
         "provider": "deepseek",
         "reasoning": True,
         "input": ["text"],
-        "cost": {"input": 0.435, "output": 0.87, "cacheRead": 0.003625, "cacheWrite": 0},
+        # DeepSeek also offers time-based off-peak rates, which the cost schema cannot represent yet.
+        "cost": {"input": 1.32, "output": 3.96, "cacheRead": 0.044, "cacheWrite": 0},
         "contextWindow": 1000000,
         "maxTokens": 384000,
         "compat": DEEPSEEK_COMPAT,
@@ -2291,20 +2342,6 @@ CODEX_MODELS: list[dict[str, Any]] = [
         {"input": 1.75, "output": 14, "cacheRead": 0.175, "cacheWrite": 0},
         context_window=CODEX_SPARK_CONTEXT,
         model_input=["text"],
-    ),
-    _codex_model(
-        "gpt-5.4",
-        "GPT-5.4",
-        with_openai_long_context_pricing({"input": 2.5, "output": 15, "cacheRead": 0.25, "cacheWrite": 0}),
-        context_window=CODEX_CONTEXT,
-        model_input=["text", "image"],
-    ),
-    _codex_model(
-        "gpt-5.4-mini",
-        "GPT-5.4 mini",
-        {"input": 0.75, "output": 4.5, "cacheRead": 0.075, "cacheWrite": 0},
-        context_window=CODEX_CONTEXT,
-        model_input=["text", "image"],
     ),
     _codex_model(
         "gpt-5.5",
@@ -2464,6 +2501,24 @@ def _clone(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # --- entry point --------------------------------------------------------------
 
 
+def apply_model_metadata(all_models: list[dict[str, Any]], reasoning_options: dict[str, list]) -> None:
+    """Metadata passes, in pi's exact order (generate-models.ts:2503-2511) — the order
+    is load-bearing: reasoning-options runs before forceAdaptiveThinking is set, so
+    anthropic models never take models.dev effort maps."""
+    for model in all_models:
+        apply_openai_completions_compat_metadata(model)
+        apply_anthropic_messages_compat_metadata(model)
+        apply_models_dev_reasoning_option_metadata(model, reasoning_options)
+        apply_thinking_level_metadata(model, reasoning_options)
+        apply_strict_tool_compat_metadata(model)
+        apply_openai_grammar_tool_compat_metadata(model)
+        apply_openai_tool_search_metadata(model)
+        apply_openai_explicit_prompt_cache_metadata(model)
+    apply_anthropic_allowed_fallback_model_metadata(
+        [model for model in all_models if is_anthropic_fallback_metadata_model(model)]
+    )
+
+
 @tonio.main
 async def main() -> None:
     reasoning_options: dict[str, list] = {}
@@ -2491,7 +2546,7 @@ async def main() -> None:
         if not any(m["provider"] == model["provider"] and m["id"] == model["id"] for m in all_models):
             all_models.append(model)
 
-    all_models.extend(_clone(DEEPSEEK_V4_MODELS))
+    all_models.extend(_clone(DEEPSEEK_MODELS))
     all_models.extend(_clone(ANT_LING_MODELS))
 
     apply_deepseek_v4_compat(all_models)
@@ -2562,21 +2617,7 @@ async def main() -> None:
 
     all_models.extend(build_azure_clones(all_models))
 
-    # Metadata passes, in pi's exact order (generate-models.ts:2503-2511) — the order
-    # is load-bearing: reasoning-options runs before forceAdaptiveThinking is set, so
-    # anthropic models never take models.dev effort maps.
-    for model in all_models:
-        apply_openai_completions_compat_metadata(model)
-        apply_anthropic_messages_compat_metadata(model)
-        apply_models_dev_reasoning_option_metadata(model, reasoning_options)
-        apply_thinking_level_metadata(model)
-        apply_strict_tool_compat_metadata(model)
-        apply_openai_grammar_tool_compat_metadata(model)
-        apply_openai_tool_search_metadata(model)
-        apply_openai_explicit_prompt_cache_metadata(model)
-    apply_anthropic_allowed_fallback_model_metadata(
-        [model for model in all_models if is_anthropic_fallback_metadata_model(model)]
-    )
+    apply_model_metadata(all_models, reasoning_options)
 
     # Group by provider, dedupe by model id (first wins), sort, group by api.
     providers: dict[str, dict[str, dict[str, Any]]] = {}

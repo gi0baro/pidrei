@@ -12,8 +12,7 @@ import pytest
 
 from pidrei_ai.api import mistral_conversations as mistral
 from pidrei_ai.api.mistral_conversations import stream_simple as stream_simple_mistral
-from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
+from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
 
 
 captured: list[dict] = []
@@ -33,6 +32,21 @@ def _reset():
     captured.clear()
 
 
+def make_model(model_id: str, reasoning: bool) -> Model:
+    return Model(
+        id=model_id,
+        name=model_id,
+        api="mistral-conversations",
+        provider="mistral",
+        base_url="http://127.0.0.1:9",
+        reasoning=reasoning,
+        input=["text"],
+        cost=ModelCost(),
+        context_window=128000,
+        max_tokens=16384,
+    )
+
+
 def make_context() -> Context:
     return Context(messages=[UserMessage(content="Hello", timestamp=1)])
 
@@ -48,9 +62,7 @@ async def capture_payload(model, options: SimpleStreamOptions | None = None) -> 
 
 @pytest.mark.tonio
 async def test_uses_reasoning_effort_for_mistral_small_4():
-    payload = await capture_payload(
-        get_builtin_model("mistral", "mistral-small-2603"), SimpleStreamOptions(reasoning="medium")
-    )
+    payload = await capture_payload(make_model("mistral-small-2603", True), SimpleStreamOptions(reasoning="medium"))
 
     assert payload["reasoningEffort"] == "high"
     assert "promptMode" not in payload
@@ -58,7 +70,7 @@ async def test_uses_reasoning_effort_for_mistral_small_4():
 
 @pytest.mark.tonio
 async def test_omits_reasoning_controls_for_mistral_small_4_when_thinking_is_off():
-    payload = await capture_payload(get_builtin_model("mistral", "mistral-small-2603"))
+    payload = await capture_payload(make_model("mistral-small-2603", True))
 
     assert "reasoningEffort" not in payload
     assert "promptMode" not in payload
@@ -67,26 +79,53 @@ async def test_omits_reasoning_controls_for_mistral_small_4_when_thinking_is_off
 @pytest.mark.tonio
 async def test_uses_prompt_mode_for_magistral_reasoning_models():
     payload = await capture_payload(
-        get_builtin_model("mistral", "magistral-medium-latest"), SimpleStreamOptions(reasoning="medium")
+        make_model("magistral-medium-latest", True), SimpleStreamOptions(reasoning="medium")
     )
 
     assert payload["promptMode"] == "reasoning"
     assert "reasoningEffort" not in payload
 
 
+# Regression for #9375: Mistral-hosted GLM-5.2 ignores prompt_mode.
 @pytest.mark.tonio
-async def test_uses_reasoning_effort_for_mistral_medium_3_5():
-    payload = await capture_payload(
-        get_builtin_model("mistral", "mistral-medium-3.5"), SimpleStreamOptions(reasoning="medium")
-    )
+async def test_zai_glm_5_2_uses_reasoning_effort_when_thinking_is_enabled():
+    payload = await capture_payload(make_model("zai-glm-5-2", True), SimpleStreamOptions(reasoning="medium"))
 
     assert payload["reasoningEffort"] == "high"
     assert "promptMode" not in payload
 
 
 @pytest.mark.tonio
-async def test_omits_reasoning_controls_for_mistral_medium_3_5_when_thinking_is_off():
-    payload = await capture_payload(get_builtin_model("mistral", "mistral-medium-3.5"))
+async def test_zai_glm_5_2_omits_reasoning_controls_when_thinking_is_off():
+    payload = await capture_payload(make_model("zai-glm-5-2", True))
+
+    assert "reasoningEffort" not in payload
+    assert "promptMode" not in payload
+
+
+# Regression for #8700: Medium aliases must use reasoning_effort, not Magistral's prompt_mode.
+@pytest.mark.tonio
+@pytest.mark.parametrize("model_id", ["mistral-medium-2604", "mistral-medium-latest"])
+async def test_medium_uses_reasoning_effort_when_thinking_is_enabled(model_id):
+    payload = await capture_payload(make_model(model_id, True), SimpleStreamOptions(reasoning="medium"))
+
+    assert payload["reasoningEffort"] == "high"
+    assert "promptMode" not in payload
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("model_id", ["mistral-medium-2604", "mistral-medium-latest"])
+async def test_medium_omits_reasoning_controls_when_thinking_is_off(model_id):
+    payload = await capture_payload(make_model(model_id, True))
+
+    assert "reasoningEffort" not in payload
+    assert "promptMode" not in payload
+
+
+# Regression for #8700: the Medium prefix must still respect the model's reasoning capability.
+@pytest.mark.tonio
+async def test_omits_reasoning_controls_for_non_reasoning_medium_models():
+    payload = await capture_payload(make_model("mistral-medium-2505", False), SimpleStreamOptions(reasoning="medium"))
 
     assert "reasoningEffort" not in payload
     assert "promptMode" not in payload
@@ -95,7 +134,7 @@ async def test_omits_reasoning_controls_for_mistral_medium_3_5_when_thinking_is_
 @pytest.mark.tonio
 async def test_uses_the_session_id_as_prompt_cache_key():
     payload = await capture_payload(
-        get_builtin_model("mistral", "mistral-large-latest"), SimpleStreamOptions(session_id="session-123")
+        make_model("mistral-large-latest", False), SimpleStreamOptions(session_id="session-123")
     )
 
     assert payload["promptCacheKey"] == "session-123"
@@ -104,7 +143,7 @@ async def test_uses_the_session_id_as_prompt_cache_key():
 @pytest.mark.tonio
 async def test_omits_prompt_cache_key_when_cache_retention_is_disabled():
     payload = await capture_payload(
-        get_builtin_model("mistral", "mistral-large-latest"),
+        make_model("mistral-large-latest", False),
         SimpleStreamOptions(session_id="session-123", cache_retention="none"),
     )
 

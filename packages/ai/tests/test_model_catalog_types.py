@@ -33,6 +33,16 @@ def test_routes_github_copilot_grok_45_through_the_responses_api():
     assert model.api == "openai-responses"
 
 
+# Regression test for https://github.com/earendil-works/pi/issues/9209
+def test_routes_all_github_copilot_gpt_models_through_the_responses_api():
+    gpt_models = [model for model in get_builtin_models("github-copilot") if model.id.startswith("gpt-")]
+    assert len(gpt_models) > 0
+    assert all(model.api == "openai-responses" for model in gpt_models)
+    astra = get_builtin_model("github-copilot", "gpt-6-astra")
+    assert astra is not None
+    assert astra.api == "openai-responses"
+
+
 def test_every_catalog_model_matches_its_position():
     for provider_id in ("xai", "anthropic", "openai", "fireworks", "opencode"):
         models = get_builtin_models(provider_id)

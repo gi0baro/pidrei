@@ -43,7 +43,7 @@ def create_chat_viewport(
             *([] if widgets_above is None else [{"component": widgets_above, "shrink": 1, "minSize": 0}]),
             {"component": editor, "shrink": 1, "minSize": 3},
             *([] if widgets_below is None else [{"component": widgets_below, "shrink": 1, "minSize": 0}]),
-            {"component": footer, "shrink": 1, "minSize": 1},
+            {"component": footer, "shrink": 1, "minSize": 0},
         ]
     )
     return ChatViewport(

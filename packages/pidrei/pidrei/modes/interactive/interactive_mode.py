@@ -2133,7 +2133,7 @@ class InteractiveMode:
     # command handler, or an extension task.
 
     def _set_editor_working_status_indicator(self, indicator) -> bool:
-        """Hand the working indicator to the editor's border; False when the
+        """Hand the status indicator to the editor's border; False when the
         active editor has not opted in (the standalone status row stays)."""
         self._default_editor.set_working_status_indicator(None)
         if not is_working_status_editor(self.editor):
@@ -2149,7 +2149,7 @@ class InteractiveMode:
             self._active_working_indicator_embedded = False
             self._status_container.clear()
             self._set_editor_working_status_indicator(None)
-            if isinstance(indicator, WorkingStatusIndicator) and self._set_editor_working_status_indicator(indicator):
+            if self._set_editor_working_status_indicator(indicator):
                 self._active_working_indicator_embedded = True
                 return
             self._status_container.set_children([indicator])
@@ -2161,11 +2161,7 @@ class InteractiveMode:
             if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
                 return
             cleared_indicator = self._active_status_indicator
-            cleared_indicator_was_embedded = (
-                cleared_indicator is not None
-                and cleared_indicator.kind == "working"
-                and self._active_working_indicator_embedded
-            )
+            cleared_indicator_was_embedded = self._active_working_indicator_embedded
             if cleared_indicator is not None:
                 cleared_indicator.dispose()
             self._active_status_indicator = None
@@ -2707,7 +2703,7 @@ class InteractiveMode:
             self.editor = self._default_editor
 
         self._editor_container.add_child(self.editor)
-        if isinstance(self._active_status_indicator, WorkingStatusIndicator):
+        if self._active_status_indicator is not None:
             self._status_container.clear()
             self._active_working_indicator_embedded = self._set_editor_working_status_indicator(
                 self._active_status_indicator
@@ -4083,7 +4079,7 @@ class InteractiveMode:
         else:
             level = self.session.thinking_level or "off"
             self.editor.border_color = theme.get_thinking_border_color(level)
-        if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
+        if self._active_status_indicator is not None:
             self._active_status_indicator.invalidate()
         self.ui.request_render()
 
@@ -5145,6 +5141,13 @@ class InteractiveMode:
                     self._restore_queued_messages_to_editor()
                     await self.session.abort()
 
+                # Recheck after the dialogs and streaming abort, before replacing another operation's UI.
+                if self.session.is_compacting:
+                    self.show_error(
+                        "Wait for the current compaction or tree navigation to finish before navigating the session tree."
+                    )
+                    return
+
                 # Set up escape handler and status indicator if summarizing
                 showing_summary_indicator = False
                 original_on_escape = self._default_editor.on_escape
@@ -5208,12 +5211,12 @@ class InteractiveMode:
                 tree,
                 real_leaf_id,
                 self.ui.terminal.rows,
+                lambda entry_id: tonio.spawn.without_tracking(select_entry(entry_id)),
+                on_cancel,
+                on_label_edit,
                 initial_selected_id,
                 initial_filter_mode,
             )
-            selector.on_select = lambda entry_id: tonio.spawn.without_tracking(select_entry(entry_id))
-            selector.on_cancel = on_cancel
-            selector.on_label_edit = on_label_edit
             selector.on_copy = lambda text: tonio.spawn.without_tracking(copy_entry(text))
             return {"component": selector, "focus": selector}
 
@@ -5560,61 +5563,81 @@ class InteractiveMode:
     ) -> None:
         action_label = f"Logged in to {provider_name}" if auth_type == "oauth" else f"Saved API key for {provider_name}"
 
-        selected_model = None
-        selection_error: str | None = None
-        if _is_unknown_model(previous_model):
-            available_models = self.session.model_runtime.get_available_snapshot()
-            provider_models = [model for model in available_models if model.provider == provider_id]
-            # Matches LLAMA_PROVIDER_ID from pi's built-in llama extension, which pidrei does not
-            # ship; kept inline so a provider registered under that id gets the same guidance.
-            if provider_id == "llama.cpp":
-                selection_error = _llama_cpp_post_login_guidance(action_label, len(provider_models))
-            elif provider_id not in DEFAULT_MODEL_PER_PROVIDER:
-                selection_error = (
-                    f'{action_label}, but no default model is configured for provider "{provider_id}". '
-                    "Use /model to select a model."
-                )
-            elif not provider_models:
-                selection_error = (
-                    f"{action_label}, but no models are available for that provider. Use /model to select a model."
-                )
-            else:
-                default_model_id = DEFAULT_MODEL_PER_PROVIDER[provider_id]
-                selected_model = next((model for model in provider_models if model.id == default_model_id), None)
-                if selected_model is None:
+        session = self.session
+        # Dynamic catalogs may be empty until the first authenticated network refresh.
+        defer_selection = (
+            _is_unknown_model(previous_model)
+            and provider_id in DEFAULT_MODEL_PER_PROVIDER
+            and not any(
+                model.provider == provider_id and model.id == DEFAULT_MODEL_PER_PROVIDER[provider_id]
+                for model in session.model_runtime.get_available_snapshot()
+            )
+        )
+
+        async def finish_authentication() -> None:
+            selected_model = None
+            selection_error: str | None = None
+            if _is_unknown_model(previous_model):
+                available_models = self.session.model_runtime.get_available_snapshot()
+                provider_models = [model for model in available_models if model.provider == provider_id]
+                # Matches LLAMA_PROVIDER_ID from pi's built-in llama extension, which pidrei does not
+                # ship; kept inline so a provider registered under that id gets the same guidance.
+                if provider_id == "llama.cpp":
+                    selection_error = _llama_cpp_post_login_guidance(action_label, len(provider_models))
+                elif provider_id not in DEFAULT_MODEL_PER_PROVIDER:
                     selection_error = (
-                        f'{action_label}, but its default model "{default_model_id}" is not available. '
+                        f'{action_label}, but no default model is configured for provider "{provider_id}". '
                         "Use /model to select a model."
                     )
+                elif not provider_models:
+                    selection_error = (
+                        f"{action_label}, but no models are available for that provider. Use /model to select a model."
+                    )
                 else:
-                    try:
-                        await self.session.set_model(selected_model, persist=True)
-                    except Exception as error:
-                        selected_model = None
+                    default_model_id = DEFAULT_MODEL_PER_PROVIDER[provider_id]
+                    # pi falls back to catalog order for Radius here; pidrei has no Radius provider.
+                    selected_model = next((model for model in provider_models if model.id == default_model_id), None)
+                    if selected_model is None:
                         selection_error = (
-                            f"{action_label}, but selecting its default model failed: {error}. "
+                            f'{action_label}, but its default model "{default_model_id}" is not available. '
                             "Use /model to select a model."
                         )
+                    else:
+                        try:
+                            await self.session.set_model(selected_model, persist=True)
+                        except Exception as error:
+                            selected_model = None
+                            selection_error = (
+                                f"{action_label}, but selecting its default model failed: {error}. "
+                                "Use /model to select a model."
+                            )
 
-        self._update_available_provider_count()
-        self._footer.invalidate()
-        self._update_editor_border_color()
-        if selected_model is not None:
-            self.show_status(f"{action_label}. Selected {selected_model.id}. Credentials saved to {get_auth_path()}")
-            tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(selected_model))
-            self._check_daxnuts_easter_egg(selected_model)
-        else:
-            self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}")
-            if selection_error:
-                self.show_error(selection_error)
+            self._update_available_provider_count()
+            self._footer.invalidate()
+            self._update_editor_border_color()
+            if selected_model is not None:
+                self.show_status(
+                    f"{action_label}. Selected {selected_model.id}. Credentials saved to {get_auth_path()}"
+                )
+                tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(selected_model))
+                self._check_daxnuts_easter_egg(selected_model)
             else:
-                tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth())
+                self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}")
+                if selection_error:
+                    self.show_error(selection_error)
+                else:
+                    tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth())
+
+        if defer_selection:
+            self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}. Refreshing model catalog…")
+        else:
+            await finish_authentication()
 
         timeout = _TimeoutCancel(15_000)
 
         async def refresh_provider_catalog() -> None:
             try:
-                result = await self.session.model_runtime.refresh(
+                result = await session.model_runtime.refresh(
                     ModelsRefreshOptions(providers=[provider_id], cancel=timeout.token)
                 )
             except Exception as error:
@@ -5624,6 +5647,9 @@ class InteractiveMode:
                 self.show_warning(f"{action_label}, but its model catalog refresh timed out; using cached models.")
             elif result.errors:
                 self.show_warning(f"{action_label}, but its model catalog could not be refreshed; using cached models.")
+            # Do not replace a model or session selected while the refresh was running.
+            if defer_selection and self.session is session and session.model is previous_model:
+                await finish_authentication()
             self._update_available_provider_count()
             self._footer.invalidate()
             self.ui.request_render()

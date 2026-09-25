@@ -411,7 +411,7 @@ class OpenAICompletionsCompat:
     supports_openai_grammar_tools: bool | None = None  # default False
     supports_strict_mode: bool | None = None  # default True
     cache_control_format: Literal["anthropic"] | None = None
-    send_session_affinity_headers: bool | None = None  # default False
+    send_session_affinity_headers: bool | None = None  # default True for OpenRouter endpoints, False otherwise
     deferred_tools_mode: Literal["kimi"] | None = None
     session_affinity_format: SessionAffinityFormat | None = None
     supports_long_cache_retention: bool | None = None  # default True
@@ -450,6 +450,8 @@ class AnthropicMessagesCompat:
     # Send `x-session-affinity` from `options.session_id` when caching is enabled
     # (required by e.g. Fireworks for prompt-cache routing). Default False.
     send_session_affinity_headers: bool | None = None
+    # Session-affinity format. "openrouter" sends `x-session-id`; when unset, sends `x-session-affinity`.
+    session_affinity_format: Literal["openrouter"] | None = None
     supports_cache_control_on_tools: bool | None = None  # default True
     supports_temperature: bool | None = None  # default True; Opus 4.7+ rejects non-default
     # Force adaptive thinking (`thinking.type: "adaptive"` + `output_config.effort`)

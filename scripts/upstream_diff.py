@@ -148,6 +148,10 @@ DROPPED_PREFIXES = (
         "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
     ),
     (
+        "packages/agent/telemetry-schema.md",
+        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+    ),
+    (
         "packages/tui/native/",
         "native modifier addon not ported (terminal.py stubs _is_native_modifier_pressed)",
     ),
@@ -290,6 +294,8 @@ DROPPED_PREFIXES += tuple(
     (path, _EXPERIMENTAL_REASON)
     for path in (
         "packages/chord/",
+        # Pico5 durable package (0.86.0 `08016016` moved pico out of agent)
+        "packages/durable/",
         "packages/agent/benchmark/",
         # durable harness runtime (agent)
         "packages/agent/src/harness/agent-harness.ts",
@@ -344,6 +350,11 @@ DROPPED_PREFIXES += tuple(
         "packages/agent/test/harness/storage-backed-session.test.ts",
         "packages/agent/test/harness/types.test.ts",
         "packages/agent/test/harness/values.test.ts",
+        # pico / pico3 prototypes (0.86.0, before the move to packages/durable)
+        "packages/agent/src/harness/pico",
+        "packages/agent/test/harness/pico",
+        "packages/agent/src/pico/",
+        "packages/agent/test/pico/",
         # experimental coding-agent (server/worker/client split, facets, mini)
         "packages/coding-agent/src/experimental/",
         "packages/coding-agent/src/cli/experimental/",
@@ -440,6 +451,69 @@ DROPPED_PREFIXES += (
         "packages/ai/test/cloudflare-ai-binding.test.ts",
         "Cloudflare Workers env.AI binding fetch — JS-runtime object, no pidrei consumer",
     ),
+)
+DROPPED_PREFIXES += (
+    # 0.87.1 drops (PORT_0.87.1.md).
+    (
+        "packages/ai/src/bun-oauth.ts",
+        "Bun bundle OAuth loader, JS-runtime only",
+    ),
+    (
+        "packages/ai/src/compat.ts",
+        (
+            "deprecated global pi-ai API shim, never ported (PLAN.md); its dispatch deltas land "
+            "through models.ts → registry.py Models.stream"
+        ),
+    ),
+    (
+        "packages/ai/test/codex-websocket-cached-probe.ts",
+        "manual live Codex probe script, not ported",
+    ),
+    (
+        "packages/coding-agent/test/documentation.test.ts",
+        "docs-navigation eval, not ported",
+    ),
+    (
+        "packages/tui/src/native-platform.ts",
+        "native platform helper (clipboard, VT input) not ported: pidrei's clipboard runs on the platform tools",
+    ),
+    (
+        "packages/tui/test/native-platform.test.ts",
+        "native platform helper (clipboard, VT input) not ported: pidrei's clipboard runs on the platform tools",
+    ),
+    (
+        "packages/tui/test/native-clipboard-linux.test.ts",
+        "native platform helper (clipboard, VT input) not ported: pidrei's clipboard runs on the platform tools",
+    ),
+    (
+        "packages/tui/test/fixtures/clipboard-",
+        "native platform helper (clipboard, VT input) not ported: pidrei's clipboard runs on the platform tools",
+    ),
+    (
+        "packages/agent/test/harness/text-line-reader.test.ts",
+        (
+            "harness/env TextLineReader not ported: its only consumer is the experimental JSONL fork "
+            "(PORT_0.87.1.md decision 7; the env/nodejs.ts + types.ts hunks are per-hunk skips)"
+        ),
+    ),
+)
+#: `/bug` bug reporting (Radius upload, zip export, crash log) is dropped
+#: completely (PORT_0.87.1.md decision 1).
+_BUG_REPORT_REASON = "/bug reporting not ported (PORT_0.87.1.md decision 1)"
+DROPPED_PREFIXES += tuple(
+    (path, _BUG_REPORT_REASON)
+    for path in (
+        "packages/coding-agent/src/core/bug-report.ts",
+        "packages/coding-agent/src/core/bug-report-upload.ts",
+        "packages/coding-agent/src/core/crash-log.ts",
+        "packages/coding-agent/src/core/radius.ts",
+        "packages/coding-agent/src/modes/interactive/bug-report.ts",
+        # zip archive writer; bug-report.ts is its only consumer
+        "packages/coding-agent/src/utils/zip.ts",
+        "packages/coding-agent/test/bug-report.test.ts",
+        "packages/coding-agent/test/interactive-mode-bug-report-hint.test.ts",
+        "packages/coding-agent/test/crash-log.test.ts",
+    )
 )
 
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
@@ -772,12 +846,14 @@ TEST_HOMES = {
     "packages/coding-agent/test/model-runtime-cloudflare-compat.test.ts": "covered by packages/pidrei/tests/test_model_registry.py + test_model_runtime.py",
     "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": "covered by packages/pidrei/tests/test_provider_attribution.py",
     "packages/coding-agent/test/model-runtime-test-utils.ts": "pi test infra; pidrei equivalent is packages/pidrei/tests/model_runtime_helpers.py — absorb deltas where ported tests need them",
-    "packages/coding-agent/test/clipboard.test.ts": "PARITY GAP: utils/clipboard.py ported, dedicated tests unmirrored (only the extension clipboard flow is covered, in test_extensions_runner.py)",
     "packages/ai/test/deferred-tools.test.ts": (
         "partial mirror: test_deferred_tools.py holds the 0.84.2 additional_tools cases; "
         "the rest of the suite is a PARITY GAP"
     ),
-    "packages/ai/test/openai-completions-prompt-cache.test.ts": "PARITY GAP: openai_completions prompt-cache accounting unmirrored",
+    "packages/ai/test/openai-completions-prompt-cache.test.ts": (
+        "partial mirror: test_openai_completions_prompt_cache.py holds the 0.87.1 session-affinity cases "
+        "(OpenRouter default/opt-out, Baseten catalog); the rest of the prompt-cache suite is a PARITY GAP"
+    ),
     "packages/ai/test/openai-completions-tool-result-images.test.ts": "PARITY GAP: openai_completions tool-result image handling unmirrored",
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
@@ -827,6 +903,76 @@ TEST_HOMES = {
         "sync) has no mirror; the sibling 8611 case lives in test_8611_thinking_toggle_pending_bash_output.py. "
         "In-range deltas only touch the fake-`this` fixture (maybeShowAssistantDiagnostics stub)"
     ),
+    # 0.87.1 additions (PORT_0.87.1.md U0 triage).
+    "packages/coding-agent/test/clipboard-image-native-errors.test.ts": (
+        "N/A: specs paste aborting on native clipboard helper errors; pidrei has no native helper and "
+        "read_clipboard_image never raises (clipboard_image.py docstring)"
+    ),
+    "packages/ai/test/context-estimate.test.ts": (
+        "covered by packages/ai/tests/test_estimate.py (+ test_simple_options.py for the buildBaseOptions clamp)"
+    ),
+    "packages/ai/test/openai-completions-empty-tools.test.ts": (
+        "partial mirror: test_openai_completions.py holds tools:[]-with-history and max_tokens params, "
+        "test_simple_options.py the context clamp, test_cloudflare_stream.py gateway auth/base URL; "
+        "empty/undefined-tools omission, default maxTokens, Cloudflare /compat conservative fields, BYOK "
+        "Authorization and Workers AI session-affinity headers are a PARITY GAP"
+    ),
+    "packages/ai/test/openai-completions-retry.test.ts": (
+        "covered by packages/ai/tests/test_openai_completions.py (retry cases; the SDK-retry case is structural)"
+    ),
+    "packages/ai/test/openai-responses-empty-tool-result.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
+    "packages/ai/test/openai-responses-foreign-toolcall-id.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
+    "packages/ai/test/openai-responses-message-id.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
+    "packages/coding-agent/test/agent-session-concurrent.test.ts": (
+        "covered by packages/pidrei/tests/test_agent_session.py (TestConcurrentPromptGuard); "
+        "the extension-origin steering case is a PARITY GAP"
+    ),
+    "packages/coding-agent/test/agent-session-retry.test.ts": (
+        "covered by packages/pidrei/tests/test_agent_session.py (TestRetry)"
+    ),
+    "packages/coding-agent/test/agent-session-stats.test.ts": (
+        "covered by packages/pidrei/tests/test_agent_session.py (TestGetSessionStats)"
+    ),
+    "packages/coding-agent/test/image-process.test.ts": (
+        "partial mirror: test_image_process.py holds the 0.87.1 GIF-signature cases; BMP->PNG conversion "
+        "is covered by test_tool_result_images.py + test_tools.py; the rest is a PARITY GAP"
+    ),
+    "packages/coding-agent/test/image-resize-callers.test.ts": (
+        "partial mirror: test_image_resize_callers.py holds the 0.87.1 model-resize-profile cases; the "
+        "'Image omitted' resize fallbacks are a PARITY GAP"
+    ),
+    "packages/coding-agent/test/sdk-stream-options.test.ts": (
+        "partial mirror: test_sdk_stream_options.py holds the 0.87.1 cache-warming scheduling cases; "
+        "sdk.py stream_fn option forwarding (timeout/websocket/provider-retry/transform_headers) is a PARITY GAP"
+    ),
+    "packages/coding-agent/test/suite/agent-session-queue.test.ts": (
+        "partial mirror: test_agent_session_queue.py holds the 0.87.1 input-handler case; the rest of the "
+        "session-level queue characterization is a PARITY GAP (steer/followUp-while-streaming in "
+        "test_agent_session.py, agent-level queue semantics in agent/tests/test_agent.py)"
+    ),
+    "packages/coding-agent/test/suite/agent-session-retry-events.test.ts": (
+        "partial mirror: test_agent_session.py (TestRetry) holds the transient/exhaust/delayed-message_end/"
+        "tool-loop retry cases and the 0.87.1 abort-after-failed-retry case; retry-disabled, non-retryable, "
+        "abortRetry and the event-order/delta/agent_end cases are a PARITY GAP"
+    ),
+    "packages/coding-agent/test/suite/regressions/1717-2113-agent-session-event-settlement.test.ts": (
+        "covered by packages/pidrei/tests/test_agent_session.py (message_end order with slow handlers, "
+        "tool_call after assistant settlement)"
+    ),
+    "packages/coding-agent/test/suite/regressions/2791-fswatch-error-crash.test.ts": (
+        "PARITY GAP: theme watcher error survival unmirrored (polling utils/fs_watch; its error handler "
+        "is exercised only via test_footer_data_provider.py)"
+    ),
+    "packages/coding-agent/test/suite/regressions/2860-replaced-session-context.test.ts": (
+        "partial mirror: test_agent_session_runtime.py holds stale-ctx invalidation on rebind; "
+        "withSession callbacks for new/fork/switch are a PARITY GAP"
+    ),
+    "packages/coding-agent/test/suite/regressions/3302-find-path-glob.test.ts": (
+        "partial mirror: test_tools.py (TestFindTool) covers basename globs; path-based patterns are a PARITY GAP"
+    ),
+    "packages/coding-agent/test/suite/regressions/3303-find-nested-gitignore.test.ts": (
+        "PARITY GAP: nested .gitignore scoping in find unmirrored (test_tools.py covers the root .gitignore only)"
+    ),
 }
 
 NOISE_BASENAMES = {
@@ -849,6 +995,7 @@ NOISE_BASENAMES = {
     "pi-test.sh",
     ".npmignore",
     ".gitignore",
+    ".gitattributes",
 }
 NOISE_PREFIXES = (
     ".github/",

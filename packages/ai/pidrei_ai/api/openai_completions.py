@@ -310,7 +310,7 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         supports_thinking_token_budget=False,
         thinking_token_budget_field=None,
         cache_control_format=cache_control_format,
-        send_session_affinity_headers=False,
+        send_session_affinity_headers=is_openrouter,
         deferred_tools_mode=None,
         session_affinity_format="openrouter" if is_openrouter else "openai",
         supports_long_cache_retention=not (

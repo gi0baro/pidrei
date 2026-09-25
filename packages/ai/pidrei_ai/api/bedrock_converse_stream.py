@@ -694,6 +694,12 @@ def _handle_metadata(event: dict, model: Model, output: AssistantMessageBuilder)
         output.usage.output = usage.get("outputTokens") or 0
         output.usage.cache_read = usage.get("cacheReadInputTokens") or 0
         output.usage.cache_write = usage.get("cacheWriteInputTokens") or 0
+        cache_details = usage.get("cacheDetails")
+        output.usage.cache_write_1h = (
+            sum(detail.get("inputTokens") or 0 for detail in cache_details if detail.get("ttl") == "1h")
+            if cache_details is not None
+            else None
+        )
         output.usage.total_tokens = usage.get("totalTokens") or (output.usage.input + output.usage.output)
         calculate_cost(model, output.usage)
 

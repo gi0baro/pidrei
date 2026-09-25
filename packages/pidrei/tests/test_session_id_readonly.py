@@ -1,10 +1,20 @@
 """Mirrors pi coding-agent test/session-id-readonly.test.ts."""
 
+import contextlib
+import io
 import json
 import os
 from datetime import UTC, datetime
 
+import pytest
+
+import pidrei.main as main_module
+from pidrei.cli.args import parse_args
+from pidrei.core.session_manager import SessionManager
+from pidrei.core.settings_manager import SettingsManager
+
 from .cli_spawn_helpers import run_cli
+from .coding_session_helpers import assistant_msg, user_msg
 
 
 def _has_session_with_id(root: str, session_id: str) -> bool:
@@ -139,6 +149,73 @@ class TestSessionIdReadOnlyCommands:
 
         assert result.code == 1
         assert "Session already exists with id 'existing-id'" in result.stderr
+
+
+async def _persist_session(manager: SessionManager, text: str) -> None:
+    await manager.append_message(user_msg(text))
+    await manager.append_message(assistant_msg(text))
+
+
+# In-process cases: pi calls the exported `createSessionManager`; pidrei's is
+# `main._create_session_manager`.
+class TestSessionIdExactLookup:
+    # Regression test for #9440.
+    @pytest.mark.tonio
+    async def test_looks_up_exact_ids_without_building_full_session_listings(self, tmp_path):
+        dirs = _Dirs(tmp_path)
+        unrelated = await SessionManager.create(dirs.project_dir, dirs.session_dir, {"id": "unrelated-id"})
+        await _persist_session(unrelated, "large transcript contents must not be loaded")
+        list_calls: list = []
+
+        async def unexpected_list(*args, **_kwargs):
+            list_calls.append(args)
+            raise Exception("unexpected full listing")
+
+        original_list = SessionManager.list
+        SessionManager.list = staticmethod(unexpected_list)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                created = await main_module._create_session_manager(
+                    parse_args(["--session-id", "fresh-id"]),
+                    dirs.project_dir,
+                    dirs.session_dir,
+                    SettingsManager.in_memory(),
+                )
+        finally:
+            SessionManager.list = original_list
+
+        assert created.get_session_id() == "fresh-id"
+        assert list_calls == []
+
+    @pytest.mark.tonio
+    async def test_reopens_an_exact_id_from_a_renamed_session_file(self, tmp_path):
+        dirs = _Dirs(tmp_path)
+        original = await SessionManager.create(dirs.project_dir, dirs.session_dir, {"id": "renamed-id"})
+        await _persist_session(original, "persist me")
+        renamed_path = os.path.join(dirs.session_dir, "imported-session.jsonl")
+        os.rename(original.get_session_file(), renamed_path)
+
+        reopened = await main_module._create_session_manager(
+            parse_args(["--session-id", "renamed-id"]),
+            dirs.project_dir,
+            dirs.session_dir,
+            SettingsManager.in_memory(),
+        )
+
+        assert reopened.get_session_file() == renamed_path
+
+    @pytest.mark.tonio
+    async def test_filters_exact_ids_by_cwd_in_a_custom_session_directory(self, tmp_path):
+        dirs = _Dirs(tmp_path)
+        project_a = os.path.join(os.path.dirname(dirs.project_dir), "project-a")
+        project_b = os.path.join(os.path.dirname(dirs.project_dir), "project-b")
+        os.makedirs(project_a)
+        os.makedirs(project_b)
+        foreign = await SessionManager.create(project_b, dirs.session_dir, {"id": "foreign-id"})
+        await _persist_session(foreign, "foreign session")
+
+        assert await SessionManager.find_by_id(project_a, "foreign-id", dirs.session_dir) is None
+        assert await SessionManager.find_by_id(project_b, "foreign-id", dirs.session_dir) == foreign.get_session_file()
 
 
 class TestSessionIdValidation:

@@ -16,6 +16,14 @@ class StatusIndicator(Loader):
         super().__init__(ui, spinner_color_fn, message_color_fn, message, indicator)
         self.kind = kind
 
+    def render_in_border(self, width: int) -> str:
+        rendered = super().render(width + 2)
+        line = rendered[1] if len(rendered) > 1 else ""
+        return truncate_to_width(line[1:].rstrip() if line.startswith(" ") else line.rstrip(), width, "")
+
+    def render_spinner_in_border(self, width: int) -> str:
+        return truncate_to_width(self._get_rendered_indicator(), width, "")
+
     def dispose(self) -> None:
         self.stop()
 
@@ -30,14 +38,6 @@ class WorkingStatusIndicator(StatusIndicator):
             message,
             indicator,
         )
-
-    def render_in_border(self, width: int) -> str:
-        rendered = super().render(width + 2)
-        line = rendered[1] if len(rendered) > 1 else ""
-        return truncate_to_width(line[1:].rstrip() if line.startswith(" ") else line.rstrip(), width, "")
-
-    def render_spinner_in_border(self, width: int) -> str:
-        return truncate_to_width(self._get_rendered_indicator(), width, "")
 
 
 class RetryStatusIndicator(StatusIndicator):

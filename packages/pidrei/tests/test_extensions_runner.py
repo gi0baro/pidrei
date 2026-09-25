@@ -347,6 +347,39 @@ async def test_collects_tools_from_multiple_extensions(fx):
     assert sorted(tool.definition.name for tool in tools) == ["tool_a", "tool_b"]
 
 
+# Regression test for #9300. pi omits `parameters`; ToolDefinition requires the
+# field, so the Python shape of the malformed tool is an explicit None.
+@pytest.mark.tonio
+async def test_rejects_extension_tools_without_a_parameter_schema(fx):
+    extension_path = fx.write(
+        "missing-parameters.py",
+        """
+from pidrei.core.extensions import ToolDefinition
+
+
+async def run(*args):
+    return {"content": [{"type": "text", "text": "ok"}]}
+
+
+def extension(pi):
+    pi.register_tool(ToolDefinition(name="noop", label="No-op", description="Do nothing", parameters=None, execute=run))
+""",
+    )
+
+    result = await load_extensions([extension_path], fx.root)
+
+    assert len(result.extensions) == 0
+    assert [(error.path, error.error) for error in result.errors] == [
+        (
+            extension_path,
+            (
+                f'Failed to load extension: Tool "noop" registered by extension "{extension_path}" '
+                "must define an object parameter schema."
+            ),
+        )
+    ]
+
+
 @pytest.mark.tonio
 async def test_keeps_first_tool_when_two_extensions_register_the_same_name(fx):
     fx.write("a-first.py", tool_extension("shared", "first"))

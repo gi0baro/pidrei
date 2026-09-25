@@ -17,7 +17,7 @@ import tonio.colored as tonio
 from tonio.colored import fs, time as tonio_time
 
 from pidrei_agent.types import AgentToolResult
-from pidrei_ai.types import TextContent
+from pidrei_ai.types import JsonSchemaConstrainedSampling, TextContent
 
 from ...utils.shell import (
     ShellConfig,
@@ -27,7 +27,6 @@ from ...utils.shell import (
     track_detached_child_pid,
     untrack_detached_child_pid,
 )
-from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .output_accumulator import OutputAccumulator
 from .renderers.bash import BASH_UPDATE_THROTTLE_S, create_shell_renderers
@@ -445,7 +444,7 @@ def create_shell_tool_definition(
             else None
         ),
         parameters=BASH_SCHEMA,
-        constrained_sampling=get_experimental_tool_sampling(),
+        constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
         execute=execute,
         render_call=renderers.render_call,
         render_result=renderers.render_result,

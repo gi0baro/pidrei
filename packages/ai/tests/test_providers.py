@@ -18,7 +18,7 @@ from pidrei_ai.providers.all import (
     get_builtin_providers,
 )
 from pidrei_ai.providers.anthropic import anthropic_provider
-from pidrei_ai.registry import create_models
+from pidrei_ai.registry import create_models, get_supported_thinking_levels
 from pidrei_ai.types import ModelCost
 
 
@@ -109,6 +109,24 @@ def test_stores_native_constrained_sampling_capabilities_in_model_metadata():
     assert gpt54.compat.supports_openai_grammar_tools is True
 
     assert get_builtin_model("anthropic", "claude-haiku-4-5").compat.supports_strict_tools is True
+
+
+def test_uses_models_dev_effort_levels_for_google_thinking_models():
+    # Regression test for https://github.com/earendil-works/pi/issues/9455
+    for provider in ("google", "google-vertex"):
+        assert "minimal" in get_supported_thinking_levels(get_builtin_model(provider, "gemini-3.6-flash"))
+        assert get_supported_thinking_levels(get_builtin_model(provider, "gemini-3.8-flash")) == [
+            "low",
+            "medium",
+            "high",
+        ]
+        assert get_supported_thinking_levels(get_builtin_model(provider, "gemini-3.1-pro-preview")) == [
+            "low",
+            "medium",
+            "high",
+        ]
+    assert get_supported_thinking_levels(get_builtin_model("opencode", "gemini-3.8-flash")) == ["low", "medium", "high"]
+    assert get_supported_thinking_levels(get_builtin_model("google", "gemma-4-31b-it")) == ["minimal", "high"]
 
 
 @pytest.mark.parametrize("provider", ["moonshotai", "moonshotai-cn"])

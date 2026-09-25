@@ -380,6 +380,7 @@ _STOP_REASON_ERROR = frozenset(
         "LANGUAGE",
         "MALFORMED_FUNCTION_CALL",
         "UNEXPECTED_TOOL_CALL",
+        "TOO_MANY_TOOL_CALLS",
         "NO_IMAGE",
     }
 )

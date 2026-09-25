@@ -9,10 +9,9 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_agent.types import AgentToolResult
-from pidrei_ai.types import TextContent
+from pidrei_ai.types import JsonSchemaConstrainedSampling, TextContent
 
 from ...utils.text import split_bom
-from ..experimental import get_experimental_tool_sampling
 from ..extensions.types import ToolDefinition
 from .edit_diff import (
     Edit,
@@ -224,7 +223,7 @@ def create_edit_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         prompt_snippet=EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION["snippet"],
         prompt_guidelines=list(EDIT_TOOL_SYSTEM_PROMPT_CONTRIBUTION["guidelines"]),
         parameters=EDIT_SCHEMA,
-        constrained_sampling=get_experimental_tool_sampling(),
+        constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
         render_shell="self",
         render_call=edit_renderers.render_call,
         render_result=edit_renderers.render_result,

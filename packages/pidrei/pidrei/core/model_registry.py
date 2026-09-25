@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from pidrei_ai.auth.types import AuthResult
 from pidrei_ai.registry import Provider
-from pidrei_ai.types import Context, Model, StreamOptions
+from pidrei_ai.types import Context, Model, SimpleStreamOptions, StreamOptions
 
 from .model_runtime import ModelRuntime
 from .provider_composer import AuthStatus, ProviderConfigInput, clear_api_key_cache
@@ -82,6 +82,14 @@ class ModelRegistry:
 
     def get_provider(self, provider: str) -> Provider | None:
         return self._runtime.get_provider(provider)
+
+    def stream(self, model: Model, context: Context, options: StreamOptions | None = None):
+        """Stream through the configured provider with request-time authentication."""
+        return self._runtime.stream(model, context, options)
+
+    def stream_simple(self, model: Model, context: Context, options: SimpleStreamOptions | None = None):
+        """Stream with provider-neutral options and request-time authentication."""
+        return self._runtime.stream_simple(model, context, options)
 
     def complete(self, model: Model, context: Context, options: StreamOptions | None = None):
         return self._runtime.complete(model, context, options)

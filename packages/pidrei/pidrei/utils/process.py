@@ -44,6 +44,10 @@ grandchild holding a pipe open can outlast the child.
 
 Bytes only, because `tonio.open_process` refuses `encoding`/`text`; callers
 decode.
+
+`max_output_bytes` is Node's `maxBuffer`, which `subprocess.run` lacks: a
+stream that grows past it abandons the child exactly like the deadline does
+(signal, drop the pipes) and raises `OutputLimitExceeded` once it is reaped.
 """
 
 import signal as signal_module
@@ -60,6 +64,18 @@ from tonio.exceptions import ResourceBroken
 _KILL_ESCALATION_S = 2.0
 
 
+class OutputLimitExceeded(subprocess.SubprocessError):
+    """A captured stream outgrew `max_output_bytes`; the child was abandoned."""
+
+    def __init__(self, cmd: Sequence[str] | str, max_output_bytes: int) -> None:
+        super().__init__(cmd, max_output_bytes)
+        self.cmd = cmd
+        self.max_output_bytes = max_output_bytes
+
+    def __str__(self) -> str:
+        return f"Command '{self.cmd}' produced more than {self.max_output_bytes} bytes of output"
+
+
 async def run_command(
     command: Sequence[str] | str,
     *,
@@ -71,6 +87,7 @@ async def run_command(
     timeout: float | None = None,
     check: bool = False,
     kill_signal: int = signal_module.SIGTERM,
+    max_output_bytes: int | None = None,
     **options: Any,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run `command` to completion without occupying a blocking-pool thread.
@@ -78,6 +95,7 @@ async def run_command(
     Mirrors `subprocess.run`, including the exceptions — `TimeoutExpired` when
     the deadline passes, `CalledProcessError` under `check=True`, `OSError` when
     the binary is missing — so call sites keep their existing `except` clauses.
+    `OutputLimitExceeded` is the one addition (see the module docstring).
     """
     if capture_output:
         if stdout is not None or stderr is not None:
@@ -93,6 +111,7 @@ async def run_command(
     captured = tonio.Result(2)  # [stdout, stderr]; None for a stream that was not piped
     result = tonio.Result()  # ("code", returncode) or ("error", exception), stored by `reap`
     exited = tonio.Event()
+    overflowed = tonio.Event()
 
     async def feed(stream) -> None:
         try:
@@ -107,6 +126,10 @@ async def run_command(
         try:
             while chunk := await stream.receive_some():
                 buffer += chunk
+                if max_output_bytes is not None and len(buffer) > max_output_bytes:
+                    overflowed.set()
+                    abandon()
+                    break
         except Exception:
             pass  # stream closed under us; keep whatever arrived
         captured.store(bytes(buffer), index)
@@ -187,6 +210,8 @@ async def run_command(
     kind, payload = result.fetch()
     if kind == "error":
         raise payload
+    if overflowed.is_set():
+        raise OutputLimitExceeded(command, max_output_bytes)
     returncode = payload
     out, err = captured.fetch()
     if check and returncode != 0:
