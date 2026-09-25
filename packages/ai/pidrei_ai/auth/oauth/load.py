@@ -43,6 +43,12 @@ async def load_kimi_coding_oauth() -> OAuthAuth:
     return kimi_coding_oauth
 
 
+async def load_meta_oauth() -> OAuthAuth:
+    from pidrei_ai.auth.oauth.meta import meta_oauth
+
+    return meta_oauth
+
+
 async def load_xai_oauth() -> OAuthAuth:
     from pidrei_ai.auth.oauth.xai import xai_oauth
 

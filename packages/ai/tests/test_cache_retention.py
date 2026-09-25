@@ -26,8 +26,11 @@ from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     Context,
+    JsonSchemaConstrainedSampling,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
+    SystemMessage,
+    Tool,
     TranscriptContext,
     UserMessage,
 )
@@ -249,3 +252,41 @@ def test_completions_env_long_applies_retention(monkeypatch):
 
     assert params["prompt_cache_retention"] == "24h"
     assert params["prompt_cache_key"] == "sess"
+
+
+@pytest.mark.parametrize("model_id", ["gpt-oss-120b", "qwen-3.8-27b"])
+def test_completions_omits_strict_field_on_tools_for_cerebras(model_id):
+    # pi passes `{type: "json_schema"}` through an `as any`; "prefer" is the valid
+    # shape of the same request.
+    model = get_builtin_model("cerebras", model_id)
+    assert model is not None
+    context = TranscriptContext(
+        messages=[
+            SystemMessage(
+                content="test",
+                tools_added=[
+                    Tool(
+                        name="t1",
+                        description="strict tool",
+                        parameters={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+                        constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
+                    ),
+                    Tool(
+                        name="t2",
+                        description="non-strict tool",
+                        parameters={"type": "object", "properties": {"y": {"type": "string"}}, "required": ["y"]},
+                    ),
+                ],
+                timestamp=0,
+            ),
+            UserMessage(content="hello", timestamp=1),
+        ]
+    )
+
+    params = build_completions_params(model, context, OpenAICompletionsOptions(api_key="fake-key", session_id="test"))
+
+    assert model.compat is not None
+    assert model.compat.supports_strict_mode is False
+    assert params["tools"]
+    for tool in params["tools"]:
+        assert "strict" not in tool["function"]

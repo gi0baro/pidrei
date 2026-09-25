@@ -16,6 +16,7 @@ Run `/login` in interactive mode and pick a provider:
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
+- Meta (Muse subscription)
 - OpenRouter (OAuth mints an API key billed from OpenRouter credits)
 - Kimi For Coding
 
@@ -43,6 +44,12 @@ API-key path; `XAI_API_KEY` and `OPENROUTER_API_KEY` keep working either way.
 On remote/headless machines (e.g. over SSH) the browser cannot reach the
 loopback callback; paste the final redirect URL (or the authorization code)
 into the login prompt instead.
+
+### Meta (Muse subscription)
+
+`/login meta` → **Sign in with Meta** opens a device authorization flow. The
+login mints a Model API key that is re-minted automatically about once a day;
+`META_API_KEY` remains available through the API-key path.
 
 ## API keys
 
@@ -72,6 +79,7 @@ pidrei
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | Moonshot | `MOONSHOT_API_KEY` | `moonshot` |
 | Kimi For Coding | `KIMI_API_KEY` | `kimi-coding` |
+| Meta | `META_API_KEY` | `meta` |
 | Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |

@@ -1,0 +1,27 @@
+"""Port of pi's meta provider factory (packages/ai/src/providers/meta.ts)."""
+
+from pidrei_ai.api.openai_responses_lazy import openai_responses_api
+from pidrei_ai.auth.helpers import env_api_key_auth, lazy_oauth
+from pidrei_ai.auth.oauth.load import load_meta_oauth
+from pidrei_ai.auth.types import ProviderAuth
+from pidrei_ai.models_generated import MODELS
+from pidrei_ai.registry import Provider, create_provider
+
+
+def meta_provider() -> Provider:
+    return create_provider(
+        id="meta",
+        name="Meta",
+        base_url="https://api.meta.ai/v1",
+        auth=ProviderAuth(
+            api_key=env_api_key_auth("Meta Model API key", ["META_API_KEY"]),
+            oauth=lazy_oauth(
+                name="Meta (Muse subscription)",
+                is_subscription=True,
+                load=load_meta_oauth,
+                login_label="Sign in with Meta",
+            ),
+        ),
+        models=list(MODELS.get("meta", [])),
+        api=openai_responses_api(),
+    )

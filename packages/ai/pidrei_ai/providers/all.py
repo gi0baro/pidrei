@@ -30,6 +30,7 @@ from pidrei_ai.providers.google_vertex import google_vertex_provider
 from pidrei_ai.providers.groq import groq_provider
 from pidrei_ai.providers.huggingface import huggingface_provider
 from pidrei_ai.providers.kimi_coding import kimi_coding_provider
+from pidrei_ai.providers.meta import meta_provider
 from pidrei_ai.providers.minimax import minimax_provider
 from pidrei_ai.providers.minimax_cn import minimax_cn_provider
 from pidrei_ai.providers.mistral import mistral_provider
@@ -119,6 +120,7 @@ def builtin_providers() -> list[Provider]:
         groq_provider(),
         huggingface_provider(),
         kimi_coding_provider(),
+        meta_provider(),
         minimax_provider(),
         minimax_cn_provider(),
         mistral_provider(),

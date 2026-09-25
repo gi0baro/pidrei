@@ -51,6 +51,12 @@ def test_detects_explicit_ollama_prompt_too_long_errors():
     assert is_context_overflow(message, 32768) is True
 
 
+def test_detects_zai_prompt_too_long_errors():
+    # Regression for #9805.
+    message = create_error_message('400 {"code":"1261","message":"Prompt too long"}', "zai")
+    assert is_context_overflow(message, 1048576) is True
+
+
 def test_detects_together_ai_context_length_errors():
     message = create_error_message(
         "400 The input (516368 tokens) is longer than the model's context length (262144 tokens)."

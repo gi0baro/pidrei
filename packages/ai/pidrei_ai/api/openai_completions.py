@@ -233,12 +233,12 @@ def detect_compat(model: Model) -> _ResolvedCompat:
     is_cloudflare_ai_gateway = provider == "cloudflare-ai-gateway" or "gateway.ai.cloudflare.com" in base_url
     is_nvidia = provider == "nvidia" or "integrate.api.nvidia.com" in base_url
     is_ant_ling = provider == "ant-ling" or "api.ant-ling.com" in base_url
+    is_cerebras = provider == "cerebras" or "cerebras.ai" in base_url
     is_deepseek = provider == "deepseek" or "deepseek.com" in base_url.lower()
 
     is_non_standard = (
         is_nvidia
-        or provider == "cerebras"
-        or "cerebras.ai" in base_url
+        or is_cerebras
         or provider == "xai"
         or "api.x.ai" in base_url
         or is_together
@@ -308,7 +308,9 @@ def detect_compat(model: Model) -> _ResolvedCompat:
         chat_template_kwargs={},
         chat_template_args={},
         zai_tool_stream=False,
-        supports_strict_mode=not is_moonshot and not is_together and not is_cloudflare_ai_gateway and not is_nvidia,
+        supports_strict_mode=(
+            not is_moonshot and not is_together and not is_cloudflare_ai_gateway and not is_nvidia and not is_cerebras
+        ),
         supports_openai_grammar_tools=False,
         supports_thinking_token_budget=False,
         thinking_token_budget_field=None,

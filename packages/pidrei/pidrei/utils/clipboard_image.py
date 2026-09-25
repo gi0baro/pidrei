@@ -21,6 +21,7 @@ from tonio.colored import fs
 
 from .clipboard_command import run_clipboard_command
 from .image_process import convert_image_bytes_to_png
+from .wsl import is_wsl
 
 
 SUPPORTED_IMAGE_MIME_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
@@ -90,19 +91,6 @@ async def _read_clipboard_image_via_wl_paste() -> dict | object | None:
         return None
 
     return {"bytes": data, "mimeType": _base_mime_type(selected_type)}
-
-
-def _is_wsl(env=None) -> bool:
-    env = env if env is not None else os.environ
-    if env.get("WSL_DISTRO_NAME") or env.get("WSLENV"):
-        return True
-
-    try:
-        with open("/proc/version", encoding="utf-8") as f:
-            release = f.read()
-        return re.search(r"microsoft|wsl", release, re.IGNORECASE) is not None
-    except OSError:
-        return False
 
 
 async def _read_clipboard_image_via_powershell() -> dict | None:
@@ -197,7 +185,7 @@ async def read_clipboard_image(options: dict | None = None) -> dict | None:
     Every branch here is a subprocess, so the chain runs async through
     `run_command` rather than going to the pool whole. The two things in it that
     are *not* subprocesses keep their offload, which is the trap an earlier
-    partial fix fell into from the other side: `_is_wsl` reads `/proc/version`,
+    partial fix fell into from the other side: `is_wsl` reads `/proc/version`,
     and `convert_image_bytes_to_png` is CPU-bound.
     """
     options = options or {}
@@ -210,7 +198,7 @@ async def read_clipboard_image(options: dict | None = None) -> dict | None:
     image: dict | object | None = _FAILED
 
     if platform == "linux":
-        wsl = await tonio.spawn_blocking(_is_wsl, env)
+        wsl = await tonio.spawn_blocking(is_wsl, env)
         if is_wayland_session(env) or wsl:
             image = await _read_clipboard_image_via_wl_paste()
         if image is _FAILED:

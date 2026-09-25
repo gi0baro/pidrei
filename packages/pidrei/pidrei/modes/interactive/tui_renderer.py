@@ -23,12 +23,12 @@ def create_interactive_tui(
         def style_search_match(text: str) -> str:
             return theme.bg("searchMatchBg", theme.fg("searchMatchText", text))
 
-        async def copy_selection(text: str) -> bool:
+        async def copy_selection(text: str) -> bool | str:
             try:
                 await copy_to_clipboard(text)
                 return True
-            except Exception:
-                return False
+            except Exception as error:
+                return str(error)
 
         def scroll_to_end_indicator() -> str:
             shortcut = key_display_text("tui.altScreen.bottom")

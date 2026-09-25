@@ -100,6 +100,7 @@ MAX_CACHED_OFFSCREEN_KITTY_IMAGES = 16
 MAX_CACHED_OFFSCREEN_KITTY_TRANSMISSION_BYTES = 32 * 1024 * 1024
 MAX_CACHED_OFFSCREEN_KITTY_DECODED_BYTES = 64 * 1024 * 1024
 DOUBLE_CLICK_INTERVAL_S = 0.5
+COPY_ERROR_FLASH_DURATION_MS = 5000
 # Regular mode delegates double-click selection to the terminal emulator. Fullscreen owns mouse selection,
 # so mirror common terminal word-selection behavior by keeping paths and kebab-case tokens whole.
 TERMINAL_WORD_SELECTION_JOINERS = {"/", "-"}
@@ -134,8 +135,9 @@ class TuiAltScreen(TuiBase):
     application-owned text selection; ``open_url`` — callback for an OSC 8
     hyperlink activated with a primary-button click; ``copy_selection`` —
     async callback copying selected text to the system clipboard, returning
-    ``True`` on success (the caller flashes an error otherwise); when omitted,
-    the selection is copied via an OSC 52 write.
+    ``True`` on success, an error message to display on failure, or ``False``
+    for a generic error; when omitted, the selection is copied via an OSC 52
+    write.
 
     Selection points are ``{"row", "col", "scrollView"?}`` records; raw SGR
     mouse events are ``{"button", "x", "y", "release"}``; wheel events are
@@ -1416,8 +1418,12 @@ class TuiAltScreen(TuiBase):
         # without OSC 52 clipboard passthrough), so only report success when
         # it actually copies.
         if self._copy_selection is not None:
-            ok = await self._copy_selection(text)
-            self.flash("Copied!" if ok else "Copy failed")
+            result = await self._copy_selection(text)
+            ok = result is True
+            self.flash(
+                "Copied!" if ok else result if isinstance(result, str) else "Copy failed",
+                None if ok else COPY_ERROR_FLASH_DURATION_MS,
+            )
             return ok
         encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
         await self.terminal.write(f"\x1b]52;c;{encoded}\x07")

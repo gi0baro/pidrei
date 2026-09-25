@@ -73,6 +73,7 @@ type KnownProvider = Literal[
     "opencode",
     "opencode-go",
     "kimi-coding",
+    "meta",
     "cloudflare-workers-ai",
     "cloudflare-ai-gateway",
     "qwen-token-plan",

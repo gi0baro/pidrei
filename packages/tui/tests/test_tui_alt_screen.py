@@ -1330,6 +1330,41 @@ async def test_flashes_an_error_when_the_injected_copy_selection_handler_fails()
 
 
 @pytest.mark.tonio
+async def test_flashes_a_specific_error_returned_by_the_injected_copy_selection_handler():
+    # Regression test for #9618.
+    terminal = RecordingTerminal(80, 4)
+
+    async def copy_selection(_text: str) -> str:
+        return "Clipboard unavailable: install wl-clipboard"
+
+    tui = TuiAltScreen(terminal, None, None, copy_on_select=False, copy_selection=copy_selection)
+    flash_durations: list[float | None] = []
+    flash = tui.flash
+
+    def record_flash(message: str, duration_ms: float | None = None) -> None:
+        flash_durations.append(duration_ms)
+        flash(message, duration_ms)
+
+    tui.flash = record_flash
+    tui.add_child(Text("alpha\nbeta\ngamma\ndelta", 0, 0))
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;1;1M")
+    await terminal.send_input("\x1b[<32;4;2M")
+    await terminal.send_input("\x1b[<0;4;2m")
+    await terminal.wait_for_render(since)
+    assert await tui.copy_active_selection_to_clipboard() is False
+
+    assert await _wait_for_viewport_text(terminal, "Clipboard unavailable: install wl-clipboard")
+    assert all("Copy failed" not in line for line in terminal.get_viewport())
+    assert flash_durations == [5000]
+
+    await tui.stop()
+
+
+@pytest.mark.tonio
 async def test_does_not_append_whitespace_to_double_click_word_highlighting():
     terminal = RecordingTerminal(20, 1)
     tui = TuiAltScreen(terminal)

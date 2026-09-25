@@ -12,19 +12,22 @@ it is a blocking write to the terminal.
 """
 
 import base64
+import contextlib
 import os
 import sys
+import tempfile
+import uuid
 
 import tonio.colored as tonio
 
 from .clipboard_command import run_clipboard_command
+from .wsl import is_wsl
 
 
 _MAX_OSC52_ENCODED_LENGTH = 100_000
 
 
-def _is_remote_session(env=None) -> bool:
-    env = env if env is not None else os.environ
+def _is_remote_session(env) -> bool:
     return bool(env.get("SSH_CONNECTION") or env.get("SSH_CLIENT") or env.get("MOSH_CONNECTION"))
 
 
@@ -56,8 +59,45 @@ async def read_clipboard_text() -> str | None:
     return None
 
 
+def _write_private_text(path: str, text: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _unlink_quietly(path: str) -> None:
+    with contextlib.suppress(OSError):
+        # The file may not have been created.
+        os.unlink(path)
+
+
+async def _copy_via_windows_clipboard(text: str) -> bool:
+    """WSL without WSLg has no Linux display, so the Windows clipboard is written
+    through interop. PowerShell reads the text from a file because `clip.exe` and
+    PowerShell stdin decode piped bytes with the console code page, which mangles
+    non-ASCII UTF-8."""
+    tmp_file = os.path.join(tempfile.gettempdir(), f"pidrei-wsl-clip-{uuid.uuid4()}.txt")
+    try:
+        await tonio.spawn_blocking(_write_private_text, tmp_file, text)
+        result = await run_clipboard_command("wslpath", ["-w", tmp_file], timeout_ms=1000)
+        win_path = result.decode("utf-8", "replace").strip() if result is not None else ""
+        if not win_path:
+            return False
+        quoted = win_path.replace("'", "''")
+        script = f"Set-Clipboard -Value ([System.IO.File]::ReadAllText('{quoted}', [System.Text.Encoding]::UTF8))"
+        return (
+            await run_clipboard_command("powershell.exe", ["-NoProfile", "-Command", script], timeout_ms=5000)
+            is not None
+        )
+    except Exception:
+        return False
+    finally:
+        await tonio.spawn_blocking(_unlink_quietly, tmp_file)
+
+
 async def copy_to_clipboard(text: str) -> None:
     p = sys.platform
+    env = os.environ
     copied = False
     # pi tries its native writer first on non-Linux platforms; pbcopy is
     # already its command fallback there.
@@ -65,18 +105,44 @@ async def copy_to_clipboard(text: str) -> None:
     if p == "darwin":
         commands.append(("pbcopy", []))
     else:
-        if os.environ.get("TERMUX_VERSION"):
+        if env.get("TERMUX_VERSION"):
             commands.append(("termux-clipboard-set", []))
-        if os.environ.get("WAYLAND_DISPLAY"):
+        if env.get("WAYLAND_DISPLAY"):
             commands.append(("wl-copy", []))
-        if os.environ.get("DISPLAY"):
+        if env.get("DISPLAY"):
             commands += [("xclip", ["-selection", "clipboard"]), ("xsel", ["--clipboard", "--input"])]
     for command, args in commands:
         if await run_clipboard_command(command, args, input=text, timeout_ms=5000) is not None:
             copied = True
             break
-    if _is_remote_session() or not copied:
-        # Still offloaded: this is a blocking write to the terminal.
-        copied = await tonio.spawn_blocking(_emit_osc52, text) or copied
-    if not copied:
-        raise Exception("Failed to copy to clipboard")
+    # The OSC 52 writes stay offloaded: each is a blocking write to the terminal.
+    osc52_emitted = False
+    if not copied and p == "linux" and await tonio.spawn_blocking(is_wsl, env):
+        # Windows Terminal supports OSC 52; prefer it over the slower PowerShell round trip.
+        if env.get("WT_SESSION"):
+            osc52_emitted = await tonio.spawn_blocking(_emit_osc52, text)
+        copied = osc52_emitted or await _copy_via_windows_clipboard(text)
+    # OSC 52 cannot be verified, so a desktop session with a display reports the failure
+    # instead (#9618). Without a display the terminal is the only clipboard route (containers,
+    # WSL without WSLg), and remote sessions always emit it to reach the client clipboard.
+    headless = (
+        p == "linux" and not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY") and not env.get("TERMUX_VERSION")
+    )
+    oversized = False
+    if not osc52_emitted and (_is_remote_session(env) or (not copied and headless)):
+        if await tonio.spawn_blocking(_emit_osc52, text):
+            copied = True
+        else:
+            oversized = True
+    if copied:
+        return
+    if oversized:
+        raise Exception("Clipboard unavailable: text exceeds the OSC 52 size limit")
+    if p == "linux":
+        if env.get("TERMUX_VERSION"):
+            raise Exception("Clipboard unavailable: install the Termux:API app and `termux-api` package")
+        if env.get("WAYLAND_DISPLAY"):
+            raise Exception("Clipboard unavailable: install `wl-clipboard` (`wl-copy`) or check Wayland access")
+        if env.get("DISPLAY"):
+            raise Exception("Clipboard unavailable: install `xclip` or `xsel`, or check X11 access")
+    raise Exception("Clipboard unavailable")

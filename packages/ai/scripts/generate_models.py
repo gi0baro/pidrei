@@ -523,13 +523,13 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
     is_cloudflare_ai_gateway = provider == "cloudflare-ai-gateway" or "gateway.ai.cloudflare.com" in base_url
     is_nvidia = provider == "nvidia" or "integrate.api.nvidia.com" in base_url
     is_ant_ling = provider == "ant-ling" or "api.ant-ling.com" in base_url
-    is_deepseek = provider == "deepseek" or "deepseek.com" in base_url.lower()
+    is_cerebras = provider == "cerebras" or "cerebras.ai" in base_url
     is_together_reasoning_only = is_together and model_id in TOGETHER_REASONING_ONLY_MODELS
+    is_deepseek = provider == "deepseek" or "deepseek.com" in base_url.lower()
 
     is_non_standard = (
         is_nvidia
-        or provider == "cerebras"
-        or "cerebras.ai" in base_url
+        or is_cerebras
         or provider == "xai"
         or "api.x.ai" in base_url
         or is_together
@@ -594,7 +594,7 @@ def detect_openai_completions_compat(model: dict[str, Any]) -> dict[str, Any]:
         "chatTemplateKwargs": {},
         "chatTemplateArgs": {},
         "zaiToolStream": False,
-        "supportsStrictMode": not (is_moonshot or is_together or is_cloudflare_ai_gateway or is_nvidia),
+        "supportsStrictMode": not (is_moonshot or is_together or is_cloudflare_ai_gateway or is_nvidia or is_cerebras),
         "supportsOpenAIGrammarTools": False,
         "supportsMidConvoSystemMessages": False,
         "supportsMidConvoToolAdditions": False,
@@ -1500,6 +1500,26 @@ def _load_gateway_providers(
         }
         models.append(model)
         record("xai", model_id, source)
+
+    # Meta
+    for model_id, source in _models_of(catalog, "meta").items():
+        if not _tool_capable(source):
+            continue
+        models.append(
+            {
+                "id": model_id,
+                "name": source.get("name") or model_id,
+                "api": "openai-responses",
+                "provider": "meta",
+                "baseUrl": "https://api.meta.ai/v1",
+                "reasoning": source.get("reasoning") is True,
+                "input": _input(source),
+                "cost": _cost(source),
+                "contextWindow": _context(source),
+                "maxTokens": _max_tokens(source),
+            }
+        )
+        record("meta", model_id, source)
 
     # Z.AI coding plan (each regional variant has its own models.dev catalog)
     zai_payg_models = _models_of(catalog, "zai")

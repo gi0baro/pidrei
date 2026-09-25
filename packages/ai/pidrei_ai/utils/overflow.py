@@ -15,7 +15,7 @@ from pidrei_ai.types import AssistantMessage
 _OVERFLOW_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
-        r"prompt is too long",  # Anthropic token overflow
+        r"prompt (?:is )?too long",  # Anthropic and z.ai token overflow
         r"request_too_large",  # Anthropic request byte-size overflow (HTTP 413)
         r"input is too long for requested model",  # Amazon Bedrock
         r"exceeds the context window",  # OpenAI (Completions & Responses API)
