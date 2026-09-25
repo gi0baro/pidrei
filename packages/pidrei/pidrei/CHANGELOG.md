@@ -6,6 +6,132 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.87.1.0] - 2026-09-25
+
+Tracks [Pi 0.87.1](https://github.com/earendil-works/pi/releases/tag/v0.87.1).
+
+### Added
+
+- Models: Claude Opus 5.5 (Anthropic and GitHub Copilot, adaptive thinking,
+  1M context), GPT-6 Sol and GPT-6 Luna (OpenAI, OpenAI Codex and GitHub
+  Copilot) and Grok 4.7 (xAI, with long-context pricing). Grok 4.7 is the new
+  xAI default.
+- Meta provider: sign in with `/login meta` (Muse subscription, with automatic
+  Model API key refresh) or set `META_API_KEY` to use the Muse Spark models.
+- Prompt-cache warming: long tool runs, and optionally idle sessions, keep
+  valuable prompt caches alive with cost-aware refreshes (the `cacheWarming`
+  setting). Extensions can observe and override each decision through the
+  `cache_warming_decision` event.
+- Mid-conversation system prompt and tool changes are recorded in the
+  transcript, so instruction and tool updates survive resume and branch
+  navigation and keep cached prefixes on models that accept system messages
+  mid-conversation.
+- Append-only model-context edits: `session_manager.append_context_edit()`
+  omits or replaces an earlier message in future provider context without
+  touching raw history, usage or the UI. A retain-none compaction
+  (`append_compaction(summary, None, tokens_before)`) makes a summary the new
+  context root.
+- Actionable extension boundaries: `turn_end` and the new `agent_before_settle`
+  handlers can append session entries and request one continuation, without
+  changing steering or follow-up scheduling.
+- The `context_with_system` extension event runs after `context` handlers on
+  the full transcript, system messages included, and sends its result as
+  returned.
+- Per-model image input limits (`inputLimits.images.resize` in `models.json`)
+  control the resize profile for attachments, `read` and tool-result images.
+- Per-model compaction budgets through `compaction.modelOverrides`, and
+  `compat.allowedFallbackModels` to override or disable Anthropic server-side
+  fallback models.
+- `ctx.model_registry.stream()` / `stream_simple()` let extensions call models
+  through the configured providers with resolved authentication.
+- `pi.on()` returns an unsubscribe function.
+- Fireworks Messages models support native deferred tool loading.
+- Click toggling for branch summaries, compaction summaries and skill
+  invocation entries.
+- Documentation: new CLI reference, slash-command reference, CLI integration,
+  configuration, "how pidrei works" and message-type pages; the existing
+  guides were refreshed and corrected against the code.
+- Image catalog refreshed from OpenRouter.
+
+### Changed
+
+- `context` extension handlers see the conversation without system messages;
+  pidrei restores the prompt and tool declarations after they run, so
+  filtering or slicing can no longer drop them.
+- `SessionManager` is the canonical provider context for `AgentSession`:
+  assigning `session.agent.state.messages` no longer replaces future request
+  history (append through `session.session_manager` and call
+  `session.refresh_context()`, or navigate the tree instead).
+- Runs requested from `agent_settled` handlers start after every settled
+  handler has finished.
+- `user_bash` handlers fail closed: an error or an invalid result aborts the
+  command.
+- Built-in `read`, `bash`, `edit` and `write` tools prefer strict JSON-schema
+  sampling by default.
+- Unknown OpenAI-compatible Chat Completions endpoints no longer receive strict
+  tool schemas unless they advertise support.
+- Agent retry backoff is capped at `retry.maxAgentDelayMs` (60 s by default).
+- Compaction, branch-summary and retry spinners sit in the editor border with
+  the working indicator.
+- `--resume` lists sessions progressively and `--continue` finds the newest
+  session faster; exact session-ID lookup reads only session headers.
+- Bash tool durations of a minute or more show minutes and seconds (and hours).
+- Fuzzy search is faster on long texts.
+- The experimental first-time setup only asks for a theme; the analytics
+  opt-in question is gone (pidrei sends no telemetry).
+- Model catalog regenerated from models.dev.
+
+### Removed
+
+- GPT-5.4 and GPT-5.4 mini from the OpenAI Codex catalog.
+
+### Fixed
+
+- Split-turn compaction summaries are no longer refused by Claude Fable 5.1.
+- Missing or invalid `--mode` values report an error instead of being ignored.
+- Image-only prompts are no longer rejected by OpenAI-compatible providers
+  over an empty text part.
+- Abandoned error-retry and length/overflow-recovery attempts no longer stay in
+  future provider context.
+- Idle cache warming no longer rebuilds an expired cache when its timer or an
+  extension decision runs late.
+- Text files starting with `GIF` are no longer treated as images.
+- Malformed prompt-template frontmatter is reported as a resource warning.
+- Clipboard copy works in containers and under WSL without WSLg (OSC 52
+  fallback when no display is available), unverified local clipboard writes
+  are no longer reported as success, and backend failures show their error.
+- z.ai `Prompt too long` errors are recognized as context overflow, and
+  bodyless HTTP 400/413 errors count as overflow only on Cerebras.
+- Cerebras models no longer advertise strict tool schemas they reject.
+- GitHub Copilot GPT models use the Responses API.
+- Provider fixes: OpenCode, OpenRouter and Baseten session-affinity headers;
+  Codex sends the model's Off reasoning effort; Mistral Medium and
+  Mistral-hosted GLM-5.2 reasoning use `reasoning_effort`; Google/Vertex avoid
+  unsupported thinking levels; Fireworks, Vercel AI Gateway and renamed
+  Anthropic relays keep thinking replay intact; Bedrock one-hour cache writes
+  are priced correctly; Cloudflare 520 and Azure peak-load errors are retried;
+  Responses errors name the actual provider; DeepSeek V4/V4.1 keep their effort
+  metadata.
+- Anthropic OAuth requests report a current Claude Code version.
+- The assistant message's `providerThinkingLevel` is persisted, so resumed
+  sessions replay Anthropic per-turn thinking effort correctly.
+- Untrusted projects' `.pidrei/themes` are no longer loaded.
+- `PIDREI_OFFLINE` only enables offline mode for `1`, `true` or `yes`.
+- Tree navigation is rejected while compaction runs and no longer replaces
+  active progress UI; compaction cancellation races are closed.
+- Oversized trailing tool results no longer skip mid-run threshold compaction.
+- Signal-terminated shell commands are reported as failures.
+- Repeated Anthropic thinking-drop notices are suppressed and shortened.
+- Extension tools without a parameter schema are rejected at registration.
+- `before_agent_start` handlers that force a system prompt send it as the
+  leading system prompt on models with mid-conversation system messages.
+- Fullscreen: empty custom footers no longer reserve a blank row, Kitty images
+  survive later row clears in WezTerm, stale tool-image conversions are
+  ignored, and the jump-to-end label no longer shifts when the scrollbar hides.
+- Autocomplete ranks skills by bare name and handles CJK punctuation around
+  file paths; LaTeX rendering handles legacy font switches, `cases` and nested
+  display scripts.
+
 ## [0.85.1.5] - 2026-09-25
 
 ### Changed

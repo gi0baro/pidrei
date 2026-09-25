@@ -27,10 +27,10 @@
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
-      "contextWindow": 202752,
+      "contextWindow": 196608,
       "maxTokens": 131072
     },
     "MiniMaxAI/MiniMax-M3": {
@@ -61,11 +61,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 524288,
-      "maxTokens": 250000
+      "maxTokens": 250000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen2.5-7B-Instruct-Turbo": {
       "id": "Qwen/Qwen2.5-7B-Instruct-Turbo",
@@ -89,8 +99,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 32768,
       "maxTokens": 32768
@@ -123,11 +133,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.6-Plus": {
       "id": "Qwen/Qwen3.6-Plus",
@@ -156,8 +176,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 1000000,
       "maxTokens": 500000
@@ -184,8 +204,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 1000000,
       "maxTokens": 500000
@@ -217,10 +237,10 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
-      "contextWindow": 1000000,
+      "contextWindow": 1048576,
       "maxTokens": 384000
     },
     "deepseek-ai/DeepSeek-V4-Pro": {
@@ -252,8 +272,8 @@
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 512000,
       "maxTokens": 384000
@@ -285,11 +305,55 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 1048576,
       "maxTokens": 384000
+    },
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "name": "DeepSeek V4.1 Flash",
+      "api": "openai-completions",
+      "provider": "together",
+      "baseUrl": "https://api.together.ai/v1",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "minimal": null,
+        "low": null,
+        "medium": null
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "together",
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 384000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemma-4-31B-it": {
       "id": "google/gemma-4-31B-it",
@@ -319,11 +383,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 262144,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta-llama/Llama-3.3-70B-Instruct-Turbo": {
       "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -347,8 +421,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 131072,
       "maxTokens": 131072
@@ -381,11 +455,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 262144,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K2.7-Code": {
       "id": "moonshotai/Kimi-K2.7-Code",
@@ -414,8 +498,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 262144,
       "maxTokens": 131072
@@ -448,11 +532,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "nvidia/nemotron-3-ultra-550b-a55b": {
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -481,8 +575,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 512300,
       "maxTokens": 512300
@@ -518,8 +612,8 @@
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 131072,
       "maxTokens": 131072
@@ -555,8 +649,8 @@
         "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "openai",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 131072,
       "maxTokens": 131072
@@ -589,11 +683,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 524288,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-5.2": {
       "id": "zai-org/GLM-5.2",
@@ -622,10 +726,10 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
-      "contextWindow": 512000,
+      "contextWindow": 1048575,
       "maxTokens": 164000
     },
     "zai-org/GLM-5.3": {
@@ -655,8 +759,8 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 1048576,
       "maxTokens": 262144
@@ -689,11 +793,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
-        "supportsStrictMode": false,
-        "supportsLongCacheRetention": false
+        "supportsLongCacheRetention": false,
+        "supportsStrictMode": false
       },
       "contextWindow": 1048575,
-      "maxTokens": 400000
+      "maxTokens": 400000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     }
   }
 }

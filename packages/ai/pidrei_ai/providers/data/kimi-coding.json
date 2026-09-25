@@ -31,6 +31,16 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "k3-256k": {
@@ -63,11 +73,21 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "kimi-for-coding": {
       "id": "kimi-for-coding",
-      "name": "Kimi K2.7 Code",
+      "name": "kimi-for-coding",
       "api": "anthropic-messages",
       "provider": "kimi-coding",
       "baseUrl": "https://api.kimi.com/coding",
@@ -86,8 +106,27 @@
         "cacheRead": 0.19,
         "cacheWrite": 0
       },
-      "contextWindow": 262144,
-      "maxTokens": 32768
+      "contextWindow": 1048576,
+      "maxTokens": 32768,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "kimi-for-coding-highspeed": {
       "id": "kimi-for-coding-highspeed",
@@ -110,7 +149,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     }
   }
 }

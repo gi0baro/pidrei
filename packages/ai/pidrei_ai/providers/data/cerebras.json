@@ -49,8 +49,8 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 65536,
-      "maxTokens": 32768,
+      "contextWindow": 131072,
+      "maxTokens": 40960,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false
@@ -63,6 +63,16 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

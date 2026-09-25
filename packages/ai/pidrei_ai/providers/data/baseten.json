@@ -26,12 +26,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
@@ -64,12 +65,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
@@ -102,17 +104,68 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
       "maxTokens": 262144
+    },
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "name": "DeepSeek V4.1 Flash",
+      "api": "openai-completions",
+      "provider": "baseten",
+      "baseUrl": "https://inference.baseten.co/v1",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.03,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "supportsUsageInStreaming": true,
+        "maxTokensField": "max_tokens",
+        "sendSessionAffinityHeaders": true,
+        "supportsLongCacheRetention": false,
+        "thinkingFormat": "openai"
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K2.5": {
       "id": "moonshotai/Kimi-K2.5",
@@ -141,12 +194,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -156,7 +210,17 @@
         }
       },
       "contextWindow": 262000,
-      "maxTokens": 262000
+      "maxTokens": 262000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K2.6": {
       "id": "moonshotai/Kimi-K2.6",
@@ -185,12 +249,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -200,7 +265,17 @@
         }
       },
       "contextWindow": 262000,
-      "maxTokens": 262000
+      "maxTokens": 262000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K2.7-Code": {
       "id": "moonshotai/Kimi-K2.7-Code",
@@ -229,12 +304,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -244,7 +320,17 @@
         }
       },
       "contextWindow": 262000,
-      "maxTokens": 262000
+      "maxTokens": 262000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K3": {
       "id": "moonshotai/Kimi-K3",
@@ -273,17 +359,28 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": {
       "id": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
@@ -311,12 +408,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -354,12 +452,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -397,12 +496,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
@@ -436,17 +536,28 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "thinkingmachines/inkling-small": {
       "id": "thinkingmachines/inkling-small",
@@ -475,17 +586,28 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-4.7": {
       "id": "zai-org/GLM-4.7",
@@ -513,12 +635,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -556,12 +679,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -599,12 +723,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -642,12 +767,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -685,12 +811,13 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "baseten",
         "chatTemplateArgs": {
@@ -719,7 +846,8 @@
         "max": "max"
       },
       "input": [
-        "text"
+        "text",
+        "image"
       ],
       "cost": {
         "input": 1.4,
@@ -728,17 +856,28 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-5.3-Fast": {
       "id": "zai-org/GLM-5.3-Fast",
@@ -767,17 +906,28 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-5.3-Flash": {
       "id": "zai-org/GLM-5.3-Flash",
@@ -806,17 +956,28 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsStore": false,
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
         "supportsLongCacheRetention": false,
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     }
   }
 }

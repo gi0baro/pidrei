@@ -43,6 +43,18 @@
       "maxTokens": 4096,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4.1": {
@@ -66,6 +78,18 @@
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4.1-mini": {
@@ -89,6 +113,18 @@
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4.1-nano": {
@@ -112,6 +148,18 @@
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4o": {
@@ -135,6 +183,18 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4o-2024-05-13": {
@@ -158,6 +218,18 @@
       "maxTokens": 4096,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4o-2024-08-06": {
@@ -181,6 +253,18 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4o-2024-11-20": {
@@ -204,6 +288,18 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-4o-mini": {
@@ -227,6 +323,18 @@
       "maxTokens": 16384,
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5": {
@@ -260,6 +368,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5-chat-latest": {
@@ -287,6 +407,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5-mini": {
@@ -320,6 +452,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5-nano": {
@@ -353,6 +497,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5-pro": {
@@ -386,6 +542,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.1": {
@@ -419,6 +587,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.2": {
@@ -452,6 +632,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.2-chat-latest": {
@@ -485,6 +677,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.2-pro": {
@@ -518,6 +722,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.3-chat-latest": {
@@ -546,6 +762,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.3-codex": {
@@ -579,6 +807,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.3-codex-spark": {
@@ -612,6 +852,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.4": {
@@ -655,7 +907,20 @@
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
-        "supportsToolSearch": true
+        "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.4-mini": {
@@ -690,7 +955,20 @@
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
-        "supportsToolSearch": true
+        "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.4-nano": {
@@ -724,6 +1002,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.4-pro": {
@@ -767,7 +1057,20 @@
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
-        "supportsToolSearch": true
+        "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.5": {
@@ -811,7 +1114,20 @@
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
-        "supportsToolSearch": true
+        "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.5-pro": {
@@ -854,6 +1170,18 @@
       "compat": {
         "supportsStrictMode": true,
         "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.6-luna": {
@@ -898,7 +1226,20 @@
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
         "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true,
         "supportsExplicitPromptCacheMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.6-sol": {
@@ -943,7 +1284,20 @@
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
         "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true,
         "supportsExplicitPromptCacheMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-5.6-terra": {
@@ -988,7 +1342,20 @@
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
         "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true,
         "supportsExplicitPromptCacheMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-6-astra": {
@@ -1033,7 +1400,136 @@
         "supportsOpenAIGrammarTools": true,
         "supportsAdditionalTools": true,
         "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true,
         "supportsExplicitPromptCacheMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "gpt-6-luna": {
+      "id": "gpt-6-luna",
+      "name": "GPT-6 Luna",
+      "api": "openai-responses",
+      "provider": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.5,
+        "cacheRead": 0.01,
+        "cacheWrite": 0.125,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 0.2,
+            "output": 0.75,
+            "cacheRead": 0.02,
+            "cacheWrite": 0.25
+          }
+        ]
+      },
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
+        "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true,
+        "supportsExplicitPromptCacheMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "gpt-6-sol": {
+      "id": "gpt-6-sol",
+      "name": "GPT-6 Sol",
+      "api": "openai-responses",
+      "provider": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4.0,
+            "output": 15.0,
+            "cacheRead": 0.4,
+            "cacheWrite": 5.0
+          }
+        ]
+      },
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsOpenAIGrammarTools": true,
+        "supportsAdditionalTools": true,
+        "supportsToolSearch": true,
+        "supportsMidConvoSystemMessages": true,
+        "supportsExplicitPromptCacheMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gpt-realtime-2.1": {
@@ -1066,6 +1562,18 @@
       },
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "o1": {
@@ -1098,6 +1606,18 @@
       },
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "o1-pro": {
@@ -1130,6 +1650,18 @@
       },
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "o3": {
@@ -1162,6 +1694,18 @@
       },
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "o3-mini": {
@@ -1225,6 +1769,18 @@
       },
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "o4-mini": {
@@ -1257,6 +1813,18 @@
       },
       "compat": {
         "supportsStrictMode": true
+      },
+      "inputLimits": {
+        "maxRequestBytes": 536870912,
+        "images": {
+          "maxPerRequest": 1500,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

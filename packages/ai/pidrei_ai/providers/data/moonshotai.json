@@ -25,7 +25,18 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "supportsStrictMode": false,
-        "thinkingFormat": "deepseek"
+        "thinkingFormat": "deepseek",
+        "supportsMidConvoSystemMessages": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "kimi-k2.7-code": {
@@ -53,10 +64,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "supportsStrictMode": false,
-        "thinkingFormat": "deepseek"
+        "thinkingFormat": "deepseek",
+        "supportsMidConvoSystemMessages": true
       },
       "thinkingLevelMap": {
         "off": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "kimi-k2.7-code-highspeed": {
@@ -84,10 +106,21 @@
         "supportsReasoningEffort": false,
         "maxTokensField": "max_tokens",
         "supportsStrictMode": false,
-        "thinkingFormat": "deepseek"
+        "thinkingFormat": "deepseek",
+        "supportsMidConvoSystemMessages": true
       },
       "thinkingLevelMap": {
         "off": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "kimi-k3": {
@@ -108,7 +141,7 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
@@ -117,7 +150,8 @@
         "supportsStrictMode": false,
         "thinkingFormat": "openai",
         "requiresReasoningContentOnAssistantMessages": true,
-        "deferredToolsMode": "kimi"
+        "supportsMidConvoSystemMessages": true,
+        "supportsMidConvoToolAdditions": true
       },
       "thinkingLevelMap": {
         "off": null,
@@ -127,6 +161,16 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

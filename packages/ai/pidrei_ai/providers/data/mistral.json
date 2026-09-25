@@ -151,7 +151,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "magistral-medium-latest": {
       "id": "magistral-medium-latest",
@@ -266,7 +276,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-large-latest": {
       "id": "mistral-large-latest",
@@ -286,7 +306,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-medium-2505": {
       "id": "mistral-medium-2505",
@@ -306,7 +336,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-medium-2508": {
       "id": "mistral-medium-2508",
@@ -326,7 +366,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-medium-2604": {
       "id": "mistral-medium-2604",
@@ -346,7 +396,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-medium-3.5": {
       "id": "mistral-medium-3.5",
@@ -366,7 +426,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-medium-latest": {
       "id": "mistral-medium-latest",
@@ -386,7 +456,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-nemo": {
       "id": "mistral-nemo",
@@ -425,7 +505,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-small-2603": {
       "id": "mistral-small-2603",
@@ -445,7 +535,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral-small-latest": {
       "id": "mistral-small-latest",
@@ -465,7 +565,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "open-mistral-7b": {
       "id": "open-mistral-7b",
@@ -561,7 +671,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 128000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "pixtral-large-latest": {
       "id": "pixtral-large-latest",
@@ -581,7 +701,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 128000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "voxtral-small-latest": {
       "id": "voxtral-small-latest",
@@ -605,6 +735,25 @@
     "zai-glm-5-2": {
       "id": "zai-glm-5-2",
       "name": "GLM-5.2",
+      "api": "mistral-conversations",
+      "provider": "mistral",
+      "baseUrl": "https://api.mistral.ai",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.14,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072
+    },
+    "zai-glm-5-3": {
+      "id": "zai-glm-5-3",
+      "name": "GLM-5.3",
       "api": "mistral-conversations",
       "provider": "mistral",
       "baseUrl": "https://api.mistral.ai",

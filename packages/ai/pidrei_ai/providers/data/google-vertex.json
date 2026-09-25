@@ -18,7 +18,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-2.5-flash-lite": {
       "id": "gemini-2.5-flash-lite",
@@ -38,7 +48,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65535,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-2.5-pro": {
       "id": "gemini-2.5-pro",
@@ -58,7 +78,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-3-flash-preview": {
       "id": "gemini-3-flash-preview",
@@ -67,6 +97,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -79,8 +118,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-flash-lite": {
@@ -90,6 +136,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -102,8 +157,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-pro-preview": {
@@ -113,6 +175,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -125,12 +196,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "LOW",
-        "medium": null,
-        "high": "HIGH"
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-pro-preview-customtools": {
@@ -140,6 +214,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -152,12 +235,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "LOW",
-        "medium": null,
-        "high": "HIGH"
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.5-flash": {
@@ -167,6 +253,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -179,8 +274,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.5-flash-lite": {
@@ -190,6 +292,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -202,8 +313,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.6-flash": {
@@ -213,6 +331,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -225,8 +352,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.7-flash": {
@@ -236,6 +370,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -248,8 +391,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.8-flash": {
@@ -259,6 +409,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -271,8 +430,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-flash-latest": {
@@ -282,6 +448,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -294,8 +469,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-flash-lite-latest": {
@@ -305,6 +487,15 @@
       "provider": "google-vertex",
       "baseUrl": "https://{location}-aiplatform.googleapis.com",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -317,8 +508,15 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

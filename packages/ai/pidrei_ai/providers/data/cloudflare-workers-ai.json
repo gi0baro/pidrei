@@ -21,6 +21,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true,
         "requiresReasoningContentOnAssistantMessages": true,
@@ -55,6 +56,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true,
         "requiresReasoningContentOnAssistantMessages": true,
@@ -90,17 +92,28 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
       "thinkingLevelMap": {
-        "off": null,
+        "off": "none",
         "minimal": null,
-        "low": "low",
-        "medium": "medium",
+        "low": null,
+        "medium": null,
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "@cf/ibm-granite/granite-4.0-h-micro": {
@@ -124,6 +137,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       }
@@ -149,6 +163,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       }
@@ -175,8 +190,19 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "@cf/mistralai/mistral-small-3.1-24b-instruct": {
@@ -200,6 +226,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       }
@@ -226,17 +253,28 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
       "thinkingLevelMap": {
-        "off": null,
+        "off": "none",
         "minimal": null,
-        "low": "low",
-        "medium": "medium",
+        "low": null,
+        "medium": null,
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "@cf/moonshotai/kimi-k2.7-code": {
@@ -261,17 +299,19 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "@cf/nvidia/nemotron-3-120b-a12b": {
@@ -295,6 +335,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
@@ -329,6 +370,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
@@ -363,8 +405,18 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
       }
     },
     "@cf/qwen/qwen3-30b-a3b-fp8": {
@@ -388,6 +440,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       }
@@ -414,6 +467,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
@@ -425,6 +479,16 @@
         "high": null,
         "xhigh": "xhigh",
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "@cf/zai-org/glm-4.7-flash": {
@@ -448,17 +512,9 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
-      },
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
       }
     },
     "@cf/zai-org/glm-5.2": {
@@ -482,17 +538,18 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
       "thinkingLevelMap": {
-        "off": null,
+        "off": "none",
         "minimal": null,
-        "low": "low",
-        "medium": "medium",
+        "low": null,
+        "medium": null,
         "high": "high",
         "xhigh": null,
-        "max": null
+        "max": "max"
       }
     },
     "@cf/zai-org/glm-5.3": {
@@ -512,10 +569,11 @@
         "cacheWrite": 0
       },
       "contextWindow": 1310720,
-      "maxTokens": 1310720,
+      "maxTokens": 1048576,
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
       },
@@ -523,10 +581,10 @@
         "off": null,
         "minimal": null,
         "low": "low",
-        "medium": "medium",
+        "medium": null,
         "high": "high",
         "xhigh": null,
-        "max": null
+        "max": "max"
       }
     },
     "@cf/zai-org/glm-5.3-flash": {
@@ -551,8 +609,28 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
+        "supportsStrictMode": true,
         "supportsLongCacheRetention": false,
         "sendSessionAffinityHeaders": true
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

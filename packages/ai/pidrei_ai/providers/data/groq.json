@@ -17,7 +17,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "compat": {
+        "supportsStrictMode": true
+      }
     },
     "llama-3.3-70b-versatile": {
       "id": "llama-3.3-70b-versatile",
@@ -36,7 +39,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 131072,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "compat": {
+        "supportsStrictMode": true
+      }
     },
     "openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
@@ -56,6 +62,9 @@
       },
       "contextWindow": 131072,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -84,6 +93,9 @@
       },
       "contextWindow": 131072,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -112,6 +124,9 @@
       },
       "contextWindow": 131072,
       "maxTokens": 65536,
+      "compat": {
+        "supportsStrictMode": true
+      },
       "thinkingLevelMap": {
         "off": null,
         "minimal": null,
@@ -141,6 +156,9 @@
       },
       "contextWindow": 131072,
       "maxTokens": 16384,
+      "compat": {
+        "supportsStrictMode": true
+      },
       "thinkingLevelMap": {
         "off": "none",
         "minimal": null,
@@ -149,6 +167,16 @@
         "high": "default",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "qwen/qwen3.8-27b": {
@@ -170,6 +198,9 @@
       },
       "contextWindow": 131042,
       "maxTokens": 16384,
+      "compat": {
+        "supportsStrictMode": true
+      },
       "thinkingLevelMap": {
         "off": "none",
         "minimal": null,
@@ -178,6 +209,16 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

@@ -18,7 +18,19 @@
         "cacheWrite": 0
       },
       "contextWindow": 131072,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "deep-research-preview-04-2026": {
       "id": "deep-research-preview-04-2026",
@@ -38,7 +50,19 @@
         "cacheWrite": 0
       },
       "contextWindow": 131072,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-2.5-computer-use-preview-10-2025": {
       "id": "gemini-2.5-computer-use-preview-10-2025",
@@ -57,8 +81,20 @@
         "cacheRead": 0,
         "cacheWrite": 0
       },
-      "contextWindow": 131072,
-      "maxTokens": 65536
+      "contextWindow": 128000,
+      "maxTokens": 64000,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-2.5-flash": {
       "id": "gemini-2.5-flash",
@@ -78,7 +114,19 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-2.5-flash-lite": {
       "id": "gemini-2.5-flash-lite",
@@ -98,7 +146,19 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-2.5-pro": {
       "id": "gemini-2.5-pro",
@@ -118,7 +178,19 @@
         "cacheWrite": 0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "gemini-3-flash-preview": {
       "id": "gemini-3-flash-preview",
@@ -127,6 +199,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -139,8 +220,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-flash-lite": {
@@ -150,6 +240,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -162,8 +261,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-flash-lite-image": {
@@ -173,6 +281,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -184,9 +301,18 @@
         "cacheWrite": 0
       },
       "contextWindow": 65536,
-      "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "maxTokens": 4096,
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-flash-lite-preview": {
@@ -196,6 +322,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -208,8 +343,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-flash-live-preview": {
@@ -219,6 +363,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -231,8 +384,17 @@
       },
       "contextWindow": 131072,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-pro-preview": {
@@ -242,6 +404,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -254,12 +425,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "LOW",
-        "medium": null,
-        "high": "HIGH"
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.1-pro-preview-customtools": {
@@ -269,6 +445,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -281,12 +466,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "LOW",
-        "medium": null,
-        "high": "HIGH"
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.5-flash": {
@@ -296,6 +486,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -308,8 +507,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.5-flash-lite": {
@@ -319,6 +527,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -331,8 +548,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.6-flash": {
@@ -342,6 +568,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -354,8 +589,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.7-flash": {
@@ -365,6 +609,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -377,8 +630,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-3.8-flash": {
@@ -388,6 +650,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -400,8 +671,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-flash-latest": {
@@ -411,6 +691,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -423,8 +712,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemini-flash-lite-latest": {
@@ -434,6 +732,15 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
       "input": [
         "text",
         "image"
@@ -446,8 +753,17 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 65536,
-      "thinkingLevelMap": {
-        "off": null
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemma-4-26b-a4b-it": {
@@ -457,6 +773,13 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "MINIMAL",
+        "low": null,
+        "medium": null,
+        "high": "HIGH"
+      },
       "input": [
         "text",
         "image"
@@ -469,12 +792,17 @@
       },
       "contextWindow": 262144,
       "maxTokens": 32768,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "MINIMAL",
-        "low": null,
-        "medium": null,
-        "high": "HIGH"
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "gemma-4-31b-it": {
@@ -484,6 +812,13 @@
       "provider": "google",
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": "MINIMAL",
+        "low": null,
+        "medium": null,
+        "high": "HIGH"
+      },
       "input": [
         "text",
         "image"
@@ -496,12 +831,17 @@
       },
       "contextWindow": 262144,
       "maxTokens": 32768,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": "MINIMAL",
-        "low": null,
-        "medium": null,
-        "high": "HIGH"
+      "inputLimits": {
+        "maxRequestBytes": 20971520,
+        "images": {
+          "maxPerRequest": 3600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

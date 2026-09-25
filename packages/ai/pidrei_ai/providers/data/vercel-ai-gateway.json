@@ -10,6 +10,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.12,
         "output": 0.24,
@@ -29,6 +32,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.22,
         "output": 0.88,
@@ -48,6 +54,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.12,
         "output": 0.5,
@@ -67,6 +76,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.16,
         "output": 0.64,
@@ -86,10 +98,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.3,
         "output": 7.8,
-        "cacheRead": 0.26,
+        "cacheRead": 0.13,
         "cacheWrite": 1.625
       },
       "contextWindow": 240000,
@@ -106,6 +121,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 4.0,
@@ -113,7 +131,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3-coder": {
       "id": "alibaba/qwen3-coder",
@@ -125,6 +153,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.5,
         "output": 7.5,
@@ -144,6 +175,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.6,
@@ -163,6 +197,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 1.2,
@@ -182,6 +219,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.0,
         "output": 5.0,
@@ -201,6 +241,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.2,
         "output": 6.0,
@@ -220,6 +263,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.2,
         "output": 6.0,
@@ -239,6 +285,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.2,
         "output": 6.0,
@@ -258,14 +307,17 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 1.2,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 131072,
-      "maxTokens": 32768
+      "contextWindow": 262114,
+      "maxTokens": 262114
     },
     "alibaba/qwen3-next-80b-a3b-thinking": {
       "id": "alibaba/qwen3-next-80b-a3b-thinking",
@@ -277,14 +329,17 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 1.2,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 131072,
-      "maxTokens": 32768
+      "contextWindow": 262144,
+      "maxTokens": 262144
     },
     "alibaba/qwen3-vl-235b-a22b-instruct": {
       "id": "alibaba/qwen3-vl-235b-a22b-instruct",
@@ -297,6 +352,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 1.6,
@@ -304,7 +362,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 129024
+      "maxTokens": 129024,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3-vl-instruct": {
       "id": "alibaba/qwen3-vl-instruct",
@@ -317,6 +385,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 1.6,
@@ -324,7 +395,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 129024
+      "maxTokens": 129024,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3-vl-thinking": {
       "id": "alibaba/qwen3-vl-thinking",
@@ -337,6 +418,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 4.0,
@@ -344,7 +428,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.5-flash": {
       "id": "alibaba/qwen3.5-flash",
@@ -357,14 +451,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.4,
-        "cacheRead": 0.001,
+        "cacheRead": 0.01,
         "cacheWrite": 0.125
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.5-plus": {
       "id": "alibaba/qwen3.5-plus",
@@ -377,6 +484,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 2.4,
@@ -384,7 +494,17 @@
         "cacheWrite": 0.5
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.6-27b": {
       "id": "alibaba/qwen3.6-27b",
@@ -397,6 +517,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 3.6,
@@ -404,7 +527,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.6-plus": {
       "id": "alibaba/qwen3.6-plus",
@@ -417,14 +550,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 3.0,
-        "cacheRead": 0.1,
+        "cacheRead": 0.05,
         "cacheWrite": 0.625
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.7-flash": {
       "id": "alibaba/qwen3.7-flash",
@@ -437,6 +583,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.03,
         "output": 0.13,
@@ -444,7 +593,17 @@
         "cacheWrite": 0.038
       },
       "contextWindow": 991000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.7-max": {
       "id": "alibaba/qwen3.7-max",
@@ -456,6 +615,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.5,
         "output": 7.5,
@@ -476,6 +638,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 1.6,
@@ -483,7 +648,17 @@
         "cacheWrite": 0.5
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.8-2.4t-a95b": {
       "id": "alibaba/qwen3.8-2.4t-a95b",
@@ -496,6 +671,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 6.0,
@@ -503,7 +681,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.8-27b": {
       "id": "alibaba/qwen3.8-27b",
@@ -516,6 +704,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 3.0,
@@ -523,7 +714,17 @@
         "cacheWrite": 0.625
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.8-flash": {
       "id": "alibaba/qwen3.8-flash",
@@ -536,34 +737,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.16,
+        "input": 0.15,
         "output": 0.47,
         "cacheRead": 0.016,
         "cacheWrite": 0.2
       },
       "contextWindow": 991000,
-      "maxTokens": 128000
-    },
-    "alibaba/qwen3.8-flash-next": {
-      "id": "alibaba/qwen3.8-flash-next",
-      "name": "Qwen 3.8 Flash Next",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.12,
-        "output": 0.4,
-        "cacheRead": 0.01,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.8-max": {
       "id": "alibaba/qwen3.8-max",
@@ -576,14 +770,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 6.0,
         "cacheRead": 0.25,
-        "cacheWrite": 2.5
+        "cacheWrite": 0.0
       },
-      "contextWindow": 1000000,
-      "maxTokens": 128000
+      "contextWindow": 262144,
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "alibaba/qwen3.8-max-0902": {
       "id": "alibaba/qwen3.8-max-0902",
@@ -596,6 +803,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 6.0,
@@ -603,7 +813,83 @@
         "cacheWrite": 2.5
       },
       "contextWindow": 991000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "alibaba/qwen3.8-max-prime": {
+      "id": "alibaba/qwen3.8-max-prime",
+      "name": "Qwen 3.8 Max Prime",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 4.0,
+        "output": 12.0,
+        "cacheRead": 0.5,
+        "cacheWrite": 5.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "alibaba/qwen3.8-omni-flash": {
+      "id": "alibaba/qwen3.8-omni-flash",
+      "name": "Qwen 3.8 Omni Flash",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.15,
+        "output": 0.47,
+        "cacheRead": 0.016,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "amazon/nova-2-lite": {
       "id": "amazon/nova-2-lite",
@@ -616,6 +902,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 2.5,
@@ -623,7 +912,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "amazon/nova-lite": {
       "id": "amazon/nova-lite",
@@ -636,6 +935,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.06,
         "output": 0.24,
@@ -643,7 +945,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 300000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "amazon/nova-micro": {
       "id": "amazon/nova-micro",
@@ -655,6 +967,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.035,
         "output": 0.14,
@@ -675,6 +990,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.8,
         "output": 3.2,
@@ -682,7 +1000,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 300000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-3-haiku": {
       "id": "anthropic/claude-3-haiku",
@@ -695,6 +1023,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 1.25,
@@ -702,7 +1033,17 @@
         "cacheWrite": 0.3
       },
       "contextWindow": 200000,
-      "maxTokens": 4096
+      "maxTokens": 4096,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-fable-5": {
       "id": "anthropic/claude-fable-5",
@@ -715,6 +1056,10 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true
+      },
       "cost": {
         "input": 10.0,
         "output": 50.0,
@@ -728,8 +1073,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-fable-5.1": {
@@ -743,6 +1095,10 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true
+      },
       "cost": {
         "input": 10.0,
         "output": 50.0,
@@ -756,8 +1112,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-haiku-4.5": {
@@ -771,6 +1134,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.0,
         "output": 5.0,
@@ -778,7 +1144,17 @@
         "cacheWrite": 1.25
       },
       "contextWindow": 200000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-opus-4": {
       "id": "anthropic/claude-opus-4",
@@ -791,6 +1167,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 15.0,
         "output": 75.0,
@@ -798,7 +1177,17 @@
         "cacheWrite": 18.75
       },
       "contextWindow": 200000,
-      "maxTokens": 8192
+      "maxTokens": 32000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-opus-4.5": {
       "id": "anthropic/claude-opus-4.5",
@@ -811,6 +1200,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 5.0,
         "output": 25.0,
@@ -818,7 +1210,17 @@
         "cacheWrite": 6.25
       },
       "contextWindow": 200000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-opus-4.6": {
       "id": "anthropic/claude-opus-4.6",
@@ -831,6 +1233,10 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true
+      },
       "cost": {
         "input": 5.0,
         "output": 25.0,
@@ -842,8 +1248,15 @@
       "thinkingLevelMap": {
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-opus-4.7": {
@@ -857,6 +1270,11 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
       "cost": {
         "input": 5.0,
         "output": 25.0,
@@ -869,9 +1287,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-opus-4.8": {
@@ -885,6 +1309,11 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
       "cost": {
         "input": 5.0,
         "output": 25.0,
@@ -897,9 +1326,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-opus-4.8-fast": {
@@ -913,6 +1348,11 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
       "cost": {
         "input": 10.0,
         "output": 50.0,
@@ -925,9 +1365,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-opus-5": {
@@ -941,6 +1387,11 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
       "cost": {
         "input": 5.0,
         "output": 25.0,
@@ -953,9 +1404,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true,
-        "supportsTemperature": false
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-opus-5-fast": {
@@ -969,6 +1426,11 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
       "cost": {
         "input": 10.0,
         "output": 50.0,
@@ -981,9 +1443,93 @@
         "xhigh": "xhigh",
         "max": "max"
       },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "anthropic/claude-opus-5.5": {
+      "id": "anthropic/claude-opus-5.5",
+      "name": "Claude Opus 5.5",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
       "compat": {
+        "allowEmptySignature": true,
         "forceAdaptiveThinking": true,
         "supportsTemperature": false
+      },
+      "cost": {
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 5.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "anthropic/claude-opus-5.5-fast": {
+      "id": "anthropic/claude-opus-5.5-fast",
+      "name": "Claude Opus 5.5 (Fast)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
+      "cost": {
+        "input": 8.0,
+        "output": 40.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 10.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-sonnet-4": {
@@ -997,6 +1543,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.0,
         "output": 15.0,
@@ -1004,7 +1553,17 @@
         "cacheWrite": 3.75
       },
       "contextWindow": 1000000,
-      "maxTokens": 8192
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-sonnet-4.5": {
       "id": "anthropic/claude-sonnet-4.5",
@@ -1017,6 +1576,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.0,
         "output": 15.0,
@@ -1024,7 +1586,17 @@
         "cacheWrite": 3.75
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "anthropic/claude-sonnet-4.6": {
       "id": "anthropic/claude-sonnet-4.6",
@@ -1037,6 +1609,10 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true
+      },
       "cost": {
         "input": 3.0,
         "output": 15.0,
@@ -1048,8 +1624,15 @@
       "thinkingLevelMap": {
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "anthropic/claude-sonnet-5": {
@@ -1063,6 +1646,10 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true
+      },
       "cost": {
         "input": 2.0,
         "output": 10.0,
@@ -1075,8 +1662,15 @@
         "xhigh": "xhigh",
         "max": "max"
       },
-      "compat": {
-        "forceAdaptiveThinking": true
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "arcee-ai/trinity-large-thinking": {
@@ -1089,6 +1683,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 0.9,
@@ -1109,6 +1706,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 2.0,
@@ -1116,7 +1716,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "bytedance/seed-1.8": {
       "id": "bytedance/seed-1.8",
@@ -1129,6 +1739,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 2.0,
@@ -1136,7 +1749,50 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "bytedance/seed-2.1-turbo": {
+      "id": "bytedance/seed-2.1-turbo",
+      "name": "Seed 2.1 Turbo",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.5,
+        "output": 2.5,
+        "cacheRead": 0.1,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "cohere/command-a": {
       "id": "cohere/command-a",
@@ -1148,6 +1804,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.5,
         "output": 10.0,
@@ -1167,6 +1826,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.35,
         "output": 5.4,
@@ -1186,6 +1848,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 0.95,
@@ -1205,6 +1870,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.27,
         "output": 1.0,
@@ -1224,10 +1892,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.28,
-        "output": 0.42,
-        "cacheRead": 0.028,
+        "input": 0.62,
+        "output": 1.85,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
@@ -1243,6 +1914,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.62,
         "output": 1.85,
@@ -1262,6 +1936,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.13,
         "output": 0.26,
@@ -1281,6 +1958,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.076,
         "output": 0.153,
@@ -1301,14 +1981,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.22,
-        "output": 0.66,
-        "cacheRead": 0.007,
+        "input": 0.2156,
+        "output": 0.6468,
+        "cacheRead": 0.0068,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "deepseek/deepseek-v4-pro": {
       "id": "deepseek/deepseek-v4-pro",
@@ -1320,6 +2013,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.66,
         "output": 1.98,
@@ -1339,6 +2035,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.66,
         "output": 1.98,
@@ -1347,6 +2046,72 @@
       },
       "contextWindow": 1000000,
       "maxTokens": 384000
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.007,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "fireworks/ember-1": {
+      "id": "fireworks/ember-1",
+      "name": "Ember-1",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cacheRead": 0.3,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-2.5-flash": {
       "id": "google/gemini-2.5-flash",
@@ -1359,6 +2124,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 2.5,
@@ -1366,7 +2134,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65535,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-2.5-flash-lite": {
       "id": "google/gemini-2.5-flash-lite",
@@ -1379,6 +2157,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.4,
@@ -1386,7 +2167,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65535,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-2.5-pro": {
       "id": "google/gemini-2.5-pro",
@@ -1399,6 +2190,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 10.0,
@@ -1406,7 +2200,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 65536
+      "maxTokens": 65535,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3-flash": {
       "id": "google/gemini-3-flash",
@@ -1419,6 +2223,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 3.0,
@@ -1426,7 +2233,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65000
+      "maxTokens": 65000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.1-flash-lite": {
       "id": "google/gemini-3.1-flash-lite",
@@ -1439,6 +2256,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 1.5,
@@ -1446,7 +2266,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65000
+      "maxTokens": 65000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.1-pro-preview": {
       "id": "google/gemini-3.1-pro-preview",
@@ -1459,6 +2289,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 12.0,
@@ -1466,7 +2299,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.5-flash": {
       "id": "google/gemini-3.5-flash",
@@ -1479,6 +2322,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.5,
         "output": 9.0,
@@ -1486,7 +2332,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.5-flash-lite": {
       "id": "google/gemini-3.5-flash-lite",
@@ -1499,6 +2355,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 2.5,
@@ -1506,7 +2365,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65000
+      "maxTokens": 65000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.6-flash": {
       "id": "google/gemini-3.6-flash",
@@ -1519,6 +2388,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.75,
         "output": 3.75,
@@ -1526,7 +2398,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.7-flash": {
       "id": "google/gemini-3.7-flash",
@@ -1539,6 +2421,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.75,
         "output": 3.75,
@@ -1546,7 +2431,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65535,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemini-3.8-flash": {
       "id": "google/gemini-3.8-flash",
@@ -1559,6 +2454,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.75,
         "output": 3.75,
@@ -1566,7 +2464,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65535,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemma-4-26b-a4b-it": {
       "id": "google/gemma-4-26b-a4b-it",
@@ -1579,6 +2487,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.6,
@@ -1586,7 +2497,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemma-4-31b-it": {
       "id": "google/gemma-4-31b-it",
@@ -1599,6 +2520,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.14,
         "output": 0.4,
@@ -1606,7 +2530,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "inception/mercury-2": {
       "id": "inception/mercury-2",
@@ -1618,6 +2552,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 0.75,
@@ -1626,6 +2563,28 @@
       },
       "contextWindow": 128000,
       "maxTokens": 128000
+    },
+    "inception/mercury-2.5": {
+      "id": "inception/mercury-2.5",
+      "name": "Mercury 2.5",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.04,
+        "output": 0.15,
+        "cacheRead": 0.004,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 260000,
+      "maxTokens": 65536
     },
     "inception/mercury-coder-small": {
       "id": "inception/mercury-coder-small",
@@ -1637,6 +2596,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 1.0,
@@ -1656,10 +2618,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.06,
-        "output": 0.18,
-        "cacheRead": 0.012,
+        "input": 0.021,
+        "output": 0.063,
+        "cacheRead": 0.0042,
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
@@ -1675,6 +2640,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.0,
         "output": 0.0,
@@ -1694,6 +2662,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.0,
         "output": 0.0,
@@ -1713,6 +2684,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.0,
         "output": 0.0,
@@ -1732,6 +2706,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.0,
         "output": 0.0,
@@ -1740,6 +2717,39 @@
       },
       "contextWindow": 256000,
       "maxTokens": 32000
+    },
+    "inclusionai/ling-3.0-flash-vl": {
+      "id": "inclusionai/ling-3.0-flash-vl",
+      "name": "Ling 3.0 Flash VL",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.075,
+        "output": 0.22,
+        "cacheRead": 0.015,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 256000,
+      "maxTokens": 32000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "interfaze/interfaze-beta": {
       "id": "interfaze/interfaze-beta",
@@ -1752,6 +2762,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.5,
         "output": 3.5,
@@ -1759,85 +2772,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 32000
-    },
-    "kwaipilot/kat-coder-air-v2.5": {
-      "id": "kwaipilot/kat-coder-air-v2.5",
-      "name": "Kat Coder Air V2.5",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.15,
-        "output": 0.6,
-        "cacheRead": 0.03,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 80000
-    },
-    "kwaipilot/kat-coder-pro-v1": {
-      "id": "kwaipilot/kat-coder-pro-v1",
-      "name": "KAT-Coder-Pro V1",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": false,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.3,
-        "output": 1.2,
-        "cacheRead": 0.06,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 32000
-    },
-    "kwaipilot/kat-coder-pro-v2": {
-      "id": "kwaipilot/kat-coder-pro-v2",
-      "name": "Kat Coder Pro V2",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.3,
-        "output": 1.2,
-        "cacheRead": 0.06,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 256000
-    },
-    "kwaipilot/kat-coder-pro-v2.5": {
-      "id": "kwaipilot/kat-coder-pro-v2.5",
-      "name": "Kat Coder Pro V2.5",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.74,
-        "output": 2.96,
-        "cacheRead": 0.15,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 80000
+      "maxTokens": 32000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/llama-3.1-70b": {
       "id": "meta/llama-3.1-70b",
@@ -1849,6 +2794,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.72,
         "output": 0.72,
@@ -1868,6 +2816,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.22,
         "output": 0.22,
@@ -1887,6 +2838,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.72,
         "output": 0.72,
@@ -1907,6 +2861,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.24,
         "output": 0.97,
@@ -1914,7 +2871,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/llama-4-scout": {
       "id": "meta/llama-4-scout",
@@ -1927,6 +2894,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.17,
         "output": 0.66,
@@ -1934,7 +2904,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/muse-glimmer-30b": {
       "id": "meta/muse-glimmer-30b",
@@ -1947,6 +2927,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.35,
         "output": 1.5,
@@ -1954,7 +2937,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/muse-spark-1.1": {
       "id": "meta/muse-spark-1.1",
@@ -1967,6 +2960,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 4.25,
@@ -1974,7 +2970,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/muse-spark-1.2": {
       "id": "meta/muse-spark-1.2",
@@ -1987,6 +2993,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 4.25,
@@ -1994,7 +3003,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/muse-spark-1.2-contributor": {
       "id": "meta/muse-spark-1.2-contributor",
@@ -2007,6 +3026,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.2,
@@ -2014,7 +3036,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/muse-spark-1.3": {
       "id": "meta/muse-spark-1.3",
@@ -2027,6 +3059,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 4.25,
@@ -2034,7 +3069,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta/muse-spark-1.3-contributor": {
       "id": "meta/muse-spark-1.3-contributor",
@@ -2047,6 +3092,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.2,
@@ -2054,7 +3102,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "minimax/minimax-m2": {
       "id": "minimax/minimax-m2",
@@ -2066,6 +3124,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 1.2,
@@ -2085,6 +3146,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 1.2,
@@ -2104,6 +3168,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 2.4,
@@ -2123,6 +3190,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 1.2,
@@ -2142,6 +3212,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 2.4,
@@ -2161,6 +3234,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 1.2,
@@ -2180,6 +3256,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 2.4,
@@ -2200,6 +3279,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 1.2,
@@ -2207,7 +3289,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 512000,
-      "maxTokens": 512000
+      "maxTokens": 512000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral/codestral": {
       "id": "mistral/codestral",
@@ -2219,53 +3311,17 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.3,
         "output": 0.9,
-        "cacheRead": 0.0,
+        "cacheRead": 0.03,
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
       "maxTokens": 4000
-    },
-    "mistral/devstral-2": {
-      "id": "mistral/devstral-2",
-      "name": "Devstral 2",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": false,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.4,
-        "output": 2.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 256000
-    },
-    "mistral/devstral-small-2": {
-      "id": "mistral/devstral-small-2",
-      "name": "Devstral Small 2",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": false,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.1,
-        "output": 0.3,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 256000
     },
     "mistral/ministral-14b": {
       "id": "mistral/ministral-14b",
@@ -2278,14 +3334,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 0.2,
-        "cacheRead": 0.0,
+        "cacheRead": 0.02,
         "cacheWrite": 0.0
       },
-      "contextWindow": 256000,
-      "maxTokens": 256000
+      "contextWindow": 262144,
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral/ministral-3b": {
       "id": "mistral/ministral-3b",
@@ -2298,14 +3367,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.1,
-        "cacheRead": 0.0,
+        "cacheRead": 0.01,
         "cacheWrite": 0.0
       },
-      "contextWindow": 128000,
-      "maxTokens": 4000
+      "contextWindow": 131072,
+      "maxTokens": 4000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral/ministral-8b": {
       "id": "mistral/ministral-8b",
@@ -2318,14 +3400,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.15,
-        "cacheRead": 0.0,
+        "cacheRead": 0.015,
         "cacheWrite": 0.0
       },
-      "contextWindow": 128000,
-      "maxTokens": 4000
+      "contextWindow": 262144,
+      "maxTokens": 4000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral/mistral-large-3": {
       "id": "mistral/mistral-large-3",
@@ -2338,34 +3433,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 1.5,
-        "cacheRead": 0.0,
+        "cacheRead": 0.05,
         "cacheWrite": 0.0
       },
-      "contextWindow": 256000,
-      "maxTokens": 256000
-    },
-    "mistral/mistral-medium": {
-      "id": "mistral/mistral-medium",
-      "name": "Mistral Medium 3.1",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": false,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.4,
-        "output": 2.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 128000,
-      "maxTokens": 64000
+      "contextWindow": 262144,
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral/mistral-medium-3.5": {
       "id": "mistral/mistral-medium-3.5",
@@ -2378,14 +3466,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.5,
         "output": 7.5,
-        "cacheRead": 0.0,
+        "cacheRead": 0.15,
         "cacheWrite": 0.0
       },
-      "contextWindow": 256000,
-      "maxTokens": 256000
+      "contextWindow": 262144,
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "mistral/mistral-nemo": {
       "id": "mistral/mistral-nemo",
@@ -2395,17 +3496,19 @@
       "provider": "vercel-ai-gateway",
       "reasoning": false,
       "input": [
-        "text",
-        "image"
+        "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.15,
-        "output": 0.15,
+        "input": 0.04,
+        "output": 0.17,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 128000,
-      "maxTokens": 128000
+      "contextWindow": 60288,
+      "maxTokens": 16000
     },
     "mistral/mistral-small": {
       "id": "mistral/mistral-small",
@@ -2418,33 +3521,48 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.1,
-        "output": 0.3,
-        "cacheRead": 0.0,
+        "input": 0.15,
+        "output": 0.6,
+        "cacheRead": 0.015,
         "cacheWrite": 0.0
       },
-      "contextWindow": 32000,
-      "maxTokens": 4000
+      "contextWindow": 262144,
+      "maxTokens": 4000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
-    "mistral/pixtral-12b": {
-      "id": "mistral/pixtral-12b",
-      "name": "Pixtral 12B 2409",
+    "mixedbread/toast-1": {
+      "id": "mixedbread/toast-1",
+      "name": "Toast 1",
       "api": "anthropic-messages",
       "baseUrl": "https://ai-gateway.vercel.sh",
       "provider": "vercel-ai-gateway",
       "reasoning": false,
       "input": [
-        "text",
-        "image"
+        "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.15,
-        "output": 0.15,
-        "cacheRead": 0.0,
+        "input": 0.3,
+        "output": 0.72,
+        "cacheRead": 0.036,
         "cacheWrite": 0.0
       },
-      "contextWindow": 128000,
+      "contextWindow": 131000,
       "maxTokens": 4000
     },
     "moonshotai/kimi-k2": {
@@ -2457,6 +3575,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.57,
         "output": 2.3,
@@ -2476,6 +3597,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.47,
         "output": 2.0,
@@ -2496,14 +3620,27 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 3.0,
-        "cacheRead": 0.1,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 262114,
-      "maxTokens": 262114
+      "contextWindow": 256000,
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/kimi-k2.6": {
       "id": "moonshotai/kimi-k2.6",
@@ -2516,6 +3653,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.95,
         "output": 4.0,
@@ -2523,7 +3663,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262000,
-      "maxTokens": 262000
+      "maxTokens": 262000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/kimi-k2.7-code": {
       "id": "moonshotai/kimi-k2.7-code",
@@ -2536,6 +3686,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.95,
         "output": 4.0,
@@ -2543,7 +3696,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/kimi-k2.7-code-highspeed": {
       "id": "moonshotai/kimi-k2.7-code-highspeed",
@@ -2556,6 +3719,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.9,
         "output": 8.0,
@@ -2563,7 +3729,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/kimi-k3": {
       "id": "moonshotai/kimi-k3",
@@ -2576,6 +3752,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.0,
         "output": 15.0,
@@ -2583,7 +3762,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/kimi-k3-fast": {
       "id": "moonshotai/kimi-k3-fast",
@@ -2596,6 +3785,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 4.5,
         "output": 22.5,
@@ -2603,7 +3795,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "nvidia/nemotron-3-nano-30b-a3b": {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
@@ -2615,10 +3817,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.05,
-        "output": 0.24,
-        "cacheRead": 0.0,
+        "output": 0.2,
+        "cacheRead": 0.025,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -2634,6 +3839,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.65,
@@ -2653,6 +3861,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 2.4,
@@ -2672,6 +3883,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.05,
         "output": 0.2,
@@ -2692,6 +3906,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 0.6,
@@ -2699,7 +3916,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "nvidia/nemotron-nano-9b-v2": {
       "id": "nvidia/nemotron-nano-9b-v2",
@@ -2711,6 +3938,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.06,
         "output": 0.23,
@@ -2730,6 +3960,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 1.5,
@@ -2750,6 +3983,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 10.0,
         "output": 30.0,
@@ -2757,7 +3993,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 4096
+      "maxTokens": 4096,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4.1": {
       "id": "openai/gpt-4.1",
@@ -2770,6 +4016,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 8.0,
@@ -2777,7 +4026,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1047576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4.1-fast": {
       "id": "openai/gpt-4.1-fast",
@@ -2790,6 +4049,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.5,
         "output": 14.0,
@@ -2797,7 +4059,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1047576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4.1-mini": {
       "id": "openai/gpt-4.1-mini",
@@ -2810,6 +4082,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 1.6,
@@ -2817,7 +4092,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1047576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4.1-mini-fast": {
       "id": "openai/gpt-4.1-mini-fast",
@@ -2830,6 +4115,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.7,
         "output": 2.8,
@@ -2837,7 +4125,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1047576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4.1-nano": {
       "id": "openai/gpt-4.1-nano",
@@ -2850,6 +4148,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.4,
@@ -2857,7 +4158,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1047576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4.1-nano-fast": {
       "id": "openai/gpt-4.1-nano-fast",
@@ -2870,6 +4181,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 0.8,
@@ -2877,7 +4191,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1047576,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4o": {
       "id": "openai/gpt-4o",
@@ -2890,6 +4214,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.5,
         "output": 10.0,
@@ -2897,7 +4224,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4o-fast": {
       "id": "openai/gpt-4o-fast",
@@ -2910,6 +4247,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 4.25,
         "output": 17.0,
@@ -2917,7 +4257,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4o-mini": {
       "id": "openai/gpt-4o-mini",
@@ -2930,6 +4280,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.6,
@@ -2937,7 +4290,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-4o-mini-fast": {
       "id": "openai/gpt-4o-mini-fast",
@@ -2950,6 +4313,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 1.0,
@@ -2957,7 +4323,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5": {
       "id": "openai/gpt-5",
@@ -2970,6 +4346,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 10.0,
@@ -2977,7 +4356,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5-codex": {
       "id": "openai/gpt-5-codex",
@@ -2990,6 +4379,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 10.0,
@@ -2997,7 +4389,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5-fast": {
       "id": "openai/gpt-5-fast",
@@ -3010,6 +4412,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.5,
         "output": 20.0,
@@ -3017,7 +4422,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5-mini": {
       "id": "openai/gpt-5-mini",
@@ -3030,6 +4445,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 2.0,
@@ -3037,7 +4455,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5-mini-fast": {
       "id": "openai/gpt-5-mini-fast",
@@ -3050,6 +4478,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.45,
         "output": 3.6,
@@ -3057,7 +4488,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5-nano": {
       "id": "openai/gpt-5-nano",
@@ -3070,6 +4511,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.05,
         "output": 0.4,
@@ -3077,7 +4521,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5-pro": {
       "id": "openai/gpt-5-pro",
@@ -3090,6 +4544,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 15.0,
         "output": 120.0,
@@ -3097,7 +4554,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 272000
+      "maxTokens": 272000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5.1-codex": {
       "id": "openai/gpt-5.1-codex",
@@ -3110,6 +4577,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 10.0,
@@ -3117,7 +4587,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5.1-codex-max": {
       "id": "openai/gpt-5.1-codex-max",
@@ -3130,6 +4610,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 10.0,
@@ -3137,7 +4620,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5.1-codex-mini": {
       "id": "openai/gpt-5.1-codex-mini",
@@ -3150,6 +4643,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.25,
         "output": 2.0,
@@ -3157,7 +4653,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5.1-thinking": {
       "id": "openai/gpt-5.1-thinking",
@@ -3170,6 +4676,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 10.0,
@@ -3177,7 +4686,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5.1-thinking-fast": {
       "id": "openai/gpt-5.1-thinking-fast",
@@ -3190,6 +4709,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.5,
         "output": 20.0,
@@ -3197,7 +4719,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 400000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/gpt-5.2": {
       "id": "openai/gpt-5.2",
@@ -3210,6 +4742,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.75,
         "output": 14.0,
@@ -3220,6 +4755,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.2-codex": {
@@ -3233,6 +4778,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.75,
         "output": 14.0,
@@ -3243,6 +4791,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.2-fast": {
@@ -3256,6 +4814,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.5,
         "output": 28.0,
@@ -3266,6 +4827,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.2-pro": {
@@ -3279,6 +4850,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 21.0,
         "output": 168.0,
@@ -3289,6 +4863,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.3-codex": {
@@ -3302,6 +4886,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.75,
         "output": 14.0,
@@ -3312,6 +4899,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.3-codex-fast": {
@@ -3325,6 +4922,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.5,
         "output": 28.0,
@@ -3335,6 +4935,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.4": {
@@ -3348,6 +4958,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.5,
         "output": 15.0,
@@ -3358,6 +4971,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.4-fast": {
@@ -3371,6 +4994,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 5.0,
         "output": 30.0,
@@ -3381,6 +5007,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.4-mini": {
@@ -3394,6 +5030,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.75,
         "output": 4.5,
@@ -3404,6 +5043,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.4-mini-fast": {
@@ -3417,6 +5066,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.5,
         "output": 9.0,
@@ -3427,6 +5079,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.4-nano": {
@@ -3440,6 +5102,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 1.25,
@@ -3450,6 +5115,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.4-pro": {
@@ -3463,6 +5138,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 30.0,
         "output": 180.0,
@@ -3473,6 +5151,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.5": {
@@ -3486,6 +5174,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 5.0,
         "output": 30.0,
@@ -3496,6 +5187,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.5-fast": {
@@ -3509,6 +5210,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 12.5,
         "output": 75.0,
@@ -3519,6 +5223,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.5-pro": {
@@ -3532,6 +5246,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 30.0,
         "output": 180.0,
@@ -3545,6 +5262,16 @@
         "off": null,
         "minimal": null,
         "low": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.6-luna": {
@@ -3558,6 +5285,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 1.2,
@@ -3568,6 +5298,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.6-luna-fast": {
@@ -3581,6 +5321,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.4,
         "output": 2.4,
@@ -3591,6 +5334,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.6-sol": {
@@ -3604,16 +5357,29 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 2.0,
-        "output": 10.0,
-        "cacheRead": 0.2,
-        "cacheWrite": 2.5
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 5.0
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.6-sol-fast": {
@@ -3627,16 +5393,29 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 4.0,
-        "output": 20.0,
-        "cacheRead": 0.4,
-        "cacheWrite": 5.0
+        "input": 8.0,
+        "output": 40.0,
+        "cacheRead": 0.8,
+        "cacheWrite": 10.0
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.6-terra": {
@@ -3650,6 +5429,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 12.0,
@@ -3660,6 +5442,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-5.6-terra-fast": {
@@ -3673,6 +5465,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 4.0,
         "output": 24.0,
@@ -3683,6 +5478,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-6-astra": {
@@ -3696,6 +5501,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 10.0,
         "output": 50.0,
@@ -3706,6 +5514,16 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-6-astra-fast": {
@@ -3719,6 +5537,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 20.0,
         "output": 100.0,
@@ -3729,6 +5550,160 @@
       "maxTokens": 128000,
       "thinkingLevelMap": {
         "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "openai/gpt-6-luna": {
+      "id": "openai/gpt-6-luna",
+      "name": "GPT-6 Luna",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.1,
+        "output": 0.5,
+        "cacheRead": 0.01,
+        "cacheWrite": 0.125
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "openai/gpt-6-luna-fast": {
+      "id": "openai/gpt-6-luna-fast",
+      "name": "GPT-6 Luna (Fast)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.2,
+        "output": 1.0,
+        "cacheRead": 0.02,
+        "cacheWrite": 0.25
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "openai/gpt-6-sol": {
+      "id": "openai/gpt-6-sol",
+      "name": "GPT-6 Sol",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "openai/gpt-6-sol-fast": {
+      "id": "openai/gpt-6-sol-fast",
+      "name": "GPT-6 Sol (Fast)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 5.0
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-oss-120b": {
@@ -3741,10 +5716,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.5,
-        "cacheRead": 0.0,
+        "cacheRead": 0.1,
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
@@ -3760,9 +5738,12 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.05,
-        "output": 0.2,
+        "input": 0.03,
+        "output": 0.14,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
@@ -3779,6 +5760,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.6,
@@ -3798,6 +5782,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.07,
         "output": 0.2,
@@ -3818,6 +5805,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 15.0,
         "output": 60.0,
@@ -3825,7 +5815,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/o3": {
       "id": "openai/o3",
@@ -3838,6 +5838,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 8.0,
@@ -3845,7 +5848,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/o3-fast": {
       "id": "openai/o3-fast",
@@ -3858,6 +5871,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 3.5,
         "output": 14.0,
@@ -3865,7 +5881,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/o3-mini": {
       "id": "openai/o3-mini",
@@ -3877,6 +5903,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.1,
         "output": 4.4,
@@ -3897,6 +5926,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 20.0,
         "output": 80.0,
@@ -3904,7 +5936,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/o4-mini": {
       "id": "openai/o4-mini",
@@ -3917,6 +5959,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.1,
         "output": 4.4,
@@ -3924,7 +5969,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "openai/o4-mini-fast": {
       "id": "openai/o4-mini-fast",
@@ -3937,6 +5992,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 8.0,
@@ -3944,7 +6002,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "poolside/laguna-s-2.1": {
       "id": "poolside/laguna-s-2.1",
@@ -3956,6 +6024,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.1,
         "output": 0.2,
@@ -3975,6 +6046,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.0,
         "output": 0.0,
@@ -3983,6 +6057,105 @@
       },
       "contextWindow": 256000,
       "maxTokens": 32768
+    },
+    "quiverai/arrow-2": {
+      "id": "quiverai/arrow-2",
+      "name": "Arrow 2",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 5.0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "quiverai/arrow-2-telos": {
+      "id": "quiverai/arrow-2-telos",
+      "name": "Arrow 2 Telos",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 6.0,
+        "output": 30.0,
+        "cacheRead": 0.6,
+        "cacheWrite": 7.5
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "sakana/fugu-max": {
+      "id": "sakana/fugu-max",
+      "name": "Fugu Max",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cacheRead": 0.25,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "sakana/fugu-ultra": {
       "id": "sakana/fugu-ultra",
@@ -3995,6 +6168,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 5.0,
         "output": 30.0,
@@ -4002,7 +6178,50 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "sakana/fugu-ultra-v2": {
+      "id": "sakana/fugu-ultra-v2",
+      "name": "Fugu Ultra v2",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cacheRead": 0.5,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "sakana/namazu": {
       "id": "sakana/namazu",
@@ -4015,6 +6234,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.95,
         "output": 4.0,
@@ -4022,7 +6244,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.1-fast-non-reasoning": {
       "id": "spacexai/grok-4.1-fast-non-reasoning",
@@ -4035,6 +6267,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 0.5,
@@ -4042,7 +6277,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.1-fast-reasoning": {
       "id": "spacexai/grok-4.1-fast-reasoning",
@@ -4055,6 +6300,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 0.5,
@@ -4062,7 +6310,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.20-multi-agent": {
       "id": "spacexai/grok-4.20-multi-agent",
@@ -4075,6 +6333,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4082,7 +6343,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 2000000,
-      "maxTokens": 2000000
+      "maxTokens": 2000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.20-multi-agent-beta": {
       "id": "spacexai/grok-4.20-multi-agent-beta",
@@ -4095,6 +6366,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4102,7 +6376,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 2000000,
-      "maxTokens": 2000000
+      "maxTokens": 2000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.20-non-reasoning": {
       "id": "spacexai/grok-4.20-non-reasoning",
@@ -4115,6 +6399,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4122,7 +6409,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 2000000,
-      "maxTokens": 2000000
+      "maxTokens": 2000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.20-non-reasoning-beta": {
       "id": "spacexai/grok-4.20-non-reasoning-beta",
@@ -4135,6 +6432,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4142,7 +6442,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 2000000,
-      "maxTokens": 2000000
+      "maxTokens": 2000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.20-reasoning": {
       "id": "spacexai/grok-4.20-reasoning",
@@ -4155,6 +6465,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4162,7 +6475,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 2000000,
-      "maxTokens": 2000000
+      "maxTokens": 2000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.20-reasoning-beta": {
       "id": "spacexai/grok-4.20-reasoning-beta",
@@ -4175,6 +6498,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4182,7 +6508,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 2000000,
-      "maxTokens": 2000000
+      "maxTokens": 2000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.3": {
       "id": "spacexai/grok-4.3",
@@ -4195,6 +6531,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.25,
         "output": 2.5,
@@ -4202,7 +6541,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.5": {
       "id": "spacexai/grok-4.5",
@@ -4215,6 +6564,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 6.0,
@@ -4222,7 +6574,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 500000,
-      "maxTokens": 500000
+      "maxTokens": 500000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-4.6": {
       "id": "spacexai/grok-4.6",
@@ -4235,6 +6597,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.0,
         "output": 6.0,
@@ -4242,7 +6607,50 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 500000,
-      "maxTokens": 500000
+      "maxTokens": 500000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "spacexai/grok-4.7": {
+      "id": "spacexai/grok-4.7",
+      "name": "Grok 4.7",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 1.2,
+        "output": 3.6,
+        "cacheRead": 0.3,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 500000,
+      "maxTokens": 500000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "spacexai/grok-build-0.1": {
       "id": "spacexai/grok-build-0.1",
@@ -4255,6 +6663,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.0,
         "output": 2.0,
@@ -4262,7 +6673,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "stepfun/step-3.5-flash": {
       "id": "stepfun/step-3.5-flash",
@@ -4275,6 +6696,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.09,
         "output": 0.3,
@@ -4282,7 +6706,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262114,
-      "maxTokens": 262114
+      "maxTokens": 262114,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "stepfun/step-3.7-flash": {
       "id": "stepfun/step-3.7-flash",
@@ -4295,6 +6729,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 1.15,
@@ -4302,7 +6739,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "tencent/hy3": {
       "id": "tencent/hy3",
@@ -4314,6 +6761,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.14,
         "output": 0.58,
@@ -4333,6 +6783,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.834,
         "output": 2.501,
@@ -4353,6 +6806,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.0,
         "output": 4.05,
@@ -4360,7 +6816,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "thinkingmachines/inkling-small": {
       "id": "thinkingmachines/inkling-small",
@@ -4373,6 +6839,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.5,
         "output": 1.2,
@@ -4380,7 +6849,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "xiaomi/mimo-v2.5": {
       "id": "xiaomi/mimo-v2.5",
@@ -4393,6 +6872,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.14,
         "output": 0.28,
@@ -4400,7 +6882,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1050000,
-      "maxTokens": 131100
+      "maxTokens": 131100,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "xiaomi/mimo-v2.5-pro": {
       "id": "xiaomi/mimo-v2.5-pro",
@@ -4412,6 +6904,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.435,
         "output": 0.87,
@@ -4421,24 +6916,104 @@
       "contextWindow": 1050000,
       "maxTokens": 131000
     },
-    "xiaomi/mimo-v2.5-pro-ultraspeed": {
-      "id": "xiaomi/mimo-v2.5-pro-ultraspeed",
-      "name": "MiMo V2.5 Pro UltraSpeed",
+    "xiaomi/mimo-v2.6-flash": {
+      "id": "xiaomi/mimo-v2.6-flash",
+      "name": "MiMo V2.6 Flash",
       "api": "anthropic-messages",
       "baseUrl": "https://ai-gateway.vercel.sh",
       "provider": "vercel-ai-gateway",
       "reasoning": true,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 1.305,
-        "output": 2.61,
-        "cacheRead": 0.0108,
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "xiaomi/mimo-v2.6-pro": {
+      "id": "xiaomi/mimo-v2.6-pro",
+      "name": "MiMo V2.6 Pro",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cacheRead": 0.0036,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+      "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+      "name": "MiMo V2.6 Pro UltraSpeed",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 4.35,
+        "output": 8.7,
+        "cacheRead": 0.036,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai/glm-4.5": {
       "id": "zai/glm-4.5",
@@ -4450,6 +7025,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 2.2,
@@ -4469,6 +7047,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.2,
         "output": 1.1,
@@ -4489,6 +7070,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 1.8,
@@ -4496,7 +7080,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 66000,
-      "maxTokens": 16000
+      "maxTokens": 16000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai/glm-4.6": {
       "id": "zai/glm-4.6",
@@ -4508,6 +7102,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 2.2,
@@ -4527,6 +7124,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.6,
         "output": 2.2,
@@ -4546,6 +7146,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.07,
         "output": 0.4,
@@ -4565,6 +7168,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.06,
         "output": 0.4,
@@ -4584,6 +7190,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.0,
         "output": 3.2,
@@ -4603,6 +7212,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.2,
         "output": 4.0,
@@ -4622,6 +7234,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.4,
         "output": 4.4,
@@ -4641,6 +7256,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.8,
         "output": 2.55,
@@ -4660,10 +7278,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 2.1,
-        "output": 6.6,
-        "cacheRead": 0.21,
+        "input": 2.8,
+        "output": 8.8,
+        "cacheRead": 0.56,
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
@@ -4679,10 +7300,13 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.7,
-        "output": 2.2,
-        "cacheRead": 0.13,
+        "input": 1.4,
+        "output": 4.4,
+        "cacheRead": 0.14,
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
@@ -4698,6 +7322,9 @@
       "input": [
         "text"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 2.1,
         "output": 6.6,
@@ -4718,6 +7345,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 0.15,
         "output": 0.5,
@@ -4725,26 +7355,50 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
-    "zai/glm-5.3-promo-50": {
-      "id": "zai/glm-5.3-promo-50",
-      "name": "GLM 5.3 (50% off)",
+    "zai/glm-5.3-flashx": {
+      "id": "zai/glm-5.3-flashx",
+      "name": "GLM 5.3 FlashX",
       "api": "anthropic-messages",
       "baseUrl": "https://ai-gateway.vercel.sh",
       "provider": "vercel-ai-gateway",
       "reasoning": true,
       "input": [
-        "text"
+        "text",
+        "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
-        "input": 0.7,
-        "output": 2.2,
-        "cacheRead": 0.13,
+        "input": 0.37,
+        "output": 1.25,
+        "cacheRead": 0.075,
         "cacheWrite": 0.0
       },
-      "contextWindow": 1048576,
-      "maxTokens": 1048576
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai/glm-5v-turbo": {
       "id": "zai/glm-5v-turbo",
@@ -4757,6 +7411,9 @@
         "text",
         "image"
       ],
+      "compat": {
+        "allowEmptySignature": true
+      },
       "cost": {
         "input": 1.2,
         "output": 4.0,
@@ -4764,7 +7421,17 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     }
   }
 }

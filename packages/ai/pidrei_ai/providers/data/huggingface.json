@@ -17,6 +17,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
@@ -39,6 +40,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
@@ -61,6 +63,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
@@ -83,6 +86,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
@@ -106,10 +110,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 524288,
-      "maxTokens": 512000
+      "maxTokens": 512000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen2.5-Coder-32B-Instruct": {
       "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
@@ -128,6 +143,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -150,6 +166,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 40960,
@@ -172,6 +189,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -194,6 +212,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -216,6 +235,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 40960,
@@ -238,6 +258,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -260,6 +281,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -282,6 +304,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -304,6 +327,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -326,6 +350,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -348,6 +373,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -371,10 +397,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3-VL-235B-A22B-Thinking": {
       "id": "Qwen/Qwen3-VL-235B-A22B-Thinking",
@@ -394,6 +431,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -406,6 +444,16 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "Qwen/Qwen3.5-122B-A10B": {
@@ -426,10 +474,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.5-27B": {
       "id": "Qwen/Qwen3.5-27B",
@@ -449,10 +508,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.5-35B-A3B": {
       "id": "Qwen/Qwen3.5-35B-A3B",
@@ -472,10 +542,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.5-397B-A17B": {
       "id": "Qwen/Qwen3.5-397B-A17B",
@@ -495,6 +576,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -507,6 +589,16 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "Qwen/Qwen3.5-9B": {
@@ -527,10 +619,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.6-27B": {
       "id": "Qwen/Qwen3.6-27B",
@@ -550,10 +653,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.6-35B-A3B": {
       "id": "Qwen/Qwen3.6-35B-A3B",
@@ -573,10 +687,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "Qwen/Qwen3.8-2.4T-A95B": {
       "id": "Qwen/Qwen3.8-2.4T-A95B",
@@ -595,6 +720,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -627,6 +753,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -639,6 +766,16 @@
         "high": null,
         "xhigh": "xhigh",
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "XiaomiMiMo/MiMo-V2-Flash": {
@@ -658,6 +795,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -680,6 +818,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -711,6 +850,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -742,6 +882,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 64000,
@@ -764,6 +905,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 163840,
@@ -786,6 +928,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 64000,
@@ -808,6 +951,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 163840,
@@ -830,6 +974,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -852,6 +997,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 163840,
@@ -874,6 +1020,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -896,6 +1043,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -928,6 +1076,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -940,6 +1089,16 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "deepseek-ai/DeepSeek-V4-Pro": {
@@ -959,6 +1118,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -990,6 +1150,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1000000,
@@ -1002,6 +1163,151 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      }
+    },
+    "deepseek-ai/DeepSeek-V4.1-Flash": {
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "name": "DeepSeek V4.1 Flash",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "google/gemma-3-12b-it": {
+      "id": "google/gemma-3-12b-it",
+      "name": "Gemma 3 12B IT",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.05,
+        "output": 0.15,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "google/gemma-3-27b-it": {
+      "id": "google/gemma-3-27b-it",
+      "name": "Gemma 3 27B IT",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.08,
+        "output": 0.16,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "google/gemma-3-4b-it": {
+      "id": "google/gemma-3-4b-it",
+      "name": "Gemma 3 4B IT",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": false,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.05,
+        "output": 0.1,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 131072,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "google/gemma-4-26B-A4B-it": {
@@ -1022,10 +1328,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "google/gemma-4-31B-it": {
       "id": "google/gemma-4-31B-it",
@@ -1045,10 +1362,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "meta-llama/Llama-3.1-8B-Instruct": {
       "id": "meta-llama/Llama-3.1-8B-Instruct",
@@ -1067,6 +1395,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1089,6 +1418,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1111,6 +1441,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1133,6 +1464,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -1155,6 +1487,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -1178,10 +1511,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K2.6": {
       "id": "moonshotai/Kimi-K2.6",
@@ -1201,10 +1545,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K2.7-Code": {
       "id": "moonshotai/Kimi-K2.7-Code",
@@ -1224,10 +1579,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "moonshotai/Kimi-K3": {
       "id": "moonshotai/Kimi-K3",
@@ -1247,6 +1613,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1000000,
@@ -1259,6 +1626,16 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "openai/gpt-oss-120b": {
@@ -1278,6 +1655,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1309,6 +1687,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1340,6 +1719,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -1363,6 +1743,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -1375,6 +1756,16 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "tencent/Hy3": {
@@ -1394,6 +1785,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -1402,6 +1794,38 @@
         "off": "none",
         "minimal": null,
         "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      }
+    },
+    "tencent/Hy4-preview": {
+      "id": "tencent/Hy4-preview",
+      "name": "Hy4 preview",
+      "api": "openai-completions",
+      "provider": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.834,
+        "output": 2.501,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsDeveloperRole": false
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 64000,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": null,
         "medium": null,
         "high": "high",
         "xhigh": null,
@@ -1426,6 +1850,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -1438,6 +1863,16 @@
         "high": "high",
         "xhigh": null,
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "thinkingmachines/Inkling-Small": {
@@ -1458,10 +1893,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 524288,
-      "maxTokens": 1048576
+      "maxTokens": 1048576,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-4.5": {
       "id": "zai-org/GLM-4.5",
@@ -1480,6 +1926,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1502,6 +1949,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
@@ -1525,10 +1973,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 65536,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-4.6": {
       "id": "zai-org/GLM-4.6",
@@ -1547,6 +2006,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
@@ -1570,10 +2030,21 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 131072,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "zai-org/GLM-4.7": {
       "id": "zai-org/GLM-4.7",
@@ -1592,6 +2063,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 204800,
@@ -1614,6 +2086,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 200000,
@@ -1636,6 +2109,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 202752,
@@ -1658,6 +2132,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 202752,
@@ -1680,6 +2155,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 262144,
@@ -1702,6 +2178,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -1734,6 +2211,7 @@
         "cacheWrite": 0
       },
       "compat": {
+        "supportsStrictMode": true,
         "supportsDeveloperRole": false
       },
       "contextWindow": 1048576,
@@ -1746,6 +2224,16 @@
         "high": "high",
         "xhigh": null,
         "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

@@ -7,6 +7,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -32,6 +33,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -57,6 +59,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -91,6 +94,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -125,6 +129,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -159,6 +164,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -186,6 +192,52 @@
         "max": "max"
       }
     },
+    "deepseek-v4.1-flash": {
+      "id": "deepseek-v4.1-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
     "glm-5": {
       "id": "glm-5",
       "name": "GLM-5",
@@ -193,6 +245,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -226,6 +279,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -259,6 +313,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -286,6 +341,41 @@
         "max": "max"
       }
     },
+    "glm-5.3": {
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
+      "api": "openai-completions",
+      "provider": "qwen-token-plan",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "compat": {
+        "supportsStrictMode": true,
+        "thinkingFormat": "qwen",
+        "supportsDeveloperRole": false,
+        "supportsStore": false,
+        "supportsReasoningEffort": true
+      },
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      }
+    },
     "kimi-k2.5": {
       "id": "kimi-k2.5",
       "name": "Kimi K2.5",
@@ -293,6 +383,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -310,7 +401,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 98304
+      "maxTokens": 98304,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "kimi-k2.6": {
       "id": "kimi-k2.6",
@@ -319,6 +420,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -336,7 +438,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "kimi-k2.7-code": {
       "id": "kimi-k2.7-code",
@@ -345,6 +457,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -362,7 +475,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "qwen3.6-flash": {
       "id": "qwen3.6-flash",
@@ -371,6 +494,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -388,7 +512,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "qwen3.6-plus": {
       "id": "qwen3.6-plus",
@@ -397,6 +531,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -414,7 +549,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "qwen3.7-max": {
       "id": "qwen3.7-max",
@@ -423,6 +568,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -448,6 +594,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -465,7 +612,17 @@
         "cacheWrite": 0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     },
     "qwen3.8-flash": {
       "id": "qwen3.8-flash",
@@ -474,6 +631,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -500,6 +658,16 @@
         "high": null,
         "xhigh": "xhigh",
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     },
     "qwen3.8-max": {
@@ -509,6 +677,7 @@
       "provider": "qwen-token-plan",
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
       "compat": {
+        "supportsStrictMode": true,
         "thinkingFormat": "qwen",
         "supportsDeveloperRole": false,
         "supportsStore": false,
@@ -535,6 +704,16 @@
         "high": null,
         "xhigh": "xhigh",
         "max": null
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
       }
     }
   }

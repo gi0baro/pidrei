@@ -2625,7 +2625,12 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
             candidate["contextWindow"] = 1000000
 
         # models.dev may list Opus 5.5 before its effort metadata is complete.
-        if provider == "anthropic" and model_id == "claude-opus-5-5":
+        # pidrei-only: the Copilot entry gets the same map. models.dev started
+        # listing it (so pi's stopgap entry is skipped) without off/minimal: None,
+        # which would offer "off" on an always-on-effort model.
+        if (provider == "anthropic" and model_id == "claude-opus-5-5") or (
+            provider == "github-copilot" and model_id == "claude-opus-5.5"
+        ):
             merge_thinking_level_map(
                 candidate,
                 {
