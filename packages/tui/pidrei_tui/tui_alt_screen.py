@@ -25,6 +25,7 @@ import math
 import os
 import re
 import time
+from collections.abc import Awaitable
 from dataclasses import replace
 
 import tonio.colored as tonio
@@ -107,6 +108,10 @@ TERMINAL_WORD_SELECTION_JOINERS = {"/", "-"}
 _word_segmenter = get_word_segmenter()
 
 _SGR_MOUSE_RE = re.compile(r"^\x1b\[<(\d+);(\d+);(\d+)([Mm])$")
+
+
+async def _resolved(value: bool) -> bool:
+    return value
 
 
 class _ImplicitDocument:
@@ -225,13 +230,18 @@ class TuiAltScreen(TuiBase):
         """Whether the fullscreen viewport has a non-empty active text selection."""
         return self._get_active_selection_text() is not None
 
-    async def copy_active_selection_to_clipboard(self) -> bool:
+    def copy_active_selection_to_clipboard(self) -> Awaitable[bool]:
         """Copy the active fullscreen text selection, if any, using the configured
-        selection clipboard path."""
+        selection clipboard path.
+
+        The selection is owner state, read at the call: call this on the owner.
+        The returned awaitable only does the clipboard write, so it can be
+        awaited off the owner without holding up input.
+        """
         text = self._get_active_selection_text()
         if not text:
-            return False
-        return await self._copy_text_to_clipboard(text)
+            return _resolved(False)
+        return self._copy_text_to_clipboard(text)
 
     @property
     def viewport_top(self) -> int:
@@ -605,8 +615,12 @@ class TuiAltScreen(TuiBase):
         return scroll_view.scroll_top != before
 
     def flash(self, message: str, duration_ms: float | None = None) -> None:
-        """Show a transient message in the alternate-screen flash stack."""
-        self._flashes.flash(message, duration_ms)
+        """Show a transient message in the alternate-screen flash stack.
+
+        Callable from any task (a detached clipboard write reports through
+        it): the stack is owner state, so the push is posted.
+        """
+        self.post_ui(lambda: self._flashes.flash(message, duration_ms))
 
     def _should_defer_viewport_input_to_overlay(self) -> bool:
         search = self._active_search

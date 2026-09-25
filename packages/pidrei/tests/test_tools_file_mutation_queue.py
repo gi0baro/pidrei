@@ -35,15 +35,22 @@ class TestWithFileMutationQueue:
     @pytest.mark.tonio
     async def test_allows_different_files_to_proceed_in_parallel(self, tmp_path):
         order: list[str] = []
+        a_started = tonio.Event()
+        b_started = tonio.Event()
 
+        # Each op ends only once the other has started (pi overlaps them with
+        # equal delays, which a slow runner can serialize by accident).
+        # Serialized ops would hit the bounded wait and fail the order checks.
         async def op_a():
             order.append("a:start")
-            await tonio_time.sleep(0.03)
+            a_started.set()
+            await b_started.wait(5)
             order.append("a:end")
 
         async def op_b():
             order.append("b:start")
-            await tonio_time.sleep(0.03)
+            b_started.set()
+            await a_started.wait(5)
             order.append("b:end")
 
         await tonio.spawn(
@@ -54,6 +61,7 @@ class TestWithFileMutationQueue:
         assert order.index("a:start") < order.index("a:end")
         assert order.index("b:start") < order.index("b:end")
         assert order.index("b:start") < order.index("a:end")
+        assert order.index("a:start") < order.index("b:end")
 
     @pytest.mark.tonio
     async def test_uses_the_same_queue_for_symlink_aliases(self, tmp_path):

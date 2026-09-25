@@ -28,6 +28,9 @@ class _FakeUi:
     def invalidate(self) -> None:
         pass
 
+    def post_ui(self, fn) -> None:
+        fn()
+
     def request_render(self) -> None:
         pass
 
@@ -99,7 +102,7 @@ def _create_controller(ui, get_settings_manager, initial_theme_setting=None):
         {
             "getSettingsManager": get_settings_manager,
             "showError": lambda _message: None,
-            "onChanged": lambda: None,
+            "onChanged": lambda *, on_owner=False: None,
             "initialThemeSetting": initial_theme_setting,
         },
     )

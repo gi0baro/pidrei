@@ -10,7 +10,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     async def on_agent_start(_event, ctx):
         prompt = ctx.get_system_prompt()
         ctx.ui.set_status("system-prompt", f"System: {len(prompt)} chars")

@@ -35,6 +35,7 @@ import tonio.colored as tonio
 from tonio.colored import fs
 from tonio.colored.sync import channel
 
+from pidrei_ai.utils import timers
 from pidrei_ai.utils.cancel import CancelToken
 
 from ..types import (
@@ -717,7 +718,12 @@ class LocalExecutionEnv:
         # again whenever `spillIsDraining()`).
         while not readers_done.is_set():
             before = pump.activity_count
-            await readers_done.wait(EXIT_STDIO_GRACE_SECONDS)
+            # The window runs on the `timers.set_timeout` seam (pi's `setTimeout`),
+            # so tests drive it with fake timers.
+            grace_elapsed = tonio.Event()
+            cancel_grace = timers.set_timeout(EXIT_STDIO_GRACE_SECONDS * 1000, grace_elapsed.set)
+            await tonio.Waiter.any(readers_done, grace_elapsed)
+            cancel_grace()
             if readers_done.is_set():
                 break
             if pump.activity_count == before and not pump.spill_draining:

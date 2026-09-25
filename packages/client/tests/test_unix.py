@@ -129,7 +129,9 @@ async def test_bounds_pending_writes_preserves_order_and_reports_remote_end_once
         assert invalid_order[0] is False
         assert inbound == [9]
         assert errors == []
-        await tonio.sleep(0)
+        # No yield before counting: the reader reports the remote end as its
+        # last act before exiting (`_run_reader`), so the count is final once
+        # `closed` is set.
         assert close_count[0] == 1
     finally:
         transport.close()

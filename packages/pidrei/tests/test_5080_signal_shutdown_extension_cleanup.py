@@ -18,6 +18,7 @@ import io
 import os
 import shutil
 import tempfile
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -94,6 +95,7 @@ def create_context(order: list[str], session_manager=None) -> SimpleNamespace:
 
     return SimpleNamespace(
         _is_shutting_down=False,
+        _shutdown_guard=threading.Lock(),
         _unregister_signal_handlers=lambda: None,
         runtime_host=SimpleNamespace(dispose=dispose),
         ui=SimpleNamespace(terminal=SimpleNamespace(drain_input=drain_input)),

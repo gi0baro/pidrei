@@ -5,6 +5,7 @@ import os
 import re
 import struct
 import tempfile
+import threading
 
 import pytest
 import tonio.colored as tonio
@@ -71,35 +72,77 @@ def apply_patch(original: str, patch: str) -> str:
     return "".join(out)
 
 
-class SlowReadExecutionEnv(LocalExecutionEnv):
+class SecondMutationKeyedEnv(LocalExecutionEnv):
+    """Signals once the second queued mutation has computed its queue key.
+
+    The mutation queue keys each mutation by `canonical_path` under its
+    registration lock; past that point the second mutation registers behind
+    the first's tail without suspending. Tests wait on this instead of
+    sleeping to give the second mutation a chance to run early.
+    """
+
+    def __init__(self, cwd: str):
+        super().__init__(cwd)
+        self.second_mutation_keyed = tonio.Event()
+        self._keyed = 0
+
+    async def canonical_path(self, path, cancel=None):
+        result = await super().canonical_path(path, cancel)
+        self._keyed += 1
+        if self._keyed == 2:
+            self.second_mutation_keyed.set()
+        return result
+
+
+class GatedReadExecutionEnv(SecondMutationKeyedEnv):
+    """Holds the first read until the second mutation has been keyed.
+
+    Replaces a 20 ms read delay: the second edit is then either parked behind
+    the first (serialized) or free to read the same original content (the
+    lost update the test catches), independent of runner speed.
+    """
+
+    def __init__(self, cwd: str):
+        super().__init__(cwd)
+        self._first_read = threading.Lock()
+
     async def read_text_file(self, path, cancel=None):
-        await tonio.sleep(0.02)
+        if self._first_read.acquire(blocking=False):
+            await self.second_mutation_keyed.wait(5)
         return await super().read_text_file(path, cancel)
 
 
-class BlockingWriteExecutionEnv(LocalExecutionEnv):
+class BlockingWriteExecutionEnv(SecondMutationKeyedEnv):
     def __init__(self, cwd: str):
         super().__init__(cwd)
         self.first_write_started = tonio.Event()
         self.finish_first_write = tonio.Event()
+        self.first_write_settled = False
         self.second_write_started = False
+        self.second_write_started_after_first_settled = False
 
     async def write_file(self, path, content, cancel=None):
         if content == "first\n":
             self.first_write_started.set()
             await self.finish_first_write.wait(None)
-        elif content == "second\n":
+            try:
+                return await super().write_file(path, content, cancel)
+            finally:
+                self.first_write_settled = True
+        if content == "second\n":
             self.second_write_started = True
+            self.second_write_started_after_first_settled = self.first_write_settled
         return await super().write_file(path, content, cancel)
 
 
-class BlockingEditExecutionEnv(LocalExecutionEnv):
+class BlockingEditExecutionEnv(SecondMutationKeyedEnv):
     def __init__(self, cwd: str):
         super().__init__(cwd)
         self.first_edit_write_started = tonio.Event()
         self.finish_first_edit_write = tonio.Event()
         self.first_edit_write_settled = False
         self.second_edit_write_started = False
+        self.second_edit_write_started_after_first_settled = False
 
     async def write_file(self, path, content, cancel=None):
         if content == "ALPHA\nbeta\n":
@@ -110,6 +153,7 @@ class BlockingEditExecutionEnv(LocalExecutionEnv):
             return result
         if content in ("ALPHA\nBETA\n", "alpha\nBETA\n"):
             self.second_edit_write_started = True
+            self.second_edit_write_started_after_first_settled = self.first_edit_write_settled
         return await super().write_file(path, content, cancel)
 
 
@@ -267,12 +311,16 @@ async def test_write_keeps_the_mutation_queue_locked_until_an_aborted_write_sett
         tool.execute("write-second", {"path": "file.txt", "content": "second\n"}, None, ExecutionToolContext(env=env))
     )
 
-    await tonio.sleep(0.02)
+    # pidrei: wait for the second write to be keyed into the queue instead of
+    # sleeping; the settle-order flag checks it never overtook the first.
+    await env.second_mutation_keyed.wait(5)
+    assert env.second_mutation_keyed.is_set()
     assert env.second_write_started is False
     env.finish_first_write.set()
     with pytest.raises(Exception):
         await first_write
     await second_write
+    assert env.second_write_started_after_first_settled is True
     assert get_or_throw(await env.read_text_file("file.txt")) == "second\n"
 
 
@@ -369,7 +417,10 @@ async def test_edit_keeps_the_mutation_queue_locked_until_an_aborted_edit_write_
         )
     )
 
-    await tonio.sleep(0.02)
+    # pidrei: wait for the second edit to be keyed into the queue instead of
+    # sleeping; the settle-order flag checks it never overtook the first.
+    await env.second_mutation_keyed.wait(5)
+    assert env.second_mutation_keyed.is_set()
     assert env.second_edit_write_started is False
     env.finish_first_edit_write.set()
     with pytest.raises(ExceptionGroup) as excinfo:
@@ -377,12 +428,13 @@ async def test_edit_keeps_the_mutation_queue_locked_until_an_aborted_edit_write_
     assert "Operation aborted" in str(excinfo.value.exceptions[0])
     await second_edit
     assert env.first_edit_write_settled is True
+    assert env.second_edit_write_started_after_first_settled is True
     assert get_or_throw(await env.read_text_file("file.txt")) == "ALPHA\nBETA\n"
 
 
 @pytest.mark.tonio
 async def test_edit_serializes_concurrent_edits_through_canonical_and_symlink_paths():
-    env = SlowReadExecutionEnv(cwd=create_temp_dir())
+    env = GatedReadExecutionEnv(cwd=create_temp_dir())
     get_or_throw(await env.write_file("target.txt", "alpha\nbeta\ngamma\n"))
     os.symlink("target.txt", os.path.join(env.cwd, "link.txt"))
     tool = create_edit_tool()

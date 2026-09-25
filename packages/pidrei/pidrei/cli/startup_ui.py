@@ -149,6 +149,7 @@ async def show_startup_selector(settings_manager: SettingsManager, title: str, o
         outcome["value"] = result
         await _clear_startup_tui(ui)
         await ui.stop()
+        ui.input_owner.close()
         done.set()
 
     def on_select(option: str) -> None:
@@ -188,6 +189,7 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
             await settings_manager.flush()
         await _clear_startup_tui(ui)
         await ui.stop()
+        ui.input_owner.close()
         done.set()
 
     await ui.start()
@@ -227,6 +229,7 @@ async def show_startup_input(settings_manager: SettingsManager, title: str, plac
         input_component.dispose()
         await _clear_startup_tui(ui)
         await ui.stop()
+        ui.input_owner.close()
         done.set()
 
     input_component = ExtensionInputComponent(

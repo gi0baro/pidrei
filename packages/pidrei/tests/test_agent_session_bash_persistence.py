@@ -5,6 +5,7 @@ rest of pi's bash/persistence characterization suite is an open parity gap
 (see scripts/upstream_diff.py TEST_HOMES).
 """
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -28,17 +29,30 @@ class ControlledBashInvocation:
 class ControlledBashOperations:
     def __init__(self):
         self.invocations: list[ControlledBashInvocation] = []
+        self._lock = threading.Lock()
+        self._waiters: list[tuple[int, tonio.Event]] = []
 
     async def exec(self, _command, _cwd, *, on_data=None, cancel=None):
         invocation = ControlledBashInvocation(cancel)
-        self.invocations.append(invocation)
+        with self._lock:
+            self.invocations.append(invocation)
+            reached = [waiter for waiter in self._waiters if len(self.invocations) >= waiter[0]]
+        for _count, event in reached:
+            event.set()
         await invocation._done.wait()
         return SimpleNamespace(exit_code=0)
 
 
 async def _wait_for_invocations(operations: ControlledBashOperations, count: int) -> None:
-    while len(operations.invocations) < count:
-        await tonio.time.sleep(0.005)
+    """Wait until the stub exec has been reached `count` times (each exec
+    signals as it records itself)."""
+    reached = tonio.Event()
+    with operations._lock:
+        if len(operations.invocations) >= count:
+            return
+        operations._waiters.append((count, reached))
+    await reached.wait(5)
+    assert reached.is_set(), f"stub exec reached {len(operations.invocations)} of {count} times"
 
 
 @pytest.mark.tonio

@@ -46,7 +46,7 @@ def run_auto_compaction(harness):
     return harness.session._run_auto_compaction("threshold", False)
 
 
-def _cancelling_extension(pi) -> None:
+async def _cancelling_extension(pi) -> None:
     async def on_before_compact(_event, _ctx):
         return {"cancel": True}
 
@@ -101,7 +101,8 @@ async def test_cancels_summarization_authentication(harnesses, monkeypatch):
     monkeypatch.setattr(harness.session.model_runtime, "get_auth", get_auth)
 
     compaction = tonio.spawn(run_auto_compaction(harness))
-    await auth_started.wait()
+    await auth_started.wait(5)
+    assert auth_started.is_set()
     started = len(harness.events_of_type("compaction_start"))
     was_compacting = harness.session.is_compacting
     await harness.session.abort()

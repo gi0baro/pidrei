@@ -2,19 +2,20 @@
 
 import os
 import re
+import threading
+from collections.abc import Awaitable
 
 import pytest
 import tonio.colored as tonio
 
-from pidrei_tui._owner import TimerHandle
 from pidrei_tui.autocomplete import CombinedAutocompleteProvider
-from pidrei_tui.components import editor as editor_module
 from pidrei_tui.components.editor import Editor, word_wrap_line
 from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_tui.utils import visible_width
 
 from .themes import default_editor_theme
-from .virtual_terminal import VirtualTerminal, poll_until
+from .tui_helpers import ManualOwnerTimers
+from .virtual_terminal import VirtualTerminal
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -24,9 +25,54 @@ def strip_ansi(line: str) -> str:
     return _ANSI_RE.sub("", line)
 
 
+class SpawnTracker:
+    """Wraps an owner's `spawn` so a test can wait for everything it spawned.
+
+    The editor spawns each autocomplete request; the owner is never started in
+    these tests, so the request applies its result inline on its own task
+    (`OwnerTask.run`'s headless contract) while the test task keeps typing. A
+    test waits on `settle()` — every spawned task finished, apply included —
+    instead of sleeping or polling a condition that holds before the apply is
+    done."""
+
+    def __init__(self, owner) -> None:
+        self._lock = threading.Lock()
+        self._pending: list[tonio.Event] = []
+        self.count = 0
+        spawn = owner.spawn
+
+        def tracked_spawn(coro) -> None:
+            done = tonio.Event()
+            with self._lock:
+                self._pending.append(done)
+                self.count += 1
+
+            async def run() -> None:
+                try:
+                    await coro
+                finally:
+                    done.set()
+
+            spawn(run())
+
+        owner.spawn = tracked_spawn
+
+    async def settle(self) -> None:
+        while True:
+            with self._lock:
+                if not self._pending:
+                    return
+                done = self._pending.pop(0)
+            await done.wait(5)
+            assert done.is_set(), "a spawned task never finished"
+
+
 def create_test_tui(cols=80, rows=24):
-    """Create a TUI with a virtual terminal for testing."""
-    return TuiMainScreen(VirtualTerminal(cols, rows))
+    """Create a TUI with a virtual terminal for testing; `tui.spawned` tracks
+    what its input owner spawns."""
+    tui = TuiMainScreen(VirtualTerminal(cols, rows))
+    tui.spawned = SpawnTracker(tui.input_owner)
+    return tui
 
 
 def apply_completion(lines, cursor_line, cursor_col, item, prefix):
@@ -53,27 +99,9 @@ class MockProvider:
             self.trigger_characters = trigger_characters
 
 
-async def flush_autocomplete():
-    await tonio.sleep(0.02)
-
-
-SLOW_DEBOUNCE_MS = 300
-
-
-def slow_debounce(request) -> None:
-    """Widen the autocomplete debounce for the test's lifetime.
-
-    The debounce tests assert that no query ran *between* keystrokes; with the
-    real 20 ms window that depends on how fast the runner gets from the last
-    `handle_input` to the assertion (a loaded macOS CI runner did not make it).
-    """
-    original = editor_module.ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS
-    editor_module.ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = SLOW_DEBOUNCE_MS
-    request.addfinalizer(lambda: setattr(editor_module, "ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS", original))
-
-
-async def wait_slow_debounce() -> None:
-    await tonio.sleep(SLOW_DEBOUNCE_MS / 1000 + 0.05)
+def flush_autocomplete(editor) -> Awaitable[None]:
+    """Wait until every autocomplete request the editor spawned has finished."""
+    return editor._tui.spawned.settle()
 
 
 # Prompt history navigation
@@ -2122,7 +2150,7 @@ async def test_undoes_autocomplete():
 
     # Press Tab to trigger autocomplete
     await editor.handle_input("\t")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == "dist/"
     assert editor.is_showing_autocomplete() is False
 
@@ -2132,38 +2160,9 @@ async def test_undoes_autocomplete():
 
 
 # Autocomplete
-
-
-class ManualOwnerTimers:
-    """pi's `t.mock.timers` for one editor's TUI: the input owner's `after`
-    queues its callback instead of sleeping, and `tick` fires what falls due."""
-
-    def __init__(self, editor: Editor) -> None:
-        self._now = 0.0
-        self._queue: list[tuple[float, TimerHandle, object]] = []
-        editor._tui.input_owner.after = self._after
-
-    def _after(self, delay_ms: float, fn) -> TimerHandle:
-        handle = TimerHandle()
-        self._queue.append((self._now + delay_ms, handle, fn))
-        return handle
-
-    @property
-    def remaining(self) -> list[float]:
-        """Milliseconds left on each live timer."""
-        return [due - self._now for due, handle, _ in self._queue if not handle.cancelled]
-
-    async def tick(self, ms: float) -> None:
-        target = self._now + ms
-        while True:
-            due = [entry for entry in self._queue if entry[0] <= target and not entry[1].cancelled]
-            if not due:
-                break
-            entry = min(due, key=lambda item: item[0])
-            self._queue.remove(entry)
-            self._now = entry[0]
-            await entry[2]()
-        self._now = target
+#
+# `ManualOwnerTimers(editor._tui.input_owner)` is pi's `t.mock.timers` for one
+# editor's TUI (the debounce is an input-owner timer).
 
 
 @pytest.mark.tonio
@@ -2171,7 +2170,7 @@ async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
     for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]:
         for trigger in ["@", "#", "$", "-"]:
             editor = Editor(create_test_tui(), default_editor_theme)
-            timers = ManualOwnerTimers(editor)
+            timers = ManualOwnerTimers(editor._tui.input_owner)
             requests: list[str] = []
 
             async def get_suggestions(lines, cursor_line, cursor_col, options, requests=requests):
@@ -2185,7 +2184,7 @@ async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
             assert timers.remaining == [1]
             assert requests == []
             await timers.tick(1)
-            assert await poll_until(lambda requests=requests: len(requests) == 1)
+            await flush_autocomplete(editor)
             assert requests == [before + trigger]
 
             await editor.handle_input("r")
@@ -2194,14 +2193,14 @@ async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
             assert timers.remaining == [1]
             assert len(requests) == 1
             await timers.tick(1)
-            assert await poll_until(lambda requests=requests: len(requests) == 2)
+            await flush_autocomplete(editor)
             assert requests == [before + trigger, f"{before}{trigger}re"]
 
 
 @pytest.mark.tonio
 async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths():
     editor = Editor(create_test_tui(), default_editor_theme)
-    timers = ManualOwnerTimers(editor)
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     requests = 0
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2236,14 +2235,14 @@ async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths()
         for char in text:
             await editor.handle_input(char)
         await timers.tick(20)
-        await flush_autocomplete()
+        await flush_autocomplete(editor)
         assert requests == 0, text
 
 
 @pytest.mark.tonio
 async def test_requests_path_completion_after_cjk_punctuation_only_on_tab():
     editor = Editor(create_test_tui(), default_editor_theme)
-    timers = ManualOwnerTimers(editor)
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     requests: list[dict] = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2254,10 +2253,10 @@ async def test_requests_path_completion_after_cjk_punctuation_only_on_tab():
     for char in text:
         await editor.handle_input(char)
     await timers.tick(20)
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert requests == []
     await editor.handle_input("\t")
-    assert await poll_until(lambda: requests)
+    await flush_autocomplete(editor)
     assert requests == [{"text": text, "force": True}]
 
 
@@ -2272,10 +2271,12 @@ async def test_completes_chinese_path_prefixes_after_whitespace_or_cjk_punctuati
         before = editor.get_text()
         await editor.handle_input("文")
         await editor.handle_input("\t")
-        assert await poll_until(lambda before=before: editor.get_text() == f"{before}文档/")
+        await flush_autocomplete(editor)
+        assert editor.get_text() == f"{before}文档/"
         await editor.handle_input("说")
         await editor.handle_input("\t")
-        assert await poll_until(lambda before=before: editor.get_text() == f"{before}文档/说明.md")
+        await flush_autocomplete(editor)
+        assert editor.get_text() == f"{before}文档/说明.md"
         assert editor.get_cursor() == {"line": 0, "col": len(editor.get_text())}
 
 
@@ -2284,7 +2285,7 @@ async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_
     for separator in [" ", "　", "，", "。"]:
         for trigger in ["@", "#", "$"]:
             editor = Editor(create_test_tui(), default_editor_theme)
-            timers = ManualOwnerTimers(editor)
+            timers = ManualOwnerTimers(editor._tui.input_owner)
             requests: list[str] = []
             prefix = f"{trigger}src"
 
@@ -2299,13 +2300,15 @@ async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_
             editor.set_text(f"{trigger}sr")
             await editor.handle_input("c")
             await timers.tick(20)
-            assert await poll_until(editor.is_showing_autocomplete)
+            await flush_autocomplete(editor)
+            assert editor.is_showing_autocomplete()
             await editor.handle_input(separator)
-            assert await poll_until(lambda editor=editor: not editor.is_showing_autocomplete())
+            await flush_autocomplete(editor)
+            assert not editor.is_showing_autocomplete()
             assert requests == [prefix, prefix + separator]
             await editor.handle_input("文")
             await timers.tick(20)
-            await flush_autocomplete()
+            await flush_autocomplete(editor)
             assert requests == [prefix, prefix + separator]
 
 
@@ -2319,7 +2322,7 @@ async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_d
         file_value = f'@"{directory}/说明.md"' if quoted else f"@{directory}/说明.md"
         file_prefix = f'@"{directory}/说' if quoted else f"@{directory}/说"
         editor = Editor(create_test_tui(), default_editor_theme)
-        timers = ManualOwnerTimers(editor)
+        timers = ManualOwnerTimers(editor._tui.input_owner)
 
         async def get_suggestions(
             lines,
@@ -2344,22 +2347,26 @@ async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_d
         editor.set_text(f"查看：{initial}")
         await editor.handle_input("\t")
         expected = f"查看：{directory_value}"
-        assert await poll_until(lambda editor=editor, expected=expected: editor.get_text() == expected)
+        await flush_autocomplete(editor)
+        assert editor.get_text() == expected
         assert editor.is_showing_autocomplete() is False
 
         await editor.handle_input("说")
         await timers.tick(20)
-        assert await poll_until(editor.is_showing_autocomplete)
+        await flush_autocomplete(editor)
+        assert editor.is_showing_autocomplete()
 
         for deletion in ["\x7f", "\x1b[3~"]:
             await editor.handle_input("错")
             await timers.tick(20)
-            assert await poll_until(lambda editor=editor: not editor.is_showing_autocomplete())
+            await flush_autocomplete(editor)
+            assert not editor.is_showing_autocomplete()
             if deletion == "\x1b[3~":
                 await editor.handle_input("\x1b[D")
             await editor.handle_input(deletion)
             await timers.tick(20)
-            assert await poll_until(editor.is_showing_autocomplete)
+            await flush_autocomplete(editor)
+            assert editor.is_showing_autocomplete()
 
         await editor.handle_input("\t")
         assert editor.get_text() == f"查看：{file_value} "
@@ -2388,7 +2395,7 @@ async def test_auto_applies_single_force_file_suggestion_without_showing_menu():
 
     # Press Tab - should auto-apply without showing menu
     await editor.handle_input("\t")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == "Workspace/"
     assert editor.is_showing_autocomplete() is False
 
@@ -2425,7 +2432,7 @@ async def test_shows_menu_when_force_file_has_multiple_suggestions():
 
     # Press Tab - should show menu because there are multiple suggestions
     await editor.handle_input("\t")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == "src"
     assert editor.is_showing_autocomplete() is True
 
@@ -2461,18 +2468,18 @@ async def test_keeps_suggestions_open_when_typing_in_force_mode_tab_triggered():
 
     # Press Tab on empty prompt - should show all files (force mode)
     await editor.handle_input("\t")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Type "r" - should narrow to "readme.md" (force mode keeps suggestions open)
     await editor.handle_input("r")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == "r"
     assert editor.is_showing_autocomplete() is True
 
     # Type "e" - should still show "readme.md"
     await editor.handle_input("e")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == "re"
     assert editor.is_showing_autocomplete() is True
 
@@ -2483,9 +2490,11 @@ async def test_keeps_suggestions_open_when_typing_in_force_mode_tab_triggered():
 
 
 @pytest.mark.tonio
-async def test_debounces_at_autocomplete_while_typing(request):
-    slow_debounce(request)
+async def test_debounces_at_autocomplete_while_typing():
     editor = Editor(create_test_tui(), default_editor_theme)
+    # Manual debounce (pi uses real timers): the "no query between keystrokes"
+    # assertion then holds however slowly the runner gets to it.
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     suggestion_calls = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2503,8 +2512,8 @@ async def test_debounces_at_autocomplete_while_typing(request):
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
 
-    await wait_slow_debounce()
-    await flush_autocomplete()
+    await timers.tick(20)
+    await flush_autocomplete(editor)
 
     assert len(suggestion_calls) == 1
     assert editor.is_showing_autocomplete() is True
@@ -2542,7 +2551,7 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
     # Type `/cmd ` so the picker ends up showing the argument list.
     for ch in "/cmd ":
         await editor.handle_input(ch)
-        await flush_autocomplete()
+        await flush_autocomplete(editor)
     assert editor.get_text() == "/cmd "
     assert editor.is_showing_autocomplete() is True
     at_arg = "\n".join(strip_ansi(line) for line in editor.render(80))
@@ -2550,7 +2559,7 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
 
     # Arrow Left back into the command name (`/cmd`).
     await editor.handle_input("\x1b[D")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
 
     # The picker must have re-queried: the stale argument items are gone
     # (replaced by the command-name suggestion, or the picker closed).
@@ -2560,9 +2569,10 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
 
 
 @pytest.mark.tonio
-async def test_debounces_hash_autocomplete_while_typing(request):
-    slow_debounce(request)
+async def test_debounces_hash_autocomplete_while_typing():
     editor = Editor(create_test_tui(), default_editor_theme)
+    # Manual debounce, as in the `@` case above.
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     suggestion_calls = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2580,17 +2590,18 @@ async def test_debounces_hash_autocomplete_while_typing(request):
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
 
-    await wait_slow_debounce()
-    await flush_autocomplete()
+    await timers.tick(20)
+    await flush_autocomplete(editor)
 
     assert len(suggestion_calls) == 1
     assert editor.is_showing_autocomplete() is True
 
 
 @pytest.mark.tonio
-async def test_debounces_custom_trigger_characters_autocomplete_while_typing(request):
-    slow_debounce(request)
+async def test_debounces_custom_trigger_characters_autocomplete_while_typing():
     editor = Editor(create_test_tui(), default_editor_theme)
+    # Manual debounce, as in the `@` case above.
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     suggestion_calls = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2605,8 +2616,8 @@ async def test_debounces_custom_trigger_characters_autocomplete_while_typing(req
     await editor.handle_input("k")
 
     assert len(suggestion_calls) == 0
-    await wait_slow_debounce()
-    await flush_autocomplete()
+    await timers.tick(20)
+    await flush_autocomplete(editor)
 
     assert len(suggestion_calls) == 1
     assert editor.is_showing_autocomplete() is True
@@ -2615,6 +2626,9 @@ async def test_debounces_custom_trigger_characters_autocomplete_while_typing(req
 @pytest.mark.tonio
 async def test_resets_custom_trigger_characters_when_provider_changes():
     editor = Editor(create_test_tui(), default_editor_theme)
+    # Manual debounce: pi waits out the real window before asserting nothing
+    # was queried; here the tick fires whatever the keystrokes debounced.
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     suggestion_calls = []
 
     async def first_get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2629,8 +2643,8 @@ async def test_resets_custom_trigger_characters_when_provider_changes():
 
     await editor.handle_input("$")
     await editor.handle_input("s")
-    await tonio.sleep(0.05)
-    await flush_autocomplete()
+    await timers.tick(20)
+    await flush_autocomplete(editor)
 
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
@@ -2639,12 +2653,16 @@ async def test_resets_custom_trigger_characters_when_provider_changes():
 @pytest.mark.tonio
 async def test_aborts_active_at_autocomplete_when_typing_continues():
     editor = Editor(create_test_tui(), default_editor_theme)
+    # Manual debounce: exactly one request starts, at the tick.
+    timers = ManualOwnerTimers(editor._tui.input_owner)
     aborts = []
     signals = []
+    entered = tonio.Event()
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
         signals.append(options["signal"])
-        await options["signal"].wait(0.5)
+        entered.set()
+        await options["signal"].wait(5)
         if options["signal"].cancelled:
             aborts.append(options["signal"])
             return None
@@ -2656,16 +2674,14 @@ async def test_aborts_active_at_autocomplete_when_typing_continues():
     await editor.handle_input("m")
     await editor.handle_input("a")
     await editor.handle_input("i")
-    # Under load the 20ms debounce can fire between keystrokes, so how many
-    # requests started (and were aborted by the next keystroke) is not fixed.
-    # Each keystroke cancels the in-flight token synchronously, so the one
-    # uncancelled signal is the request that survived typing: wait for it,
-    # keep typing, and assert that exact request gets aborted.
-    active = await poll_until(lambda: next((signal for signal in signals if not signal.cancelled), None))
-    assert active is not None
+    await timers.tick(20)
+    await entered.wait(5)
+    assert len(signals) == 1
+    active = signals[0]
     await editor.handle_input("n")
 
-    assert await poll_until(lambda: active in aborts)
+    await flush_autocomplete(editor)
+    assert aborts == [active]
 
 
 @pytest.mark.tonio
@@ -2692,13 +2708,13 @@ async def test_hides_autocomplete_when_backspacing_slash_command_to_empty():
 
     # Type "/" - should show slash command suggestions
     await editor.handle_input("/")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == "/"
     assert editor.is_showing_autocomplete() is True
 
     # Backspace to delete "/" - should hide autocomplete completely
     await editor.handle_input("\x7f")  # Backspace
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.get_text() == ""
     assert editor.is_showing_autocomplete() is False
 
@@ -2734,7 +2750,7 @@ async def test_applies_exact_typed_slash_argument_value_on_enter_even_when_first
         await editor.handle_input(ch)
 
     assert editor.get_text() == "/argtest two"
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - should apply the exact typed value "two", not the first item
@@ -2774,7 +2790,7 @@ async def test_selects_first_prefix_match_on_enter_when_typed_arg_is_not_exact_m
     for ch in "/argtest t":
         await editor.handle_input(ch)
 
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - "t" prefix matches "two" (first in list), so "two" is applied
@@ -2810,7 +2826,7 @@ async def test_highlights_unique_prefix_match_as_user_types_before_full_exact_ma
         await editor.handle_input(ch)
 
     assert editor.get_text() == "/argtest tw"
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - "tw" uniquely matches "two", so "two" should be applied
@@ -2844,7 +2860,7 @@ async def test_selects_first_prefix_match_when_multiple_items_match():
     for ch in "/argtest t":
         await editor.handle_input(ch)
 
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - "t" matches "two" first, so "two" is selected
@@ -2883,7 +2899,7 @@ async def test_works_for_built_in_style_command_argument_completion_path_model_l
         await editor.handle_input(ch)
 
     assert editor.get_text() == "/model gpt-4o-mini"
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - should retain exact typed value, not apply first highlighted item
@@ -2908,7 +2924,7 @@ async def test_awaits_async_slash_command_argument_completions(tmp_path):
     editor.set_text("/load-skills ")
 
     await editor.handle_input("s")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     await editor.handle_input("\t")
@@ -2937,7 +2953,7 @@ async def test_ignores_invalid_slash_command_argument_completion_results(tmp_pat
     editor.set_text("/load-skills ")
 
     await editor.handle_input("s")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is False
     assert editor.get_text() == "/load-skills s"
 
@@ -2965,7 +2981,7 @@ async def test_does_not_show_argument_completions_when_command_has_no_argument_c
     await editor.handle_input("/")
     await editor.handle_input("h")
     await editor.handle_input("e")
-    await flush_autocomplete()
+    await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     await editor.handle_input("\t")

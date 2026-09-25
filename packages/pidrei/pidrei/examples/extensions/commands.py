@@ -16,7 +16,7 @@ def format_command(cmd) -> str:
     return f"/{cmd.name}{desc}"
 
 
-def extension(pi):
+async def extension(pi):
     async def get_argument_completions(prefix: str):
         sources = ["extension", "prompt", "skill"]
         filtered = [s for s in sources if s.startswith(prefix)]

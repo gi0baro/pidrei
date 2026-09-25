@@ -46,7 +46,7 @@ async def _seed_compactable_session(harness) -> None:
 async def test_notifies_extensions_when_auto_compaction_fails(harnesses):
     failed_events: list = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_compact_failed(event, _ctx):
             failed_events.append(event)
 

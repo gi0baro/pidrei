@@ -45,7 +45,7 @@ async def test_persists_extension_provided_summary_usage_in_session_totals(temp_
         cost=UsageCost(input=0.1, output=0.2, cache_read=0.3, cache_write=0.4, total=1),
     )
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_session_before_tree(_event, _ctx):
             return {"summary": {"summary": "Summary provided by extension", "usage": usage}}
 

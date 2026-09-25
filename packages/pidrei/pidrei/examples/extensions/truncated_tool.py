@@ -79,7 +79,7 @@ def _first_text(result) -> str | None:
     return first.get("text") if isinstance(first, dict) else first.text
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel=None, _on_update=None, ctx=None):
         pattern = params["pattern"]
         search_path = params.get("path")

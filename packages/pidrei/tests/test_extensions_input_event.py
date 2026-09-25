@@ -80,7 +80,7 @@ async def handler(event, ctx):
 {body}
 
 
-def extension(pi):
+async def extension(pi):
     pi.on("input", handler)
 """
 

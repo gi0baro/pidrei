@@ -15,6 +15,8 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/custom_footer.py
 """
 
+import threading
+
 from pidrei_tui import truncate_to_width, visible_width
 
 
@@ -63,17 +65,22 @@ class CustomFooter:
         return [truncate_to_width(left + pad + right, width)]
 
 
-def extension(pi):
+async def extension(pi):
     state = {"enabled": False}
+    # Commands run concurrently (each submit on its own task): the flip and
+    # the footer swap it posts are one step, so the installed footer always
+    # matches the flag.
+    toggle_guard = threading.Lock()
 
     async def toggle_footer(_args, ctx) -> None:
-        state["enabled"] = not state["enabled"]
+        with toggle_guard:
+            state["enabled"] = not state["enabled"]
 
-        if state["enabled"]:
-            ctx.ui.set_footer(lambda ui, theme, footer_data: CustomFooter(ui, theme, footer_data, ctx))
-            ctx.ui.notify("Custom footer enabled", "info")
-        else:
-            ctx.ui.set_footer(None)
-            ctx.ui.notify("Default footer restored", "info")
+            if state["enabled"]:
+                ctx.ui.set_footer(lambda ui, theme, footer_data: CustomFooter(ui, theme, footer_data, ctx))
+                ctx.ui.notify("Custom footer enabled", "info")
+            else:
+                ctx.ui.set_footer(None)
+                ctx.ui.notify("Default footer restored", "info")
 
     pi.register_command("footer", handler=toggle_footer, description="Toggle custom footer")

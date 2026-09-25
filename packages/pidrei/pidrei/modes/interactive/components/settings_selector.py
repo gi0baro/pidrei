@@ -821,10 +821,7 @@ class SettingsSelectorComponent(Container):
             elif item_id == "terminal-progress":
                 callbacks["onShowTerminalProgressChange"](new_value == "true")
             elif item_id == "tui-mode":
-                # Awaited, unlike its siblings: switching renderers is async here
-                # (pi's stop/start are sync) and the status line it writes must
-                # land after the swap, not race it.
-                await callbacks["onTuiModeChange"](new_value)
+                callbacks["onTuiModeChange"](new_value)
             elif item_id == "fullscreen-exit-output":
                 callbacks["onFullscreenExitOutputChange"](new_value)
             elif item_id == "fullscreen-scrollbar":

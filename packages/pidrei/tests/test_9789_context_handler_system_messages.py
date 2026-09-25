@@ -19,7 +19,7 @@ def harnesses(request):
     return created
 
 
-def compact_via_hook(pi) -> None:
+async def compact_via_hook(pi) -> None:
     """Compaction supplied by an extension hook, as in the reported sessions."""
 
     async def on_before_compact(event, _ctx):
@@ -79,7 +79,7 @@ def _slice_from_summary(messages: list) -> list:
 async def test_keeps_the_prompt_and_tools_when_a_handler_slices_from_the_compaction_summary(harnesses):
     seen: list[list] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_context(event, _ctx):
             seen.append(event["messages"])
             return {"messages": _slice_from_summary(event["messages"])}
@@ -107,7 +107,7 @@ async def test_keeps_mid_conversation_system_messages_in_place_when_a_handler_le
 ):
     turn = 0
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_agent_start(event, _ctx):
             nonlocal turn
             turn += 1
@@ -135,7 +135,7 @@ async def test_keeps_mid_conversation_system_messages_in_place_when_a_handler_le
 
 @pytest.mark.tonio
 async def test_applies_in_place_edits_to_event_messages_without_a_return_value(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_context(event, _ctx):
             event["messages"].insert(0, UserMessage(content=[TextContent(text="injected")], timestamp=0))
 
@@ -154,7 +154,7 @@ async def test_applies_in_place_edits_to_event_messages_without_a_return_value(h
 
 @pytest.mark.tonio
 async def test_keeps_system_messages_a_handler_adds_after_the_replayed_head(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_context(event, _ctx):
             return {"messages": [SystemMessage(content="ephemeral reminder", timestamp=0), *event["messages"]]}
 
@@ -180,7 +180,7 @@ async def test_keeps_system_messages_a_handler_adds_after_the_replayed_head(harn
 async def test_runs_after_context_handlers_on_the_restored_transcript_and_sends_its_output_verbatim(harnesses):
     seen: list[list] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_context_with_system(event, _ctx):
             seen.append(event["messages"])
             return {
@@ -217,7 +217,7 @@ async def test_runs_after_context_handlers_on_the_restored_transcript_and_sends_
 
 @pytest.mark.tonio
 async def test_reports_a_handler_that_drops_the_leading_system_message_but_honors_its_output(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_context_with_system(event, _ctx):
             return {"messages": [message for message in event["messages"] if message.role != "system"]}
 

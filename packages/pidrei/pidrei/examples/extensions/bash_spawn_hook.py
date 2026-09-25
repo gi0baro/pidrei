@@ -14,7 +14,7 @@ import os
 from pidrei.core.tools.bash import create_bash_tool_definition
 
 
-def extension(pi):
+async def extension(pi):
     cwd = os.getcwd()
 
     def spawn_hook(context):

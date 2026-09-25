@@ -93,9 +93,19 @@ async def _listen(serve):
 
 
 @pytest.mark.tonio
-async def test_upgrades_over_a_real_socket_and_drains_bytes_sent_behind_the_head():
+async def test_upgrades_over_a_real_socket_and_drains_bytes_sent_behind_the_head(monkeypatch):
     closed: list = []
     close_seen = tonio.Event()
+    # `_finish` is the read loop's last step: once it ran, every event the
+    # connection will ever emit is already queued.
+    read_loop_done = tonio.Event()
+    finish = websocket.WebSocketConnection._finish
+
+    def finish_and_signal(self) -> None:
+        finish(self)
+        read_loop_done.set()
+
+    monkeypatch.setattr(websocket.WebSocketConnection, "_finish", finish_and_signal)
     listener, port = await _listen(
         lambda stream: _serve_echo(stream, greet=b"hello", closed=closed, close_seen=close_seen)
     )
@@ -114,8 +124,65 @@ async def test_upgrades_over_a_real_socket_and_drains_bytes_sent_behind_the_head
         assert close_seen.is_set(), "peer never received the close frame"
         assert [c.code for c in closed] == [1000]
         assert connection.ready_state == websocket.READY_STATE_CLOSED
-        settled, completed = await tonio.time.timeout(connection.receive_event(), 0.2)
-        assert not completed, f"unexpected event after a local close: {settled!r}"
+        # Instead of a 0.2 s quiet window: wait for the read loop to end, then
+        # queue a marker behind whatever it emitted; the marker must come first.
+        await read_loop_done.wait(5)
+        assert read_loop_done.is_set(), "read loop never ended after a local close"
+        marker = MessageEvent(data="end-of-events marker")
+        connection._events_sender.send(marker)
+        settled = await connection.receive_event()
+        assert settled is marker, f"unexpected event after a local close: {settled!r}"
+    finally:
+        listener.close()
+
+
+@pytest.mark.tonio
+async def test_drops_the_peers_close_echo_when_it_lands_before_the_local_teardown(monkeypatch):
+    # pidrei-only: the write loop tears the transport down right behind the local
+    # close frame, so the peer's echo normally never arrives. Holding the teardown
+    # until the read loop has received the echo forces the other order, which a
+    # descheduled write task produces in production.
+    closed: list = []
+    close_seen = tonio.Event()
+    echo_received = tonio.Event()
+    read_loop_done = tonio.Event()
+    receive_locked = websocket.WebSocketConnection._receive_locked
+    teardown = websocket.WebSocketConnection._teardown
+    finish = websocket.WebSocketConnection._finish
+
+    def receive_and_signal(self, chunk):
+        events = receive_locked(self, chunk)
+        if self._protocol.close_rcvd is not None:
+            echo_received.set()
+        return events
+
+    async def teardown_after_echo(self) -> None:
+        await echo_received.wait(5)
+        await teardown(self)
+
+    def finish_and_signal(self) -> None:
+        finish(self)
+        read_loop_done.set()
+
+    monkeypatch.setattr(websocket.WebSocketConnection, "_receive_locked", receive_and_signal)
+    monkeypatch.setattr(websocket.WebSocketConnection, "_teardown", teardown_after_echo)
+    monkeypatch.setattr(websocket.WebSocketConnection, "_finish", finish_and_signal)
+    listener, port = await _listen(
+        lambda stream: _serve_echo(stream, greet=b"hello", closed=closed, close_seen=close_seen)
+    )
+    try:
+        connection = await websocket.connect(f"ws://127.0.0.1:{port}/v1/responses", {})
+        assert await connection.receive_event() == MessageEvent(data="hello")
+
+        connection.close()
+        await echo_received.wait(5)
+        assert echo_received.is_set(), "the peer's close echo never reached the read loop"
+        await read_loop_done.wait(5)
+        assert read_loop_done.is_set()
+        marker = MessageEvent(data="end-of-events marker")
+        connection._events_sender.send(marker)
+        settled = await connection.receive_event()
+        assert settled is marker, f"unexpected event after a local close: {settled!r}"
     finally:
         listener.close()
 

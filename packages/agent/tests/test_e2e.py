@@ -7,7 +7,6 @@ pi drives the compat global `streamSimple`; pidrei passes the explicit
 import time
 
 import pytest
-import tonio.colored as tonio
 
 from pidrei_agent.agent import Agent, AgentInitialState
 from pidrei_agent.types import AgentTool
@@ -149,15 +148,16 @@ async def test_handles_abort_during_streaming():
     )
     agent = create_agent(faux.get_model(), "You are a helpful assistant.")
 
-    prompt_handle = tonio.spawn(agent.prompt("Count slowly from 1 to 20."))
+    # pidrei: pi aborts from a timer; a timer can fire before the run is
+    # admitted (abort() is then a no-op) on a slow runner. Aborting on the
+    # first streamed update pins the abort inside streaming.
+    async def abort_on_first_update(event, _signal):
+        if event.type == "message_update":
+            agent.abort()
 
-    async def abort_later():
-        await tonio.sleep(0.03)
-        agent.abort()
+    agent.subscribe(abort_on_first_update)
 
-    tonio.spawn.without_tracking(abort_later())
-
-    await prompt_handle
+    await agent.prompt("Count slowly from 1 to 20.")
 
     assert agent.state.is_streaming is False
     assert len(agent.state.messages) >= 2

@@ -6,8 +6,8 @@ here is the started TUI's owner task (`OwnerTask`): `TUI.start()` registers
 it with `set_ui_owner`, and from then on every `Timeout`/`Interval` fires on
 that task — ordered with input handling, so a callback never overlaps a key
 being processed, `cancel()` is exact (cancel and fire are ordered on the
-same task), and the timer tasks are children of the TUI's scope, reaped at
-`stop()` instead of ticking on after a skipped `dispose()`.
+same task). A timer ticks until it is cancelled or its owner is closed (app
+shutdown), across the TUI's stop/start — as pi's global timers do.
 
 With no TUI started (tests, headless modes) timers run detached, calling
 `fn` on their own task — the pre-owner behaviour. Each detached timer gets
@@ -16,11 +16,14 @@ spanning every TUI lifetime in the process (and, under pytest's
 session-scoped runtime, every test), accumulating handles and pinning
 zombie tasks across runtime teardowns.
 
-A registered owner is routed to only while it is `serving` — merely
-`started` is not enough: an owner whose TUI never reached `stop()` (a
-crashed flow, a test that died mid-lifecycle) still reads as started, but
-its scope is consumed, and `scope.spawn` on a consumed scope silently
-drops the timer coroutine — a timer that never fires and never errors.
+A registered owner is routed to only while it is `serving`: a closed or
+crashed owner hands back an already-cancelled handle — a timer that never
+fires and never errors — so the timer runs detached instead.
+
+The registration outlives the TUI's stop: timers created during a
+stop/start (Ctrl+Z, the external editor, a UI-mode switch) still land on
+the owner. It ends when another TUI starts, or when the owner is closed
+(no longer `serving`, so new timers run detached).
 
 `fn` must return an awaitable (async-only callback policy); the result is
 awaited rather than dropped.

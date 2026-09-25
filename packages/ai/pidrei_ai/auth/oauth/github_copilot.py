@@ -9,6 +9,7 @@ derives the per-credential base URL from.
 import base64
 import math
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from http import HTTPStatus
@@ -337,7 +338,7 @@ async def _start_device_flow(domain: str, cancel: CancelToken) -> _DeviceCodeRes
     )
 
 
-async def _poll_for_github_access_token(domain: str, device: _DeviceCodeResponse, cancel: CancelToken) -> str:
+def _poll_for_github_access_token(domain: str, device: _DeviceCodeResponse, cancel: CancelToken) -> Awaitable[str]:
     urls = _get_urls(domain)
 
     async def poll() -> OAuthDeviceCodePollResult:
@@ -382,7 +383,7 @@ async def _poll_for_github_access_token(domain: str, device: _DeviceCodeResponse
 
         return OAuthDeviceCodePollResult(status="failed", message="Invalid device token response")
 
-    return await poll_oauth_device_code_flow(
+    return poll_oauth_device_code_flow(
         poll=poll,
         interval_seconds=device.interval,
         expires_in_seconds=device.expires_in,

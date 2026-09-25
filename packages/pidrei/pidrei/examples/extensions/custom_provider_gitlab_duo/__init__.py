@@ -197,8 +197,10 @@ _cached_direct_access: _DirectAccessToken | None = None
 async def _get_direct_access_token(gitlab_access_token: str, cancel: CancelToken | None) -> _DirectAccessToken:
     global _cached_direct_access
     now = clock.now_ms()
-    if _cached_direct_access is not None and _cached_direct_access.expires_at > now:
-        return _cached_direct_access
+    # Read once: a login on another task may invalidate the cache meanwhile.
+    cached = _cached_direct_access
+    if cached is not None and cached.expires_at > now:
+        return cached
 
     response = await oauth_http.request(
         f"{GITLAB_COM_URL}/api/v4/ai/third_party_agents/direct_access",
@@ -214,12 +216,13 @@ async def _get_direct_access_token(gitlab_access_token: str, cancel: CancelToken
         raise RuntimeError(f"Failed to get direct access token: {response.status} {response.text}")
 
     data = response.json()
-    _cached_direct_access = _DirectAccessToken(
+    fetched = _DirectAccessToken(
         token=data["token"],
         headers=dict(data["headers"]),
         expires_at=now + DIRECT_ACCESS_TTL_MS,
     )
-    return _cached_direct_access
+    _cached_direct_access = fetched
+    return fetched
 
 
 def _invalidate_direct_access_token() -> None:
@@ -395,5 +398,5 @@ def gitlab_duo_provider() -> Provider:
     )
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_provider(gitlab_duo_provider())

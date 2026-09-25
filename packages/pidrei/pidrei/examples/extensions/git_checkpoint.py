@@ -8,7 +8,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     checkpoints: dict[str, str] = {}
     state: dict[str, str | None] = {"current_entry_id": None}
 

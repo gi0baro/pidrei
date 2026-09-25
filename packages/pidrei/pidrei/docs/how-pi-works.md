@@ -67,7 +67,7 @@ in process. Every interface uses the same agent and session machinery.
 ## Extensions and resources
 
 Extensions are Python modules loaded into the pidrei process. Their
-`extension(pi)` factories register tools, commands, shortcuts, flags,
+`async def extension(pi)` factories register tools, commands, shortcuts, flags,
 providers, event handlers, renderers, and terminal UI
 ([extensions.md](extensions.md)).
 

@@ -16,6 +16,8 @@ Start pidrei with this extension:
 
 from typing import Any
 
+from tonio.colored import sync as tonio_sync
+
 from pidrei_tui.keys import Key
 
 from .utils import TodoItem, extract_todo_items, is_safe_command, mark_completed_steps
@@ -58,6 +60,12 @@ class PlanMode:
         self.execution_mode = False
         self.todo_items: list[TodoItem] = []
         self.tools_before_plan_mode: list[str] | None = None
+        # pi's handlers run to completion on one thread, yielding only at
+        # agent_end's dialogs; here /plan, the shortcut and the agent events
+        # run on different tasks. Each of pi's run-to-completion segments
+        # holds this lock (never across a dialog); `update_status` and
+        # `persist_state` are only called with it held.
+        self.state_lock = tonio_sync.Lock()
 
     def wire(self) -> None:
         self.pi.register_flag(
@@ -137,31 +145,33 @@ class PlanMode:
         )
 
     async def toggle_plan_mode(self, ctx) -> None:
-        self.plan_mode_enabled = not self.plan_mode_enabled
-        self.execution_mode = False
-        self.todo_items = []
+        async with self.state_lock:
+            self.plan_mode_enabled = not self.plan_mode_enabled
+            self.execution_mode = False
+            self.todo_items = []
 
-        if self.plan_mode_enabled:
-            self.enable_plan_mode_tools()
-            ctx.ui.notify("Plan mode enabled. Built-in write tools disabled.")
-        else:
-            self.restore_normal_mode_tools()
-            ctx.ui.notify("Plan mode disabled. Full access restored.")
-        self.update_status(ctx)
-        await self.persist_state()
+            if self.plan_mode_enabled:
+                self.enable_plan_mode_tools()
+                ctx.ui.notify("Plan mode enabled. Built-in write tools disabled.")
+            else:
+                self.restore_normal_mode_tools()
+                ctx.ui.notify("Plan mode disabled. Full access restored.")
+            self.update_status(ctx)
+            await self.persist_state()
 
     async def plan_command(self, _args: str, ctx) -> None:
         await self.toggle_plan_mode(ctx)
 
     async def todos_command(self, _args: str, ctx) -> None:
-        todo_items: list[TodoItem] = self.todo_items
-        if not todo_items:
-            ctx.ui.notify("No todos. Create a plan first with /plan", "info")
-            return
-        listing = "\n".join(
-            f"{index + 1}. {'✓' if item.completed else '○'} {item.text}" for index, item in enumerate(todo_items)
-        )
-        ctx.ui.notify(f"Plan Progress:\n{listing}", "info")
+        async with self.state_lock:
+            todo_items: list[TodoItem] = self.todo_items
+            if not todo_items:
+                ctx.ui.notify("No todos. Create a plan first with /plan", "info")
+                return
+            listing = "\n".join(
+                f"{index + 1}. {'✓' if item.completed else '○'} {item.text}" for index, item in enumerate(todo_items)
+            )
+            ctx.ui.notify(f"Plan Progress:\n{listing}", "info")
 
     async def on_tool_call(self, event, _ctx):
         """Block destructive bash commands in plan mode."""
@@ -209,7 +219,14 @@ class PlanMode:
 
     async def on_before_agent_start(self, _event, _ctx):
         """Inject plan/execution context before the agent starts."""
-        if self.plan_mode_enabled:
+        # One consistent read of the state (a /plan toggle may run meanwhile).
+        async with self.state_lock:
+            plan_mode_enabled = self.plan_mode_enabled
+            execution_mode = self.execution_mode
+            remaining = [(item.step, item.text) for item in self.todo_items if not item.completed]
+            has_todos = bool(self.todo_items)
+
+        if plan_mode_enabled:
             return {
                 "message": {
                     "customType": "plan-mode-context",
@@ -237,10 +254,8 @@ Do NOT attempt to make changes - just describe what you would do.""",
                 }
             }
 
-        todo_items: list[TodoItem] = self.todo_items
-        if self.execution_mode and todo_items:
-            remaining = [item for item in todo_items if not item.completed]
-            todo_list = "\n".join(f"{item.step}. {item.text}" for item in remaining)
+        if execution_mode and has_todos:
+            todo_list = "\n".join(f"{step}. {text}" for step, text in remaining)
             return {
                 "message": {
                     "customType": "plan-execution-context",
@@ -259,54 +274,57 @@ After completing a step, include a [DONE:n] tag in your response.""",
 
     async def on_turn_end(self, event, ctx) -> None:
         """Track progress after each turn."""
-        todo_items: list[TodoItem] = self.todo_items
-        if not self.execution_mode or not todo_items:
-            return
-        message = event.get("message")
-        if not _is_assistant_message(message):
-            return
+        async with self.state_lock:
+            todo_items: list[TodoItem] = self.todo_items
+            if not self.execution_mode or not todo_items:
+                return
+            message = event.get("message")
+            if not _is_assistant_message(message):
+                return
 
-        if mark_completed_steps(_get_text_content(message), todo_items) > 0:
-            self.update_status(ctx)
-        await self.persist_state()
+            if mark_completed_steps(_get_text_content(message), todo_items) > 0:
+                self.update_status(ctx)
+            await self.persist_state()
 
     async def on_agent_end(self, event, ctx) -> None:
         """Handle plan completion and the plan mode prompt."""
-        todo_items: list[TodoItem] = self.todo_items
+        # Up to the dialog: one locked segment (pi runs it without yielding).
+        async with self.state_lock:
+            todo_items: list[TodoItem] = self.todo_items
 
-        if self.execution_mode and todo_items:
-            if all(item.completed for item in todo_items):
-                completed_list = "\n".join(f"~~{item.text}~~" for item in todo_items)
-                self.pi.send_message(
-                    {
-                        "customType": "plan-complete",
-                        "content": f"**Plan Complete!** ✓\n\n{completed_list}",
-                        "display": True,
-                    },
-                    {"triggerTurn": False},
-                )
-                self.execution_mode = False
-                self.todo_items = []
-                self.update_status(ctx)
-                # Save the cleared state so a resume does not restore it.
-                await self.persist_state()
-            return
+            if self.execution_mode and todo_items:
+                if all(item.completed for item in todo_items):
+                    completed_list = "\n".join(f"~~{item.text}~~" for item in todo_items)
+                    self.pi.send_message(
+                        {
+                            "customType": "plan-complete",
+                            "content": f"**Plan Complete!** ✓\n\n{completed_list}",
+                            "display": True,
+                        },
+                        {"triggerTurn": False},
+                    )
+                    self.execution_mode = False
+                    self.todo_items = []
+                    self.update_status(ctx)
+                    # Save the cleared state so a resume does not restore it.
+                    await self.persist_state()
+                return
 
-        if not self.plan_mode_enabled or not ctx.has_ui:
-            return
+            if not self.plan_mode_enabled or not ctx.has_ui:
+                return
 
-        last_assistant = next(
-            (message for message in reversed(event["messages"]) if _is_assistant_message(message)), None
-        )
-        if last_assistant is not None:
-            extracted = extract_todo_items(_get_text_content(last_assistant))
-            if extracted:
-                self.todo_items = extracted
+            last_assistant = next(
+                (message for message in reversed(event["messages"]) if _is_assistant_message(message)), None
+            )
+            if last_assistant is not None:
+                extracted = extract_todo_items(_get_text_content(last_assistant))
+                if extracted:
+                    self.todo_items = extracted
 
-        todo_items = self.todo_items
-        if not todo_items:
-            return
-        await self.persist_state()
+            todo_items = self.todo_items
+            if not todo_items:
+                return
+            await self.persist_state()
 
         todo_list_text = "\n".join(f"{index + 1}. ☐ {item.text}" for index, item in enumerate(todo_items))
         plan_todo_list_message = {
@@ -322,11 +340,12 @@ After completing a step, include a [DONE:n] tag in your response.""",
 
         if choice and choice.startswith("Execute"):
             first_item = todo_items[0]
-            self.plan_mode_enabled = False
-            self.execution_mode = True
-            self.restore_normal_mode_tools()
-            self.update_status(ctx)
-            await self.persist_state()
+            async with self.state_lock:
+                self.plan_mode_enabled = False
+                self.execution_mode = True
+                self.restore_normal_mode_tools()
+                self.update_status(ctx)
+                await self.persist_state()
 
             remaining_list = "\n".join(f"{item.step}. {item.text}" for item in todo_items)
             exec_message = f"""\
@@ -350,48 +369,49 @@ After completing a step, include a [DONE:n] tag in your response."""
 
     async def on_session_start(self, _event, ctx) -> None:
         """Restore state on session start/resume."""
-        if self.pi.get_flag("plan") is True:
-            self.plan_mode_enabled = True
+        async with self.state_lock:
+            if self.pi.get_flag("plan") is True:
+                self.plan_mode_enabled = True
 
-        entries = ctx.session_manager.get_entries()
+            entries = ctx.session_manager.get_entries()
 
-        plan_mode_entries = [
-            entry for entry in entries if entry.get("type") == "custom" and entry.get("customType") == "plan-mode"
-        ]
-        plan_mode_entry = plan_mode_entries[-1] if plan_mode_entries else None
-
-        if plan_mode_entry is not None and plan_mode_entry.get("data"):
-            data = plan_mode_entry["data"]
-            self.plan_mode_enabled = data.get("enabled", self.plan_mode_enabled)
-            if data.get("todos") is not None:
-                self.todo_items = [
-                    TodoItem(step=todo["step"], text=todo["text"], completed=todo.get("completed", False))
-                    for todo in data["todos"]
-                ]
-            self.execution_mode = data.get("executing", self.execution_mode)
-            self.tools_before_plan_mode = data.get("toolsBeforePlanMode", self.tools_before_plan_mode)
-
-        # On resume, re-scan messages to rebuild completion state — but only
-        # those after the last plan-mode-execute, so [DONE:n] markers from a
-        # previous plan are not picked up.
-        if plan_mode_entry is not None and self.execution_mode and self.todo_items:
-            execute_index = -1
-            for index in range(len(entries) - 1, -1, -1):
-                if entries[index].get("customType") == "plan-mode-execute":
-                    execute_index = index
-                    break
-
-            messages = [
-                entry["message"]
-                for entry in entries[execute_index + 1 :]
-                if entry.get("type") == "message" and "message" in entry and _is_assistant_message(entry["message"])
+            plan_mode_entries = [
+                entry for entry in entries if entry.get("type") == "custom" and entry.get("customType") == "plan-mode"
             ]
-            mark_completed_steps("\n".join(_get_text_content(m) for m in messages), self.todo_items)
+            plan_mode_entry = plan_mode_entries[-1] if plan_mode_entries else None
 
-        if self.plan_mode_enabled:
-            self.enable_plan_mode_tools()
-        self.update_status(ctx)
+            if plan_mode_entry is not None and plan_mode_entry.get("data"):
+                data = plan_mode_entry["data"]
+                self.plan_mode_enabled = data.get("enabled", self.plan_mode_enabled)
+                if data.get("todos") is not None:
+                    self.todo_items = [
+                        TodoItem(step=todo["step"], text=todo["text"], completed=todo.get("completed", False))
+                        for todo in data["todos"]
+                    ]
+                self.execution_mode = data.get("executing", self.execution_mode)
+                self.tools_before_plan_mode = data.get("toolsBeforePlanMode", self.tools_before_plan_mode)
+
+            # On resume, re-scan messages to rebuild completion state — but only
+            # those after the last plan-mode-execute, so [DONE:n] markers from a
+            # previous plan are not picked up.
+            if plan_mode_entry is not None and self.execution_mode and self.todo_items:
+                execute_index = -1
+                for index in range(len(entries) - 1, -1, -1):
+                    if entries[index].get("customType") == "plan-mode-execute":
+                        execute_index = index
+                        break
+
+                messages = [
+                    entry["message"]
+                    for entry in entries[execute_index + 1 :]
+                    if entry.get("type") == "message" and "message" in entry and _is_assistant_message(entry["message"])
+                ]
+                mark_completed_steps("\n".join(_get_text_content(m) for m in messages), self.todo_items)
+
+            if self.plan_mode_enabled:
+                self.enable_plan_mode_tools()
+            self.update_status(ctx)
 
 
-def extension(pi):
+async def extension(pi):
     PlanMode(pi).wire()

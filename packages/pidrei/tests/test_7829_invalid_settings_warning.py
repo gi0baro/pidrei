@@ -63,6 +63,9 @@ async def test_renders_startup_diagnostics_inside_the_transcript():
     fake.show_warning = lambda message: InteractiveMode.show_warning(fake, message)
     fake.show_error = lambda message: InteractiveMode.show_error(fake, message)
     fake.show_status = lambda message: InteractiveMode.show_status(fake, message)
+    fake._apply_show_warning = lambda message: InteractiveMode._apply_show_warning(fake, message)
+    fake._apply_show_error = lambda message: InteractiveMode._apply_show_error(fake, message)
+    fake._apply_show_status = lambda message: InteractiveMode._apply_show_status(fake, message)
 
     try:
         with pytest.raises(_ReachedInput):

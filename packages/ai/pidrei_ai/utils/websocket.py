@@ -186,6 +186,13 @@ class WebSocketConnection:
             return [ErrorEvent(message=str(error) or type(error).__name__, error=error)]
         events: list[WebSocketEvent] = []
         for frame in self._protocol.events_received():
+            if self._closed:
+                # CLOSED for the consumer — by a local `close()`, or by the peer's
+                # close earlier in this batch. A DOM socket drops what arrives once
+                # it is not OPEN, and a local close queues no CloseEvent (`_finish`);
+                # the peer's echo winning the race against the write loop's
+                # teardown must not queue one either. The codec was still fed.
+                continue
             if frame.opcode is OP_TEXT:
                 events.append(MessageEvent(data=frame.data.decode("utf-8", "replace")))
             elif frame.opcode is OP_BINARY:

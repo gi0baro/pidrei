@@ -17,6 +17,7 @@ from pidrei_ai.registry import ModelsRefreshResult
 from pidrei_tui import set_keybindings
 
 from .harness import create_harness
+from .render_request_helpers import RenderRequests
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +28,7 @@ def _setup():
 
 
 def fake_tui():
-    return SimpleNamespace(request_render=lambda: None)
+    return SimpleNamespace(request_render=lambda: None, post_ui=lambda fn: fn())
 
 
 def render(selector: ModelSelectorComponent) -> str:
@@ -42,6 +43,16 @@ async def test_keeps_the_current_model_marked_while_browsing():
             {"id": "browsed-model", "name": "Browsed Model", "reasoning": True},
         ]
     )
+    refresh_released = tonio.Event()
+
+    # pi's background catalog refresh is still pending when its synchronous
+    # test body finishes; here it completes on another thread and would reset
+    # the selection to the current model mid-test, so it is held pending.
+    async def pending_refresh(_options=None, *, _requested_only=False):
+        await refresh_released.wait()
+        return ModelsRefreshResult(aborted=False, errors={})
+
+    harness.session.model_runtime.refresh = pending_refresh
     try:
         current_model = harness.get_model("current-model")
         selector = ModelSelectorComponent(
@@ -63,6 +74,7 @@ async def test_keeps_the_current_model_marked_while_browsing():
         assert get_model_row("browsed-model") == f"→   browsed-model [{current_model.provider}]"
         selector.dispose()
     finally:
+        refresh_released.set()
         harness.cleanup()
 
 
@@ -106,8 +118,9 @@ async def test_lists_every_catalog_that_failed_to_refresh():
 
         harness.session.model_runtime.refresh = failing_refresh
 
+        tui = RenderRequests()
         selector = ModelSelectorComponent(
-            fake_tui(),
+            tui,
             harness.get_model(),
             harness.session.model_runtime,
             [],
@@ -115,8 +128,7 @@ async def test_lists_every_catalog_that_failed_to_refresh():
             lambda *args: None,
         )
 
-        while "Could not refresh" not in render(selector):
-            await tonio.time.sleep(0.005)
+        await tui.until(lambda: "Could not refresh" in render(selector))
 
         assert "Could not refresh 2 model catalogs (openai, anthropic); showing cached models." in render(selector)
     finally:

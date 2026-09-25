@@ -65,7 +65,7 @@ async def test_allows_extensions_to_re_register_tools_without_strict_sampling(ac
     agent_dir = os.path.join(cwd, "agent")
     settings_manager = SettingsManager.in_memory({"defaultTools": active_tools})
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_session_start(_event, _ctx):
             definitions = create_all_tool_definitions(cwd)
             for name in STRICT_TOOL_NAMES:

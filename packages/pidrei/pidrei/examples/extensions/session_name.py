@@ -10,7 +10,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     async def run(args, ctx):
         name = args.strip()
 

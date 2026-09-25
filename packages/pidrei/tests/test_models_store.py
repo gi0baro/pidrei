@@ -9,15 +9,18 @@ from pidrei.core.models_store import FileModelsStore
 from pidrei.utils import lockfile
 from pidrei_ai.models_store import ModelsStoreEntry, ModelsStoreOperationOptions
 from pidrei_ai.utils.cancel import AbortError, CancelToken
+from tests.auth_lock_helpers import ObservedLock, park_on_file_lock_retry
 from tests.model_runtime_helpers import make_model
 
 
 @pytest.mark.tonio
-async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writing_later(tmp_path):
+async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writing_later(tmp_path, monkeypatch):
     path = str(tmp_path / "models-store.json")
     entry_one = ModelsStoreEntry(models=[make_model("one", "existing")])
     store = FileModelsStore(path)
     await store.write("one", entry_one)
+    operations = ObservedLock.install(store._storage)
+    parked = park_on_file_lock_retry(monkeypatch)
     release = lockfile.lock_sync(path, stale=30.0)
     controller = CancelToken()
     outcome: dict = {}
@@ -34,13 +37,16 @@ async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writ
             outcome["error"] = error
 
     async def drive() -> None:
-        await tonio.time.sleep(0.01)
+        await parked.wait(5)
+        assert parked.is_set()
         controller.cancel()
 
     await tonio.spawn(run_pending(), drive())
     assert isinstance(outcome["error"], AbortError)
     release()
-    await tonio.time.sleep(0.15)
+    # The cancelled write keeps running detached; once its critical section
+    # ends it can no longer write.
+    await operations.until(lambda lock: lock.released == 1)
 
     stored = json.loads((tmp_path / "models-store.json").read_text(encoding="utf-8"))
     assert "one" in stored

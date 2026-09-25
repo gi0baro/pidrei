@@ -14,16 +14,23 @@ overlays) gets one owner task instead of a lock per site:
   too. `cancel()` is exact by construction: the cancel and the fire are
   ordered on the same task, so a cancelled timer never runs — none of the
   identity re-checks the detached `_timers` needed.
-- The timer tasks are children of the scope passed to `start()`, so stopping
-  the owner reaps them; nothing ticks after `close()`.
+- `close()` cancels every live timer handle, which ends its task; nothing
+  ticks after `close()`.
+- One queue and one consumer for the owner's lifetime: the first `start()`
+  spawns the consumer (later calls do nothing), so posted work keeps being
+  served across the TUI's suspend/resume and renderer switches. `close()` is
+  final: it closes the queue from the sender side, and the consumer drains it
+  and returns.
 
 An owner that was never started (a TUI that is never `start()`ed — tests)
 runs `run` work on the caller and timer fires inline; `post`ed work waits in
 the queue for a `start()` that may never come.
 """
 
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored.sync import channel
@@ -36,9 +43,9 @@ class OwnerStopped(Exception):
     """The owner stopped before running a `run()` job.
 
     A `run()` waiter is settled with this — never left parked — whenever the
-    consumer exits for any reason: a clean `close()` whose sentinel the job
-    landed behind, cancellation unwinding it, or a crash (chained as
-    `__cause__`). "Processed, or the queue stopped for good" is the contract;
+    consumer exits before running the job: a `close()` the job raced, or a
+    crash (chained as `__cause__`). "Processed, or the queue stopped for
+    good" is the contract;
     a silent hang is not an outcome.
     """
 
@@ -48,6 +55,55 @@ class _Job:
     fn: Thunk
     done: tonio.Event | None = None
     error: BaseException | None = None
+
+
+@dataclass(slots=True, eq=False)
+class _ConsumerState:
+    """The part of an `OwnerTask` its consumer works with — all it holds.
+
+    Not the owner: the consumer never reaches the sender, the timers or
+    whatever the owner's users hang on it. The owner holds this; nothing
+    here points back.
+    """
+
+    receiver: Any
+    # Called with an exception escaping posted work (a timer callback,
+    # a fire-and-forget mutation). `None` lets it kill the owner.
+    on_error: Callable[[BaseException], None] | None
+    #: sync sections only: the claim set and the stop state the shutdown
+    #  sweep publishes.
+    guard: threading.Lock = field(default_factory=threading.Lock)
+    #: `run()` jobs nobody has claimed yet. Leaving the set under the
+    #  guard is the claim: the consumer takes a job to run it, the
+    #  shutdown sweep or `run()` itself to settle it with `OwnerStopped` —
+    #  never both.
+    pending: set[_Job] = field(default_factory=set)
+    closed: bool = False
+    #: published (before the pending sweep) only by the consumer's
+    #  shutdown path — unlike `closed`, which `close()` sets while the
+    #  consumer is still draining the queue.
+    stopped: bool = False
+    #: the exception that killed the consumer, when it died of one.
+    #  A crashed owner is an error state, not headless mode: `run` raises
+    #  instead of degrading to the never-started inline fallback.
+    crashed: BaseException | None = None
+    #: set by the first `start()`, which spawns the consumer.
+    spawned: bool = False
+    #: set when the consumer returns.
+    done: tonio.Event = field(default_factory=tonio.Event)
+
+    def claim(self, job: _Job) -> bool:
+        with self.guard:
+            if job not in self.pending:
+                return False
+            self.pending.discard(job)
+            return True
+
+    def stop_error(self) -> OwnerStopped:
+        error = OwnerStopped()
+        if self.crashed is not None:
+            error.__cause__ = self.crashed
+        return error
 
 
 @dataclass(slots=True, eq=False)
@@ -64,26 +120,21 @@ class TimerHandle:
 
 class OwnerTask:
     def __init__(self, on_error: Callable[[BaseException], None] | None = None) -> None:
-        self._sender, self._receiver = channel.unbounded()
-        self._scope = None
-        self._closed = False
-        #: published (before the pending sweep) only by the consumer's
-        #  shutdown path — unlike `_closed`, which a clean `close()` sets
-        #  while the consumer is still draining jobs ahead of the sentinel.
-        self._stopped = False
-        #: the exception that killed the consumer, when it died of one.
-        #  A crashed owner is an error state, not headless mode: `run` raises
-        #  instead of degrading to the never-started inline fallback.
-        self._crashed: BaseException | None = None
-        self._pending: set[_Job] = set()
+        self._sender, receiver = channel.unbounded()
+        self._state = _ConsumerState(receiver, on_error)
         self._timers: set[TimerHandle] = set()
-        # Called with an exception escaping posted work (a timer callback,
-        # a fire-and-forget mutation). `None` lets it kill the owner.
-        self.on_error = on_error
+
+    @property
+    def on_error(self) -> Callable[[BaseException], None] | None:
+        return self._state.on_error
+
+    @on_error.setter
+    def on_error(self, handler: Callable[[BaseException], None] | None) -> None:
+        self._state.on_error = handler
 
     @property
     def started(self) -> bool:
-        return self._scope is not None and not self._closed
+        return self._state.spawned and not self._state.closed
 
     @property
     def serving(self) -> bool:
@@ -94,28 +145,48 @@ class OwnerTask:
         `close()` recorded, so an owner abandoned without `close()` reads
         started forever even though nothing will ever drain its queue.
         """
-        return self.started and not self._stopped and self._crashed is None
+        state = self._state
+        return self.started and not state.stopped and state.crashed is None
 
-    def start(self, scope) -> None:
-        """Run the owner loop as a child of `scope` (restartable after `close()`)."""
-        if self._closed:
-            self._sender, self._receiver = channel.unbounded()
-            self._closed = False
-            self._stopped = False
-            self._crashed = None
-        self._scope = scope
-        scope.spawn(self._consume(self._receiver))
+    def start(self) -> None:
+        """Start the consumer, which serves the queue until `close()`.
+
+        A TUI restarting (suspend/resume, renderer switch) calls this again:
+        it does nothing, the consumer and the queue carry on.
+        """
+        state = self._state
+        if not state.spawned:
+            state.spawned = True
+            tonio.spawn.without_tracking(self._consume(state))
 
     def close(self) -> None:
-        """Stop after the work already queued; cancel every live timer."""
-        if self._closed:
-            return
-        self._closed = True
+        """Final: stop after the work already queued; cancel every live timer.
+
+        Closes the queue from the sender side: the consumer drains it, then
+        its receive raises and it returns (`join()` waits for that).
+        """
+        state = self._state
+        with state.guard:
+            if state.closed:
+                return
+            state.closed = True
+        self._sender.close()
         for handle in list(self._timers):
             handle.cancel()
         self._timers.clear()
-        if self._scope is not None:
-            self._sender.send(None)
+
+    async def join(self) -> None:
+        """Wait for the consumer to return (after `close()`, or a crash)."""
+        state = self._state
+        if state.spawned:
+            await state.done.wait(None)
+
+    def _send(self, item: _Job) -> bool:
+        try:
+            self._sender.send(item)
+        except BrokenPipeError:
+            return False  # closed for good
+        return True
 
     def post(self, fn: Thunk) -> None:
         """Run `fn` on the owner, fire-and-forget, in post order.
@@ -123,61 +194,54 @@ class OwnerTask:
         Always enqueues: work posted before `start()` runs when the owner
         starts, still in order. An owner that never starts never runs it —
         tests drive a started owner or stub the posting seam; production
-        owners span the terminal's lifetime. After `close()` the job lands
-        behind the shutdown sentinel and is dropped with the channel.
+        owners span the app's lifetime. After `close()` it is dropped.
         """
-        self._sender.send(_Job(fn))
+        self._send(_Job(fn))
 
     async def run(self, fn: Thunk) -> None:
         """Run `fn` on the owner and wait for it; its error surfaces here.
 
         Never parks forever: if the owner stops before running the job — a
-        `close()` sentinel it landed behind, cancellation, a consumer crash —
-        the job is settled with `OwnerStopped` (crash chained as `__cause__`)
-        by the consumer's shutdown path, and raised here. Only a never-started
-        or cleanly-closed owner runs `fn` inline (the headless contract); a
+        `close()` it raced, a consumer crash — the job is settled with
+        `OwnerStopped` (crash chained as `__cause__`) by the consumer's
+        shutdown path or here, and raised here. Only a never-started or
+        closed owner runs `fn` inline (the headless contract); a
         *crashed* owner raises instead — inline mutation on the caller's task
         after the owner died would be an ownership violation, not a fallback.
         """
-        if self._crashed is not None:
-            raise self._stop_error()
+        state = self._state
+        if state.crashed is not None:
+            raise state.stop_error()
         if not self.started:
             await fn()
             return
         job = _Job(fn, done=tonio.Event())
         # Enrolled before the send so the consumer's shutdown sweep can never
         # miss it: either we observe the stop below, or the sweep — which
-        # runs after the stop is published — observes the job.
-        self._pending.add(job)
-        self._sender.send(job)
-        if self._stopped and not job.done.is_set():
-            # The consumer stopped between our `started` check and the send;
-            # nothing will drain the channel again. (The sweep may settle the
-            # job concurrently — both sides write the same outcome.)
-            self._pending.discard(job)
-            job.error = self._stop_error()
+        # publishes the stop under the same guard — observes the job.
+        with state.guard:
+            state.pending.add(job)
+        sent = self._send(job)
+        with state.guard:
+            # Closed or stopped between our `started` check and the send:
+            # nothing will run it, so settle it here.
+            stranded = (not sent or state.stopped) and job in state.pending
+            if stranded:
+                state.pending.discard(job)
+        if stranded:
+            job.error = state.stop_error()
             job.done.set()
         await job.done.wait(None)
         if job.error is not None:
             raise job.error
 
-    def _stop_error(self) -> OwnerStopped:
-        error = OwnerStopped()
-        if self._crashed is not None:
-            error.__cause__ = self._crashed
-        return error
-
     def spawn(self, coro) -> None:
-        """Run `coro` concurrently (off the owner) as a child of its scope.
+        """Run `coro` concurrently (off the owner), fire-and-forget.
 
         For work the owner kicks off but must not wait for — a provider
-        request whose result comes back through `run`/`post`. Reaped with
-        the scope instead of outliving the TUI.
+        request whose result comes back through `run`/`post`.
         """
-        if self.started:
-            self._scope.spawn(coro)
-        else:
-            tonio.spawn.without_tracking(coro)
+        tonio.spawn.without_tracking(coro)
 
     def after(self, delay_ms: float, fn: Thunk) -> TimerHandle:
         """`setTimeout`: run `fn` on the owner after `delay_ms` unless cancelled."""
@@ -189,15 +253,12 @@ class OwnerTask:
 
     def _schedule(self, delay_ms: float, fn: Thunk, *, repeat: bool) -> TimerHandle:
         handle = TimerHandle()
-        if self._closed:
+        if self._state.closed:
             handle.cancel()
             return handle
         self._timers.add(handle)
-        timer = self._timer(handle, delay_ms / 1000, fn, repeat)
-        if self._scope is not None:
-            self._scope.spawn(timer)
-        else:
-            tonio.spawn.without_tracking(timer)
+        # Ended by its handle (`cancel()`, or `close()` cancelling them all).
+        tonio.spawn.without_tracking(self._timer(handle, delay_ms / 1000, fn, repeat))
         return handle
 
     async def _timer(self, handle: TimerHandle, delay_s: float, fn: Thunk, repeat: bool) -> None:
@@ -207,8 +268,8 @@ class OwnerTask:
                 if handle.cancelled:
                     return
                 if self.started:
-                    self._sender.send(_Job(self._fire(handle, fn)))
-                elif not self._closed:
+                    self._send(_Job(self._fire(handle, fn)))
+                elif not self._state.closed:
                     await fn()
                 if not repeat:
                     return
@@ -224,52 +285,54 @@ class OwnerTask:
 
         return fire
 
-    async def _consume(self, receiver) -> None:
+    @staticmethod
+    async def _consume(state: _ConsumerState) -> None:
         crash: BaseException | None = None
         try:
             while True:
-                job = await receiver.receive()
-                if job is None:
-                    return
+                try:
+                    job = await state.receiver.receive()
+                except BrokenPipeError:
+                    return  # closed from the sender side, and drained
                 if job.done is None:
                     try:
                         await job.fn()
                     except BaseException as error:
                         # BaseException: a pyo3 PanicException escaping here
                         # would kill the owner — input and timers — silently.
-                        if isinstance(error, GeneratorExit) or self.on_error is None:
+                        on_error = state.on_error
+                        if on_error is None:
                             raise
-                        self.on_error(error)
+                        on_error(error)
                     continue
+                if not state.claim(job):
+                    continue  # already settled by `run()` (it raced a close)
                 try:
                     await job.fn()
                 except BaseException as error:
                     job.error = error
                 finally:
-                    self._pending.discard(job)
                     job.done.set()
         except BaseException as error:
             crash = error
-            if isinstance(error, GeneratorExit):
-                raise
             # Swallowed, not re-raised: the sweep below fully accounts for
             # the crash (`_crashed`, `OwnerStopped` settlements, `serving`
             # off). Escaping further would only reach tonio's
             # unhandled-coroutine printer on stdout — which the TUI may be
             # holding in non-blocking mode.
         finally:
-            # Shutdown sweep — sync only (a cancelled child unwinds but cannot
-            # await): whatever stopped this loop, no `run()` waiter is left
-            # parked on a queue nobody drains. Publish the stop first, then
-            # settle; `run()` enrolls before sending, so one side always sees
-            # the job. Runs on the clean sentinel exit too, settling `run`
-            # jobs that landed behind it.
-            if crash is not None and not isinstance(crash, GeneratorExit):
-                self._crashed = crash
-            self._closed = True
-            self._stopped = True
-            for job in list(self._pending):
-                self._pending.discard(job)
-                if job.error is None:
-                    job.error = self._stop_error()
+            # Shutdown sweep — sync: whatever stopped this loop (the close,
+            # a crash), no `run()` waiter is left parked on a queue nobody
+            # drains. Publish the stop first, then settle; `run()` enrolls
+            # before sending, so one side always sees the job.
+            with state.guard:
+                if crash is not None:
+                    state.crashed = crash
+                state.closed = True
+                state.stopped = True
+                stranded = list(state.pending)
+                state.pending.clear()
+            for job in stranded:
+                job.error = state.stop_error()
                 job.done.set()
+            state.done.set()

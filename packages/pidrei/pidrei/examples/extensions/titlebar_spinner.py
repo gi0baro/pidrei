@@ -13,6 +13,7 @@ Start pidrei with this extension:
 """
 
 import os
+import threading
 
 import tonio.colored as tonio
 
@@ -23,8 +24,13 @@ BRAILLE_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇",
 FRAME_INTERVAL_S = 0.08
 
 
-def extension(pi):
+async def extension(pi):
     state: dict = {"cancel": None}
+    # Start and stop run from agent events and from session_shutdown (quit
+    # does not abort the agent first), so they can overlap; the animation
+    # ticks on its own task. The cancel swap and the title each one posts
+    # happen under this lock, so the last title posted is the right one.
+    title_guard = threading.Lock()
 
     def make_title(ctx, frame: str | None = None) -> str:
         cwd = os.path.basename(ctx.cwd)
@@ -33,25 +39,30 @@ def extension(pi):
         return f"{frame} {base}" if frame else base
 
     def stop_animation(ctx) -> None:
-        if state["cancel"] is not None:
-            state["cancel"].set()
-            state["cancel"] = None
-        ctx.ui.set_title(make_title(ctx))
+        with title_guard:
+            cancel, state["cancel"] = state["cancel"], None
+            if cancel is not None:
+                cancel.set()
+            ctx.ui.set_title(make_title(ctx))
 
     def start_animation(ctx) -> None:
-        stop_animation(ctx)
         cancelled = tonio.Event()
-        state["cancel"] = cancelled
+        with title_guard:
+            previous, state["cancel"] = state["cancel"], cancelled
+            if previous is not None:
+                previous.set()
+            ctx.ui.set_title(make_title(ctx))
 
         async def animate() -> None:
             frame_index = 0
             while True:
                 # Wake every tick, or immediately when cancelled.
                 await cancelled.wait(FRAME_INTERVAL_S)
-                if cancelled.is_set():
-                    return
-                frame = BRAILLE_FRAMES[frame_index % len(BRAILLE_FRAMES)]
-                ctx.ui.set_title(make_title(ctx, frame))
+                with title_guard:
+                    if cancelled.is_set():
+                        return
+                    frame = BRAILLE_FRAMES[frame_index % len(BRAILLE_FRAMES)]
+                    ctx.ui.set_title(make_title(ctx, frame))
                 frame_index += 1
 
         tonio.spawn.without_tracking(animate())

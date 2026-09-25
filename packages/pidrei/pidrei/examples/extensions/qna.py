@@ -34,7 +34,7 @@ A:\x20
 Keep questions in the order they appeared. Be concise."""
 
 
-def extension(pi):
+async def extension(pi):
     async def qna(_args, ctx):
         if ctx.mode != "tui":
             ctx.ui.notify("qna requires interactive mode", "error")
@@ -66,11 +66,17 @@ def extension(pi):
             return
 
         # Run extraction with loader UI
-        def factory(tui, theme, _kb, done):
+        async def factory(tui, theme, _kb, done):
             loader = BorderedLoader(tui, theme, f"Extracting questions using {model.id}...")
             loader.on_abort = lambda: done(None)
 
             # Do the work
+            # The work below runs on its own task, while `done` is the
+            # component's (it closes the dialog on the UI owner): the result
+            # is handed to the owner, as internal background work does.
+            def finish(result) -> None:
+                tui.post_ui(lambda: done(result))
+
             async def extract():
                 try:
                     user_message = UserMessage(
@@ -85,12 +91,12 @@ def extension(pi):
                     )
 
                     if response.stop_reason == "aborted":
-                        done(None)
+                        finish(None)
                         return
 
-                    done("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
+                    finish("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
                 except Exception:
-                    done(None)
+                    finish(None)
 
             tonio.spawn.without_tracking(extract())
             return loader

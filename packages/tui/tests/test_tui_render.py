@@ -5,13 +5,13 @@ Viewport expectations are right-stripped (see virtual_terminal.py).
 
 import os
 import re
-import tempfile
 from contextlib import contextmanager
 
 import pytest
 import tonio.colored as tonio
+from tonio.colored import fs
 
-from pidrei_tui import tui as tui_module
+from pidrei_tui import tui as tui_module, tui_main_screen
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
     delete_kitty_image,
@@ -60,8 +60,9 @@ class InputComponent(TestComponent):
 @pytest.mark.tonio
 async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
     """pi asserts one render on the next tick; the throttle here is a real
-    wait, so it is stretched to 2s for the test — a preempted frame lands in
-    milliseconds, a throttled one could not."""
+    wait, so it is stretched to 60s for the test — any frame that lands
+    inside the wait was preempted, a throttled one could not have. (A 2s
+    throttle against a 1s wait made that a race with the runner's speed.)"""
     terminal = VirtualTerminal(40, 10)
     tui = TuiMainScreen(terminal)
     component = InputComponent()
@@ -73,20 +74,27 @@ async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
     render_count_before_input = component.render_count
 
     original_interval = tui_module._MIN_RENDER_INTERVAL_S
-    tui_module._MIN_RENDER_INTERVAL_S = 2.0
+    tui_module._MIN_RENDER_INTERVAL_S = 60.0
     try:
         # Queue a normal throttled render first, and let the loop park in the
         # throttle. Keyboard input must preempt it.
         component.lines = ["pending"]
         since = terminal.frames
         tui.request_render()
-        await tonio.sleep(0.02)
+        parked = []
+
+        async def probe() -> None:
+            # Behind the request's scheduling job on the owner (FIFO).
+            parked.append(tui._render_scheduled and tui._throttle_timer is not None)
+
+        await tui.input_owner.run(probe)
+        assert parked == [True], "the render should be parked in the throttle"
         assert terminal.frames == since, "the throttled frame should still be pending"
 
         await terminal.send_input("first")
         await terminal.send_input("second")
         await terminal.send_input("typed")
-        await terminal.wait_for_render(since, timeout=1.0)
+        await terminal.wait_for_render(since)
     finally:
         tui_module._MIN_RENDER_INTERVAL_S = original_interval
 
@@ -123,13 +131,13 @@ async def test_writes_redraw_logs_to_the_provided_directory(tmp_path):
 @pytest.mark.tonio
 async def test_writes_the_crash_dump_to_the_os_temp_directory_instead_of_a_home_directory_default(tmp_path):
     # The TUI falls back to the OS temp directory when no log directory is
-    # configured. pi points TMPDIR/TEMP/TMP at a fresh directory; Python caches
-    # `tempfile.gettempdir()`, so the cached value is swapped instead.
+    # configured. pi points TMPDIR/TEMP/TMP at a fresh directory; pidrei resolves
+    # the temp directory once at import, so the resolved fallback is swapped instead.
     crash_dir = str(tmp_path / "crash")
     os.makedirs(crash_dir)
     crash_log_path = os.path.join(crash_dir, "pidrei-tui-crash.log")
-    previous_tempdir = tempfile.tempdir
-    tempfile.tempdir = crash_dir
+    previous_log_directory = tui_main_screen._DEFAULT_LOG_DIRECTORY
+    tui_main_screen._DEFAULT_LOG_DIRECTORY = fs.Path(crash_dir)
     try:
         terminal = VirtualTerminal(40, 10)
         tui = TuiMainScreen(terminal)
@@ -145,7 +153,7 @@ async def test_writes_the_crash_dump_to_the_os_temp_directory_instead_of_a_home_
         with open(crash_log_path, encoding="utf-8") as crash_file:
             assert "Terminal width: 40" in crash_file.read()
     finally:
-        tempfile.tempdir = previous_tempdir
+        tui_main_screen._DEFAULT_LOG_DIRECTORY = previous_log_directory
 
 
 # TUI Kitty image cleanup (encode_kitty-based cases)
@@ -1074,6 +1082,7 @@ class _BoundedWriteTerminal(VirtualTerminal):
         self._writes.append(data)
         if "\x1b[?2026h" in data:
             self._frames += 1
+        self._notify_waiters()  # what `wait_for_render` waits on
 
     def get_writes(self) -> str:
         return "".join(self._writes)

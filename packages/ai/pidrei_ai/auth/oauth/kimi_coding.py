@@ -8,6 +8,7 @@ https://api.kimi.com/coding as an `Authorization: Bearer` header.
 import json as json_module
 import math
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,10 +68,8 @@ def _stringify(value: Any) -> str:
     return json_module.dumps(value, separators=(",", ":"))
 
 
-async def _post_form(url: str, fields: dict[str, str], cancel: CancelToken) -> oauth_http.OAuthHttpResponse:
-    return await oauth_http.request(
-        url, form=fields, headers=_FORM_HEADERS, timeout_ms=REQUEST_TIMEOUT_MS, cancel=cancel
-    )
+def _post_form(url: str, fields: dict[str, str], cancel: CancelToken) -> Awaitable[oauth_http.OAuthHttpResponse]:
+    return oauth_http.request(url, form=fields, headers=_FORM_HEADERS, timeout_ms=REQUEST_TIMEOUT_MS, cancel=cancel)
 
 
 async def _start_device_authorization(oauth_host: str, cancel: CancelToken) -> _DeviceAuthorization:
@@ -132,7 +131,7 @@ def _parse_token_response(body: dict[str, Any] | None, operation: str) -> _Token
     )
 
 
-async def _poll_for_token(oauth_host: str, device: _DeviceAuthorization, cancel: CancelToken) -> _TokenResponse:
+def _poll_for_token(oauth_host: str, device: _DeviceAuthorization, cancel: CancelToken) -> Awaitable[_TokenResponse]:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _post_form(
             f"{oauth_host}/api/oauth/token",
@@ -189,7 +188,7 @@ async def _poll_for_token(oauth_host: str, device: _DeviceAuthorization, cancel:
             ),
         )
 
-    return await poll_oauth_device_code_flow(
+    return poll_oauth_device_code_flow(
         poll=poll,
         interval_seconds=device.interval_seconds,
         expires_in_seconds=device.expires_in_seconds,

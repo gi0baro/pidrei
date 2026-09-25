@@ -23,7 +23,7 @@ from pidrei.core.package_manager import DefaultPackageManager, is_offline_mode_e
 from pidrei.core.settings_manager import SettingsManager
 
 
-EXTENSION_SOURCE = "def extension(pi):\n    pass\n"
+EXTENSION_SOURCE = "async def extension(pi):\n    pass\n"
 
 
 def write(path: str, content: str) -> str:

@@ -13,6 +13,7 @@ from mint means the session is dead and the user must sign in again.
 
 import json as json_module
 import math
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,10 +68,8 @@ def _stringify(value: Any) -> str:
     return json_module.dumps(value, separators=(",", ":"))
 
 
-async def _post_form(url: str, fields: dict[str, str], cancel: CancelToken) -> oauth_http.OAuthHttpResponse:
-    return await oauth_http.request(
-        url, form=fields, headers=_FORM_HEADERS, timeout_ms=REQUEST_TIMEOUT_MS, cancel=cancel
-    )
+def _post_form(url: str, fields: dict[str, str], cancel: CancelToken) -> Awaitable[oauth_http.OAuthHttpResponse]:
+    return oauth_http.request(url, form=fields, headers=_FORM_HEADERS, timeout_ms=REQUEST_TIMEOUT_MS, cancel=cancel)
 
 
 async def _start_device_authorization(cancel: CancelToken) -> _DeviceAuthorization:
@@ -102,7 +101,7 @@ async def _start_device_authorization(cancel: CancelToken) -> _DeviceAuthorizati
     )
 
 
-async def _poll_for_identity_token(device: _DeviceAuthorization, cancel: CancelToken) -> str:
+def _poll_for_identity_token(device: _DeviceAuthorization, cancel: CancelToken) -> Awaitable[str]:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _post_form(
             DEVICE_TOKEN_URL,
@@ -136,7 +135,7 @@ async def _poll_for_identity_token(device: _DeviceAuthorization, cancel: CancelT
                     message=f"Meta device token request failed with status {response.status}{_error_detail(body)}",
                 )
 
-    return await poll_oauth_device_code_flow(
+    return poll_oauth_device_code_flow(
         poll=poll,
         interval_seconds=device.interval_seconds,
         expires_in_seconds=device.expires_in_seconds,
@@ -197,8 +196,8 @@ async def _login_meta(interaction: ProviderAuthInteraction) -> OAuthCredential:
         raise
 
 
-async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
-    return await _mint_api_key(credential.refresh, cancel)
+def _refresh(credential: OAuthCredential, cancel: CancelToken) -> Awaitable[OAuthCredential]:
+    return _mint_api_key(credential.refresh, cancel)
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:

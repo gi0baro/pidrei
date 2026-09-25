@@ -31,8 +31,11 @@ def _create_context(leaf_id, fork_calls):
 
 def _wire_recorders(context):
     context.editor.set_text = context.editor.set_text_calls.append
-    context.show_status = context.show_status_calls.append
+    # The owner-side part applies in place, the clone's remainder posts: both
+    # record into the same lists.
+    context.show_status = context._apply_show_status = context.show_status_calls.append
     context.show_error = context.show_error_calls.append
+    context._clone_session = partial(InteractiveMode._clone_session, context)
     context.ui = SimpleNamespace(
         request_render=lambda: context.request_render_calls.append(True),
         input_owner=OwnerTask(),

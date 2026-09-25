@@ -36,9 +36,13 @@ async def select_config(
     # invokes them directly), so the stop is spawned. Pre-existing bug found
     # while auditing the render path: both coroutines used to be dropped
     # outright, so the config TUI never started and never restored the terminal.
+    async def stop_and_close() -> None:
+        await ui.stop()
+        ui.input_owner.close()
+
     def finish() -> None:
         if not closed.is_set():
-            tonio.spawn.without_tracking(ui.stop())
+            tonio.spawn.without_tracking(stop_and_close())
             stop_theme_watcher()
             closed.set()
 

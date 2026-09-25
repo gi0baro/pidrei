@@ -36,10 +36,10 @@ from pidrei_ai.types import (
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 from .agent_session_helpers import (
-    abortable_stream_fn,
     create_agent_session,
     create_assistant_message,
     create_test_resource_loader,
+    signalling_abortable_stream_fn,
 )
 from .coding_session_helpers import now_ms
 
@@ -89,10 +89,11 @@ class _MockRunner:
 class TestConcurrentPromptGuard:
     @pytest.mark.tonio
     async def test_throws_when_prompt_called_while_streaming(self, tmp_path):
-        session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
+        stream_fn, streaming = signalling_abortable_stream_fn()
+        session = await create_agent_session(tmp_path, stream_fn=stream_fn)
 
         first_prompt = tonio.spawn(session.prompt("First message"))
-        await tonio.time.sleep(0.01)
+        await streaming.wait(5)
 
         assert session.is_streaming is True
 
@@ -108,10 +109,12 @@ class TestConcurrentPromptGuard:
 
     @pytest.mark.tonio
     async def test_allows_steer_while_streaming(self, tmp_path):
-        session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
+        stream_fn, streaming = signalling_abortable_stream_fn()
+        session = await create_agent_session(tmp_path, stream_fn=stream_fn)
 
         first_prompt = tonio.spawn(session.prompt("First message"))
-        await tonio.time.sleep(0.01)
+        await streaming.wait(5)
+        assert streaming.is_set()
 
         await session.steer("Steering message")
         assert session.pending_message_count == 1
@@ -125,10 +128,12 @@ class TestConcurrentPromptGuard:
 
     @pytest.mark.tonio
     async def test_allows_follow_up_while_streaming(self, tmp_path):
-        session = await create_agent_session(tmp_path, stream_fn=abortable_stream_fn)
+        stream_fn, streaming = signalling_abortable_stream_fn()
+        session = await create_agent_session(tmp_path, stream_fn=stream_fn)
 
         first_prompt = tonio.spawn(session.prompt("First message"))
-        await tonio.time.sleep(0.01)
+        await streaming.wait(5)
+        assert streaming.is_set()
 
         await session.follow_up("Follow-up message")
         assert session.pending_message_count == 1
@@ -264,7 +269,6 @@ class TestConcurrentPromptGuard:
 
         await session.prompt("hi")
         await session.agent.wait_for_idle()
-        await tonio.time.sleep(0.1)
 
         message_entries = [entry for entry in session_manager.get_entries() if entry["type"] == "message"]
         assert [entry["message"].role for entry in message_entries] == [
@@ -402,6 +406,60 @@ class TestRetry:
             1,
             "Retry cancelled",
         )
+        session.dispose()
+
+    # pidrei-only: the retry's cancel token is published before anything can
+    # observe the retry, so an `abort_retry()` reacting to `auto_retry_start`
+    # (what an RPC client does) is never lost.
+    @pytest.mark.tonio
+    async def test_abort_retry_from_an_auto_retry_start_listener_cancels_the_retry(self, tmp_path):
+        session, call_count = await self._create_session(tmp_path, fail_count=1)
+        retry_ends: list = []
+
+        def listener(event):
+            if event.type == "auto_retry_start":
+                session.abort_retry()
+            if event.type == "auto_retry_end":
+                retry_ends.append(event)
+
+        session.subscribe(listener)
+
+        await session.prompt("Test")
+
+        assert call_count["value"] == 1
+        assert [(end.success, end.final_error) for end in retry_ends] == [(False, "Retry cancelled")]
+        assert session.is_retrying is False
+        session.dispose()
+
+    # pidrei-only: the failed attempt's omission is session I/O, so the retry
+    # suspends before its backoff sleep; an `abort_retry()` landing there must
+    # still cancel it.
+    @pytest.mark.tonio
+    async def test_abort_retry_during_the_recovery_omission_cancels_the_retry(self, tmp_path):
+        session, call_count = await self._create_session(tmp_path, fail_count=1)
+        retry_ends: list = []
+        session.subscribe(lambda event: retry_ends.append(event) if event.type == "auto_retry_end" else None)
+
+        entered = tonio.Event()
+        release = tonio.Event()
+        append_context_edit = session.session_manager.append_context_edit
+
+        async def gated_append_context_edit(*args, **kwargs):
+            entered.set()
+            await release.wait(5)
+            return await append_context_edit(*args, **kwargs)
+
+        session.session_manager.append_context_edit = gated_append_context_edit
+
+        prompt = tonio.spawn(session.prompt("Test"))
+        await entered.wait(5)
+        assert entered.is_set()
+        session.abort_retry()
+        release.set()
+        await prompt
+
+        assert call_count["value"] == 1
+        assert [(end.success, end.final_error) for end in retry_ends] == [(False, "Retry cancelled")]
         session.dispose()
 
     @pytest.mark.tonio
@@ -912,7 +970,9 @@ class TestAutoCompactionQueue:
 
         run_calls = []
 
-        async def run_auto_compaction_spy(reason, will_retry):
+        # `_abort_generation` (in every spy of this class): pidrei-only, the abort
+        # baseline `_check_compaction` hands to `_run_auto_compaction`.
+        async def run_auto_compaction_spy(reason, will_retry, _abort_generation=None):
             run_calls.append((reason, will_retry))
 
         session._run_auto_compaction = run_auto_compaction_spy
@@ -972,7 +1032,7 @@ class TestAutoCompactionQueue:
 
         run_calls = []
 
-        async def run_auto_compaction_spy(reason, will_retry):
+        async def run_auto_compaction_spy(reason, will_retry, _abort_generation=None):
             run_calls.append((reason, will_retry))
 
         session._run_auto_compaction = run_auto_compaction_spy
@@ -1023,7 +1083,7 @@ class TestAutoCompactionQueue:
 
         run_calls = []
 
-        async def run_auto_compaction_spy(reason, will_retry):
+        async def run_auto_compaction_spy(reason, will_retry, _abort_generation=None):
             run_calls.append((reason, will_retry))
 
         session._run_auto_compaction = run_auto_compaction_spy
@@ -1056,7 +1116,7 @@ class TestAutoCompactionQueue:
 
         run_calls = []
 
-        async def run_auto_compaction_spy(reason, will_retry):
+        async def run_auto_compaction_spy(reason, will_retry, _abort_generation=None):
             run_calls.append((reason, will_retry))
 
         session._run_auto_compaction = run_auto_compaction_spy
@@ -1111,7 +1171,7 @@ class TestAutoCompactionQueue:
 
         run_calls = []
 
-        async def run_auto_compaction_spy(reason, will_retry):
+        async def run_auto_compaction_spy(reason, will_retry, _abort_generation=None):
             run_calls.append((reason, will_retry))
 
         session._run_auto_compaction = run_auto_compaction_spy

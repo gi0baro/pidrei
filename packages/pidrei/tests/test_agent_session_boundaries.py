@@ -97,7 +97,7 @@ async def test_commits_a_retain_none_turn_end_compaction_and_explicitly_continue
     observed_ids: list[str] = []
     requests: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, _ctx):
             nonlocal handled
             observed_ids.append(event["messageEntryId"])
@@ -149,7 +149,7 @@ async def test_preserves_queue_scheduling_around_a_turn_end_handoff(harnesses, q
         "both": ("queued steering", "queued follow-up"),
     }[queue_kind]
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(_event, _ctx):
             nonlocal handled
             if handled:
@@ -198,7 +198,7 @@ async def test_keeps_a_boundary_replacement_verbatim_through_threshold_compactio
     requests: list[str] = []
     instruction = "EXACT-REPLACEMENT-INSTRUCTION " * 100
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, ctx):
             nonlocal handled
             if handled:
@@ -237,7 +237,7 @@ async def test_keeps_a_boundary_replacement_verbatim_through_threshold_compactio
 
 
 def _compaction_summary_factory(summary: str):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             preparation = event["preparation"]
             return {
@@ -259,7 +259,7 @@ async def test_keeps_boundary_input_verbatim_through_threshold_compaction_when_m
     requests: list[str] = []
     instruction = "EXACT-UNSENT-INSTRUCTION " * 100
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(_event, _ctx):
             nonlocal handled
             if handled:
@@ -295,7 +295,7 @@ async def test_refreshes_canonical_context_before_publishing_boundary_entry_noti
     handled = False
     snapshots: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(_event, _ctx):
             nonlocal handled
             if handled:
@@ -336,7 +336,7 @@ async def test_continues_from_an_agent_before_settle_custom_message_before_final
     requested = False
     requests: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_settle(_event, _ctx):
             nonlocal requested
             if requested:
@@ -378,7 +378,7 @@ async def test_persists_custom_context_queued_by_agent_end_before_pre_settlement
     requests: list[str] = []
     observations: list[tuple[str, str]] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_agent_end(_event, _ctx):
             nonlocal first_run
             if not first_run:
@@ -422,7 +422,7 @@ async def test_keeps_a_pre_settlement_follow_up_deferred_until_the_explicit_cont
     requests: list[str] = []
     queued = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_settle(_event, _ctx):
             nonlocal handled
             if handled:
@@ -465,7 +465,7 @@ async def test_defers_runs_started_by_agent_settled_handlers_until_every_settled
     triggered = False
     lifecycle: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_start(_event, _ctx):
             lifecycle.append("start")
 
@@ -505,7 +505,7 @@ async def test_defers_runs_started_by_agent_settled_handlers_until_every_settled
 
 @pytest.mark.tonio
 async def test_does_not_let_an_invalid_explicit_continuation_suppress_natural_tool_continuation(harnesses):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, ctx):
             user = _latest_user_entry(ctx.session_manager)
             return {
@@ -537,7 +537,7 @@ async def test_dispatches_actionable_turn_end_for_synthetic_run_failures(harness
     turn_ends = 0
     outcomes: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, _ctx):
             nonlocal turn_ends
             turn_ends += 1
@@ -578,7 +578,7 @@ def _inflate_assistant_usage(**usage):
 async def test_does_not_compact_from_usage_belonging_to_a_boundary_omitted_assistant(harnesses):
     handled = False
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, _ctx):
             nonlocal handled
             if handled:
@@ -607,7 +607,7 @@ async def test_does_not_compact_from_usage_belonging_to_a_boundary_omitted_assis
 async def test_does_not_trigger_successful_response_overflow_from_usage_captured_before_a_boundary_edit(harnesses):
     handled = False
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(_event, ctx):
             nonlocal handled
             if handled:
@@ -652,7 +652,8 @@ async def test_does_not_trigger_threshold_compaction_from_post_edit_usage_captur
     harness.session.refresh_context()
     auto_compaction_calls: list[tuple] = []
 
-    async def run_auto_compaction(reason, will_retry):
+    # `_abort_generation`: pidrei-only (the abort baseline `_check_compaction` hands over).
+    async def run_auto_compaction(reason, will_retry, _abort_generation=None):
         auto_compaction_calls.append((reason, will_retry))
         return False
 
@@ -681,7 +682,7 @@ async def test_persists_custom_context_sent_during_pre_settlement_before_continu
     handled = False
     requests: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_settle(_event, _ctx):
             nonlocal handled
             if handled:
@@ -714,7 +715,7 @@ async def test_does_not_consume_queued_input_when_pre_settlement_drafts_leave_sy
     handled = False
     queued = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_settle(_event, ctx):
             nonlocal handled
             if handled:
@@ -753,7 +754,7 @@ async def test_commits_pre_settlement_drafts_but_suppresses_continuation_when_ab
     started = tonio.Event()
     release = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_settle(_event, _ctx):
             started.set()
             await release.wait()
@@ -771,7 +772,10 @@ async def test_commits_pre_settlement_drafts_but_suppresses_continuation_when_ab
     prompt = tonio.spawn(harness.session.prompt("start"))
     await started.wait(5)
     assert started.is_set()
-    abort = tonio.spawn(harness.session.abort())
+    # pi's `session.abort()` runs its synchronous prefix before `release()`;
+    # `_request_abort` is that prefix, and the idle wait is the rest of `abort()`.
+    harness.session._request_abort()
+    abort = tonio.spawn(harness.session.wait_for_idle())
     release.set()
     await prompt
     await abort
@@ -873,7 +877,7 @@ async def test_gives_a_distinct_queued_follow_up_its_own_length_recovery_budget(
     sent = False
     queued = tonio.Event()
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_agent_end(event, _ctx):
             nonlocal sent
             if sent or not any(get_message_text(message) == "first recovered" for message in event["messages"]):
@@ -930,7 +934,7 @@ async def test_finishes_retry_bookkeeping_when_a_retry_receives_a_nonretryable_e
 
 @pytest.mark.tonio
 async def test_omits_a_recoverable_projected_replacement_by_its_source_entry_id(harnesses):
-    def cancel_factory(pi) -> None:
+    async def cancel_factory(pi) -> None:
         async def on_before_compact(_event, _ctx):
             return {"cancel": True}
 
@@ -968,7 +972,7 @@ async def test_recovers_an_explicit_overflow_error_after_a_retained_boundary_rep
     replaced = False
     overflow_id: str | None = None
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, _ctx):
             nonlocal replaced, overflow_id
             if replaced or event["outcome"] != "error":
@@ -1019,7 +1023,7 @@ async def test_keeps_follow_up_work_behind_an_automatic_error_retry(harnesses):
     requests: list[str] = []
     lifecycle: list[str] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_turn_end(event, _ctx):
             nonlocal sent
             if sent or event["outcome"] != "error":

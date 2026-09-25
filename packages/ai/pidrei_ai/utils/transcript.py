@@ -45,7 +45,8 @@ def create_initial_system_message(system_prompt: str | None, tools: list[Tool] |
     has_tools = tools is not None and len(tools) > 0
     if not has_system_prompt and not has_tools:
         return None
-    return SystemMessage(content=system_prompt or "", tools_added=tools if has_tools else None, timestamp=0)
+    # A copy: the message is frozen and published, and the caller keeps its list.
+    return SystemMessage(content=system_prompt or "", tools_added=list(tools) if has_tools else None, timestamp=0)
 
 
 def normalize_context(context: Context | TranscriptContext) -> TranscriptContext:
@@ -60,7 +61,9 @@ def normalize_context(context: Context | TranscriptContext) -> TranscriptContext
     if isinstance(context, TranscriptContext):
         return context
     initial_message = create_initial_system_message(context.system_prompt, context.tools)
-    messages = [initial_message, *context.messages] if initial_message is not None else context.messages
+    # Always a new list: adapters read it later on their setup task, while the
+    # caller keeps its `Context`.
+    messages = [initial_message, *context.messages] if initial_message is not None else list(context.messages)
     return TranscriptContext(messages=messages)
 
 

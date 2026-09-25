@@ -643,14 +643,17 @@ async def test_session_info_modified_uses_last_message_timestamp(tmp_path):
 
     # SessionManager only persists once it has seen at least one assistant
     # message; add one so subsequent appends are persisted.
+    first_time = now_ms()
     mgr = await SessionManager.open(file_path)
-    await mgr.append_message(assistant_msg("hi", api="openai-completions", provider="openai"))
+    await mgr.append_message(assistant_msg("hi", api="openai-completions", provider="openai", timestamp=first_time))
 
     before_mtime = os.stat(file_path).st_mtime
-    await tonio.time.sleep(0.01)
 
     mgr = await SessionManager.open(file_path)
-    msg_time = now_ms()
+    # A minute past the first message instead of a short real pause: the
+    # later message's time can then equal neither the first one nor the
+    # file's mtime, however slow the runner.
+    msg_time = first_time + 60_000
     await mgr.append_message(assistant_msg("later", api="openai-completions", provider="openai", timestamp=msg_time))
 
     sessions = await SessionManager.list("/tmp", os.path.dirname(file_path))

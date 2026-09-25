@@ -55,7 +55,7 @@ async def _create_waiting_harness(*, extension_factories=None):
 async def test_runs_direct_steering_and_follow_up_messages_through_input_handlers(harnesses):
     input_events: list[dict] = []
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_input(event, _ctx):
             input_events.append(
                 {"text": event["text"], "source": event["source"], "streamingBehavior": event["streamingBehavior"]}
@@ -97,3 +97,36 @@ async def test_runs_direct_steering_and_follow_up_messages_through_input_handler
     finally:
         tool_release.set()
     await prompt
+
+
+# pidrei-only: in pi the final queue check and the end of the run are one
+# synchronous step. Here the check is a mailbox job, so input can see the run
+# between the check answering "nothing queued" and the run ending. It must not be
+# queued into a run that will never drain it; it takes the idle path once the run
+# has settled, as it would in pi arriving just after the run.
+@pytest.mark.tonio
+async def test_input_seeing_the_run_after_its_final_queue_check_is_not_stranded(harnesses):
+    harness = await create_harness()
+    harnesses.append(harness)
+    harness.set_responses([faux_assistant_message("done")])
+    session = harness.session
+    late: list = []
+    run_before_settle_boundary = session._run_before_settle_boundary
+
+    async def boundary_then_late_input() -> bool:
+        should_continue = await run_before_settle_boundary()
+        if not should_continue and not late:
+            remainder = session._dispatch_custom_message({"customType": "late", "content": "late input"}, {})
+            late.append(tonio.spawn(remainder()) if remainder is not None else None)
+        return should_continue
+
+    session._run_before_settle_boundary = boundary_then_late_input
+
+    await session.prompt("start")
+    if late[0] is not None:
+        await late[0]
+
+    assert await session.agent.has_queued_messages() is False
+    assert [
+        entry.get("customType") for entry in session.session_manager.get_entries() if entry["type"] == "custom_message"
+    ] == ["late"]

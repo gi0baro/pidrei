@@ -404,13 +404,13 @@ async def test_emit_cache_warming_decision_uses_the_last_extension_override(tmp_
     runtime = create_extension_runtime()
     event_bus = create_event_bus()
 
-    def warm(pi) -> None:
+    async def warm(pi) -> None:
         async def handler(_event, _ctx):
             return {"action": "warm"}
 
         pi.on("cache_warming_decision", handler)
 
-    def stop(pi) -> None:
+    async def stop(pi) -> None:
         async def handler(_event, _ctx):
             return {"action": "stop"}
 

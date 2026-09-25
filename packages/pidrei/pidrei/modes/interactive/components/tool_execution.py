@@ -194,23 +194,29 @@ class ToolExecutionComponent(Container):
 
             async def convert(index=i, source_data=source_data, source_mime_type=source_mime_type) -> None:
                 converted = await tonio.spawn_blocking(convert_to_png, source_data, source_mime_type)
-                # Ignore a conversion that finishes after its image was replaced.
-                current_images = [c for c in (self._result or {}).get("content", []) if _block_type(c) == "image"]
-                current = current_images[index] if index < len(current_images) else None
-                if (
-                    not converted
-                    or current is None
-                    or _block_get(current, "data") != source_data
-                    or _block_get(current, "mimeType") != source_mime_type
-                ):
+                if not converted:
                     return
-                self._converted_images[index] = {
-                    "sourceData": source_data,
-                    "sourceMimeType": source_mime_type,
-                    **converted,
-                }
-                self._update_display()
-                self._ui.request_render()
+
+                def apply() -> None:
+                    # On the owner, ordered with `update_result`: ignore a conversion
+                    # that finishes after its image was replaced.
+                    current_images = [c for c in (self._result or {}).get("content", []) if _block_type(c) == "image"]
+                    current = current_images[index] if index < len(current_images) else None
+                    if (
+                        current is None
+                        or _block_get(current, "data") != source_data
+                        or _block_get(current, "mimeType") != source_mime_type
+                    ):
+                        return
+                    self._converted_images[index] = {
+                        "sourceData": source_data,
+                        "sourceMimeType": source_mime_type,
+                        **converted,
+                    }
+                    self._update_display()
+                    self._ui.request_render()
+
+                self._ui.post_ui(apply)
 
             tonio.spawn.without_tracking(convert())
 

@@ -38,7 +38,6 @@ import json
 import os
 
 import tonio.colored as tonio
-from tonio.colored import fs
 from tonio.colored.sync import channel
 
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
@@ -276,10 +275,6 @@ async def run_single_agent(
         )
 
     run_cwd = cwd or default_cwd
-    if not await fs.Path(run_cwd).exists():
-        # The child process failed at spawn on a bad cwd; fail before building
-        # a session for the same effect.
-        return _failed_result(agent_name, agent.source, task, step, f"Working directory does not exist: {run_cwd}")
 
     inherits_dispatch_config = not agent.model
     model = agent.model or dispatch_defaults.get("model")
@@ -300,13 +295,20 @@ async def run_single_agent(
     # at message boundaries.
     streaming_preview = {"text": ""}
 
+    def snapshot_result() -> dict:
+        # An update is consumed on other tasks, later (the agent loop forwards
+        # it; the TUI renders it, RPC serializes it) while this session keeps
+        # appending to `current_result`: hand over a copy. The message dicts
+        # themselves are never changed once appended.
+        return {**current_result, "messages": list(current_result["messages"]), "usage": dict(current_result["usage"])}
+
     def emit_update() -> None:
         if on_update is not None:
             text = streaming_preview["text"] or get_final_output(current_result["messages"]) or "(running...)"
             on_update(
                 AgentToolResult(
                     content=[TextContent(text=text)],
-                    details=make_details([current_result]),
+                    details=make_details([snapshot_result()]),
                 )
             )
 
@@ -625,36 +627,54 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
         concurrency = requested_concurrency if isinstance(requested_concurrency, int) else MAX_CONCURRENCY
         concurrency = max(1, min(concurrency, MAX_PARALLEL_TASKS))
 
-        # Track all results for streaming updates (pi: exitCode -1 = running)
-        all_results: list[dict] = [
-            {
-                "agent": t["agent"],
-                "agentSource": "unknown",
-                "task": t["task"],
-                "status": "running",
-                "messages": [],
-                "usage": empty_usage(),
-            }
-            for t in tasks
-        ]
+        # Track all results for streaming updates (pi: exitCode -1 = running).
+        # One slot per subagent; `fetch()` returns a consistent copy of all.
+        slots = tonio.Result(len(tasks))
+        for index, t in enumerate(tasks):
+            slots.store(
+                {
+                    "agent": t["agent"],
+                    "agentSource": "unknown",
+                    "task": t["task"],
+                    "status": "running",
+                    "messages": [],
+                    "usage": empty_usage(),
+                },
+                index,
+            )
 
-        def emit_parallel_update() -> None:
-            if on_update is not None:
-                running = sum(1 for r in all_results if is_running_result(r))
-                done = len(all_results) - running
-                on_update(
-                    AgentToolResult(
-                        content=[TextContent(text=f"Parallel: {done}/{len(all_results)} done, {running} running...")],
-                        details=make_details("parallel")(list(all_results)),
-                    )
+        # The subagents report from their own tasks: each stores its slot and
+        # ticks; the aggregator is the only one building and sending the
+        # combined view (pi's emitParallelUpdate), so views go out in order.
+        tick_sender, tick_receiver = channel.unbounded()
+
+        def emit_parallel_update(results: list[dict]) -> None:
+            running = sum(1 for r in results if is_running_result(r))
+            done = len(results) - running
+            on_update(
+                AgentToolResult(
+                    content=[TextContent(text=f"Parallel: {done}/{len(results)} done, {running} running...")],
+                    details=make_details("parallel")(results),
                 )
+            )
+
+        async def aggregate() -> None:
+            # Every view is a fresh `fetch()`, so each is at least as new as
+            # the one before; ticks already queued coalesce into one view.
+            while True:
+                tick = await tick_receiver.receive()
+                while tick is not None and (more := tick_receiver.receive_nowait()) is not tick_receiver.Empty:
+                    tick = more
+                emit_parallel_update(slots.fetch())
+                if tick is None:
+                    return
 
         async def run_one(t: dict, index: int) -> dict:
             def task_update(partial) -> None:
                 streaming = (partial.details or {}).get("results") or []
                 if streaming:
-                    all_results[index] = streaming[0]
-                    emit_parallel_update()
+                    slots.store(streaming[0], index)
+                    tick_sender.send(index)
 
             result = await run_single_agent(
                 ctx.cwd,
@@ -668,11 +688,17 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
                 task_update,
                 make_details("parallel"),
             )
-            all_results[index] = result
-            emit_parallel_update()
+            slots.store(result, index)
+            tick_sender.send(index)
             return result
 
-        results = await map_with_concurrency_limit(tasks, concurrency, run_one)
+        aggregator = tonio.spawn(aggregate()) if on_update is not None else None
+        try:
+            results = await map_with_concurrency_limit(tasks, concurrency, run_one)
+        finally:
+            if aggregator is not None:
+                tick_sender.send(None)  # the final view, then stop
+                await aggregator
 
         success_count = sum(1 for r in results if not is_failed_result(r))
         summaries = []
@@ -1003,7 +1029,7 @@ def _render_result(result, options, theme, _context):
     return Text(getattr(first, "text", None) or "(no output)", 0, 0)
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_tool(
         ToolDefinition(
             name="subagent",

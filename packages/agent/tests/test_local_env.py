@@ -20,9 +20,12 @@ from pidrei_agent.harness.types import (
     get_or_throw,
     ok,
 )
-from pidrei_agent.harness.utils.output_capture import apply_shell_output_update
+from pidrei_agent.harness.utils.output_capture import OutputCapture, apply_shell_output_update
 from pidrei_agent.harness.utils.shell_output import execute_shell_with_capture
+from pidrei_ai.utils import timers
 from pidrei_ai.utils.cancel import CancelToken
+
+from .fake_timers import fake_timers
 
 
 def create_temp_dir() -> str:
@@ -341,11 +344,14 @@ async def test_can_replace_rather_than_inherit_the_default_shell_environment():
 async def test_cleanup_terminates_active_shell_processes():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
-    execution = tonio.spawn(env.exec("touch started; sleep 60"))
-    for _ in range(100):
-        if get_or_throw(await env.exists("started")):
-            break
-        await tonio.sleep(0.01)
+    # pidrei: the child reports it is running through its output (the pid is
+    # registered before output is read) instead of the test polling a file.
+    started = tonio.Event()
+    execution = tonio.spawn(
+        env.exec("touch started; printf started; sleep 60", ShellExecOptions(on_update=lambda *_: started.set()))
+    )
+    await started.wait(5)
+    assert started.is_set()
     assert get_or_throw(await env.exists("started")) is True
     await env.cleanup()
     result, completed = await tonio_time.timeout(execution, 3.0)
@@ -446,8 +452,14 @@ async def test_returns_an_aborted_result_for_aborted_commands():
     root = create_temp_dir()
     env = LocalExecutionEnv(cwd=root)
     token = CancelToken()
-    execution = tonio.spawn(env.exec("sleep 5", None, token))
-    await tonio.sleep(0.05)
+    # pidrei: cancel once the child is known to be running (it prints first)
+    # rather than after a 50 ms sleep that a slow runner can outrun.
+    started = tonio.Event()
+    execution = tonio.spawn(
+        env.exec("printf started; sleep 5", ShellExecOptions(on_update=lambda *_: started.set()), token)
+    )
+    await started.wait(5)
+    assert started.is_set()
     token.cancel()
     result = await execution
     assert result.ok is False
@@ -509,18 +521,26 @@ async def test_preserves_complete_output_when_spill_backpressure_pauses_a_proces
     assert len(get_or_throw(await env.read_text_file(result.spill_path))) == size
 
 
-class SlowSpillExecutionEnv(LocalExecutionEnv):
-    """Hands the spill its file only after a delay that outlasts the post-exit
-    grace window, so the writer (and the channel behind it) stalls."""
+class GatedSpillExecutionEnv(LocalExecutionEnv):
+    """Hands the spill its file only once the test releases it, so the writer
+    (and the channel behind it) stays stalled for as long as the test needs."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.spill_release = tonio.Event()
 
     async def create_temp_file(self, prefix: str = "", suffix: str = "", cancel=None):
         if prefix == "pidrei-output-":
-            await tonio_time.sleep(0.2)
+            await self.spill_release.wait(5)
         return await super().create_temp_file(prefix, suffix, cancel)
 
 
+# A value no other timer in exec uses, so the grace window is recognizable.
+_GRACE_SECONDS = 0.137
+
+
 @pytest.mark.tonio
-async def test_keeps_reading_the_pipes_while_a_slow_spill_parks_a_reader_after_exit():
+async def test_keeps_reading_the_pipes_while_a_slow_spill_parks_a_reader_after_exit(monkeypatch):
     """pidrei-only; pi's `spillIsDraining()` re-arms its idle timer. With a
     one-slot spill channel and a stalled writer the reader sits parked on
     `send` while the child prints its last line and exits. That silence is
@@ -530,19 +550,79 @@ async def test_keeps_reading_the_pipes_while_a_slow_spill_parks_a_reader_after_e
     Read by read: `a` stays in the prefix (one line is within the limit), `b`
     overflows and hands the writer its first chunk (which stalls on the
     spill file), `c` fills the single slot, `d` parks the reader, and `e` is
-    the line still in the pipe when the child exits."""
-    saved = (local.SPILL_CHANNEL_SIZE, local.EXIT_STDIO_GRACE_SECONDS)
-    local.SPILL_CHANNEL_SIZE, local.EXIT_STDIO_GRACE_SECONDS = 1, 0.02
-    try:
-        env = SlowSpillExecutionEnv(cwd=create_temp_dir())
-        result = get_or_throw(
-            await env.exec(
-                "for line in a b c d e; do echo $line; sleep 0.02; done",
-                ShellExecOptions(capture=_capture(max_bytes=10_000, max_lines=1)),
+    the line still in the pipe when the child exits.
+
+    Nothing is timed: the child prints each line only when the test writes a
+    newline into a FIFO gate (after the previous line was read; both sides keep
+    the FIFO open for the whole run, so no reopen can pair with a stale
+    writer), the spill file is released
+    by the test, and the grace window runs on fake timers — the test expires
+    it while the spill is still stalled and requires it to be re-armed."""
+    pushed = {line: tonio.Event() for line in "abcde"}
+    push = OutputCapture.push
+
+    def observed_push(self, chunk) -> None:
+        push(self, chunk)
+        text = chunk.decode() if isinstance(chunk, bytes) else chunk
+        for line in text.split():
+            if line in pushed:
+                pushed[line].set()
+
+    monkeypatch.setattr(OutputCapture, "push", observed_push)
+    monkeypatch.setattr(local, "SPILL_CHANNEL_SIZE", 1)
+    monkeypatch.setattr(local, "EXIT_STDIO_GRACE_SECONDS", _GRACE_SECONDS)
+
+    cwd = create_temp_dir()
+    gate = os.path.join(cwd, "gate")
+    os.mkfifo(gate)
+    env = GatedSpillExecutionEnv(cwd=cwd)
+    script = "; ".join(['exec 3< "$GATE"', *(f"echo {line}; read -r _ <&3" for line in "abcd"), "echo e"])
+
+    with fake_timers() as fake:
+        graces: list[tonio.Event] = [tonio.Event(), tonio.Event()]
+        armed = 0
+
+        def set_timeout(delay_ms, callback):
+            nonlocal armed
+            cancel = fake.set_timeout(delay_ms, callback)
+            if delay_ms == _GRACE_SECONDS * 1000 and armed < len(graces):
+                graces[armed].set()
+                armed += 1
+            return cancel
+
+        # Plain assignment: `fake_timers()` restores the real seam on exit.
+        timers.set_timeout = set_timeout
+        run = tonio.spawn(
+            env.exec(
+                script,
+                ShellExecOptions(env={"GATE": gate}, capture=_capture(max_bytes=10_000, max_lines=1)),
             )
         )
-    finally:
-        local.SPILL_CHANNEL_SIZE, local.EXIT_STDIO_GRACE_SECONDS = saved
+        # O_RDWR: opens without waiting for the child's reader (Linux and macOS),
+        # so a child that never starts cannot park a pool thread in open().
+        gate_fd = await tonio.spawn_blocking(os.open, gate, os.O_RDWR)
+        try:
+            for line in "abcd":
+                await pushed[line].wait(5)
+                assert pushed[line].is_set(), f"line {line!r} was never read"
+                # One newline per line: the child prints the next one.
+                await tonio.spawn_blocking(os.write, gate_fd, b"\n")
+
+            # The child printed `e` and exited; the grace window opened with the
+            # reader parked on the stalled spill and `e` unread in the pipe.
+            await graces[0].wait(5)
+            assert graces[0].is_set(), "the post-exit grace window never opened"
+            assert not pushed["e"].is_set()
+            fake.advance(round(_GRACE_SECONDS * 1000))
+            # No read happened, but the spill is draining: the window re-arms
+            # instead of force-closing the pipes.
+            await graces[1].wait(5)
+            assert graces[1].is_set(), "the pipes were closed while the spill was still draining"
+        finally:
+            env.spill_release.set()
+            await tonio.spawn_blocking(os.close, gate_fd)
+        result = get_or_throw(await run)
+
     assert result.truncation.total_lines == 5
     assert result.spill_path is not None
     assert get_or_throw(await env.read_text_file(result.spill_path)) == "a\nb\nc\nd\ne\n"

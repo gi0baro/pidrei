@@ -36,7 +36,7 @@ async def test_does_not_start_prepared_tools_after_a_later_preflight_aborts(harn
         execute=execute,
     )
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_tool_call(event, ctx):
             value = str(event["input"]["value"]) if "value" in event["input"] else ""
             preflights.append(value)

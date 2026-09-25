@@ -108,7 +108,7 @@ class IssueAutocompleteProvider:
         return should(lines, cursor_line, cursor_col) if should is not None else True
 
 
-def extension(pi):
+async def extension(pi):
     async def on_session_start(_event, ctx) -> None:
         repo, error = await resolve_github_repo(pi, ctx.cwd)
         if repo is None:
@@ -116,11 +116,23 @@ def extension(pi):
             return
 
         # pi memoizes the load promise; here a single load task sets an Event
-        # every caller waits on, so the `gh` call runs at most once.
+        # every caller waits on, so the `gh` call runs at most once. A failed
+        # load (the exec, or a notify on a context gone stale) is kept and
+        # re-raised to every caller, as pi's rejected promise is — never a
+        # wait that does not end.
         state = {"issues": None, "error_shown": False}
         loaded = tonio.Event()
+        failure = tonio.Result()
 
         async def load_issues() -> None:
+            try:
+                await fetch_issues()
+            except Exception as error:
+                failure.store(error)
+            finally:
+                loaded.set()
+
+        async def fetch_issues() -> None:
             result = await pi.exec(
                 "gh",
                 [
@@ -150,10 +162,12 @@ def extension(pi):
                     if not state["error_shown"]:
                         state["error_shown"] = True
                         ctx.ui.notify("github-issue-autocomplete: failed to parse gh issue list output", "error")
-            loaded.set()
 
         async def get_issues() -> list[dict] | None:
             await loaded.wait()
+            error = failure.fetch()
+            if error is not None:
+                raise error
             return state["issues"]
 
         tonio.spawn.without_tracking(load_issues())

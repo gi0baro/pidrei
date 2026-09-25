@@ -27,7 +27,7 @@ def build_tool_guidance(options) -> str:
     return "\n".join(rules)
 
 
-def extension(pi):
+async def extension(pi):
     async def on_before_agent_start(event, _ctx):
         options = event["systemPromptOptions"]
         guidance = build_tool_guidance(options)

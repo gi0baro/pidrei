@@ -28,7 +28,7 @@ async def test_lets_a_tool_call_handler_terminate_the_run_after_blocking_executi
         execute=execute,
     )
 
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def guard(_event, _ctx):
             return {"block": True, "reason": "Blocked by terminating policy", "terminate": True}
 

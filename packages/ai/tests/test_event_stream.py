@@ -172,12 +172,16 @@ async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
         timestamp=0,
     )
 
+    producing = tonio.Event()
+
     async def produce():
         stream.partial = partial
+        producing.set()
         await parked.wait(None)  # never set: only cancellation gets us out
 
     stream.spawn_producer(produce(), cancel)
-    await tonio.sleep(0.02)
+    await producing.wait(5)
+    assert producing.is_set()
     cancel.cancel()
 
     events = [event async for event in stream]
@@ -200,12 +204,15 @@ async def test_cancel_before_the_producer_registers_a_partial_fails_the_result()
     stream = AssistantMessageEventStream()
     cancel = CancelToken()
     parked = tonio.Event()
+    producing = tonio.Event()
 
     async def produce():
+        producing.set()
         await parked.wait(None)
 
     stream.spawn_producer(produce(), cancel)
-    await tonio.sleep(0.02)
+    await producing.wait(5)
+    assert producing.is_set()
     cancel.cancel()
 
     assert [event async for event in stream] == []
@@ -322,12 +329,16 @@ async def test_abort_with_a_frozen_partial_publishes_an_aborted_copy():
     cancel = CancelToken()
     parked = tonio.Event()
 
+    producing = tonio.Event()
+
     async def produce():
         stream.partial = frozen
+        producing.set()
         await parked.wait(None)
 
     stream.spawn_producer(produce(), cancel)
-    await tonio.sleep(0.02)
+    await producing.wait(5)
+    assert producing.is_set()
     cancel.cancel()
 
     result = await stream.result()
@@ -344,18 +355,21 @@ async def test_run_cancellable_unwinds_a_parked_operation():
 
     cancel = CancelToken()
     parked = tonio.Event()
+    entered = tonio.Event()
 
     async def operation():
+        entered.set()
         await parked.wait(None)
         return "never"
 
     async def cancel_soon():
-        await tonio.sleep(0.02)
+        await entered.wait(5)
         cancel.cancel()
 
     tonio.spawn.without_tracking(cancel_soon())
     with pytest.raises(AbortError):
         await run_cancellable(operation(), cancel)
+    assert entered.is_set()
 
 
 @pytest.mark.tonio

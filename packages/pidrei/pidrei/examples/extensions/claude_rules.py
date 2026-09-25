@@ -36,7 +36,7 @@ async def find_markdown_files(rules_dir: str) -> list[str]:
     return sorted(files)
 
 
-def extension(pi):
+async def extension(pi):
     state: dict[str, list[str]] = {"rule_files": []}
 
     # Scan for rules on session start

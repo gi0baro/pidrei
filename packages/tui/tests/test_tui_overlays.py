@@ -47,21 +47,20 @@ class StaticLines:
 async def render_and_flush(tui, terminal):
     """Render and wait until the frame on screen reflects the current state.
 
-    Two round-trips, not one. Waiting for a single frame is not enough: if the
-    render loop is already inside `_do_render()` when the test mutates focus or
-    overlay order, it writes a *stale* frame, the counter advances and the wait
-    returns early — the assertion then reads the previous frame. The second
-    request cannot start until the first has completed, so the frame it
-    produces is guaranteed to have begun after the mutation.
+    Waiting for *a* frame is not enough: if the render loop is already inside
+    `_do_render()` when the test mutates focus or overlay order, it writes a
+    *stale* frame, the counter advances and the wait returns early — the
+    assertion then reads the previous frame. (Two frame round-trips narrowed
+    that without closing it: a stale frame still in the writer plus one mid-
+    render consumed both.) `settle()` returns once the render requested here
+    — which begins after the mutation — has run and every frame is written.
 
     This replaced `await tonio.sleep(0.05)`, which waited for nothing at all
     and was the cause of a long-standing load-dependent flake across the focus
     and overlay suites.
     """
-    for _ in range(2):
-        before = terminal.frames
-        tui.request_render(True)
-        await terminal.wait_for_render(before)
+    tui.request_render(True)
+    await terminal.settle()
 
 
 # width overflow protection

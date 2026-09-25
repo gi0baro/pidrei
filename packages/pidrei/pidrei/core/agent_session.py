@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 import tonio.colored as tonio
-from tonio.colored import fs
+from tonio.colored import fs, sync as tonio_sync
 
 from pidrei_agent.agent import Agent
 from pidrei_agent.types import (
@@ -261,6 +261,15 @@ class BashExecutionUpdateEvent:
 AgentSessionEventListener = Callable[[Any], None]
 
 
+def _without_first(listeners: tuple, listener) -> tuple:
+    """`listeners` minus the first occurrence of `listener` (pi's
+    `indexOf` + `splice`: a listener subscribed twice unsubscribes once)."""
+    if listener not in listeners:
+        return listeners
+    index = listeners.index(listener)
+    return listeners[:index] + listeners[index + 1 :]
+
+
 # ============================================================================
 # Types
 # ============================================================================
@@ -438,13 +447,28 @@ class AgentSession:
 
         # Event subscription state
         self._unsubscribe_agent: Callable[[], None] | None = None
-        self._event_listeners: list[AgentSessionEventListener] = []
+        # Subscribed and unsubscribed from any task while `_emit` iterates:
+        # a copy-on-write tuple, replaced under the guard.
+        self._event_listeners: tuple[AgentSessionEventListener, ...] = ()
+        self._event_listeners_guard = threading.Lock()
         self._is_agent_run_active = False
         # Set by abort() while a run is active; the post-run loop checks it so a retry,
         # compaction continuation or queued-message continuation cannot outlive the abort.
         self._agent_run_abort_requested = False
+        # Bumped by every abort, run or not. An operation that publishes its cancel
+        # token after an await captures it first, so an abort landing before the
+        # token exists is still seen (`_run_auto_compaction`).
+        self._abort_generation = 0
         self._idle_wait_event: tonio.Event | None = None
         self._state_guard = threading.RLock()
+        # Serializes run activation against the idle-path writers (`record_bash_result`,
+        # `_append_custom_message_when_idle`): their "no run is active" decision and the
+        # persist + `_refresh_finalized_context()` that follows it span an await, and a
+        # run starting inside that window would have its transcript rebound under it.
+        self._run_admission = tonio_sync.Lock()
+        # Makes `_refresh_finalized_context` compute-and-rebind atomic, so two writers
+        # refreshing concurrently cannot publish an older projection last.
+        self._finalized_context_guard = threading.Lock()
 
         # Pending steering/follow-up messages tracked for UI display.
         self._steering_messages: list[str] = []
@@ -492,6 +516,10 @@ class AgentSession:
         self._abort_during_before_settle = False
         self._is_emitting_agent_settled = False
         self._deferred_settled_actions: list[Callable[[], Awaitable[None]]] = []
+        # Set (under `_state_guard`) when the run stops taking queued input, right
+        # before its final queue check; set and cleared when the run reopens or has
+        # settled. See `_close_run_input`.
+        self._run_input_closed: tonio.Event | None = None
 
         self._resource_loader = config.resource_loader
         self._custom_tools: list[Any] = config.custom_tools or []
@@ -761,8 +789,8 @@ class AgentSession:
             if entry_id
         ]
 
-        async def build_context(entries: list[dict[str, Any]]) -> BoundaryContextPreview:
-            return await self._build_boundary_context(entries, "turn_end")
+        def build_context(entries: list[dict[str, Any]]) -> Awaitable[BoundaryContextPreview]:
+            return self._build_boundary_context(entries, "turn_end")
 
         boundary = await self._extension_runner.emit_boundary(
             {
@@ -817,21 +845,21 @@ class AgentSession:
             next_context = (
                 previous_snapshot.context if previous_snapshot is not None and previous_snapshot.context else context
             )
-            run_options = (
-                self._run_system_prompt_options
-                if self._run_system_prompt_options is not None
-                else self._base_system_prompt_options
-            )
+            # One read of each published value: both are rebound from other tasks.
+            base_options = self._base_system_prompt_options
+            run_options = self._run_system_prompt_options
+            if run_options is None:
+                run_options = base_options
             options = normalize_build_system_prompt_options(
                 dataclass_replace(
                     run_options,
                     selected_tools=self.get_active_tool_names(),
                     tool_snippets={
-                        **(self._base_system_prompt_options.tool_snippets or {}),
+                        **(base_options.tool_snippets or {}),
                         **(run_options.tool_snippets or {}),
                     },
                     tool_guidelines={
-                        **(self._base_system_prompt_options.tool_guidelines or {}),
+                        **(base_options.tool_guidelines or {}),
                         **(run_options.tool_guidelines or {}),
                     },
                 )
@@ -862,7 +890,8 @@ class AgentSession:
         pi also records every projected message's entry id here; the run-scoped
         table only holds messages persisted this run, and projected messages
         resolve through the positional walk (state epochs, option P)."""
-        self.agent.state.messages = self.session_manager.build_session_projection().messages
+        with self._finalized_context_guard:
+            self.agent.state.messages = self.session_manager.build_session_projection().messages
 
     async def _apply_boundary_drafts(
         self, manager: SessionManager, drafts: list[dict[str, Any]]
@@ -947,7 +976,7 @@ class AgentSession:
         )
 
     def _emit(self, event: Any) -> None:
-        for listener in list(self._event_listeners):
+        for listener in self._event_listeners:
             listener(event)
 
     def _emit_queue_update(self) -> None:
@@ -993,15 +1022,25 @@ class AgentSession:
         # bash flush (see `_run_agent_prompt`).
         if self._cache_warmer is not None:
             self._cache_warmer.on_agent_settled()
-        self._is_emitting_agent_settled = True
+        with self._state_guard:
+            self._is_emitting_agent_settled = True
         try:
             await self._extension_runner.emit({"type": "agent_settled"})
             self._emit(AgentSettledEvent())
         finally:
-            self._is_emitting_agent_settled = False
+            # Clearing the flag and taking the list is one critical section, paired
+            # with `_defer_until_settled`: an action either lands in the list taken
+            # here or sees the flag cleared and runs directly — never on a list
+            # nobody drains.
+            with self._state_guard:
+                self._is_emitting_agent_settled = False
+                deferred, self._deferred_settled_actions = self._deferred_settled_actions, []
+                # The run has settled: input that found it closing now takes the idle path.
+                closed, self._run_input_closed = self._run_input_closed, None
+            if closed is not None:
+                closed.set()
 
         # Runs started from settled handlers were deferred until settlement finished.
-        deferred, self._deferred_settled_actions = self._deferred_settled_actions, []
         if deferred:
             try:
                 for action in deferred:
@@ -1010,6 +1049,50 @@ class AgentSession:
                 self._resolve_idle_wait_if_idle()
             return
         self._resolve_idle_wait_if_idle()
+
+    def _defer_until_settled(self, action: Callable[[], Awaitable[None]]) -> bool:
+        """Queue `action` behind the running `agent_settled` emission; False when
+        none is running and the caller should run it itself."""
+        with self._state_guard:
+            if not self._is_emitting_agent_settled:
+                return False
+            self._deferred_settled_actions.append(action)
+            return True
+
+    def _close_run_input(self) -> None:
+        """Stop the run taking queued input, right before its final queue check.
+
+        pi's final `hasQueuedMessages()` and the end of the run are one synchronous
+        step, so input that saw the run streaming is always seen by that check. Here
+        the check is a mailbox job, so the enqueue sites decide and post under
+        `_state_guard` while `_run_input_closed` is None, and the run closes under the
+        same guard before posting its check: every accepted post is in the mailbox
+        ahead of the check (FIFO). Input arriving while the run is closed waits on the
+        event, then queues (the run reopened) or takes the idle path (it settled) —
+        in pi it would have found the run finished."""
+        with self._state_guard:
+            if self._run_input_closed is None:
+                self._run_input_closed = tonio.Event()
+
+    def _reopen_run_input(self) -> None:
+        """The final check found queued input, so the run continues and takes input again."""
+        with self._state_guard:
+            closed, self._run_input_closed = self._run_input_closed, None
+        if closed is not None:
+            closed.set()
+
+    def _post_queued_input(self, behavior: str, text: str, images: list[ImageContent] | None) -> None:
+        """The synchronous body of `_queue_steer`/`_queue_follow_up`, without the update event."""
+        content: list[TextContent | ImageContent] = [TextContent(text=text)]
+        if images:
+            content.extend(images)
+        message = UserMessage(content=content, timestamp=_now_ms())
+        if behavior == "followUp":
+            self._follow_up_messages.append(text)
+            self.agent.follow_up(message)
+        else:
+            self._steering_messages.append(text)
+            self.agent.steer(message)
 
     async def _handle_agent_event(self, event: AgentEvent, _cancel=None) -> None:
         """Internal handler for agent events - shared by subscribe and reconnect."""
@@ -1236,11 +1319,12 @@ class AgentSession:
     def subscribe(self, listener: AgentSessionEventListener) -> Callable[[], None]:
         """Subscribe to agent session events. Session persistence is handled
         internally. Returns an unsubscribe function for this listener."""
-        self._event_listeners.append(listener)
+        with self._event_listeners_guard:
+            self._event_listeners = (*self._event_listeners, listener)
 
         def unsubscribe() -> None:
-            if listener in self._event_listeners:
-                self._event_listeners.remove(listener)
+            with self._event_listeners_guard:
+                self._event_listeners = _without_first(self._event_listeners, listener)
 
         return unsubscribe
 
@@ -1264,7 +1348,8 @@ class AgentSession:
 
         self._extension_runner.invalidate()
         self._disconnect_from_agent()
-        self._event_listeners = []
+        with self._event_listeners_guard:
+            self._event_listeners = ()
         if self._cache_warmer is not None:
             self._cache_warmer.on_warmed = None
             self._cache_warmer.cancel()
@@ -1314,11 +1399,9 @@ class AgentSession:
     @property
     def system_prompt(self) -> str:
         """Current effective system prompt, including changes not yet sent to the model."""
-        return build_system_prompt(
-            self._run_system_prompt_options
-            if self._run_system_prompt_options is not None
-            else self._base_system_prompt_options
-        )
+        # One read: the prompt task clears the run options when the run ends.
+        run_options = self._run_system_prompt_options
+        return build_system_prompt(run_options if run_options is not None else self._base_system_prompt_options)
 
     @property
     def retry_attempt(self) -> int:
@@ -1430,7 +1513,7 @@ class AgentSession:
         loaded_skills = self._resource_loader.get_skills().skills
         loaded_context_files = self._resource_loader.get_agents_files()
 
-        self._base_system_prompt_options = normalize_build_system_prompt_options(
+        options = normalize_build_system_prompt_options(
             BuildSystemPromptOptions(
                 cwd=self._cwd,
                 skills=loaded_skills,
@@ -1442,6 +1525,24 @@ class AgentSession:
                 tool_guidelines=dict(self._tool_prompt_guidelines),
             )
         )
+        # Under the guard `_publish_system_prompt_options` swaps under.
+        with self._state_guard:
+            self._base_system_prompt_options = options
+
+    def _check_out_system_prompt_options(self) -> tuple[Any, NormalizedBuildSystemPromptOptions]:
+        """A command's private copy of the base prompt options, with the value it was
+        copied from (`ctx.get_system_prompt_options()`)."""
+        source = self._base_system_prompt_options
+        return source, normalize_build_system_prompt_options(source)
+
+    def _publish_system_prompt_options(self, source: Any, options: NormalizedBuildSystemPromptOptions) -> None:
+        """Publish a command's copy once its handler returns — only if the base is still
+        the value it was copied from. In pi a rebuild replaces the base object, so later
+        mutations of the old one have no effect; a stale copy is dropped the same way."""
+        published = normalize_build_system_prompt_options(options)
+        with self._state_guard:
+            if self._base_system_prompt_options is source:
+                self._base_system_prompt_options = published
 
     def _prepare_prompt_and_tool_loadout(
         self, options: NormalizedBuildSystemPromptOptions, messages: list[Any] | None = None
@@ -1485,11 +1586,8 @@ class AgentSession:
                 if previous_transform_context is not None
                 else messages
             )
-            forced = (
-                self._run_system_prompt_options.force_system_prompt
-                if self._run_system_prompt_options is not None
-                else None
-            )
+            run_options = self._run_system_prompt_options
+            forced = run_options.force_system_prompt if run_options is not None else None
             if forced is None:
                 return transformed
             current = get_current_system_message(transformed)
@@ -1516,9 +1614,10 @@ class AgentSession:
     # =========================================================================
 
     async def _run_agent_prompt(self, messages: Any) -> None:
-        with self._state_guard:
-            self._agent_run_abort_requested = False
-            self._is_agent_run_active = True
+        async with self._run_admission:
+            with self._state_guard:
+                self._agent_run_abort_requested = False
+                self._is_agent_run_active = True
         try:
             await self.agent.prompt(messages)
             while not self._agent_run_abort_requested:
@@ -1547,10 +1646,15 @@ class AgentSession:
             # this flush already ran — such a message was stranded until a
             # future run settled (surfaced on CI as a bashExecution entry
             # missing from the session file).
-            with self._state_guard:
-                self._is_agent_run_active = False
-            await self._flush_pending_bash_messages()
-            await self._flush_pending_custom_messages()
+            # `_run_admission` spans the flip and both flushes: an idle-path writer
+            # arriving in the settle window waits, then persists after the messages
+            # queued during the run, keeping session order. `_emit_agent_settled`
+            # stays outside — its deferred actions start runs, which take the lock.
+            async with self._run_admission:
+                with self._state_guard:
+                    self._is_agent_run_active = False
+                await self._flush_pending_bash_messages()
+                await self._flush_pending_custom_messages()
             await self._emit_agent_settled()
 
     async def _handle_post_agent_run(self) -> bool:
@@ -1585,13 +1689,21 @@ class AgentSession:
 
     async def _run_before_settle_boundary(self) -> bool:
         if not self._extension_runner.has_handlers("agent_before_settle"):
-            return await self.agent.has_queued_messages()
-        self._is_before_settle = True
-        self._abort_during_before_settle = False
+            # The run's final queue check: close its input first (`_close_run_input`).
+            self._close_run_input()
+            queued = await self.agent.has_queued_messages()
+            if queued:
+                self._reopen_run_input()
+            return queued
+        # Both flags move under the guard `_request_abort` checks them with, so an
+        # abort cannot land between entering the window and resetting its record.
+        with self._state_guard:
+            self._abort_during_before_settle = False
+            self._is_before_settle = True
         try:
 
-            async def build_context(entries: list[dict[str, Any]]) -> BoundaryContextPreview:
-                return await self._build_boundary_context(entries, "agent_before_settle")
+            def build_context(entries: list[dict[str, Any]]) -> Awaitable[BoundaryContextPreview]:
+                return self._build_boundary_context(entries, "agent_before_settle")
 
             result = await self._extension_runner.emit_boundary(
                 {"type": "agent_before_settle", "outcome": self._last_activity_outcome}, build_context
@@ -1601,14 +1713,20 @@ class AgentSession:
             final_context = await self._build_boundary_context([], "agent_before_settle")
             if self._abort_during_before_settle:
                 return False
+            # The run's final queue check: close its input first (`_close_run_input`);
+            # input queued by the hooks above is still accepted.
+            self._close_run_input()
             should_continue = result.continue_ or await self.agent.has_queued_messages()
             if should_continue and not final_context.can_continue:
                 if result.continue_:
                     self._report_invalid_boundary_continuation("agent_before_settle")
                 return False
+            if should_continue:
+                self._reopen_run_input()
             return should_continue
         finally:
-            self._is_before_settle = False
+            with self._state_guard:
+                self._is_before_settle = False
 
     def _model_image_resize_options(self) -> ModelImageResizeOptions | None:
         limits = self.model.input_limits if self.model is not None else None
@@ -1664,13 +1782,8 @@ class AgentSession:
         - During streaming, queues via steer()/follow_up() based on streaming_behavior
         - Validates model and API key before sending (when not streaming)
         """
-        if self._is_emitting_agent_settled:
-            deferred_options = options
-
-            async def deferred_prompt() -> None:
-                await self.prompt(text, deferred_options)
-
-            self._deferred_settled_actions.append(deferred_prompt)
+        deferred_options = options
+        if self._defer_until_settled(lambda: self.prompt(text, deferred_options)):
             return
         options = options if options is not None else PromptOptions()
         expand_prompt_templates = options.expand_prompt_templates
@@ -1711,17 +1824,26 @@ class AgentSession:
                 expanded_text = await self._expand_skill_command(expanded_text)
                 expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
 
-            # If streaming, queue via steer() or follow_up() based on option
-            if self.is_streaming:
+            # If streaming, queue via steer() or follow_up() based on option. The decision
+            # and the post are one critical section (see `_close_run_input`); a run that
+            # is closing is waited out, then this input queues or takes the idle path.
+            while True:
+                with self._state_guard:
+                    closed = self._run_input_closed
+                    streaming = self._is_agent_run_active and closed is None
+                    if streaming and options.streaming_behavior:
+                        self._post_queued_input(options.streaming_behavior, expanded_text, current_images)
+                if closed is None:
+                    break
+                await closed.wait()
+            if streaming:
                 if not options.streaming_behavior:
                     raise Exception(
                         "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') "
                         "to queue the message."
                     )
-                if options.streaming_behavior == "followUp":
-                    await self._queue_follow_up(expanded_text, current_images)
-                else:
-                    await self._queue_steer(expanded_text, current_images)
+                # After the post, as in `_queue_user_input`.
+                self._emit_queue_update()
                 if preflight_result:
                     preflight_result(True)
                 return
@@ -1755,11 +1877,12 @@ class AgentSession:
 
             # Emit before_agent_start before normalizing images so extension-driven model
             # selection determines the resize profile used for the request and history.
-            selected_tools_before = list(self._base_system_prompt_options.selected_tools or [])
+            base_options = self._base_system_prompt_options  # one read: rebound from other tasks
+            selected_tools_before = list(base_options.selected_tools or [])
             result = await self._extension_runner.emit_before_agent_start(
                 expanded_text,
                 current_images,
-                self._base_system_prompt_options,
+                base_options,
             )
             system_prompt_options = result["systemPromptOptions"]
             # Handlers may edit event["systemPromptOptions"].selected_tools or call set_active_tools(),
@@ -1823,7 +1946,11 @@ class AgentSession:
         ctx = self._extension_runner.create_command_context()
 
         try:
-            await command.handler(args, ctx)
+            try:
+                await command.handler(args, ctx)
+            finally:
+                # pi's live options object keeps a command's mutations even when it throws.
+                ctx.publish_system_prompt_options()
             return True
         except Exception as err:
             # lazy: import cycle within core
@@ -1876,44 +2003,33 @@ class AgentSession:
         expanded_text = await self._expand_skill_command(processed_text)
         expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
 
-        if behavior == "steer":
-            await self._queue_steer(expanded_text, processed_images)
-        else:
-            await self._queue_follow_up(expanded_text, processed_images)
+        # pi queues here whether or not a run is active (input queued while idle is
+        # delivered by the next run), so no streaming decision is made.
+        self._post_queued_input(behavior, expanded_text, processed_images)
+        # Emitted after the mailbox post (pi emits before; on one thread nothing can
+        # run in between): a listener woken by the update then observes the queue —
+        # mailbox FIFO puts any `has_queued_messages()` behind the post.
+        self._emit_queue_update()
 
-    async def steer(self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive") -> None:
+    def steer(
+        self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive"
+    ) -> Awaitable[None]:
         """Queue a steering message while the agent is running. Delivered after the
         current assistant turn finishes executing its tool calls, before the next
         LLM call. Runs input handlers, expands skill commands and prompt
         templates. Errors on extension commands. `source` is the input source
         reported to input handlers."""
-        await self._queue_user_input(text, images, "steer", source)
+        return self._queue_user_input(text, images, "steer", source)
 
-    async def follow_up(
+    def follow_up(
         self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive"
-    ) -> None:
+    ) -> Awaitable[None]:
         """Queue a follow-up message to be processed after the agent finishes.
         Delivered only when agent has no more tool calls or steering messages.
         Runs input handlers, expands skill commands and prompt templates. Errors
         on extension commands. `source` is the input source reported to input
         handlers."""
-        await self._queue_user_input(text, images, "followUp", source)
-
-    async def _queue_steer(self, text: str, images: list[ImageContent] | None = None) -> None:
-        self._steering_messages.append(text)
-        self._emit_queue_update()
-        content: list[TextContent | ImageContent] = [TextContent(text=text)]
-        if images:
-            content.extend(images)
-        self.agent.steer(UserMessage(content=content, timestamp=_now_ms()))
-
-    async def _queue_follow_up(self, text: str, images: list[ImageContent] | None = None) -> None:
-        self._follow_up_messages.append(text)
-        self._emit_queue_update()
-        content: list[TextContent | ImageContent] = [TextContent(text=text)]
-        if images:
-            content.extend(images)
-        self.agent.follow_up(UserMessage(content=content, timestamp=_now_ms()))
+        return self._queue_user_input(text, images, "followUp", source)
 
     def _throw_if_extension_command(self, text: str) -> None:
         space_index = text.find(" ")
@@ -1974,29 +2090,62 @@ class AgentSession:
         trigger_turn = options.get("trigger_turn", options.get("triggerTurn"))
         if deliver_as == "nextTurn":
             self._pending_next_turn_messages.append(app_message)
-        elif self.is_streaming and trigger_turn is not False:
-            if deliver_as == "followUp":
-                self.agent.follow_up(app_message)
-            else:
-                self.agent.steer(app_message)
-        elif trigger_turn:
+            return None
+        if trigger_turn is not False:
+            # Decided and posted under the guard the run closes its input under (see
+            # `_close_run_input`).
+            with self._state_guard:
+                closed = self._run_input_closed
+                if self._is_agent_run_active and closed is None:
+                    if deliver_as == "followUp":
+                        self.agent.follow_up(app_message)
+                    else:
+                        self.agent.steer(app_message)
+                    return None
+                # Not while `agent_settled` is emitted: its handlers take the branches
+                # below (deferred or appended), and one awaiting this remainder would
+                # wait on its own settlement.
+                wait_for_close = closed is not None and not self._is_emitting_agent_settled
+            if wait_for_close:
 
-            async def run() -> None:
-                await self._run_agent_prompt(app_message)
+                async def dispatch_after_close() -> None:
+                    # The run was closing: once it has reopened or settled, decide again.
+                    await closed.wait()
+                    remainder = self._dispatch_custom_message(message, options)
+                    if remainder is not None:
+                        await remainder()
 
-            if self._is_emitting_agent_settled:
-                self._deferred_settled_actions.append(run)
+                return dispatch_after_close
+        if trigger_turn:
+
+            def run() -> Awaitable[None]:
+                return self._run_agent_prompt(app_message)
+
+            if self._defer_until_settled(run):
                 return None
             return run
-        elif self.is_streaming:
-            # Appending now would put the message between an assistant tool call and its
-            # result, which providers that validate message order reject on replay. Defer
-            # to the end of the turn. Nothing is emitted yet: message events must not
-            # describe messages the session tree does not contain.
-            self._pending_custom_messages.append(app_message)
-        else:
-            return lambda: self._append_custom_message(app_message)
-        return None
+        # While a run is active, appending now would put the message between an
+        # assistant tool call and its result, which providers that validate message
+        # order reject on replay. Defer to the end of the turn. Nothing is emitted
+        # yet: message events must not describe messages the session tree does not
+        # contain. Decided and queued under the guard the flush swaps under.
+        with self._state_guard:
+            if self._is_agent_run_active:
+                self._pending_custom_messages.append(app_message)
+                return None
+        return lambda: self._append_custom_message_when_idle(app_message)
+
+    async def _append_custom_message_when_idle(self, app_message: CustomMessage) -> None:
+        """The idle path of `_dispatch_custom_message`. The idle decision was made
+        synchronously, but a run can start before this remainder runs; re-deciding
+        under `_run_admission` either queues the message for that run's flush or
+        persists it with no run able to start until the transcript is refreshed."""
+        async with self._run_admission:
+            with self._state_guard:
+                if self._is_agent_run_active:
+                    self._pending_custom_messages.append(app_message)
+                    return
+            await self._append_custom_message(app_message)
 
     async def _append_custom_message(self, app_message: CustomMessage) -> None:
         await self.session_manager.append_custom_message_entry(
@@ -2013,13 +2162,16 @@ class AgentSession:
         """Append custom messages queued while the agent was running.
 
         Called once the current turn's tool results are in agent state and
-        session history."""
-        if not self._pending_custom_messages:
-            return
-
-        pending, self._pending_custom_messages = self._pending_custom_messages, []
-        for app_message in pending:
-            await self._append_custom_message(app_message)
+        session history. Drains with a swap-under-guard loop, like
+        `_flush_pending_bash_messages`, so a concurrent dispatch append can never
+        be dropped by the list reset."""
+        while True:
+            with self._state_guard:
+                pending, self._pending_custom_messages = self._pending_custom_messages, []
+            if not pending:
+                return
+            for app_message in pending:
+                await self._append_custom_message(app_message)
 
     async def send_user_message(
         self,
@@ -2089,13 +2241,14 @@ class AgentSession:
         first await, so an extension's `ctx.abort()` cancels the agent before
         control returns to the tool loop (regression #8935)."""
         with self._state_guard:
+            self._abort_generation += 1
             if self._is_agent_run_active:
                 self._agent_run_abort_requested = True
+            if self._is_before_settle:
+                self._abort_during_before_settle = True
         self.abort_retry()
         self.abort_compaction()
         self.abort_branch_summary()
-        if self._is_before_settle:
-            self._abort_during_before_settle = True
         self.agent.abort()
 
     async def abort(self) -> None:
@@ -2540,6 +2693,9 @@ class AgentSession:
         `skip_aborted_check`: when False, include aborted messages (for the pre-prompt
         check). Returns whether the post-run loop should call `agent.continue_()` for
         overflow recovery or queued messages."""
+        # Captured before the overflow path's omission await, so an abort landing
+        # there cancels the compaction whose token does not exist yet.
+        abort_generation = self._abort_generation
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(self.model))
         if not settings.enabled:
             return False
@@ -2618,7 +2774,7 @@ class AgentSession:
             # because agent.continue_() cannot continue from a completed assistant
             # response.
             if not will_retry:
-                return await self._run_auto_compaction("overflow", False)
+                return await self._run_auto_compaction("overflow", False, abort_generation)
 
             if self._overflow_recovery_attempted:
                 error_message = (
@@ -2650,7 +2806,7 @@ class AgentSession:
             # Persistently omit the selected final attempt before post-run recovery compaction.
             self._overflow_recovery_attempted = True
             await self._omit_recovery_attempt(assistant_message, tool_results)
-            return await self._run_auto_compaction("overflow", will_retry)
+            return await self._run_auto_compaction("overflow", will_retry, abort_generation)
 
         # Case 3: threshold compaction without retry. For error messages or all-zero
         # usage messages, estimate from the last valid response so sessions hitting
@@ -2682,10 +2838,10 @@ class AgentSession:
         else:
             context_tokens = direct_context_tokens
         if should_compact(context_tokens, context_window, settings):
-            return await self._run_auto_compaction("threshold", False)
+            return await self._run_auto_compaction("threshold", False, abort_generation)
         return False
 
-    async def _run_auto_compaction(self, reason: str, will_retry: bool) -> bool:
+    async def _run_auto_compaction(self, reason: str, will_retry: bool, abort_generation: int | None = None) -> bool:
         """Execute threshold or overflow compaction. Manual compaction uses
         `AgentSession.compact()` instead. Both paths call the lower-level `compact()`
         function imported from `./compaction` after preparation and extension
@@ -2694,7 +2850,11 @@ class AgentSession:
         `reason`: the automatic trigger selected by `_check_compaction()`.
         `will_retry`: whether to continue the interrupted turn after overflow
         compaction. Returns whether the post-run loop should call
-        `agent.continue_()`."""
+        `agent.continue_()`.
+        `abort_generation`: `_abort_generation` as captured by the caller before
+        its own awaits; defaults to the value on entry."""
+        if abort_generation is None:
+            abort_generation = self._abort_generation
         model = self.model
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
         compaction_cancel: CancelToken | None = None
@@ -2711,8 +2871,19 @@ class AgentSession:
             if preparation is None:
                 return False
 
+            # Publishing the token and checking for an earlier abort is one critical
+            # section, paired with `_request_abort` (flag + generation under the same
+            # guard, then `abort_compaction()`): an abort either finds the token or
+            # is seen here. The run flag covers an abort since the run began; the
+            # generation covers the pre-prompt path, where no run is active.
             compaction_cancel = CancelToken()
-            self._auto_compaction_cancel = compaction_cancel
+            with self._state_guard:
+                self._auto_compaction_cancel = compaction_cancel
+                abort_requested = self._abort_generation != abort_generation or (
+                    self._is_agent_run_active and self._agent_run_abort_requested
+                )
+            if abort_requested:
+                compaction_cancel.cancel()
             started = True
             self._emit(CompactionStartEvent(reason=reason))
             compaction_cancel.raise_if_cancelled()
@@ -3008,8 +3179,7 @@ class AgentSession:
                     )
 
             # A user message always triggers a turn; pi defers it synchronously during agent_settled.
-            if self._is_emitting_agent_settled:
-                self._deferred_settled_actions.append(run)
+            if self._defer_until_settled(run):
                 return
             tonio.spawn.without_tracking(run())
 
@@ -3081,7 +3251,8 @@ class AgentSession:
                 "get_context_usage": lambda: self.get_context_usage(),
                 "compact": compact_action,
                 "get_system_prompt": lambda: self.system_prompt,
-                "get_system_prompt_options": lambda: self._base_system_prompt_options,
+                "check_out_system_prompt_options": self._check_out_system_prompt_options,
+                "publish_system_prompt_options": self._publish_system_prompt_options,
             },
             {
                 "register_provider": lambda name, provider_config: (
@@ -3334,26 +3505,39 @@ class AgentSession:
 
         delay_ms = retry_delay_ms(_retry_policy_from(settings), self._retry_attempt)
 
-        self._emit(
-            AutoRetryStartEvent(
-                attempt=self._retry_attempt,
-                max_attempts=settings["max_retries"],
-                delay_ms=delay_ms,
-                error_message=message.error_message or "Unknown error",
-            )
-        )
+        # The token is published before anything can observe the retry (the start
+        # event, `is_retrying`) and before the omission's await, so `abort_retry()`
+        # always has something to cancel. Publishing it and reading the abort flag
+        # in one critical section pairs with `_request_abort`, which sets the flag
+        # under the same guard before calling `abort_retry()`: an abort either
+        # finds the token or is seen here.
+        retry_cancel = CancelToken()
+        with self._state_guard:
+            self._retry_cancel = retry_cancel
+            abort_requested = self._agent_run_abort_requested
+        if abort_requested:
+            retry_cancel.cancel()
 
-        # Keep the failed attempt in raw history while durably omitting it from model projection.
-        await self._omit_recovery_attempt(message)
-
-        # Wait with exponential backoff (abortable)
-        self._retry_cancel = CancelToken()
         try:
-            await sleep(delay_ms, self._retry_cancel)
-        except Exception:
-            # Aborted during sleep - emit end event so UI can clean up
-            self._finish_cancelled_retry()
-            return False
+            self._emit(
+                AutoRetryStartEvent(
+                    attempt=self._retry_attempt,
+                    max_attempts=settings["max_retries"],
+                    delay_ms=delay_ms,
+                    error_message=message.error_message or "Unknown error",
+                )
+            )
+
+            # Keep the failed attempt in raw history while durably omitting it from model projection.
+            await self._omit_recovery_attempt(message)
+
+            # Wait with exponential backoff (abortable)
+            try:
+                await sleep(delay_ms, retry_cancel)
+            except Exception:
+                # Aborted during sleep - emit end event so UI can clean up
+                self._finish_cancelled_retry()
+                return False
         finally:
             self._retry_cancel = None
 
@@ -3434,12 +3618,15 @@ class AgentSession:
         # ordering; flushed on agent settle. Decision and append happen under
         # the guard the settle path clears the flag under, so a recording that
         # saw the run as active is guaranteed visible to the settle flush.
-        with self._state_guard:
-            if self._is_agent_run_active:
-                self._pending_bash_messages.append(bash_message)
-                return
-        await self.session_manager.append_message(bash_message)
-        self._refresh_finalized_context()
+        # `_run_admission` spans the decision and the direct persist + refresh, so
+        # no run can start (and have its transcript rebound) in between.
+        async with self._run_admission:
+            with self._state_guard:
+                if self._is_agent_run_active:
+                    self._pending_bash_messages.append(bash_message)
+                    return
+            await self.session_manager.append_message(bash_message)
+            self._refresh_finalized_context()
 
     def abort_bash(self) -> None:
         """Cancel running bash commands."""

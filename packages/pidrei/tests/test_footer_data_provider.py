@@ -23,6 +23,8 @@ from pidrei.core import footer_data_provider as fdp_module
 from pidrei.core.footer_data_provider import FooterDataProvider
 from pidrei.utils import fs_watch
 
+from .ui_timer_helpers import manual_ui_timers
+
 
 def _patch(request, module, name, value) -> None:
     # Finalizer-based restore (predates tonio 0.9.14; `monkeypatch` works now).
@@ -251,10 +253,9 @@ async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp
 
 
 @pytest.mark.tonio
-async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_mock, request):
-    # pi advances fake timers across the 5s retry delay; shorten it and
-    # wait in real time instead.
-    _patch(request, fs_watch, "FS_WATCH_RETRY_DELAY_MS", 100)
+async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_mock):
+    # pi advances fake timers across the 5s retry delay; here the retry
+    # `Timeout` is recorded by manual UI timers and its callback awaited.
     repo_dir = _create_plain_repo(tmp_path)
 
     provider = FooterDataProvider(str(repo_dir))
@@ -263,10 +264,13 @@ async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_
         original_watcher = provider._head_watcher
         assert original_watcher is not None
 
-        provider._handle_git_watcher_error()
+        with manual_ui_timers() as timers:
+            provider._handle_git_watcher_error()
         assert provider._head_watcher is None
 
-        await tonio.sleep(0.2)
+        retries = [fn for delay, _handle, fn in timers.scheduled if delay == fs_watch.FS_WATCH_RETRY_DELAY_MS]
+        assert len(retries) == 1
+        await retries[0]()
         assert provider._head_watcher is not None
         assert provider._head_watcher is not original_watcher
     finally:

@@ -38,7 +38,7 @@ def _create_ui():
     async def start():
         ui.start_calls.append(True)
 
-    async def stop():
+    async def stop(*, on_owner=False):
         ui.stop_calls.append(True)
 
     ui.start = start

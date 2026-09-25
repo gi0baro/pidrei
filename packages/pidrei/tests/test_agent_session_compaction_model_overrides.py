@@ -45,7 +45,7 @@ async def _seed_history(harness, total_tokens: int = 650) -> str:
 
 
 def _compaction_factory(preparations: list, summary: str = "compacted history"):
-    def factory(pi) -> None:
+    async def factory(pi) -> None:
         async def on_before_compact(event, _ctx):
             preparations.append(event)
             preparation = event["preparation"]

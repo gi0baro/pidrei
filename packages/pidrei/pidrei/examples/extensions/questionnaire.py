@@ -343,7 +343,7 @@ def _error_result(message: str, questions: list[dict] | None = None) -> AgentToo
     )
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel=None, _on_update=None, ctx=None):
         if ctx is None or ctx.mode != "tui":
             return _error_result("Error: UI not available (running in non-interactive mode)")
@@ -360,7 +360,10 @@ def extension(pi):
             for index, q in enumerate(params["questions"])
         ]
 
-        result = await ctx.ui.custom(lambda tui, theme, _kb, done: QuestionnaireComponent(tui, theme, questions, done))
+        async def factory(tui, theme, _kb, done):
+            return QuestionnaireComponent(tui, theme, questions, done)
+
+        result = await ctx.ui.custom(factory)
 
         if result is None or result["cancelled"]:
             return AgentToolResult(

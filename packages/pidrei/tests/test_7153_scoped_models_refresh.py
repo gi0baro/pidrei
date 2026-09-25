@@ -13,6 +13,7 @@ from pidrei_ai.registry import ModelsRefreshResult
 from pidrei_tui import set_keybindings
 
 from .harness import create_harness
+from .render_request_helpers import RenderRequests
 
 
 ESC = "\x1b"
@@ -41,6 +42,11 @@ class OpenedSelector:
         self.done_calls = 0
         self._finish = tonio.Event()
         self._result: ModelsRefreshResult | None = None
+        # The selector's refresh runs detached: `refresh_started` marks the
+        # stub reached (its cancel token captured), and `renders` is re-checked
+        # on every `request_render` (the refresh's last step).
+        self.refresh_started = tonio.Event()
+        self.renders = RenderRequests()
 
         runtime = harness.session.model_runtime
         runtime.get_available_snapshot = lambda: list(self.snapshot)
@@ -52,6 +58,7 @@ class OpenedSelector:
                 # keyword dies as an UNHANDLED detached task, seen on macOS CI.)
                 return ModelsRefreshResult(aborted=False, errors={})
             self.refresh_cancel = options.cancel
+            self.refresh_started.set()
             await self._finish.wait()
             return self._result if self._result is not None else ModelsRefreshResult(aborted=True, errors={})
 
@@ -73,7 +80,7 @@ class OpenedSelector:
             _show_selector=show_selector,
             _update_available_provider_count=lambda: None,
             show_status=lambda message: None,
-            ui=SimpleNamespace(request_render=lambda force=False: None),
+            ui=self.renders,
         )
 
         InteractiveMode._show_models_selector(self.context)
@@ -108,11 +115,7 @@ async def test_renders_cached_models_immediately_and_updates_after_background_re
         assert "refreshed" not in initial
 
         opened.complete(all_models, ModelsRefreshResult(aborted=False, errors={}))
-        for _ in range(200):
-            rendered = render(opened.selector)
-            if "refreshed" in rendered and "Model catalogs refreshed." in rendered:
-                break
-            await tonio.time.sleep(0.005)
+        await opened.renders.until(lambda: "Model catalogs refreshed." in render(opened.selector))
         rendered = render(opened.selector)
         assert "refreshed" in rendered
         assert "Model catalogs refreshed." in rendered
@@ -127,15 +130,12 @@ async def test_cancels_the_background_refresh_when_the_selector_closes(harnesses
     opened = OpenedSelector(harness, [harness.get_model("cached")])
 
     try:
-        await tonio.time.sleep(0.005)
+        await opened.refresh_started.wait(5)
         assert opened.refresh_cancel is not None
         await opened.selector.handle_input(ESC)
         # 7d8c11d3: the shared coordinator aborts the runtime refresh only
         # after the last waiter detaches (pi switched this to vi.waitFor).
-        waited = 0.0
-        while not opened.refresh_cancel.cancelled and waited < 2.0:
-            await tonio.time.sleep(0.005)
-            waited += 0.005
+        await opened.refresh_cancel.wait(5)
         assert opened.refresh_cancel.cancelled is True
         assert opened.done_calls == 1
     finally:

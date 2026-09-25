@@ -80,7 +80,7 @@ def get_handoff_messages(branch):
     return [message for message in map(entry_to_message, compacted_branch) if message is not None]
 
 
-def extension(pi):
+async def extension(pi):
     async def handoff(args, ctx):
         if ctx.mode != "tui":
             ctx.ui.notify("handoff requires interactive mode", "error")
@@ -109,9 +109,15 @@ def extension(pi):
         current_session_file = ctx.session_manager.get_session_file()
 
         # Generate the handoff prompt with loader UI
-        def factory(tui, theme, _kb, done):
+        async def factory(tui, theme, _kb, done):
             loader = BorderedLoader(tui, theme, "Generating handoff prompt...")
             loader.on_abort = lambda: done(None)
+
+            # The work below runs on its own task, while `done` is the
+            # component's (it closes the dialog on the UI owner): the result
+            # is handed to the owner, as internal background work does.
+            def finish(result) -> None:
+                tui.post_ui(lambda: done(result))
 
             async def generate():
                 try:
@@ -138,13 +144,13 @@ def extension(pi):
                     )
 
                     if response.stop_reason == "aborted":
-                        done(None)
+                        finish(None)
                         return
 
-                    done("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
+                    finish("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
                 except Exception as error:
                     ctx.ui.notify(f"Handoff generation failed: {error}", "error")
-                    done(None)
+                    finish(None)
 
             tonio.spawn.without_tracking(generate())
             return loader

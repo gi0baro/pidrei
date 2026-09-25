@@ -52,7 +52,7 @@ def create_interactive_context():
 
         holder["selector"] = factory(done)["component"]
 
-    async def select_thinking_level(level: str, persist: bool) -> None:
+    async def select_thinking_level(level: str, persist: bool, *, on_owner: bool = False) -> None:
         select_calls.append((level, persist))
 
     def request_render():

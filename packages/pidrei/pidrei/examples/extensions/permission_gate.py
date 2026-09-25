@@ -17,7 +17,7 @@ DANGEROUS_PATTERNS = [
 ]
 
 
-def extension(pi):
+async def extension(pi):
     async def on_tool_call(event, ctx):
         if event["toolName"] != "bash":
             return None

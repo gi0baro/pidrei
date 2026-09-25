@@ -19,13 +19,21 @@ from pidrei.core.resource_loader import DefaultResourceLoader
 COUNTING_EXTENSION = """
 import os
 
-with open(os.environ["PIDREI_CACHE_TEST_COUNTER"], "a") as handle:
-    handle.write("module\\n")
+import tonio.colored as tonio
 
 
-def extension(pi):
+def _record(kind):
     with open(os.environ["PIDREI_CACHE_TEST_COUNTER"], "a") as handle:
-        handle.write("factory\\n")
+        handle.write(kind + "\\n")
+
+
+# The loader executes extension modules on the blocking pool.
+_record("module")
+
+
+async def extension(pi):
+    # The factory runs on the runtime: the write goes to the blocking pool.
+    await tonio.spawn_blocking(_record, "factory")
 """
 
 

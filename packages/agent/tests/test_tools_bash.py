@@ -77,6 +77,8 @@ class LateOutputExecutionEnv(LocalExecutionEnv):
     def __init__(self, cwd: str):
         super().__init__(cwd)
         self.settled = tonio.Event()
+        # Set once the late view has been published (its callback is sync).
+        self.late_emitted = tonio.Event()
 
     async def exec(self, _command: str, options: ShellExecOptions | None = None, cancel=None):
         result = fake_shell_output("before\n", options, cancel=cancel)
@@ -84,6 +86,7 @@ class LateOutputExecutionEnv(LocalExecutionEnv):
         async def late() -> None:
             await self.settled.wait(None)
             fake_shell_output("before\nlate\n", options, cancel=cancel)
+            self.late_emitted.set()
 
         tonio.spawn.without_tracking(late())
         return ok(result)
@@ -158,7 +161,8 @@ async def test_ignores_output_callbacks_after_execution_settles():
         ExecutionToolContext(env=env),
     )
     env.settled.set()
-    await tonio.sleep(0.02)
+    await env.late_emitted.wait(5)
+    assert env.late_emitted.is_set()
 
     assert text_output(result) == "before\n"
     assert not any("late" in update for update in updates)

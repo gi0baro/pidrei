@@ -2,24 +2,20 @@
 
 pi's harness patches the `process.stdout.write`/`process.stdin.on` globals
 and reaches into the terminal's privates; here the same seams are instance
-attributes (`_write_stdout`, `_input_handler`, `_stdin_data_handler`).
-pi drives the split-response timers with mocked clocks; the ticks become
-short real-time sleeps.
+attributes (`write_sync`, `_input_handler`, `_stdin_data_handler`).
+pi drives the split-response timers with mocked clocks; here both (the
+StdinBuffer sequence flush and the negotiation flush) are input-owner timers,
+ticked by hand through `ManualOwnerTimers`.
 """
 
 import os
 
 import pytest
-import tonio.colored as tonio
 
 from pidrei_tui.keys import set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input, resolve_escape_timeout_ms
 
-from .tui_helpers import env_var
-
-
-STDIN_FLUSH_WAIT = 0.1  # pi ticks 50ms for the StdinBuffer sequence flush timer
-NEGOTIATION_FLUSH_WAIT = 0.25  # pi ticks 150ms for the negotiation flush timer
+from .tui_helpers import ManualOwnerTimers, env_var
 
 
 # resolve_escape_timeout_ms
@@ -75,8 +71,9 @@ class _NegotiationHarness:
         self.writes = []
         self.input = None
         self._cleaned = False
-        self.terminal._write_stdout = self.writes.append
+        self.terminal.write_sync = self.writes.append
         self.terminal._input_handler = self._on_input
+        self.timers = ManualOwnerTimers(self.terminal.input_owner)
         self.terminal._query_and_enable_kitty_protocol()
 
     async def _on_input(self, data):
@@ -171,7 +168,7 @@ async def test_tracks_split_kitty_confirmation():
     harness = _NegotiationHarness()
     try:
         await harness.send("\x1b[?7")
-        await tonio.sleep(STDIN_FLUSH_WAIT)
+        await harness.timers.tick(50)
 
         assert harness.input is None
 
@@ -188,11 +185,11 @@ async def test_replays_buffered_csi_prefix_input_when_it_is_not_a_kitty_response
     harness = _NegotiationHarness()
     try:
         await harness.send("\x1b[")
-        await tonio.sleep(STDIN_FLUSH_WAIT)
+        await harness.timers.tick(50)
 
         assert harness.input is None
 
-        await tonio.sleep(NEGOTIATION_FLUSH_WAIT)
+        await harness.timers.tick(150)
 
         assert harness.input == "\x1b["
     finally:
@@ -205,7 +202,7 @@ async def test_replays_buffered_csi_prefix_input_when_it_is_not_a_kitty_response
 def test_writes_a_valid_osc_9_4_clear_sequence():
     terminal = ProcessTerminal()
     writes: list[str] = []
-    terminal._write_stdout = writes.append
+    terminal.write_sync = writes.append
 
     terminal.set_progress(False)
 

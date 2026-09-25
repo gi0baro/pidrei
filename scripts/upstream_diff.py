@@ -508,6 +508,26 @@ DROPPED_PREFIXES += (
             "(PORT_0.87.1.md decision 7; the env/nodejs.ts + types.ts hunks are per-hunk skips)"
         ),
     ),
+    (
+        "packages/coding-agent/test/suite/regressions/8261-subagent-project-trust.test.ts",
+        (
+            "not mirrored: it relies on a child process failing at spawn, and pidrei's subagent "
+            "example runs in process (recipe subagent-inprocess); example extensions carry no pidrei tests"
+        ),
+    ),
+)
+#: pi's tests of its example extensions: examples carry no pidrei tests
+#: (2026-09-26 ruling); the examples themselves are still ported.
+_EXAMPLE_TESTS_REASON = "tests an example extension; examples carry no pidrei tests (2026-09-26 ruling)"
+DROPPED_PREFIXES += tuple(
+    (path, _EXAMPLE_TESTS_REASON)
+    for path in (
+        "packages/coding-agent/test/git-merge-and-resolve-extension.test.ts",
+        "packages/coding-agent/test/input-transform-streaming-example.test.ts",
+        "packages/coding-agent/test/plan-mode-extension.test.ts",
+        "packages/coding-agent/test/plan-mode-utils.test.ts",
+        "packages/coding-agent/test/trigger-compact-extension.test.ts",
+    )
 )
 #: `/bug` bug reporting (Radius upload, zip export, crash log) is dropped
 #: completely (PORT_0.87.1.md decision 1).

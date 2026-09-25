@@ -415,6 +415,10 @@ def is_viewport_tui(tui) -> bool:
     return getattr(tui, VIEWPORT_TUI, False) is True
 
 
+def _without(listeners: tuple, listener) -> tuple:
+    return tuple(registered for registered in listeners if registered != listener)
+
+
 # TuiMode: "regular" (main screen) | "fullscreen" (alternate screen).
 
 # pi streams renders through a BoundedTerminalWriter so a full render never
@@ -442,7 +446,11 @@ class TuiBase(Container, ABC):
         # and crash dumps fall back to the OS temp directory.
         self._log_directory = log_directory
         self._focused_component = None
-        self._input_listeners: list = []
+        # Listener registries: (un)registered from any task (extensions, the
+        # theme controller), iterated on the owner. Copy-on-write tuples under
+        # the guard, so a reader's reference never changes under it.
+        self._listeners_guard = threading.Lock()
+        self._input_listeners: tuple = ()
 
         # Global callback for debug key (Shift+Ctrl+D). Called before input is
         # forwarded to the focused component.
@@ -460,7 +468,7 @@ class TuiBase(Container, ABC):
         self._line_reset_memo: dict[str, str] = {}
         # Frame pipeline (see the module docstring): the sender side of the
         # one-slot channel while the writer task runs, else None.
-        self._writer_scope = None
+        self._frame_writer_task = None
         self._frames: Any = None
         self._frame_parts: list[str] = []
         self._frame_writer_error: BaseException | None = None
@@ -468,12 +476,11 @@ class TuiBase(Container, ABC):
         self._render_error_handler = None
         # The task that owns UI state (pi: the JS thread). A ProcessTerminal
         # brings its own — the stdin pump and the input timers already run on
-        # it; for any other terminal the TUI runs one (`_owner_scope`) and
-        # routes the terminal's input through it. Components post work that
+        # it; for any other terminal the TUI runs one and routes the
+        # terminal's input through it. Either way it outlives stop/start: it
+        # is closed once, by the app, at shutdown. Components post work that
         # mutates state from elsewhere (an autocomplete result, a timer) here.
         self.input_owner: OwnerTask = getattr(terminal, "input_owner", None) or OwnerTask()
-        self.input_owner.on_error = self._handle_owner_error
-        self._owner_scope = None
         self._show_hardware_cursor = False
         # Clear empty rows when content shrinks (default: off)
         self._clear_on_shrink = False
@@ -482,7 +489,7 @@ class TuiBase(Container, ABC):
         self._query_lock = threading.Lock()
         self._pending_osc11_replies = 0
         self._pending_osc11_queries: list[_PendingOsc11Query] = []
-        self._color_scheme_listeners: list = []
+        self._color_scheme_listeners: tuple = ()  # under `_listeners_guard`
         self._color_scheme_notifications_enabled = False
 
         # Overlay stack for modal components rendered on top of base content
@@ -543,8 +550,22 @@ class TuiBase(Container, ABC):
 
         Without one, the exception propagates out of the render job into the
         UI owner (killing input with it), so owners should install one.
+
+        Posted owner work (a timer tick, an autocomplete result) that raises
+        goes to the same handler — pi would crash on it; here the owner keeps
+        serving input. Installed as a closure over the handler, not a method
+        of this TUI: the owner's lifecycle is not the TUI's, and must not
+        keep it alive.
         """
         self._render_error_handler = handler
+        if handler is None:
+            self.input_owner.on_error = None
+            return
+
+        def on_error(error: BaseException) -> None:
+            tonio.spawn.without_tracking(handler(error))
+
+        self.input_owner.on_error = on_error
 
     def set_clear_on_shrink(self, enabled: bool) -> None:
         """Set whether to trigger full re-render when content shrinks.
@@ -899,11 +920,9 @@ class TuiBase(Container, ABC):
         await self._before_terminal_start()
         on_input = self._handle_input
         if getattr(self.terminal, "input_owner", None) is not self.input_owner:
-            # The terminal does not run the owner: do it here and put the
-            # terminal's input on it.
-            self._owner_scope = tonio.scope()
-            await self._owner_scope.__aenter__()
-            self.input_owner.start(self._owner_scope)
+            # The terminal does not run the owner: do it here (a restart
+            # finds it running) and put the terminal's input on it.
+            self.input_owner.start()
 
             async def on_input(data: str) -> None:
                 try:
@@ -913,7 +932,10 @@ class TuiBase(Container, ABC):
                     # exception must not kill the terminal's input delivery.
                     if isinstance(error, GeneratorExit):
                         raise
-                    self._handle_owner_error(error)
+                    on_error = self.input_owner.on_error
+                    if on_error is None:
+                        raise
+                    on_error(error)
 
         await self.terminal.start(on_input, self.request_render)
         set_ui_owner(self.input_owner)
@@ -925,14 +947,11 @@ class TuiBase(Container, ABC):
             await self._query_cell_size()
             self._frames, receiver = channel.channel(1)
             self._frame_writer_error = None
-            self._writer_scope = tonio.scope()
-            await self._writer_scope.__aenter__()
-            self._writer_scope.spawn(self._frame_writer(receiver))
+            # Ended by the `None` sentinel `stop()` sends, and joined there.
+            self._frame_writer_task = tonio.spawn(self._frame_writer(receiver))
         except BaseException:
-            # A failed start must not leave this TUI as the process-wide
-            # ambient timer owner: the registry outlives us, and an owner
-            # that never reaches stop() would capture every later
-            # `Timeout`/`Interval` into a queue nothing drains.
+            # A failed start leaves no running UI: later timers must not be
+            # routed to its owner.
             if get_ui_owner() is self.input_owner:
                 set_ui_owner(None)
             raise
@@ -947,8 +966,9 @@ class TuiBase(Container, ABC):
         self.request_render()
 
     def add_input_listener(self, listener):
-        if listener not in self._input_listeners:
-            self._input_listeners.append(listener)
+        with self._listeners_guard:
+            if listener not in self._input_listeners:
+                self._input_listeners = (*self._input_listeners, listener)
 
         def unsubscribe() -> None:
             self.remove_input_listener(listener)
@@ -956,16 +976,17 @@ class TuiBase(Container, ABC):
         return unsubscribe
 
     def remove_input_listener(self, listener) -> None:
-        if listener in self._input_listeners:
-            self._input_listeners.remove(listener)
+        with self._listeners_guard:
+            self._input_listeners = _without(self._input_listeners, listener)
 
     def on_terminal_color_scheme_change(self, listener):
-        if listener not in self._color_scheme_listeners:
-            self._color_scheme_listeners.append(listener)
+        with self._listeners_guard:
+            if listener not in self._color_scheme_listeners:
+                self._color_scheme_listeners = (*self._color_scheme_listeners, listener)
 
         def unsubscribe() -> None:
-            if listener in self._color_scheme_listeners:
-                self._color_scheme_listeners.remove(listener)
+            with self._listeners_guard:
+                self._color_scheme_listeners = _without(self._color_scheme_listeners, listener)
 
         return unsubscribe
 
@@ -984,72 +1005,56 @@ class TuiBase(Container, ABC):
         # Response format: CSI 6 ; height ; width t
         await self.terminal.write("\x1b[16t")
 
-    async def stop(self, options: dict | None = None) -> None:
+    async def stop(self, options: dict | None = None, *, on_owner: bool = False) -> None:
         """``options`` mirrors pi's ``TuiStopOptions`` (``{"preserveScreen"?}``).
 
         ``preserveScreen`` leaves the renderer's output on the terminal for
         another TUI taking the same terminal over (the runtime UI-mode switch).
 
-        Must be called from off the owner (every real caller — shutdown
-        flows, the UI-mode switch, the crash handler — is a detached or main
-        task): the barrier below waits on the owner's queue, which from an
-        owner job would deadlock.
+        Off the owner (shutdown flows, the UI-mode switch, the crash handler)
+        the stop hands its owner-confined steps to the owner and waits. From
+        owner-side code (``on_owner``: a key action, a component — pi stops
+        the UI in place from its UI thread) they apply in place: waiting on
+        the owner from an owner job would deadlock.
         """
         options = options or {}
         self._stopped = True
         self._render_active = False
 
-        try:
-            # Barrier: a render job already queued (or mid-frame) finishes
-            # before the writer is told to stop, so nothing sends into a
-            # drained pipeline; jobs queued after this see `_render_active`
-            # False and no-op. A still-pending throttle timer fires into a
-            # no-op too and is reaped when the owner closes. (`run` on an owner
-            # that never started settles inline.)
-            async def _drained() -> None: ...
+        # Barrier: a render job already queued (or mid-frame) finishes
+        # before the writer is told to stop, so nothing sends into a
+        # drained pipeline; jobs queued after this see `_render_active`
+        # False and no-op. A pending throttle timer is cancelled here: the
+        # owner outlives the stop, so it would otherwise fire into the
+        # restarted TUI and render outside the schedule. (`run` on an
+        # owner that never started settles inline.) On the owner no render
+        # job can be mid-frame: this job is the one running.
+        def drained() -> None:
+            if self._throttle_timer is not None:
+                self._throttle_timer.cancel()
+                self._throttle_timer = None
 
+        async def _drained() -> None:
+            drained()
+
+        if on_owner:
+            drained()
+        else:
             await self.input_owner.run(_drained)
-            if self._writer_scope is not None:
-                # After the barrier: what rendering handed over still goes out,
-                # then the writer stops and everything below writes in order
-                # behind it.
-                frames, self._frames = self._frames, None
-                await frames.send(None)
-                await self._writer_scope.__aexit__(None, None, None)
-                self._writer_scope = None
-            if self._color_scheme_notifications_enabled:
-                await self.terminal.write("\x1b[?2031l")
-            await self._before_terminal_stop(options)
-            self.terminal.show_cursor()
-            if get_ui_owner() is self.input_owner:
-                set_ui_owner(None)
-            await self.terminal.stop()
-            if self._owner_scope is not None:
-                # After the terminal: its input no longer arrives, so the queued
-                # work drains and the owner's timers are reaped with the scope.
-                self.input_owner.close()
-                await self._owner_scope.__aexit__(None, None, None)
-                self._owner_scope = None
-            await self._after_terminal_stop(options)
-        finally:
-            # Backstop for a stop() that raised before the in-order clear
-            # above: the registry outlives this TUI, and leaving it pointing
-            # here would route every later ambient timer into a queue
-            # nothing drains.
-            if get_ui_owner() is self.input_owner:
-                set_ui_owner(None)
-
-    def _handle_owner_error(self, error: BaseException) -> None:
-        """Posted UI work (a timer tick, an autocomplete result) raised.
-
-        pi would crash on it; the render error handler gets it here too, so
-        the owner keeps serving input instead of dying with the exception
-        surfacing only at `stop()`.
-        """
-        handler = self._render_error_handler
-        if handler is None:
-            raise error
-        tonio.spawn.without_tracking(handler(error))
+        if self._frame_writer_task is not None:
+            # After the barrier: what rendering handed over still goes out,
+            # then the writer stops and everything below writes in order
+            # behind it.
+            frames, self._frames = self._frames, None
+            await frames.send(None)
+            await self._frame_writer_task
+            self._frame_writer_task = None
+        if self._color_scheme_notifications_enabled:
+            await self.terminal.write("\x1b[?2031l")
+        await self._before_terminal_stop(options)
+        self.terminal.show_cursor()
+        await self.terminal.stop(on_owner=on_owner)
+        await self._after_terminal_stop(options)
 
     async def render_now(self, force: bool = False) -> None:
         """Render one frame on the caller, bypassing the owner and the throttle.
@@ -1243,9 +1248,10 @@ class TuiBase(Container, ABC):
         if await self._handle_pointer_input(data):
             return
 
-        if self._input_listeners:
+        input_listeners = self._input_listeners
+        if input_listeners:
             current = data
-            for listener in list(self._input_listeners):
+            for listener in input_listeners:
                 result = listener(current)
                 if result and result.get("consume"):
                     return
@@ -1323,7 +1329,7 @@ class TuiBase(Container, ABC):
         if not scheme:
             return False
 
-        for listener in list(self._color_scheme_listeners):
+        for listener in self._color_scheme_listeners:
             # Listeners are awaitable-returning (async-only policy): reacting
             # to a scheme change can mean loading a theme from disk.
             await listener(scheme)

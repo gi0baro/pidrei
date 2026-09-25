@@ -744,6 +744,9 @@ def set_theme_instance(theme_instance: Theme) -> None:
 
 
 def on_theme_change(callback) -> None:
+    """``callback(on_owner=...)`` runs after the theme changed under the UI:
+    ``on_owner=True`` from the theme-file reload (a UI-owner timer), the
+    default from `set_theme_instance` (the caller's task, either side)."""
     global _on_theme_change_callback
     _on_theme_change_callback = callback
 
@@ -798,7 +801,7 @@ async def _start_theme_watcher() -> None:
             _set_global_theme(reloaded_theme)
             callback = _on_theme_change_callback
         if callback is not None:
-            callback()
+            callback(on_owner=True)
 
     def schedule_reload() -> None:
         global _theme_reload_timer

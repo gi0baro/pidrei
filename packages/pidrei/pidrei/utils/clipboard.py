@@ -12,15 +12,16 @@ it is a blocking write to the terminal.
 """
 
 import base64
-import contextlib
 import os
 import sys
-import tempfile
 import uuid
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
+from ..config import TEMP_DIR
 from .clipboard_command import run_clipboard_command
+from .temp_file_writer import discard_temp_file
 from .wsl import is_wsl
 
 
@@ -59,16 +60,11 @@ async def read_clipboard_text() -> str | None:
     return None
 
 
-def _write_private_text(path: str, text: str) -> None:
+def _write_private_text(path: fs.Path, text: str) -> None:
+    # Created 0600 (it holds the copied text), which `fs.Path.write_text` cannot do.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
-
-
-def _unlink_quietly(path: str) -> None:
-    with contextlib.suppress(OSError):
-        # The file may not have been created.
-        os.unlink(path)
 
 
 async def _copy_via_windows_clipboard(text: str) -> bool:
@@ -76,10 +72,22 @@ async def _copy_via_windows_clipboard(text: str) -> bool:
     through interop. PowerShell reads the text from a file because `clip.exe` and
     PowerShell stdin decode piped bytes with the console code page, which mangles
     non-ASCII UTF-8."""
-    tmp_file = os.path.join(tempfile.gettempdir(), f"pidrei-wsl-clip-{uuid.uuid4()}.txt")
+    tmp_file = TEMP_DIR / f"pidrei-wsl-clip-{uuid.uuid4()}.txt"
+    try:
+        copied = await _copy_through_file(tmp_file, text)
+    except BaseException:
+        # Cancelled: an await is not served on this path, so the cleanup of the
+        # file (it holds the copied text) is detached.
+        tonio.spawn.without_tracking(discard_temp_file(tmp_file))
+        raise
+    await discard_temp_file(tmp_file)
+    return copied
+
+
+async def _copy_through_file(tmp_file: fs.Path, text: str) -> bool:
     try:
         await tonio.spawn_blocking(_write_private_text, tmp_file, text)
-        result = await run_clipboard_command("wslpath", ["-w", tmp_file], timeout_ms=1000)
+        result = await run_clipboard_command("wslpath", ["-w", str(tmp_file)], timeout_ms=1000)
         win_path = result.decode("utf-8", "replace").strip() if result is not None else ""
         if not win_path:
             return False
@@ -91,8 +99,6 @@ async def _copy_via_windows_clipboard(text: str) -> bool:
         )
     except Exception:
         return False
-    finally:
-        await tonio.spawn_blocking(_unlink_quietly, tmp_file)
 
 
 async def copy_to_clipboard(text: str) -> None:

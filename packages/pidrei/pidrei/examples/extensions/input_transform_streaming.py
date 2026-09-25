@@ -17,7 +17,7 @@ import re
 TRIGGER = re.compile(r"\b(changes?|diff|modified)\b", re.IGNORECASE)
 
 
-def extension(pi):
+async def extension(pi):
     async def on_input(event, _ctx):
         # During steering, skip the exec call — corrections should be fast.
         if event.get("streamingBehavior") == "steer":

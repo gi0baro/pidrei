@@ -13,7 +13,7 @@ Try it in a project containing .pidrei, AGENTS.md/CLAUDE.md, or .agents/skills.
 """
 
 
-def extension(pi):
+async def extension(pi):
     load_count = 0
     load_count += 1
 

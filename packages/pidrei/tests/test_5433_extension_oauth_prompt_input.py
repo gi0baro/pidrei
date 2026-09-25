@@ -23,6 +23,9 @@ class _FakeTui:
     def request_render(self) -> None:
         pass
 
+    def post_ui(self, fn) -> None:
+        fn()
+
 
 @contextlib.contextmanager
 def mock_open_browser():

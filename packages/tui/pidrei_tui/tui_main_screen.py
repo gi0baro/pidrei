@@ -19,6 +19,7 @@ import time as _time
 from datetime import UTC, datetime
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from .terminal_image import delete_kitty_image, is_image_line
 from .tui import TuiBase
@@ -26,6 +27,10 @@ from .utils import visible_width
 
 
 KITTY_SEQUENCE_PREFIX = "\x1b_G"
+
+# Crash-dump fallback when no log directory is configured. Resolved once at
+# import, before the runtime starts: the first gettempdir() probes the filesystem.
+_DEFAULT_LOG_DIRECTORY = fs.Path(tempfile.gettempdir())
 
 
 def _parse_kitty_image_header(line: str) -> dict | None:
@@ -77,12 +82,6 @@ def _append_debug_log(path: str, message: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as log_file:
         log_file.write(message)
-
-
-def _write_crash_log(path: str, data: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as crash_file:
-        crash_file.write(data)
 
 
 class TuiMainScreen(TuiBase):
@@ -466,10 +465,10 @@ class TuiMainScreen(TuiBase):
             buffer += "\x1b[2K"  # Clear current line
             if not is_image and visible_width(line) > width:
                 # Log all lines to crash file for debugging
-                crash_log_path = os.path.join(
-                    self._log_directory if self._log_directory is not None else tempfile.gettempdir(),
-                    "pidrei-tui-crash.log",
+                log_directory = (
+                    fs.Path(self._log_directory) if self._log_directory is not None else _DEFAULT_LOG_DIRECTORY
                 )
+                crash_log_path = log_directory / "pidrei-tui-crash.log"
                 timestamp = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 crash_data = "\n".join(
                     [
@@ -482,7 +481,8 @@ class TuiMainScreen(TuiBase):
                         "",
                     ]
                 )
-                await tonio.spawn_blocking(_write_crash_log, crash_log_path, crash_data)
+                await crash_log_path.parent.mkdir(parents=True, exist_ok=True)
+                await crash_log_path.write_text(crash_data, encoding="utf-8")
 
                 # Terminal cleanup happens in the caller's shutdown path; pi
                 # calls the sync stop() here, but stop() is async in the port
@@ -520,9 +520,8 @@ class TuiMainScreen(TuiBase):
         buffer += "\x1b[?2026l"  # End synchronized output
 
         if os.environ.get("PIDREI_TUI_DEBUG") == "1":
-            debug_dir = "/tmp/tui"  # noqa: S108
-            os.makedirs(debug_dir, exist_ok=True)
-            debug_path = os.path.join(debug_dir, f"render-{_time.time_ns() // 1_000_000}-{secrets.token_hex(6)}.log")
+            debug_dir = fs.Path("/tmp/tui")  # noqa: S108
+            debug_path = debug_dir / f"render-{_time.time_ns() // 1_000_000}-{secrets.token_hex(6)}.log"
             debug_data = "\n".join(
                 [
                     f"firstChanged: {first_changed}",
@@ -547,7 +546,8 @@ class TuiMainScreen(TuiBase):
                     repr(buffer),
                 ]
             )
-            await tonio.spawn_blocking(_write_crash_log, debug_path, debug_data)
+            await debug_dir.mkdir(parents=True, exist_ok=True)
+            await debug_path.write_text(debug_data, encoding="utf-8")
 
         # Write entire buffer at once
         self._emit(buffer)

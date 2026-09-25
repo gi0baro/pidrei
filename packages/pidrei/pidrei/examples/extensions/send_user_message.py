@@ -17,7 +17,7 @@ Start pidrei with this extension:
 from pidrei_ai.types import TextContent
 
 
-def extension(pi):
+async def extension(pi):
     # Simple command that sends a user message
     async def ask(args, ctx):
         if not args.strip():

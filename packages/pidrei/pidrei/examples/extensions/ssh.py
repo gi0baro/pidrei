@@ -18,6 +18,7 @@ import dataclasses
 import os
 import shlex
 import subprocess
+import threading
 
 import tonio.colored as tonio
 
@@ -133,6 +134,10 @@ class RemoteBashOperations:
         )
         timed_out = False
         exited = tonio.Event()
+        # The stdout and stderr readers run in parallel; `on_data` (the bash
+        # tool's accumulator + throttle state) assumes pi's one-at-a-time
+        # delivery, as in pidrei's LocalShellOperations.
+        chunk_lock = threading.Lock()
 
         def kill() -> None:
             try:
@@ -148,7 +153,8 @@ class RemoteBashOperations:
                     chunk = await stream.receive_some()
                     if not chunk:
                         return
-                    on_data(chunk)
+                    with chunk_lock:
+                        on_data(chunk)
             except Exception:
                 pass  # Broken pipe after kill.
 
@@ -179,7 +185,7 @@ class RemoteBashOperations:
         return BashExecResult(exit_code=exit_code)
 
 
-def extension(pi):
+async def extension(pi):
     pi.register_flag("ssh", type="string", description="SSH remote: user@host or user@host:/path")
 
     local_cwd = os.getcwd()

@@ -20,17 +20,6 @@ from pidrei_server.listener import ServerListener
 from pidrei_server.transports.unix import UnixListenerOptions, create_unix_listener
 
 
-async def flush(turns: int = 4) -> None:
-    """Let spawned tasks progress (stand-in for JS microtask turns).
-
-    A small positive sleep, not `sleep(0)` — see the note on the client
-    package's copy of this helper: a zero sleep is not a guaranteed
-    reschedule in tonio.
-    """
-    for _ in range(turns):
-        await tonio.sleep(0.005)
-
-
 async def settled(awaitable, what: str = "the awaited step", timeout: float = 5.0):
     """Await with a bound: a wedged choreography step fails here, with a name
     and this call site's line in the traceback, instead of parking forever

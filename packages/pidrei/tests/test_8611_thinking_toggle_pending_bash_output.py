@@ -53,7 +53,7 @@ async def test_preserves_partial_bash_output():
         settings_manager=SimpleNamespace(set_hide_thinking_block=set_hidden_calls.append),
         _chat_container=chat_container,
         ui=ui,
-        show_status=status_calls.append,
+        _apply_show_status=status_calls.append,
     )
     fake_self._update_thinking_block_visibility = lambda: InteractiveMode._update_thinking_block_visibility(fake_self)
 

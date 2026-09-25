@@ -22,7 +22,7 @@ IMPORTANT: You are now in PIRATE MODE. You must:
 """
 
 
-def extension(pi):
+async def extension(pi):
     state = {"pirate_mode": False}
 
     # Register /pirate command to toggle pirate mode

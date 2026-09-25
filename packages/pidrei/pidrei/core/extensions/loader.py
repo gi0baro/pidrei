@@ -163,6 +163,7 @@ class ExtensionAPI:
     __slots__ = (
         "_cwd",
         "_extension",
+        "_handlers_guard",
         "_loading_unsubscribers",
         "_pending_flag_values",
         "_pending_runtime_changes",
@@ -173,6 +174,9 @@ class ExtensionAPI:
 
     def __init__(self, extension: Extension, runtime: ExtensionRuntime, cwd: str, event_bus: EventBus):
         self._extension = extension
+        # `on()` and its unsubscribers can run on any task; each read-modify-write
+        # of `extension.handlers` happens under this (the only writer of it).
+        self._handlers_guard = threading.Lock()
         self._runtime = runtime
         self._cwd = cwd
         self._state = "loading"
@@ -238,15 +242,17 @@ class ExtensionAPI:
         def registered_handler(*args: Any) -> Any:
             return handler(*args)
 
-        self._extension.handlers.setdefault(event, []).append(registered_handler)
+        with self._handlers_guard:
+            self._extension.handlers.setdefault(event, []).append(registered_handler)
 
         def unsubscribe() -> None:
-            handlers = self._extension.handlers.get(event)
-            if not handlers or registered_handler not in handlers:
-                return
-            handlers.remove(registered_handler)
-            if not handlers:
-                del self._extension.handlers[event]
+            with self._handlers_guard:
+                handlers = self._extension.handlers.get(event)
+                if not handlers or registered_handler not in handlers:
+                    return
+                handlers.remove(registered_handler)
+                if not handlers:
+                    del self._extension.handlers[event]
 
         return unsubscribe
 
@@ -494,12 +500,6 @@ def _create_extension(extension_path: str, resolved_path: str) -> Extension:
     )
 
 
-async def _call_factory(factory: Any, api: ExtensionAPI) -> None:
-    result = factory(api)
-    if hasattr(result, "__await__"):
-        await result
-
-
 async def _initialize_extension(
     factory: Any,
     extension_path: str,
@@ -511,7 +511,8 @@ async def _initialize_extension(
     extension = _create_extension(extension_path, resolved_path)
     api = ExtensionAPI(extension, runtime, cwd, event_bus)
     try:
-        await _call_factory(factory, api)
+        # Async-only (pi's `void | Promise<void>` union is not ported).
+        await factory(api)
         api._commit()
     except BaseException:
         api._discard()

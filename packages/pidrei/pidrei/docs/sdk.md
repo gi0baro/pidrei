@@ -58,7 +58,8 @@ the process's), `model_runtime`, `model`, `thinking_level`, `scoped_models`,
 `settings_manager`, `session_manager`, `resource_loader`, and `tools`,
 `no_tools`, `exclude_tools`, `custom_tools`. A `DefaultResourceLoader` keeps
 normal discovery with selected overrides, and its `extension_factories` loads
-in-process extensions; supply your own loader only if the host owns resource
+in-process extensions (each factory an `async def` taking `pi`, like a module's
+`extension`); supply your own loader only if the host owns resource
 discovery entirely.
 
 Read state through `session.messages`, `session.model`,

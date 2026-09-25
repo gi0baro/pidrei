@@ -8,9 +8,8 @@ Start pidrei with this extension:
 
 import re
 
-import tonio.colored as tonio
-
 from pidrei.modes.interactive.components import CustomEditor
+from pidrei_tui._timers import Interval
 
 
 # Base colors (coral → yellow → green → teal → blue → purple → pink)
@@ -25,7 +24,7 @@ COLORS: list[tuple[int, int, int]] = [
 ]
 RESET = "\x1b[0m"
 ULTRATHINK = re.compile(r"ultrathink", re.IGNORECASE)
-ANIMATION_INTERVAL_S = 0.06
+ANIMATION_INTERVAL_MS = 60
 
 
 def brighten(rgb: tuple[int, int, int], factor: float) -> str:
@@ -52,35 +51,28 @@ def colorize(text: str, shine_pos: int) -> str:
 class RainbowEditor(CustomEditor):
     def __init__(self, tui, theme, keybindings) -> None:
         super().__init__(tui, theme, keybindings)
-        self._animation_stop: tonio.Event | None = None
+        self._animation: Interval | None = None
         self._frame = 0
 
     def _has_ultrathink(self) -> bool:
         return ULTRATHINK.search(self.get_text()) is not None
 
     def _start_animation(self) -> None:
-        if self._animation_stop is not None:
+        if self._animation is not None:
             return
 
-        # pi drives the animation with setInterval; here it is a background
-        # task that ends cooperatively through the Event.
-        stop = tonio.Event()
-        self._animation_stop = stop
+        # pi's setInterval: the ticks fire on the UI owner, where this editor
+        # renders (and where start/stop run, from handle_input).
+        async def tick() -> None:
+            self._frame += 1
+            self._tui.request_render()
 
-        async def animate() -> None:
-            while True:
-                await stop.wait(ANIMATION_INTERVAL_S)
-                if stop.is_set():
-                    return
-                self._frame += 1
-                self._tui.request_render()
-
-        tonio.spawn.without_tracking(animate())
+        self._animation = Interval(ANIMATION_INTERVAL_MS, tick)
 
     def _stop_animation(self) -> None:
-        if self._animation_stop is not None:
-            self._animation_stop.set()
-            self._animation_stop = None
+        if self._animation is not None:
+            self._animation.cancel()
+            self._animation = None
 
     async def handle_input(self, data: str) -> None:
         await super().handle_input(data)
@@ -96,7 +88,7 @@ class RainbowEditor(CustomEditor):
         return [ULTRATHINK.sub(lambda m: colorize(m.group(0), shine_pos), line) for line in super().render(width)]
 
 
-def extension(pi):
+async def extension(pi):
     async def on_session_start(_event, ctx) -> None:
         ctx.ui.set_editor_component(lambda tui, theme, keybindings: RainbowEditor(tui, theme, keybindings))
 

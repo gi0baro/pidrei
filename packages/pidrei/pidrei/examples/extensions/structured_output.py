@@ -19,7 +19,7 @@ def _get(record, key: str, snake: str):
     return getattr(record, snake, None)
 
 
-def extension(pi):
+async def extension(pi):
     async def execute(_tool_call_id, params, _cancel=None, _on_update=None, _ctx=None):
         return AgentToolResult(
             content=[TextContent(text=f"Saved structured output: {params['headline']}")],

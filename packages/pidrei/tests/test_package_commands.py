@@ -48,7 +48,7 @@ def workspace(request, tmp_path):
     os.makedirs(project_dir, exist_ok=True)
     os.makedirs(agent_dir, exist_ok=True)
     with open(os.path.join(package_dir, "extensions", "hello.py"), "w", encoding="utf-8") as handle:
-        handle.write("def extension(pi):\n    pass\n")
+        handle.write("async def extension(pi):\n    pass\n")
 
     previous_cwd = os.getcwd()
     previous_agent = os.environ.get("PIDREI_CODING_AGENT_DIR")

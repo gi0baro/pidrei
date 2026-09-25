@@ -34,7 +34,8 @@ def create_base_tool_definition(name: str = "custom_tool") -> ToolDefinition:
 
 
 def create_fake_tui():
-    return SimpleNamespace(request_render=lambda: None)
+    # `post_ui` applies inline: there is no UI owner in these tests.
+    return SimpleNamespace(request_render=lambda: None, post_ui=lambda fn: fn())
 
 
 @pytest.fixture(autouse=True)
@@ -60,10 +61,24 @@ class TestToolExecutionComponentParity:
 
         monkeypatch.setattr(tool_execution, "convert_to_png", convert_to_png)
         rendered = tonio.Event()
+        applied = tonio.Event()
+
+        def post_ui(fn) -> None:
+            # Stands in for the UI owner: runs the late conversion's apply, then
+            # signals that it has run, so the checks below see its outcome.
+            fn()
+            applied.set()
+
         set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
         try:
             component = ToolExecutionComponent(
-                "custom_tool", "tool-image-race", {}, {}, None, SimpleNamespace(request_render=rendered.set), CWD
+                "custom_tool",
+                "tool-image-race",
+                {},
+                {},
+                None,
+                SimpleNamespace(request_render=rendered.set, post_ui=post_ui),
+                CWD,
             )
 
             component.update_result(
@@ -78,8 +93,10 @@ class TestToolExecutionComponentParity:
             release.set()
             await returned.wait(5)
             assert returned.is_set()
-            # A late conversion that were applied would re-render; give it the chance.
-            await rendered.wait(0.2)
+            # The late conversion's apply has run; had it been applied, it would
+            # have re-rendered.
+            await applied.wait(5)
+            assert applied.is_set()
             assert not rendered.is_set()
 
             output = "\n".join(component.render(120))
@@ -155,21 +172,28 @@ class TestToolExecutionComponentParity:
         import tonio.colored as tonio
 
         updates = []
+        exec_started = tonio.Event()
+        release_exec = tonio.Event()
 
+        # The exec stays pending until released, so the check below runs while
+        # it is in flight rather than inside a fixed window.
         class Operations:
             async def exec(self, _command, _cwd, *, on_data, cancel=None, timeout=None, env=None):
-                await tonio.sleep(0.01)
+                exec_started.set()
+                await release_exec.wait()
                 return BashExecResult(exit_code=0)
 
         tool = create_bash_tool_definition(CWD, operations=Operations(), expose_session_environment=False)
         coro = tool.execute("tool-bash-1", {"command": "sleep 10"}, None, lambda update: updates.append(update), None)
         # pi asserts the update is emitted before the exec settles
         task = tonio.spawn(coro)
-        await tonio.time.sleep(0.001)
+        await exec_started.wait(5)
+        assert exec_started.is_set()
         assert len(updates) == 1
         first = updates[0]
         content = first["content"] if isinstance(first, dict) else first.content
         assert content == []
+        release_exec.set()
         await task
 
     @pytest.mark.tonio

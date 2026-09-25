@@ -13,14 +13,15 @@ next one), ``None`` means it answered with no image (stop).
 import os
 import re
 import sys
-import tempfile
 import uuid
 
 import tonio.colored as tonio
 from tonio.colored import fs
 
+from ..config import TEMP_DIR
 from .clipboard_command import run_clipboard_command
 from .image_process import convert_image_bytes_to_png
+from .temp_file_writer import discard_temp_file
 from .wsl import is_wsl
 
 
@@ -99,10 +100,22 @@ async def _read_clipboard_image_via_powershell() -> dict | None:
     On WSL, the Linux clipboard (Wayland/X11) does not receive image data
     from Windows screenshots (Win+Shift+S).
     """
-    tmp_file = os.path.join(tempfile.gettempdir(), f"pidrei-wsl-clip-{uuid.uuid4()}.png")
-
+    tmp_file = TEMP_DIR / f"pidrei-wsl-clip-{uuid.uuid4()}.png"
     try:
-        win_path_result = await run_clipboard_command("wslpath", ["-w", tmp_file], timeout_ms=_DEFAULT_LIST_TIMEOUT_MS)
+        image = await _read_image_through_file(tmp_file)
+    except BaseException:
+        # Cancelled: an await is not served on this path, so the cleanup is detached.
+        tonio.spawn.without_tracking(discard_temp_file(tmp_file))
+        raise
+    await discard_temp_file(tmp_file)
+    return image
+
+
+async def _read_image_through_file(tmp_file: fs.Path) -> dict | None:
+    try:
+        win_path_result = await run_clipboard_command(
+            "wslpath", ["-w", str(tmp_file)], timeout_ms=_DEFAULT_LIST_TIMEOUT_MS
+        )
         if win_path_result is None:
             return None
 
@@ -134,18 +147,13 @@ async def _read_clipboard_image_via_powershell() -> dict | None:
         if output != "ok":
             return None
 
-        data = await fs.Path(tmp_file).read_bytes()
+        data = await tmp_file.read_bytes()
         if len(data) == 0:
             return None
 
         return {"bytes": data, "mimeType": "image/png"}
     except OSError:
         return None
-    finally:
-        try:
-            await fs.Path(tmp_file).unlink()
-        except OSError:
-            pass
 
 
 async def _read_clipboard_image_via_xclip() -> dict | object | None:

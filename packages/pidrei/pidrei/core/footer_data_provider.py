@@ -171,7 +171,11 @@ class FooterDataProvider:
             return self._cached_branch
 
     def get_extension_statuses(self) -> dict:
-        """Extension status texts set via ctx.ui.set_status()."""
+        """Extension status texts set via ctx.ui.set_status().
+
+        A snapshot: writers (extension tasks) replace the dict instead of
+        mutating it, so the footer render can iterate it undisturbed.
+        """
         return self._extension_statuses
 
     def on_branch_change(self, callback):
@@ -187,13 +191,18 @@ class FooterDataProvider:
         return unsubscribe
 
     def set_extension_status(self, key: str, text: str | None) -> None:
-        if text is None:
-            self._extension_statuses.pop(key, None)
-        else:
-            self._extension_statuses[key] = text
+        # Copy-on-write under the lock (see `get_extension_statuses`).
+        with self._lock:
+            statuses = dict(self._extension_statuses)
+            if text is None:
+                statuses.pop(key, None)
+            else:
+                statuses[key] = text
+            self._extension_statuses = statuses
 
     def clear_extension_statuses(self) -> None:
-        self._extension_statuses.clear()
+        with self._lock:
+            self._extension_statuses = {}
 
     def get_available_provider_count(self) -> int:
         """Number of unique providers with available models (footer display)."""

@@ -565,16 +565,17 @@ class Agent:
         self.clear_steering_queue()
         self.clear_follow_up_queue()
 
-    async def has_queued_messages(self) -> bool:
+    def has_queued_messages(self) -> Awaitable[bool]:
         """Resolves True when either queue still contains pending messages.
 
         Awaited (pi's call is sync) — the answer lives on the mailbox task;
-        FIFO orders it after every enqueue and clear already sent.
+        FIFO orders it after every enqueue and clear already sent (the job is
+        sent when awaited).
         """
         mailbox = self._mailbox
-        return await mailbox.run(lambda: mailbox.steering.has_items() or mailbox.follow_up.has_items())
+        return mailbox.run(lambda: mailbox.steering.has_items() or mailbox.follow_up.has_items())
 
-    async def peek_queued_messages(self) -> list[AgentMessage]:
+    def peek_queued_messages(self) -> Awaitable[list[AgentMessage]]:
         """Preview the messages selected for the next turn without consuming them.
 
         Awaited (pi's call is sync) for the same reason as `has_queued_messages`.
@@ -585,7 +586,7 @@ class Agent:
             steering = mailbox.steering.peek()
             return steering if steering else mailbox.follow_up.peek()
 
-        return await mailbox.run(peek)
+        return mailbox.run(peek)
 
     @property
     def signal(self) -> CancelToken | None:
@@ -785,20 +786,20 @@ class Agent:
     ) -> None:
         """The mailbox's run handling, spawned by the admit job."""
         try:
-            # The dispatcher is a child of the run: it outlives every emitter
-            # (tool tasks are joined by the loop before the executor returns,
-            # and the failure events below go through it too) and is closed
-            # and joined before the run is considered idle.
-            async with tonio.scope() as scope:
-                scope.spawn(self._dispatch_events(receiver))
-                try:
-                    await executor(run.cancel)
-                except Exception as error:
-                    await self._handle_run_failure(error, run.cancel.cancelled)
-                finally:
-                    run.events.send(None)
-        except GeneratorExit:
-            raise
+            # The dispatcher outlives every emitter (tool tasks are joined by
+            # the loop before the executor returns, and the failure events
+            # below go through it too): the `None` sentinel ends it, and it is
+            # joined before the run is considered idle. (This task is detached
+            # and never cancelled — aborts go through `run.cancel` — so the
+            # join always runs.)
+            dispatcher = tonio.spawn(self._dispatch_events(receiver))
+            try:
+                await executor(run.cancel)
+            except Exception as error:
+                await self._handle_run_failure(error, run.cancel.cancelled)
+            finally:
+                run.events.send(None)
+                await dispatcher
         except BaseException as error:
             # Re-raised at the awaiting entry point after `done` — this task
             # is detached, so nothing else would observe the failure.

@@ -29,6 +29,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.registry import create_models, create_provider
 from pidrei_ai.utils.cancel import AbortError, CancelToken
+from tests.auth_lock_helpers import ObservedLock, park_on_file_lock_retry
 
 
 def write_auth_json(path, data):
@@ -362,11 +363,13 @@ async def test_pre_aborted_file_operations_do_not_create_the_backing_file_or_run
 
 
 @pytest.mark.tonio
-async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mutation_later(tmp_path):
+async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mutation_later(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     release = lockfile.lock_sync(str(auth_path), stale=30.0)
     backend = FileAuthStorageBackend(str(auth_path))
+    operations = ObservedLock.install(backend)
+    parked = park_on_file_lock_retry(monkeypatch)
     controller = CancelToken()
     calls = {"count": 0}
 
@@ -384,7 +387,8 @@ async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mut
             outcome["error"] = error
 
     async def drive() -> None:
-        await tonio.time.sleep(0.01)
+        await parked.wait(5)
+        assert parked.is_set()
         controller.cancel()
 
     await tonio.spawn(run_pending(), drive())
@@ -392,7 +396,9 @@ async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mut
     assert calls["count"] == 0
 
     release()
-    await tonio.time.sleep(0.15)
+    # The cancelled operation keeps running detached; once its critical
+    # section ends it can no longer run the mutation.
+    await operations.until(lambda lock: lock.released == 1)
     assert calls["count"] == 0
     assert read_auth_json(auth_path) == {"anthropic": {"type": "api_key", "key": "stored"}}
 
@@ -402,6 +408,7 @@ async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_befo
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     backend = FileAuthStorageBackend(str(auth_path))
+    operations = ObservedLock.install(backend)
     controller = CancelToken()
     released = {"count": 0}
     calls = {"count": 0}
@@ -423,7 +430,9 @@ async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_befo
     try:
         with pytest.raises(AbortError):
             await backend.with_lock_async(update, AuthOperationOptions(cancel=controller))
-        await tonio.time.sleep(0.01)
+        # The cancellation settles the caller before the detached operation
+        # releases the file lock; wait for its critical section to end.
+        await operations.until(lambda lock: lock.released == 1)
     finally:
         auth_storage_module.lockfile.lock_sync = original_lock_sync
     assert calls["count"] == 0
@@ -435,6 +444,7 @@ async def test_holds_the_file_lock_until_a_cancelled_active_callback_settles_wit
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
     backend = FileAuthStorageBackend(str(auth_path))
+    operations = ObservedLock.install(backend)
     controller = CancelToken()
     started = tonio.Event()
     blocked = tonio.Event()
@@ -460,8 +470,11 @@ async def test_holds_the_file_lock_until_a_cancelled_active_callback_settles_wit
     async def run_competing() -> None:
         await started.wait()
         controller.cancel()
-        pending_competing = backend.with_lock_async(competing_update)
-        await tonio.time.sleep(0.02)
+        # pi's `withLockAsync(...)` promise queues at once; a coroutine does
+        # not run until awaited, so the competing operation is spawned and the
+        # check waits until it is queued at the operation lock.
+        pending_competing = tonio.spawn(backend.with_lock_async(competing_update))
+        await operations.until(lambda lock: lock.arrived == 2)
         assert competing_calls["count"] == 0
         blocked.set()
         await pending_competing
@@ -473,7 +486,7 @@ async def test_holds_the_file_lock_until_a_cancelled_active_callback_settles_wit
 
 
 @pytest.mark.tonio
-async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(tmp_path):
+async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(tmp_path, monkeypatch):
     """pi also asserts a single lock attempt; pidrei's coalesced shared reload
     (see `_read_latest_data`) completes detached after the release, so only
     the caller-visible semantics are asserted here."""
@@ -481,6 +494,7 @@ async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
     storage = await AuthStorage.create(str(auth_path))
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "new-value"}})
+    parked = park_on_file_lock_retry(monkeypatch)
     release = lockfile.lock_sync(str(auth_path), stale=30.0)
     controller = CancelToken()
     outcome: dict = {}
@@ -493,19 +507,22 @@ async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(
             outcome["error"] = error
 
     async def drive() -> None:
-        await tonio.time.sleep(0.01)
+        await parked.wait(5)
+        assert parked.is_set()
         controller.cancel()
 
     await tonio.spawn(run_pending(), drive())
     assert isinstance(outcome["error"], AbortError)
     release()
-    await tonio.time.sleep(0.15)
+    # No settling pause: this read's reload queues on the backend's operation
+    # lock behind the abandoned one.
     assert await storage.read("anthropic") == ApiKeyCredential(key="new-value")
 
 
 @pytest.mark.tonio
 async def test_serializes_in_memory_mutations_across_providers():
     storage = AuthStorage.in_memory()
+    operations = ObservedLock.install(storage._storage)
     started = tonio.Event()
     blocked = tonio.Event()
     second_calls = {"count": 0}
@@ -524,8 +541,10 @@ async def test_serializes_in_memory_mutations_across_providers():
 
     async def run_second() -> None:
         await started.wait()
-        pending_second = storage.modify("openai", second_fn)
-        await tonio.time.sleep(0.01)
+        # Spawned, not a bare coroutine: pi's promise queues at once (see the
+        # file-lock variant above).
+        pending_second = tonio.spawn(storage.modify("openai", second_fn))
+        await operations.until(lambda lock: lock.arrived == 2)
         assert second_calls["count"] == 0
         blocked.set()
         await pending_second
@@ -538,6 +557,7 @@ async def test_serializes_in_memory_mutations_across_providers():
 @pytest.mark.tonio
 async def test_cancels_a_queued_in_memory_mutation_without_running_it_later():
     storage = AuthStorage.in_memory()
+    operations = ObservedLock.install(storage._storage)
     started = tonio.Event()
     blocked = tonio.Event()
     second_calls = {"count": 0}
@@ -567,7 +587,9 @@ async def test_cancels_a_queued_in_memory_mutation_without_running_it_later():
         blocked.set()
 
     await tonio.spawn(run_first(), run_second())
-    await tonio.time.sleep(0.01)
+    # The cancelled mutation stays queued detached behind the first; once its
+    # critical section ends it can no longer run.
+    await operations.until(lambda lock: lock.released == 2)
     assert isinstance(outcome["error"], AbortError)
     assert second_calls["count"] == 0
     assert await storage.read("openai") is None
@@ -577,6 +599,7 @@ async def test_cancels_a_queued_in_memory_mutation_without_running_it_later():
 async def test_preserves_the_stored_credential_after_cancelling_an_active_refresh_mutation():
     previous = OAuthCredential(access="expired", refresh="refresh-token", expires=0)
     storage = AuthStorage.in_memory({"oauth": previous})
+    operations = ObservedLock.install(storage._storage)
     controller = CancelToken()
     started = tonio.Event()
     blocked = tonio.Event()
@@ -602,8 +625,10 @@ async def test_preserves_the_stored_credential_after_cancelling_an_active_refres
     async def run_competing() -> None:
         await started.wait()
         controller.cancel()
-        pending_competing = storage.modify("other", competing_fn)
-        await tonio.time.sleep(0.01)
+        # Spawned, not a bare coroutine: pi's promise queues at once (see the
+        # file-lock variant above).
+        pending_competing = tonio.spawn(storage.modify("other", competing_fn))
+        await operations.until(lambda lock: lock.arrived == 2)
         assert competing_calls["count"] == 0
         blocked.set()
         await pending_competing

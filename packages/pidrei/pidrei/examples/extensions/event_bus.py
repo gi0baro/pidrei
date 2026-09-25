@@ -10,7 +10,7 @@ Start pidrei with this extension:
 """
 
 
-def extension(pi):
+async def extension(pi):
     # Store ctx for use in the bus handler, which only receives the data.
     state = {"ctx": None}
 

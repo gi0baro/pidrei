@@ -6,27 +6,26 @@ import pytest
 
 from pidrei_ai.utils import clock, timers
 from pidrei_tui import terminal_image
+from pidrei_tui._owner import OwnerTask
 from pidrei_tui._timers import get_ui_owner, set_ui_owner
 
 
 @pytest.fixture(autouse=True)
 def _ambient_ui_owner_guard():
-    """Fail-loud reset of the process-wide ambient timer owner.
+    """End of each test's UI lifecycle: close the ambient owner a started TUI
+    left registered, and reset the registry.
 
     The whole suite shares one tonio runtime (session fixture over a global
-    singleton), so a test that registers its TUI's owner and never reaches
-    `stop()` would silently capture every later test's `Timeout`/`Interval`
-    into a queue nothing drains. The warning names the polluting test; the
-    reset keeps the poison from spreading.
+    singleton), so a registered owner that is still serving would capture
+    every later test's `Timeout`/`Interval`.
     """
     yield
-    if get_ui_owner() is not None:
-        set_ui_owner(None)
-        warnings.warn(
-            "test left pidrei_tui's ambient UI owner registered (a TuiBase was "
-            "started without reaching stop()); reset to detached timers",
-            stacklevel=1,
-        )
+    owner = get_ui_owner()
+    if owner is None:
+        return
+    set_ui_owner(None)
+    if isinstance(owner, OwnerTask):  # not the ManualUiTimers fake
+        owner.close()
 
 
 @pytest.fixture(autouse=True)

@@ -98,12 +98,27 @@ async def abortable_stream_fn(_model, _context, options=None) -> AssistantMessag
     stream.push(StartEvent(partial=create_assistant_message("")))
 
     async def watch_abort() -> None:
-        while cancel is None or not cancel.cancelled:
-            await tonio.time.sleep(0.005)
+        if cancel is None:
+            return  # Nothing can abort it: the stream stays open.
+        await cancel.wait()
         stream.push(ErrorEvent(reason="aborted", error=create_assistant_message("Aborted")))
 
     tonio.spawn.without_tracking(watch_abort())
     return stream
+
+
+def signalling_abortable_stream_fn() -> tuple[Callable, tonio.Event]:
+    """`abortable_stream_fn` plus an Event set once the provider stream is
+    open, i.e. the session is streaming: tests wait on it instead of sleeping
+    after spawning a prompt."""
+    streaming = tonio.Event()
+
+    async def stream_fn(model, context, options=None) -> AssistantMessageEventStream:
+        stream = await abortable_stream_fn(model, context, options)
+        streaming.set()
+        return stream
+
+    return stream_fn, streaming
 
 
 async def create_agent_session(

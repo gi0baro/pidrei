@@ -42,6 +42,7 @@ async def select_session(
         settled = True
         outcome["path"] = path
         await ui.stop()
+        ui.input_owner.close()
         done.set()
 
     def on_select(path: str) -> None:
@@ -65,6 +66,7 @@ async def select_session(
         on_exit,
         lambda: ui.request_render(),
         {"showRenameHint": False, "keybindings": keybindings},
+        post_ui=ui.post_ui,
     )
 
     ui.add_child(selector)

@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent test/interactive-mode-startup-input.test.ts."""
 
+import threading
 from functools import partial
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ def _create_submit_context():
         ),
         _on_input_callback=None,
         _pending_user_inputs=[],
+        _user_input_guard=threading.Lock(),
         flush_calls=[],
         history=[],
         set_text_calls=[],
@@ -35,18 +37,30 @@ def _create_submit_context():
     context.ui = SimpleNamespace(input_owner=OwnerTask(), request_render=lambda force=False: None)
     context._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, context)
     context._set_editor_text = partial(InteractiveMode._set_editor_text, context)
-    context._add_editor_history = partial(InteractiveMode._add_editor_history, context)
+    context._apply_editor_history = partial(InteractiveMode._apply_editor_history, context)
     return context
 
 
 @pytest.mark.tonio
 async def test_queues_a_normal_prompt_submitted_before_the_input_callback_is_installed():
     context = _create_submit_context()
+    # on_submit spawns the async submit handler detached; the test waits for
+    # that handler to finish.
+    handled = tonio.Event()
+    handle_editor_submit = context._handle_editor_submit
+
+    async def handle_and_signal(text: str) -> None:
+        try:
+            await handle_editor_submit(text)
+        finally:
+            handled.set()
+
+    context._handle_editor_submit = handle_and_signal
     InteractiveMode._setup_editor_submit_handler(context)
 
     context._default_editor.on_submit(" early prompt ")
-    # on_submit spawns the async submit handler; let it run.
-    await tonio.time.sleep(0.01)
+    await handled.wait(5)
+    assert handled.is_set()
 
     assert context._pending_user_inputs == ["early prompt"]
     assert context.flush_calls == [True]
@@ -58,6 +72,7 @@ async def test_returns_queued_startup_input_before_installing_a_new_input_callba
     context = SimpleNamespace(
         _on_input_callback=None,
         _pending_user_inputs=["queued prompt"],
+        _user_input_guard=threading.Lock(),
     )
 
     assert await InteractiveMode._get_user_input(context) == "queued prompt"
@@ -76,7 +91,7 @@ async def test_startup_submit_wiring_passes_the_editor_text_through():
     context = SimpleNamespace(
         _default_editor=SimpleNamespace(on_action=actions.__setitem__, on_ctrl_d=None, on_submit=None),
         editor=SimpleNamespace(set_text=set_texts.append),
-        show_status=statuses.append,
+        _apply_show_status=statuses.append,
         _handle_ctrl_c=lambda: None,
         _handle_ctrl_d=lambda: None,
     )
@@ -96,7 +111,7 @@ async def test_restores_a_prompt_submitted_while_managed_tool_setup_is_running()
     set_texts: list[str] = []
     context = SimpleNamespace(
         editor=SimpleNamespace(set_text=set_texts.append),
-        show_status=statuses.append,
+        _apply_show_status=statuses.append,
     )
 
     InteractiveMode._handle_startup_submit(context, "early prompt")

@@ -10,7 +10,7 @@ Start pidrei with this extension:
 COMPACT_THRESHOLD_TOKENS = 100_000
 
 
-def extension(pi):
+async def extension(pi):
     # pi distinguishes undefined (no turn seen yet) from null; here `None`
     # covers both, which is the same thing: there is no previous reading to
     # have crossed from.

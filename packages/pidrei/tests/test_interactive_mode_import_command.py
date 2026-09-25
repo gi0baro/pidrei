@@ -39,14 +39,17 @@ def _create_import_context(import_from_jsonl):
         confirm_calls=[],
     )
     context._clear_status_indicator = lambda kind=None: context.clear_status_calls.append(kind)
-    context.show_error = context.show_error_calls.append
+    # The owner-side part applies in place, the import's remainder posts:
+    # both record into the same lists.
+    context.show_error = context._apply_show_error = context.show_error_calls.append
     context.show_status = context.show_status_calls.append
 
-    async def show_extension_confirm(title, message, opts=None):
+    async def show_extension_confirm(title, message, opts=None, *, on_owner=False):
         context.confirm_calls.append((title, message))
         return True
 
     context._show_extension_confirm = show_extension_confirm
+    context._import_session = partial(InteractiveMode._import_session, context)
 
     async def handle_fatal_runtime_error(prefix, error):
         raise AssertionError("unexpected fatal error")

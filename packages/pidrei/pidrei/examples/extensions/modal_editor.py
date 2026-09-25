@@ -77,7 +77,7 @@ class ModalEditor(CustomEditor):
         return lines
 
 
-def extension(pi):
+async def extension(pi):
     async def on_session_start(_event, ctx) -> None:
         ctx.ui.set_editor_component(lambda tui, theme, keybindings: ModalEditor(tui, theme, keybindings))
 

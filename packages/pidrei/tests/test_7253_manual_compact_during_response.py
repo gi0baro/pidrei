@@ -37,7 +37,7 @@ def _create_noop_tool() -> ToolDefinition:
     )
 
 
-def _compaction_factory(pi) -> None:
+async def _compaction_factory(pi) -> None:
     async def on_before_compact(event, _ctx):
         preparation = event["preparation"]
         return {
@@ -78,14 +78,23 @@ async def test_persists_the_aborted_response_before_running_the_requested_manual
     )
 
     compaction_results: list = []
+    # pi's `compact()` runs synchronously into `abort()`; a spawned coroutine
+    # here runs in parallel, so the driver waits until the compaction has
+    # requested the abort before releasing the response it is waiting for.
+    abort_requested = tonio.Event()
+    request_abort = harness.session._request_abort
+
+    def request_abort_and_signal() -> None:
+        request_abort()
+        abort_requested.set()
+
+    harness.session._request_abort = request_abort_and_signal
 
     async def drive() -> None:
         await second_response_started.wait(None)
         compact = tonio.spawn(harness.session.compact())
-        # pi's `compact()` runs synchronously into `abort()`; a spawned
-        # coroutine here only starts on a real suspension, so give it one
-        # before releasing the response the abort is waiting for.
-        await tonio.time.sleep(0)
+        await abort_requested.wait(5)
+        assert abort_requested.is_set()
         second_response_released.set()
         compaction_results.append(await compact)
 

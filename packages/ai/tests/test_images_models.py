@@ -1,5 +1,6 @@
 """Mirror of pi's images-models.test.ts."""
 
+import threading
 import time
 from types import SimpleNamespace
 
@@ -165,13 +166,42 @@ async def test_returns_an_error_result_for_unknown_providers_and_unconfigured_au
     assert calls[0]["options"] is None or calls[0]["options"].api_key is None
 
 
+class _ObservedGuard:
+    """Wraps a provider's guard: `decided[i]` is set when the i-th critical
+    section is released. While a fetch is in flight only the dedupe decisions
+    take the guard, so the second release means both callers have decided —
+    one leads the fetch, the other is committed to waiting on it."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self._count_lock = threading.Lock()
+        self._released = 0
+        self.decided = [tonio.Event(), tonio.Event()]
+
+    def __enter__(self):
+        self._inner.acquire()
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        self._inner.release()
+        with self._count_lock:
+            index = self._released
+            self._released += 1
+        if index < len(self.decided):
+            self.decided[index].set()
+        return False
+
+
 @pytest.mark.tonio
 async def test_supports_dynamic_providers_via_refresh_with_in_flight_dedupe():
     fetches = []
+    guard: _ObservedGuard | None = None
 
     async def refresh_models():
         fetches.append(1)
-        await tonio.sleep(0.005)
+        # pidrei: hold the fetch in flight until the second caller has decided
+        # to follow it (instead of a 5 ms sleep a slow runner can outlast).
+        await guard.decided[1].wait(5)
         return [make_image_model("dyn", "listed")]
 
     async def generate_images(model, _context, options=None):
@@ -194,7 +224,10 @@ async def test_supports_dynamic_providers_via_refresh_with_in_flight_dedupe():
     )
 
     assert models.get_models("dyn") == []
+    entry = models.get_provider("dyn")
+    guard = entry._guard = _ObservedGuard(entry._guard)
     await tonio.spawn(models.refresh("dyn"), models.refresh("dyn"))
+    assert guard.decided[1].is_set()
     assert len(fetches) == 1
     assert models.get_model("dyn", "listed") is not None
 

@@ -197,7 +197,7 @@ class PresetExtension:
         ]
         items.append({"value": "(none)", "label": "(none)", "description": "Clear active preset, restore defaults"})
 
-        def factory(_tui, theme, _kb, done):
+        async def factory(_tui, theme, _kb, done):
             def accent(text: str) -> str:
                 return theme.fg("accent", text)
 
@@ -333,5 +333,5 @@ class PresetExtension:
             await self.pi.append_entry("preset-state", {"name": self.active_name})
 
 
-def extension(pi):
+async def extension(pi):
     PresetExtension(pi).wire()

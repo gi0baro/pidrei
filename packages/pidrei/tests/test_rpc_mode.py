@@ -12,6 +12,7 @@ export lands with the Phase 4 theme system).
 import contextlib
 import json
 import os
+import threading
 from typing import Any
 
 import pytest
@@ -40,24 +41,20 @@ def _patched(module, **attrs):
             setattr(module, name, value)
 
 
-async def _wait_for(predicate, timeout: float = 5.0) -> None:
-    waited = 0.0
-    while not predicate():
-        if waited >= timeout:
-            raise AssertionError("timed out waiting for condition")
-        await tonio.time.sleep(0.01)
-        waited += 0.01
+def _stream_fn(release: tonio.Event | None = None, streaming: tonio.Event | None = None):
+    """Canned stream that finishes at once, or once `release` is set: a test
+    that must act while the response is still streaming holds it open with a
+    gate (and waits for `streaming`) instead of racing a fixed delay."""
 
-
-@pytest.mark.tonio
-async def _delayed_stream_fn(delay_s: float):
     async def stream_fn(_model, _context, _options=None):
         stream = AssistantMessageEventStream()
         stream.push(StartEvent(partial=create_assistant_message("")))
+        if streaming is not None:
+            streaming.set()
 
         async def finish() -> None:
-            if delay_s > 0:
-                await tonio.time.sleep(delay_s)
+            if release is not None:
+                await release.wait()
             stream.push(DoneEvent(reason="stop", message=create_assistant_message("done")))
 
         tonio.spawn.without_tracking(finish())
@@ -84,6 +81,8 @@ def _fake_model() -> Model:
 class _RpcHarness:
     def __init__(self):
         self.output_lines: list[str] = []
+        self._waiters_lock = threading.Lock()
+        self._waiters: list[tuple[Any, tonio.Event]] = []
         self.line_handler = None
         self._stop = tonio.Event()
         self._ready = tonio.Event()
@@ -106,6 +105,32 @@ class _RpcHarness:
             if record.get("id") == request_id and record.get("type") == "response" and record.get("command") == command
         ]
 
+    def settled(self) -> bool:
+        return any(record.get("type") == "agent_settled" for record in self.records())
+
+    def _write(self, chunk: str) -> None:
+        """Stands in for `write_raw_stdout`: every RPC record arrives here, so
+        waiters are re-checked on each write instead of polled."""
+        self.output_lines.append(chunk)
+        with self._waiters_lock:
+            waiters = list(self._waiters)
+        for predicate, reached in waiters:
+            if not reached.is_set() and predicate():
+                reached.set()
+
+    async def until(self, predicate, timeout: float = 5.0) -> None:
+        reached = tonio.Event()
+        waiter = (predicate, reached)
+        with self._waiters_lock:
+            self._waiters.append(waiter)
+        # Registered first, then checked: a write landing in between is not missed.
+        if predicate():
+            reached.set()
+        await reached.wait(timeout)
+        with self._waiters_lock:
+            self._waiters.remove(waiter)
+        assert reached.is_set(), "timed out waiting for the RPC output"
+
     def send(self, command: dict[str, Any]) -> None:
         assert self.line_handler is not None
         self.line_handler(json.dumps(command))
@@ -113,7 +138,7 @@ class _RpcHarness:
     async def request(self, command: dict[str, Any], timeout: float = 5.0) -> dict[str, Any]:
         request_id = command["id"]
         self.send(command)
-        await _wait_for(lambda: len(self.responses(request_id, command["type"])) > 0, timeout)
+        await self.until(lambda: len(self.responses(request_id, command["type"])) > 0, timeout)
         return self.responses(request_id, command["type"])[0]
 
     async def start(self, runtime_host) -> None:
@@ -132,7 +157,7 @@ class _RpcHarness:
             _patched(
                 rpc_mode,
                 take_over_stdout=lambda: None,
-                write_raw_stdout=self.output_lines.append,
+                write_raw_stdout=self._write,
                 wait_for_raw_stdout_backpressure=_noop_async,
                 flush_raw_stdout=_noop_async,
                 _pump_stdin_commands=fake_pump,
@@ -212,14 +237,12 @@ class TestRpcPromptResponseSemantics:
     @pytest.mark.tonio
     async def test_emits_one_failure_response_when_prompt_preflight_rejects(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(
-            tmp_path, stream_fn=await _delayed_stream_fn(0), with_auth=False, model=_fake_model()
-        )
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), with_auth=False, model=_fake_model())
         await harness.start(host)
         try:
             harness.send({"id": "b1", "type": "prompt", "message": "Hello"})
 
-            await _wait_for(lambda: len(harness.responses("b1", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("b1", "prompt")) == 1)
             response = harness.responses("b1", "prompt")[0]
             assert response["success"] is False
             assert (
@@ -232,12 +255,12 @@ class TestRpcPromptResponseSemantics:
     @pytest.mark.tonio
     async def test_emits_one_success_response_when_prompt_preflight_succeeds(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             harness.send({"id": "b2", "type": "prompt", "message": "Hello"})
 
-            await _wait_for(lambda: len(harness.responses("b2", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("b2", "prompt")) == 1)
             response = harness.responses("b2", "prompt")[0]
             assert response["success"] is True
             await host.session.wait_for_idle()
@@ -247,22 +270,29 @@ class TestRpcPromptResponseSemantics:
     @pytest.mark.tonio
     async def test_emits_one_success_response_when_prompt_is_queued_during_streaming(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0.1))
+        release = tonio.Event()
+        streaming = tonio.Event()
+        # A gate, not a fixed delay, keeps the first response streaming until
+        # the follow-up has been answered.
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(release, streaming))
         await harness.start(host)
         try:
             harness.send({"id": "b3-start", "type": "prompt", "message": "Start"})
-            await _wait_for(lambda: len(harness.responses("b3-start", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("b3-start", "prompt")) == 1)
+            await streaming.wait(5)
+            assert streaming.is_set()
 
             harness.output_lines.clear()
             harness.send({"id": "b3", "type": "prompt", "message": "Queue this", "streamingBehavior": "followUp"})
 
-            await _wait_for(lambda: len(harness.responses("b3", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("b3", "prompt")) == 1)
             response = harness.responses("b3", "prompt")[0]
             assert response["success"] is True
 
-            await tonio.time.sleep(0.15)
+            release.set()
             await host.session.wait_for_idle()
         finally:
+            release.set()
             await harness.stop()
 
     @pytest.mark.tonio
@@ -270,11 +300,17 @@ class TestRpcPromptResponseSemantics:
         # Mirrors the clear_queue case pi added to rpc-prompt-response-semantics.test.ts
         # (the rest of that suite is a recorded parity gap).
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0.5))
+        release = tonio.Event()
+        streaming = tonio.Event()
+        # A gate, not a fixed delay, keeps the first response streaming while
+        # the queue is filled and cleared.
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(release, streaming))
         await harness.start(host)
         try:
             harness.send({"id": "clear-start", "type": "prompt", "message": "Start"})
-            await _wait_for(lambda: len(harness.responses("clear-start", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("clear-start", "prompt")) == 1)
+            await streaming.wait(5)
+            assert streaming.is_set()
 
             harness.send(
                 {
@@ -284,7 +320,7 @@ class TestRpcPromptResponseSemantics:
                     "streamingBehavior": "steer",
                 }
             )
-            await _wait_for(lambda: len(harness.responses("clear-steering", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("clear-steering", "prompt")) == 1)
 
             harness.send(
                 {
@@ -294,7 +330,7 @@ class TestRpcPromptResponseSemantics:
                     "streamingBehavior": "followUp",
                 }
             )
-            await _wait_for(lambda: len(harness.responses("clear-follow-up", "prompt")) == 1)
+            await harness.until(lambda: len(harness.responses("clear-follow-up", "prompt")) == 1)
 
             response = await harness.request({"id": "clear", "type": "clear_queue"})
             assert response == {
@@ -308,9 +344,14 @@ class TestRpcPromptResponseSemantics:
                 },
             }
 
-            await tonio.time.sleep(0.6)
+            # Let the run finish and settle: with the queue cleared nothing
+            # follows it.
+            release.set()
+            await harness.until(harness.settled)
+            await host.session.wait_for_idle()
             assert len([record for record in harness.records() if record.get("type") == "agent_start"]) == 1
         finally:
+            release.set()
             await harness.stop()
 
 
@@ -318,7 +359,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_state(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             response = await harness.request({"id": "r1", "type": "get_state"})
@@ -333,18 +374,20 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_save_messages_to_session_file(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just the word 'hello'"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             message_end_events = [r for r in harness.records() if r.get("type") == "message_end"]
             assert len(message_end_events) >= 2  # user + assistant
 
             session_file = host.session.session_file
             assert session_file is not None
-            await _wait_for(lambda: os.path.exists(session_file))
+            # No polling: message persistence is awaited by the session's
+            # event listener, which the run finishes before `agent_settled`.
+            assert os.path.exists(session_file)
 
             entries = _read_session_entries(session_file)
             assert entries[0]["type"] == "session"
@@ -370,7 +413,7 @@ class TestRpcMode:
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Say hello"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             response = await harness.request({"id": "c1", "type": "compact"})
             assert response["success"] is True
@@ -388,7 +431,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_execute_bash_command(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             response = await harness.request({"id": "b1", "type": "bash", "command": "echo hello"})
@@ -402,11 +445,11 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_add_bash_output_to_context(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Say hi"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             unique_value = "test-bash-context-value"
             await harness.request({"id": "b1", "type": "bash", "command": f"echo {unique_value}"})
@@ -422,10 +465,9 @@ class TestRpcMode:
                     if e["type"] == "message" and e.get("message", {}).get("role") == "bashExecution"
                 ]
 
-            # Poll rather than read instantly: unlike pi's synchronous session
-            # writes, persistence here is async — the response only proves the
-            # execution finished, not that the entry hit the disk yet.
-            await _wait_for(lambda: len(bash_entries()) > 0)
+            # Read at once: the run has settled, so `execute_bash` persists the
+            # result directly (`record_bash_result` awaits the append) before
+            # the bash response is written.
             bash_messages = bash_entries()
             assert len(bash_messages) == 1
             assert unique_value in bash_messages[0]["message"]["output"]
@@ -435,7 +477,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_set_and_get_thinking_level(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             response = await harness.request({"id": "t1", "type": "set_thinking_level", "level": "high"})
@@ -449,7 +491,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_cycle_thinking_level(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             initial_state = (await harness.request({"id": "t1", "type": "get_state"}))["data"]
@@ -466,7 +508,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_available_thinking_levels(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             levels = (await harness.request({"id": "t1", "type": "get_available_thinking_levels"}))["data"]["levels"]
@@ -487,7 +529,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_available_models(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0))
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn())
         await harness.start(host)
         try:
             models = (await harness.request({"id": "m1", "type": "get_available_models"}))["data"]["models"]
@@ -504,11 +546,11 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_session_stats(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Hello"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             stats = (await harness.request({"id": "s1", "type": "get_session_stats"}))["data"]
             assert stats["sessionFile"]
@@ -521,11 +563,11 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_create_new_session(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Hello"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             state = (await harness.request({"id": "s1", "type": "get_state"}))["data"]
             assert state["messageCount"] > 0
@@ -541,11 +583,11 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_export_html_exports_the_session(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "hello"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             output_path = str(tmp_path / "export.html")
             response = await harness.request({"id": "e1", "type": "export_html", "outputPath": output_path})
@@ -559,14 +601,14 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_last_assistant_text(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             text = (await harness.request({"id": "l1", "type": "get_last_assistant_text"}))["data"]["text"]
             assert text is None
 
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just: test123"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             text = (await harness.request({"id": "l2", "type": "get_last_assistant_text"}))["data"]["text"]
             assert "done" in text
@@ -576,11 +618,11 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_session_entries_with_since_cursor(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just 'ok'"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             data = (await harness.request({"id": "e1", "type": "get_entries"}))["data"]
             entries = data["entries"]
@@ -603,11 +645,11 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_get_session_tree(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just 'ok'"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             entries_data = (await harness.request({"id": "e1", "type": "get_entries"}))["data"]
             tree_data = (await harness.request({"id": "t1", "type": "get_tree"}))["data"]
@@ -639,7 +681,7 @@ class TestRpcMode:
         await harness.start(host)
         try:
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just 'ok'"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
             before = (await harness.request({"id": "e1", "type": "get_entries"}))["data"]
 
             await harness.request({"id": "c1", "type": "compact"})
@@ -655,7 +697,7 @@ class TestRpcMode:
     @pytest.mark.tonio
     async def test_should_set_and_get_session_name(self, tmp_path):
         harness = _RpcHarness()
-        host = await _create_runtime_host(tmp_path, stream_fn=await _delayed_stream_fn(0), persisted=True)
+        host = await _create_runtime_host(tmp_path, stream_fn=_stream_fn(), persisted=True)
         await harness.start(host)
         try:
             state = (await harness.request({"id": "s1", "type": "get_state"}))["data"]
@@ -663,7 +705,7 @@ class TestRpcMode:
 
             # Session files are only written after the first assistant message
             harness.send({"id": "p1", "type": "prompt", "message": "Reply with just 'ok'"})
-            await _wait_for(lambda: any(r.get("type") == "agent_settled" for r in harness.records()))
+            await harness.until(harness.settled)
 
             await harness.request({"id": "n1", "type": "set_session_name", "name": "my-test-session"})
 
@@ -671,7 +713,9 @@ class TestRpcMode:
             assert state["sessionName"] == "my-test-session"
 
             session_file = host.session.session_file
-            await _wait_for(lambda: os.path.exists(session_file))
+            # The session_info append is awaited before the set_session_name
+            # response.
+            assert os.path.exists(session_file)
             entries = _read_session_entries(session_file)
             session_info_entries = [e for e in entries if e["type"] == "session_info"]
             assert len(session_info_entries) == 1

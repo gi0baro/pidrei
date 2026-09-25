@@ -123,7 +123,7 @@ def is_interactive_command(command: str) -> bool:
     return False
 
 
-def extension(pi):
+async def extension(pi):
     async def on_user_bash(event, ctx):
         command = event["command"]
         force_interactive = False
@@ -149,10 +149,12 @@ def extension(pi):
                 }
             }
 
-        # Use ctx.ui.custom() to get TUI access, then run the command
+        # Use ctx.ui.custom() to get TUI access, then run the command. The
+        # factory runs on the UI owner (like pi's, on its UI thread), so the
+        # TUI is stopped in place; the UI waits for the command, as pi's does.
         async def run_in_terminal(tui, _theme, _keybindings, done):
             # Stop TUI to release the terminal
-            await tui.stop()
+            await tui.stop(on_owner=True)
 
             # Clear screen
             sys.stdout.write("\x1b[2J\x1b[H")

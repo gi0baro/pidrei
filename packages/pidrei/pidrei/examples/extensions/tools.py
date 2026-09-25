@@ -60,7 +60,7 @@ class ToolsExtension:
         # Refresh the tool list.
         self.all_tools = self.pi.get_all_tools()
 
-        def factory(_tui, theme, _kb, done):
+        async def factory(_tui, theme, _kb, done):
             # A settings row per tool, toggling between enabled and disabled.
             items = [
                 {
@@ -109,5 +109,5 @@ class ToolsExtension:
         await ctx.ui.custom(factory)
 
 
-def extension(pi):
+async def extension(pi):
     ToolsExtension(pi).wire()

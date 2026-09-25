@@ -1,9 +1,6 @@
 """Mirror of pi's suite/regressions/7209-model-selector-filter-resets-selection.test.ts."""
 
-from types import SimpleNamespace
-
 import pytest
-import tonio.colored as tonio
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.model_selector import ModelSelectorComponent
@@ -12,6 +9,7 @@ from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
 from .harness import create_harness
+from .render_request_helpers import RenderRequests
 
 
 DOWN = "\x1b[B"
@@ -31,10 +29,6 @@ def _setup():
     set_keybindings(KeybindingsManager())
 
 
-def fake_tui():
-    return SimpleNamespace(request_render=lambda: None)
-
-
 def selected_model_id(rendered: str) -> str | None:
     """Return the model id of the highlighted (→) row in the rendered selector."""
     line = next((candidate for candidate in rendered.split("\n") if candidate.startswith("→ ")), None)
@@ -49,9 +43,8 @@ def render(selector: ModelSelectorComponent) -> str:
     return strip_ansi("\n".join(selector.render(120)))
 
 
-async def wait_for_refresh(selector: ModelSelectorComponent) -> None:
-    while "Model catalogs refreshed." not in render(selector):
-        await tonio.time.sleep(0.005)
+async def wait_for_refresh(tui: RenderRequests, selector: ModelSelectorComponent) -> None:
+    await tui.until(lambda: "Model catalogs refreshed." in render(selector))
 
 
 @pytest.mark.tonio
@@ -60,8 +53,9 @@ async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_que
     try:
         current = harness.get_model("alpha-1")
         assert current is not None
+        tui = RenderRequests()
         selector = ModelSelectorComponent(
-            fake_tui(),
+            tui,
             current,
             harness.session.model_runtime,
             [],
@@ -69,7 +63,7 @@ async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_que
             lambda *args: None,
         )
 
-        await wait_for_refresh(selector)
+        await wait_for_refresh(tui, selector)
 
         # Current model (alpha-1) is sorted first, so selection starts on row 0.
         assert selected_model_id(render(selector)) == "alpha-1"
@@ -103,8 +97,9 @@ async def test_moves_selection_to_the_first_row_in_the_scoped_tab_when_typing_a_
 
         # Scoped list is intentionally not in current-model-first order; the
         # current model (alpha-1) sits at index 2.
+        tui = RenderRequests()
         selector = ModelSelectorComponent(
-            fake_tui(),
+            tui,
             alpha1,
             harness.session.model_runtime,
             [{"model": alpha2}, {"model": alpha3}, {"model": alpha1}],
@@ -112,7 +107,7 @@ async def test_moves_selection_to_the_first_row_in_the_scoped_tab_when_typing_a_
             lambda *args: None,
         )
 
-        await wait_for_refresh(selector)
+        await wait_for_refresh(tui, selector)
 
         # Selection starts on the current model (alpha-1), which is row 2 here.
         assert selected_model_id(render(selector)) == "alpha-1"

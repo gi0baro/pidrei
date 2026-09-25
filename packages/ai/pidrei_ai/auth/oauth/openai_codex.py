@@ -12,6 +12,7 @@ import base64
 import json
 import math
 import secrets
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -251,7 +252,7 @@ def _number(value: str) -> float:
         return math.nan
 
 
-async def _poll_device_auth(device: _DeviceAuthInfo, cancel: CancelToken) -> _DeviceTokenSuccess:
+def _poll_device_auth(device: _DeviceAuthInfo, cancel: CancelToken) -> Awaitable[_DeviceTokenSuccess]:
     async def poll() -> OAuthDeviceCodePollResult:
         response = await _request_with_login_cancellation(
             DEVICE_TOKEN_URL,
@@ -301,7 +302,7 @@ async def _poll_device_auth(device: _DeviceAuthInfo, cancel: CancelToken) -> _De
             ),
         )
 
-    return await poll_oauth_device_code_flow(
+    return poll_oauth_device_code_flow(
         poll=poll,
         interval_seconds=device.interval_seconds,
         expires_in_seconds=DEVICE_CODE_TIMEOUT_SECONDS,

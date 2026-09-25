@@ -32,7 +32,7 @@ class Expansion:
     error: str | None = None
 
 
-def extension(pi):
+async def extension(pi):
     async def on_input(event, ctx):
         text = event["text"]
 

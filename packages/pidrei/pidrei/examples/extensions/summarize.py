@@ -103,10 +103,13 @@ async def show_summary_ui(summary, ctx):
     if ctx.mode != "tui":
         return
 
-    await ctx.ui.custom(lambda _tui, theme, _kb, done: SummaryView(theme, summary, done))
+    async def factory(_tui, theme, _kb, done):
+        return SummaryView(theme, summary, done)
+
+    await ctx.ui.custom(factory)
 
 
-def extension(pi):
+async def extension(pi):
     async def summarize(_args, ctx):
         branch = ctx.session_manager.get_branch()
         conversation_text = build_conversation_text(branch)
@@ -119,12 +122,12 @@ def extension(pi):
         if ctx.has_ui:
             ctx.ui.notify("Preparing summary...", "info")
 
-        model = ctx.model_registry.get_model("openai", "gpt-5.2")
+        model = ctx.model_registry.find("openai", "gpt-5.2")
         if model is None:
             if ctx.has_ui:
                 ctx.ui.notify("Model openai/gpt-5.2 not found", "warning")
             return
-        if not ctx.model_registry.has_configured_auth(model.provider):
+        if not ctx.model_registry.has_configured_auth(model):
             if ctx.has_ui:
                 ctx.ui.notify("No authentication configured for openai/gpt-5.2", "warning")
             return
@@ -136,9 +139,10 @@ def extension(pi):
             )
         ]
 
-        # complete_simple is pi's `complete` with reasoningEffort: the unified
-        # entry point that accepts a reasoning level.
-        response = await ctx.model_registry.complete_simple(
+        # pi's `complete` with reasoningEffort: the provider-neutral
+        # `stream_simple` takes the reasoning level; `result()` is the final
+        # message.
+        response = await ctx.model_registry.stream_simple(
             model,
             Context(messages=summary_messages),
             SimpleStreamOptions(
@@ -146,7 +150,7 @@ def extension(pi):
                 cache_retention="none",
                 session_id=uuidv7(),
             ),
-        )
+        ).result()
 
         summary = "\n".join(c.text for c in response.content if getattr(c, "type", None) == "text")
 
