@@ -190,6 +190,8 @@ def model_to_dict(model: Model) -> dict[str, Any]:
         "contextWindow": model.context_window,
         "maxTokens": model.max_tokens,
     }
+    if model.prompt_cache is not None:
+        raw["promptCache"] = dict(model.prompt_cache)
     if model.thinking_level_map is not None:
         raw["thinkingLevelMap"] = dict(model.thinking_level_map)
     if model.headers is not None:

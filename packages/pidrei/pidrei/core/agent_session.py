@@ -54,6 +54,7 @@ from ..utils.sleep import sleep
 from ..utils.tool_result_images import normalize_tool_result_images
 from .auth_guidance import format_no_api_key_found_message, format_no_model_selected_message
 from .bash_executor import BashResult, execute_bash_with_operations
+from .cache_warmer import CacheWarmer, CacheWarmingStatus
 from .compaction import (
     CompactionPreparation,
     CompactionResult,
@@ -72,8 +73,10 @@ from .extensions import ExtensionRunner, wrap_registered_tools
 from .extensions.runner import emit_session_shutdown_event
 from .messages import BashExecutionMessage, CustomMessage
 from .model_registry import ModelRegistry
+from .model_runtime import ModelRuntimeAuthOverrides
 from .prompt_templates import expand_prompt_template
 from .session_manager import get_latest_compaction_entry
+from .settings_manager import CacheWarmingMode
 from .source_info import create_synthetic_source_info
 from .system_prompt import (
     BuildSystemPromptOptions,
@@ -272,6 +275,8 @@ class AgentSessionConfig:
     scoped_models: list[ScopedModel] | None = None
     # SDK custom tools registered outside extensions
     custom_tools: list[Any] | None = None
+    # Keeps the prompt cache entry of the last session request warm.
+    cache_warmer: CacheWarmer | None = None
     # Initial active built-in tool names. Default: [read, bash, edit, write]
     initial_active_tool_names: list[str] | None = None
     # Optional allowlist of tool names.
@@ -418,6 +423,9 @@ class AgentSession:
         self._unsubscribe_agent: Callable[[], None] | None = None
         self._event_listeners: list[AgentSessionEventListener] = []
         self._is_agent_run_active = False
+        # Set by abort() while a run is active; the post-run loop checks it so a retry,
+        # compaction continuation or queued-message continuation cannot outlive the abort.
+        self._agent_run_abort_requested = False
         self._idle_wait_event: tonio.Event | None = None
         self._state_guard = threading.RLock()
 
@@ -473,6 +481,9 @@ class AgentSession:
         self._extension_error_unsubscriber: Callable[[], None] | None = None
 
         self._model_runtime = config.model_runtime
+        self._cache_warmer = config.cache_warmer
+        if self._cache_warmer is not None:
+            self._cache_warmer.on_warmed = lambda entry: self._emit(EntryAppendedEvent(entry=entry))
 
         # Tool registry for extension getTools/setTools
         self._tool_registry: dict[str, AgentTool] = {}
@@ -507,9 +518,9 @@ class AgentSession:
     def model_runtime(self) -> Any:
         return self._model_runtime
 
-    async def _get_required_request_auth(self, model: Model) -> dict[str, Any]:
+    async def _get_required_request_auth(self, model: Model, cancel: CancelToken | None = None) -> dict[str, Any]:
         try:
-            result = await self._model_runtime.get_auth(model)
+            result = await self._model_runtime.get_auth(model, ModelRuntimeAuthOverrides(cancel=cancel))
         except Exception as error:
             cause = error.__cause__
             if isinstance(cause, Exception) and str(cause) == "authHeader requires a resolved API key":
@@ -533,15 +544,16 @@ class AgentSession:
             )
         raise Exception(format_no_api_key_found_message(model.provider))
 
-    async def _get_summarization_request_auth(self, model: Model) -> dict[str, Any]:
+    async def _get_summarization_request_auth(self, model: Model, cancel: CancelToken | None = None) -> dict[str, Any]:
         """Auth for summarization requests, plus the model to send them to.
 
         A credential-resolved `base_url` (GitHub Copilot Business/Enterprise)
         must reach the request, so the resolved model comes back with it applied
-        (pi #6768).
+        (pi #6768). A cancelled `cancel` propagates instead of degrading to
+        unauthenticated.
         """
         try:
-            result = await self._model_runtime.get_auth(model)
+            result = await self._model_runtime.get_auth(model, ModelRuntimeAuthOverrides(cancel=cancel))
             if result is None:
                 return {"model": model, "api_key": None, "headers": None, "env": None}
             return {
@@ -551,6 +563,8 @@ class AgentSession:
                 "env": dict(result.env) if result.env is not None else None,
             }
         except Exception:
+            if cancel is not None and cancel.cancelled:
+                raise
             return {"model": model, "api_key": None, "headers": None, "env": None}
 
     def _install_agent_tool_hooks(self) -> None:
@@ -740,6 +754,8 @@ class AgentSession:
     async def _emit_agent_settled(self) -> None:
         # `_is_agent_run_active` is cleared by the caller, before the pending
         # bash flush (see `_run_agent_prompt`).
+        if self._cache_warmer is not None:
+            self._cache_warmer.on_agent_settled()
         try:
             await self._extension_runner.emit({"type": "agent_settled"})
             self._emit(AgentSettledEvent())
@@ -812,6 +828,8 @@ class AgentSession:
             await self._flush_pending_custom_messages()
 
     def _will_retry_after_agent_end(self, event: AgentEndEvent) -> bool:
+        if self._agent_run_abort_requested:
+            return False
         settings = self.settings_manager.get_retry_settings()
         if not settings["enabled"] or self._retry_attempt >= settings["max_retries"]:
             return False
@@ -949,6 +967,9 @@ class AgentSession:
         self._extension_runner.invalidate()
         self._disconnect_from_agent()
         self._event_listeners = []
+        if self._cache_warmer is not None:
+            self._cache_warmer.on_warmed = None
+            self._cache_warmer.cancel()
         cleanup_session_resources(self.session_id)
 
     # =========================================================================
@@ -958,6 +979,17 @@ class AgentSession:
     @property
     def state(self) -> Any:
         return self.agent.state
+
+    @property
+    def cache_warming_status(self) -> CacheWarmingStatus | None:
+        """Current cache-warming state and the policy inputs that produced it."""
+        return self._cache_warmer.status if self._cache_warmer is not None else None
+
+    def set_cache_warming_mode(self, mode: CacheWarmingMode) -> None:
+        """Persist the cache-warming mode and immediately reconcile active warming."""
+        self.settings_manager.set_cache_warming_mode(mode)
+        if self._cache_warmer is not None:
+            self._cache_warmer.on_mode_changed()
 
     @property
     def model(self) -> Model | None:
@@ -1182,12 +1214,18 @@ class AgentSession:
     # =========================================================================
 
     async def _run_agent_prompt(self, messages: Any) -> None:
-        self._is_agent_run_active = True
+        with self._state_guard:
+            self._agent_run_abort_requested = False
+            self._is_agent_run_active = True
         try:
             await self.agent.prompt(messages)
             while await self._handle_post_agent_run():
+                if self._agent_run_abort_requested:
+                    break
                 await self.agent.continue_()
         finally:
+            if self._agent_run_abort_requested:
+                self._finish_cancelled_retry()
             self._run_system_prompt_options = None
             # The flag flips before the flush, under the guard that
             # `record_bash_result` takes for its pending-vs-direct decision:
@@ -1205,22 +1243,30 @@ class AgentSession:
     async def _handle_post_agent_run(self) -> bool:
         msg = self._last_assistant_message
         self._last_assistant_message = None
+        if self._agent_run_abort_requested:
+            self._finish_cancelled_retry()
+            return False
         if msg is None:
             return False
 
         if self._is_retryable_error(msg) and await self._prepare_retry(msg):
-            return True
+            if self._agent_run_abort_requested:
+                self._finish_cancelled_retry()
+            return not self._agent_run_abort_requested
+        if self._agent_run_abort_requested:
+            self._finish_cancelled_retry()
+            return False
 
         if msg.stop_reason == "error" and self._retry_attempt > 0:
             self._emit(AutoRetryEndEvent(success=False, attempt=self._retry_attempt, final_error=msg.error_message))
             self._retry_attempt = 0
 
         if await self._check_compaction(msg):
-            return True
+            return not self._agent_run_abort_requested
 
         # The agent loop drains both queues before emitting agent_end. Any messages
         # here were queued by agent_end extension handlers and need a continuation.
-        return await self.agent.has_queued_messages()
+        return not self._agent_run_abort_requested and await self.agent.has_queued_messages()
 
     async def _run_input_handlers(
         self,
@@ -1641,6 +1687,9 @@ class AgentSession:
         """The synchronous prefix of `abort()`: everything pi runs before its
         first await, so an extension's `ctx.abort()` cancels the agent before
         control returns to the tool loop (regression #8935)."""
+        with self._state_guard:
+            if self._is_agent_run_active:
+                self._agent_run_abort_requested = True
         self.abort_retry()
         self.abort_compaction()
         self.abort_branch_summary()
@@ -1911,9 +1960,11 @@ class AgentSession:
 
         `custom_instructions`: optional instructions for the compaction summary."""
         await self.abort()
-        self._compaction_cancel = CancelToken()
+        compaction_cancel = CancelToken()
+        self._compaction_cancel = compaction_cancel
         self._emit(CompactionStartEvent(reason="manual"))
         from_extension = False
+        cancelled_by_extension = False
 
         try:
             model = self.model
@@ -1921,7 +1972,7 @@ class AgentSession:
                 raise Exception(format_no_model_selected_message())
 
             settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
-            auth = await self._get_summarization_request_auth(model)
+            auth = await self._get_summarization_request_auth(model, compaction_cancel)
 
             path_entries = self.session_manager.get_branch()
 
@@ -1949,6 +2000,7 @@ class AgentSession:
                 )
 
                 if isinstance(result, dict) and result.get("cancel"):
+                    cancelled_by_extension = True
                     raise Exception("Compaction cancelled")
 
                 if isinstance(result, dict) and result.get("compaction") is not None:
@@ -2022,7 +2074,7 @@ class AgentSession:
             return compaction_result
         except Exception as error:
             message = str(error)
-            aborted = message == "Compaction cancelled" or type(error).__name__ == "AbortError"
+            aborted = compaction_cancel.cancelled or cancelled_by_extension
             error_message = None if aborted else f"Compaction failed: {message}"
             self._clear_manual_compaction_state()
             self._emit(
@@ -2204,24 +2256,28 @@ class AgentSession:
         `agent.continue_()`."""
         model = self.model
         settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
+        compaction_cancel: CancelToken | None = None
         started = False
         from_extension = False
+        cancelled_by_extension = False
 
         try:
             if model is None:
                 return False
 
-            auth = await self._get_summarization_request_auth(model)
-
             path_entries = self.session_manager.get_branch()
-
             preparation = prepare_compaction(path_entries, settings)
             if preparation is None:
                 return False
 
-            self._emit(CompactionStartEvent(reason=reason))
-            self._auto_compaction_cancel = CancelToken()
+            compaction_cancel = CancelToken()
+            self._auto_compaction_cancel = compaction_cancel
             started = True
+            self._emit(CompactionStartEvent(reason=reason))
+            compaction_cancel.raise_if_cancelled()
+
+            auth = await self._get_summarization_request_auth(model, compaction_cancel)
+            compaction_cancel.raise_if_cancelled()
 
             extension_compaction: CompactionResult | None = None
 
@@ -2234,20 +2290,18 @@ class AgentSession:
                         "customInstructions": None,
                         "reason": reason,
                         "willRetry": will_retry,
-                        "signal": self._auto_compaction_cancel,
+                        "signal": compaction_cancel,
                     }
                 )
 
                 if isinstance(extension_result, dict) and extension_result.get("cancel"):
-                    self._emit(CompactionEndEvent(reason=reason, result=None, aborted=True, will_retry=False))
-                    await self._emit_session_compact_failed(
-                        reason=reason, aborted=True, will_retry=False, from_extension=False
-                    )
-                    return False
+                    cancelled_by_extension = True
+                    raise Exception("Compaction cancelled")
 
                 if isinstance(extension_result, dict) and extension_result.get("compaction") is not None:
                     extension_compaction = extension_result["compaction"]
                     from_extension = True
+            compaction_cancel.raise_if_cancelled()
 
             if extension_compaction is not None:
                 summary = extension_compaction.summary
@@ -2263,7 +2317,7 @@ class AgentSession:
                     auth["api_key"],
                     auth["headers"],
                     None,
-                    self._auto_compaction_cancel,
+                    compaction_cancel,
                     auth["env"],
                     reason,
                 )
@@ -2272,13 +2326,7 @@ class AgentSession:
                 tokens_before = compact_result.tokens_before
                 usage = compact_result.usage
                 details = compact_result.details
-
-            if self._auto_compaction_cancel.cancelled:
-                self._emit(CompactionEndEvent(reason=reason, result=None, aborted=True, will_retry=False))
-                await self._emit_session_compact_failed(
-                    reason=reason, aborted=True, will_retry=False, from_extension=from_extension
-                )
-                return False
+            compaction_cancel.raise_if_cancelled()
 
             await self.session_manager.append_compaction(
                 summary, first_kept_entry_id, tokens_before, details, from_extension, usage
@@ -2334,32 +2382,36 @@ class AgentSession:
             # are waiting. Continue once so queued messages are delivered.
             return await self.agent.has_queued_messages()
         except Exception as error:
-            error_message = str(error) or "compaction failed"
+            message = str(error) or "compaction failed"
+            aborted = (compaction_cancel is not None and compaction_cancel.cancelled) or cancelled_by_extension
             if started:
-                formatted_error_message = (
-                    f"Context overflow recovery failed: {error_message}"
+                error_message = (
+                    None
+                    if aborted
+                    else f"Context overflow recovery failed: {message}"
                     if reason == "overflow"
-                    else f"Auto-compaction failed: {error_message}"
+                    else f"Auto-compaction failed: {message}"
                 )
                 self._emit(
                     CompactionEndEvent(
                         reason=reason,
                         result=None,
-                        aborted=False,
+                        aborted=aborted,
                         will_retry=False,
-                        error_message=formatted_error_message,
+                        error_message=error_message,
                     )
                 )
                 await self._emit_session_compact_failed(
                     reason=reason,
-                    error_message=formatted_error_message,
-                    aborted=False,
+                    error_message=error_message,
+                    aborted=aborted,
                     will_retry=False,
                     from_extension=from_extension,
                 )
             return False
         finally:
-            self._auto_compaction_cancel = None
+            if self._auto_compaction_cancel is compaction_cancel:
+                self._auto_compaction_cancel = None
             self._resolve_idle_wait_if_idle()
 
     def set_auto_compaction_enabled(self, enabled: bool) -> None:
@@ -2818,6 +2870,13 @@ class AgentSession:
             on_retry_finished=on_retry_finished,
         )
 
+    def _finish_cancelled_retry(self) -> None:
+        if self._retry_attempt == 0:
+            return
+        attempt = self._retry_attempt
+        self._retry_attempt = 0
+        self._emit(AutoRetryEndEvent(success=False, attempt=attempt, final_error="Retry cancelled"))
+
     async def _prepare_retry(self, message: AssistantMessage) -> bool:
         """Prepare a retryable error for continuation with exponential backoff.
         Returns True if the caller should continue the agent."""
@@ -2855,9 +2914,7 @@ class AgentSession:
             await sleep(delay_ms, self._retry_cancel)
         except Exception:
             # Aborted during sleep - emit end event so UI can clean up
-            attempt = self._retry_attempt
-            self._retry_attempt = 0
-            self._emit(AutoRetryEndEvent(success=False, attempt=attempt, final_error="Retry cancelled"))
+            self._finish_cancelled_retry()
             return False
         finally:
             self._retry_cancel = None
@@ -3227,7 +3284,9 @@ class AgentSession:
         usage_totals = create_usage_totals()
 
         for entry in self.session_manager.get_entries():
-            if entry.get("type") in ("branch_summary", "compaction") and entry.get("usage"):
+            if entry.get("type") == "usage" or (
+                entry.get("type") in ("branch_summary", "compaction") and entry.get("usage")
+            ):
                 add_usage_to_totals(usage_totals, entry["usage"])
             if entry.get("type") != "message":
                 continue

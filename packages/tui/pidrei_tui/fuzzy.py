@@ -32,31 +32,32 @@ def fuzzy_match(query: str, text: str) -> dict:
         last_match_index = -1
         consecutive_matches = 0
 
-        for i, char in enumerate(text_lower):
-            if query_index >= len(normalized_query):
+        while query_index < len(normalized_query):
+            i = text_lower.find(normalized_query[query_index], last_match_index + 1)
+            if i == -1:
                 break
-            if char == normalized_query[query_index]:
-                is_word_boundary = i == 0 or _WORD_BOUNDARY_RE.search(text_lower[i - 1]) is not None
 
-                # Reward consecutive matches
-                if last_match_index == i - 1:
-                    consecutive_matches += 1
-                    score -= consecutive_matches * 5
-                else:
-                    consecutive_matches = 0
-                    # Penalize gaps
-                    if last_match_index >= 0:
-                        score += (i - last_match_index - 1) * 2
+            is_word_boundary = i == 0 or _WORD_BOUNDARY_RE.search(text_lower[i - 1]) is not None
 
-                # Reward word boundary matches
-                if is_word_boundary:
-                    score -= 10
+            # Reward consecutive matches
+            if last_match_index == i - 1:
+                consecutive_matches += 1
+                score -= consecutive_matches * 5
+            else:
+                consecutive_matches = 0
+                # Penalize gaps
+                if last_match_index >= 0:
+                    score += (i - last_match_index - 1) * 2
 
-                # Slight penalty for later matches
-                score += i * 0.1
+            # Reward word boundary matches
+            if is_word_boundary:
+                score -= 10
 
-                last_match_index = i
-                query_index += 1
+            # Slight penalty for later matches
+            score += i * 0.1
+
+            last_match_index = i
+            query_index += 1
 
         if query_index < len(normalized_query):
             return {"matches": False, "score": 0}

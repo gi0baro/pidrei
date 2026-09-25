@@ -5,15 +5,14 @@ import warnings
 import pytest
 
 from pidrei_agent.harness.env import local
-from pidrei_agent.harness.utils import adaptive_publisher
-from pidrei_ai.utils import clock
+from pidrei_ai.utils import clock, timers
 
 
 # Module attributes tests are allowed to swap, captured at collection time
 # before any test can touch them: the clock/timer seams behind `fake_timers()`
 # and the shell-exec knobs the slow-spill regression test narrows.
 _PROCESS_SEAMS = (
-    (adaptive_publisher, "_set_timeout", adaptive_publisher._set_timeout),
+    (timers, "set_timeout", timers.set_timeout),
     (clock, "now_ms", clock.now_ms),
     (clock, "sleep_ms", clock.sleep_ms),
     (local, "SPILL_CHANNEL_SIZE", local.SPILL_CHANNEL_SIZE),

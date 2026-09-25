@@ -61,7 +61,17 @@ class _BashPreviewOutput:
 
 
 def _format_duration(ms: float) -> str:
-    return f"{ms / 1000:.1f}s"
+    seconds = ms / 1000
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+
+    total_seconds = int(seconds)
+    minutes = total_seconds // 60
+    remainder = total_seconds % 60
+    if minutes < 60:
+        return f"{minutes}m {remainder}s"
+
+    return f"{minutes // 60}h {minutes % 60}m {remainder}s"
 
 
 def _format_shell_call(args: dict | None, prompt: str) -> str:

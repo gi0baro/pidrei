@@ -76,6 +76,7 @@ from ...core.cache_stats import (
     compute_cache_waste,
     detect_cache_miss,
 )
+from ...core.cache_warmer import format_cache_warming_status, format_cache_warming_usage
 from ...core.defaults import DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS
 from ...core.exec import exec_command
 from ...core.footer_data_provider import FooterDataProvider
@@ -236,6 +237,10 @@ def _is_compaction_cost_notice(item) -> bool:
     """pi's `CompactionCostNotice` is a plain object in the render item union;
     here it stays a dict, like the custom session entries alongside it."""
     return isinstance(item, dict) and item.get("type") == "compaction_cost"
+
+
+def _is_usage_session_entry(item) -> bool:
+    return isinstance(item, dict) and item.get("type") == "usage"
 
 
 _DEAD_TERMINAL_ERRNOS = {errno.EIO, errno.EPIPE, errno.ENOTCONN}
@@ -502,10 +507,11 @@ class _TerminalInputSubscription:
 class InteractiveMode:
     """Options: ``{"migratedProviders"?, "startupDiagnostics"?,
     "modelFallbackMessage"?, "autoTrustOnReloadCwd"?, "initialMessage"?,
-    "initialImages"?, "initialMessages"?, "verbose"?, "tuiMode"?}``.
+    "initialImages"?, "initialMessages"?, "verbose"?, "tuiMode"?, "terminal"?}``.
 
     ``startupDiagnostics`` are the diagnostics collected before the TUI was
-    initialized, replayed into the transcript."""
+    initialized, replayed into the transcript. ``terminal`` is the terminal
+    implementation; it defaults to the current process terminal."""
 
     def __init__(self, runtime_host, options: dict | None = None) -> None:
         options = options or {}
@@ -526,6 +532,7 @@ class InteractiveMode:
             tui_mode=tui_mode,
             show_hardware_cursor=self.settings_manager.get_show_hardware_cursor(),
             log_directory=get_agent_dir(),
+            terminal=options.get("terminal"),
             fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
         )
         self._main_screen_render_state = None
@@ -3203,6 +3210,9 @@ class InteractiveMode:
             if event.entry.get("type") == "custom":
                 self._add_custom_entry_to_chat(event.entry)
                 self.ui.request_render()
+            elif event.entry.get("type") == "usage" and event.entry.get("kind") == "cache_warm":
+                self._add_cache_warming_usage(event.entry)
+                self.ui.request_render()
 
         elif event_type == "session_info_changed":
             self._update_terminal_title()
@@ -3297,7 +3307,7 @@ class InteractiveMode:
                     # edit tools
                     for component in self._pending_tools.values():
                         component.set_args_complete()
-                    self._maybe_show_assistant_diagnostics(self._streaming_message)
+                    self._maybe_show_thinking_drop_notice(self._streaming_message)
                     self._maybe_show_cache_miss_notice(self._streaming_message)
                 self._streaming_component = None
                 self._streaming_message = None
@@ -3630,9 +3640,9 @@ class InteractiveMode:
         options = options or {}
         self._pending_tools.clear()
         rendered_pending_tools: dict = {}
-        # Cache-miss notices are not persisted; re-derive them from the full
-        # entry list and re-inject them after the assistant messages that
-        # paid for them.
+        # Cache misses are not persisted, unlike successful cache-warming
+        # usage. Re-derive them and inject them after the assistant messages
+        # that paid for them.
         cache_misses = (
             collect_cache_misses(self.session_manager.get_entries(), self.session.model_runtime)
             if self.settings_manager.get_show_cache_miss_notices()
@@ -3646,6 +3656,9 @@ class InteractiveMode:
         for item in items:
             if _is_custom_session_entry(item):
                 self._add_custom_entry_to_chat(item)
+                continue
+            if _is_usage_session_entry(item):
+                self._add_cache_warming_usage(item)
                 continue
             if _is_compaction_cost_notice(item):
                 self._add_compaction_cost_notice(item)
@@ -3689,7 +3702,6 @@ class InteractiveMode:
                         else:
                             rendered_pending_tools[content.id] = component
                 if message.stop_reason not in ("aborted", "error"):
-                    self._maybe_show_assistant_diagnostics(message)
                     # collect_cache_misses keys by id() of the assistant
                     # message (pi keys a Map by object reference)
                     miss = cache_misses.get(id(message))
@@ -3718,7 +3730,7 @@ class InteractiveMode:
         """
         items: list = []
         for entry in entries:
-            if entry.get("type") == "custom":
+            if entry.get("type") == "custom" or (entry.get("type") == "usage" and entry.get("kind") == "cache_warm"):
                 items.append(entry)
                 continue
             messages = session_entry_to_context_messages(entry)
@@ -3726,6 +3738,12 @@ class InteractiveMode:
             if entry.get("type") in ("compaction", "branch_summary") and entry.get("usage") and messages:
                 items.append({"type": "compaction_cost", "kind": entry["type"], "usage": entry["usage"]})
         self._render_session_items(items, options)
+
+    def _add_cache_warming_usage(self, entry: dict) -> None:
+        if not self.settings_manager.get_show_cache_miss_notices():
+            return
+        self._chat_container.add_child(Spacer(1))
+        self._chat_container.add_child(Text(theme.fg("dim", format_cache_warming_usage(entry)), 1, 0))
 
     def _add_compaction_cost_notice(self, notice: dict) -> None:
         """Render billing usage for a compaction or branch summary. The notice is derived
@@ -3742,34 +3760,50 @@ class InteractiveMode:
             Text(theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
         )
 
-    def _maybe_show_assistant_diagnostics(self, message) -> None:
-        if not self.settings_manager.get_show_cache_miss_notices():
-            return
-
+    @staticmethod
+    def _count_dropped_thinking_blocks(message) -> int:
+        count = 0
         for diagnostic in message.diagnostics or []:
             if diagnostic.type != "anthropic_input_transformations":
                 continue
             transformations = (diagnostic.details or {}).get("transformations")
             if not isinstance(transformations, list):
                 continue
-
-            dropped: list[str] = []
-            for transformation in transformations:
-                if not isinstance(transformation, dict) or transformation.get("type") != "thinking_dropped":
-                    continue
-                reason = transformation.get("reason")
-                reason = reason if isinstance(reason, str) else "unknown reason"
-                path = transformation.get("path")
-                location = f" at {path}" if isinstance(path, str) else ""
-                dropped.append(f"{reason}{location}")
-            if not dropped:
-                continue
-
-            noun = "thinking block" if len(dropped) == 1 else f"{len(dropped)} thinking blocks"
-            self._chat_container.add_child(Spacer(1))
-            self._chat_container.add_child(
-                Text(theme.fg("warning", f"Anthropic dropped {noun}: {'; '.join(dropped)}"), 1, 0)
+            count += sum(
+                1
+                for transformation in transformations
+                if isinstance(transformation, dict) and transformation.get("type") == "thinking_dropped"
             )
+        return count
+
+    def _maybe_show_thinking_drop_notice(self, message) -> None:
+        if not self.settings_manager.get_show_cache_miss_notices():
+            return
+
+        dropped_count = InteractiveMode._count_dropped_thinking_blocks(message)
+        if dropped_count == 0:
+            return
+
+        # Compare against the previous response on the branch. pi relies on message_end
+        # reaching the UI before persistence; here the UI owner can run after the session
+        # persisted the message, so the current message is skipped by identity.
+        previous_dropped_count = 0
+        for entry in reversed(self.session_manager.get_branch()):
+            if entry.get("type") != "message":
+                continue
+            entry_message = entry.get("message")
+            if getattr(entry_message, "role", None) != "assistant" or entry_message is message:
+                continue
+            previous_dropped_count = InteractiveMode._count_dropped_thinking_blocks(entry_message)
+            break
+        if dropped_count <= previous_dropped_count:
+            return
+
+        noun = "thinking block" if dropped_count == 1 else "thinking blocks"
+        self._chat_container.add_child(Spacer(1))
+        self._chat_container.add_child(
+            Text(theme.fg("warning", f"Anthropic dropped {dropped_count} {noun} (details in session)"), 1, 0)
+        )
 
     def _maybe_show_cache_miss_notice(self, message) -> None:
         """Show a transcript notice for a significant prompt-cache miss.
@@ -4295,7 +4329,7 @@ class InteractiveMode:
         if not all_queued:
             self._update_pending_messages_display()
             if options and options.get("abort"):
-                self.agent.abort()
+                tonio.spawn.without_tracking(self.session.abort())
             return 0
         queued_text = "\n\n".join(all_queued)
         current_text = options.get("currentText") if options else None
@@ -4305,7 +4339,7 @@ class InteractiveMode:
         self.editor.set_text(combined_text)
         self._update_pending_messages_display()
         if options and options.get("abort"):
-            self.agent.abort()
+            tonio.spawn.without_tracking(self.session.abort())
         return len(all_queued)
 
     def _queue_compaction_message(self, text: str, mode: str) -> None:
@@ -4504,6 +4538,10 @@ class InteractiveMode:
                 self.settings_manager.set_http_idle_timeout_ms(timeout_ms)
                 self.show_status(f"HTTP idle timeout: {format_http_idle_timeout_ms(timeout_ms)}")
 
+            def on_cache_warming_mode_change(mode: str) -> None:
+                self.session.set_cache_warming_mode(mode)
+                self.show_status(f"Cache warming: {mode}")
+
             async def on_model_thinking_level_change(provider: str, model_id: str, level: str) -> None:
                 self.settings_manager.set_model_thinking_level(provider, model_id, level)
                 # If the override is for the current model, apply it to the session too
@@ -4613,6 +4651,7 @@ class InteractiveMode:
                     "followUpMode": self.session.follow_up_mode,
                     "transport": self.settings_manager.get_transport(),
                     "httpIdleTimeoutMs": self.settings_manager.get_http_idle_timeout_ms(),
+                    "cacheWarmingMode": self.settings_manager.get_cache_warming_mode(),
                     "thinkingLevel": self.settings_manager.get_default_thinking_level() or DEFAULT_THINKING_LEVEL,
                     "availableThinkingLevels": list(THINKING_LEVEL_OPTIONS),
                     "modelThinkingLevels": self.settings_manager.get_all_model_thinking_levels(),
@@ -4650,6 +4689,7 @@ class InteractiveMode:
                     "onFollowUpModeChange": lambda mode: self.session.set_follow_up_mode(mode),
                     "onTransportChange": on_transport_change,
                     "onHttpIdleTimeoutMsChange": on_http_idle_timeout_ms_change,
+                    "onCacheWarmingModeChange": on_cache_warming_mode_change,
                     "onModelThinkingLevelChange": on_model_thinking_level_change,
                     "onModelThinkingLevelRemove": on_model_thinking_level_remove,
                     "onThemeChange": on_theme_change,
@@ -5242,13 +5282,13 @@ class InteractiveMode:
                 await mgr.append_session_info(next_value)
 
             selector = SessionSelectorComponent(
-                lambda on_progress: SessionManager.list(
-                    self.session_manager.get_cwd(), self.session_manager.get_session_dir(), on_progress
+                lambda on_progress, cancel: SessionManager.list(
+                    self.session_manager.get_cwd(), self.session_manager.get_session_dir(), on_progress, cancel
                 ),
-                lambda on_progress: (
-                    SessionManager.list_all(on_progress=on_progress)
+                lambda on_progress, cancel: (
+                    SessionManager.list_all(on_progress=on_progress, cancel=cancel)
                     if self.session_manager.uses_default_session_dir()
-                    else SessionManager.list_all(self.session_manager.get_session_dir(), on_progress)
+                    else SessionManager.list_all(self.session_manager.get_session_dir(), on_progress, cancel)
                 ),
                 lambda session_path: tonio.spawn.without_tracking(select_session(session_path)),
                 on_cancel,
@@ -6199,6 +6239,20 @@ class InteractiveMode:
         info += f"{theme.fg('dim', 'Output:')} {stats.tokens.output:,}\n"
         info += f"{theme.fg('dim', 'Total:')} {stats.tokens.total:,}\n"
 
+        cache_warming_status = self.session.cache_warming_status
+        info += f"\n{theme.bold('Cache Warming')}\n"
+        info += f"{theme.fg('dim', 'Mode:')} {self.settings_manager.get_cache_warming_mode()}\n"
+        status_text = (
+            format_cache_warming_status(cache_warming_status)
+            if cache_warming_status is not None
+            else "Inactive (cache warming unavailable)"
+        )
+        info += f"{theme.fg('dim', 'Status:')} {status_text}\n"
+        decision = cache_warming_status.decision if cache_warming_status is not None else None
+        if decision is not None and decision.economics_available:
+            info += f"{theme.fg('dim', 'Cache miss penalty:')} ${decision.miss_cost:.3f}\n"
+            info += f"{theme.fg('dim', 'Refresh cost:')} ${decision.warm_cost:.3f}\n"
+
         if stats.cost > 0 or cache_waste.missed_tokens > 0:
             info += f"\n{theme.bold('Cost')}\n"
             info += f"{theme.fg('dim', 'Total:')} ${stats.cost:.3f}"
@@ -6331,7 +6385,7 @@ class InteractiveMode:
 | `{expand_tools}` | Toggle tool output expansion |
 | `{toggle_thinking}` | Toggle thinking block visibility |
 | `{external_editor}` | Edit message in external editor |
-| `{copy_message}` | Copy last assistant message |
+| `{copy_message}` | Copy selection or last assistant message |
 | `{follow_up}` | Queue follow-up message |
 | `{dequeue}` | Restore queued messages |
 | `{paste_image}` | Paste image or text from clipboard |
@@ -6429,14 +6483,18 @@ class InteractiveMode:
         extension_runner = self.session.extension_runner
 
         # Emit user_bash event to let extensions intercept
-        event_result = await extension_runner.emit_user_bash(
-            {
-                "type": "user_bash",
-                "command": command,
-                "excludeFromContext": exclude_from_context,
-                "cwd": self.session_manager.get_cwd(),
-            }
-        )
+        try:
+            event_result = await extension_runner.emit_user_bash(
+                {
+                    "type": "user_bash",
+                    "command": command,
+                    "excludeFromContext": exclude_from_context,
+                    "cwd": self.session_manager.get_cwd(),
+                }
+            )
+        except Exception:
+            # The extension runner already reported the error. Do not fall back to local execution.
+            return
 
         # If extension returned a full result, use it directly
         if event_result and event_result.get("result"):

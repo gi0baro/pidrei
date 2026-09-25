@@ -201,6 +201,26 @@ def test_updates_the_working_state_when_the_same_agent_run_resumes_after_compact
 
 
 @pytest.mark.tonio
+async def test_routes_interactive_response_aborts_through_agent_session():
+    # Regression test for #9340.
+    aborted = tonio.Event()
+
+    async def abort() -> None:
+        aborted.set()
+
+    context = SimpleNamespace(
+        _clear_all_queues=lambda: {"steering": [], "followUp": []},
+        _update_pending_messages_display=lambda: None,
+        session=SimpleNamespace(abort=abort),
+    )
+
+    InteractiveMode._restore_queued_messages_to_editor(context, {"abort": True})
+
+    await aborted.wait(5)
+    assert aborted.is_set()
+
+
+@pytest.mark.tonio
 async def test_preserves_steering_behavior_when_flushing_into_an_active_agent_run():
     prompt_calls: list = []
     prompt_dispatched = tonio.Event()

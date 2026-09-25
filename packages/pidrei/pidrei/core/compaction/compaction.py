@@ -395,11 +395,10 @@ def find_cut_point(
 
         # Check if we've exceeded the budget
         if accumulated_tokens >= keep_recent_tokens:
-            # Find the closest valid cut point at or after this entry
-            for candidate in cut_points:
-                if candidate >= i:
-                    cut_index = candidate
-                    break
+            # Prefer the closest valid cut point at or after this entry. If trailing
+            # tool results exceed the budget by themselves, keep their preceding
+            # assistant tool call instead of falling back to the first message.
+            cut_index = next((candidate for candidate in cut_points if candidate >= i), cut_points[-1])
             break
 
     # Scan backwards from cut_index to include adjacent metadata entries that do

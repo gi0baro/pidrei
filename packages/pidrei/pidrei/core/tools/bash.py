@@ -200,6 +200,10 @@ class LocalShellOperations:
             raise Exception("aborted")
         if timed_out:
             raise Exception(f"timeout:{_format_timeout(timeout)}")
+        # A signal-killed shell reports -signum. Use the standard shell convention so
+        # callers do not mistake the termination for an ordinary exit status.
+        if exit_code is not None and exit_code < 0:
+            exit_code = 128 - exit_code
         return BashExecResult(exit_code=exit_code)
 
 
@@ -420,7 +424,9 @@ def create_shell_tool_definition(
 
             snapshot = await finish_output()
             output_text, details = format_output(snapshot)
-            if exit_code is not None and exit_code != 0:
+            if exit_code is None:
+                raise Exception(append_status(output_text, "Command terminated without an exit code"))
+            if exit_code != 0:
                 raise Exception(append_status(output_text, f"Command exited with code {exit_code}"))
             return AgentToolResult(content=[TextContent(text=output_text)], details=details)
         finally:

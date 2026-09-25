@@ -752,6 +752,32 @@ class TestModelOverrides:
         assert next(model for model in models if model.id == second_id).sampling_params is None
 
     @pytest.mark.tonio
+    async def test_custom_model_and_model_override_carry_prompt_cache_lifetimes(self, registry_env):
+        _tmp, models_json_path, auth_storage = registry_env
+        write_models_json(
+            models_json_path,
+            {
+                "openrouter": {
+                    "baseUrl": "https://my-proxy.example.com/v1",
+                    "api": "openai-completions",
+                    "models": [{"id": "custom/cached-model", "promptCache": {"short": 120}}],
+                    "modelOverrides": {"anthropic/claude-sonnet-4": {"promptCache": {"short": 300}}},
+                },
+                "anthropic": {"modelOverrides": {"claude-sonnet-4-6": {"promptCache": {"long": 1800}}}},
+            },
+        )
+
+        registry = await create_model_registry(auth_storage, models_json_path)
+        openrouter = models_for_provider(registry, "openrouter")
+
+        assert registry.get_error() is None
+        assert next(m for m in openrouter if m.id == "custom/cached-model").prompt_cache == {"short": 120}
+        assert next(m for m in openrouter if m.id == "anthropic/claude-sonnet-4").prompt_cache == {"short": 300}
+        assert next(m for m in openrouter if m.id == "anthropic/claude-opus-4").prompt_cache is None
+        # Overrides merge per tier with the built-in catalog.
+        assert registry.find("anthropic", "claude-sonnet-4-6").prompt_cache == {"short": 300, "long": 1800}
+
+    @pytest.mark.tonio
     async def test_model_override_with_compat_open_router_routing(self, registry_env):
         """Adapted: openRouterRouting is a completions-compat key, exercised on a
         custom openai-completions provider (no openrouter builtin yet)."""

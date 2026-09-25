@@ -21,6 +21,7 @@ from pidrei.core.session_manager import (
 )
 from pidrei.core.tools import EditToolDetails
 from pidrei_ai.types import UserMessage
+from pidrei_ai.utils.cancel import AbortError, CancelToken
 
 from .coding_session_helpers import assistant_msg, make_usage, tool_result_msg, user_msg
 
@@ -1373,6 +1374,27 @@ async def test_scopes_current_folder_apis_by_cwd_while_listing_all_flat_sessions
 
     continued_a = await SessionManager.continue_recent(project_a, tmp_path)
     assert continued_a.get_session_file() == session_a
+
+
+@pytest.mark.tonio
+async def test_rejects_a_cancelled_session_listing(tmp_path):
+    tmp_path = str(tmp_path)
+    project_a = os.path.join(tmp_path, "project-a")
+    project_b = os.path.join(tmp_path, "project-b")
+    os.makedirs(project_a)
+    os.makedirs(project_b)
+    await _create_persisted_session(project_a, tmp_path, "from A")
+    await _create_persisted_session(project_b, tmp_path, "from B")
+    cancel = CancelToken()
+
+    def on_progress(_loaded, _total, partial_sessions):
+        if partial_sessions is not None:
+            cancel.cancel()
+
+    with pytest.raises(AbortError):
+        await SessionManager.list_all(tmp_path, on_progress, cancel)
+    with pytest.raises(AbortError):
+        await SessionManager.list_all(cancel=cancel)
 
 
 class TestSetSessionFileCorrupted:

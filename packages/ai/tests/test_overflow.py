@@ -6,11 +6,11 @@ from pidrei_ai.types import AssistantMessage, Usage
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 
 
-def create_error_message(error_message: str) -> AssistantMessage:
+def create_error_message(error_message: str, provider: str = "ollama") -> AssistantMessage:
     return AssistantMessage(
         content=[],
         api="openai-completions",
-        provider="ollama",
+        provider=provider,
         model="qwen3.5:35b",
         usage=Usage(),
         stop_reason="error",
@@ -92,6 +92,13 @@ def test_detects_ds4_configured_context_size_errors():
 def test_does_not_treat_generic_non_overflow_ollama_errors_as_overflow():
     message = create_error_message("500 `model runner crashed unexpectedly`")
     assert is_context_overflow(message, 32768) is False
+
+
+def test_only_treats_bodyless_400_and_413_errors_as_overflow_for_cerebras():
+    # Regression for #9482.
+    for error_message in ("400 status code (no body)", "413 status code (no body)"):
+        assert is_context_overflow(create_error_message(error_message, "cerebras"), 131072) is True
+        assert is_context_overflow(create_error_message(error_message, "opencode-go"), 1000000) is False
 
 
 def test_does_not_treat_bedrock_throttling_too_many_tokens_as_overflow():

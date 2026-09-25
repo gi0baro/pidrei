@@ -33,6 +33,8 @@ from ..kill_ring import KillRing
 from ..tui import CURSOR_MARKER, TuiMouseEvent, TuiMouseEventResult
 from ..undo_stack import UndoStack
 from ..utils import (
+    autocomplete_boundary_regex,
+    autocomplete_separator_regex,
     cjk_break_regex,
     get_word_segmenter,
     is_whitespace_char,
@@ -216,6 +218,8 @@ SLASH_COMMAND_SELECT_LIST_LAYOUT = {"minPrimaryColumnWidth": 12, "maxPrimaryColu
 
 ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20
 DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#"]
+# Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
+_UNQUOTED_AUTOCOMPLETE_SUFFIX = rf"(?:(?!{autocomplete_separator_regex.pattern}).)*"
 
 _CHARACTER_CLASS_ESCAPE_RE = re.compile(r"[\\^$.*+?()\[\]{}|-]")
 
@@ -224,13 +228,22 @@ def _escape_character_class(value: str) -> str:
     return _CHARACTER_CLASS_ESCAPE_RE.sub(lambda m: "\\" + m.group(0), value)
 
 
+def _unquoted_trigger_alternative(escaped: str) -> str:
+    # JS `[]` never matches; Python rejects or misreads an empty class, so drop the branch instead.
+    return f"|[{escaped}]{_UNQUOTED_AUTOCOMPLETE_SUFFIX}" if escaped else ""
+
+
 def _build_trigger_pattern(trigger_characters: list[str]):
-    return re.compile(r"(?:^|[\s])[" + "".join(map(_escape_character_class, trigger_characters)) + r"][^\s]*$")
+    escaped = "".join(map(_escape_character_class, trigger_characters))
+    return re.compile(rf'{autocomplete_boundary_regex.pattern}(?:@"[^"]*{_unquoted_trigger_alternative(escaped)})$')
 
 
 def _build_debounce_pattern(trigger_characters: list[str]):
-    escaped_without_at = [_escape_character_class(c) for c in trigger_characters if c != "@"]
-    return re.compile(r"(?:^|[ \t])(?:@(?:\"[^\"]*|[^\s]*)|[" + "".join(escaped_without_at) + r"][^\s]*)$")
+    escaped_without_at = "".join(_escape_character_class(c) for c in trigger_characters if c != "@")
+    return re.compile(
+        rf'{autocomplete_boundary_regex.pattern}(?:@(?:"[^"]*|{_UNQUOTED_AUTOCOMPLETE_SUFFIX})'
+        rf"{_unquoted_trigger_alternative(escaped_without_at)})$"
+    )
 
 
 def _create_scroll_border(direction: str, hidden_line_count: int, width: int) -> str:
@@ -1096,13 +1109,10 @@ class Editor:
             elif char in self._autocomplete_trigger_characters:
                 current_line = self._current_line()
                 text_before_cursor = current_line[: self._state["cursorCol"]]
-                char_before_symbol = (
-                    text_before_cursor[len(text_before_cursor) - 2] if len(text_before_cursor) >= 2 else None
-                )
-                if len(text_before_cursor) == 1 or char_before_symbol == " " or char_before_symbol == "\t":
+                if self._autocomplete_trigger_pattern.search(text_before_cursor):
                     self._try_trigger_autocomplete()
             # Also auto-trigger when typing letters in a slash command or symbol completion context
-            elif re.search(r"[a-zA-Z0-9.\-_]", char):
+            elif re.search(r"[a-zA-Z0-9.\-_]", char) or cjk_break_regex.search(char):
                 current_line = self._current_line()
                 text_before_cursor = current_line[: self._state["cursorCol"]]
                 # Check if we're in a slash command (with or without space for

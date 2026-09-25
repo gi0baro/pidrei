@@ -2,33 +2,18 @@
 
 pi paces publications with `Date.now()` and a single `setTimeout`, driven in
 tests by vitest fake timers. The wall clock comes from the `clock` seam the
-OAuth flows already virtualize, and the trailing timer goes through
-`_set_timeout` — a module attribute tests replace with a manual timer queue,
-the same substitution vitest performs. Producers push from several tonio tasks
-(the execution env's stdout/stderr readers), so the state sits behind a lock;
-pi's single thread needs none.
+OAuth flows already virtualize, and the trailing timer goes through the shared
+`timers.set_timeout` seam tests replace with a manual timer queue, the same
+substitution vitest performs. Producers push from several tonio tasks (the
+execution env's stdout/stderr readers), so the state sits behind a lock; pi's
+single thread needs none.
 """
 
 import threading
 from collections.abc import Callable
 from typing import Any
 
-import tonio.colored as tonio
-
-from pidrei_ai.utils import clock
-
-
-def _set_timeout(delay_ms: float, callback: Callable[[], None]) -> Callable[[], None]:
-    """`setTimeout`: run `callback` after `delay_ms` unless the returned cancel is called first."""
-    cancelled = tonio.Event()
-
-    async def run() -> None:
-        await cancelled.wait(delay_ms / 1000)
-        if not cancelled.is_set():
-            callback()
-
-    tonio.spawn.without_tracking(run())
-    return cancelled.set
+from pidrei_ai.utils import clock, timers
 
 
 class AdaptivePublisher[TValue, TUpdate]:
@@ -124,4 +109,4 @@ class AdaptivePublisher[TValue, TUpdate]:
             except Exception as error:
                 self._on_error(error)
 
-        self._cancel_timer = _set_timeout(wait_ms, fire)
+        self._cancel_timer = timers.set_timeout(wait_ms, fire)

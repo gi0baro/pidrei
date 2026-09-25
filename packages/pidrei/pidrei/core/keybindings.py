@@ -71,7 +71,7 @@ KEYBINDINGS = {
     "app.thinking.toggle": {"defaultKeys": "ctrl+t", "description": "Toggle thinking blocks"},
     "app.session.toggleNamedFilter": {"defaultKeys": "ctrl+n", "description": "Toggle named session filter"},
     "app.editor.external": {"defaultKeys": "ctrl+g", "description": "Open external editor"},
-    "app.message.copy": {"defaultKeys": "ctrl+x", "description": "Copy message to clipboard"},
+    "app.message.copy": {"defaultKeys": "ctrl+x", "description": "Copy selection or last assistant message"},
     "app.message.followUp": {
         "defaultKeys": "ctrl+q" if _WINDOWS_KEYBINDINGS else "alt+enter",
         "description": "Queue follow-up message",

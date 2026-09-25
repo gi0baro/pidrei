@@ -166,6 +166,9 @@ def apply_model_override(model: Model, override: dict[str, Any]) -> Model:
         else model.thinking_level_map,
         input=list(_nn(override.get("input"), model.input)),
         cost=cost,
+        prompt_cache={**(model.prompt_cache or {}), **override["promptCache"]}
+        if override.get("promptCache")
+        else model.prompt_cache,
         context_window=_nn(override.get("contextWindow"), model.context_window),
         max_tokens=_nn(override.get("maxTokens"), model.max_tokens),
         sampling_params={**(model.sampling_params or {}), **override["samplingParams"]}
@@ -203,6 +206,7 @@ def _model_from_json(
         thinking_level_map=definition.get("thinkingLevelMap"),
         input=list(_nn(definition.get("input"), ["text"])),
         cost=_model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0),
+        prompt_cache=definition.get("promptCache"),
         context_window=_nn(definition.get("contextWindow"), 128000),
         max_tokens=_nn(definition.get("maxTokens"), 16384),
         sampling_params=definition.get("samplingParams"),
@@ -295,6 +299,7 @@ def apply_extension(
                 thinking_level_map=definition.get("thinkingLevelMap"),
                 input=list(_nn(definition.get("input"), ["text"])),
                 cost=_model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0),
+                prompt_cache=definition.get("promptCache"),
                 context_window=_nn(definition.get("contextWindow"), 128000),
                 max_tokens=_nn(definition.get("maxTokens"), 16384),
                 headers=None,

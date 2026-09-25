@@ -37,6 +37,7 @@ BASE_CONFIG = {
     "enableProviderAttribution": True,
     "enableSkillCommands": False,
     "followUpMode": "queue",
+    "cacheWarmingMode": "streaming",
     "fullscreenExitOutput": "transcript",
     "fullscreenScrollbar": "auto",
     "fullscreenCopyOnSelect": True,

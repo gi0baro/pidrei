@@ -367,6 +367,42 @@ class TestRetry:
         assert session.is_retrying is False
         session.dispose()
 
+    # Regression test for #9340.
+    @pytest.mark.tonio
+    async def test_finalizes_retry_state_when_abort_is_requested_after_a_retry_attempt_fails(self, tmp_path):
+        session, _call_count = await self._create_session(tmp_path, fail_count=2, max_retries=3)
+        agent_ends: list = []
+        retry_ends: list = []
+        error_count = 0
+
+        def listener(event):
+            nonlocal error_count
+            if event.type == "agent_end":
+                agent_ends.append(event)
+            if event.type == "auto_retry_end":
+                retry_ends.append(event)
+            if event.type != "message_end" or getattr(event.message, "role", None) != "assistant":
+                return
+            if event.message.stop_reason == "error":
+                error_count += 1
+                if error_count == 2:
+                    # pi's `void session.abort()` runs abort's synchronous prefix before the
+                    # listener returns; `_request_abort` is that prefix.
+                    session._request_abort()
+
+        session.subscribe(listener)
+
+        await session.prompt("test")
+
+        assert session.retry_attempt == 0
+        assert agent_ends[-1].will_retry is False
+        assert (retry_ends[-1].success, retry_ends[-1].attempt, retry_ends[-1].final_error) == (
+            False,
+            1,
+            "Retry cancelled",
+        )
+        session.dispose()
+
     @pytest.mark.tonio
     async def test_caps_agent_retry_delay(self, tmp_path):
         # Regression for #8826.
@@ -678,6 +714,44 @@ class TestGetSessionStats:
             stats = session.get_session_stats()
             assert stats.tokens.total == 100
             assert stats.cost == 1
+        finally:
+            session.dispose()
+
+    @pytest.mark.tonio
+    async def test_includes_cache_warming_usage_exactly_once_without_adding_messages(self):
+        session, session_manager = await _create_stats_session()
+        try:
+            await session_manager.append_usage(
+                "cache_warm",
+                "anthropic",
+                _STATS_MODEL.id,
+                Usage(
+                    input=2,
+                    output=1,
+                    cache_read=97,
+                    cache_write=0,
+                    total_tokens=100,
+                    cost=UsageCost(input=0.001, output=0.002, cache_read=0.007, cache_write=0, total=0.01),
+                ),
+                "extension override",
+            )
+
+            [entry] = session_manager.get_entries()
+            assert (entry["type"], entry["kind"], entry["note"]) == ("usage", "cache_warm", "extension override")
+            stats = session.get_session_stats()
+            assert (
+                stats.tokens.input,
+                stats.tokens.output,
+                stats.tokens.cache_read,
+                stats.tokens.cache_write,
+                stats.tokens.total,
+            ) == (2, 1, 97, 0, 100)
+            assert stats.total_messages == 0
+            assert session_manager.build_session_context().messages == []
+            breakdown = get_usage_cost_breakdown(session_manager.get_entries())
+            assert [(item.key, item.cost, item.tokens) for item in breakdown] == [
+                (f"anthropic/{_STATS_MODEL.id}", 0.01, 100)
+            ]
         finally:
             session.dispose()
 

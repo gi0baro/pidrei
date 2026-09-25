@@ -8,7 +8,6 @@ and budget tables, the disabled-thinking configs — mirrors pi.
 
 import itertools
 import json
-import re
 import time
 from dataclasses import dataclass, fields
 from typing import Any
@@ -19,6 +18,7 @@ from pidrei_ai.api.google_shared import (
     ResolvedGoogleThinkingLevel,
     convert_messages,
     convert_tools,
+    get_disabled_google_thinking_config,
     is_thinking_part,
     map_stop_reason,
     resolve_google_function_calling_mode,
@@ -26,6 +26,8 @@ from pidrei_ai.api.google_shared import (
     retain_thought_signature,
     retry_google_request,
     supports_google_strict_tool_sampling,
+    to_google_thinking_level,
+    uses_google_thinking_level,
 )
 from pidrei_ai.api.simple_options import build_base_options
 from pidrei_ai.builders import (
@@ -64,11 +66,6 @@ from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import collapse_system_messages, get_current_tools, get_initial_system_message
 from pidrei_ai.utils.user_agent import set_default_user_agent
-
-
-_GEMMA_4 = re.compile(r"gemma-?4")
-_GEMINI_3_PRO = re.compile(r"gemini-3(?:\.\d+)?-pro")
-_GEMINI_3_FLASH = re.compile(r"gemini-3(?:\.\d+)?-flash")
 
 
 @dataclass(slots=True)
@@ -328,14 +325,16 @@ def stream_simple(
         return stream(model, context, _with_thinking(base, GoogleThinking(enabled=False), tool_choice), into=into)
 
     clamped_reasoning = clamp_thinking_level(model, options.reasoning)
+    if clamped_reasoning == "off":
+        return stream(model, context, _with_thinking(base, GoogleThinking(enabled=False), tool_choice), into=into)
     resolved_level = resolve_google_thinking_level(model, clamped_reasoning)
 
-    if _is_gemini_3_pro_model(model) or _is_gemini_3_flash_model(model) or _is_gemma_4_model(model):
+    if uses_google_thinking_level(model):
         return stream(
             model,
             context,
             _with_thinking(
-                base, GoogleThinking(enabled=True, level=_get_thinking_level(resolved_level, model)), tool_choice
+                base, GoogleThinking(enabled=True, level=to_google_thinking_level(resolved_level)), tool_choice
             ),
             into=into,
         )
@@ -413,60 +412,12 @@ def build_params(model: Model, context: TranscriptContext, options: GoogleOption
             thinking_config["thinkingBudget"] = options.thinking.budget_tokens
         config["thinkingConfig"] = thinking_config
     elif model.reasoning and options.thinking is not None and not options.thinking.enabled:
-        config["thinkingConfig"] = _get_disabled_thinking_config(model)
+        config["thinkingConfig"] = get_disabled_google_thinking_config(model)
 
     if options.cancel is not None and options.cancel.cancelled:
         raise RuntimeError("Request aborted")
 
     return {"model": model.id, "contents": contents, "config": config}
-
-
-def _is_gemma_4_model(model: Model) -> bool:
-    return _GEMMA_4.search(model.id.lower()) is not None
-
-
-def _is_gemini_3_pro_model(model: Model) -> bool:
-    return _GEMINI_3_PRO.search(model.id.lower()) is not None
-
-
-def _is_gemini_3_flash_model(model: Model) -> bool:
-    id = model.id.lower()
-    return _GEMINI_3_FLASH.search(id) is not None or id == "gemini-flash-latest" or id == "gemini-flash-lite-latest"
-
-
-def _get_disabled_thinking_config(model: Model) -> dict[str, Any]:
-    # Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
-    # do not support full thinking-off either. For Gemini 3 models, use the lowest supported
-    # thinkingLevel without includeThoughts so hidden thinking remains invisible to pidrei.
-    if _is_gemini_3_pro_model(model):
-        return {"thinkingLevel": "LOW"}
-    if _is_gemini_3_flash_model(model):
-        return {"thinkingLevel": "MINIMAL"}
-    if _is_gemma_4_model(model):
-        return {"thinkingLevel": "MINIMAL"}
-
-    # Gemini 2.x supports disabling via thinkingBudget = 0.
-    return {"thinkingBudget": 0}
-
-
-def _get_thinking_level(effort: ResolvedGoogleThinkingLevel, model: Model) -> GoogleApiThinkingLevel:
-    if _is_gemini_3_pro_model(model):
-        if effort in ("minimal", "low"):
-            return "LOW"
-        return "HIGH"
-    if _is_gemma_4_model(model):
-        if effort in ("minimal", "low"):
-            return "MINIMAL"
-        return "HIGH"
-    match effort:
-        case "minimal":
-            return "MINIMAL"
-        case "low":
-            return "LOW"
-        case "medium":
-            return "MEDIUM"
-        case _:
-            return "HIGH"
 
 
 def _get_google_budget(

@@ -184,19 +184,33 @@ class ToolExecutionComponent(Container):
         for i, img in enumerate(image_blocks):
             if not _block_get(img, "data") or not _block_get(img, "mimeType"):
                 continue
-            if _block_get(img, "mimeType") == "image/png":
+            source_data = _block_get(img, "data")
+            source_mime_type = _block_get(img, "mimeType")
+            if source_mime_type == "image/png":
                 continue
-            if i in self._converted_images:
+            cached = self._converted_images.get(i)
+            if cached and cached["sourceData"] == source_data and cached["sourceMimeType"] == source_mime_type:
                 continue
 
-            async def convert(index=i, block=img) -> None:
-                converted = await tonio.spawn_blocking(
-                    convert_to_png, _block_get(block, "data"), _block_get(block, "mimeType")
-                )
-                if converted:
-                    self._converted_images[index] = converted
-                    self._update_display()
-                    self._ui.request_render()
+            async def convert(index=i, source_data=source_data, source_mime_type=source_mime_type) -> None:
+                converted = await tonio.spawn_blocking(convert_to_png, source_data, source_mime_type)
+                # Ignore a conversion that finishes after its image was replaced.
+                current_images = [c for c in (self._result or {}).get("content", []) if _block_type(c) == "image"]
+                current = current_images[index] if index < len(current_images) else None
+                if (
+                    not converted
+                    or current is None
+                    or _block_get(current, "data") != source_data
+                    or _block_get(current, "mimeType") != source_mime_type
+                ):
+                    return
+                self._converted_images[index] = {
+                    "sourceData": source_data,
+                    "sourceMimeType": source_mime_type,
+                    **converted,
+                }
+                self._update_display()
+                self._ui.request_render()
 
             tonio.spawn.without_tracking(convert())
 
@@ -323,7 +337,14 @@ class ToolExecutionComponent(Container):
             caps = get_capabilities()
             for i, img in enumerate(image_blocks):
                 if caps["images"] and self._show_images and _block_get(img, "data") and _block_get(img, "mimeType"):
-                    converted = self._converted_images.get(i)
+                    cached = self._converted_images.get(i)
+                    converted = (
+                        cached
+                        if cached
+                        and cached["sourceData"] == _block_get(img, "data")
+                        and cached["sourceMimeType"] == _block_get(img, "mimeType")
+                        else None
+                    )
                     image_data = converted["data"] if converted else _block_get(img, "data")
                     image_mime_type = converted["mimeType"] if converted else _block_get(img, "mimeType")
                     if caps["images"] == "kitty" and image_mime_type != "image/png":

@@ -74,7 +74,9 @@ async def test_prices_a_served_fallback_with_the_model_metadata_cost():
 
     result, _request = await run(model, "claude-opus-4-8")
 
-    assert result.model == "claude-opus-4-8"
+    # Since 1283afd0 `model` stays the requested id; the served model is `response_model`.
+    assert result.model == "claude-fable-5"
+    assert result.response_model == "claude-opus-4-8"
     assert result.usage.cost.input == pytest.approx(5.0, abs=1e-10)
 
 

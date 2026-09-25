@@ -20,11 +20,13 @@ import subprocess
 import tonio.colored as tonio
 
 from .fuzzy import fuzzy_filter
+from .utils import autocomplete_boundary_regex, autocomplete_separator_regex
 
 
 __all__ = ["CombinedAutocompleteProvider"]
 
 PATH_DELIMITERS = {" ", "\t", '"', "'", "="}
+_TOKEN_START_RE = re.compile(rf"{autocomplete_boundary_regex.pattern}$")
 
 _ESCAPE_REGEX_RE = re.compile(r"[.*+?^${}()|[\]\\]")
 
@@ -60,7 +62,7 @@ def _build_fd_path_query(query: str) -> str:
 
 def _find_last_delimiter(text: str) -> int:
     for i in range(len(text) - 1, -1, -1):
-        if text[i] in PATH_DELIMITERS:
+        if text[i] in PATH_DELIMITERS or autocomplete_separator_regex.match(text[i]):
             return i
     return -1
 
@@ -79,7 +81,7 @@ def _find_unclosed_quote_start(text: str) -> int | None:
 
 
 def _is_token_start(text: str, index: int) -> bool:
-    return index == 0 or text[index - 1] in PATH_DELIMITERS
+    return (index > 0 and text[index - 1] in PATH_DELIMITERS) or _TOKEN_START_RE.search(text[:index]) is not None
 
 
 def _extract_quoted_prefix(text: str) -> str | None:
@@ -109,7 +111,7 @@ def _parse_path_prefix(prefix: str) -> dict:
 
 
 def _build_completion_value(path: str, *, is_directory: bool, is_at_prefix: bool, is_quoted_prefix: bool) -> str:
-    needs_quotes = is_quoted_prefix or " " in path
+    needs_quotes = is_quoted_prefix or autocomplete_separator_regex.search(path) is not None
     prefix = "@" if is_at_prefix else ""
 
     if not needs_quotes:
@@ -250,7 +252,13 @@ class CombinedAutocompleteProvider:
                         "label": item["label"],
                         **({"description": item["description"]} if item["description"] else {}),
                     }
-                    for item in fuzzy_filter(command_items, prefix, lambda item: item["name"])
+                    for item in fuzzy_filter(
+                        command_items,
+                        prefix,
+                        lambda item: (
+                            item["name"].removeprefix("skill:") if not prefix.startswith("skill:") else item["name"]
+                        ),
+                    )
                 ]
 
                 if not filtered:
@@ -399,9 +407,9 @@ class CombinedAutocompleteProvider:
         if "/" in path_prefix or path_prefix.startswith((".", "~/")):
             return path_prefix
 
-        # Return empty string only after a space (not for completely empty text)
+        # Return an empty prefix after whitespace or CJK punctuation, but not for empty text.
         # Empty text should not trigger file suggestions - that's for forced Tab completion
-        if path_prefix == "" and text.endswith(" "):
+        if path_prefix == "" and text != "" and _TOKEN_START_RE.search(text):
             return path_prefix
 
         return None
@@ -557,7 +565,7 @@ class CombinedAutocompleteProvider:
 
             # Sort directories first, then alphabetically (approximates JS
             # localeCompare with a case-insensitive comparison).
-            suggestions.sort(key=lambda s: (not s["value"].endswith("/"), s["label"].lower(), s["label"]))
+            suggestions.sort(key=lambda s: (not s["label"].endswith("/"), s["label"].lower(), s["label"]))
 
             return suggestions
         except OSError:

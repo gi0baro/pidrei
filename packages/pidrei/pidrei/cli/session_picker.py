@@ -8,17 +8,22 @@ from typing import Any
 
 import tonio.colored as tonio
 
+from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import set_keybindings
 
 from ..core.keybindings import KeybindingsManager
+from ..core.session_manager import SessionInfo, SessionListProgress
 from ..modes.interactive.components.session_selector import SessionSelectorComponent
 from ..utils.fd_io import hard_exit
 from .startup_ui import create_startup_tui, start_startup_tui
 
 
+type SessionsLoader = Callable[[SessionListProgress | None, CancelToken | None], Awaitable[list[SessionInfo]]]
+
+
 async def select_session(
-    current_sessions_loader: Callable[[Callable[[int, int], None] | None], Awaitable[list[Any]]],
-    all_sessions_loader: Callable[[Callable[[int, int], None] | None], Awaitable[list[Any]]],
+    current_sessions_loader: SessionsLoader,
+    all_sessions_loader: SessionsLoader,
     settings_manager: Any,
 ) -> str | None:
     """Show TUI session selector; returns the selected session path or None if cancelled."""

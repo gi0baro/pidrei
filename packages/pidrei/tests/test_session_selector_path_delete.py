@@ -39,7 +39,7 @@ def _dt(value: str) -> datetime:
 
 
 def _loader(sessions):
-    async def load(on_progress=None):
+    async def load(on_progress=None, cancel=None):
         return sessions
 
     return load
@@ -162,7 +162,7 @@ class TestSessionSelectorPathDeleteInteractions:
         all_ready = tonio.Event()
         all_load_calls = 0
 
-        async def all_loader(on_progress=None):
+        async def all_loader(on_progress=None, cancel=None):
             nonlocal all_load_calls
             all_load_calls += 1
             await all_ready.wait(None)
@@ -186,14 +186,17 @@ class TestSessionSelectorPathDeleteInteractions:
     @pytest.mark.tonio
     async def test_does_not_start_redundant_all_loads_when_toggling_scopes_while_all_is_already_loading(self):
         current_sessions = [make_session(id="current")]
+        all_sessions = [make_session(id="all")]
         all_ready = tonio.Event()
         all_load_calls = 0
 
-        async def all_loader(on_progress=None):
+        async def all_loader(on_progress=None, cancel=None):
             nonlocal all_load_calls
             all_load_calls += 1
+            if on_progress is not None:
+                on_progress(1, 2, all_sessions)
             await all_ready.wait(None)
-            return [make_session(id="all")]
+            return all_sessions
 
         selector = _make_selector(_loader(current_sessions), all_loader)
         await flush_promises()
@@ -205,6 +208,8 @@ class TestSessionSelectorPathDeleteInteractions:
         await flush_promises()
 
         assert all_load_calls == 1
+        assert selector.get_session_list().get_selected_session_path() == all_sessions[0].path
+        assert "Loading" in "\n".join(selector.render(120))
 
         all_ready.set()
         await flush_promises()

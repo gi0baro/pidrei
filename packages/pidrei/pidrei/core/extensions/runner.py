@@ -84,6 +84,41 @@ _SESSION_BEFORE_EVENT_TYPES = (
 )
 
 
+def _snapshot_event_handlers(extensions: list[Extension], event: str) -> list[tuple[Extension, list[Any]]]:
+    """Every extension's handlers for `event`, copied before dispatch starts, so a handler
+    added or removed mid-dispatch does not affect the dispatch in progress."""
+    return [(ext, list(ext.handlers.get(event, ()))) for ext in extensions]
+
+
+def _is_user_bash_event_result(value: Any) -> bool:
+    """A user_bash result carries exactly one of `operations` (with a callable `exec`)
+    or a complete `result` record."""
+    if not isinstance(value, dict):
+        return False
+    operations = value.get("operations")
+    result = value.get("result")
+    if (operations is not None) == (result is not None):
+        return False
+
+    if operations is not None:
+        return callable(getattr(operations, "exec", None))
+
+    if not isinstance(result, dict):
+        return False
+
+    def is_number(item: Any) -> bool:
+        return isinstance(item, (int, float)) and not isinstance(item, bool)
+
+    return (
+        isinstance(result.get("output"), str)
+        and "exitCode" in result
+        and (result["exitCode"] is None or is_number(result["exitCode"]))
+        and isinstance(result.get("cancelled"), bool)
+        and isinstance(result.get("truncated"), bool)
+        and (result.get("fullOutputPath") is None or isinstance(result["fullOutputPath"], str))
+    )
+
+
 class _NoOpUIContext:
     """pi's noOpUIContext: UI surface used when no interactive UI is bound.
 
@@ -363,10 +398,7 @@ async def emit_project_trust_event(
 ) -> tuple[Any, list[ExtensionError]]:
     """First project_trust handler that returns yes/no wins; undecided falls through."""
     errors: list[ExtensionError] = []
-    for ext in extensions_result.extensions:
-        handlers = ext.handlers.get("project_trust")
-        if not handlers:
-            continue
+    for ext, handlers in _snapshot_event_handlers(extensions_result.extensions, "project_trust"):
         for handler in handlers:
             try:
                 handler_result = await handler(event, ctx)
@@ -800,8 +832,7 @@ class ExtensionRunner:
         result: Any = None
         is_session_before = event.get("type") in _SESSION_BEFORE_EVENT_TYPES
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get(event.get("type"))
+        for ext, handlers in _snapshot_event_handlers(self._extensions, event.get("type")):
             if not handlers:
                 continue
             if ctx is None:
@@ -827,16 +858,35 @@ class ExtensionRunner:
 
         return result
 
+    async def emit_cache_warming_decision(self, event: dict[str, Any]) -> str:
+        """Returns the event's own action unless a handler overrides it; the last override wins."""
+        ctx = self.create_context()
+        action = event["action"]
+
+        for ext, handlers in _snapshot_event_handlers(self._extensions, event["type"]):
+            for handler in handlers:
+                try:
+                    result = await handler(event, ctx)
+                    if isinstance(result, dict) and result.get("action") is not None:
+                        action = result["action"]
+                except Exception as error:
+                    self.emit_error(
+                        ExtensionError(
+                            extension_path=ext.path,
+                            event=event["type"],
+                            error=str(error),
+                            stack=traceback.format_exc(),
+                        )
+                    )
+
+        return action
+
     async def emit_message_end(self, event: dict[str, Any]) -> Any:
         ctx = self.create_context()
         current_message = event.get("message")
         modified = False
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("message_end")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "message_end"):
             for handler in handlers:
                 try:
                     current_event = {**event, "message": current_message}
@@ -874,11 +924,7 @@ class ExtensionRunner:
         current_event = dict(event)
         modified = False
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("tool_result")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "tool_result"):
             for handler in handlers:
                 try:
                     handler_result = await handler(current_event, ctx)
@@ -913,11 +959,7 @@ class ExtensionRunner:
         ctx = self.create_context()
         result: dict[str, Any] | None = None
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("tool_call")
-            if not handlers:
-                continue
-
+        for _ext, handlers in _snapshot_event_handlers(self._extensions, "tool_call"):
             for handler in handlers:
                 # Intentionally no try/except: tool_call handler errors block execution
                 # (AgentSession wraps them; mirrors pi).
@@ -933,16 +975,18 @@ class ExtensionRunner:
     async def emit_user_bash(self, event: dict[str, Any]) -> Any:
         ctx = self.create_context()
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("user_bash")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "user_bash"):
             for handler in handlers:
                 try:
                     handler_result = await handler(event, ctx)
-                    if handler_result:
-                        return handler_result
+                    if handler_result is None:
+                        continue
+                    if not _is_user_bash_event_result(handler_result):
+                        raise Exception(
+                            "Invalid user_bash handler result: return None for local execution or exactly one "
+                            'valid {"operations"} or {"result"} dict'
+                        )
+                    return handler_result
                 except Exception as error:
                     self.emit_error(
                         ExtensionError(
@@ -952,6 +996,7 @@ class ExtensionRunner:
                             stack=traceback.format_exc(),
                         )
                     )
+                    raise
 
         return None
 
@@ -963,11 +1008,7 @@ class ExtensionRunner:
             return messages
         current_messages = copy.deepcopy(messages)
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("context")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "context"):
             for handler in handlers:
                 try:
                     event = {"type": "context", "messages": current_messages}
@@ -990,11 +1031,7 @@ class ExtensionRunner:
         ctx = self.create_context()
         current_payload = payload
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("before_provider_request")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "before_provider_request"):
             for handler in handlers:
                 try:
                     event = {"type": "before_provider_request", "payload": current_payload}
@@ -1016,11 +1053,7 @@ class ExtensionRunner:
     async def emit_before_provider_headers(self, headers: dict[str, Any]) -> dict[str, Any]:
         ctx = self.create_context()
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("before_provider_headers")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "before_provider_headers"):
             for handler in handlers:
                 try:
                     # Handlers mutate `headers` in place; the return value is ignored.
@@ -1051,11 +1084,7 @@ class ExtensionRunner:
         ctx.get_system_prompt = lambda: self._assert_active() or build_system_prompt(current_options)
         messages: list[Any] = []
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("before_agent_start")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "before_agent_start"):
             for handler in handlers:
                 try:
                     # pi exposes `systemPrompt` as a getter over the live options; the dict
@@ -1093,11 +1122,7 @@ class ExtensionRunner:
         prompt_paths: list[dict[str, str]] = []
         theme_paths: list[dict[str, str]] = []
 
-        for ext in self._extensions:
-            handlers = ext.handlers.get("resources_discover")
-            if not handlers:
-                continue
-
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "resources_discover"):
             for handler in handlers:
                 try:
                     event = {"type": "resources_discover", "cwd": cwd, "reason": reason}
@@ -1136,8 +1161,8 @@ class ExtensionRunner:
         current_text = text
         current_images = images
 
-        for ext in self._extensions:
-            for handler in ext.handlers.get("input", ()):
+        for ext, handlers in _snapshot_event_handlers(self._extensions, "input"):
+            for handler in handlers:
                 try:
                     event = {
                         "type": "input",

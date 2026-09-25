@@ -8,6 +8,7 @@ from pidrei_ai.registry import get_supported_thinking_levels
 from pidrei_tui import Container, SettingsList, Spacer, Text, get_capabilities
 
 from ....core.http_config import HTTP_IDLE_TIMEOUT_CHOICES, format_http_idle_timeout_ms
+from ....core.settings_manager import CACHE_WARMING_MODES
 from ..theme import get_settings_list_theme, parse_auto_theme_setting, theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_display_text
@@ -507,6 +508,15 @@ class SettingsSelectorComponent(Container):
                 "values": [choice["label"] for choice in HTTP_IDLE_TIMEOUT_CHOICES],
             },
             {
+                "id": "cache-warming-mode",
+                "label": "Cache warming",
+                "description": (
+                    "off; streaming while the agent runs; idle also between runs while continuation stays profitable"
+                ),
+                "currentValue": config["cacheWarmingMode"],
+                "values": list(CACHE_WARMING_MODES),
+            },
+            {
                 "id": "hide-thinking",
                 "label": "Hide thinking",
                 "description": "Hide thinking blocks in assistant responses",
@@ -778,6 +788,8 @@ class SettingsSelectorComponent(Container):
                 choice = next((item for item in HTTP_IDLE_TIMEOUT_CHOICES if item["label"] == new_value), None)
                 if choice is not None:
                     callbacks["onHttpIdleTimeoutMsChange"](choice["timeout_ms"])
+            elif item_id == "cache-warming-mode":
+                callbacks["onCacheWarmingModeChange"](new_value)
             elif item_id == "hide-thinking":
                 callbacks["onHideThinkingBlockChange"](new_value == "true")
             elif item_id == "cache-miss-notices":

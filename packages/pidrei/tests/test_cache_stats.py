@@ -1,6 +1,7 @@
 """Mirrors pi coding-agent test/cache-stats.test.ts."""
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 
@@ -57,6 +58,20 @@ def assistant(
 
 def entry(message: AssistantMessage) -> dict:
     return {"type": "message", "id": "x", "parentId": None, "timestamp": "", "message": message}
+
+
+def usage_entry(kind: str, timestamp_ms: int) -> dict:
+    return {
+        "type": "usage",
+        "id": f"usage-{kind}",
+        "parentId": None,
+        # JS `new Date(ms).toISOString()`.
+        "timestamp": datetime.fromtimestamp(timestamp_ms / 1000, UTC).isoformat(timespec="milliseconds"),
+        "kind": kind,
+        "provider": "test",
+        "model": "test-model",
+        "usage": Usage(input=0, output=0, cache_read=100_000, cache_write=0, total_tokens=100_000, cost=UsageCost()),
+    }
 
 
 def _turn1() -> AssistantMessage:
@@ -130,6 +145,19 @@ class TestDetectCacheMiss:
         miss = detect_cache_miss([entry(_turn1()), entry(_turn2())], other_model, models)
         assert miss.missed_tokens == 105_000
         assert miss.model_changed is True
+
+    def test_uses_only_cache_warm_usage_entries_as_cache_refreshes(self):
+        miss_message = assistant(cache_write=110_000, cost={"cache_write": 0.4125}, timestamp=600_000)
+
+        after_cache_warm = detect_cache_miss(
+            [entry(_turn1()), usage_entry("cache_warm", 500_000)], miss_message, models
+        )
+        after_other_usage = detect_cache_miss(
+            [entry(_turn1()), usage_entry("custom_operation", 500_000)], miss_message, models
+        )
+
+        assert after_cache_warm.idle_ms == 100_000
+        assert after_other_usage.idle_ms == 600_000
 
     def test_returns_none_for_healthy_turns(self):
         healthy = assistant(

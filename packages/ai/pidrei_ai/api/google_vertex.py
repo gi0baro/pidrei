@@ -25,6 +25,7 @@ from pidrei_ai.api.google_shared import (
     ResolvedGoogleThinkingLevel,
     convert_messages,
     convert_tools,
+    get_disabled_google_thinking_config,
     is_thinking_part,
     map_stop_reason,
     resolve_google_function_calling_mode,
@@ -32,6 +33,8 @@ from pidrei_ai.api.google_shared import (
     retain_thought_signature,
     retry_google_request,
     supports_google_strict_tool_sampling,
+    to_google_thinking_level,
+    uses_google_thinking_level,
 )
 from pidrei_ai.api.simple_options import build_base_options
 from pidrei_ai.builders import (
@@ -77,8 +80,6 @@ from pidrei_ai.utils.user_agent import set_default_user_agent
 API_VERSION = "v1"
 GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials"
 
-_GEMINI_3_PRO = re.compile(r"gemini-3(?:\.\d+)?-pro")
-_GEMINI_3_FLASH = re.compile(r"gemini-3(?:\.\d+)?-flash")
 _PLACEHOLDER_API_KEY = re.compile(r"^<[^>]+>$")
 _API_VERSION_SEGMENT = re.compile(r"^v\d+(?:beta\d*)?$")
 _API_VERSION_IN_PATH = re.compile(r"(?:^|/)v\d+(?:beta\d*)?(?:/|$)")
@@ -341,15 +342,17 @@ def stream_simple(
         return stream(model, context, _with_thinking(base, GoogleVertexThinking(enabled=False), tool_choice), into=into)
 
     clamped_reasoning = clamp_thinking_level(model, options.reasoning)
+    if clamped_reasoning == "off":
+        return stream(model, context, _with_thinking(base, GoogleVertexThinking(enabled=False), tool_choice), into=into)
     resolved_level = resolve_google_thinking_level(model, clamped_reasoning)
 
-    if _is_gemini_3_pro_model(model) or _is_gemini_3_flash_model(model):
+    if uses_google_thinking_level(model):
         return stream(
             model,
             context,
             _with_thinking(
                 base,
-                GoogleVertexThinking(enabled=True, level=_get_gemini_3_thinking_level(resolved_level, model)),
+                GoogleVertexThinking(enabled=True, level=to_google_thinking_level(resolved_level)),
                 tool_choice,
             ),
             into=into,
@@ -525,50 +528,12 @@ def build_params(
             thinking_config["thinkingBudget"] = options.thinking.budget_tokens
         config["thinkingConfig"] = thinking_config
     elif model.reasoning and options.thinking is not None and not options.thinking.enabled:
-        config["thinkingConfig"] = _get_disabled_thinking_config(model)
+        config["thinkingConfig"] = get_disabled_google_thinking_config(model)
 
     if options.cancel is not None and options.cancel.cancelled:
         raise RuntimeError("Request aborted")
 
     return {"model": model.id, "contents": contents, "config": config}
-
-
-def _is_gemini_3_pro_model(model: Model) -> bool:
-    return _GEMINI_3_PRO.search(model.id.lower()) is not None
-
-
-def _is_gemini_3_flash_model(model: Model) -> bool:
-    id = model.id.lower()
-    return _GEMINI_3_FLASH.search(id) is not None or id == "gemini-flash-latest" or id == "gemini-flash-lite-latest"
-
-
-def _get_disabled_thinking_config(model: Model) -> dict[str, Any]:
-    # Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
-    # do not support full thinking-off either. For Gemini 3 models, use the lowest supported
-    # thinkingLevel without includeThoughts so hidden thinking remains invisible to pidrei.
-    if _is_gemini_3_pro_model(model):
-        return {"thinkingLevel": "LOW"}
-    if _is_gemini_3_flash_model(model):
-        return {"thinkingLevel": "MINIMAL"}
-
-    # Gemini 2.x supports disabling via thinkingBudget = 0.
-    return {"thinkingBudget": 0}
-
-
-def _get_gemini_3_thinking_level(effort: ResolvedGoogleThinkingLevel, model: Model) -> GoogleApiThinkingLevel:
-    if _is_gemini_3_pro_model(model):
-        if effort in ("minimal", "low"):
-            return "LOW"
-        return "HIGH"
-    match effort:
-        case "minimal":
-            return "MINIMAL"
-        case "low":
-            return "LOW"
-        case "medium":
-            return "MEDIUM"
-        case _:
-            return "HIGH"
 
 
 def _get_google_budget(

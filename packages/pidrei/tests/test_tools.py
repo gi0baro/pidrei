@@ -544,6 +544,35 @@ class TestBashTool:
         with pytest.raises(Exception, match="Command failed|code 1"):
             await bash_tool.execute("test-call-9", {"command": "exit 1"})
 
+    # Regression tests for https://github.com/earendil-works/pi/issues/9577
+    @pytest.mark.tonio
+    async def test_maps_signal_killed_commands_to_128_plus_the_signal_number(self, tmp_path):
+        operations = create_local_bash_operations()
+        for signal, exit_code in (("KILL", 137), ("TERM", 143)):
+            result = await operations.exec(f"kill -{signal} $$", str(tmp_path), on_data=lambda _chunk: None)
+            assert result.exit_code == exit_code
+
+    @pytest.mark.tonio
+    async def test_rejects_signal_killed_commands_while_preserving_partial_output(self, tmp_path):
+        bash_tool = create_bash_tool(str(tmp_path))
+        for signal, exit_code in (("KILL", 137), ("TERM", 143)):
+            with pytest.raises(Exception, match=rf"before-kill\s+Command exited with code {exit_code}$"):
+                await bash_tool.execute(
+                    f"test-call-signal-{signal}", {"command": f"printf 'before-kill\\n'; kill -{signal} $$"}
+                )
+
+    @pytest.mark.tonio
+    async def test_rejects_a_none_exit_code_from_custom_operations(self, tmp_path):
+        class NoExitCodeOperations:
+            async def exec(self, _command, _cwd, *, on_data, cancel=None, timeout=None, env=None):
+                on_data(b"partial\n")
+                return BashExecResult(exit_code=None)
+
+        bash = create_bash_tool(str(tmp_path), operations=NoExitCodeOperations())
+
+        with pytest.raises(Exception, match=r"partial\s+Command terminated without an exit code$"):
+            await bash.execute("test-call-null-exit", {"command": "remote"})
+
     @pytest.mark.tonio
     async def test_respects_timeout(self, tmp_path):
         bash_tool = create_bash_tool(str(tmp_path))

@@ -21,9 +21,11 @@ from types import SimpleNamespace
 import pytest
 
 from pidrei.core.auth_storage import AuthStorage, FileAuthStorageBackend
+from pidrei.core.event_bus import create_event_bus
 from pidrei.core.extensions.loader import (
     create_extension_runtime,
     discover_and_load_extensions,
+    load_extension_from_factory,
     load_extensions,
 )
 from pidrei.core.extensions.runner import ExtensionRunner, emit_project_trust_event
@@ -543,6 +545,122 @@ def extension(pi):
     assert errors[0].event == "context"
 
 
+def _user_bash_event(fx, command: str = "pwd") -> dict:
+    return {"type": "user_bash", "command": command, "excludeFromContext": False, "cwd": fx.root}
+
+
+# Regression test for #9068.
+@pytest.mark.tonio
+async def test_fails_closed_when_a_user_bash_handler_throws(fx):
+    fx.write(
+        "throws.py",
+        """
+async def handler(event, ctx):
+    raise RuntimeError("Routing failed")
+
+
+def extension(pi):
+    pi.on("user_bash", handler)
+""",
+    )
+
+    runner = await make_runner(fx)
+    errors = []
+    runner.on_error(errors.append)
+
+    with pytest.raises(RuntimeError, match="Routing failed"):
+        await runner.emit_user_bash(_user_bash_event(fx))
+    assert [(error.event, error.error) for error in errors] == [("user_bash", "Routing failed")]
+
+
+# Regression test for #9068.
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    "handler_result",
+    [
+        "{}",
+        '{"operations": None}',
+        '{"operations": SimpleNamespace()}',
+        '{"result": None}',
+        '{"result": {"output": "handled"}}',
+        (
+            '{"operations": SimpleNamespace(exec=run), '
+            '"result": {"output": "handled", "exitCode": 0, "cancelled": False, "truncated": False}}'
+        ),
+    ],
+    ids=[
+        "an empty dict",
+        "None operations",
+        "operations without exec",
+        "a None result",
+        "an incomplete result",
+        "operations and a result",
+    ],
+)
+async def test_fails_closed_when_a_user_bash_handler_returns_an_invalid_result(fx, handler_result):
+    fx.write(
+        "invalid_result.py",
+        f"""
+from types import SimpleNamespace
+
+
+async def run(*args, **kwargs):
+    return {{"exitCode": 0}}
+
+
+async def handler(event, ctx):
+    return {handler_result}
+
+
+def extension(pi):
+    pi.on("user_bash", handler)
+""",
+    )
+
+    runner = await make_runner(fx)
+    errors = []
+    runner.on_error(errors.append)
+
+    with pytest.raises(Exception, match="Invalid user_bash handler result"):
+        await runner.emit_user_bash(_user_bash_event(fx))
+    assert len(errors) == 1
+    assert errors[0].event == "user_bash"
+    assert "Invalid user_bash handler result" in errors[0].error
+
+
+@pytest.mark.tonio
+async def test_accepts_valid_user_bash_operations_and_result_overrides(fx):
+    fx.write(
+        "valid_results.py",
+        """
+from types import SimpleNamespace
+
+
+async def run(*args, **kwargs):
+    return {"exitCode": 0}
+
+
+async def handler(event, ctx):
+    if event["command"] == "operations":
+        return {"operations": SimpleNamespace(exec=run)}
+    return {"result": {"output": "handled", "exitCode": 0, "cancelled": False, "truncated": False}}
+
+
+def extension(pi):
+    pi.on("user_bash", handler)
+""",
+    )
+
+    runner = await make_runner(fx)
+
+    operations = await runner.emit_user_bash(_user_bash_event(fx, "operations"))
+    assert list(operations) == ["operations"]
+    assert callable(operations["operations"].exec)
+    assert await runner.emit_user_bash(_user_bash_event(fx, "result")) == {
+        "result": {"output": "handled", "exitCode": 0, "cancelled": False, "truncated": False}
+    }
+
+
 # -- renderers -------------------------------------------------------------------
 
 
@@ -897,6 +1015,139 @@ async def test_passes_fork_options_through_to_the_bound_handler(fx):
 
     await command_context.fork("entry-2", {"position": "at"})
     assert calls[1] == ("entry-2", {"position": "at"})
+
+
+# -- event subscriptions ---------------------------------------------------------
+# #8967: event handler unsubscription must not disturb other registrations.
+
+
+async def load_subscription_extension(fx, factory):
+    runtime = create_extension_runtime()
+    extension = await load_extension_from_factory(factory, fx.root, create_event_bus(), runtime)
+    runner = await make_runner(fx, [extension], runtime)
+    return extension, runner
+
+
+def recorder(calls: list[str], name: str):
+    async def handler(_event, _ctx):
+        calls.append(name)
+
+    return handler
+
+
+AGENT_END = {"type": "agent_end", "messages": []}
+
+
+@pytest.mark.tonio
+async def test_allows_self_removal_without_skipping_neighboring_handlers(fx):
+    calls: list[str] = []
+
+    def factory(pi) -> None:
+        async def first(_event, _ctx):
+            calls.append("A")
+            unsubscribe()
+
+        unsubscribe = pi.on("agent_end", first)
+        pi.on("agent_end", recorder(calls, "B"))
+
+    _extension, runner = await load_subscription_extension(fx, factory)
+
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "B"]
+
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "B", "B"]
+
+
+@pytest.mark.tonio
+async def test_removes_duplicate_registrations_independently_and_cleans_up_the_last_handler(fx):
+    calls: list[str] = []
+    unsubscribers = []
+
+    def factory(pi) -> None:
+        shared = recorder(calls, "shared")
+        unsubscribers.append(pi.on("agent_end", shared))
+        unsubscribers.append(pi.on("agent_end", recorder(calls, "B")))
+        unsubscribers.append(pi.on("agent_end", shared))
+
+    extension, runner = await load_subscription_extension(fx, factory)
+    stop_first, stop_b, stop_second = unsubscribers
+
+    stop_second()
+    stop_second()
+    await runner.emit(AGENT_END)
+    assert calls == ["shared", "B"]
+
+    stop_first()
+    await runner.emit(AGENT_END)
+    assert calls == ["shared", "B", "B"]
+
+    stop_b()
+    assert "agent_end" not in extension.handlers
+
+
+@pytest.mark.tonio
+async def test_keeps_removed_pending_handlers_in_the_current_dispatch(fx):
+    calls: list[str] = []
+
+    def factory(pi) -> None:
+        async def first(_event, _ctx):
+            calls.append("A")
+            stop_b()
+
+        pi.on("agent_end", first)
+        stop_b = pi.on("agent_end", recorder(calls, "B"))
+        pi.on("agent_end", recorder(calls, "C"))
+
+    _extension, runner = await load_subscription_extension(fx, factory)
+
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "B", "C"]
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "B", "C", "A", "C"]
+
+
+@pytest.mark.tonio
+async def test_defers_registrations_made_during_dispatch_until_the_next_dispatch(fx):
+    calls: list[str] = []
+
+    def factory(pi) -> None:
+        async def first(_event, _ctx):
+            calls.append("A")
+            pi.on("agent_end", recorder(calls, "C"))
+
+        pi.on("agent_end", first)
+        pi.on("agent_end", recorder(calls, "B"))
+
+    _extension, runner = await load_subscription_extension(fx, factory)
+
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "B"]
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "B", "A", "B", "C"]
+
+
+@pytest.mark.tonio
+async def test_uses_a_fresh_handler_list_for_nested_dispatches(fx):
+    calls: list[str] = []
+    holder: dict = {}
+
+    def factory(pi) -> None:
+        async def first(_event, _ctx):
+            calls.append("A")
+            stop_a()
+            stop_b()
+            pi.on("agent_end", recorder(calls, "C"))
+            await holder["runner"].emit(AGENT_END)
+
+        stop_a = pi.on("agent_end", first)
+        stop_b = pi.on("agent_end", recorder(calls, "B"))
+
+    _extension, runner = await load_subscription_extension(fx, factory)
+    holder["runner"] = runner
+
+    await runner.emit(AGENT_END)
+    assert calls == ["A", "C", "B"]
 
 
 # -- has_handlers ----------------------------------------------------------------

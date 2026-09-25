@@ -19,6 +19,7 @@ from ..config import get_agent_dir
 from ..utils.paths import resolve_path
 from .agent_session import AgentSession, AgentSessionConfig, ScopedModel
 from .auth_guidance import format_no_models_available_message
+from .cache_warmer import CacheWarmer, CacheWarmRequest
 from .defaults import DEFAULT_THINKING_LEVEL
 from .extensions import LoadExtensionsResult
 from .messages import convert_to_llm
@@ -246,6 +247,31 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
 
     extension_runner_ref = _ExtensionRunnerRef()
 
+    async def decide_cache_warming(event: dict[str, Any]) -> str:
+        runner = extension_runner_ref.current
+        return await runner.emit_cache_warming_decision(event) if runner is not None else event["action"]
+
+    cache_warmer = CacheWarmer(
+        model_runtime, session_manager, settings_manager.get_cache_warming_mode, decide_cache_warming
+    )
+
+    def cache_context_is_current(request_model: Model):
+        # A snapshot of the transcript the request was built from: warming continues
+        # while the current transcript still extends it and the model is unchanged.
+        messages = list(agent.state.messages)
+
+        def is_current() -> bool:
+            current_model = agent.state.model
+            current_messages = agent.state.messages
+            return (
+                current_model.provider == request_model.provider
+                and current_model.id == request_model.id
+                and len(messages) <= len(current_messages)
+                and all(current_messages[index] is message for index, message in enumerate(messages))
+            )
+
+        return is_current
+
     async def stream_fn(request_model: Model, context: Any, stream_options: Any = None):
         provider_retry_settings = settings_manager.get_provider_retry_settings()
         http_idle_timeout_ms = settings_manager.get_http_idle_timeout_ms()
@@ -294,6 +320,16 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             ),
             transform_headers=transform_headers,
         )
+        # Compaction and summaries use their own routing ids; only session requests
+        # replace the cache entry, so warming restarts from them. Keep warming while
+        # the current transcript still extends the request's prefix. Agent state may
+        # shallow-copy the messages list or refresh the model object without changing
+        # the provider request, so top-level object identity is not a valid cache key.
+        if getattr(stream_options, "session_id", None) == session_manager.get_session_id():
+            cache_warmer.start(
+                CacheWarmRequest(model=request_model, context=context, options=merged_options),
+                cache_context_is_current(request_model),
+            )
         return model_runtime.stream_simple(request_model, context, merged_options)
 
     async def on_payload(payload: Any, _model: Any = None) -> Any:
@@ -362,6 +398,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             resource_loader=resource_loader,
             custom_tools=options.custom_tools,
             model_runtime=model_runtime,
+            cache_warmer=cache_warmer,
             initial_active_tool_names=initial_active_tool_names,
             allowed_tool_names=allowed_tool_names,
             excluded_tool_names=excluded_tool_names,

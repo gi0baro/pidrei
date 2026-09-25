@@ -54,6 +54,7 @@ from pidrei_agent.harness.session.serde import (
     serialize_usage,
     to_wire_value,
 )
+from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_ai.utils.uuid import uuidv7
 
@@ -74,6 +75,9 @@ _MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024
 _SESSION_HEADER_READ_BUFFER_SIZE = 4096
 
 _MAX_CONCURRENT_SESSION_INFO_LOADS = 10
+_MAX_CONCURRENT_SESSION_DISCOVERY_LOADS = 64
+_CURRENT_SESSION_LIST_PUBLISH_INTERVAL = 10
+_ALL_SESSION_LIST_PUBLISH_INTERVAL = 100
 
 # leaf_id sentinel: `...` = "use current leaf / last entry", None = pi's explicit null.
 _UNSET = ...
@@ -188,7 +192,7 @@ def _generate_id(existing) -> str:
 def _decode_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if entry.get("type") == "message" and isinstance(entry.get("message"), dict):
         entry["message"] = parse_message(entry["message"])
-    elif entry.get("type") in ("compaction", "branch_summary"):
+    elif entry.get("type") in ("compaction", "branch_summary", "usage"):
         if isinstance(entry.get("usage"), dict):
             entry["usage"] = parse_usage(entry["usage"])
         if isinstance(entry.get("systemMessage"), dict):
@@ -217,6 +221,10 @@ def _entry_to_wire(entry: dict[str, Any]) -> dict[str, Any]:
             wire["details"] = to_wire_value(entry["details"])
         if entry.get("systemMessage") is not None:
             wire["systemMessage"] = serialize_message(entry["systemMessage"])
+        return wire
+    if entry_type == "usage":
+        wire = dict(entry)
+        wire["usage"] = serialize_usage(entry["usage"])
         return wire
     if entry_type == "custom" and entry.get("data") is not None:
         wire = dict(entry)
@@ -632,19 +640,24 @@ def find_most_recent_session(session_dir: str, cwd: str | None = None) -> str | 
     resolved_session_dir = normalize_path(session_dir)
     resolved_cwd = resolve_path(cwd) if cwd else None
     try:
-        candidates = []
-        for name in os.listdir(resolved_session_dir):
-            if not name.endswith(".jsonl"):
-                continue
-            path = os.path.join(resolved_session_dir, name)
+        files = [
+            (path, os.stat(path).st_mtime)
+            for path in (
+                os.path.join(resolved_session_dir, name)
+                for name in os.listdir(resolved_session_dir)
+                if name.endswith(".jsonl")
+            )
+        ]
+        files.sort(key=lambda item: item[1], reverse=True)
+
+        # Newest first: only read headers until the first match.
+        for path, _mtime in files:
             header = _read_session_header_for_discovery(path)
-            if header is None:
-                continue
-            if resolved_cwd and not _session_cwd_matches(_get_session_header_cwd(header), resolved_cwd):
-                continue
-            candidates.append((path, os.stat(path).st_mtime))
-        candidates.sort(key=lambda item: item[1], reverse=True)
-        return candidates[0][0] if candidates else None
+            if header is not None and (
+                not resolved_cwd or _session_cwd_matches(_get_session_header_cwd(header), resolved_cwd)
+            ):
+                return path
+        return None
     except Exception:
         # Directory access and stat races make recent-session discovery unavailable.
         return None
@@ -680,9 +693,14 @@ def _get_message_activity_time(entry: dict[str, Any]) -> float | None:
     return None if math.isnan(parsed) else parsed
 
 
-def _build_session_info(file_path: str) -> SessionInfo | None:
+def _build_session_info(
+    file_path: str, cancel: CancelToken | None = None, stat_result: os.stat_result | None = None
+) -> SessionInfo | None:
+    """Blocking; run on the pool. A cancelled `cancel` stops the read at the next
+    line and yields None (pi aborts the read stream); the caller raises."""
     try:
-        stat_result = os.stat(file_path)
+        if stat_result is None:
+            stat_result = os.stat(file_path)
         header: dict[str, Any] | None = None
         message_count = 0
         first_message = ""
@@ -692,6 +710,8 @@ def _build_session_info(file_path: str) -> SessionInfo | None:
 
         with open(file_path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
+                if cancel is not None and cancel.cancelled:
+                    return None
                 entry = _parse_session_entry_line(line.rstrip("\n").rstrip("\r"))
                 if entry is None:
                     continue
@@ -765,70 +785,105 @@ def _build_session_info(file_path: str) -> SessionInfo | None:
         return None
 
 
-async def _build_session_infos_with_concurrency(
-    files: list[str], on_loaded: Callable[[], None]
-) -> list[SessionInfo | None]:
-    results: list[SessionInfo | None] = [None] * len(files)
+# `(loaded, total, partial_sessions)`: `partial_sessions` holds the sessions
+# loaded so far, sorted by activity, on periodic updates and None otherwise.
+type SessionListProgress = Callable[[int, int, list[SessionInfo] | None], None]
+
+
+@dataclass(slots=True)
+class _SessionFileCandidate:
+    path: str
+    stat_result: os.stat_result | None = None
+
+
+async def _map_with_concurrency[T, R](
+    items: list[T], limit: int, fn: Callable[[T, int], Awaitable[R]], cancel: CancelToken | None = None
+) -> list[R]:
+    """`fn` over `items` with at most `limit` in flight. `fn` must not raise:
+    a cancelled `cancel` stops workers from taking new items and raises once
+    they have drained (pi's workers throw from `throwIfAborted`)."""
+    results: list[Any] = [None] * len(items)
     next_index = 0
     guard = threading.Lock()
 
     async def worker() -> None:
         nonlocal next_index
-        while True:
+        while cancel is None or not cancel.cancelled:
             with guard:
                 index = next_index
                 next_index += 1
-            if index >= len(files):
+            if index >= len(items):
                 return
-            try:
-                results[index] = await tonio.spawn_blocking(_build_session_info, files[index])
-            except Exception:
-                results[index] = None
-            finally:
-                on_loaded()
+            results[index] = await fn(items[index], index)
 
-    worker_count = min(_MAX_CONCURRENT_SESSION_INFO_LOADS, len(files))
+    worker_count = min(limit, len(items))
     if worker_count > 0:
         await tonio.spawn(*(worker() for _ in range(worker_count)))
+    if cancel is not None:
+        cancel.raise_if_cancelled()
     return results
+
+
+def _sort_session_infos(sessions: list[SessionInfo]) -> list[SessionInfo]:
+    sessions.sort(key=lambda session: session.modified, reverse=True)
+    return sessions
+
+
+async def _build_session_infos_with_concurrency(
+    files: list[_SessionFileCandidate],
+    on_loaded: Callable[[SessionInfo | None, int], None],
+    cancel: CancelToken | None = None,
+) -> list[SessionInfo | None]:
+    async def load(file: _SessionFileCandidate, index: int) -> SessionInfo | None:
+        try:
+            info = await tonio.spawn_blocking(_build_session_info, file.path, cancel, file.stat_result)
+        except Exception:
+            info = None
+        on_loaded(info, index)
+        return info
+
+    return await _map_with_concurrency(files, _MAX_CONCURRENT_SESSION_INFO_LOADS, load, cancel)
 
 
 async def _list_sessions_from_dir(
     directory: str,
-    on_progress: Callable[[int, int], None] | None = None,
-    progress_offset: int = 0,
-    progress_total: int | None = None,
+    on_progress: SessionListProgress | None = None,
+    cancel: CancelToken | None = None,
 ) -> list[SessionInfo]:
-    sessions: list[SessionInfo] = []
+    if cancel is not None:
+        cancel.raise_if_cancelled()
     if not await fs.Path(directory).exists():
-        return sessions
+        return []
 
     try:
-        files = [
-            os.path.join(directory, name)
-            for name in await tonio.spawn_blocking(os.listdir, directory)
-            if name.endswith(".jsonl")
-        ]
-        total = progress_total if progress_total is not None else len(files)
-
+        names = sorted(
+            (name for name in await tonio.spawn_blocking(os.listdir, directory) if name.endswith(".jsonl")),
+            reverse=True,
+        )
+        files = [_SessionFileCandidate(os.path.join(directory, name)) for name in names]
+        total = len(files)
+        partial_sessions: list[SessionInfo] = []
         loaded = 0
-        loaded_guard = threading.Lock()
+        guard = threading.Lock()
 
-        def on_loaded() -> None:
+        def on_loaded(info: SessionInfo | None, _index: int) -> None:
             nonlocal loaded
-            with loaded_guard:
+            # Workers finish on parallel threads; reporting under the guard keeps
+            # progress (and each partial snapshot) in load order.
+            with guard:
                 loaded += 1
-                current = loaded
-            if on_progress is not None:
-                on_progress(progress_offset + current, total)
+                if info is not None:
+                    partial_sessions.append(info)
+                publish_partial = loaded == 1 or loaded % _CURRENT_SESSION_LIST_PUBLISH_INTERVAL == 0 or loaded == total
+                if on_progress is not None:
+                    on_progress(loaded, total, _sort_session_infos([*partial_sessions]) if publish_partial else None)
 
-        results = await _build_session_infos_with_concurrency(files, on_loaded)
-        sessions.extend(info for info in results if info is not None)
+        results = await _build_session_infos_with_concurrency(files, on_loaded, cancel)
+        return [info for info in results if info is not None]
     except Exception:
-        # Return empty list on error
-        pass
-
-    return sessions
+        if cancel is not None:
+            cancel.raise_if_cancelled()
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1169,24 @@ class SessionManager:
                 self._append_entry_locked(entry)
             await self._persist_entry(entry)
             return entry["id"]
+
+    async def append_usage(
+        self, kind: str, provider: str, model: str, usage: Any, note: str | None = None
+    ) -> dict[str, Any]:
+        """Append model-attributed usage that does not participate in LLM context
+        (`kind` is an arbitrary category such as "cache_warm"). Returns the appended entry."""
+        async with self._io_lock:
+            with self._lock:
+                entry = self._new_entry_base("usage")
+                entry["kind"] = kind
+                entry["provider"] = provider
+                entry["model"] = model
+                entry["usage"] = usage
+                if note:
+                    entry["note"] = note
+                self._append_entry_locked(entry)
+            await self._persist_entry(entry)
+            return entry
 
     async def append_compaction(
         self,
@@ -1647,31 +1720,43 @@ class SessionManager:
     async def list(
         cwd: str,
         session_dir: str | None = None,
-        on_progress: Callable[[int, int], None] | None = None,
+        on_progress: SessionListProgress | None = None,
+        cancel: CancelToken | None = None,
     ) -> list[SessionInfo]:
         """List all sessions for a directory."""
         directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
         filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
         resolved_cwd = resolve_path(cwd)
-        sessions = [
-            session
-            for session in await _list_sessions_from_dir(directory, on_progress)
-            if not filter_cwd or _session_cwd_matches(session.cwd, resolved_cwd)
-        ]
-        sessions.sort(key=lambda session: session.modified, reverse=True)
-        return sessions
+
+        def include_session(session: SessionInfo) -> bool:
+            return not filter_cwd or _session_cwd_matches(session.cwd, resolved_cwd)
+
+        progress: SessionListProgress | None = None
+        if on_progress is not None:
+            report = on_progress
+
+            def progress(loaded: int, total: int, partial_sessions: list[SessionInfo] | None) -> None:
+                report(
+                    loaded,
+                    total,
+                    None if partial_sessions is None else [s for s in partial_sessions if include_session(s)],
+                )
+
+        sessions = [s for s in await _list_sessions_from_dir(directory, progress, cancel) if include_session(s)]
+        return _sort_session_infos(sessions)
 
     @staticmethod
     async def list_all(
         session_dir: str | None = None,
-        on_progress: Callable[[int, int], None] | None = None,
+        on_progress: SessionListProgress | None = None,
+        cancel: CancelToken | None = None,
     ) -> list[SessionInfo]:
         """List all sessions across all project directories."""
+        if cancel is not None:
+            cancel.raise_if_cancelled()
         custom_session_dir = normalize_path(session_dir) if session_dir else None
         if custom_session_dir:
-            sessions = await _list_sessions_from_dir(custom_session_dir, on_progress)
-            sessions.sort(key=lambda session: session.modified, reverse=True)
-            return sessions
+            return _sort_session_infos(await _list_sessions_from_dir(custom_session_dir, on_progress, cancel))
 
         sessions_dir = get_sessions_dir()
 
@@ -1690,8 +1775,6 @@ class SessionManager:
 
             dirs = await tonio.spawn_blocking(_project_dirs)
 
-            # Count total files first for accurate progress. Listed concurrently:
-            # one thread per project directory, which is the cold-cache cost here.
             def list_jsonl(directory: str) -> list[str]:
                 try:
                     names = os.listdir(directory)
@@ -1699,24 +1782,60 @@ class SessionManager:
                     return []  # skip unreadable project dirs like pi's
                 return [os.path.join(directory, name) for name in names if name.endswith(".jsonl")]
 
-            listings = await tonio.map_blocking(list_jsonl, dirs)
-            all_files: list[str] = [path for listing in listings for path in listing]
+            async def list_dir(directory: str, _index: int) -> list[str]:
+                return await tonio.spawn_blocking(list_jsonl, directory)
 
+            dir_files = await _map_with_concurrency(dirs, _MAX_CONCURRENT_SESSION_DISCOVERY_LOADS, list_dir, cancel)
+            all_files = [path for listing in dir_files for path in listing]
+
+            def stat_candidate(path: str) -> _SessionFileCandidate:
+                try:
+                    return _SessionFileCandidate(path, os.stat(path))
+                except OSError:
+                    return _SessionFileCandidate(path)
+
+            async def load_candidate(path: str, _index: int) -> _SessionFileCandidate:
+                return await tonio.spawn_blocking(stat_candidate, path)
+
+            candidates = await _map_with_concurrency(
+                all_files, _MAX_CONCURRENT_SESSION_DISCOVERY_LOADS, load_candidate, cancel
+            )
+            # Most recently written first, so the first partial update holds the
+            # sessions the user most likely wants.
+            candidates.sort(
+                key=lambda candidate: (
+                    candidate.stat_result.st_mtime if candidate.stat_result is not None else -math.inf,
+                    os.path.basename(candidate.path),
+                ),
+                reverse=True,
+            )
+
+            total_files = len(candidates)
             loaded = 0
-            loaded_guard = threading.Lock()
-            total_files = len(all_files)
+            first_candidate_loaded = False
+            partial_sessions: list[SessionInfo] = []
+            guard = threading.Lock()
 
-            def on_loaded() -> None:
-                nonlocal loaded
-                with loaded_guard:
+            def on_loaded(info: SessionInfo | None, index: int) -> None:
+                nonlocal loaded, first_candidate_loaded
+                # Under the guard for the same ordering reason as `_list_sessions_from_dir`.
+                with guard:
                     loaded += 1
-                    current = loaded
-                if on_progress is not None:
-                    on_progress(current, total_files)
+                    if index == 0:
+                        first_candidate_loaded = True
+                    if info is not None:
+                        partial_sessions.append(info)
+                    publish_partial = first_candidate_loaded and (
+                        index == 0 or loaded % _ALL_SESSION_LIST_PUBLISH_INTERVAL == 0 or loaded == total_files
+                    )
+                    if on_progress is not None:
+                        on_progress(
+                            loaded, total_files, _sort_session_infos([*partial_sessions]) if publish_partial else None
+                        )
 
-            results = await _build_session_infos_with_concurrency(all_files, on_loaded)
-            sessions = [info for info in results if info is not None]
-            sessions.sort(key=lambda session: session.modified, reverse=True)
-            return sessions
+            results = await _build_session_infos_with_concurrency(candidates, on_loaded, cancel)
+            return _sort_session_infos([info for info in results if info is not None])
         except Exception:
+            if cancel is not None:
+                cancel.raise_if_cancelled()
             return []

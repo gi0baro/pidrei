@@ -230,9 +230,25 @@ class ExtensionAPI:
 
     # -- registration ------------------------------------------------------------
 
-    def on(self, event: str, handler: Any) -> None:
+    def on(self, event: str, handler: Any) -> Callable[[], None]:
+        """Subscribe to `event`. Returns an unsubscribe function that removes only this
+        registration (registering the same handler twice yields two independent ones)."""
         self._assert_active()
-        self._extension.handlers.setdefault(event, []).append(handler)
+
+        def registered_handler(*args: Any) -> Any:
+            return handler(*args)
+
+        self._extension.handlers.setdefault(event, []).append(registered_handler)
+
+        def unsubscribe() -> None:
+            handlers = self._extension.handlers.get(event)
+            if not handlers or registered_handler not in handlers:
+                return
+            handlers.remove(registered_handler)
+            if not handlers:
+                del self._extension.handlers[event]
+
+        return unsubscribe
 
     def register_tool(self, tool: ToolDefinition) -> None:
         self._assert_active()

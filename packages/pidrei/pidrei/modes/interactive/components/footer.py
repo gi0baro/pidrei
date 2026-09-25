@@ -101,7 +101,9 @@ class FooterComponent:
 
         for entry in session_manager.get_entries():
             message = entry.get("message")
-            if entry.get("type") == "message" and getattr(message, "role", None) == "assistant":
+            if entry.get("type") == "usage":
+                add_usage_to_totals(usage_totals, entry["usage"])
+            elif entry.get("type") == "message" and getattr(message, "role", None) == "assistant":
                 add_usage_to_totals(usage_totals, message.usage)
 
                 latest_prompt_tokens = message.usage.input + message.usage.cache_read + message.usage.cache_write

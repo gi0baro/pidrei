@@ -77,10 +77,12 @@ async def test_allows_a_queued_prompt_to_start_when_manual_compaction_ends(harne
 # -- 0.84.4 compact-before-post-tool-requests cases (same upstream suite) -----
 
 
-def _large_result_tool(name: str = "large_result", *, terminate: bool | None = None) -> ToolDefinition:
+def _large_result_tool(
+    name: str = "large_result", *, terminate: bool | None = None, size: int = 6800
+) -> ToolDefinition:
     async def execute(*_args):
         return AgentToolResult(
-            content=[TextContent(text=f"large-tool-result:{'x' * 6800}")],
+            content=[TextContent(text=f"large-tool-result:{'x' * size}")],
             details={},
             terminate=terminate,
         )
@@ -99,9 +101,10 @@ _THRESHOLD_MODELS = [{"id": "faux-1", "context_window": 2600, "max_tokens": 100}
 
 
 # Regression coverage for #8133: model overrides must also apply between assistant turns.
+# Regression coverage for #9740: an oversized trailing tool result must still produce a cut point.
 @pytest.mark.tonio
 @pytest.mark.parametrize("model_override", [False, True])
-async def test_compacts_after_a_tool_result_in_the_same_run(harnesses, model_override):
+async def test_compacts_after_an_oversized_tool_result_in_the_same_run(harnesses, model_override):
     order: list[str] = []
     observed_settings: list = []
 
@@ -136,7 +139,7 @@ async def test_compacts_after_a_tool_result_in_the_same_run(harnesses, model_ove
     harness = await create_harness(
         models=_THRESHOLD_MODELS,
         settings=settings,
-        tools=[_large_result_tool()],
+        tools=[_large_result_tool(size=8000)],
         extension_factories=[factory],
     )
     harnesses.append(harness)
@@ -161,8 +164,8 @@ async def test_compacts_after_a_tool_result_in_the_same_run(harnesses, model_ove
     agent_starts_before = len(harness.events_of_type("agent_start"))
     await harness.session.prompt("run the large tool")
 
-    assert order == ["compaction", "provider"]
-    assert observed_settings == [CompactionSettings(enabled=True, reserve_tokens=400, keep_recent_tokens=1750)]
+    assert order[:2] == ["compaction", "provider"]
+    assert observed_settings[0] == CompactionSettings(enabled=True, reserve_tokens=400, keep_recent_tokens=1750)
     assert len(harness.events_of_type("agent_start")) == agent_starts_before + 1
     last_compaction_start = harness.events_of_type("compaction_start")[-1]
     assert last_compaction_start.reason == "threshold"

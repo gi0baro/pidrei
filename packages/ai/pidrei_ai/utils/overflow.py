@@ -40,9 +40,10 @@ _OVERFLOW_PATTERNS = [
         r"context[_ ]length[_ ]exceeded",  # Generic fallback
         r"too many tokens",  # Generic fallback
         r"token limit exceeded",  # Generic fallback
-        r"^4(?:00|13)\s*(?:status code)?\s*\(no body\)",  # Cerebras: 400/413 with no body
     )
 ]
+
+_CEREBRAS_BODYLESS_OVERFLOW_PATTERN = re.compile(r"^4(?:00|13)\s*(?:status code)?\s*\(no body\)", re.IGNORECASE)
 
 # Errors matching any of these are excluded from overflow detection even when
 # they also match an overflow pattern (e.g. Bedrock throttling "Too many tokens,
@@ -63,8 +64,11 @@ def is_context_overflow(message: AssistantMessage, context_window: int | None = 
     if message.stop_reason == "error" and message.error_message:
         error_message = message.error_message
         is_non_overflow = any(pattern.search(error_message) for pattern in _NON_OVERFLOW_PATTERNS)
-        if not is_non_overflow and any(pattern.search(error_message) for pattern in _OVERFLOW_PATTERNS):
-            return True
+        if not is_non_overflow:
+            if any(pattern.search(error_message) for pattern in _OVERFLOW_PATTERNS):
+                return True
+            if message.provider == "cerebras" and _CEREBRAS_BODYLESS_OVERFLOW_PATTERN.search(error_message):
+                return True
 
     # Case 2: silent overflow (z.ai style) — successful but usage exceeds context
     if context_window and message.stop_reason == "stop":

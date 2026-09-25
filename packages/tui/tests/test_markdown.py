@@ -1411,7 +1411,7 @@ def test_stabilizes_partial_closing_fence_rendering():
 
 def test_renders_inline_dollar_and_parenthesis_delimiters():
     markdown = Markdown(
-        r"A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, and \(s \to \infty\).",
+        r"A map $\mathbb{C}^3 \to \mathbb{C}^3$, $xy$, $x-y$, $-x$, $\frac{1}{2}$, $\rightarrow$, and \(s \to \infty\).",
         0,
         0,
         default_markdown_theme,
@@ -1419,7 +1419,7 @@ def test_renders_inline_dollar_and_parenthesis_delimiters():
 
     lines = [strip_ansi(line).rstrip() for line in markdown.render(80)]
 
-    assert lines == ["A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, and s → ∞."]
+    assert lines == ["A map ℂ³ → ℂ³, xy, x-y, -x, 1/2, →, and s → ∞."]
 
 
 def test_renders_display_dollar_delimiters_without_markdown_escape_corruption():
@@ -1528,7 +1528,7 @@ def test_does_not_render_latex_inside_escaped_delimiters_or_code_fences():
 
 def test_allows_latex_rendering_to_be_disabled():
     markdown = Markdown(
-        r"Map $\mathbb{C}^3 \to \mathbb{C}^3$",
+        "$$\n\\widetilde Y_{sf}\n=\n(1-w_{sf})\\mu_{sf}^{\\mathrm{MAR}}\n$$\n\nInline \\(A_{sf}\\)",
         0,
         0,
         default_markdown_theme,
@@ -1536,7 +1536,15 @@ def test_allows_latex_rendering_to_be_disabled():
         {"renderLatex": False},
     )
 
-    assert [strip_ansi(line).rstrip() for line in markdown.render(80)] == [r"Map $\mathbb{C}^3 \to \mathbb{C}^3$"]
+    assert [strip_ansi(line).rstrip() for line in markdown.render(80)] == [
+        "$$",
+        r"\widetilde Y_{sf}",
+        "=",
+        r"(1-w_{sf})\mu_{sf}^{\mathrm{MAR}}",
+        "$$",
+        "",
+        r"Inline \(A_{sf}\)",
+    ]
 
 
 def test_switches_from_raw_to_rendered_math_when_a_streamed_delimiter_closes():

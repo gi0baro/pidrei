@@ -68,6 +68,20 @@ def test_includes_low_for_deepseek_v4_flash_on_opencode_go():
     assert get_supported_thinking_levels(flash) == ["off", "low", "high", "max"]
 
 
+def test_preserves_low_high_max_metadata_for_deepseek_v4_1_flash_on_openrouter():
+    model = next((model for model in MODELS["openrouter"] if model.id == "deepseek/deepseek-v4.1-flash"), None)
+    assert model is not None
+
+    assert get_supported_thinking_levels(model) == ["off", "low", "high", "max"]
+
+
+def test_preserves_low_high_max_metadata_for_deepseek_v4_1_flash_on_opencode_go():
+    model = next((model for model in MODELS["opencode-go"] if model.id == "deepseek-v4.1-flash"), None)
+    assert model is not None
+
+    assert get_supported_thinking_levels(model) == ["low", "high", "max"]
+
+
 def test_includes_xhigh_and_max_for_bedrock_claude_opus_5():
     opus = next(model for model in MODELS["amazon-bedrock"] if model.id == "global.anthropic.claude-opus-5")
 

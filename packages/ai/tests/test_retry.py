@@ -32,6 +32,11 @@ OPENAI_RESPONSES_EARLY_EOF_MESSAGE = "OpenAI Responses stream ended before a ter
 WRAPPED_DNS_LOOKUP_ERROR = (
     "The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)"
 )
+AZURE_PEAK_LOAD_ERROR = (
+    "The system is currently experiencing high demand and cannot process your request. Your request exceeds the "
+    "maximum usage size allowed during peak load. For improved capacity reliability, consider switching to "
+    "Provisioned Throughput."
+)
 
 
 def error_message(text: str):
@@ -68,11 +73,17 @@ class TestProviderRetryClassification:
     def test_matches_openai_responses_streams_that_end_before_terminal_events(self):
         assert is_retryable_assistant_error(error_message(OPENAI_RESPONSES_EARLY_EOF_MESSAGE)) is True
 
+    def test_matches_azure_peak_load_capacity_errors(self):
+        # Regression for #9669.
+        assert is_retryable_assistant_error(error_message(AZURE_PEAK_LOAD_ERROR)) is True
+
     def test_keeps_provider_limit_errors_non_retryable(self):
         assert is_retryable_assistant_error(error_message("429 quota exceeded")) is False
 
     def test_classifies_assistant_error_messages(self):
         assert is_retryable_assistant_error(error_message("overloaded_error")) is True
+        # Regression for #9627.
+        assert is_retryable_assistant_error(error_message("520 status code (no body)")) is True
         assert is_retryable_assistant_error(error_message("524 status code (no body)")) is True
         assert is_retryable_assistant_error(faux_assistant_message("not an error")) is False
 

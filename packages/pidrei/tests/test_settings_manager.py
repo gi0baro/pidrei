@@ -350,6 +350,36 @@ class TestHttpIdleTimeoutMs:
             manager.get_http_idle_timeout_ms()
 
 
+class TestCacheWarming:
+    @pytest.mark.tonio
+    async def test_defaults_to_streaming_and_ignores_project_settings(self, dirs):
+        agent_dir, project_dir = dirs
+
+        async def mode() -> str:
+            return (await SettingsManager.create(str(project_dir), str(agent_dir))).get_cache_warming_mode()
+
+        assert await mode() == "streaming"
+
+        write_json(project_dir / ".pidrei" / "settings.json", {"cacheWarming": "idle"})
+        assert await mode() == "streaming"
+
+        write_json(agent_dir / "settings.json", {"cacheWarming": "idle"})
+        assert await mode() == "idle"
+
+        write_json(agent_dir / "settings.json", {"cacheWarming": "bogus"})
+        assert await mode() == "streaming"
+
+    @pytest.mark.tonio
+    async def test_persists_the_mode_globally(self, dirs):
+        agent_dir, project_dir = dirs
+        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager.set_cache_warming_mode("off")
+        await manager.flush()
+
+        assert (await SettingsManager.create(str(project_dir), str(agent_dir))).get_cache_warming_mode() == "off"
+        assert json.loads((agent_dir / "settings.json").read_text(encoding="utf-8")) == {"cacheWarming": "off"}
+
+
 class TestExternalEditor:
     def test_resolves_editor_commands_by_precedence(self, monkeypatch):
         monkeypatch.setenv("VISUAL", "vim")

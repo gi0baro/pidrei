@@ -1,15 +1,18 @@
-"""vitest fake timers for the adaptive publisher.
+"""vitest fake timers over pidrei's clock and timer seams.
 
-pi drives `Date.now()` and `setTimeout` from `vi.useFakeTimers()`; pidrei's
-publisher reads the clock through `pidrei_ai.utils.clock.now_ms` and arms its
-trailing timer through `adaptive_publisher._set_timeout`, so a test swaps both
-for this queue and advances time by hand.
+pi drives `Date.now()` and `setTimeout` from `vi.useFakeTimers()`; pidrei reads
+the clock through `pidrei_ai.utils.clock.now_ms` and arms timers through
+`pidrei_ai.utils.timers.set_timeout`, so a test swaps both for this queue and
+advances time by hand.
+
+Shared by the agent and pidrei suites (the pidrei suite imports it from this
+directory, like its `tui/tests` helpers); each suite's conftest restores both
+seams after every test.
 """
 
 import contextlib
 
-from pidrei_agent.harness.utils import adaptive_publisher
-from pidrei_ai.utils import clock
+from pidrei_ai.utils import clock, timers
 
 
 class FakeTimers:
@@ -32,6 +35,25 @@ class FakeTimers:
 
         return cancel
 
+    @property
+    def pending(self) -> int:
+        """`vi.getTimerCount()`: timers armed and not yet fired or cancelled."""
+        return len(self._timers)
+
+    def pop_due(self, target_ms: int) -> object | None:
+        """Remove the earliest timer due by `target_ms` and return its callback
+        without calling it (advancing `now` to its due time), or None.
+
+        For timers whose callback only spawns async work: the test awaits that
+        work itself instead of racing a detached task."""
+        due = sorted((entry for entry in self._timers if entry[0] <= target_ms), key=lambda e: (e[0], e[1]))
+        if not due:
+            return None
+        entry = due[0]
+        self._timers.remove(entry)
+        self.now = max(self.now, entry[0])
+        return entry[2]
+
     def advance(self, ms: int) -> None:
         """`vi.advanceTimersByTime`: fire every timer due within `ms`, in order."""
         target = self.now + ms
@@ -48,13 +70,13 @@ class FakeTimers:
 
 @contextlib.contextmanager
 def fake_timers(start_ms: int = 0):
-    timers = FakeTimers(start_ms)
+    fake = FakeTimers(start_ms)
     original_now = clock.now_ms
-    original_set_timeout = adaptive_publisher._set_timeout
-    clock.now_ms = timers.now_ms
-    adaptive_publisher._set_timeout = timers.set_timeout
+    original_set_timeout = timers.set_timeout
+    clock.now_ms = fake.now_ms
+    timers.set_timeout = fake.set_timeout
     try:
-        yield timers
+        yield fake
     finally:
         clock.now_ms = original_now
-        adaptive_publisher._set_timeout = original_set_timeout
+        timers.set_timeout = original_set_timeout

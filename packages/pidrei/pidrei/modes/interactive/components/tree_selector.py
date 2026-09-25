@@ -326,6 +326,8 @@ class TreeList:
 
         def passes(flat_node: dict) -> bool:
             entry = flat_node["node"].entry
+            if entry.get("type") == "usage":
+                return False
             is_current_leaf = entry["id"] == self._current_leaf_id
             message = entry.get("message")
 

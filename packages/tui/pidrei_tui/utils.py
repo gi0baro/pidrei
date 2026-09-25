@@ -30,6 +30,8 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
   what the renderer measures.
 - ``cjkBreakRegex`` (Script_Extensions) → explicit codepoint ranges for
   Han/Hiragana/Katakana/Hangul/Bopomofo blocks and CJK punctuation.
+- ``cjkPunctuationRegex`` (Punctuation ∩ Script_Extensions) → the codepoints
+  it matches, enumerated once from pi's expression.
 - JS ``String.length`` is UTF-16 units; where the distinction matters
   (couldBeEmoji's ``length > 2``) the UTF-16 length is computed explicitly.
 - The pooled ``AnsiCodeTracker`` used by ``extract_segments`` is per-thread
@@ -178,6 +180,17 @@ cjk_break_regex = re.compile(
     "\U00020000-\U0003ffff"  # CJK extensions B+
     "]"
 )
+
+# CJK letters remain part of words and paths; only punctuation can separate prose from completions.
+# pi selects punctuation within the Script_Extensions set (which `re` cannot express) plus a fixed
+# list of fullwidth marks; these are exactly the codepoints that expression matches.
+cjk_punctuation_regex = re.compile(
+    r"[·—‘’“”…、-〃〈-】〔-〟〰〽"
+    r"゠・﹅﹆！（），．：；？［］｛｝"
+    r"｡-･\U00016fe2]"
+)
+autocomplete_separator_regex = re.compile(rf"(?:\s|{cjk_punctuation_regex.pattern})")
+autocomplete_boundary_regex = re.compile(rf"(?:^|{autocomplete_separator_regex.pattern})")
 
 
 def _is_default_ignorable(cp: int) -> bool:

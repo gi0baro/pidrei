@@ -6,12 +6,24 @@ Response; here the fake implements the adapter's `AnthropicClient` protocol.
 
 import json
 import time
+from dataclasses import replace
 
 import pytest
 
 from pidrei_ai.api.anthropic_messages import AnthropicOptions, stream as stream_anthropic
+from pidrei_ai.api.transform_messages import transform_messages
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, TextContent, Tool, UserMessage
+from pidrei_ai.types import (
+    AnthropicAllowedFallbackModel,
+    AnthropicMessagesCompat,
+    Context,
+    ModelCost,
+    TextContent,
+    ThinkingContent,
+    Tool,
+    UserMessage,
+)
+from pidrei_ai.utils.transcript import normalize_context
 
 
 def sse_body(events: list[tuple[str, str]]) -> bytes:
@@ -393,6 +405,97 @@ async def test_preserves_sensitive_stop_reasons_with_a_descriptive_error_message
     assert result.stop_reason == "error"
     assert result.raw_stop_reason == "sensitive"
     assert result.error_message == "Provider stopped with: sensitive"
+
+
+def response_model_events(model_id: str, content_block: dict) -> list[tuple[str, str]]:
+    return [
+        (
+            "message_start",
+            json.dumps(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_response_model",
+                        "model": model_id,
+                        "usage": {"input_tokens": 100, "output_tokens": 0},
+                    },
+                }
+            ),
+        ),
+        (
+            "content_block_start",
+            json.dumps({"type": "content_block_start", "index": 0, "content_block": content_block}),
+        ),
+        ("content_block_stop", json.dumps({"type": "content_block_stop", "index": 0})),
+        (
+            "message_delta",
+            json.dumps(
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"},
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                }
+            ),
+        ),
+        ("message_stop", json.dumps({"type": "message_stop"})),
+    ]
+
+
+@pytest.mark.tonio
+async def test_keeps_signed_thinking_replayable_when_a_proxy_relabels_the_model():
+    # Regression test for earendil-works/pi#9188.
+    model = get_builtin_model("anthropic", "claude-opus-5")
+    response_model = "kimi-for-coding"
+    initial_context = normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)]))
+    first = await stream_anthropic(
+        model,
+        initial_context,
+        AnthropicOptions(
+            client=FakeClient(
+                sse_body(
+                    response_model_events(
+                        response_model, {"type": "thinking", "thinking": "reasoning", "signature": "signature"}
+                    )
+                )
+            )
+        ),
+    ).result()
+
+    assert first.model == model.id
+    assert first.response_model == response_model
+
+    transformed = transform_messages([*initial_context.messages, first], model)
+    replayed_assistant = next(message for message in transformed if message.role == "assistant")
+    assert replayed_assistant.content == [ThinkingContent(thinking="reasoning", thinking_signature="signature")]
+
+
+@pytest.mark.tonio
+async def test_uses_a_returned_fallback_model_for_cost_attribution():
+    fallback_model = "fallback-model"
+    model = replace(
+        get_builtin_model("anthropic", "claude-opus-5"),
+        compat=AnthropicMessagesCompat(
+            allowed_fallback_models=[
+                AnthropicAllowedFallbackModel(
+                    provider="anthropic",
+                    model=fallback_model,
+                    cost=ModelCost(input=3, output=5, cache_read=0, cache_write=0),
+                )
+            ]
+        ),
+    )
+    result = await stream_anthropic(
+        model,
+        normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)])),
+        AnthropicOptions(
+            client=FakeClient(sse_body(response_model_events(fallback_model, {"type": "text", "text": "done"})))
+        ),
+    ).result()
+
+    assert result.model == model.id
+    assert result.response_model == fallback_model
+    assert result.usage.cost.input == pytest.approx(0.0003, abs=1e-10)
+    assert result.usage.cost.output == pytest.approx(0.0001, abs=1e-10)
 
 
 @pytest.mark.tonio

@@ -1068,6 +1068,30 @@ async def test_retains_recently_offscreen_kitty_images_for_placement_only_reuse(
         await tui.stop()
 
 
+@pytest.mark.parametrize("wezterm", [True, False])
+@pytest.mark.tonio
+async def test_clears_rows_before_drawing_kitty_images_only_in_wezterm(monkeypatch, wezterm):
+    # pidrei-only: pi ships this fix (#9169) without a test. WezTerm erases image
+    # cells a later EL row clear intersects, so every clear must precede the images.
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    monkeypatch.delenv("WEZTERM_PANE", raising=False)
+    if wezterm:
+        monkeypatch.setenv("WEZTERM_PANE", "0")
+    with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):
+        terminal = RecordingTerminal(20, 2)
+        tui = TuiAltScreen(terminal)
+        image_id = 654
+        image_line = encode_kitty("AAAA", columns=2, rows=1, image_id=image_id, move_cursor=False)
+        register_kitty_image_metadata({"imageId": image_id, "columns": 2, "rows": 1, "widthPx": 100, "heightPx": 50})
+        tui.set_layout_root(_image_scroll_view([image_line, "after"]))
+        await tui.start()
+        frames = await terminal.wait_for_write("\x1b_Ga=T")
+        assert frames
+        frame = frames[0]
+        assert ("\x1b[2K" in frame[frame.index("\x1b_Ga=T") :]) is not wezterm
+        await tui.stop()
+
+
 @pytest.mark.tonio
 async def test_evicts_the_least_recently_visible_kitty_image_when_the_cache_is_full():
     with capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True}):

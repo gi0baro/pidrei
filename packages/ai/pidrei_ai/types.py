@@ -98,6 +98,10 @@ type ChatTemplateKwargValue = str | float | bool | None | dict[str, Any]
 type ThinkingTokenBudgetField = Literal["thinking_token_budget", "thinking_budget", "thinking_budget_tokens"]
 
 type CacheRetention = Literal["none", "short", "long"]
+
+# Best-effort prompt cache lifetime in seconds for each retention tier a request can ask for.
+# A missing tier means the lifetime is unknown; pidrei does not warm such caches.
+type ModelPromptCache = dict[Literal["short", "long"], float]
 type Transport = Literal["sse", "websocket", "websocket-cached", "auto"]
 type SessionAffinityFormat = Literal["openai", "openai-nosession", "openrouter"]
 
@@ -278,7 +282,7 @@ class AssistantMessage:
     usage: Usage
     stop_reason: StopReason
     timestamp: int  # Unix timestamp in milliseconds
-    # Concrete response model when different from the requested one (e.g. OpenRouter `auto`).
+    # Concrete model reported by the provider when different from the requested `model`.
     response_model: str | None = None
     response_id: str | None = None  # Provider-specific response/message identifier
     # Exact provider-native effort level used for this response. None for legacy or unmanaged responses.
@@ -594,6 +598,8 @@ class Model:
     cost: ModelCost
     context_window: int
     max_tokens: int
+    # Prompt cache lifetimes per retention tier. None when the provider's cache behavior is unknown.
+    prompt_cache: ModelPromptCache | None = None
     # Default sampling parameters for this model. See StreamOptions.sampling_params;
     # per-request keys override these.
     sampling_params: dict[str, Any] | None = None

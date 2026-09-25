@@ -659,11 +659,12 @@ def stream(
                     input_transformations = _pick_input_transformations(message, input_transformations)
                     # Anthropic reports the model it actually served, which differs
                     # from the requested one when a refusal fallback fires.
-                    served_model = message.get("model")
-                    if isinstance(served_model, str):
-                        output.model = served_model
-                    fallback_cost = None if output.model == model.id else _find_fallback_cost(model, output.model)
-                    usage_model = replace(model, id=output.model, cost=fallback_cost) if fallback_cost else model
+                    # `model` stays the requested id so thinking replay keeps matching it.
+                    response_model = message.get("model")
+                    if response_model != model.id:
+                        output.response_model = response_model
+                    fallback_cost = None if response_model == model.id else _find_fallback_cost(model, response_model)
+                    usage_model = replace(model, id=response_model, cost=fallback_cost) if fallback_cost else model
                     # Capture initial usage so input counts survive early aborts.
                     output.usage.input = usage.get("input_tokens") or 0
                     output.usage.output = usage.get("output_tokens") or 0

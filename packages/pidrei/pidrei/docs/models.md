@@ -69,8 +69,28 @@ adapters pidrei implements. Most third-party endpoints are
 | `contextWindow` | Total context in tokens |
 | `maxTokens` | Maximum output tokens |
 | `cost` | `input` / `output` / `cacheRead` / `cacheWrite` per million tokens, and optional `tiers` |
+| `promptCache` | Best-effort prompt cache lifetime in seconds per retention tier (see below) |
 | `headers` | Extra headers for this model only |
 | `compat` | Per-model compatibility switches |
+
+## Prompt cache lifetimes
+
+`promptCache` states how long the provider keeps a prompt cache entry alive
+for each retention tier pidrei can request (`short` is the default tier;
+`long` is used when `PIDREI_CACHE_RETENTION=long`). Values are seconds and are
+estimates: providers publish ranges, so pick the conservative end.
+
+```jsonc
+{ "id": "claude-sonnet-5", "promptCache": { "short": 300, "long": 3600 } }
+```
+
+Cache warming (the `cacheWarming` setting: `"off"`, `"streaming"` — the
+default — or `"idle"`, also in `/settings`) re-sends the last request with a
+one-token output budget shortly before the entry expires, when the expected
+avoided cache-miss cost outweighs the refresh. A model without a lifetime for
+the tier a request used is never warmed. The built-in catalog fills this in
+for direct Anthropic only; a `promptCache` override opts in a proxy whose
+backing cache you know (merged per tier).
 
 ## Overriding a built-in model
 

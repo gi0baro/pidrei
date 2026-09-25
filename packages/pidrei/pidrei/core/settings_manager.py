@@ -45,6 +45,10 @@ from .http_config import DEFAULT_HTTP_IDLE_TIMEOUT_MS, parse_http_idle_timeout_m
 type Settings = dict[str, Any]
 type SettingsScope = Literal["global", "project"]
 
+# Cache-warming profile. "idle" also warms between agent runs.
+CACHE_WARMING_MODES = ("off", "streaming", "idle")
+type CacheWarmingMode = Literal["off", "streaming", "idle"]
+
 
 def _is_mergeable_object(value: Any) -> bool:
     return isinstance(value, dict)
@@ -855,6 +859,14 @@ class SettingsManager:
         ):
             raise Exception(f"Invalid httpIdleTimeoutMs setting: {timeout_ms}")
         self._set_global("httpIdleTimeoutMs", math.floor(timeout_ms))
+
+    def get_cache_warming_mode(self) -> CacheWarmingMode:
+        """Read from global settings only because warming costs money."""
+        mode = self._global_settings.get("cacheWarming")
+        return mode if mode in CACHE_WARMING_MODES else "streaming"
+
+    def set_cache_warming_mode(self, mode: CacheWarmingMode) -> None:
+        self._set_global("cacheWarming", mode)
 
     def get_provider_retry_settings(self) -> dict[str, Any]:
         provider = (self._settings.get("retry") or {}).get("provider") or {}

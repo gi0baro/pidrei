@@ -44,7 +44,7 @@ LATEX_CASES = [
     ("\\ge 2", "≥ 2"),
     ("\\ge 3", "≥ 3"),
     ("1", "1"),
-    ("\\mathrm{diag}(-1/2,1,1)", "diag(-1/2,1,1)"),
+    ("\\mathrm{diag}(-1/2,1,1),\\quad F_{\\rm intrinsic}(\\lambda)", "diag(-1/2,1,1), F_intrinsic(λ)"),
     ("4+3xy", "4+3xy"),
     (
         "E \\approx \\frac{0.1\\ \\text{lux}}{100\\ \\text{lm/W}} = 0.001\\ \\text{W/m}^2",
@@ -132,7 +132,7 @@ LATEX_CASES = [
     ),
     (
         "\\Psi(x,t)=\n\\sum_{n=1}^{\\infty}\n\\underbrace{\nc_n\n\\sqrt{\\frac{2}{L}}\n\\sin\\!\\left(\\frac{n\\pi x}{L}\\right)\n}_{\\text{spatial eigenmode}}\n\\exp\\!\\left(-\\frac{i\\hbar n^2\\pi^2}{2mL^2}t\\right),\n\\qquad\n|\\Psi(x,t)|^2\n=\n\\begin{cases}\n\\Psi^\\ast\\Psi, & 0<x<L,\\\\\n0, & \\text{otherwise}.\n\\end{cases}",
-        "Ψ(x,t) = ∑ₙ₌₁^∞ cₙ √(2/L) sin((nπ x)/L)_(spatial eigenmode) exp(-(iℏ n²π²)/(2mL²)t), |Ψ(x,t)|² = ⎧ Ψ^∗Ψ if 0 < x < L,\n⎩ 0 otherwise.",
+        f"{' ' * 97}⎧ Ψ^∗Ψ if 0 < x < L,\nΨ(x,t) = ∑ₙ₌₁^∞ cₙ √(2/L) sin((nπ x)/L)_(spatial eigenmode) exp(-(iℏ n²π²)/(2mL²)t), |Ψ(x,t)|² = ⎨\n{' ' * 97}⎩ 0    otherwise.",
     ),
     ("x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}", "x = (-b±√(b²-4ac))/(2a)"),
     ("\\int_0^\\infty e^{-x^2}\\,dx=\\frac{\\sqrt{\\pi}}{2}", "∫₀^∞ e^(-x²) dx = (√π)/2"),
@@ -185,13 +185,20 @@ LATEX_ASSERT_CASES = [
     ("\\overset{!}{=}+\\underset{n}{x}+\\stackrel{def}{=}", False, "=^!+xₙ+=ᵈᵉᶠ"),
     ("\\sqrt[2]{x}+\\sqrt[3]{x}+\\sqrt[4]{x}+\\sqrt[n]{x}+\\sqrt[k]{x+1}", False, "√x+∛x+∜x+ⁿ√x+ᵏ√(x+1)"),
     ("\\acute{x}+\\grave{y}+\\widehat{xyz}+\\overrightarrow{AB}", False, "x́+ỳ+widehat(xyz)+overrightarrow(AB)"),
-    ("\\textnormal{hello}+\\mbox{world}+\\boldsymbol{x}", False, "hello+world+x"),
+    (
+        (
+            "\\textnormal{hello}+\\mbox{world}+\\boldsymbol{x}+{\\rm roman}+{\\bf bold}+{\\it italic}+{\\sf sans}"
+            "+{\\tt mono}+{\\cal calligraphic}+{\\sl slanted}"
+        ),
+        False,
+        "hello+world+x+roman+bold+italic+sans+mono+calligraphic+slanted",
+    ),
     ("\\begin{equation}\\begin{split}a&=b\\\\&=c\\end{split}\\end{equation}", False, "a = b\n= c"),
     ("\\begin{alignedat}{2}a&=b&\\quad c&=d\\\\e&=f&g&=h\\end{alignedat}", False, "a = b c = d\ne = f g = h"),
     (
-        "\\begin{cases}a & x<0 \\\\ b & \\text{if }x=0 \\\\ c & \\text{otherwise}\\end{cases}",
+        "f(x)=\\begin{cases}a & x<0 \\\\ b & \\text{if }x=0 \\\\ c & \\text{otherwise}\\end{cases}",
         False,
-        "⎧ a if x < 0\n⎨ b if x = 0\n⎩ c otherwise",
+        "       ⎧ a if x < 0\nf(x) = ⎨ b if x = 0\n       ⎩ c otherwise",
     ),
     ("\\begin{pmatrix}1&200\\\\3000&4\\end{pmatrix}", False, "⎛ 1    │ 200 ⎞\n⎝ 3000 │ 4   ⎠"),
     (
@@ -235,12 +242,25 @@ LATEX_ASSERT_CASES = [
     ("\\operatorname*{arg\\,max}_{x\\in X} f(x)", True, "arg max f(x)\n  x∈X"),
     ("\\int\\nolimits_0^1 f(x)\\,dx", True, "∫₀¹ f(x) dx"),
     ("\\int\\limits_0^1 f(x)\\,dx", True, "1\n∫ f(x) dx\n0"),
-    ("\\begin{cases}a & x<0 \\\\ b & x=0 \\\\ c & x>0\\end{cases}", False, "⎧ a if x < 0\n⎨ b if x = 0\n⎩ c if x > 0"),
+    # Even case rows center around a middle brace.
+    (
+        "f(x) = \\begin{cases} x^{2} & x \\geq 0 \\\\ -x & x < 0 \\end{cases}",
+        False,
+        "       ⎧ x² if x ≥ 0\nf(x) = ⎨\n       ⎩ -x if x < 0",
+    ),
     ("x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}", True, "    -b±√(b²-4ac)\nx = ────────────\n         2a"),
     ("\\frac{x^2+1}{x-1}", True, "x²+1\n────\nx-1"),
     ("\\frac{1}\n{2}", True, "1\n─\n2"),
-    ("e^{\\frac{1}{2}}", True, "e^(1/2)"),
-    ("\\tfrac{1}{2}", True, "1/2"),
+    # Unsupported and nested scripts are laid out; script fractions stay linear.
+    (
+        "\\partial_tU_2(t,0)=Aj_*(1-t)^{-A-1}.\\qquad x^{n^2}+x_{i_j}",
+        True,
+        (
+            "                            2\n                    -A-1   n\n∂ₜU₂(t,0) = Aj (1-t)    . x  +x\n"
+            "              *                i\n                                j"
+        ),
+    ),
+    ("e^{\\frac{1}{2}}+\\tfrac{1}{2}", True, "e^(1/2)+1/2"),
     ("x + \\unknown{y}", False, None),
     ("x=y", False, "x = y"),
     ("x =y", False, "x = y"),

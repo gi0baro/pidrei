@@ -2,13 +2,16 @@
 
 import os
 import re
+import threading
 import time
+from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored import fs
 
+from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, Input, Spacer, Text, get_keybindings, truncate_to_width, visible_width
 from pidrei_tui._timers import Timeout
 
@@ -303,6 +306,9 @@ class SessionList:
         self._canonical_by_path: dict[str, str] = {}
         self._filtered_sessions: list = []
         self._selected_index = 0
+        self._selection_touched = False
+        self._set_sessions_guard = threading.Lock()
+        self._set_sessions_seq = 0
         self._search_input = Input()
         self._show_cwd = show_cwd
         self._sort_mode = sort_mode
@@ -359,13 +365,38 @@ class SessionList:
         self._name_filter = name_filter
         self._filter_sessions(self._search_input.get_value())
 
-    async def set_sessions(self, sessions: list, show_cwd: bool) -> None:
-        self._all_sessions = sessions
-        self._show_cwd = show_cwd
+    def set_sessions(self, sessions: list, show_cwd: bool) -> Awaitable[None]:
+        """Replace the listed sessions; returns the awaitable remainder.
+
+        pi's setSessions is synchronous; here the canonical-path map is built
+        off the runtime first, so progressive loads can have several calls in
+        flight. The call order is taken synchronously and only the latest call
+        applies, whichever finishes last.
+        """
+        with self._set_sessions_guard:
+            self._set_sessions_seq += 1
+            seq = self._set_sessions_seq
+        return self._apply_sessions(seq, sessions, show_cwd)
+
+    async def _apply_sessions(self, seq: int, sessions: list, show_cwd: bool) -> None:
         # Resolve every session path once here, off the runtime, so the
         # per-keystroke filter below never touches the filesystem.
-        self._canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map, sessions)
+        canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map, sessions)
+        if seq != self._set_sessions_seq:
+            return
+        selected_path = self.get_selected_session_path() if self._selection_touched else None
+        self._all_sessions = sessions
+        self._show_cwd = show_cwd
+        self._canonical_by_path = canonical_by_path
         self._filter_sessions(self._search_input.get_value())
+        if not self._selection_touched:
+            self._selected_index = 0
+        elif selected_path:
+            selected_index = next(
+                (i for i, node in enumerate(self._filtered_sessions) if node["session"].path == selected_path), -1
+            )
+            if selected_index >= 0:
+                self._selected_index = selected_index
 
     def _filter_sessions(self, query: str) -> None:
         trimmed = query.strip()
@@ -583,6 +614,7 @@ class SessionList:
             self._start_delete_confirmation_for_selected_session()
             return
 
+        self._selection_touched = True
         # Up arrow
         if kb.matches(key_data, "tui.select.up"):
             self._selected_index = max(0, self._selected_index - 1)
@@ -653,6 +685,10 @@ async def delete_session_file(session_path: str) -> dict:
         return {"ok": False, "method": "unlink", "error": error}
 
 
+async def _already_loading() -> None:
+    """The remainder of a `_load_scope` call that found its scope already loading."""
+
+
 class SessionSelectorComponent(Container):
     """Component that renders a session selector."""
 
@@ -681,9 +717,9 @@ class SessionSelectorComponent(Container):
         self._name_filter = "all"
         self._current_sessions: list | None = None
         self._all_sessions: list | None = None
-        self._current_loading = False
-        self._all_loading = False
-        self._all_load_seq = 0
+        # The in-flight load per scope (pi's AbortControllers); None when idle.
+        self._current_load: CancelToken | None = None
+        self._all_load: CancelToken | None = None
         self._mode = "list"
         self._rename_input = Input()
         self._rename_target_path: str | None = None
@@ -716,14 +752,17 @@ class SessionSelectorComponent(Container):
 
         def handle_select(session_path: str) -> None:
             clear_status_message()
+            self._cancel_loads()
             on_select(session_path)
 
         def handle_cancel() -> None:
             clear_status_message()
+            self._cancel_loads()
             on_cancel()
 
         def handle_exit() -> None:
             clear_status_message()
+            self._cancel_loads()
             on_exit()
 
         self._session_list.on_select = handle_select
@@ -736,9 +775,7 @@ class SessionSelectorComponent(Container):
         def handle_rename(session_path: str) -> None:
             if rename_session is None:
                 return
-            if self._scope == "current" and self._current_loading:
-                return
-            if self._scope == "all" and self._all_loading:
+            if (self._current_load if self._scope == "current" else self._all_load) is not None:
                 return
 
             sessions = (self._all_sessions or []) if self._scope == "all" else (self._current_sessions or [])
@@ -792,7 +829,7 @@ class SessionSelectorComponent(Container):
         self._session_list.on_delete_session = handle_delete_session
 
         # Start loading current sessions immediately
-        self._load_current_sessions()
+        tonio.spawn.without_tracking(self._load_scope("current"))
 
     # Focusable implementation - propagate to session list for IME cursor
     # positioning
@@ -833,8 +870,15 @@ class SessionSelectorComponent(Container):
         self.add_child(Spacer(1))
         self.add_child(DynamicBorder(lambda s: theme.fg("accent", s)))
 
-    def _load_current_sessions(self) -> None:
-        tonio.spawn.without_tracking(self._load_scope("current", "initial"))
+    def _cancel_loads(self) -> None:
+        if self._current_load is not None:
+            self._current_load.cancel()
+            self._current_load = None
+            self._current_sessions = None
+        if self._all_load is not None:
+            self._all_load.cancel()
+            self._all_load = None
+            self._all_sessions = None
 
     def _enter_rename_mode(self, session_path: str, current_name: str | None) -> None:
         self._mode = "rename"
@@ -889,78 +933,84 @@ class SessionSelectorComponent(Container):
         finally:
             self._exit_rename_mode()
 
-    def _load_scope(self, scope: str, reason: str):
+    def _load_scope(self, scope: str) -> Awaitable[None]:
         """Start a scope load; returns the awaitable remainder.
 
-        pi's async loadScope runs synchronously up to its first await, so
-        the loading flags are observable immediately after the call; this
-        sync prologue mirrors that before handing back the coroutine.
+        pi's async loadScope runs synchronously up to its first await, so the
+        in-flight load is observable immediately after the call; this sync
+        prologue mirrors that before handing back the coroutine.
         """
-        show_cwd = scope == "all"
+        if (self._current_load if scope == "current" else self._all_load) is not None:
+            return _already_loading()
 
-        # Mark loading
+        cancel = CancelToken()
         if scope == "current":
-            self._current_loading = True
+            self._current_load = cancel
         else:
-            self._all_loading = True
-
-        if scope == "all":
-            self._all_load_seq += 1
-            seq = self._all_load_seq
-        else:
-            seq = None
+            self._all_load = cancel
         self._header.set_scope(scope)
         self._header.set_loading(True)
         self._request_render()
+        return self._load_scope_rest(scope, cancel)
 
-        return self._load_scope_rest(scope, reason, show_cwd, seq)
+    def _set_scope_sessions(self, scope: str, sessions: list | None) -> None:
+        if scope == "current":
+            self._current_sessions = sessions
+        else:
+            self._all_sessions = sessions
 
-    async def _load_scope_rest(self, scope: str, reason: str, show_cwd: bool, seq: int | None) -> None:
-        def on_progress(loaded: int, total: int) -> None:
-            if scope != self._scope:
+    async def _load_scope_rest(self, scope: str, cancel: CancelToken) -> None:
+        show_cwd = scope == "all"
+
+        def is_active() -> bool:
+            return (self._current_load if scope == "current" else self._all_load) is cancel
+
+        def on_progress(loaded: int, total: int, partial_sessions: list | None) -> None:
+            if not is_active():
                 return
-            if seq is not None and seq != self._all_load_seq:
+            if partial_sessions is not None:
+                sessions = [*partial_sessions]
+                self._set_scope_sessions(scope, sessions)
+                if scope == self._scope:
+                    # Progress arrives on a sync callback; `set_sessions` orders
+                    # calls at call time, so the final list still wins.
+                    tonio.spawn.without_tracking(self._session_list.set_sessions(sessions, show_cwd))
+            if scope != self._scope:
                 return
             self._header.set_progress(loaded, total)
             self._request_render()
 
+        loader = self._current_sessions_loader if scope == "current" else self._all_sessions_loader
         try:
-            if scope == "current":
-                sessions = await self._current_sessions_loader(on_progress)
-            else:
-                sessions = await self._all_sessions_loader(on_progress)
+            sessions = await loader(on_progress, cancel)
+            if not is_active():
+                return
 
+            self._set_scope_sessions(scope, sessions)
             if scope == "current":
-                self._current_sessions = sessions
-                self._current_loading = False
+                self._current_load = None
             else:
-                self._all_sessions = sessions
-                self._all_loading = False
+                self._all_load = None
 
             if scope != self._scope:
                 return
-            if seq is not None and seq != self._all_load_seq:
-                return
-
             self._header.set_loading(False)
             await self._session_list.set_sessions(sessions, show_cwd)
             self._request_render()
         except Exception as err:
-            if scope == "current":
-                self._current_loading = False
-            else:
-                self._all_loading = False
-
-            if scope != self._scope:
+            if not is_active():
                 return
-            if seq is not None and seq != self._all_load_seq:
+            self._set_scope_sessions(scope, None)
+            if scope == "current":
+                self._current_load = None
+            else:
+                self._all_load = None
+            if scope != self._scope:
                 return
 
             self._header.set_loading(False)
             self._header.set_status_message({"type": "error", "message": f"Failed to load sessions: {err}"}, 4000)
-
-            if reason == "initial":
-                await self._session_list.set_sessions([], show_cwd)
+            await self._session_list.set_sessions([], show_cwd)
             self._request_render()
 
     def _toggle_sort_mode(self) -> None:
@@ -982,28 +1032,24 @@ class SessionSelectorComponent(Container):
         self._request_render()
 
     async def _refresh_sessions_after_mutation(self) -> None:
-        await self._load_scope(self._scope, "refresh")
+        self._cancel_loads()
+        self._current_sessions = None
+        self._all_sessions = None
+        await self._load_scope(self._scope)
 
     async def _toggle_scope(self) -> None:
-        if self._scope == "current":
-            self._scope = "all"
-            self._header.set_scope(self._scope)
-
-            if self._all_sessions is not None:
-                self._header.set_loading(False)
-                await self._session_list.set_sessions(self._all_sessions, True)
-                self._request_render()
-                return
-
-            if not self._all_loading:
-                tonio.spawn.without_tracking(self._load_scope("all", "toggle"))
-            return
-
-        self._scope = "current"
+        self._scope = "all" if self._scope == "current" else "current"
+        sessions = self._current_sessions if self._scope == "current" else self._all_sessions
+        loading = (self._current_load if self._scope == "current" else self._all_load) is not None
         self._header.set_scope(self._scope)
-        self._header.set_loading(self._current_loading)
-        await self._session_list.set_sessions(self._current_sessions or [], False)
+        self._header.set_loading(loading)
+        update = self._session_list.set_sessions(sessions or [], self._scope == "all")
         self._request_render()
+        # Start the load before awaiting the list update, as pi's synchronous
+        # setSessions lets it (the in-flight load is visible immediately).
+        if sessions is None and not loading:
+            tonio.spawn.without_tracking(self._load_scope(self._scope))
+        await update
 
     def get_session_list(self) -> SessionList:
         return self._session_list

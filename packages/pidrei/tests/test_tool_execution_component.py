@@ -1,21 +1,23 @@
 """Mirror of pi coding-agent test/tool-execution-component.test.ts."""
 
 import os
+import threading
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.config import get_readme_path
 from pidrei.core.extensions.types import ToolDefinition
 from pidrei.core.tools.bash import BashExecResult, create_bash_tool_definition
 from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
-from pidrei.core.tools.renderers import with_built_in_renderers
+from pidrei.core.tools.renderers import bash as bash_renderers, with_built_in_renderers
 from pidrei.core.tools.write import create_write_tool_definition
-from pidrei.modes.interactive.components import ToolExecutionComponent
+from pidrei.modes.interactive.components import ToolExecutionComponent, tool_execution
 from pidrei.modes.interactive.theme import init_theme_sync, theme
 from pidrei.utils.ansi import strip_ansi
-from pidrei_tui import Text, TuiMouseEvent
+from pidrei_tui import Text, TuiMouseEvent, reset_capabilities_cache, set_capabilities
 
 
 def create_base_tool_definition(name: str = "custom_tool") -> ToolDefinition:
@@ -44,6 +46,49 @@ CWD = os.getcwd()
 
 
 class TestToolExecutionComponentParity:
+    # Issue #8577: ignore conversions that finish after the image was replaced.
+    @pytest.mark.tonio
+    async def test_keeps_the_final_tool_image_when_a_partial_image_conversion_finishes_late(self, monkeypatch):
+        release = threading.Event()
+        returned = tonio.Event()
+
+        def convert_to_png(_data, _mime_type):
+            # Runs on the blocking pool, so waiting here does not stall the runtime.
+            release.wait(5)
+            returned.set()
+            return {"data": "converted-partial", "mimeType": "image/png"}
+
+        monkeypatch.setattr(tool_execution, "convert_to_png", convert_to_png)
+        rendered = tonio.Event()
+        set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
+        try:
+            component = ToolExecutionComponent(
+                "custom_tool", "tool-image-race", {}, {}, None, SimpleNamespace(request_render=rendered.set), CWD
+            )
+
+            component.update_result(
+                {"content": [{"type": "image", "data": "partial-jpeg", "mimeType": "image/jpeg"}], "isError": False},
+                True,
+            )
+            component.update_result(
+                {"content": [{"type": "image", "data": "final-png", "mimeType": "image/png"}], "isError": False}
+            )
+            assert "final-png" in "\n".join(component.render(120))
+
+            release.set()
+            await returned.wait(5)
+            assert returned.is_set()
+            # A late conversion that were applied would re-render; give it the chance.
+            await rendered.wait(0.2)
+            assert not rendered.is_set()
+
+            output = "\n".join(component.render(120))
+            assert "final-png" in output
+            assert "converted-partial" not in output
+        finally:
+            release.set()
+            reset_capabilities_cache()
+
     def test_stacks_custom_call_and_result_renderers_like_the_old_implementation(self):
         tool_definition = replace(
             create_base_tool_definition(),
@@ -151,6 +196,53 @@ class TestToolExecutionComponentParity:
         assert not re.search(r"line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:", rendered)
         assert "Truncated: showing 2000 of 4000 lines" in rendered
         assert "[Showing lines 2001-4000 of 4000. Full output:" not in rendered
+
+    # Issue #9628: keep short durations precise and make long shell durations readable.
+    @pytest.mark.tonio
+    @pytest.mark.parametrize(
+        ("ms", "formatted"),
+        [
+            (0, "0.0s"),
+            (4_200, "4.2s"),
+            (59_900, "59.9s"),
+            (59_999, "60.0s"),
+            (60_000, "1m 0s"),
+            (90_900, "1m 30s"),
+            (1_592_200, "26m 32s"),
+            (3_599_999, "59m 59s"),
+            (3_600_000, "1h 0m 0s"),
+            (7_384_900, "2h 3m 4s"),
+        ],
+    )
+    async def test_bash_renderer_formats_durations_while_running_and_after_completion(self, monkeypatch, ms, formatted):
+        # pi drives `Date.now()` with vi.useFakeTimers; the renderer reads the clock
+        # through its module's `time`, which is swapped for a settable one here.
+        clock = {"now_s": 0.0}
+        monkeypatch.setattr(bash_renderers, "time", SimpleNamespace(time=lambda: clock["now_s"]))
+        component = ToolExecutionComponent(
+            "bash",
+            "tool-bash-duration",
+            {"command": "long-running-command"},
+            {},
+            create_bash_tool_definition(CWD, expose_session_environment=False),
+            create_fake_tui(),
+            CWD,
+        )
+        component.mark_execution_started()
+        component.update_result({"content": [], "isError": False}, True)
+
+        clock["now_s"] += ms / 1000
+        component.invalidate()
+        running = strip_ansi("\n".join(component.render(120)))
+
+        component.update_result({"content": [], "isError": False}, False)
+        completed = strip_ansi("\n".join(component.render(120)))
+
+        clock["now_s"] += 1
+        component.invalidate()
+        assert strip_ansi("\n".join(component.render(120))) == completed
+        assert f"Elapsed {formatted}" in running
+        assert f"Took {formatted}" in completed
 
     def test_does_not_duplicate_built_in_headers_when_passed_the_active_built_in_definition(self):
         import re

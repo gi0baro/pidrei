@@ -567,7 +567,7 @@ def stream(
                             error,
                             {
                                 "configuredTransport": transport,
-                                "fallbackTransport": None if websocket_started.value else "sse",
+                                **({} if websocket_started.value else {"fallbackTransport": "sse"}),
                                 "eventsEmitted": websocket_started.value,
                                 "phase": "after_message_stream_start"
                                 if websocket_started.value

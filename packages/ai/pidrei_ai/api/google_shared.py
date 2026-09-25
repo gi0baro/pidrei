@@ -15,14 +15,15 @@ from typing import Any, Literal
 
 from pidrei_ai.api.constrained_sampling import get_json_schema_tool_parameters, resolve_json_schema_strict_sampling
 from pidrei_ai.api.transform_messages import transform_messages
+from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import (
     AssistantMessage,
     ImageContent,
     Model,
-    ModelThinkingLevel,
     StopReason,
     StreamOptions,
     TextContent,
+    ThinkingLevel,
     Tool,
     TranscriptContext,
 )
@@ -35,11 +36,8 @@ type GoogleApiThinkingLevel = Literal["THINKING_LEVEL_UNSPECIFIED", "MINIMAL", "
 type ResolvedGoogleThinkingLevel = Literal["minimal", "low", "medium", "high"]
 
 
-def resolve_google_thinking_level(model: Model, level: ModelThinkingLevel) -> ResolvedGoogleThinkingLevel:
+def resolve_google_thinking_level(model: Model, level: ThinkingLevel) -> ResolvedGoogleThinkingLevel:
     """Resolve a supported pi level or model-specific Google mapping to a standard Google level."""
-    if level == "off":
-        return "high"
-
     level_map = model.thinking_level_map or {}
     mapped = level_map.get(level)
     resolved_level = mapped.lower() if isinstance(mapped, str) else level
@@ -51,6 +49,43 @@ def resolve_google_thinking_level(model: Model, level: ModelThinkingLevel) -> Re
     raise Exception(
         f"Unsupported Google thinking level mapping for {model.provider}/{model.id}: {level} -> {described}"
     )
+
+
+_GEMINI_3_THINKING_LEVEL = re.compile(r"gemini-3(?:\.\d+)?-(?:pro|flash)")
+_GEMMA_4 = re.compile(r"gemma-?4")
+
+
+def uses_google_thinking_level(model: Model) -> bool:
+    """Whether this model uses Gemini's discrete `thinkingLevel` control instead of
+    the token-based `thinkingBudget` control. Supported levels come from the
+    model's `thinking_level_map`; this only selects the Google wire format."""
+    id = model.id.lower()
+    return (
+        # Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
+        # gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
+        _GEMINI_3_THINKING_LEVEL.search(id) is not None
+        or id == "gemini-flash-latest"
+        or id == "gemini-flash-lite-latest"
+        # Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
+        or _GEMMA_4.search(id) is not None
+    )
+
+
+def to_google_thinking_level(level: ResolvedGoogleThinkingLevel) -> GoogleApiThinkingLevel:
+    # pi's `toGoogleSdkThinkingLevel` maps these onto the SDK enum, whose values
+    # are the same wire strings; the plain-dict request body uses them directly.
+    return {"minimal": "MINIMAL", "low": "LOW", "medium": "MEDIUM", "high": "HIGH"}[level]  # type: ignore[return-value]
+
+
+def get_disabled_google_thinking_config(model: Model) -> dict[str, Any]:
+    if not uses_google_thinking_level(model):
+        return {"thinkingBudget": 0}
+
+    fallback = clamp_thinking_level(model, "off")
+    if fallback == "off":
+        return {"thinkingBudget": 0}
+
+    return {"thinkingLevel": to_google_thinking_level(resolve_google_thinking_level(model, fallback))}
 
 
 # `FunctionCallingConfigMode` in the SDK; these are its wire values.

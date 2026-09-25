@@ -753,7 +753,7 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
         merge_compat(model, {"forceAdaptiveThinking": True})
     if model["api"] == "anthropic-messages" and is_anthropic_temperature_unsupported_model(model_id):
         merge_compat(model, {"supportsTemperature": False})
-    if model["api"] == "openai-completions" and "deepseek-v4" in model_id:
+    if model["api"] == "openai-completions" and "deepseek-v4" in model_id and model.get("thinkingLevelMap") is None:
         if provider == "openrouter":
             level_map = {**DEEPSEEK_V4_THINKING_LEVEL_MAP, "xhigh": "xhigh", "max": None}
         elif provider in ("deepseek", "opencode", "opencode-go") and "deepseek-v4-flash" in model_id:
@@ -938,6 +938,21 @@ def apply_openai_explicit_prompt_cache_metadata(model: dict[str, Any]) -> None:
     if not model["cost"]["cacheWrite"] > 0:
         return
     merge_compat(model, {"supportsExplicitPromptCacheMode": True})
+
+
+# Anthropic ephemeral entries have a hard five-minute lifetime; `ttl: "1h"`
+# extends it to one hour. Only direct Anthropic is annotated so cache warming
+# does not assume equivalent behavior through proxies.
+# https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+ANTHROPIC_PROMPT_CACHE: dict[str, float] = {"short": 300, "long": 3600}
+
+
+def apply_prompt_cache_metadata(model: dict[str, Any]) -> None:
+    if model["provider"] == "anthropic" and model["api"] == "anthropic-messages":
+        model["promptCache"] = dict(ANTHROPIC_PROMPT_CACHE)
+    # Do not add OpenAI lifetimes yet. Before enabling warming for explicit
+    # OpenAI caches, re-evaluate it using observed expiry, replay, and billing
+    # behavior; a documented TTL alone does not establish full cache loss.
 
 
 def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any] | None:
@@ -1152,6 +1167,7 @@ async def fetch_ai_gateway_models(client: Client) -> list[dict[str, Any]]:
                 "provider": "vercel-ai-gateway",
                 "reasoning": "reasoning" in tags,
                 "input": model_input,
+                "compat": {"allowEmptySignature": True},
                 "cost": {
                     "input": round_cost(_to_number(pricing.get("input")) * 1_000_000),
                     "output": round_cost(_to_number(pricing.get("output")) * 1_000_000),
@@ -1896,11 +1912,11 @@ def _load_aggregator_providers(catalog: dict[str, Any], record: _Recorder) -> li
                 if f"{provider}:{model_id}" in OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS:
                     compat = {**compat, "supportsLongCacheRetention": False}
 
-            thinking_level_map = (
-                get_google_thinking_level_map(model_id, source.get("reasoning_options") or [])
-                if api == "google-generative-ai"
-                else None
-            )
+            thinking_level_map = None
+            if api == "google-generative-ai":
+                thinking_level_map = get_google_thinking_level_map(model_id, source.get("reasoning_options") or [])
+            elif provider == "opencode-go" and model_id == "deepseek-v4.1-flash":
+                thinking_level_map = get_effort_thinking_level_map(source.get("reasoning_options") or [])
             model = {
                 "id": model_id,
                 "name": source.get("name") or model_id,
@@ -1994,7 +2010,7 @@ def _load_regional_providers(catalog: dict[str, Any], record: _Recorder) -> list
             record(provider, model_id, source)
 
     # Kimi For Coding
-    kimi_models = _models_of(catalog, "kimi-for-coding")
+    kimi_models = _models_of(catalog, "kimi-code-plan-global")
     has_canonical_kimi_model = "kimi-for-coding" in kimi_models
     kimi_aliases = {"k2p5", "k2p6", "k2p7"}
     for model_id, source in kimi_models.items():
@@ -2599,6 +2615,7 @@ def apply_model_metadata(all_models: list[dict[str, Any]], reasoning_options: di
         apply_openai_completions_transcript_metadata(model)
         apply_openai_responses_transcript_metadata(model)
         apply_openai_explicit_prompt_cache_metadata(model)
+        apply_prompt_cache_metadata(model)
     apply_anthropic_allowed_fallback_model_metadata(
         [model for model in all_models if is_anthropic_fallback_metadata_model(model)]
     )

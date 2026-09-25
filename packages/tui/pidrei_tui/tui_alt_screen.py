@@ -1685,10 +1685,26 @@ class TuiAltScreen(TuiBase):
                 buffer += delete_all_kitty_placements()
         buffer += evicted_image_deletion
 
+        # WezTerm erases intersecting Kitty image cells when a later EL clears a covered row.
+        # Only separate clearing from drawing for WezTerm frames that place images; preserve the
+        # existing interleaved output for text-only frames and every other terminal.
+        clear_rows_before_kitty_images = (
+            redraw_images
+            and self._image_protocol == "kitty"
+            and any(is_image_line(line) for line in screen)
+            and (bool(os.environ.get("WEZTERM_PANE")) or os.environ.get("TERM_PROGRAM", "").lower() == "wezterm")
+        )
+        if clear_rows_before_kitty_images:
+            for row in range(height):
+                if not full_redraw and not images_need_redraw and screen[row] == self._previous_of(row):
+                    continue
+                buffer += f"\x1b[{row + 1};1H\x1b[2K"
+
         for row in range(height):
             if not full_redraw and not images_need_redraw and screen[row] == self._previous_of(row):
                 continue
-            buffer += f"\x1b[{row + 1};1H\x1b[2K{prepared_lines[row] if row < len(prepared_lines) else ''}"
+            clear_line = "" if clear_rows_before_kitty_images else "\x1b[2K"
+            buffer += f"\x1b[{row + 1};1H{clear_line}{prepared_lines[row] if row < len(prepared_lines) else ''}"
 
         if cursor_pos:
             buffer += f"\x1b[{cursor_pos['row'] + 1};{min(width, cursor_pos['col']) + 1}H"

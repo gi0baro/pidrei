@@ -39,7 +39,7 @@ class UsageCostBreakdownEntry:
 
 
 def get_usage_cost_breakdown(entries: list[dict[str, Any]]) -> list[UsageCostBreakdownEntry]:
-    """Group attributable assistant usage by model and all other usage into a separate bucket."""
+    """Group model-attributed usage by model and all other usage into a separate bucket."""
     totals_by_key: dict[str, UsageTotals] = {}
 
     for entry in entries:
@@ -51,6 +51,9 @@ def get_usage_cost_breakdown(entries: list[dict[str, Any]]) -> list[UsageCostBre
             response_model = message.response_model if message.response_model is not None else message.model
             key = f"{message.provider}/{response_model}"
             usage = message.usage
+        elif entry.get("type") == "usage":
+            key = f"{entry['provider']}/{entry['model']}"
+            usage = entry["usage"]
         elif entry.get("type") == "message" and role == "toolResult" and getattr(message, "usage", None):
             key = "Tools/summaries"
             usage = message.usage

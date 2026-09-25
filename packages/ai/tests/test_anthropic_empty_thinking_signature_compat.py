@@ -5,7 +5,7 @@ The Kimi Coding case joins when that provider's catalog lands (PLAN.md).
 
 import pytest
 
-from pidrei_ai.providers.all import get_builtin_model
+from pidrei_ai.providers.all import get_builtin_model, get_builtin_models
 from pidrei_ai.types import (
     AnthropicMessagesCompat,
     AssistantMessage,
@@ -84,6 +84,13 @@ async def test_preserves_empty_thinking_text_when_the_signature_is_present():
 async def test_preserves_empty_signature_thinking_when_allow_empty_signature_is_enabled():
     payload = await capture_payload(make_model(True), context=make_context(" "))
     assert assistant_content(payload) == [{"type": "thinking", "thinking": "internal reasoning", "signature": ""}]
+
+
+# Regression for #9676: Vercel AI Gateway emits unsigned thinking for translated models.
+def test_allows_empty_thinking_signatures_for_every_vercel_ai_gateway_model():
+    models = get_builtin_models("vercel-ai-gateway")
+    assert len(models) > 0
+    assert all(model.compat is not None and model.compat.allow_empty_signature is True for model in models)
 
 
 # Regression for #9323: Fireworks emits unsigned thinking that must survive replay.

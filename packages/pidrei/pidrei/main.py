@@ -264,10 +264,14 @@ async def _resolve_session_path(session_arg: str, cwd: str, session_dir: str | N
     if "/" in session_arg or "\\" in session_arg or session_arg.endswith(".jsonl"):
         return {"type": "path", "path": resolve_path(session_arg, cwd)}
 
+    # Exact IDs only require reading session headers. Fall back to the full
+    # metadata listing for prefix matches.
+    exact_local_match = await _find_local_session_by_exact_id(session_arg, cwd, session_dir)
+    if exact_local_match:
+        return exact_local_match
+
     local_sessions = await SessionManager.list(cwd, session_dir)
-    local_match = next((s for s in local_sessions if s.id == session_arg), None) or next(
-        (s for s in local_sessions if s.id.startswith(session_arg)), None
-    )
+    local_match = next((s for s in local_sessions if s.id.startswith(session_arg)), None)
 
     if local_match:
         return {"type": "local", "path": local_match.path}
@@ -411,8 +415,8 @@ async def _create_session_manager(
 
     if parsed.resume:
         selected_path = await select_session(
-            lambda on_progress: SessionManager.list(cwd, session_dir, on_progress),
-            lambda on_progress: SessionManager.list_all(session_dir, on_progress),
+            lambda on_progress, cancel: SessionManager.list(cwd, session_dir, on_progress, cancel),
+            lambda on_progress, cancel: SessionManager.list_all(session_dir, on_progress, cancel),
             settings_manager,
         )
         if not selected_path:

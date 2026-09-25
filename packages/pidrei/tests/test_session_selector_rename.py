@@ -36,7 +36,7 @@ CTRL_R = "\x1b[114;5u"
 
 
 def _make_loader(sessions):
-    async def loader(on_progress=None):
+    async def loader(on_progress=None, cancel=None):
         return sessions
 
     return loader

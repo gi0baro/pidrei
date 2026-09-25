@@ -158,6 +158,21 @@ return an awaitable) and are awaited; a plain sync function is not accepted.
 Each receives `(event, ctx)` where `ctx` is an
 [ExtensionContext](#extensioncontext).
 
+`pi.on` returns an unsubscribe function that removes only that registration:
+
+```python
+async def on_agent_end(event, ctx):
+    unsubscribe()
+    await update_integration(event["messages"])
+
+
+unsubscribe = pi.on("agent_end", on_agent_end)
+```
+
+Handlers run in extension load order, then registration order within each
+extension. Adding or removing a handler does not affect a dispatch already in
+progress.
+
 ### Lifecycle
 
 ```
@@ -206,10 +221,11 @@ user sends a prompt
 | `before_provider_headers` | Before each request | Request headers |
 | `before_provider_request` | Before each request | The payload |
 | `after_provider_response` | After each response arrives | — (inspect status/headers) |
+| `cache_warming_decision` | Before each prompt-cache refresh, with pidrei's decision (`warmCost`, `missCost`, `continuationProbability`, `action`) | Return `{"action": "warm"}` or `{"action": "stop"}`; the last handler that returns an action wins; `"stop"` ends warming until the next real request |
 | `message_start` / `message_update` / `message_end` | Assistant message stream | `message_end` may rewrite |
 | `tool_call` | Before a tool runs | Block it, or rewrite arguments |
 | `tool_result` | After a tool runs | Rewrite the result |
-| `user_bash` | User ran a `!` command | — |
+| `user_bash` | User ran a `!` command | Return exactly one of `{"operations": ...}` (run through that backend) or a complete `{"result": ...}` (record without running); `None` falls through to local execution; an invalid result or a raise blocks the command |
 | `ui_prompt_start` / `ui_prompt_end` | Around a blocking `ctx.ui` prompt (`select`, `confirm`, `input`, `editor`, `custom`) — nested prompts coalesce into one outer waiting span; handlers are best-effort and not awaited | — |
 | `model_select` / `thinking_level_select` | Selection changed | — |
 
@@ -287,7 +303,7 @@ arguments.
 
 | Method | Purpose |
 |--------|---------|
-| `on(event, handler)` | Subscribe to an event |
+| `on(event, handler)` | Subscribe to an event; returns an unsubscribe function |
 | `register_tool(tool)` | Add a tool the model can call |
 | `register_command(name, *, handler, description=None, get_argument_completions=None)` | Add a slash command |
 | `register_shortcut(shortcut, *, handler, description=None)` | Bind a key |

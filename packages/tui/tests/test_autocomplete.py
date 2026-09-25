@@ -122,6 +122,67 @@ async def test_returns_all_files_and_folders_for_empty_at_query(fd_dirs):
 
 @requires_fd
 @pytest.mark.tonio
+async def test_recognizes_at_after_cjk_punctuation_without_consuming_the_preceding_text(fd_dirs):
+    _setup_folder(fd_dirs["base"], files={"README.md": "readme"})
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]:
+        for force in [False, True]:
+            line = f"{before}@REA"
+            result = await get_suggestions(provider, [line], 0, len(line), force)
+            assert result, line
+            assert result["prefix"] == "@REA"
+            assert [item["value"] for item in result["items"]] == ["@README.md"]
+            applied = provider.apply_completion([line], 0, len(line), result["items"][0], result["prefix"])
+            assert applied["lines"][0] == f"{before}@README.md "
+            assert applied["cursorCol"] == len(applied["lines"][0])
+
+
+@requires_fd
+@pytest.mark.tonio
+async def test_preserves_cjk_characters_and_embedded_at_in_attachment_paths(fd_dirs):
+    _setup_folder(fd_dirs["base"], files={"文档/说明.md": "text", "文档@备份/说明.md": "backup"})
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    for before in ["", "查看，"]:
+        for directory in ["文档", "文档@备份"]:
+            prefix = f"@{directory}/说"
+            line = before + prefix
+            result = await get_suggestions(provider, [line], 0, len(line))
+            assert result, line
+            assert result["prefix"] == prefix
+            assert [item["value"] for item in result["items"]] == [f"@{directory}/说明.md"]
+
+
+@requires_fd
+@pytest.mark.tonio
+async def test_completes_quoted_cjk_attachments_after_prose_without_losing_path_segments_or_quotes(fd_dirs):
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    for separator in [" ", "　", "，", "。"]:
+        directory = f"我的{separator}文档"
+        _setup_folder(fd_dirs["base"], files={f"{directory}/说明.md": "text", "文档/说明.md": "not the quoted path"})
+        line = f'查看：@"{directory}/说"后文'
+        cursor_col = line.index('"后文')
+        result = await get_suggestions(provider, [line], 0, cursor_col)
+        assert result
+        assert result["prefix"] == f'@"{directory}/说'
+        assert [item["value"] for item in result["items"]] == [f'@"{directory}/说明.md"']
+        applied = provider.apply_completion([line], 0, cursor_col, result["items"][0], result["prefix"])
+        assert applied["lines"][0] == f'查看：@"{directory}/说明.md" 后文'
+        assert applied["cursorCol"] == len(f'查看：@"{directory}/说明.md" ')
+
+
+@requires_fd
+@pytest.mark.tonio
+async def test_does_not_interpret_email_addresses_or_at_after_ascii_or_cjk_letters_as_attachment_prefixes(fd_dirs):
+    _setup_folder(fd_dirs["base"], files={"README.md": "readme", "example.com": "text"})
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    for before in ["user", "查看", "あ", "カ", "한", "ㄅ", "𠮷", "が", "禰\U000e0100", "々", "Ａ"]:
+        for name in ["REA", "example.com"]:
+            line = f"{before}@{name}"
+            assert await get_suggestions(provider, [line], 0, len(line)) is None, line
+
+
+@requires_fd
+@pytest.mark.tonio
 async def test_matches_file_with_extension_in_query(fd_dirs):
     _setup_folder(fd_dirs["base"], files={"file.txt": "content"})
 
@@ -273,15 +334,20 @@ async def test_includes_scoped_direct_children_when_recursive_at_matches_are_flo
 
 @requires_fd
 @pytest.mark.tonio
-async def test_quotes_paths_with_spaces_for_at_suggestions(fd_dirs):
-    _setup_folder(fd_dirs["base"], dirs=["my folder"], files={"my folder/test.txt": "content"})
-
+async def test_quotes_paths_containing_whitespace_or_cjk_punctuation_for_at_suggestions(fd_dirs):
     provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
-    line = "@my"
-    result = await get_suggestions(provider, [line], 0, len(line))
-
-    values = [item["value"] for item in result["items"]]
-    assert '@"my folder/"' in values
+    for separator in [" ", "　", "，", "。"]:
+        directory = f"my{separator}folder"
+        _setup_folder(fd_dirs["base"], files={f"{directory}/test.txt": "content"})
+        line = "@my"
+        result = await get_suggestions(provider, [line], 0, len(line))
+        assert result
+        item = next((entry for entry in result["items"] if entry["value"] == f'@"{directory}/"'), None)
+        assert item, directory
+        applied = provider.apply_completion([line], 0, len(line), item, result["prefix"])
+        continued = await get_suggestions(provider, applied["lines"], 0, applied["cursorCol"])
+        assert continued["prefix"] == f'@"{directory}/'
+        assert any(entry["value"] == f'@"{directory}/test.txt"' for entry in continued["items"])
 
 
 @requires_fd
@@ -430,6 +496,83 @@ async def test_applies_quoted_at_completion_without_duplicating_closing_quote(fd
 
 
 @pytest.mark.tonio
+async def test_completes_chinese_path_prefixes_after_whitespace_or_cjk_punctuation_on_tab(tmp_path):
+    base_dir = str(tmp_path)
+    _setup_folder(base_dir, files={"说明.md": "file", "文档/说明.md": "nested file"})
+    provider = CombinedAutocompleteProvider([], base_dir)
+    completions = [
+        ("说", "说明.md"),
+        ("文", "文档/"),
+        ("文档/说", "文档/说明.md"),
+        ("./文档/说", "./文档/说明.md"),
+        (f"{base_dir}/文档/说", f"{base_dir}/文档/说明.md"),
+    ]
+    for separator in " \t　 ，：；。！？（「《":
+        for prefix, value in completions:
+            before = f"查看𠮷{separator}"
+            line = f"{before}{prefix} 后文"
+            cursor_col = len(before) + len(prefix)
+            result = await get_suggestions(provider, [line], 0, cursor_col, True)
+            assert result, line
+            assert result["prefix"] == prefix
+            assert [item["value"] for item in result["items"]] == [value]
+            applied = provider.apply_completion([line], 0, cursor_col, result["items"][0], result["prefix"])
+            assert applied["lines"][0] == f"{before}{value} 后文"
+            assert applied["cursorCol"] == len(before) + len(value)
+
+
+@pytest.mark.tonio
+async def test_treats_unquoted_separators_as_boundaries_even_when_a_matching_literal_path_exists(tmp_path):
+    base_dir = str(tmp_path)
+    _setup_folder(base_dir, files={"归档/说明.md": "other"})
+    provider = CombinedAutocompleteProvider([], base_dir)
+    for separator in [" ", "　", "，", "。"]:
+        directory = f"资料{separator}归档"
+        _setup_folder(base_dir, files={f"{directory}/说明.md": "archive"})
+        for marker in ["", "@"]:
+            line = f"{marker}{directory}/说"
+            result = await get_suggestions(provider, [line], 0, len(line), True)
+            assert result, line
+            assert result["prefix"] == "归档/说"
+            assert [item["value"] for item in result["items"]] == ["归档/说明.md"]
+        quoted = f'查看，"{directory}/说"后文'
+        cursor_col = quoted.index('"后文')
+        result = await get_suggestions(provider, [quoted], 0, cursor_col, True)
+        assert result
+        assert result["prefix"] == f'"{directory}/说'
+        assert [item["value"] for item in result["items"]] == [f'"{directory}/说明.md"']
+        applied = provider.apply_completion([quoted], 0, cursor_col, result["items"][0], result["prefix"])
+        assert applied["lines"][0] == f'查看，"{directory}/说明.md"后文'
+        missing = f'查看，"不存在{separator}归档/说'
+        assert await get_suggestions(provider, [missing], 0, len(missing), True) is None
+
+
+@pytest.mark.tonio
+async def test_handles_an_empty_prefix_after_whitespace_or_cjk_punctuation_consistently(tmp_path):
+    _setup_folder(str(tmp_path), files={"说明.md": "text"})
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
+    for separator in [" ", "\t", "　", "，", "。"]:
+        for force in [False, True]:
+            line = f"查看{separator}"
+            result = await get_suggestions(provider, [line], 0, len(line), force)
+            assert result, line
+            assert result["prefix"] == ""
+            assert [item["value"] for item in result["items"]] == ["说明.md"]
+    assert await get_suggestions(provider, [""], 0, 0) is None
+
+
+@pytest.mark.tonio
+async def test_preserves_cjk_characters_in_unprefixed_tab_completions(tmp_path):
+    _setup_folder(str(tmp_path), files={"文档/说明.md": "text"})
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
+    line = "文档/说"
+    result = await get_suggestions(provider, [line], 0, len(line), True)
+    assert result
+    assert result["prefix"] == line
+    assert [item["value"] for item in result["items"]] == ["文档/说明.md"]
+
+
+@pytest.mark.tonio
 async def test_preserves_dot_slash_prefix_when_completing_paths(tmp_path):
     _setup_folder(str(tmp_path), files={"update.sh": "#!/bin/bash", "utils.ts": "export {};"})
 
@@ -459,16 +602,29 @@ async def test_preserves_dot_slash_prefix_for_directory_completions(tmp_path):
 
 
 @pytest.mark.tonio
-async def test_quotes_paths_with_spaces_for_direct_completion(tmp_path):
-    _setup_folder(str(tmp_path), dirs=["my folder"], files={"my folder/test.txt": "content"})
-
+async def test_quotes_paths_containing_whitespace_or_cjk_punctuation_for_direct_completion(tmp_path):
     provider = CombinedAutocompleteProvider([], str(tmp_path))
-    line = "my"
-    result = await get_suggestions(provider, [line], 0, len(line), True)
+    for separator in [" ", "　", "，", "。"]:
+        directory = f"my{separator}folder"
+        _setup_folder(str(tmp_path), files={f"{directory}/test.txt": "content"})
+        line = "my"
+        result = await get_suggestions(provider, [line], 0, len(line), True)
+        assert result
+        item = next((entry for entry in result["items"] if entry["value"] == f'"{directory}/"'), None)
+        assert item, directory
+        applied = provider.apply_completion([line], 0, len(line), item, result["prefix"])
+        continued = await get_suggestions(provider, applied["lines"], 0, applied["cursorCol"], True)
+        assert continued["prefix"] == f'"{directory}/'
+        assert [entry["value"] for entry in continued["items"]] == [f'"{directory}/test.txt"']
 
-    assert result is not None, "Should return suggestions for path completion"
-    values = [item["value"] for item in result["items"]]
-    assert '"my folder/"' in values
+
+@pytest.mark.tonio
+async def test_keeps_quoted_directories_before_files(tmp_path):
+    _setup_folder(str(tmp_path), dirs=["z folder", "z，folder"], files={"a.txt": "text"})
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
+    result = await get_suggestions(provider, [""], 0, 0, True)
+    assert result
+    assert [item["label"].endswith("/") for item in result["items"]] == [True, True, False]
 
 
 @pytest.mark.tonio

@@ -637,6 +637,7 @@ PLAIN_WRAPPERS = frozenset(
 
 NEGATIVE_SPACING_COMMANDS = frozenset({"!", "negmedspace", "negthickspace", "negthinspace"})
 NEGATIVE_SPACE = "\x00"
+FONT_SWITCH_COMMANDS = frozenset({"bf", "cal", "it", "rm", "sf", "sl", "tt"})
 
 _LETTERS_OR_DIGITS = r"[^\W_]"
 
@@ -655,10 +656,17 @@ _SCRIPT_OPERATOR_SPACING_RE = re.compile(r"\s*([=+-])\s*")
 _ALPHA_ONLY_RE = re.compile(r"^[A-Za-z]+$")
 
 
+def _normalize_script_value(value: str) -> str:
+    return _SCRIPT_OPERATOR_SPACING_RE.sub(r"\1", value.strip())
+
+
+def _format_unicode_script(value: str, kind: str) -> str | None:
+    return _replace_characters(_normalize_script_value(value), SUBSCRIPTS if kind == "sub" else SUPERSCRIPTS)
+
+
 def _format_script(value: str, kind: str) -> str:
-    value = value.strip()
-    replacements = SUBSCRIPTS if kind == "sub" else SUPERSCRIPTS
-    unicode_value = _replace_characters(_SCRIPT_OPERATOR_SPACING_RE.sub(r"\1", value), replacements)
+    value = _normalize_script_value(value)
+    unicode_value = _format_unicode_script(value, kind)
     if unicode_value is not None:
         return unicode_value
 
@@ -803,6 +811,21 @@ def _render_layout(source: str, nodes: list[dict]) -> dict:
                         "baseline": 0 if node.get("upper") is None else 1,
                     }
                 )
+            elif node["type"] == "script":
+                upper = None if node.get("upper") is None else _render_layout(node["upper"], nodes)
+                lower = None if node.get("lower") is None else _render_layout(node["lower"], nodes)
+                width = max(0 if upper is None else upper["width"], 0 if lower is None else lower["width"])
+                layouts.append(
+                    {
+                        "lines": [
+                            *([] if upper is None else [_pad_layout_line(line, width) for line in upper["lines"]]),
+                            " " * width,
+                            *([] if lower is None else [_pad_layout_line(line, width) for line in lower["lines"]]),
+                        ],
+                        "width": width,
+                        "baseline": 0 if upper is None else len(upper["lines"]),
+                    }
+                )
             else:
                 width = max([0, *[visible_width(line) for line in node["lines"]]])
                 layouts.append(
@@ -840,6 +863,7 @@ _ENVIRONMENT_ROW_SPLIT_RE = re.compile(r"\\\\(?:\[[^\]\n]*\])?")
 _ENVIRONMENT_ARGUMENT_RE = re.compile(r"^\s*\{[^}]*\}")
 _TRAILING_COMMA_RE = re.compile(r",\s*$")
 _CASES_CONDITION_RE = re.compile(r"^(?:if|when|for|otherwise)\b", re.IGNORECASE)
+_SCRIPT_LAYOUT_EXEMPT_RE = re.compile(r"[A-Z*∗]")
 
 _ALIGNED_ENVIRONMENTS = frozenset(
     {
@@ -876,6 +900,7 @@ class _LatexParser:
         self._position = 0
         self._supported = True
         self._stack_fractions = True
+        self._script_depth = 0
 
     def render(self) -> str | None:
         rendered = self._parse_sequence()
@@ -912,7 +937,7 @@ class _LatexParser:
             if character in ("^", "_"):
                 self._position += 1
                 result = result.rstrip()
-                script = _format_script(self._parse_required_argument(False), "sub" if character == "_" else "sup")
+                script = self._parse_scripts(character)
                 if result.endswith(NAMED_OPERATOR_END):
                     result = f"{result[: -len(NAMED_OPERATOR_END)]}{script}{NAMED_OPERATOR_END}"
                 else:
@@ -953,6 +978,66 @@ class _LatexParser:
             self._supported = False
         return result
 
+    def _parse_scripts(self, initial_marker: str) -> str:
+        scripts: dict[str, str] = {}
+        order: list[str] = []
+
+        def parse(marker: str) -> None:
+            kind = "sub" if marker == "_" else "sup"
+            self._script_depth += 1
+            try:
+                scripts[kind] = self._parse_required_argument(False)
+            finally:
+                self._script_depth -= 1
+            order.append(kind)
+
+        parse(initial_marker)
+        next_position = self._position
+        while next_position < len(self._source) and self._source[next_position].isspace():
+            next_position += 1
+        next_marker = self._source[next_position] if next_position < len(self._source) else None
+        if next_marker in ("^", "_") and next_marker != initial_marker:
+            self._position = next_position + 1
+            parse(next_marker)
+
+        sub = scripts.get("sub")
+        sup = scripts.get("sup")
+        sub_unicode = None if sub is None else _format_unicode_script(sub, "sub")
+        sup_unicode = None if sup is None else _format_unicode_script(sup, "sup")
+        can_use_layout = not any(
+            value is not None
+            and (
+                "/" in value
+                or (LAYOUT_MARKER_START not in value and len(value) > 1 and not _SCRIPT_LAYOUT_EXEMPT_RE.search(value))
+            )
+            for value in (sub, sup)
+        )
+        needs_layout = (
+            self._display
+            and can_use_layout
+            and (
+                self._script_depth > 0
+                or (sub is not None and sub_unicode is None)
+                or (sup is not None and sup_unicode is None)
+            )
+        )
+        if not needs_layout:
+            return "".join(
+                (sub_unicode if sub_unicode is not None else _format_script(sub or "", kind))
+                if kind == "sub"
+                else (sup_unicode if sup_unicode is not None else _format_script(sup or "", kind))
+                for kind in order
+            )
+
+        self._layout_nodes.append(
+            {
+                "type": "script",
+                "lower": None if sub is None else _normalize_output(sub),
+                "upper": None if sup is None else _normalize_output(sup),
+            }
+        )
+        return f"{LAYOUT_MARKER_START}{len(self._layout_nodes) - 1}{LAYOUT_MARKER_END}"
+
     def _parse_whitespace(self) -> str:
         while self._position < len(self._source) and self._source[self._position].isspace():
             self._position += 1
@@ -985,6 +1070,10 @@ class _LatexParser:
             return " "
         if command in NEGATIVE_SPACING_COMMANDS:
             return NEGATIVE_SPACE
+        if command in FONT_SWITCH_COMMANDS:
+            while self._position < len(self._source) and self._source[self._position].isspace():
+                self._position += 1
+            return ""
         if command in IGNORED_COMMANDS:
             return ""
         if command in ("{", "}", "$", "%", "#", "_", "&"):
@@ -1222,20 +1311,7 @@ class _LatexParser:
             return "\n".join(row for row in rows if row)
 
         if environment in ("cases", "cases*"):
-            rows = [
-                [self._render_nested(cell, False).strip() for cell in row.split("&")]
-                for row in self._split_environment_rows(body)
-            ]
-            rows = [row for row in rows if any(row)]
-            lines = []
-            for index, row in enumerate(rows):
-                value = _TRAILING_COMMA_RE.sub("", row[0] if row else "")
-                condition = row[1] if len(row) > 1 else ""
-                delimiter = "⎧" if index == 0 else "⎩" if index == len(rows) - 1 else "⎨"
-                condition_prefix = " " if _CASES_CONDITION_RE.match(condition) else " if "
-                suffix = f"{condition_prefix}{condition}" if condition else ""
-                lines.append(f"{delimiter} {value}{suffix}")
-            return "\n".join(lines)
+            return self._render_cases(body)
 
         if environment in _MATRIX_ENVIRONMENTS:
             matrix_body = _ENVIRONMENT_ARGUMENT_RE.sub("", body, count=1) if environment == "array" else body
@@ -1243,6 +1319,37 @@ class _LatexParser:
 
         self._supported = False
         return body
+
+    def _render_cases(self, body: str) -> str:
+        rows = [
+            [self._render_nested(cell, False).strip() for cell in row.split("&")]
+            for row in self._split_environment_rows(body)
+        ]
+        rows = [row for row in rows if any(row)]
+        value_width = max([0, *[visible_width(_TRAILING_COMMA_RE.sub("", row[0] if row else "")) for row in rows]])
+        contents: list[str] = []
+        for row in rows:
+            value = _TRAILING_COMMA_RE.sub("", row[0] if row else "")
+            condition = row[1] if len(row) > 1 else ""
+            if not condition:
+                contents.append(value)
+                continue
+            condition_prefix = " " if _CASES_CONDITION_RE.match(condition) else " if "
+            padding = PROTECTED_SPACE * (value_width - visible_width(value))
+            contents.append(f"{value}{padding}{condition_prefix}{condition}")
+        if len(contents) <= 1:
+            return "" if not contents else f"⎧ {contents[0]}"
+
+        middle = len(contents) // 2
+        visual_rows: list[str | None] = [*contents]
+        if len(contents) % 2 == 0:
+            visual_rows.insert(middle, None)
+        lines = []
+        for index, content in enumerate(visual_rows):
+            delimiter = "⎧" if index == 0 else "⎩" if index == len(visual_rows) - 1 else "⎨"
+            lines.append(delimiter if content is None else f"{delimiter} {content}")
+        self._layout_nodes.append({"type": "matrix", "lines": lines, "baseline": middle})
+        return f"{LAYOUT_MARKER_START}{len(self._layout_nodes) - 1}{LAYOUT_MARKER_END}"
 
     def _render_matrix(self, environment: str, body: str) -> str:
         matrix = [

@@ -1,10 +1,12 @@
 """Mirror of pi tui test/editor.test.ts."""
 
+import os
 import re
 
 import pytest
 import tonio.colored as tonio
 
+from pidrei_tui._owner import TimerHandle
 from pidrei_tui.autocomplete import CombinedAutocompleteProvider
 from pidrei_tui.components import editor as editor_module
 from pidrei_tui.components.editor import Editor, word_wrap_line
@@ -2130,6 +2132,238 @@ async def test_undoes_autocomplete():
 
 
 # Autocomplete
+
+
+class ManualOwnerTimers:
+    """pi's `t.mock.timers` for one editor's TUI: the input owner's `after`
+    queues its callback instead of sleeping, and `tick` fires what falls due."""
+
+    def __init__(self, editor: Editor) -> None:
+        self._now = 0.0
+        self._queue: list[tuple[float, TimerHandle, object]] = []
+        editor._tui.input_owner.after = self._after
+
+    def _after(self, delay_ms: float, fn) -> TimerHandle:
+        handle = TimerHandle()
+        self._queue.append((self._now + delay_ms, handle, fn))
+        return handle
+
+    @property
+    def remaining(self) -> list[float]:
+        """Milliseconds left on each live timer."""
+        return [due - self._now for due, handle, _ in self._queue if not handle.cancelled]
+
+    async def tick(self, ms: float) -> None:
+        target = self._now + ms
+        while True:
+            due = [entry for entry in self._queue if entry[0] <= target and not entry[1].cancelled]
+            if not due:
+                break
+            entry = min(due, key=lambda item: item[0])
+            self._queue.remove(entry)
+            self._now = entry[0]
+            await entry[2]()
+        self._now = target
+
+
+@pytest.mark.tonio
+async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
+    for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]:
+        for trigger in ["@", "#", "$", "-"]:
+            editor = Editor(create_test_tui(), default_editor_theme)
+            timers = ManualOwnerTimers(editor)
+            requests: list[str] = []
+
+            async def get_suggestions(lines, cursor_line, cursor_col, options, requests=requests):
+                requests.append(lines[cursor_line][:cursor_col])
+
+            editor.set_autocomplete_provider(MockProvider(get_suggestions, trigger_characters=["$", "-"]))
+            editor.set_text(before)
+            await editor.handle_input(trigger)
+            await timers.tick(19)
+            # The request is still debounced (an undebounced one queues no timer).
+            assert timers.remaining == [1]
+            assert requests == []
+            await timers.tick(1)
+            assert await poll_until(lambda requests=requests: len(requests) == 1)
+            assert requests == [before + trigger]
+
+            await editor.handle_input("r")
+            await editor.handle_input("e")
+            await timers.tick(19)
+            assert timers.remaining == [1]
+            assert len(requests) == 1
+            await timers.tick(1)
+            assert await poll_until(lambda requests=requests: len(requests) == 2)
+            assert requests == [before + trigger, f"{before}{trigger}re"]
+
+
+@pytest.mark.tonio
+async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths():
+    editor = Editor(create_test_tui(), default_editor_theme)
+    timers = ManualOwnerTimers(editor)
+    requests = 0
+
+    async def get_suggestions(lines, cursor_line, cursor_col, options):
+        nonlocal requests
+        requests += 1
+
+    editor.set_autocomplete_provider(MockProvider(get_suggestions))
+    for text in [
+        "user@example.com",
+        "张三@example.com",
+        "查看@src",
+        "あ@src",
+        "カ@src",
+        "한@src",
+        "ㄅ@src",
+        "𠮷@src",
+        "が@src",
+        "禰\U000e0100@src",
+        "々@src",
+        "Ａ@src",
+        "文档@备份",
+        "prefix#123",
+        "问题#123",
+        "查看，/path/",
+        "查看，./文档/",
+        "src/index.ts",
+        "./文档/说明.md",
+        "文档/说明.md",
+        "查看src/index.ts",
+    ]:
+        editor.set_text("")
+        for char in text:
+            await editor.handle_input(char)
+        await timers.tick(20)
+        await flush_autocomplete()
+        assert requests == 0, text
+
+
+@pytest.mark.tonio
+async def test_requests_path_completion_after_cjk_punctuation_only_on_tab():
+    editor = Editor(create_test_tui(), default_editor_theme)
+    timers = ManualOwnerTimers(editor)
+    requests: list[dict] = []
+
+    async def get_suggestions(lines, cursor_line, cursor_col, options):
+        requests.append({"text": lines[cursor_line][:cursor_col], "force": options.get("force")})
+
+    editor.set_autocomplete_provider(MockProvider(get_suggestions))
+    text = "查看，/path/"
+    for char in text:
+        await editor.handle_input(char)
+    await timers.tick(20)
+    await flush_autocomplete()
+    assert requests == []
+    await editor.handle_input("\t")
+    assert await poll_until(lambda: requests)
+    assert requests == [{"text": text, "force": True}]
+
+
+@pytest.mark.tonio
+async def test_completes_chinese_path_prefixes_after_whitespace_or_cjk_punctuation_with_tab(tmp_path):
+    (tmp_path / "文档").mkdir()
+    (tmp_path / "文档" / "说明.md").write_text("text")
+    editor = Editor(create_test_tui(), default_editor_theme)
+    editor.set_autocomplete_provider(CombinedAutocompleteProvider([], str(tmp_path)))
+    for separator in [" ", "\t", "　", " ", "，", "。"]:
+        editor.set_text(f"查看{separator}")
+        before = editor.get_text()
+        await editor.handle_input("文")
+        await editor.handle_input("\t")
+        assert await poll_until(lambda before=before: editor.get_text() == f"{before}文档/")
+        await editor.handle_input("说")
+        await editor.handle_input("\t")
+        assert await poll_until(lambda before=before: editor.get_text() == f"{before}文档/说明.md")
+        assert editor.get_cursor() == {"line": 0, "col": len(editor.get_text())}
+
+
+@pytest.mark.tonio
+async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_punctuation():
+    for separator in [" ", "　", "，", "。"]:
+        for trigger in ["@", "#", "$"]:
+            editor = Editor(create_test_tui(), default_editor_theme)
+            timers = ManualOwnerTimers(editor)
+            requests: list[str] = []
+            prefix = f"{trigger}src"
+
+            async def get_suggestions(lines, cursor_line, cursor_col, options, requests=requests, prefix=prefix):
+                text = lines[cursor_line][:cursor_col]
+                requests.append(text)
+                return (
+                    {"prefix": prefix, "items": [{"value": f"{prefix}/", "label": "src/"}]} if text == prefix else None
+                )
+
+            editor.set_autocomplete_provider(MockProvider(get_suggestions, trigger_characters=["$"]))
+            editor.set_text(f"{trigger}sr")
+            await editor.handle_input("c")
+            await timers.tick(20)
+            assert await poll_until(editor.is_showing_autocomplete)
+            await editor.handle_input(separator)
+            assert await poll_until(lambda editor=editor: not editor.is_showing_autocomplete())
+            assert requests == [prefix, prefix + separator]
+            await editor.handle_input("文")
+            await timers.tick(20)
+            await flush_autocomplete()
+            assert requests == [prefix, prefix + separator]
+
+
+@pytest.mark.tonio
+async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_deleting():
+    provider = CombinedAutocompleteProvider([], os.getcwd())
+    for directory in ["文档", "我的 文档", "资料，归档"]:
+        quoted = directory != "文档"
+        initial = f'@"{directory[:2]}' if quoted else "@文"
+        directory_value = f'@"{directory}/"' if quoted else f"@{directory}/"
+        file_value = f'@"{directory}/说明.md"' if quoted else f"@{directory}/说明.md"
+        file_prefix = f'@"{directory}/说' if quoted else f"@{directory}/说"
+        editor = Editor(create_test_tui(), default_editor_theme)
+        timers = ManualOwnerTimers(editor)
+
+        async def get_suggestions(
+            lines,
+            cursor_line,
+            cursor_col,
+            options,
+            initial=initial,
+            directory=directory,
+            directory_value=directory_value,
+            file_value=file_value,
+            file_prefix=file_prefix,
+        ):
+            before = lines[cursor_line][:cursor_col]
+            prefix = before[before.find("@") :]
+            if prefix == initial:
+                return {"prefix": prefix, "items": [{"value": directory_value, "label": f"{directory}/"}]}
+            if prefix == file_prefix:
+                return {"prefix": prefix, "items": [{"value": file_value, "label": "说明.md"}]}
+            return None
+
+        editor.set_autocomplete_provider(MockProvider(get_suggestions, provider.apply_completion))
+        editor.set_text(f"查看：{initial}")
+        await editor.handle_input("\t")
+        expected = f"查看：{directory_value}"
+        assert await poll_until(lambda editor=editor, expected=expected: editor.get_text() == expected)
+        assert editor.is_showing_autocomplete() is False
+
+        await editor.handle_input("说")
+        await timers.tick(20)
+        assert await poll_until(editor.is_showing_autocomplete)
+
+        for deletion in ["\x7f", "\x1b[3~"]:
+            await editor.handle_input("错")
+            await timers.tick(20)
+            assert await poll_until(lambda editor=editor: not editor.is_showing_autocomplete())
+            if deletion == "\x1b[3~":
+                await editor.handle_input("\x1b[D")
+            await editor.handle_input(deletion)
+            await timers.tick(20)
+            assert await poll_until(editor.is_showing_autocomplete)
+
+        await editor.handle_input("\t")
+        assert editor.get_text() == f"查看：{file_value} "
+        assert editor.get_cursor() == {"line": 0, "col": len(editor.get_text())}
 
 
 @pytest.mark.tonio

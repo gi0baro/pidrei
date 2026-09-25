@@ -127,6 +127,7 @@ def _parse_model(raw: dict[str, Any]) -> Model:
         cost=_parse_cost(raw["cost"]),
         context_window=raw["contextWindow"],
         max_tokens=raw["maxTokens"],
+        prompt_cache=dict(raw["promptCache"]) if "promptCache" in raw else None,
         thinking_level_map=dict(raw["thinkingLevelMap"]) if "thinkingLevelMap" in raw else None,
         headers=dict(raw["headers"]) if "headers" in raw else None,
         compat=_parse_compat(raw["api"], raw["compat"]) if "compat" in raw else None,

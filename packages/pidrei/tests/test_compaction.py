@@ -14,9 +14,11 @@ from types import SimpleNamespace
 from pidrei.core.compaction import (
     DEFAULT_COMPACTION_SETTINGS,
     CompactionSettings,
+    CutPointResult,
     calculate_context_tokens,
     estimate_context_tokens,
     estimate_tokens,
+    find_cut_point,
     get_last_assistant_usage,
     prepare_compaction,
     serialize_conversation,
@@ -212,6 +214,44 @@ def test_should_return_true_when_context_exceeds_threshold():
 def test_should_return_false_when_disabled():
     settings = CompactionSettings(enabled=False, reserve_tokens=10000, keep_recent_tokens=20000)
     assert should_compact(95000, 100000, settings) is False
+
+
+# ============================================================================
+# findCutPoint
+# ============================================================================
+
+
+# Regression test for #9740.
+def test_should_fall_back_to_the_latest_valid_cut_point_before_oversized_trailing_tool_results():
+    old_user = create_message_entry(create_user_message("old history"))
+    old_assistant = create_message_entry(create_assistant_message("old answer"))
+    current_user = create_message_entry(create_user_message("read the large file"))
+    tool_call = create_message_entry(
+        replace(
+            create_assistant_message(""),
+            content=[ToolCall(id="call-1", name="read", arguments={"path": "big.txt"})],
+            stop_reason="toolUse",
+        )
+    )
+    tool_result = create_message_entry(
+        ToolResultMessage(
+            tool_call_id="call-1",
+            tool_name="read",
+            content=[TextContent(text="x" * 8000)],
+            is_error=False,
+            timestamp=_now_ms(),
+        )
+    )
+    entries = [old_user, old_assistant, current_user, tool_call, tool_result]
+
+    result = find_cut_point(entries, 0, len(entries), 1000)
+    assert result == CutPointResult(first_kept_entry_index=3, turn_start_index=2, is_split_turn=True)
+
+    preparation = prepare_compaction(entries, replace(DEFAULT_COMPACTION_SETTINGS, keep_recent_tokens=1000))
+    assert preparation is not None
+    assert preparation.first_kept_entry_id == tool_call["id"]
+    assert preparation.messages_to_summarize == [old_user["message"], old_assistant["message"]]
+    assert preparation.turn_prefix_messages == [current_user["message"]]
 
 
 # ============================================================================

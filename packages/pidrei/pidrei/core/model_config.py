@@ -166,6 +166,14 @@ _MODEL_COST_TIER = {
     "properties": {"inputTokensAbove": _NUMBER, **_MODEL_COST_RATES},
     "required": ["inputTokensAbove", "input", "output", "cacheRead", "cacheWrite"],
 }
+_MODEL_PROMPT_CACHE = {
+    "type": "object",
+    "properties": {
+        "short": {"type": "number", "exclusiveMinimum": 0},
+        "long": {"type": "number", "exclusiveMinimum": 0},
+    },
+}
+
 _MODEL_COST = {
     "type": "object",
     "properties": {**_MODEL_COST_RATES, "tiers": {"type": "array", "items": _MODEL_COST_TIER}},
@@ -213,6 +221,7 @@ _MODEL_DEFINITION = {
         "thinkingLevelMap": _THINKING_LEVEL_MAP,
         "input": _INPUT_MODALITIES,
         "cost": _MODEL_COST,
+        "promptCache": _MODEL_PROMPT_CACHE,
         "contextWindow": _NUMBER,
         "maxTokens": _NUMBER,
         "samplingParams": {"type": "object"},
@@ -233,6 +242,7 @@ _MODEL_OVERRIDE = {
             "type": "object",
             "properties": {**_MODEL_COST_RATES, "tiers": {"type": "array", "items": _MODEL_COST_TIER}},
         },
+        "promptCache": _MODEL_PROMPT_CACHE,
         "contextWindow": _NUMBER,
         "maxTokens": _NUMBER,
         "samplingParams": {"type": "object"},

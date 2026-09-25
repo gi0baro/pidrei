@@ -1,6 +1,7 @@
 """Mirror of pi coding-agent src/core/cache-stats.ts."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from pidrei_ai.types import AssistantMessage
@@ -114,7 +115,17 @@ def _scan(
             prev = None
             continue
         message = entry.get("message")
-        if entry.get("type") == "message" and getattr(message, "role", None) == "assistant":
+        if entry.get("type") == "usage" and entry.get("kind") == "cache_warm":
+            usage = entry["usage"]
+            prompt_tokens = usage.input + usage.cache_read + usage.cache_write
+            if prompt_tokens > 0:
+                prev = _PreviousRequest(
+                    prompt_tokens=prompt_tokens,
+                    model_key=f"{entry['provider']}/{entry['model']}",
+                    timestamp=int(datetime.fromisoformat(entry["timestamp"]).timestamp() * 1000),
+                    reported_cache=True,
+                )
+        elif entry.get("type") == "message" and getattr(message, "role", None) == "assistant":
             miss = _detect_miss(prev, message, models)
             if miss:
                 totals.missed_tokens += miss.missed_tokens

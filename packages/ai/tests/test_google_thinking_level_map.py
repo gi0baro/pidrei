@@ -83,7 +83,7 @@ def _capturing(adapter):
 
 
 async def _capture_config(
-    adapter, model: Model, reasoning: str, thinking_budgets: ThinkingBudgets | None = None
+    adapter, model: Model, reasoning: str | None = None, thinking_budgets: ThinkingBudgets | None = None
 ) -> dict[str, Any]:
     options = SimpleStreamOptions(api_key="test", reasoning=reasoning, thinking_budgets=thinking_budgets)
     with _capturing(adapter) as captured:
@@ -94,7 +94,7 @@ async def _capture_config(
 
 @pytest.mark.tonio
 async def test_exhaustively_resolves_supported_logical_levels_and_mapping_values():
-    default_expectations = {"off": "high", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high"}
+    default_expectations = {"minimal": "minimal", "low": "low", "medium": "medium", "high": "high"}
     for level, expected in default_expectations.items():
         assert resolve_google_thinking_level(google_model("gemini-3.7-flash", {}), level) == expected
 
@@ -125,6 +125,46 @@ async def test_exhaustively_resolves_supported_logical_levels_and_mapping_values
         match="Unsupported Google thinking level mapping for test-google/gemini-3.7-flash: max -> undefined",
     ):
         resolve_google_thinking_level(google_model("gemini-3.7-flash", {}), "max")
+
+
+GOOGLE_ADAPTERS = [
+    pytest.param(google_generative_ai, google_model, id="Google Generative AI"),
+    pytest.param(google_vertex, vertex_model, id="Google Vertex"),
+]
+NATIVE_LEVELS_MAP = {
+    "off": None,
+    "minimal": None,
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": None,
+    "max": None,
+}
+
+
+# Regression test for https://github.com/earendil-works/pi/issues/9455
+@pytest.mark.tonio
+@pytest.mark.parametrize(("adapter", "make_model"), GOOGLE_ADAPTERS)
+async def test_uses_the_lowest_supported_level_when_reasoning_is_omitted(adapter, make_model):
+    config = await _capture_config(adapter, make_model("gemini-3.8-flash", NATIVE_LEVELS_MAP))
+
+    assert config["thinkingConfig"] == {"thinkingLevel": "LOW"}
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(("adapter", "make_model"), GOOGLE_ADAPTERS)
+async def test_preserves_native_medium_effort_for_gemini_3_1_pro(adapter, make_model):
+    config = await _capture_config(adapter, make_model("gemini-3.1-pro-preview", NATIVE_LEVELS_MAP), "medium")
+
+    assert config["thinkingConfig"] == {"includeThoughts": True, "thinkingLevel": "MEDIUM"}
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(("adapter", "make_model"), GOOGLE_ADAPTERS)
+async def test_disables_gemini_2_5_thinking_when_reasoning_is_omitted(adapter, make_model):
+    config = await _capture_config(adapter, make_model("gemini-2.5-flash", {}))
+
+    assert config["thinkingConfig"] == {"thinkingBudget": 0}
 
 
 @pytest.mark.tonio
