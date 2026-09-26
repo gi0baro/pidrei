@@ -34,8 +34,8 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
   it matches, enumerated once from pi's expression.
 - JS ``String.length`` is UTF-16 units; where the distinction matters
   (couldBeEmoji's ``length > 2``) the UTF-16 length is computed explicitly.
-- The pooled ``AnsiCodeTracker`` used by ``extract_segments`` is per-thread
-  (``threading.local``): tonio may run layout work on parallel workers.
+- ``extract_segments`` creates its own ``AnsiCodeTracker`` per call (pi
+  pools one shared instance to save the allocation).
 - The width cache is a plain dict with FIFO eviction under a lock; reads are
   lock-free (a racing double-compute is benign).
 """
@@ -1346,19 +1346,6 @@ def slice_with_width(line: str, start_col: int, length: int, strict: bool = Fals
     return result, result_width
 
 
-# Per-thread pooled tracker for extract_segments (pi shares one instance;
-# tonio may call this from parallel layout workers).
-_pooled_tracker_local = threading.local()
-
-
-def _pooled_style_tracker() -> AnsiCodeTracker:
-    tracker = getattr(_pooled_tracker_local, "tracker", None)
-    if tracker is None:
-        tracker = AnsiCodeTracker()
-        _pooled_tracker_local.tracker = tracker
-    return tracker
-
-
 def extract_segments(
     line: str,
     before_end: int,
@@ -1384,8 +1371,7 @@ def extract_segments(
     after_end = after_start + after_len
 
     # Track styling state so "after" inherits styling from before the overlay
-    tracker = _pooled_style_tracker()
-    tracker.clear()
+    tracker = AnsiCodeTracker()
 
     while i < len(line):
         ansi = extract_ansi_code(line, i)

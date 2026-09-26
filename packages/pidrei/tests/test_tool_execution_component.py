@@ -34,8 +34,7 @@ def create_base_tool_definition(name: str = "custom_tool") -> ToolDefinition:
 
 
 def create_fake_tui():
-    # `post_ui` applies inline: there is no UI owner in these tests.
-    return SimpleNamespace(request_render=lambda: None, post_ui=lambda fn: fn())
+    return SimpleNamespace(request_render=lambda: None)
 
 
 @pytest.fixture(autouse=True)
@@ -63,11 +62,18 @@ class TestToolExecutionComponentParity:
         rendered = tonio.Event()
         applied = tonio.Event()
 
-        def post_ui(fn) -> None:
-            # Stands in for the UI owner: runs the late conversion's apply, then
-            # signals that it has run, so the checks below see its outcome.
-            fn()
-            applied.set()
+        class SignallingLock:
+            # Stands in for `TUI.state_lock`: signals when the late conversion's
+            # apply has run under it, so the checks below see its outcome.
+            def __init__(self) -> None:
+                self._lock = threading.RLock()
+
+            def __enter__(self) -> None:
+                self._lock.acquire()
+
+            def __exit__(self, *_exc) -> None:
+                self._lock.release()
+                applied.set()
 
         set_capabilities({"images": "kitty", "trueColor": True, "hyperlinks": True})
         try:
@@ -77,7 +83,7 @@ class TestToolExecutionComponentParity:
                 {},
                 {},
                 None,
-                SimpleNamespace(request_render=rendered.set, post_ui=post_ui),
+                SimpleNamespace(request_render=rendered.set, state_lock=SignallingLock()),
                 CWD,
             )
 
@@ -498,7 +504,7 @@ class TestToolExecutionComponentParity:
             height=len(lines),
             click_count=1,
         )
-        result = await component.handle_mouse(event)
+        result = component.handle_mouse(event)
         assert result is not None and result.handled is True
         assert "hidden content" in strip_ansi("\n".join(component.render(width)))
 

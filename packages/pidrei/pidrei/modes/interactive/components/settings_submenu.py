@@ -1,9 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/settings-submenu.ts.
 
-pi's step callbacks (`options`, `preselect`, `title`, `description`) are plain
-synchronous functions and stay that way here; only the callbacks that reach the
-settings manager or the session — `on_select`, `on_cancel`, `on_complete` — are
-awaited, matching the rest of the settings surface.
+All callbacks are synchronous, as in pi.
 """
 
 from pidrei_tui import Container, Input, SelectList, Spacer, Text, fuzzy_filter, get_keybindings
@@ -53,15 +50,12 @@ class SelectSubmenu(Container):
             self.add_child(Spacer(1))
             self.add_child(Text(theme.fg("muted", description), 0, 0))
 
-        # Search input. pi also wires `searchInput.onSubmit` to forward Enter to
-        # the list; Enter is a `tui.select.confirm` nav key, so `handle_input`
-        # below routes it to the list before the input ever sees it, in both
-        # ports. The hook is unreachable, and a sync-only `on_submit` could not
-        # await the list here anyway, so it is left unwired.
+        # Search input
         self._search_input = None
         if self._searchable:
             self.add_child(Spacer(1))
             self._search_input = Input()
+            self._search_input.on_submit = lambda _value: self._select_list.handle_input("\r")
             self.add_child(self._search_input)
 
         # Spacer
@@ -109,7 +103,7 @@ class SelectSubmenu(Container):
         self.set_children(children)
         self._select_list = new_list
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if self._search_input is not None:
             kb = get_keybindings()
             is_nav = (
@@ -119,12 +113,12 @@ class SelectSubmenu(Container):
                 or kb.matches(data, "tui.select.cancel")
             )
             if is_nav:
-                await self._select_list.handle_input(data)
+                self._select_list.handle_input(data)
             else:
-                await self._search_input.handle_input(data)
+                self._search_input.handle_input(data)
                 self._apply_filter(self._search_input.get_value())
         else:
-            await self._select_list.handle_input(data)
+            self._select_list.handle_input(data)
 
 
 # ============================================================================
@@ -165,7 +159,7 @@ class SteppedSubmenu(Container):
         items = step["options"](self._context)
         preselect = (step.get("preselect")(self._context) if step.get("preselect") is not None else None) or ""
 
-        async def on_select(value: str) -> None:
+        def on_select(value: str) -> None:
             self._context[step["key"]] = value
 
             if step_index < total - 1:
@@ -173,20 +167,20 @@ class SteppedSubmenu(Container):
                 self._active_component = self._build_step(step_index + 1)
             else:
                 # Final step — deliver result
-                await self._on_complete(dict(self._context))
+                self._on_complete(dict(self._context))
 
                 if self._opts.get("loop"):
                     self._context = {}
                     self._active_component = self._build_step(0)
                 else:
-                    await self._on_cancel()
+                    self._on_cancel()
 
-        async def on_cancel() -> None:
+        def on_cancel() -> None:
             if step_index > 0:
                 self._context.pop(step["key"], None)
                 self._active_component = self._build_step(step_index - 1)
             else:
-                await self._on_cancel()
+                self._on_cancel()
 
         submenu_options = (
             {"searchable": step.get("searchable"), "layout": step.get("layout")}
@@ -207,10 +201,10 @@ class SteppedSubmenu(Container):
     def render(self, width: int) -> list[str]:
         return self._active_component.render(width)
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         handle_input = getattr(self._active_component, "handle_input", None)
         if handle_input is not None:
-            await handle_input(data)
+            handle_input(data)
 
     def invalidate(self) -> None:
         invalidate = getattr(self._active_component, "invalidate", None)

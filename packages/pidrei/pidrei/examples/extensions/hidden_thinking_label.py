@@ -25,9 +25,9 @@ DEFAULT_LABEL = "Pondering..."
 
 async def extension(pi):
     state = {"label": DEFAULT_LABEL}
-    # Commands run concurrently (each submit on its own task): a label write
-    # and the post made from it are one step, so the shown label always
-    # matches the stored one.
+    # Commands run concurrently (each submit on its own coroutine): a label
+    # write and the setter call made from it are one step, so the shown label
+    # always matches the stored one.
     label_guard = threading.Lock()
 
     async def on_session_start(_event, ctx) -> None:

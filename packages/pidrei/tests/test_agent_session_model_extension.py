@@ -15,6 +15,7 @@ case observes the startup event the harness itself produced.
 from dataclasses import replace
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.core.agent_session import ExtensionBindings, ScopedModel
 from pidrei.core.extensions import ToolDefinition
@@ -549,3 +550,44 @@ async def test_bind_extensions_emits_session_start_and_reload_emits_shutdown_the
     await harness.session.reload()
 
     assert lifecycle_events == ["start:startup", "shutdown:reload", "start:reload"]
+
+
+@pytest.mark.tonio
+async def test_overlapping_model_cycles_apply_one_at_a_time(harnesses):
+    """pidrei-specific (UI_ISLAND_DESIGN §7.3): Ctrl+P pressed twice runs two
+    cycles on their own tasks. The second waits for the first to finish
+    (persisting its change included) before it reads the current model."""
+    harness = await create_harness(
+        models=[*TWO_REASONING_MODELS, {"id": "faux-3", "name": "Three", "reasoning": True}],
+        settings={"defaultProvider": "faux", "defaultModel": "faux-1"},
+    )
+    harnesses.append(harness)
+    session_manager = harness.session.session_manager
+    append_model_change = session_manager.append_model_change
+    appended: list[str] = []
+    first_persisting = tonio.Event()
+    second_persisting = tonio.Event()
+    release_first = tonio.Event()
+
+    async def gated_append(provider: str, model_id: str):
+        appended.append(model_id)
+        if len(appended) == 1:
+            first_persisting.set()
+            await release_first.wait(5)
+        else:
+            second_persisting.set()
+        return await append_model_change(provider, model_id)
+
+    session_manager.append_model_change = gated_append
+    first = tonio.spawn(harness.session.cycle_model())
+    await first_persisting.wait(5)
+    second = tonio.spawn(harness.session.cycle_model())
+    # A bounded wait for something that must not happen: the second cycle
+    # does not get to persist while the first is still persisting.
+    await second_persisting.wait(0.1)
+    assert not second_persisting.is_set()
+
+    release_first.set()
+    assert (await first).model.id == "faux-2"
+    assert (await second).model.id == "faux-3"
+    assert appended == ["faux-2", "faux-3"]

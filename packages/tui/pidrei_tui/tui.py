@@ -6,19 +6,37 @@ renderer-independent half of the TUI. The two renderers live next door —
 main screen and scrollback) and ``tui_alt_screen.TuiAltScreen`` (an
 application-owned viewport on the alternate screen).
 
-Ownership contract (the island, PROPER_MT_DESIGN.md §4a): in a started TUI,
-**all component mutation and all rendering happen on the UI owner task**
-(``input_owner``) — the Qt-GUI-thread / Swing-EDT shape. Code running
-anywhere else hands work to it with ``post_ui()``/``input_owner.post()``
-(maybe-on-owner callers) or ``input_owner.run()`` (callers known to be
-off-owner; ``run`` from an owner job self-deadlocks). ``request_render()``
-is safe from any task — it posts. The owner spans the terminal's lifetime,
-so posted work is always consumed in production; tests exercising posted
-paths start an owner (or stub the posting seam), while direct component
-calls in unit tests need no owner at all. This contract is what makes
-the component tree safe under free-threading; publication idioms that
-remain (``set_children``, atomic cache tuples) are hygiene and efficiency,
-not correctness.
+Concurrency contract (UI_ISLAND_DESIGN.md): the UI is passive state plus
+one guard, and independent loops work on it in parallel.
+
+- **The UI state lock** (``state_lock``, a reentrant thread lock with the
+  terminal's lifetime, shared by every TUI on it) guards all component and
+  TUI state. Every mutation or read of it is a short synchronous section
+  under the lock, from whatever task it runs on: input handling, a frame's
+  tree walk, an agent event, a flow's stretch, a timer callback, a
+  component's spawned work. **Nothing awaits while holding it.** A helper
+  that mutates takes it itself (it is reentrant).
+- **Input**: the terminal's reader reads ahead into a channel, and one
+  consumer hands each item to ``_handle_input``, which routes it under the
+  lock. Handlers are synchronous; work whose effect the next key must see
+  is spawned and registered with ``finish_before_next_input``.
+- **Rendering**: ``request_render()`` is sync, lock-free and callable from
+  anywhere (a component's render included); the render loop draws one frame
+  per request, holding the per-TUI render lock for the frame and the state
+  lock for the tree walk only.
+- **Timers** (``_timers``) know nothing about the UI: their callbacks guard
+  what they touch.
+- **Errors** nothing up the stack can take (the input consumer's, the
+  output pump's, a terminal event's, a component's spawned work) go to
+  ``report_error`` and the installed handler.
+
+- **Grouping**: ``apply(fn)`` runs a synchronous ``fn`` under the lock and
+  refuses coroutines, so nothing can be awaited inside; it is the primitive
+  component code (and extensions, through their guarded wrapper) uses to
+  change state from a timer or spawned work.
+
+Publication idioms that remain (``set_children``, atomic cache tuples) are
+hygiene and efficiency, not correctness.
 
 Port deviations (documented once here):
 
@@ -26,28 +44,46 @@ Port deviations (documented once here):
   Python stand-in for that annotation is ``TuiBase`` itself, re-exported under
   the name ``TUI``. Construct a renderer, never ``TUI``.
 
-- Render coalescing: pi chains ``process.nextTick`` + a 16ms ``setTimeout``
-  throttle; here rendering is owner work. ``request_render()`` stays sync
-  (callable from anywhere) and posts a coalescing schedule job to the owner;
-  the 16ms throttle against the end of the last frame is an owner timer
-  (``input_owner.after``), so its cancel is exact. ``force=True`` resets the
-  differential state and skips the throttle, and keyboard input takes the
-  same throttle-skipping path without the reset (pi cancels its render timer
-  for both).
-- Frame output is a two-stage pipeline: ``_do_render`` computes a frame and
-  hands its bytes to a writer task over a one-slot channel (``_emit``), so
-  the next frame's compute (on the owner) overlaps the previous frame's
+- Render scheduling (UI_ISLAND_DESIGN §4.1): pi chains ``process.nextTick``
+  + a 16ms ``setTimeout`` throttle; here a render loop (one task per start)
+  receives requests from a one-slot channel and draws one frame per
+  request. ``request_render()`` stays sync and touches no lock: it sends
+  with ``send_nowait``, and a full channel means a request is already
+  pending, so the new one is covered and dropped. The loop receives before
+  it walks the tree, so a change made after the receive queues exactly one
+  more frame. There is no throttle: while a frame runs, requests collapse
+  into the pending one, and the frame writer paces a slow terminal. pi's
+  keyboard fast path (skip the throttle) goes with it. ``force=True``
+  (drop the differential state: repaint everything) is a field of the
+  request object every requester sends until the loop receives it: a
+  forced request sets it before its send, so a dropped send still lands in
+  the pending request. The loop installs a fresh object before reading it.
+- A frame is two halves: ``_compose_frame`` walks the tree and publishes
+  what input reads back (layout, overlay bounds) under the UI state lock;
+  ``_write_frame`` diffs and emits under the render lock only.
+- Frame output is a two-stage pipeline: ``_write_frame`` hands its bytes to
+  a writer task over a one-slot channel (``_emit``), so the next frame's
+  compute overlaps the previous frame's
   trip to the terminal while a slow link (SSH) still paces rendering — at
   most one frame ahead of the wire. pi writes synchronously from the
   same thread; the ordering that gives it is kept by routing every write
   the renderers make through ``_emit`` and by ``render_now``/``stop``
   draining the pipeline (``_flush_frames``) before anything else goes out.
 - ``start``/``stop`` are async (they drive the async terminal driver and the
-  render/writer lifecycle). ``stop()`` quiesces rendering with an owner
-  barrier and drains the writer — no task abort involved.
+  render/writer lifecycle). ``stop()`` closes the request channel, waits for
+  the render loop to finish its frame, and drains the writer — no task
+  abort involved.
 - ``query_terminal_background_color``/``query_terminal_color_scheme`` are
   async methods; their pending-state transitions take a sync lock because
-  the input pump and the querying task may run on different tonio workers.
+  the terminal's input reader and the querying task may run on different
+  tonio workers.
+- Input (UI_ISLAND_DESIGN §4.2): the terminal hands terminal replies to
+  ``_consume_terminal_reply`` from its reader, ahead of the input order, so
+  a query is answered even while input handling waits on the work that
+  asked; colour-scheme reports go to their own loop (a theme load stays off
+  the key path). Every other item reaches ``_handle_input`` from the
+  terminal's one input consumer (or, for a terminal without one, from its
+  caller), one at a time.
 - ``CURSOR_MARKER`` is an APC sequence pi brands "pi:c" — renamed to
   "pidrei:c" (pi naming itself).
 - Env renames: PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW, PI_TUI_DEBUG →
@@ -57,21 +93,20 @@ Port deviations (documented once here):
   maps PI_HARDWARE_CURSOR through its settings manager before creating it).
 """
 
-import functools
+import inspect
 import math
 import re
 import threading
-import time as _time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
 import tonio.colored as tonio
+from tonio.colored import sync
 from tonio.colored.sync import channel
 
-from ._owner import OwnerTask
-from ._timers import get_ui_owner, set_ui_owner
 from .keys import is_key_release, matches_key
+from .terminal import ProcessTerminal
 from .terminal_colors import (
     is_osc11_background_color_response,
     parse_osc11_background_color,
@@ -150,17 +185,14 @@ class TuiMouseDispatchResult:
     focus_target: Any = None
 
 
-async def dispatch_mouse_event(component, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+def dispatch_mouse_event(component, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
     """Dispatch an event to a component and retain the exact target and coordinate
     transform. Containers use this when forwarding events to nested children.
-
-    `handle_mouse` is async here (pi's is sync) for the same reason
-    `handle_input` is: list selections run awaited callbacks.
     """
     handle_mouse = getattr(component, "handle_mouse", None)
     if handle_mouse is None:
         return None
-    result = await handle_mouse(event)
+    result = handle_mouse(event)
     if result is None:
         return None
     if isinstance(result, TuiMouseDispatchResult):
@@ -209,8 +241,8 @@ class Component(Protocol):
         """
         ...
 
-    # Optional: async handle_input(data) for keyboard input when focused;
-    # async handle_mouse(event) -> TuiMouseEventResult | None for normalized
+    # Optional: handle_input(data) for keyboard input when focused;
+    # handle_mouse(event) -> TuiMouseEventResult | None for normalized
     # pointer input in fullscreen mode; wants_key_release = True to receive
     # Kitty key release events.
 
@@ -316,9 +348,9 @@ class Container:
     def set_children(self, children: list) -> None:
         """Replace the children in one step.
 
-        Correctness comes from the ownership contract (mutation and render
-        both run on the UI owner task, so a rebuild can never overlap a
-        frame). The single assignment remains as hygiene: a rebuild is one
+        Correctness comes from the UI state lock (mutation and the frame's
+        tree walk both hold it, so a rebuild can never overlap a frame).
+        The single assignment remains as hygiene: a rebuild is one
         publication instead of a clear-then-append window, which keeps any
         off-contract reader (a test, a debug probe) from seeing a
         half-populated container.
@@ -331,7 +363,7 @@ class Container:
             if invalidate is not None:
                 invalidate()
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
         if event.y < 0 or event.y >= event.height:
             return None
         layout = self._mouse_layout
@@ -343,7 +375,7 @@ class Container:
         child_y = 0
         for child, child_height in mouse_children:
             if child_y <= event.y < child_y + child_height:
-                result = await dispatch_mouse_event(child, replace(event, y=event.y - child_y, height=child_height))
+                result = dispatch_mouse_event(child, replace(event, y=event.y - child_y, height=child_height))
                 if result is not None and result.focus and getattr(self, "handle_input", None) is not None:
                     return replace(result, focus_target=self)
                 return result
@@ -360,8 +392,6 @@ class Container:
         self._mouse_layout = {"width": width, "children": mouse_children}
         return lines
 
-
-_MIN_RENDER_INTERVAL_S = 0.016
 
 SEGMENT_RESET = "\x1b[0m\x1b]8;;\x07"
 
@@ -411,6 +441,24 @@ def composite_tui_line(base_line: str, overlay_line: str, start_col: int, overla
 VIEWPORT_TUI = "__pidrei_tui_viewport__"
 
 
+def call_sync(fn):
+    """Call ``fn`` and return its result, refusing an awaitable one with
+    ``TypeError`` (the coroutine is closed, not left unawaited).
+
+    What runs under the UI state lock must not await (UI_ISLAND_DESIGN
+    §10.2): ``apply`` and the extension UI contexts call through here. This
+    enforces synchronous-only; it is not a ``T | Awaitable[T]`` union.
+    """
+    # An `async def` only builds its coroutine here: nothing runs.
+    result = fn()
+    if inspect.isawaitable(result):
+        close = getattr(result, "close", None)
+        if close is not None:
+            close()
+        raise TypeError("expected a synchronous function: nothing can be awaited under the UI state lock")
+    return result
+
+
 def is_viewport_tui(tui) -> bool:
     return getattr(tui, VIEWPORT_TUI, False) is True
 
@@ -430,10 +478,20 @@ def _without(listeners: tuple, listener) -> tuple:
 MAX_RENDER_WRITE_CHARS = 1024 * 1024
 
 
+class _RenderRequest:
+    """The render loop's request message (see the module docstring)."""
+
+    __slots__ = ("force",)
+
+    def __init__(self) -> None:
+        self.force = False
+
+
 class TuiBase(Container, ABC):
     """Renderer-independent half of the TUI: focus, overlays, input, queries.
 
-    Subclasses own the frame: they implement ``_do_render`` and may hook the
+    Subclasses own the frame: they implement ``_compose_frame`` and
+    ``_write_frame`` and may hook the
     terminal lifecycle through ``_before_terminal_start`` / ``_after_terminal_start``
     / ``_before_terminal_stop`` / ``_after_terminal_stop`` and reset their
     differential state in ``_reset_render_state``.
@@ -447,7 +505,8 @@ class TuiBase(Container, ABC):
         self._log_directory = log_directory
         self._focused_component = None
         # Listener registries: (un)registered from any task (extensions, the
-        # theme controller), iterated on the owner. Copy-on-write tuples under
+        # theme controller), iterated by input routing and the terminal-event
+        # loop. Copy-on-write tuples under
         # the guard, so a reader's reference never changes under it.
         self._listeners_guard = threading.Lock()
         self._input_listeners: tuple = ()
@@ -455,32 +514,44 @@ class TuiBase(Container, ABC):
         # Global callback for debug key (Shift+Ctrl+D). Called before input is
         # forwarded to the focused component.
         self.on_debug = None
+        # Spawned work the current input item must finish before the next
+        # item is handled (`finish_before_next_input`). Only the input
+        # consumer touches it. `_routing` is True while an item is routed
+        # (read and written under the state lock only): registering from
+        # anywhere else is refused.
+        self._input_completions: list = []
+        self._routing = False
 
-        # Render scheduling state. Owner-confined: only owner jobs touch it
-        # (`_schedule_render`/`_render_job`), so no lock — that is the island's
-        # point. `_render_active` is the one exception: a plain flag set by
-        # `start()`/`stop()` and read anywhere to drop requests early.
+        # Render scheduling (see the module docstring). `_render_active` is a
+        # plain flag set by `start()`/`stop()` and read anywhere to drop
+        # requests early; the request channel's sender and the render loop
+        # exist while started. `_render_request` is the object requesters
+        # send; the render loop replaces it on each receive.
         self._render_active = False
-        self._render_scheduled = False
-        self._render_force = False
-        self._throttle_timer = None
-        self._last_render_at = 0.0
+        self._render_requests = None
+        self._render_loop_task = None
+        self._render_request = _RenderRequest()
         self._line_reset_memo: dict[str, str] = {}
         # Frame pipeline (see the module docstring): the sender side of the
         # one-slot channel while the writer task runs, else None.
         self._frame_writer_task = None
         self._frames: Any = None
         self._frame_parts: list[str] = []
+        # I/O a frame needs (debug and crash logs), run once the UI state
+        # lock is released: see `_defer_frame_io`.
+        self._frame_io: list = []
         self._frame_writer_error: BaseException | None = None
-        # Async callback invoked when a frame raises; see `_render_job`.
+        # Async callback invoked when a frame raises; see `_render_loop`.
         self._render_error_handler = None
-        # The task that owns UI state (pi: the JS thread). A ProcessTerminal
-        # brings its own — the stdin pump and the input timers already run on
-        # it; for any other terminal the TUI runs one and routes the
-        # terminal's input through it. Either way it outlives stop/start: it
-        # is closed once, by the app, at shutdown. Components post work that
-        # mutates state from elsewhere (an autocomplete result, a timer) here.
-        self.input_owner: OwnerTask = getattr(terminal, "input_owner", None) or OwnerTask()
+        # The UI state lock (UI_ISLAND_DESIGN §4.1, §4.6): a reentrant thread
+        # lock with the terminal's lifetime, shared by every TUI on that
+        # terminal; a terminal without one (tests) gets the TUI's own. It is
+        # held for synchronous sections only — nothing awaits under it.
+        terminal_state_lock = getattr(terminal, "state_lock", None)
+        self.state_lock: threading.RLock = terminal_state_lock if terminal_state_lock is not None else threading.RLock()
+        # One frame at a time: guards the render-private state (previous
+        # frame, diff bookkeeping, hardware cursor, the frame writer).
+        self._render_lock = sync.Lock()
         self._show_hardware_cursor = False
         # Clear empty rows when content shrinks (default: off)
         self._clear_on_shrink = False
@@ -491,6 +562,11 @@ class TuiBase(Container, ABC):
         self._pending_osc11_queries: list[_PendingOsc11Query] = []
         self._color_scheme_listeners: tuple = ()  # under `_listeners_guard`
         self._color_scheme_notifications_enabled = False
+        # Terminal events (colour-scheme reports) from the input reader to
+        # their own loop, off the key path (UI_ISLAND_DESIGN §4.2): the
+        # sender while the TUI is started, and the loop's task.
+        self._terminal_events = None
+        self._terminal_event_task = None
 
         # Overlay stack for modal components rendered on top of base content
         self._focus_order_counter = 0
@@ -508,10 +584,22 @@ class TuiBase(Container, ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    async def _do_render(self) -> None: ...
+    def _compose_frame(self) -> Any:
+        """The frame's first half, under the UI state lock (and the render
+        lock): walk the tree, which reads live component state, and publish
+        what input reads back from render. Returns what `_write_frame` needs,
+        or None when there is nothing to draw. Never awaits: I/O the frame
+        needs goes through `_defer_frame_io`."""
+
+    @abstractmethod
+    def _write_frame(self, frame) -> None:
+        """The frame's second half, under the render lock only: diff against
+        the previous frame and `_emit` the output. Reads no live component
+        state (`_compose_frame` captured it)."""
 
     def _reset_render_state(self) -> None:
-        """Drop the differential state so the next frame repaints everything."""
+        """Drop the differential state so the next frame repaints everything.
+        Called under both locks: a renderer may also drop state input reads."""
 
     async def _before_terminal_start(self) -> None: ...
 
@@ -533,9 +621,10 @@ class TuiBase(Container, ABC):
         return self._show_hardware_cursor
 
     def set_show_hardware_cursor(self, enabled: bool) -> None:
-        if self._show_hardware_cursor == enabled:
-            return
-        self._show_hardware_cursor = enabled
+        with self.state_lock:
+            if self._show_hardware_cursor == enabled:
+                return
+            self._show_hardware_cursor = enabled
         # pi hides the cursor right here. Every frame ends by emitting the
         # cursor state (`_position_hardware_cursor` / the alt-screen frame
         # tail), so rendering stays the only path writing terminal
@@ -546,26 +635,37 @@ class TuiBase(Container, ABC):
         return self._clear_on_shrink
 
     def set_render_error_handler(self, handler) -> None:
-        """Install the async callback that receives a rendering exception.
+        """Install the async callback that receives the UI's uncaught errors:
+        a frame that raises, and whatever `report_error` is handed.
 
-        Without one, the exception propagates out of the render job into the
-        UI owner (killing input with it), so owners should install one.
-
-        Posted owner work (a timer tick, an autocomplete result) that raises
-        goes to the same handler — pi would crash on it; here the owner keeps
-        serving input. Installed as a closure over the handler, not a method
-        of this TUI: the owner's lifecycle is not the TUI's, and must not
-        keep it alive.
+        Without one, a frame's exception ends the render loop and resurfaces
+        from `stop()`, and `report_error` re-raises, so owners should install
+        one.
         """
         self._render_error_handler = handler
+
+    def apply(self, fn):
+        """Run the synchronous ``fn`` under the UI state lock, as one whole
+        change, and return its result: the way to change UI state from a
+        timer or spawned work. Callable from anywhere, input handling
+        included (the lock is reentrant).
+
+        Nothing may be awaited under the lock, so a coroutine function, or
+        a callable returning an awaitable, is refused with ``TypeError``.
+        """
+        with self.state_lock:
+            return call_sync(fn)
+
+    def report_error(self, error: BaseException) -> None:
+        """Hand an error that nothing up the stack can take to the installed
+        handler (interactive mode's crash handler), on a task of its own:
+        the input consumer's item, the output pump's write, a terminal event,
+        a component's spawned work (UI_ISLAND_DESIGN §4.7). With no handler
+        installed it is re-raised to the caller."""
+        handler = self._render_error_handler
         if handler is None:
-            self.input_owner.on_error = None
-            return
-
-        def on_error(error: BaseException) -> None:
-            tonio.spawn.without_tracking(handler(error))
-
-        self.input_owner.on_error = on_error
+            raise error
+        tonio.spawn.without_tracking(handler(error))
 
     def set_clear_on_shrink(self, enabled: bool) -> None:
         """Set whether to trigger full re-render when content shrinks.
@@ -573,7 +673,8 @@ class TuiBase(Container, ABC):
         When enabled, empty rows are cleared when content shrinks. When
         disabled, empty rows remain (reduces redraws on slower terminals).
         """
-        self._clear_on_shrink = enabled
+        with self.state_lock:
+            self._clear_on_shrink = enabled
 
     # ------------------------------------------------------------------
     # Focus and overlay focus-restore machinery
@@ -868,7 +969,7 @@ class TuiBase(Container, ABC):
                 return overlay.component
         return component
 
-    async def _dispatch_mouse_to_overlay(self, event: TuiMouseEvent) -> tuple[bool, TuiMouseDispatchResult | None]:
+    def _dispatch_mouse_to_overlay(self, event: TuiMouseEvent) -> tuple[bool, TuiMouseDispatchResult | None]:
         """Dispatch to the visually topmost overlay under the pointer: (hit, result)."""
         for layout in reversed(self._rendered_overlay_layouts):
             if (
@@ -878,7 +979,7 @@ class TuiBase(Container, ABC):
                 or event.screen_y >= layout["row"] + layout["height"]
             ):
                 continue
-            result = await dispatch_mouse_event(
+            result = dispatch_mouse_event(
                 layout["entry"].component,
                 replace(
                     event,
@@ -893,13 +994,12 @@ class TuiBase(Container, ABC):
             return True, replace(result, focus_target=layout["entry"].component) if result.focus else result
         return False, None
 
-    async def _handle_pointer_input(self, data: str) -> bool:
+    def _handle_pointer_input(self, data: str) -> bool:
         """Renderer hook for pointer input, run before the input listeners.
 
-        pi handles the mouse inside the alternate screen's (sync) viewport
-        input listener; here component mouse handlers are async, so the
-        pointer path is this awaited hook instead. Returns True when the
-        input was consumed.
+        pi handles the mouse inside the alternate screen's viewport input
+        listener; here the pointer path is this hook instead. Returns True
+        when the input was consumed.
         """
         return False
 
@@ -919,27 +1019,25 @@ class TuiBase(Container, ABC):
         self._stopped = False
         await self._before_terminal_start()
         on_input = self._handle_input
-        if getattr(self.terminal, "input_owner", None) is not self.input_owner:
-            # The terminal does not run the owner: do it here (a restart
-            # finds it running) and put the terminal's input on it.
-            self.input_owner.start()
+        if not isinstance(self.terminal, ProcessTerminal):
+            # Only a ProcessTerminal runs an input consumer. Any other
+            # terminal's caller awaits each item, so the error routing a
+            # consumer does happens here.
 
             async def on_input(data: str) -> None:
                 try:
-                    await self.input_owner.run(functools.partial(self._handle_input, data))
-                except BaseException as error:
-                    # Mirror of the ProcessTerminal pump guard: a handler
-                    # exception must not kill the terminal's input delivery.
-                    if isinstance(error, GeneratorExit):
-                        raise
-                    on_error = self.input_owner.on_error
-                    if on_error is None:
-                        raise
-                    on_error(error)
+                    await self._handle_input(data)
+                except Exception as error:
+                    self.report_error(error)
 
-        await self.terminal.start(on_input, self.request_render)
-        set_ui_owner(self.input_owner)
+        self._terminal_events, events = channel.unbounded()
+        self._terminal_event_task = tonio.spawn(self._run_terminal_events(events))
+        # Requests are dropped (`_render_active`) until the end of start.
+        self._render_request = _RenderRequest()
+        self._render_requests, requests = channel.channel(1)
+        self._render_loop_task = tonio.spawn(self._render_loop(requests))
         try:
+            await self.terminal.start(on_input, self.request_render, self._consume_terminal_reply, self.report_error)
             await self._after_terminal_start()
             self.terminal.hide_cursor()
             if self._color_scheme_notifications_enabled:
@@ -950,20 +1048,65 @@ class TuiBase(Container, ABC):
             # Ended by the `None` sentinel `stop()` sends, and joined there.
             self._frame_writer_task = tonio.spawn(self._frame_writer(receiver))
         except BaseException:
-            # A failed start leaves no running UI: later timers must not be
-            # routed to its owner.
-            if get_ui_owner() is self.input_owner:
-                set_ui_owner(None)
+            # A failed start leaves no terminal events or rendering running:
+            # the loops end on their closed channels.
+            self._terminal_events = self._terminal_event_task = None
+            events.close()
+            self._render_requests = self._render_loop_task = None
+            requests.close()
             raise
-        # Rendering is owner work from here on. Requests made earlier in
-        # start() were dropped by the `_render_active` gate; this final
-        # request supersedes them all with the first frame.
-        self._render_scheduled = False
-        self._render_force = False
-        self._throttle_timer = None
-        self._last_render_at = 0.0
+        # Requests made earlier in start() were dropped by the
+        # `_render_active` gate; this final request supersedes them all with
+        # the first frame.
         self._render_active = True
         self.request_render()
+
+    def close(self) -> None:
+        """App shutdown, once: ends what outlives stop/start, the terminal's
+        input consumer."""
+        self.terminal.close()
+
+    def finish_before_next_input(self, task) -> None:
+        """Hold the next input item until ``task`` (a ``tonio.spawn()``
+        handle) finishes.
+
+        Input handlers are synchronous; a handler whose effect needs I/O
+        (pi does that I/O synchronously) spawns it and registers the handle
+        here, so the next key sees the effect. Awaiting the handle re-raises
+        the task's error, which then takes the input error path.
+
+        Only from input handling (``handle_input``/``handle_mouse`` and the
+        callbacks they run): from anywhere else the handle would be awaited
+        by an unrelated item, or never, so that raises ``RuntimeError``.
+        """
+        # Routing holds the (reentrant) lock, so a call from inside it
+        # re-enters and sees the flag; any other caller waits for the item
+        # to be routed and sees it cleared.
+        with self.state_lock:
+            if not self._routing:
+                raise RuntimeError("finish_before_next_input() called outside input handling")
+            self._input_completions.append(task)
+
+    async def _finish_input_completions(self) -> None:
+        completions, self._input_completions = self._input_completions, []
+        error = None
+        for completion in completions:
+            try:
+                await completion
+            except Exception as exc:
+                if error is None:
+                    error = exc
+        if error is None:
+            return
+        # A spawn handle raises the task's error inside a
+        # `SpawnExceptionGroup`; the error handler gets the task's own error,
+        # with the group as its cause.
+        leaf = error
+        while isinstance(leaf, BaseExceptionGroup) and leaf.exceptions:
+            leaf = leaf.exceptions[0]
+        if leaf is error:
+            raise error
+        raise leaf from error
 
     def add_input_listener(self, listener):
         with self._listeners_guard:
@@ -1005,86 +1148,97 @@ class TuiBase(Container, ABC):
         # Response format: CSI 6 ; height ; width t
         await self.terminal.write("\x1b[16t")
 
-    async def stop(self, options: dict | None = None, *, on_owner: bool = False) -> None:
+    async def stop(self, options: dict | None = None) -> None:
         """``options`` mirrors pi's ``TuiStopOptions`` (``{"preserveScreen"?}``).
 
         ``preserveScreen`` leaves the renderer's output on the terminal for
         another TUI taking the same terminal over (the runtime UI-mode switch).
 
-        Off the owner (shutdown flows, the UI-mode switch, the crash handler)
-        the stop hands its owner-confined steps to the owner and waits. From
-        owner-side code (``on_owner``: a key action, a component — pi stops
-        the UI in place from its UI thread) they apply in place: waiting on
-        the owner from an owner job would deadlock.
+        Never waits on input handling (UI_ISLAND_DESIGN §4.4), so a key's
+        completion may stop the UI, as pi's key handlers do in place.
         """
         options = options or {}
         self._stopped = True
         self._render_active = False
 
-        # Barrier: a render job already queued (or mid-frame) finishes
-        # before the writer is told to stop, so nothing sends into a
-        # drained pipeline; jobs queued after this see `_render_active`
-        # False and no-op. A pending throttle timer is cancelled here: the
-        # owner outlives the stop, so it would otherwise fire into the
-        # restarted TUI and render outside the schedule. (`run` on an
-        # owner that never started settles inline.) On the owner no render
-        # job can be mid-frame: this job is the one running.
-        def drained() -> None:
-            if self._throttle_timer is not None:
-                self._throttle_timer.cancel()
-                self._throttle_timer = None
-
-        async def _drained() -> None:
-            drained()
-
-        if on_owner:
-            drained()
-        else:
-            await self.input_owner.run(_drained)
-        if self._frame_writer_task is not None:
-            # After the barrier: what rendering handed over still goes out,
-            # then the writer stops and everything below writes in order
-            # behind it.
-            frames, self._frames = self._frames, None
-            await frames.send(None)
-            await self._frame_writer_task
-            self._frame_writer_task = None
-        if self._color_scheme_notifications_enabled:
-            await self.terminal.write("\x1b[?2031l")
-        await self._before_terminal_stop(options)
+        # Later requests are dropped; the render loop finishes the frame it
+        # is on, if any, and ends, so nothing sends into a drained pipeline.
+        requests, self._render_requests = self._render_requests, None
+        if requests is not None:
+            requests.close()
+        if self._render_loop_task is not None:
+            task, self._render_loop_task = self._render_loop_task, None
+            await task
+        # The render lock: the writer and the diff state the exit sequence
+        # reads are render-private.
+        async with self._render_lock:
+            if self._frame_writer_task is not None:
+                # After the barrier: what rendering handed over still goes out,
+                # then the writer stops and everything below writes in order
+                # behind it.
+                frames, self._frames = self._frames, None
+                await frames.send(None)
+                await self._frame_writer_task
+                self._frame_writer_task = None
+            if self._color_scheme_notifications_enabled:
+                await self.terminal.write("\x1b[?2031l")
+            await self._before_terminal_stop(options)
         self.terminal.show_cursor()
-        await self.terminal.stop(on_owner=on_owner)
-        await self._after_terminal_stop(options)
+        await self.terminal.stop()
+        # The reader is gone: no more terminal events. A listener being
+        # notified finishes first.
+        events, self._terminal_events = self._terminal_events, None
+        if events is not None:
+            events.close()
+        if self._terminal_event_task is not None:
+            task, self._terminal_event_task = self._terminal_event_task, None
+            await task
+        async with self._render_lock:
+            await self._after_terminal_stop(options)
 
     async def render_now(self, force: bool = False) -> None:
-        """Render one frame on the caller, bypassing the owner and the throttle.
+        """Render one frame on the caller, bypassing the render loop, and
+        wait until it is on the wire. The render lock orders it
+        with the loop's frames (the UI-mode switch renders a stopped regular
+        screen this way)."""
+        async with self._render_lock:
+            if force:
+                self._reset_for_full_redraw()
+            await self._render_frame()
+            await self._flush_frames()
 
-        For a TUI whose render machinery is not running (never started, or
-        already stopped — the UI-mode switch renders the regular screen this
-        way) or for owner-side callers. Off-owner calls against a *running*
-        TUI would race the owner's frames — no production path does that.
-        """
-        if force:
+    def _reset_for_full_redraw(self) -> None:
+        with self.state_lock:
             self._reset_render_state()
-        await self._render_frame()
-        await self._flush_frames()
 
     async def _render_frame(self) -> None:
-        """One frame: compute, hand the bytes over, stamp the throttle clock."""
+        """One frame, under the render lock: walk the tree under the UI state
+        lock, then — released — diff it, run its I/O and hand the bytes over."""
         try:
-            await self._do_render()
+            with self.state_lock:
+                frame = self._compose_frame()
+            if frame is not None:
+                self._write_frame(frame)
         except BaseException:
             self._frame_parts = []  # a torn frame is never written
+            await self._run_frame_io()  # the crash log lands before the error propagates
             raise
+        await self._run_frame_io()
         await self._send_frame()
-        # Throttle from the end of the frame (pi measures from its start) so
-        # a frame that takes longer than the interval is still followed by a
-        # pause instead of pinning the worker for as long as updates keep
-        # coming.
-        self._last_render_at = _time.monotonic()
+
+    def _defer_frame_io(self, io) -> None:
+        """Queue I/O the frame being computed needs (`io` returns an
+        awaitable). It runs after the UI state lock is released, in order,
+        before the frame goes out — or before the frame's error propagates."""
+        self._frame_io.append(io)
+
+    async def _run_frame_io(self) -> None:
+        pending, self._frame_io = self._frame_io, []
+        for io in pending:
+            await io()
 
     def _emit(self, data: str) -> None:
-        """Add to the frame being rendered; it goes out as one write when `_do_render` returns."""
+        """Add to the frame being rendered; it goes out as one write when `_write_frame` returns."""
         self._frame_parts.append(data)
 
     async def _send_frame(self) -> None:
@@ -1140,112 +1294,105 @@ class TuiBase(Container, ABC):
                     raise
                 self._frame_writer_error = error
 
-    def post_ui(self, fn) -> None:
-        """Run a synchronous component mutation on the UI owner task.
-
-        The ownership contract's front door for code that may be off-owner:
-        `fn` is posted (FIFO — safe from any task, including owner jobs, and
-        ordered with everything else posted). Pure adaptation over
-        `input_owner.post`; the queueing policy lives there.
-        """
-
-        async def apply() -> None:
-            fn()
-
-        self.input_owner.post(apply)
-
     def request_render(self, force: bool = False) -> None:
-        # Sync and callable from any task: it only posts. Coalescing, the
-        # throttle, and the force/diff-reset handling are owner state
-        # (`_schedule_render`); pi calls resetRenderState() right here, which
-        # is safe on one thread and was a data race against `_do_render`'s
-        # previous-frame tail on this runtime — only the render job resets.
+        # Sync, callable from any task (a component's render included), and
+        # touches no lock. pi calls resetRenderState() right here; the diff
+        # state is the render loop's, so `force` travels in the request.
         if not self._render_active:
             return
-        self.input_owner.post(functools.partial(self._schedule_render, force, force))
-
-    def _request_immediate_render(self) -> None:
-        """Render without the throttle (but with the diff).
-
-        pi's counterpart cancels the throttled `setTimeout`; here the pending
-        throttle timer is cancelled on the owner (exact by construction).
-        """
-        if not self._render_active:
-            return
-        self.input_owner.post(functools.partial(self._schedule_render, False, True))
-
-    async def _schedule_render(self, force: bool, immediate: bool) -> None:
-        """Owner job: fold a render request into the schedule.
-
-        At most one `_render_job` is pending at a time (`_render_scheduled`);
-        requests coalesce into it. A non-immediate request inside the 16ms
-        window parks in an owner timer; an immediate one cancels that timer
-        and renders on the next owner turn — keyboard input never waits out
-        the throttle (mirrors the old loop's immediate-signal preemption).
-        """
-        if not self._render_active:
-            return
+        request = self._render_request
         if force:
-            self._render_force = True
-        if self._render_scheduled:
-            if immediate and self._throttle_timer is not None:
-                self._throttle_timer.cancel()
-                self._throttle_timer = None
-                self.input_owner.post(self._render_job)
-            return
-        self._render_scheduled = True
-        if not immediate:
-            delay_s = _MIN_RENDER_INTERVAL_S - (_time.monotonic() - self._last_render_at)
-            if delay_s > 0:
-                self._throttle_timer = self.input_owner.after(delay_s * 1000, self._render_job)
+            # Before the send: if the channel is full, the pending request
+            # is this same object, so the force still lands.
+            request.force = True
+        requests = self._render_requests
+        if requests is not None:
+            # Full: a pending request covers this one. Closed: stopping.
+            requests.send_nowait(request)
+
+    async def _render_loop(self, requests) -> None:
+        """One frame per received request. Ends when `stop()` closes the
+        channel, or after a frame raises (rendering is over; the error goes
+        to the installed handler)."""
+        while True:
+            try:
+                request = await requests.receive()
+            except BrokenPipeError:
+                return  # `stop()`
+            # Later requests go in a fresh object; `force` is read once, after.
+            # A forced request that took this one just before the swap either
+            # set `force` before this read, or sends it again (the channel is
+            # empty now) and forces the next frame. A plain request resending
+            # it can only repeat a full repaint, never lose one.
+            self._render_request = _RenderRequest()
+            force = request.force
+            try:
+                async with self._render_lock:
+                    if force:
+                        self._reset_for_full_redraw()
+                    await self._render_frame()
+            except BaseException as error:
+                # pi crashes the process on a render throw. Here rendering
+                # stops and the error goes to the installed handler
+                # (interactive mode's crash handler). BaseException on
+                # purpose: a pyo3 PanicException is not an Exception, and
+                # missing it here is a silent render death.
+                if isinstance(error, GeneratorExit):
+                    raise
+                self._render_active = False
+                handler = self._render_error_handler
+                if handler is None:
+                    raise
+                # Detached: the handler typically calls `stop()`, which
+                # waits for this loop to end.
+                tonio.spawn.without_tracking(handler(error))
                 return
-        self.input_owner.post(self._render_job)
-
-    async def _render_job(self) -> None:
-        """Owner job: one frame. Requests during the frame schedule the next.
-
-        (They post new schedule jobs behind this one — nothing renders
-        concurrently, so pi's renderRequested re-check is the owner queue
-        itself.)
-        """
-        self._throttle_timer = None
-        self._render_scheduled = False
-        if not self._render_active:
-            return
-        force = self._render_force
-        self._render_force = False
-        if force:
-            self._reset_render_state()
-        try:
-            await self._render_frame()
-        except BaseException as error:
-            # pi crashes the process on a render throw. Here the frame is an
-            # owner job: letting the exception escape would go to the owner's
-            # on_error with the render machinery still armed. Stop rendering
-            # and hand it to the installed handler (interactive mode's crash
-            # handler) instead. BaseException on purpose: a pyo3
-            # PanicException is not an Exception, and missing it here is a
-            # silent render death.
-            if isinstance(error, GeneratorExit):
-                raise
-            self._render_active = False
-            handler = self._render_error_handler
-            if handler is None:
-                raise
-            # Detached on purpose: the handler typically calls `stop()`,
-            # whose owner barrier would deadlock behind this job.
-            tonio.spawn.without_tracking(handler(error))
 
     # ------------------------------------------------------------------
     # Input handling
     # ------------------------------------------------------------------
 
     async def _handle_input(self, data: str) -> None:
+        try:
+            with self.state_lock:
+                self._routing = True
+                try:
+                    self._route_input(data)
+                finally:
+                    self._routing = False
+        finally:
+            await self._finish_input_completions()
+
+    def _consume_terminal_reply(self, data: str) -> bool:
+        """The terminal's ``on_reply``: runs in its input reader, ahead of the
+        input order (pi checks these first in `handleInput`). A query's
+        answer settles the query even while input handling waits on the
+        work that asked; a colour-scheme report goes to the terminal-event
+        loop, since reacting to it can mean loading a theme."""
         if self._consume_osc11_background_response(data):
-            return
-        if await self._consume_terminal_color_scheme_report(data):
-            return
-        if await self._handle_pointer_input(data):
+            return True
+        scheme = parse_terminal_color_scheme_report(data)
+        if not scheme:
+            return False
+        events = self._terminal_events
+        if events is not None:
+            events.send(scheme)
+        return True
+
+    async def _run_terminal_events(self, receiver) -> None:
+        while True:
+            try:
+                scheme = await receiver.receive()
+            except BrokenPipeError:
+                return  # `stop()`
+            try:
+                await self._notify_terminal_color_scheme(scheme)
+            except Exception as error:
+                self.report_error(error)
+
+    def _route_input(self, data: str) -> None:
+        """The input item's synchronous handling, under the UI state lock."""
+        if self._handle_pointer_input(data):
             return
 
         input_listeners = self._input_listeners
@@ -1303,19 +1450,17 @@ class TuiBase(Container, ABC):
             # Filter out key release events unless component opts in
             if is_key_release(data) and not getattr(focused, "wants_key_release", False):
                 return
-            await handle(data)
-            # Keyboard input is latency-sensitive; skip the throttled path.
-            self._request_immediate_render()
+            handle(data)
+            self.request_render()
 
     def _consume_osc11_background_response(self, data: str) -> bool:
-        if self._pending_osc11_replies <= 0:
-            return False
-
         if not is_osc11_background_color_response(data):
             return False
 
         rgb = parse_osc11_background_color(data)
         with self._query_lock:
+            if self._pending_osc11_replies <= 0:
+                return False
             self._pending_osc11_replies -= 1
             query = self._pending_osc11_queries.pop(0) if self._pending_osc11_queries else None
             if query is not None and not query.settled:
@@ -1324,16 +1469,11 @@ class TuiBase(Container, ABC):
                 query.event.set()
         return True
 
-    async def _consume_terminal_color_scheme_report(self, data: str) -> bool:
-        scheme = parse_terminal_color_scheme_report(data)
-        if not scheme:
-            return False
-
+    async def _notify_terminal_color_scheme(self, scheme: str) -> None:
         for listener in self._color_scheme_listeners:
             # Listeners are awaitable-returning (async-only policy): reacting
             # to a scheme change can mean loading a theme from disk.
             await listener(scheme)
-        return True
 
     def _consume_cell_size_response(self, data: str) -> bool:
         # Response format: ESC [ 6 ; height ; width t

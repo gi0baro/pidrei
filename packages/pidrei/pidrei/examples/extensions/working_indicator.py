@@ -72,9 +72,9 @@ def get_indicator(mode: str) -> dict | None:
 
 async def extension(pi):
     state = {"mode": "spinner"}
-    # Commands run concurrently (each submit on its own task): a mode write
-    # and the UI posts made from it are one step, so what is shown always
-    # matches the stored mode.
+    # Commands run concurrently (each submit on its own coroutine): a mode
+    # write and the setter calls made from it are one step, so what is shown
+    # always matches the stored mode.
     mode_guard = threading.Lock()
 
     def apply_indicator(ctx, mode: str) -> None:

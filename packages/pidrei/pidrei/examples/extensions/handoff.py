@@ -16,8 +16,6 @@ Start pidrei with this extension:
 
 import time
 
-import tonio.colored as tonio
-
 from pidrei.core.compaction.utils import serialize_conversation
 from pidrei.core.messages import convert_to_llm, create_compaction_summary_message
 from pidrei.modes.interactive.components import BorderedLoader
@@ -109,15 +107,12 @@ async def extension(pi):
         current_session_file = ctx.session_manager.get_session_file()
 
         # Generate the handoff prompt with loader UI
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             loader = BorderedLoader(tui, theme, "Generating handoff prompt...")
             loader.on_abort = lambda: done(None)
 
-            # The work below runs on its own task, while `done` is the
-            # component's (it closes the dialog on the UI owner): the result
-            # is handed to the owner, as internal background work does.
-            def finish(result) -> None:
-                tui.post_ui(lambda: done(result))
+            # The work below runs on its own coroutine: `done` takes the UI
+            # state lock itself, so it closes the dialog from there directly.
 
             async def generate():
                 try:
@@ -144,15 +139,15 @@ async def extension(pi):
                     )
 
                     if response.stop_reason == "aborted":
-                        finish(None)
+                        done(None)
                         return
 
-                    finish("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
+                    done("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
                 except Exception as error:
                     ctx.ui.notify(f"Handoff generation failed: {error}", "error")
-                    finish(None)
+                    done(None)
 
-            tonio.spawn.without_tracking(generate())
+            tui.spawn(generate())
             return loader
 
         result = await ctx.ui.custom(factory)

@@ -10,6 +10,7 @@ real browser tab at the fake URL on every run.
 """
 
 import contextlib
+import threading
 
 import pytest
 
@@ -20,11 +21,11 @@ from pidrei.utils.ansi import strip_ansi
 
 
 class _FakeTui:
+    def __init__(self) -> None:
+        self.state_lock = threading.RLock()
+
     def request_render(self) -> None:
         pass
-
-    def post_ui(self, fn) -> None:
-        fn()
 
 
 @contextlib.contextmanager
@@ -59,12 +60,12 @@ async def test_keeps_previous_prompt_input_stable_when_a_later_prompt_is_active(
     dialog = await create_dialog()
 
     first_prompt = dialog.show_prompt("First prompt:", "first-value")
-    await dialog.handle_input("first-value")
-    await dialog.handle_input("\n")
+    dialog.handle_input("first-value")
+    dialog.handle_input("\n")
     assert await first_prompt == "first-value"
 
     second_prompt = dialog.show_prompt("Second prompt:")
-    await dialog.handle_input("second-secret-demo")
+    dialog.handle_input("second-secret-demo")
 
     lines = render_dialog(dialog)
     output = "\n".join(lines)
@@ -73,7 +74,7 @@ async def test_keeps_previous_prompt_input_stable_when_a_later_prompt_is_active(
     assert count_rendered_value(lines, "first-value") == 1
     assert count_rendered_value(lines, "second-secret-demo") == 1
 
-    await dialog.handle_input("\n")
+    dialog.handle_input("\n")
     assert await second_prompt == "second-secret-demo"
 
 
@@ -126,12 +127,12 @@ async def test_keeps_previous_manual_input_stable_when_a_later_prompt_is_active(
     dialog = await create_dialog()
 
     manual_input = dialog.show_manual_input("Paste callback URL:")
-    await dialog.handle_input("callback-value")
-    await dialog.handle_input("\n")
+    dialog.handle_input("callback-value")
+    dialog.handle_input("\n")
     assert await manual_input == "callback-value"
 
     prompt = dialog.show_prompt("Second prompt:")
-    await dialog.handle_input("second-secret-demo")
+    dialog.handle_input("second-secret-demo")
 
     lines = render_dialog(dialog)
     output = "\n".join(lines)
@@ -140,5 +141,5 @@ async def test_keeps_previous_manual_input_stable_when_a_later_prompt_is_active(
     assert count_rendered_value(lines, "callback-value") == 1
     assert count_rendered_value(lines, "second-secret-demo") == 1
 
-    await dialog.handle_input("\n")
+    dialog.handle_input("\n")
     assert await prompt == "second-secret-demo"

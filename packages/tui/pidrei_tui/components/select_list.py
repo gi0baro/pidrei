@@ -89,7 +89,7 @@ class SelectList:
 
         return lines
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
         if not self._filtered_items:
             return None
         if event.type == "wheel" and event.wheel_delta:
@@ -97,7 +97,7 @@ class SelectList:
             previous_index = self._selected_index
             self._selected_index = max(0, min(len(self._filtered_items) - 1, self._selected_index + delta))
             if self._selected_index != previous_index:
-                await self._notify_selection_change()
+                self._notify_selection_change()
             return TuiMouseEventResult(handled=True, render=self._selected_index != previous_index)
         # Hover must not change selection: the visible range is centered on it.
         if event.button != "left" or event.type not in ("press", "click"):
@@ -111,7 +111,7 @@ class SelectList:
             self._mouse_pressed_index = item_index
             if self._selected_index != item_index:
                 self._selected_index = item_index
-                await self._notify_selection_change()
+                self._notify_selection_change()
             return TuiMouseEventResult(handled=True, focus=True)
         if event.type == "click":
             clicked_index = self._mouse_pressed_index if self._mouse_pressed_index is not None else item_index
@@ -119,31 +119,31 @@ class SelectList:
             changed = self._selected_index != clicked_index
             self._selected_index = clicked_index
             if changed:
-                await self._notify_selection_change()
+                self._notify_selection_change()
             selected_item = (
                 self._filtered_items[self._selected_index]
                 if 0 <= self._selected_index < len(self._filtered_items)
                 else None
             )
             if selected_item is not None and self.on_select is not None:
-                await self.on_select(selected_item)
+                self.on_select(selected_item)
             return TuiMouseEventResult(handled=True)
         return None
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Up arrow - wrap to bottom when at top
         if kb.matches(key_data, "tui.select.up"):
             self._selected_index = (
                 len(self._filtered_items) - 1 if self._selected_index == 0 else self._selected_index - 1
             )
-            await self._notify_selection_change()
+            self._notify_selection_change()
         # Down arrow - wrap to top when at bottom
         elif kb.matches(key_data, "tui.select.down"):
             self._selected_index = (
                 0 if self._selected_index == len(self._filtered_items) - 1 else self._selected_index + 1
             )
-            await self._notify_selection_change()
+            self._notify_selection_change()
         # Enter
         elif kb.matches(key_data, "tui.select.confirm"):
             selected_item = (
@@ -152,13 +152,11 @@ class SelectList:
                 else None
             )
             if selected_item is not None and self.on_select is not None:
-                # Callbacks are awaitable-returning (async-only policy): input
-                # handling is async, and some selections persist.
-                await self.on_select(selected_item)
+                self.on_select(selected_item)
         # Escape or Ctrl+C
         elif kb.matches(key_data, "tui.select.cancel"):
             if self.on_cancel is not None:
-                await self.on_cancel()
+                self.on_cancel()
 
     def _get_visible_range(self) -> tuple[int, int]:
         start_index = max(
@@ -255,17 +253,14 @@ class SelectList:
     def _get_display_value(self, item: dict) -> str:
         return item.get("label") or item["value"]
 
-    async def _notify_selection_change(self) -> None:
+    def _notify_selection_change(self) -> None:
         selected_item = (
             self._filtered_items[self._selected_index]
             if 0 <= self._selected_index < len(self._filtered_items)
             else None
         )
         if selected_item is not None and self.on_selection_change is not None:
-            # Awaitable-returning like `on_select`; pi runs the callback to
-            # completion before the next render, so awaiting inline (not
-            # detaching) is the matching order.
-            await self.on_selection_change(selected_item)
+            self.on_selection_change(selected_item)
 
     def get_selected_item(self) -> dict | None:
         if 0 <= self._selected_index < len(self._filtered_items):

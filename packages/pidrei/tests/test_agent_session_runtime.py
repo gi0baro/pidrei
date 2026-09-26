@@ -336,7 +336,8 @@ class TestRuntimeSessionLifecycleEvents:
             phases.append("beforeSessionInvalidate")
             assert old_session.extension_runner.create_context().cwd == old_session.session_manager.get_cwd()
 
-        async def rebind(_session):
+        async def rebind(_session, swap):
+            swap()
             phases.append("rebindSession")
 
         runtime_host.set_before_session_invalidate(before_invalidate)
@@ -661,3 +662,81 @@ async def test_session_info_modified_uses_last_message_timestamp(tmp_path):
     assert session_info is not None
     assert int(session_info.modified.timestamp() * 1000) == msg_time
     assert session_info.modified != datetime.fromtimestamp(before_mtime, tz=UTC)
+
+
+class TestSessionReplacementGuards:
+    """pidrei-specific (UI_ISLAND_DESIGN §4.5c, §7.3)."""
+
+    @pytest.mark.tonio
+    async def test_the_rebind_callback_makes_the_new_session_current_with_swap(self, tmp_path):
+        # The host applies the swap together with its first rebind block, so
+        # the replaced session stays current until the callback swaps.
+        runtime_host = await _create_runtime_host(tmp_path, [])
+        old_session = runtime_host.session
+        observed: list = []
+
+        async def rebind(new_session, swap):
+            observed.append(runtime_host.session is old_session)
+            swap()
+            observed.append(runtime_host.session is new_session)
+
+        runtime_host.set_rebind_session(rebind)
+        await runtime_host.new_session()
+
+        assert observed == [True, True]
+        runtime_host.set_rebind_session(None)
+        await runtime_host.dispose()
+
+    @pytest.mark.tonio
+    async def test_a_rebind_callback_that_never_swaps_fails_loudly(self, tmp_path):
+        runtime_host = await _create_runtime_host(tmp_path, [])
+
+        async def rebind(_new_session, _swap):
+            pass
+
+        runtime_host.set_rebind_session(rebind)
+        with pytest.raises(RuntimeError, match="must call swap"):
+            await runtime_host.new_session()
+        runtime_host.set_rebind_session(None)
+
+    @pytest.mark.tonio
+    async def test_overlapping_session_replacements_run_one_at_a_time(self, tmp_path):
+        before_switches: list = []
+        second_started = tonio.Event()
+
+        async def before_switch(event, _ctx):
+            before_switches.append(event["reason"])
+            if len(before_switches) == 2:
+                second_started.set()
+
+        runtime_host = await _create_runtime_host(tmp_path, [_extension({"session_before_switch": before_switch})])
+        first_rebinding = tonio.Event()
+        release_first = tonio.Event()
+        rebinds = 0
+
+        async def rebind(_new_session, swap):
+            nonlocal rebinds
+            rebinds += 1
+            swap()
+            if rebinds == 1:
+                first_rebinding.set()
+                await release_first.wait(5)
+
+        runtime_host.set_rebind_session(rebind)
+        first = tonio.spawn(runtime_host.new_session())
+        await first_rebinding.wait(5)
+        assert first_rebinding.is_set()
+        second = tonio.spawn(runtime_host.new_session())
+        # The second replacement waits for the first: its before-switch hook
+        # does not run meanwhile (a bounded wait for something that must not
+        # happen).
+        await second_started.wait(0.1)
+        assert not second_started.is_set()
+
+        release_first.set()
+        await first
+        await second
+        assert before_switches == ["new", "new"]
+        assert rebinds == 2
+        runtime_host.set_rebind_session(None)
+        await runtime_host.dispose()

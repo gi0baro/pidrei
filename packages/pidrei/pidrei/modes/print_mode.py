@@ -83,7 +83,8 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
 
     register_signal_handlers()
 
-    async def rebind_from_runtime(_session=None) -> None:
+    async def rebind_from_runtime(_session, swap) -> None:
+        swap()
         await rebind_session()
 
     runtime_host.set_rebind_session(rebind_from_runtime)

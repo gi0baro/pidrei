@@ -160,7 +160,7 @@ def create_shell_renderers(prompt: str) -> ToolRenderers:
         if state.get("startedAt") is not None and options.get("isPartial") and not state.get("interval"):
             invalidate = context["invalidate"]
 
-            async def tick() -> None:
+            def tick() -> None:
                 invalidate()
 
             state["interval"] = Interval(1000, tick)

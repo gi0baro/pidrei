@@ -26,6 +26,7 @@ from pidrei.modes.interactive.components.status_indicator import (
     RetryStatusIndicator,
     WorkingStatusIndicator,
 )
+from pidrei.modes.interactive.extension_tui import ExtensionTui
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import get_editor_theme, init_theme, init_theme_sync, theme
 from pidrei.utils.ansi import strip_ansi
@@ -79,7 +80,7 @@ class FakeFocusableComponent:
         self._label = label
         self._text = ""
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         self.inputs.append(data)
 
     def get_text(self) -> str:
@@ -116,13 +117,12 @@ class TestShowStatus:
             _last_status_spacer=None,
             _last_status_text=None,
         )
-        # Relaxation (island, PROPER_MT_DESIGN step 1): helpers route through
-        # ui.post_ui; the stub applies inline like an un-started TUI.
+        # Helpers take the UI state lock.
         fake.ui = SimpleNamespace(
             request_render=lambda force=False: fake.request_render_calls.append(force),
-            post_ui=lambda fn: fn(),
+            state_lock=threading.RLock(),
         )
-        fake._apply_show_status = partial(InteractiveMode._apply_show_status, fake)
+        fake.show_status = partial(InteractiveMode.show_status, fake)
         return fake
 
     def test_coalesces_immediately_sequential_status_messages(self):
@@ -162,12 +162,11 @@ class TestSetToolsExpanded:
         status_calls: list = []
         fake = SimpleNamespace(
             _tool_output_expanded=False,
-            _tool_output_expanded_guard=threading.Lock(),
             _custom_header=None,
             _built_in_header=SimpleNamespace(set_expanded=header_calls.append),
             _loaded_resources_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=loaded_calls.append)]),
             _chat_container=SimpleNamespace(children=[SimpleNamespace(set_expanded=chat_calls.append)]),
-            ui=SimpleNamespace(request_render=lambda force=False: None, post_ui=lambda fn: fn()),
+            ui=SimpleNamespace(request_render=lambda force=False: None, state_lock=threading.RLock()),
             show_status=status_calls.append,
         )
 
@@ -267,29 +266,17 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         _editor_container=editor_container,
         _keybindings={},
         ui=ui,
+        _extension_tui=ExtensionTui(ui),
         _dispose_active_selector=lambda: None,
     )
-    # Editor mutations route through the owner helpers (started owner here:
-    # the restore lands as a posted owner job).
-    fake._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, fake)
     fake._set_editor_text = partial(InteractiveMode._set_editor_text, fake)
 
-    async def show_extension_custom(key, factory, options=None):
-        done = tonio.Event()
+    async def collect(key, handle) -> None:
+        results[key] = await handle
 
-        async def run() -> None:
-            results[key] = await InteractiveMode._show_extension_custom(fake, factory, options)
-            done.set()
-
-        tonio.spawn.without_tracking(run())
-        return done
-
-    async def close_on_owner(key, result) -> None:
-        # `done` is component-side: a component calls it on the UI owner.
-        async def close() -> None:
-            closers[key](result)
-
-        await ui.input_owner.run(close)
+    def show_extension_custom(key, factory, options=None):
+        # Mounted before this returns; the handle yields the result.
+        return tonio.spawn(collect(key, InteractiveMode._show_extension_custom(fake, factory, options)))
 
     editor_container.add_child(editor)
     ui.add_child(editor_container)
@@ -298,29 +285,25 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
     await ui.start()
     try:
 
-        async def overlay_factory(_tui, _theme, _keybindings, done):
+        def overlay_factory(_tui, _theme, _keybindings, done):
             closers["overlay"] = done
             return overlay
 
-        overlay_done = await show_extension_custom("overlay", overlay_factory, {"overlay": True})
-        # `run()` is untracked, so a render flush does not order its
-        # `set_focus` before this task — wait on the focus state itself
-        # (set before the render it requests, so the frame write re-checks it).
-        await terminal.until(lambda: overlay.focused)
+        overlay_done = show_extension_custom("overlay", overlay_factory, {"overlay": True})
         await flush_tui(ui, terminal)
         assert overlay.focused is True
 
-        async def replacement_factory(_tui, _theme, _keybindings, done):
+        def replacement_factory(_tui, _theme, _keybindings, done):
             closers["replacement"] = done
             return replacement
 
-        replacement_done = await show_extension_custom("replacement", replacement_factory)
-        await terminal.until(lambda: replacement.focused)
+        replacement_done = show_extension_custom("replacement", replacement_factory)
         await flush_tui(ui, terminal)
         assert replacement.focused is True
 
-        await close_on_owner("replacement", "done")
-        await replacement_done.wait(None)
+        # `done` takes the UI state lock itself: callable from anywhere.
+        closers["replacement"]("done")
+        await replacement_done
         await flush_tui(ui, terminal)
         await terminal.send_input("x")
         await flush_tui(ui, terminal)
@@ -329,8 +312,8 @@ async def test_overlay_custom_ui_reclaims_input_after_non_overlay_custom_ui_clos
         assert editor.inputs == []
         assert overlay.focused is True
 
-        await close_on_owner("overlay", "closed")
-        await overlay_done.wait(None)
+        closers["overlay"]("closed")
+        await overlay_done
         assert results == {"overlay": "closed", "replacement": "done"}
     finally:
         await ui.stop()
@@ -384,13 +367,13 @@ class TestSetupAutocompleteProvider:
 
         fake = SimpleNamespace(
             _autocomplete_provider_wrappers=[make_wrap("wrap1"), make_wrap("wrap2")],
+            ui=SimpleNamespace(state_lock=threading.RLock()),
         )
         fake._create_base_autocomplete_provider = lambda: CombinedAutocompleteProvider([], "/tmp/project", None)
         fake._default_editor = SimpleNamespace(set_autocomplete_provider=default_editor_providers.append)
         fake.editor = SimpleNamespace(set_autocomplete_provider=custom_editor_providers.append)
 
-        # pidrei: `_setup_autocomplete_provider` posts this body to the UI owner.
-        InteractiveMode._apply_autocomplete_provider(fake)
+        InteractiveMode._setup_autocomplete_provider(fake)
 
         assert len(default_editor_providers) == 1
         assert len(custom_editor_providers) == 1
@@ -414,13 +397,13 @@ class TestSetupAutocompleteProvider:
 
         fake = SimpleNamespace(
             _autocomplete_provider_wrappers=[pass_through(["$"]), pass_through(["!"])],
+            ui=SimpleNamespace(state_lock=threading.RLock()),
         )
         fake._create_base_autocomplete_provider = lambda: CombinedAutocompleteProvider([], "/tmp/project", None)
         fake._default_editor = SimpleNamespace(set_autocomplete_provider=default_editor_providers.append)
         fake.editor = SimpleNamespace(set_autocomplete_provider=lambda provider: None)
 
-        # pidrei: `_setup_autocomplete_provider` posts this body to the UI owner.
-        InteractiveMode._apply_autocomplete_provider(fake)
+        InteractiveMode._setup_autocomplete_provider(fake)
 
         provider = default_editor_providers[0]
         assert provider.trigger_characters == ["$", "!"]
@@ -507,8 +490,8 @@ def create_show_loaded_resources_fake(
     use_real_scope_groups=False,
 ):
     fake = _BareInteractiveMode()
-    # No UI owner here: posted UI work applies inline (island relaxation).
-    fake.ui = SimpleNamespace(post_ui=lambda fn: fn())
+    # Helpers take the UI state lock.
+    fake.ui = SimpleNamespace(state_lock=threading.RLock())
     fake._options = {"verbose": verbose}
     fake._tool_output_expanded = tool_output_expanded
     fake._loaded_resources_container = Container()
@@ -1072,7 +1055,9 @@ class TestWorkingStatusEmbedding:
     @pytest.mark.tonio
     async def test_embeds_compaction_summary_and_retry_labels_within_the_border_width(self):
         init_theme_sync("dark")
-        tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
+        tui = SimpleNamespace(
+            request_render=lambda: None, terminal=SimpleNamespace(rows=10), state_lock=threading.RLock()
+        )
         editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
         # Spinners and the retry countdown stay put until the test ticks them.
         with manual_ui_timers():
@@ -1093,7 +1078,7 @@ class TestWorkingStatusEmbedding:
                     assert visible_width(editor.render(width)[0]) == width
             # pi advances fake timers by one second; the countdown's tick is
             # what that fires.
-            await retry._countdown._tick()
+            retry._countdown._tick()
             assert "Retrying (1/3) in 2s" in strip_ansi(editor.render(120)[0])
             editor.set_working_status_indicator(None)
             assert strip_ansi(editor.render(120)[0]) == "─" * 120
@@ -1111,9 +1096,8 @@ class TestShowManagedToolStatus:
             _last_status_spacer=None,
             _last_status_text=None,
         )
-        # Relaxation (island, PROPER_MT_DESIGN step 1): helpers route through
-        # ui.post_ui; the stub applies inline like an un-started TUI.
-        fake.ui = SimpleNamespace(request_render=lambda force=False: None, post_ui=lambda fn: fn())
+        # Helpers take the UI state lock.
+        fake.ui = SimpleNamespace(request_render=lambda force=False: None, state_lock=threading.RLock())
 
         InteractiveMode._show_managed_tool_status(fake, {"type": "info", "message": "fd downloading"})
         InteractiveMode._show_managed_tool_status(fake, {"type": "info", "message": "rg downloading"})

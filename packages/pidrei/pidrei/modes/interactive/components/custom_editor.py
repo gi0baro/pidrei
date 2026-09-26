@@ -3,21 +3,6 @@
 from pidrei_tui import Editor, visible_width
 
 
-def sync_action(fn):
-    """Adapt a sync callable to the awaitable-returning action-handler contract.
-
-    Handlers registered via `on_action`/`on_escape`/`on_ctrl_d` must return an
-    awaitable (async-only callback policy); pi types them `() => void`, but
-    input handling is async here and a handler that persists something (the
-    thinking-level cycle, for one) must be awaited, not dropped.
-    """
-
-    async def handler():
-        fn()
-
-    return handler
-
-
 class CustomEditor(Editor):
     """Editor that handles app-level keybindings for the coding agent.
 
@@ -96,7 +81,7 @@ class CustomEditor(Editor):
         """Register a handler for an app action."""
         self.action_handlers[action] = handler
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         # Check extension-registered shortcuts first
         if self.on_extension_shortcut is not None and self.on_extension_shortcut(data):
             return
@@ -115,17 +100,17 @@ class CustomEditor(Editor):
                 # Use dynamic on_escape if set, otherwise registered handler
                 handler = self.on_escape or self.action_handlers.get("app.interrupt")
                 if handler is not None:
-                    await handler()
+                    handler()
                     return
             # Let parent handle escape for autocomplete cancellation
-            await super().handle_input(data)
+            super().handle_input(data)
             return
 
         # Exit (Ctrl+D) - only when editor is empty
         if self._keybindings.matches(data, "app.exit") and len(self.get_text()) == 0:
             handler = self.on_ctrl_d or self.action_handlers.get("app.exit")
             if handler is not None:
-                await handler()
+                handler()
             return
             # (non-empty editors fall through to delete-char-forward below)
 
@@ -135,14 +120,14 @@ class CustomEditor(Editor):
         if self._keybindings.matches(data, "tui.editor.historyPrevious") or self._keybindings.matches(
             data, "tui.editor.historyNext"
         ):
-            await super().handle_input(data)
+            super().handle_input(data)
             return
 
         # Check all other app actions
         for action, handler in list(self.action_handlers.items()):
             if action not in ("app.interrupt", "app.exit") and self._keybindings.matches(data, action):
-                await handler()
+                handler()
                 return
 
         # Pass to parent for editor handling
-        await super().handle_input(data)
+        super().handle_input(data)

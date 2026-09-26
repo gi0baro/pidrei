@@ -6,6 +6,7 @@ fake for the second case.
 """
 
 import contextlib
+import threading
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import ClassVar
@@ -183,17 +184,16 @@ async def test_completes_interactive_login_before_its_bounded_background_refresh
         _update_available_provider_count=lambda: None,
         _footer=SimpleNamespace(invalidate=lambda: None),
         _update_editor_border_color=lambda: None,
-        _apply_editor_border_color=lambda: None,
         show_status=lambda message: None,
-        _apply_show_status=lambda message: None,
         show_error=lambda message: None,
-        _apply_show_error=lambda message: None,
         show_warning=warning_calls.append,
         _maybe_warn_about_anthropic_subscription_auth=noop_async,
         _check_daxnuts_easter_egg=lambda model, **_kwargs: None,
         # The refresh continuation ends with the render request (the login flow's
         # own UI updates here are stubbed and do not render).
-        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), post_ui=lambda fn: fn()),
+        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), state_lock=threading.RLock()),
+        # Spawned flows run detached, as `_spawn_flow` runs them.
+        _spawn_flow=tonio.spawn.without_tracking,
     )
 
     original_timeout = interactive_mode_module._TimeoutCancel
@@ -356,15 +356,15 @@ async def _start_login():
         _update_available_provider_count=lambda: None,
         _footer=SimpleNamespace(invalidate=lambda: None),
         _update_editor_border_color=lambda: None,
-        _apply_editor_border_color=lambda: None,
         _maybe_warn_about_anthropic_subscription_auth=noop_async,
         _check_daxnuts_easter_egg=lambda model, **_kwargs: None,
-        # The refresh continuation ends with the render request. No UI owner here:
-        # posted UI updates apply inline.
-        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), post_ui=lambda fn: fn()),
+        # The refresh continuation ends with the render request.
+        ui=SimpleNamespace(request_render=lambda force=False: refreshed.set(), state_lock=threading.RLock()),
+        # Spawned flows run detached, as `_spawn_flow` runs them.
+        _spawn_flow=tonio.spawn.without_tracking,
     )
-    context.show_status = context._apply_show_status = context.status_calls.append
-    context.show_error = context._apply_show_error = context.error_calls.append
+    context.show_status = context.status_calls.append
+    context.show_error = context.error_calls.append
     context.show_warning = context.warning_calls.append
 
     await InteractiveMode._complete_provider_authentication(

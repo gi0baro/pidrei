@@ -14,6 +14,8 @@ Start pidrei with this extension:
 import os
 import sys
 
+import tonio.colored as tonio
+
 
 def _windows_toast_script(title: str, body: str) -> str:
     type_ = "Windows.UI.Notifications"
@@ -52,9 +54,13 @@ def _notify_osc99(ctx, title: str, body: str) -> None:
 
 
 async def extension(pi):
-    async def notify(ctx, title: str, body: str) -> None:
+    def notify(ctx, title: str, body: str) -> None:
         if os.environ.get("WT_SESSION"):
-            await pi.exec("powershell.exe", ["-NoProfile", "-Command", _windows_toast_script(title, body)])
+            # Fire and forget, as pi's `execFile`: the settle handler must not
+            # wait for PowerShell to exit.
+            tonio.spawn.without_tracking(
+                pi.exec("powershell.exe", ["-NoProfile", "-Command", _windows_toast_script(title, body)])
+            )
         elif os.environ.get("KITTY_WINDOW_ID"):
             _notify_osc99(ctx, title, body)
         else:
@@ -64,6 +70,6 @@ async def extension(pi):
     # compact, or continue with queued follow-ups. Notify only after the full
     # run settles.
     async def on_agent_settled(_event, ctx) -> None:
-        await notify(ctx, "Pidrei", "Ready for input")
+        notify(ctx, "Pidrei", "Ready for input")
 
     pi.on("agent_settled", on_agent_settled)

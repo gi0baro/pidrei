@@ -123,6 +123,19 @@ def is_interactive_command(command: str) -> bool:
     return False
 
 
+def _clear_screen() -> None:
+    sys.stdout.write("\x1b[2J\x1b[H")
+    sys.stdout.flush()
+
+
+class _EmptyComponent:
+    def render(self, _width: int) -> list[str]:
+        return []
+
+    def invalidate(self) -> None:
+        pass
+
+
 async def extension(pi):
     async def on_user_bash(event, ctx):
         command = event["command"]
@@ -150,32 +163,41 @@ async def extension(pi):
             }
 
         # Use ctx.ui.custom() to get TUI access, then run the command. The
-        # factory runs on the UI owner (like pi's, on its UI thread), so the
-        # TUI is stopped in place; the UI waits for the command, as pi's does.
-        async def run_in_terminal(tui, _theme, _keybindings, done):
+        # factory is synchronous, so the handoff (stop the TUI, run the
+        # command, restart) runs on its own coroutine; the caller waits for
+        # the result, as pi's does.
+        async def hand_over_terminal(tui, done) -> None:
             # Stop TUI to release the terminal
-            await tui.stop(on_owner=True)
+            await tui.stop()
 
-            # Clear screen
-            sys.stdout.write("\x1b[2J\x1b[H")
-            sys.stdout.flush()
-
-            # Run command with full terminal access. The process inherits
-            # stdio, and the runtime waits for it without blocking the loop —
-            # this is the same pattern pidrei's own external editor uses.
-            shell = os.environ.get("SHELL") or "/bin/sh"
+            exit_code = None
             try:
-                process = await tonio.open_process([shell, "-c", command])
-                exit_code = await process.wait()
-            except Exception:
-                exit_code = None
+                # Clear screen (a blocking terminal write: off the runtime)
+                await tonio.spawn_blocking(_clear_screen)
 
-            # Restart TUI
-            await tui.start()
-            tui.request_render(True)
+                # Run command with full terminal access. The process inherits
+                # stdio, and the runtime waits for it without blocking the loop —
+                # this is the same pattern pidrei's own external editor uses.
+                shell = os.environ.get("SHELL") or "/bin/sh"
+                try:
+                    process = await tonio.open_process([shell, "-c", command])
+                    exit_code = await process.wait()
+                except Exception:
+                    exit_code = None
+            finally:
+                # Signal completion while the TUI is still stopped (pi calls
+                # `done` before its empty component is ever shown): the editor
+                # is back before the restart reads a key or draws a frame.
+                done(exit_code)
 
-            # Signal completion; no component to show since we are done
-            done(exit_code)
+                # Restart TUI
+                await tui.start()
+                tui.request_render(True)
+
+        def run_in_terminal(tui, _theme, _keybindings, done):
+            tui.spawn(hand_over_terminal(tui, done))
+            # Empty component, in place (with the TUI stopped) until `done`
+            return _EmptyComponent()
 
         exit_code = await ctx.ui.custom(run_in_terminal)
 

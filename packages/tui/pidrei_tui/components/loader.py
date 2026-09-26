@@ -2,7 +2,8 @@
 
 Port of pi tui ``components/loader.ts``. pi drives the animation with
 ``setInterval``; here it is an ``Interval`` (a cooperative tonio task), so a
-``Loader`` must be constructed on a tonio runtime thread.
+``Loader`` must be constructed on a tonio runtime thread. The frame advance
+runs on the timer, so it goes through the UI's ``apply`` (the state lock).
 """
 
 from .._timers import Interval
@@ -80,11 +81,12 @@ class Loader(Text):
         if len(self._frames) <= 1:
             return
 
-        async def advance() -> None:
+        def advance() -> None:
             self._current_frame = (self._current_frame + 1) % len(self._frames)
             self._update_display()
 
-        self._interval = Interval(self._interval_ms, advance)
+        ui = self._ui
+        self._interval = Interval(self._interval_ms, (lambda: ui.apply(advance)) if ui is not None else advance)
 
     def _get_rendered_indicator(self) -> str:
         frame = self._frames[self._current_frame] if self._current_frame < len(self._frames) else ""

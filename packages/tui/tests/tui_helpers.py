@@ -4,35 +4,44 @@ import contextlib
 import os
 import threading
 
-from pidrei_tui._owner import OwnerTask, TimerHandle
+from pidrei_tui.components import editor as editor_module
 
 
-class ManualOwnerTimers:
-    """pi's `t.mock.timers` for one `OwnerTask`: its `after` queues the
-    callback instead of sleeping, and `tick` fires what falls due, in due
-    order, on the ticking task (what an owner that was never started does
-    with a real fire)."""
+class _ManualTimeout:
+    __slots__ = ("cancelled",)
 
-    def __init__(self, owner: OwnerTask) -> None:
-        # `after` can also be called from another task (a request task's
-        # inline apply): the queue is guarded, and callbacks run outside the
-        # lock.
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class ManualTimers:
+    """pi's `t.mock.timers` for the editor's `Timeout`: while the test runs,
+    `editor.Timeout` queues the callback instead of sleeping (restored by
+    `monkeypatch`), and `tick` fires what falls due, in due order, on the
+    ticking task."""
+
+    def __init__(self, monkeypatch) -> None:
+        # A timer can also be created from another task (a request task):
+        # the queue is guarded, and callbacks run outside the lock.
         self._lock = threading.Lock()
         self._now = 0.0
-        self._queue: list[tuple[float, TimerHandle, object]] = []
-        owner.after = self._after
+        self._queue: list[tuple[float, _ManualTimeout, object]] = []
+        monkeypatch.setattr(editor_module, "Timeout", self._timeout)
 
-    def _after(self, delay_ms: float, fn) -> TimerHandle:
-        handle = TimerHandle()
+    def _timeout(self, delay_ms: float, fn) -> _ManualTimeout:
+        timer = _ManualTimeout()
         with self._lock:
-            self._queue.append((self._now + delay_ms, handle, fn))
-        return handle
+            self._queue.append((self._now + delay_ms, timer, fn))
+        return timer
 
     @property
     def remaining(self) -> list[float]:
         """Milliseconds left on each live timer."""
         with self._lock:
-            return [due - self._now for due, handle, _ in self._queue if not handle.cancelled]
+            return [due - self._now for due, timer, _ in self._queue if not timer.cancelled]
 
     async def tick(self, ms: float) -> None:
         with self._lock:
@@ -45,7 +54,7 @@ class ManualOwnerTimers:
                 entry = min(due, key=lambda item: item[0])
                 self._queue.remove(entry)
                 self._now = entry[0]
-            await entry[2]()
+            entry[2]()
         with self._lock:
             self._now = target
 

@@ -10,6 +10,7 @@ import contextlib
 import os
 import re
 
+from pidrei_tui import terminal_image
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
     crop_kitty_image_line,
@@ -692,3 +693,27 @@ def test_omits_filename_segment_when_not_provided():
         assert image_fallback("image/png", {"widthPx": 8, "heightPx": 6}) == "[Image: [image/png] 8x6]"
     finally:
         reset_capabilities_cache()
+
+
+def test_an_override_change_during_detection_leaves_no_stale_cache(monkeypatch):
+    """pidrei-only (UI_ISLAND_DESIGN §7.2): overrides and cache are one
+    snapshot, so capabilities computed from old overrides are not stored
+    next to new ones."""
+    detected = {"images": None, "trueColor": True, "hyperlinks": False}
+    changed: list[bool] = []
+
+    def detect(*_args):
+        if not changed:
+            changed.append(True)
+            # Another task changes the overrides while this one detects.
+            terminal_image.set_capability_overrides({"trueColor": False})
+        return dict(detected)
+
+    monkeypatch.setattr(terminal_image, "detect_capabilities", detect)
+    terminal_image.reset_capabilities_cache()
+    try:
+        terminal_image.get_capabilities()
+        assert terminal_image.get_capabilities()["trueColor"] is False
+    finally:
+        terminal_image.set_capability_overrides({})
+        terminal_image.reset_capabilities_cache()

@@ -54,7 +54,7 @@ class Input:
         self._value = value
         self._cursor = min(self._cursor, len(value))
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         # Handle bracketed paste mode
         # Start of paste: \x1b[200~
         # End of paste: \x1b[201~
@@ -85,7 +85,7 @@ class Input:
                 remaining = self._paste_buffer[end_index + 6 :]  # 6 = length of \x1b[201~
                 self._paste_buffer = ""
                 if remaining:
-                    await self.handle_input(remaining)
+                    self.handle_input(remaining)
             return
 
         kb = get_keybindings()
@@ -192,7 +192,7 @@ class Input:
         if not has_control_chars:
             self._insert_character(data)
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
         if event.type != "press" or event.button != "left" or event.y != 0:
             return None
         visible_column = max(0, event.x - 2)

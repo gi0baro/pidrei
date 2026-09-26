@@ -4,43 +4,47 @@ pi's upstream note: based on code from OpenTUI
 (https://github.com/anomalyco/opentui), MIT License, Copyright (c) 2025
 opentui.
 
-pi drives the 10ms flush timeout with mocked timers; here the flush timer is
-an `OwnerTask` timer, ticked by hand through `ManualOwnerTimers` in the cases
-that wait on it (`_make_manual_buffer`).
+pi drives the 10ms flush timeout with mocked timers; here the buffer has no
+timer, only a deadline its reader honours with `expire()`. The cases that
+wait on it (`_make_manual_buffer`) run the buffer on a `_ManualClock` whose
+`tick` advances the time and expires the buffer, as pi's
+`vi.advanceTimersByTime` fires the due timer.
 """
 
 import pytest
 
-from pidrei_tui._owner import OwnerTask
 from pidrei_tui.keys import matches_key
 from pidrei_tui.stdin_buffer import StdinBuffer
 
-from .tui_helpers import ManualOwnerTimers
+
+class _ManualClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.buffer: StdinBuffer | None = None
+
+    def __call__(self) -> float:
+        return self.now
+
+    def tick(self, ms: float) -> None:
+        self.now += ms / 1000
+        self.buffer.expire()
 
 
 def _make_buffer():
     buffer = StdinBuffer(timeout=10)
     emitted_sequences = []
-
-    async def record(sequence):
-        emitted_sequences.append(sequence)
-
-    buffer.on_data(record)
+    buffer.on_data(emitted_sequences.append)
     return buffer, emitted_sequences
 
 
 def _make_manual_buffer(**options):
-    """A buffer whose flush timers fire only on `timers.tick` (pi's mocked
+    """A buffer whose flush happens only on `timers.tick` (pi's mocked
     timers), recording what it emits."""
-    owner = OwnerTask()
-    timers = ManualOwnerTimers(owner)
-    buffer = StdinBuffer(owner=owner, **options)
+    timers = _ManualClock()
+    buffer = StdinBuffer(clock=timers, **options)
+    timers.buffer = buffer
     emitted_sequences = []
-
-    async def record(sequence):
-        emitted_sequences.append(sequence)
-
-    buffer.on_data(record)
+    buffer.on_data(emitted_sequences.append)
     return buffer, emitted_sequences, timers
 
 
@@ -50,21 +54,21 @@ def _make_manual_buffer(**options):
 @pytest.mark.tonio
 async def test_passes_through_regular_characters_immediately():
     buffer, emitted = _make_buffer()
-    await buffer.process("a")
+    buffer.process("a")
     assert emitted == ["a"]
 
 
 @pytest.mark.tonio
 async def test_passes_through_multiple_regular_characters():
     buffer, emitted = _make_buffer()
-    await buffer.process("abc")
+    buffer.process("abc")
     assert emitted == ["a", "b", "c"]
 
 
 @pytest.mark.tonio
 async def test_handles_unicode_characters():
     buffer, emitted = _make_buffer()
-    await buffer.process("hello 世界")
+    buffer.process("hello 世界")
     assert emitted == ["h", "e", "l", "l", "o", " ", "世", "界"]
 
 
@@ -75,7 +79,7 @@ async def test_handles_unicode_characters():
 async def test_passes_through_complete_mouse_sgr_sequences():
     buffer, emitted = _make_buffer()
     mouse_seq = "\x1b[<35;20;5m"
-    await buffer.process(mouse_seq)
+    buffer.process(mouse_seq)
     assert emitted == [mouse_seq]
 
 
@@ -83,7 +87,7 @@ async def test_passes_through_complete_mouse_sgr_sequences():
 async def test_passes_through_complete_arrow_key_sequences():
     buffer, emitted = _make_buffer()
     up_arrow = "\x1b[A"
-    await buffer.process(up_arrow)
+    buffer.process(up_arrow)
     assert emitted == [up_arrow]
 
 
@@ -91,7 +95,7 @@ async def test_passes_through_complete_arrow_key_sequences():
 async def test_passes_through_complete_function_key_sequences():
     buffer, emitted = _make_buffer()
     f1 = "\x1b[11~"
-    await buffer.process(f1)
+    buffer.process(f1)
     assert emitted == [f1]
 
 
@@ -99,7 +103,7 @@ async def test_passes_through_complete_function_key_sequences():
 async def test_passes_through_meta_key_sequences():
     buffer, emitted = _make_buffer()
     meta_a = "\x1ba"
-    await buffer.process(meta_a)
+    buffer.process(meta_a)
     assert emitted == [meta_a]
 
 
@@ -107,7 +111,7 @@ async def test_passes_through_meta_key_sequences():
 async def test_passes_through_ss3_sequences():
     buffer, emitted = _make_buffer()
     ss3 = "\x1bOA"
-    await buffer.process(ss3)
+    buffer.process(ss3)
     assert emitted == [ss3]
 
 
@@ -117,15 +121,15 @@ async def test_passes_through_ss3_sequences():
 @pytest.mark.tonio
 async def test_buffers_incomplete_mouse_sgr_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b")
+    buffer.process("\x1b")
     assert emitted == []
     assert buffer.get_buffer() == "\x1b"
 
-    await buffer.process("[<35")
+    buffer.process("[<35")
     assert emitted == []
     assert buffer.get_buffer() == "\x1b[<35"
 
-    await buffer.process(";20;5m")
+    buffer.process(";20;5m")
     assert emitted == ["\x1b[<35;20;5m"]
     assert buffer.get_buffer() == ""
 
@@ -133,13 +137,13 @@ async def test_buffers_incomplete_mouse_sgr_sequence():
 @pytest.mark.tonio
 async def test_buffers_incomplete_csi_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[")
+    buffer.process("\x1b[")
     assert emitted == []
 
-    await buffer.process("1;")
+    buffer.process("1;")
     assert emitted == []
 
-    await buffer.process("5H")
+    buffer.process("5H")
     assert emitted == ["\x1b[1;5H"]
 
 
@@ -147,7 +151,7 @@ async def test_buffers_incomplete_csi_sequence():
 async def test_buffers_split_across_many_chunks():
     buffer, emitted = _make_buffer()
     for chunk in ["\x1b", "[", "<", "3", "5", ";", "2", "0", ";", "5", "m"]:
-        await buffer.process(chunk)
+        buffer.process(chunk)
 
     assert emitted == ["\x1b[<35;20;5m"]
 
@@ -155,11 +159,11 @@ async def test_buffers_split_across_many_chunks():
 @pytest.mark.tonio
 async def test_flushes_incomplete_sequence_after_timeout():
     buffer, emitted, timers = _make_manual_buffer(timeout=10)
-    await buffer.process("\x1b[<35")
+    buffer.process("\x1b[<35")
     assert emitted == []
 
     # Wait for timeout
-    await timers.tick(15)
+    timers.tick(15)
 
     assert emitted == ["\x1b[<35"]
 
@@ -171,9 +175,9 @@ async def test_flushes_a_lone_esc_as_escape_when_cr_arrives_after_the_timeout():
     # host sees Escape (interrupt) instead of Alt+Enter. This locks in the
     # behavior so the configurable timeout in ProcessTerminal stays honest.
     buffer, emitted, timers = _make_manual_buffer(timeout=10)
-    await buffer.process("\x1b")
-    await timers.tick(15)
-    await buffer.process("\r")
+    buffer.process("\x1b")
+    timers.tick(15)
+    buffer.process("\r")
 
     assert emitted == ["\x1b", "\r"]
     assert matches_key(emitted[0], "escape") is True
@@ -183,9 +187,9 @@ async def test_flushes_a_lone_esc_as_escape_when_cr_arrives_after_the_timeout():
 async def test_merges_esc_plus_cr_split_across_chunks_within_a_larger_escape_timeout():
     buffer, emitted, timers = _make_manual_buffer(escape_timeout=100)
 
-    await buffer.process("\x1b")
-    await timers.tick(20)  # > 10ms default escape timeout, < 100ms configured
-    await buffer.process("\r")
+    buffer.process("\x1b")
+    timers.tick(20)  # > 10ms default escape timeout, < 100ms configured
+    buffer.process("\r")
 
     assert emitted == ["\x1b\r"]
     assert matches_key(emitted[0], "alt+enter") is True
@@ -196,9 +200,9 @@ async def test_merges_esc_plus_cr_split_across_chunks_within_a_larger_escape_tim
 async def test_does_not_apply_the_sequence_timeout_to_a_lone_esc():
     buffer, emitted, timers = _make_manual_buffer(timeout=100)
 
-    await buffer.process("\x1b")
-    await timers.tick(20)
-    await buffer.process("\r")
+    buffer.process("\x1b")
+    timers.tick(20)
+    buffer.process("\r")
 
     assert emitted == ["\x1b", "\r"]
     assert matches_key(emitted[0], "escape") is True
@@ -209,10 +213,10 @@ async def test_does_not_apply_the_sequence_timeout_to_a_lone_esc():
 async def test_keeps_fragmented_mouse_sequences_buffered_across_delayed_chunks_by_default():
     delayed_buffer, delayed_sequences, timers = _make_manual_buffer()
 
-    await delayed_buffer.process("\x1b[")
-    await timers.tick(20)
+    delayed_buffer.process("\x1b[")
+    timers.tick(20)
     assert delayed_sequences == []
-    await delayed_buffer.process("<65;48;39M")
+    delayed_buffer.process("<65;48;39M")
     assert delayed_sequences == ["\x1b[<65;48;39M"]
     delayed_buffer.destroy()
 
@@ -223,32 +227,32 @@ async def test_keeps_fragmented_mouse_sequences_buffered_across_delayed_chunks_b
 @pytest.mark.tonio
 async def test_handles_characters_followed_by_escape_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("abc\x1b[A")
+    buffer.process("abc\x1b[A")
     assert emitted == ["a", "b", "c", "\x1b[A"]
 
 
 @pytest.mark.tonio
 async def test_handles_escape_sequence_followed_by_characters():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[Aabc")
+    buffer.process("\x1b[Aabc")
     assert emitted == ["\x1b[A", "a", "b", "c"]
 
 
 @pytest.mark.tonio
 async def test_handles_multiple_complete_sequences():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[A\x1b[B\x1b[C")
+    buffer.process("\x1b[A\x1b[B\x1b[C")
     assert emitted == ["\x1b[A", "\x1b[B", "\x1b[C"]
 
 
 @pytest.mark.tonio
 async def test_handles_partial_sequence_with_preceding_characters():
     buffer, emitted = _make_buffer()
-    await buffer.process("abc\x1b[<35")
+    buffer.process("abc\x1b[<35")
     assert emitted == ["a", "b", "c"]
     assert buffer.get_buffer() == "\x1b[<35"
 
-    await buffer.process(";20;5m")
+    buffer.process(";20;5m")
     assert emitted == ["a", "b", "c", "\x1b[<35;20;5m"]
 
 
@@ -258,14 +262,14 @@ async def test_handles_partial_sequence_with_preceding_characters():
 @pytest.mark.tonio
 async def test_handles_kitty_csi_u_press_events():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[97u")
+    buffer.process("\x1b[97u")
     assert emitted == ["\x1b[97u"]
 
 
 @pytest.mark.tonio
 async def test_handles_kitty_csi_u_release_events():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[97;1:3u")
+    buffer.process("\x1b[97;1:3u")
     assert emitted == ["\x1b[97;1:3u"]
 
 
@@ -273,7 +277,7 @@ async def test_handles_kitty_csi_u_release_events():
 async def test_handles_batched_kitty_press_and_release():
     # Press 'a', release 'a' batched together (common over SSH)
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[97u\x1b[97;1:3u")
+    buffer.process("\x1b[97u\x1b[97;1:3u")
     assert emitted == ["\x1b[97u", "\x1b[97;1:3u"]
 
 
@@ -281,7 +285,7 @@ async def test_handles_batched_kitty_press_and_release():
 async def test_handles_multiple_batched_kitty_events():
     # Press 'a', release 'a', press 'b', release 'b'
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[97u\x1b[97;1:3u\x1b[98u\x1b[98;1:3u")
+    buffer.process("\x1b[97u\x1b[97;1:3u\x1b[98u\x1b[98;1:3u")
     assert emitted == ["\x1b[97u", "\x1b[97;1:3u", "\x1b[98u", "\x1b[98;1:3u"]
 
 
@@ -289,7 +293,7 @@ async def test_handles_multiple_batched_kitty_events():
 async def test_handles_kitty_arrow_keys_with_event_type():
     # Up arrow press with event type
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[1;1:1A")
+    buffer.process("\x1b[1;1:1A")
     assert emitted == ["\x1b[1;1:1A"]
 
 
@@ -297,7 +301,7 @@ async def test_handles_kitty_arrow_keys_with_event_type():
 async def test_handles_kitty_functional_keys_with_event_type():
     # Delete key release
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[3;1:3~")
+    buffer.process("\x1b[3;1:3~")
     assert emitted == ["\x1b[3;1:3~"]
 
 
@@ -308,14 +312,14 @@ async def test_splits_esc_esc_csi_into_standalone_esc_and_csi_sequence():
     # The buffer must not treat \x1b\x1b as a complete meta-key when the
     # following byte starts a new escape sequence.
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b\x1b[27;129:3u")
+    buffer.process("\x1b\x1b[27;129:3u")
     assert emitted == ["\x1b", "\x1b[27;129:3u"]
 
 
 @pytest.mark.tonio
 async def test_splits_esc_esc_csi_with_no_modifier():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b\x1b[27;1:3u")
+    buffer.process("\x1b\x1b[27;1:3u")
     assert emitted == ["\x1b", "\x1b[27;1:3u"]
 
 
@@ -323,7 +327,7 @@ async def test_splits_esc_esc_csi_with_no_modifier():
 async def test_still_emits_esc_esc_as_single_sequence_when_not_followed_by_new_escape():
     # \x1b\x1b alone (no following CSI) stays as-is — e.g. ctrl+alt+[
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b\x1b")
+    buffer.process("\x1b\x1b")
     assert emitted == ["\x1b\x1b"]
 
 
@@ -331,36 +335,36 @@ async def test_still_emits_esc_esc_as_single_sequence_when_not_followed_by_new_e
 async def test_handles_plain_characters_mixed_with_kitty_sequences():
     # Plain 'a' followed by Kitty release
     buffer, emitted = _make_buffer()
-    await buffer.process("a\x1b[97;1:3u")
+    buffer.process("a\x1b[97;1:3u")
     assert emitted == ["a", "\x1b[97;1:3u"]
 
 
 @pytest.mark.tonio
 async def test_drops_raw_duplicate_character_after_matching_kitty_printable_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[224uà")
+    buffer.process("\x1b[224uà")
     assert emitted == ["\x1b[224u"]
 
 
 @pytest.mark.tonio
 async def test_drops_raw_duplicate_character_after_kitty_printable_across_chunks():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[64u")
-    await buffer.process("@")
+    buffer.process("\x1b[64u")
+    buffer.process("@")
     assert emitted == ["\x1b[64u"]
 
 
 @pytest.mark.tonio
 async def test_keeps_non_matching_plain_character_after_kitty_printable_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[97ub")
+    buffer.process("\x1b[97ub")
     assert emitted == ["\x1b[97u", "b"]
 
 
 @pytest.mark.tonio
 async def test_keeps_raw_character_after_modified_kitty_printable_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[64;3u@")
+    buffer.process("\x1b[64;3u@")
     assert emitted == ["\x1b[64;3u", "@"]
 
 
@@ -368,7 +372,7 @@ async def test_keeps_raw_character_after_modified_kitty_printable_sequence():
 async def test_handles_rapid_typing_simulation_with_kitty_protocol():
     # Simulates typing "hi" quickly with releases interleaved
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[104u\x1b[104;1:3u\x1b[105u\x1b[105;1:3u")
+    buffer.process("\x1b[104u\x1b[104;1:3u\x1b[105u\x1b[105;1:3u")
     assert emitted == ["\x1b[104u", "\x1b[104;1:3u", "\x1b[105u", "\x1b[105;1:3u"]
 
 
@@ -378,58 +382,58 @@ async def test_handles_rapid_typing_simulation_with_kitty_protocol():
 @pytest.mark.tonio
 async def test_handles_mouse_press_event():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[<0;10;5M")
+    buffer.process("\x1b[<0;10;5M")
     assert emitted == ["\x1b[<0;10;5M"]
 
 
 @pytest.mark.tonio
 async def test_handles_mouse_release_event():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[<0;10;5m")
+    buffer.process("\x1b[<0;10;5m")
     assert emitted == ["\x1b[<0;10;5m"]
 
 
 @pytest.mark.tonio
 async def test_handles_mouse_move_event():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[<35;20;5m")
+    buffer.process("\x1b[<35;20;5m")
     assert emitted == ["\x1b[<35;20;5m"]
 
 
 @pytest.mark.tonio
 async def test_handles_split_mouse_events():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[<3")
-    await buffer.process("5;1")
-    await buffer.process("5;")
-    await buffer.process("10m")
+    buffer.process("\x1b[<3")
+    buffer.process("5;1")
+    buffer.process("5;")
+    buffer.process("10m")
     assert emitted == ["\x1b[<35;15;10m"]
 
 
 @pytest.mark.tonio
 async def test_handles_multiple_mouse_events():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[<35;1;1m\x1b[<35;2;2m\x1b[<35;3;3m")
+    buffer.process("\x1b[<35;1;1m\x1b[<35;2;2m\x1b[<35;3;3m")
     assert emitted == ["\x1b[<35;1;1m", "\x1b[<35;2;2m", "\x1b[<35;3;3m"]
 
 
 @pytest.mark.tonio
 async def test_handles_old_style_mouse_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[M abc")
+    buffer.process("\x1b[M abc")
     assert emitted == ["\x1b[M ab", "c"]
 
 
 @pytest.mark.tonio
 async def test_buffers_incomplete_old_style_mouse_sequence():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[M")
+    buffer.process("\x1b[M")
     assert buffer.get_buffer() == "\x1b[M"
 
-    await buffer.process(" a")
+    buffer.process(" a")
     assert buffer.get_buffer() == "\x1b[M a"
 
-    await buffer.process("b")
+    buffer.process("b")
     assert emitted == ["\x1b[M ab"]
 
 
@@ -439,7 +443,7 @@ async def test_buffers_incomplete_old_style_mouse_sequence():
 @pytest.mark.tonio
 async def test_handles_empty_input():
     buffer, emitted = _make_buffer()
-    await buffer.process("")
+    buffer.process("")
     # Empty string emits an empty data event
     assert emitted == [""]
 
@@ -447,11 +451,11 @@ async def test_handles_empty_input():
 @pytest.mark.tonio
 async def test_handles_lone_escape_character_with_timeout():
     buffer, emitted, timers = _make_manual_buffer(timeout=10)
-    await buffer.process("\x1b")
+    buffer.process("\x1b")
     assert emitted == []
 
     # After timeout, should emit
-    await timers.tick(15)
+    timers.tick(15)
     assert emitted == ["\x1b"]
 
 
@@ -459,8 +463,8 @@ async def test_handles_lone_escape_character_with_timeout():
 async def test_flushes_a_lone_escape_promptly_with_the_longer_default_sequence_timeout():
     default_buffer, default_sequences, timers = _make_manual_buffer()
 
-    await default_buffer.process("\x1b")
-    await timers.tick(20)
+    default_buffer.process("\x1b")
+    timers.tick(20)
     assert default_sequences == ["\x1b"]
     default_buffer.destroy()
 
@@ -468,7 +472,7 @@ async def test_flushes_a_lone_escape_promptly_with_the_longer_default_sequence_t
 @pytest.mark.tonio
 async def test_handles_lone_escape_character_with_explicit_flush():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b")
+    buffer.process("\x1b")
     assert emitted == []
 
     flushed = buffer.flush()
@@ -478,7 +482,7 @@ async def test_handles_lone_escape_character_with_explicit_flush():
 @pytest.mark.tonio
 async def test_handles_buffer_input():
     buffer, emitted = _make_buffer()
-    await buffer.process(b"\x1b[A")
+    buffer.process(b"\x1b[A")
     assert emitted == ["\x1b[A"]
 
 
@@ -486,7 +490,7 @@ async def test_handles_buffer_input():
 async def test_handles_very_long_sequences():
     buffer, emitted = _make_buffer()
     long_seq = "\x1b[" + "1;" * 50 + "H"
-    await buffer.process(long_seq)
+    buffer.process(long_seq)
     assert emitted == [long_seq]
 
 
@@ -496,7 +500,7 @@ async def test_handles_very_long_sequences():
 @pytest.mark.tonio
 async def test_flushes_incomplete_sequences():
     buffer, _emitted = _make_buffer()
-    await buffer.process("\x1b[<35")
+    buffer.process("\x1b[<35")
     flushed = buffer.flush()
     assert flushed == ["\x1b[<35"]
     assert buffer.get_buffer() == ""
@@ -512,11 +516,11 @@ async def test_returns_empty_list_if_nothing_to_flush():
 @pytest.mark.tonio
 async def test_emits_flushed_data_via_timeout():
     buffer, emitted, timers = _make_manual_buffer(timeout=10)
-    await buffer.process("\x1b[<35")
+    buffer.process("\x1b[<35")
     assert emitted == []
 
     # Wait for timeout to flush
-    await timers.tick(15)
+    timers.tick(15)
 
     assert emitted == ["\x1b[<35"]
 
@@ -527,7 +531,7 @@ async def test_emits_flushed_data_via_timeout():
 @pytest.mark.tonio
 async def test_clears_buffered_content_without_emitting():
     buffer, emitted = _make_buffer()
-    await buffer.process("\x1b[<35")
+    buffer.process("\x1b[<35")
     assert buffer.get_buffer() == "\x1b[<35"
 
     buffer.clear()
@@ -541,11 +545,7 @@ async def test_clears_buffered_content_without_emitting():
 def _make_paste_buffer():
     buffer, emitted = _make_buffer()
     emitted_paste = []
-
-    async def record(content):
-        emitted_paste.append(content)
-
-    buffer.on_paste(record)
+    buffer.on_paste(emitted_paste.append)
     return buffer, emitted, emitted_paste
 
 
@@ -556,7 +556,7 @@ async def test_emits_paste_event_for_complete_bracketed_paste():
     paste_end = "\x1b[201~"
     content = "hello world"
 
-    await buffer.process(paste_start + content + paste_end)
+    buffer.process(paste_start + content + paste_end)
 
     assert emitted_paste == ["hello world"]
     assert emitted == []  # No data events during paste
@@ -565,13 +565,13 @@ async def test_emits_paste_event_for_complete_bracketed_paste():
 @pytest.mark.tonio
 async def test_handles_paste_arriving_in_chunks():
     buffer, emitted, emitted_paste = _make_paste_buffer()
-    await buffer.process("\x1b[200~")
+    buffer.process("\x1b[200~")
     assert emitted_paste == []
 
-    await buffer.process("hello ")
+    buffer.process("hello ")
     assert emitted_paste == []
 
-    await buffer.process("world\x1b[201~")
+    buffer.process("world\x1b[201~")
     assert emitted_paste == ["hello world"]
     assert emitted == []
 
@@ -579,9 +579,9 @@ async def test_handles_paste_arriving_in_chunks():
 @pytest.mark.tonio
 async def test_handles_paste_with_input_before_and_after():
     buffer, emitted, emitted_paste = _make_paste_buffer()
-    await buffer.process("a")
-    await buffer.process("\x1b[200~pasted\x1b[201~")
-    await buffer.process("b")
+    buffer.process("a")
+    buffer.process("\x1b[200~pasted\x1b[201~")
+    buffer.process("b")
 
     assert emitted == ["a", "b"]
     assert emitted_paste == ["pasted"]
@@ -590,7 +590,7 @@ async def test_handles_paste_with_input_before_and_after():
 @pytest.mark.tonio
 async def test_handles_paste_with_newlines():
     buffer, emitted, emitted_paste = _make_paste_buffer()
-    await buffer.process("\x1b[200~line1\nline2\nline3\x1b[201~")
+    buffer.process("\x1b[200~line1\nline2\nline3\x1b[201~")
 
     assert emitted_paste == ["line1\nline2\nline3"]
     assert emitted == []
@@ -599,7 +599,7 @@ async def test_handles_paste_with_newlines():
 @pytest.mark.tonio
 async def test_handles_paste_with_unicode():
     buffer, emitted, emitted_paste = _make_paste_buffer()
-    await buffer.process("\x1b[200~Hello 世界 🎉\x1b[201~")
+    buffer.process("\x1b[200~Hello 世界 🎉\x1b[201~")
 
     assert emitted_paste == ["Hello 世界 🎉"]
     assert emitted == []
@@ -611,7 +611,7 @@ async def test_handles_paste_with_unicode():
 @pytest.mark.tonio
 async def test_clears_buffer_on_destroy():
     buffer, _emitted = _make_buffer()
-    await buffer.process("\x1b[<35")
+    buffer.process("\x1b[<35")
     assert buffer.get_buffer() == "\x1b[<35"
 
     buffer.destroy()
@@ -621,11 +621,11 @@ async def test_clears_buffer_on_destroy():
 @pytest.mark.tonio
 async def test_clears_pending_timeouts_on_destroy():
     buffer, emitted, timers = _make_manual_buffer(timeout=10)
-    await buffer.process("\x1b[<35")
+    buffer.process("\x1b[<35")
     buffer.destroy()
 
     # Wait longer than timeout
-    await timers.tick(15)
+    timers.tick(15)
 
     # Should not have emitted anything
     assert emitted == []

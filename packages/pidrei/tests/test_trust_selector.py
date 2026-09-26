@@ -38,7 +38,7 @@ class TestTrustSelectorComponent:
         assert "Current session: trusted" in output
         assert "→ ✓ Trust" in output
 
-        await selector.handle_input("\x1b[B")
+        selector.handle_input("\x1b[B")
         output = strip_ansi("\n".join(selector.render(120)))
         assert "✓ Trust" in output
         assert "→   Trust parent folder (/)" in output
@@ -48,7 +48,7 @@ class TestTrustSelectorComponent:
     async def test_selects_a_trust_decision(self):
         selections = []
 
-        async def on_select(selection: dict) -> None:
+        def on_select(selection: dict) -> None:
             selections.append(selection)
 
         selector = TrustSelectorComponent(
@@ -61,7 +61,7 @@ class TestTrustSelectorComponent:
             }
         )
 
-        await selector.handle_input("\n")
+        selector.handle_input("\n")
 
         assert selections == [{"trusted": True, "updates": [ProjectTrustUpdate(path="/project", decision=True)]}]
 
@@ -84,7 +84,7 @@ class TestTrustSelectorComponent:
     async def test_adds_a_trust_parent_option(self):
         selections = []
 
-        async def on_select(selection: dict) -> None:
+        def on_select(selection: dict) -> None:
             selections.append(selection)
 
         selector = TrustSelectorComponent(
@@ -101,7 +101,7 @@ class TestTrustSelectorComponent:
         assert "Saved decision: trusted (inherited from /parent)" in output
         assert "✓ Trust parent folder (/parent)" in output
 
-        await selector.handle_input("\n")
+        selector.handle_input("\n")
 
         assert selections == [
             {

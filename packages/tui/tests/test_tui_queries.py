@@ -21,6 +21,7 @@ class TestTerminal:
         self._column_count = column_count
         self._row_count = row_count
         self._input_handler = None
+        self._reply_handler = None
         self._resize_handler = None
         self.writes = []
         self._expected_writes: list[tuple[str, tonio.Event]] = []
@@ -33,12 +34,14 @@ class TestTerminal:
         self._expected_writes.append((text, written))
         return written
 
-    async def start(self, on_input, on_resize):
+    async def start(self, on_input, on_resize, on_reply=None, on_error=None):
         self._input_handler = on_input
+        self._reply_handler = on_reply
         self._resize_handler = on_resize
 
-    async def stop(self, *, on_owner=False):
+    async def stop(self):
         self._input_handler = None
+        self._reply_handler = None
         self._resize_handler = None
 
     async def drain_input(self, max_ms=1000, idle_ms=50):
@@ -86,7 +89,14 @@ class TestTerminal:
     def set_progress(self, active):
         pass
 
+    def close(self):
+        pass
+
     async def send_input(self, data):
+        # Replies are consumed where ProcessTerminal's reader offers them.
+        on_reply = self._reply_handler
+        if on_reply is not None and on_reply(data):
+            return
         if self._input_handler is not None:
             await self._input_handler(data)
 
@@ -102,7 +112,7 @@ class InputRecorder:
     def render(self, width):
         return []
 
-    async def handle_input(self, data):
+    def handle_input(self, data):
         self.inputs.append(data)
 
     def invalidate(self):

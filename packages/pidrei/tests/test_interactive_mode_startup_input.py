@@ -5,10 +5,8 @@ from functools import partial
 from types import SimpleNamespace
 
 import pytest
-import tonio.colored as tonio
 
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei_tui._owner import OwnerTask
 
 
 def _create_submit_context():
@@ -32,10 +30,7 @@ def _create_submit_context():
     )
     context._flush_pending_bash_components = lambda: context.flush_calls.append(True)
     context._handle_editor_submit = partial(InteractiveMode._handle_editor_submit, context)
-    # Editor mutations route through the owner helpers; an unstarted owner
-    # exercises their direct-call fallback.
-    context.ui = SimpleNamespace(input_owner=OwnerTask(), request_render=lambda force=False: None)
-    context._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, context)
+    context.ui = SimpleNamespace(state_lock=threading.RLock(), request_render=lambda force=False: None)
     context._set_editor_text = partial(InteractiveMode._set_editor_text, context)
     context._apply_editor_history = partial(InteractiveMode._apply_editor_history, context)
     return context
@@ -44,23 +39,9 @@ def _create_submit_context():
 @pytest.mark.tonio
 async def test_queues_a_normal_prompt_submitted_before_the_input_callback_is_installed():
     context = _create_submit_context()
-    # on_submit spawns the async submit handler detached; the test waits for
-    # that handler to finish.
-    handled = tonio.Event()
-    handle_editor_submit = context._handle_editor_submit
-
-    async def handle_and_signal(text: str) -> None:
-        try:
-            await handle_editor_submit(text)
-        finally:
-            handled.set()
-
-    context._handle_editor_submit = handle_and_signal
     InteractiveMode._setup_editor_submit_handler(context)
 
     context._default_editor.on_submit(" early prompt ")
-    await handled.wait(5)
-    assert handled.is_set()
 
     assert context._pending_user_inputs == ["early prompt"]
     assert context.flush_calls == [True]
@@ -91,7 +72,7 @@ async def test_startup_submit_wiring_passes_the_editor_text_through():
     context = SimpleNamespace(
         _default_editor=SimpleNamespace(on_action=actions.__setitem__, on_ctrl_d=None, on_submit=None),
         editor=SimpleNamespace(set_text=set_texts.append),
-        _apply_show_status=statuses.append,
+        show_status=statuses.append,
         _handle_ctrl_c=lambda: None,
         _handle_ctrl_d=lambda: None,
     )
@@ -111,7 +92,7 @@ async def test_restores_a_prompt_submitted_while_managed_tool_setup_is_running()
     set_texts: list[str] = []
     context = SimpleNamespace(
         editor=SimpleNamespace(set_text=set_texts.append),
-        _apply_show_status=statuses.append,
+        show_status=statuses.append,
     )
 
     InteractiveMode._handle_startup_submit(context, "early prompt")

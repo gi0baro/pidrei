@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
-from tonio.colored import fs
+from tonio.colored import fs, sync
 
 from ..utils.paths import resolve_path
 from .agent_session import AgentSession
@@ -76,7 +76,12 @@ class AgentSessionRuntime:
         diagnostics: list[AgentSessionRuntimeDiagnostic] | None = None,
         model_fallback_message: str | None = None,
     ):
-        self._rebind_session: Callable[[AgentSession], Any] | None = None
+        self._rebind_session: Callable[[AgentSession, Callable[[], None]], Any] | None = None
+        # One session replacement at a time (UI_ISLAND_DESIGN §7.3): the
+        # before-hooks, teardown, creation, swap and rebind of one
+        # replacement never interleave with another's. `with_session` runs
+        # after it, so the callback may replace the session again.
+        self._replacement_lock = sync.Lock()
         self._before_session_invalidate: Callable[[], None] | None = None
         self._session = session
         self._services = services
@@ -104,7 +109,12 @@ class AgentSessionRuntime:
     def model_fallback_message(self) -> str | None:
         return self._model_fallback_message
 
-    def set_rebind_session(self, rebind_session: Callable[[AgentSession], Any] | None = None) -> None:
+    def set_rebind_session(
+        self, rebind_session: Callable[[AgentSession, Callable[[], None]], Any] | None = None
+    ) -> None:
+        """`rebind_session(new_session, swap)`: rebind the host to the new
+        session. It must call `swap()` (which makes `new_session` current),
+        typically together with its first rebind step."""
         self._rebind_session = rebind_session
 
     def set_before_session_invalidate(self, before_session_invalidate: Callable[[], None] | None = None) -> None:
@@ -149,16 +159,31 @@ class AgentSessionRuntime:
         self._diagnostics = result.diagnostics
         self._model_fallback_message = result.model_fallback_message
 
-    async def _finish_session_replacement(self, with_session: Callable[[Any], Any] | None = None) -> None:
-        if self._rebind_session is not None:
-            await self._rebind_session(self.session)
-        if with_session is not None:
+    async def _rebind(self, result: CreateAgentSessionRuntimeResult) -> None:
+        """pi's `apply` + `rebindSession`: swap in the new runtime and rebind
+        the host. The rebind callback performs the swap itself (`swap`), so a
+        host that guards its state applies it together with its first rebind
+        stretch (UI_ISLAND_DESIGN §4.5c); with no callback it happens here."""
+
+        def swap() -> None:
+            self._apply(result)
+
+        if self._rebind_session is None:
+            swap()
+            return
+        await self._rebind_session(result.session, swap)
+        if self._session is not result.session:
+            raise RuntimeError("the rebind_session callback must call swap()")
+
+    async def _run_with_session(self, result: dict, with_session: Callable[[Any], Any] | None) -> dict:
+        if with_session is not None and not result.get("cancelled"):
             context = self.session.create_replaced_session_context()
             try:
                 await with_session(context)
             finally:
                 # Prompt options the callback checked out publish when it returns.
                 context.publish_system_prompt_options()
+        return result
 
     async def switch_session(
         self,
@@ -168,6 +193,16 @@ class AgentSessionRuntime:
         with_session: Callable[[Any], Any] | None = None,
         project_trust_context_factory: Callable[[str], Any] | None = None,
     ) -> dict[str, bool]:
+        async with self._replacement_lock:
+            result = await self._switch_session(session_path, cwd_override, project_trust_context_factory)
+        return await self._run_with_session(result, with_session)
+
+    async def _switch_session(
+        self,
+        session_path: str,
+        cwd_override: str | None,
+        project_trust_context_factory: Callable[[str], Any] | None,
+    ) -> dict[str, bool]:
         before_result = await self._emit_before_switch("resume", session_path)
         if before_result["cancelled"]:
             return before_result
@@ -176,7 +211,7 @@ class AgentSessionRuntime:
         session_manager = await SessionManager.open(session_path, None, cwd_override)
         assert_session_cwd_exists(session_manager, self.cwd)
         await self._teardown_current("resume", session_manager.get_session_file())
-        self._apply(
+        await self._rebind(
             await self._create_runtime(
                 cwd=session_manager.get_cwd(),
                 agent_dir=self.services.agent_dir,
@@ -193,7 +228,6 @@ class AgentSessionRuntime:
                 ),
             )
         )
-        await self._finish_session_replacement(with_session)
         return {"cancelled": False}
 
     async def new_session(
@@ -202,6 +236,15 @@ class AgentSessionRuntime:
         parent_session: str | None = None,
         setup: Callable[[SessionManager], Any] | None = None,
         with_session: Callable[[Any], Any] | None = None,
+    ) -> dict[str, bool]:
+        async with self._replacement_lock:
+            result = await self._new_session(parent_session, setup)
+        return await self._run_with_session(result, with_session)
+
+    async def _new_session(
+        self,
+        parent_session: str | None,
+        setup: Callable[[SessionManager], Any] | None,
     ) -> dict[str, bool]:
         before_result = await self._emit_before_switch("new")
         if before_result["cancelled"]:
@@ -218,22 +261,22 @@ class AgentSessionRuntime:
             session_manager.new_session({"parentSession": parent_session})
 
         await self._teardown_current("new", session_manager.get_session_file())
-        self._apply(
-            await self._create_runtime(
-                cwd=self.cwd,
-                agent_dir=self.services.agent_dir,
-                session_manager=session_manager,
-                session_start_event={
-                    "type": "session_start",
-                    "reason": "new",
-                    "previousSessionFile": previous_session_file,
-                },
-            )
+        result = await self._create_runtime(
+            cwd=self.cwd,
+            agent_dir=self.services.agent_dir,
+            session_manager=session_manager,
+            session_start_event={
+                "type": "session_start",
+                "reason": "new",
+                "previousSessionFile": previous_session_file,
+            },
         )
         if setup is not None:
-            await setup(self.session.session_manager)
-            self.session.refresh_context()
-        await self._finish_session_replacement(with_session)
+            # pi runs `setup` after `apply`; the swap now happens inside the
+            # rebind, so it runs on the new session directly.
+            await setup(result.session.session_manager)
+            result.session.refresh_context()
+        await self._rebind(result)
         return {"cancelled": False}
 
     async def fork(
@@ -243,6 +286,11 @@ class AgentSessionRuntime:
         position: str = "before",
         with_session: Callable[[Any], Any] | None = None,
     ) -> dict[str, Any]:
+        async with self._replacement_lock:
+            result = await self._fork(entry_id, position)
+        return await self._run_with_session(result, with_session)
+
+    async def _fork(self, entry_id: str, position: str) -> dict[str, Any]:
         before_result = await self._emit_before_fork(entry_id, position)
         if before_result["cancelled"]:
             return {"cancelled": True}
@@ -273,7 +321,7 @@ class AgentSessionRuntime:
                 session_manager = await SessionManager.create(self.cwd, session_dir)
                 session_manager.new_session({"parentSession": current_session_file})
                 await self._teardown_current("fork", session_manager.get_session_file())
-                self._apply(
+                await self._rebind(
                     await self._create_runtime(
                         cwd=self.cwd,
                         agent_dir=self.services.agent_dir,
@@ -285,7 +333,6 @@ class AgentSessionRuntime:
                         },
                     )
                 )
-                await self._finish_session_replacement(with_session)
                 return {"cancelled": False, "selectedText": selected_text}
 
             if not await fs.Path(current_session_file).exists():
@@ -298,7 +345,7 @@ class AgentSessionRuntime:
             if not forked_session_path:
                 raise Exception("Failed to create forked session")
             await self._teardown_current("fork", session_manager.get_session_file())
-            self._apply(
+            await self._rebind(
                 await self._create_runtime(
                     cwd=session_manager.get_cwd(),
                     agent_dir=self.services.agent_dir,
@@ -310,7 +357,6 @@ class AgentSessionRuntime:
                     },
                 )
             )
-            await self._finish_session_replacement(with_session)
             return {"cancelled": False, "selectedText": selected_text}
 
         session_manager = self.session.session_manager
@@ -319,7 +365,7 @@ class AgentSessionRuntime:
             session_manager.new_session({"parentSession": previous_session_file})
         else:
             await session_manager.create_branched_session(target_leaf_id)
-        self._apply(
+        await self._rebind(
             await self._create_runtime(
                 cwd=self.cwd,
                 agent_dir=self.services.agent_dir,
@@ -331,7 +377,6 @@ class AgentSessionRuntime:
                 },
             )
         )
-        await self._finish_session_replacement(with_session)
         return {"cancelled": False, "selectedText": selected_text}
 
     async def import_from_jsonl(self, input_path: str, cwd_override: str | None = None) -> dict[str, bool]:
@@ -340,6 +385,10 @@ class AgentSessionRuntime:
         Returns {"cancelled": True} when cancelled by session_before_switch.
         Raises SessionImportFileNotFoundError when the input path does not exist
         and MissingSessionCwdError when the imported session cwd is unresolvable."""
+        async with self._replacement_lock:
+            return await self._import_from_jsonl(input_path, cwd_override)
+
+    async def _import_from_jsonl(self, input_path: str, cwd_override: str | None) -> dict[str, bool]:
         resolved_path = resolve_path(input_path)
         if not await fs.Path(resolved_path).exists():
             raise SessionImportFileNotFoundError(resolved_path)
@@ -369,7 +418,7 @@ class AgentSessionRuntime:
         session_manager = await SessionManager.open(destination_path, session_dir, cwd_override)
         assert_session_cwd_exists(session_manager, self.cwd)
         await self._teardown_current("resume", session_manager.get_session_file())
-        self._apply(
+        await self._rebind(
             await self._create_runtime(
                 cwd=session_manager.get_cwd(),
                 agent_dir=self.services.agent_dir,
@@ -381,7 +430,6 @@ class AgentSessionRuntime:
                 },
             )
         )
-        await self._finish_session_replacement()
         return {"cancelled": False}
 
     async def dispose(self) -> None:

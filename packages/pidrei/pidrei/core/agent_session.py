@@ -444,6 +444,12 @@ class AgentSession:
         self.settings_manager = config.settings_manager
 
         self._scoped_models: list[ScopedModel] = config.scoped_models or []
+        # One model change at a time (UI_ISLAND_DESIGN §7.3): repeated
+        # `set_model` / `cycle_model` calls (Ctrl+P pressed twice, Enter on the
+        # selector twice) apply in turn instead of reading the same current
+        # model. The model_select event is emitted after it, so an extension
+        # reacting to it may change the model again.
+        self._model_change_lock = tonio_sync.Lock()
 
         # Event subscription state
         self._unsubscribe_agent: Callable[[], None] | None = None
@@ -2279,21 +2285,22 @@ class AgentSession:
         `ModelMutationOptions` object here; the interface has the single
         `persist` field and no other caller, so it stays a keyword argument.
         """
-        if await self._model_runtime.check_auth(model.provider) is None:
-            raise Exception(f"No API key for {model.provider}/{model.id}")
+        async with self._model_change_lock:
+            if await self._model_runtime.check_auth(model.provider) is None:
+                raise Exception(f"No API key for {model.provider}/{model.id}")
 
-        previous_model = self.model
-        thinking_level = self._get_thinking_level_for_model_switch(model)
-        self.agent.state.model = model
-        await self.session_manager.append_model_change(model.provider, model.id)
-        if persist:
-            self.settings_manager.set_default_model_and_provider(model.provider, model.id)
-            self._add_persisted_default_to_non_empty_scope(model)
+            previous_model = self.model
+            thinking_level = self._get_thinking_level_for_model_switch(model)
+            self.agent.state.model = model
+            await self.session_manager.append_model_change(model.provider, model.id)
+            if persist:
+                self.settings_manager.set_default_model_and_provider(model.provider, model.id)
+                self._add_persisted_default_to_non_empty_scope(model)
 
-        # Apply thinking level for the new model.
-        # Per-model thinking level overrides take priority over the global default.
-        # Model persistence does not implicitly rewrite the global thinking default.
-        await self.set_thinking_level(thinking_level)
+            # Apply thinking level for the new model.
+            # Per-model thinking level overrides take priority over the global default.
+            # Model persistence does not implicitly rewrite the global thinking default.
+            await self.set_thinking_level(thinking_level)
 
         await self._emit_model_select(model, previous_model, "set")
 
@@ -2317,11 +2324,18 @@ class AgentSession:
     async def cycle_model(self, direction: str = "forward", *, persist: bool = False) -> ModelCycleResult | None:
         """Cycle to next/previous model. Uses scoped models (--models flag) if
         available, otherwise all available models."""
-        if self._scoped_models:
-            return await self._cycle_scoped_model(direction, persist=persist)
-        return await self._cycle_available_model(direction, persist=persist)
+        async with self._model_change_lock:
+            if self._scoped_models:
+                cycled = await self._cycle_scoped_model(direction, persist=persist)
+            else:
+                cycled = await self._cycle_available_model(direction, persist=persist)
+        if cycled is None:
+            return None
+        result, previous_model = cycled
+        await self._emit_model_select(result.model, previous_model, "cycle")
+        return result
 
-    async def _cycle_scoped_model(self, direction: str, *, persist: bool) -> ModelCycleResult | None:
+    async def _cycle_scoped_model(self, direction: str, *, persist: bool) -> tuple[ModelCycleResult, Model] | None:
         available_ids = {(model.provider, model.id) for model in self._model_runtime.get_available_snapshot()}
         scoped_models = [
             scoped for scoped in self._scoped_models if (scoped.model.provider, scoped.model.id) in available_ids
@@ -2353,11 +2367,12 @@ class AgentSession:
         # Model persistence does not implicitly rewrite the global thinking default.
         await self.set_thinking_level(thinking_level)
 
-        await self._emit_model_select(next_scoped.model, current_model, "cycle")
+        return (
+            ModelCycleResult(model=next_scoped.model, thinking_level=self.thinking_level, is_scoped=True),
+            current_model,
+        )
 
-        return ModelCycleResult(model=next_scoped.model, thinking_level=self.thinking_level, is_scoped=True)
-
-    async def _cycle_available_model(self, direction: str, *, persist: bool) -> ModelCycleResult | None:
+    async def _cycle_available_model(self, direction: str, *, persist: bool) -> tuple[ModelCycleResult, Model] | None:
         available_models = self._model_runtime.get_available_snapshot()
         if len(available_models) <= 1:
             return None
@@ -2382,9 +2397,7 @@ class AgentSession:
         # Model persistence does not implicitly rewrite the global thinking default.
         await self.set_thinking_level(thinking_level)
 
-        await self._emit_model_select(next_model, current_model, "cycle")
-
-        return ModelCycleResult(model=next_model, thinking_level=self.thinking_level, is_scoped=False)
+        return ModelCycleResult(model=next_model, thinking_level=self.thinking_level, is_scoped=False), current_model
 
     # =========================================================================
     # Thinking Level Management

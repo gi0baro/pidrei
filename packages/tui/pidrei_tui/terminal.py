@@ -3,7 +3,7 @@
 Port deviations (documented once here):
 
 - pi drives input through node's `process.stdin` data events; here `start()`
-  spawns a tonio input pump (`tonio.io.register` + `arm_r` over a
+  spawns a tonio input reader (`tonio.io.register` + `arm_r` over a
   non-blocking stdin fd, incremental UTF-8 decode) and a SIGWINCH resize
   watcher inside a tonio scope, so `start`/`stop` are async. The resize
   watcher needs the runtime created with `tonio.run(..., signals=
@@ -22,12 +22,24 @@ Port deviations (documented once here):
 - The win32 VT-input helper and the darwin native-modifiers addon are not
   ported (POSIX-only port; native modifier addons omitted per plan) — the
   Apple Terminal Shift+Enter rewrite therefore never sees a pressed Shift.
-- Input has one owner task (`input_owner`, an `OwnerTask` child of the input
-  scope): the stdin pump hands each chunk to it, the StdinBuffer flush and
-  negotiation flush timers fire on it, and it calls the input handler. That
-  is pi's single thread for the input path — no lock, and clearTimeout is
-  exact because cancel and fire are ordered on the same task. The progress
-  keepalive is the one timer driven from other tasks and keeps its lock.
+- Input is a read-ahead reader and one sequential consumer
+  (UI_ISLAND_DESIGN §4.2). The reader (`_read_input`, one task per start)
+  reads stdin, splits it with the StdinBuffer, completes the Kitty/DA
+  negotiation, hands terminal replies to `start`'s ``on_reply`` (pidrei-only:
+  pi's input handler sees them), and queues every other item. It never waits
+  for the consumer. The parser deadlines (pi's lone-ESC and negotiation
+  flush `setTimeout`s) are the reader's: it waits on "more bytes, or the
+  deadline". The consumer (`_consume_input`, one task for the terminal's
+  lifetime, ended by `close()`) awaits the input handler once per item, in
+  order. Every handler change (`start`, `stop`, `drain_input`) starts a new
+  input generation, and items queued under an older one are dropped: `stop`
+  loses the typeahead pi would leave in the kernel buffer (§4.4, accepted).
+  The negotiation state is shared by the reader and the protocol teardown
+  (`drain_input`, `stop`) under `_protocol_lock`. Kitty mode changes how
+  keys parse (`keys.set_kitty_protocol_active`), so the reader queues its
+  activation as an item (`_KITTY_PROTOCOL_ACTIVE`) and the consumer applies
+  it under the UI state lock in input order: keys read before the reply
+  still parse in the old mode (UI_ISLAND_DESIGN §7.2).
 - Output is a single pump task (`_output_pump`): every writer enqueues a
   complete sequence, the pump emits them in FIFO order with `arm_w`
   readiness. `write()` waits for its bytes to go out (backpressure for the
@@ -38,7 +50,7 @@ Port deviations (documented once here):
 """
 
 import codecs
-import functools
+import contextlib
 import math
 import os
 import re
@@ -55,7 +67,6 @@ from tonio.colored import io as tonio_io, signals as tonio_signals
 from tonio.colored.sync import channel as tonio_channel
 from tonio.exceptions import CancelledError
 
-from ._owner import OwnerStopped, OwnerTask, TimerHandle
 from ._timers import Interval
 from .keys import set_kitty_protocol_active
 from .stdin_buffer import StdinBuffer
@@ -70,6 +81,10 @@ KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150
 KITTY_KEYBOARD_PROTOCOL_QUERY = f"\x1b[>{DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c"
 
 ENV_WRITE_LOG = "PIDREI_TUI_WRITE_LOG"
+
+# The reader's shortest wait for a parser deadline: one it computes as due
+# (or past) still parks it briefly instead of spinning.
+_MIN_INPUT_WAIT_S = 0.001
 
 _KITTY_FLAGS_RE = re.compile(r"^\x1b\[\?(\d+)u$")
 _DEVICE_ATTRIBUTES_RE = re.compile(r"^\x1b\[\?[\d;]*c$")
@@ -103,6 +118,16 @@ def normalize_apple_terminal_input(data: str, is_apple_terminal: bool, is_shift_
     return data
 
 
+# An input item: Kitty keyboard protocol confirmed. Applied by the consumer,
+# in order with the keys around it.
+_KITTY_PROTOCOL_ACTIVE = object()
+
+
+def _monotonic() -> float:
+    """The input deadlines' clock (read through the module's `_time`)."""
+    return _time.monotonic()
+
+
 def _is_native_modifier_pressed(key: str) -> bool:
     # pi loads a darwin-only native addon to read live modifier state; the
     # addon is not ported, so modifiers always read as released.
@@ -112,17 +137,26 @@ def _is_native_modifier_pressed(key: str) -> bool:
 class Terminal(Protocol):
     """Minimal terminal interface for TUI."""
 
-    async def start(self, on_input, on_resize) -> None:
-        """Start the terminal with input and resize handlers."""
+    async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
+        """Start the terminal with input and resize handlers.
+
+        ``on_reply`` (pidrei-only) is offered each input item first, where
+        it is read, off the input order: it returns True for a terminal
+        reply it consumed (a query answer), which then never reaches
+        ``on_input``. ``on_error`` (pidrei-only) receives what the
+        terminal's own tasks cannot take: an input handler's exception, a
+        failed write.
+        """
         ...
 
-    async def stop(self, *, on_owner: bool = False) -> None:
-        """Stop the terminal and restore state.
+    async def stop(self) -> None:
+        """Stop the terminal and restore state. Never waits on input
+        handling, so input handling may call it."""
+        ...
 
-        ``on_owner``: the caller runs on the input owner (an owner job, e.g. a
-        key handler stopping the UI in place, as pi does); the owner-confined
-        steps then apply in place instead of being handed to the owner.
-        """
+    def close(self) -> None:
+        """Release what outlives stop/start (the input consumer); once, at
+        app shutdown."""
         ...
 
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
@@ -240,19 +274,30 @@ class ProcessTerminal:
         self._saved_termios: list | None = None
         self._saved_blocking: bool | None = None
         self._saved_output_blocking: bool | None = None
+        # The UI state lock (UI_ISLAND_DESIGN §4.1, §4.6) has the terminal's
+        # lifetime: every TUI on this terminal shares it.
+        self.state_lock = threading.RLock()
+        # The input handler and its generation, under the state lock (see
+        # the module docstring): the reader tags each item with the
+        # generation, the consumer delivers only current ones.
         self._input_handler = None
-        # Input reaches the handler from the stdin pump, the StdinBuffer flush
-        # timer and the negotiation flush timer. pi's handlers
-        # (`editor.handle_input`, focus/overlay changes) never overlap on its
-        # single thread; here all three feed one owner task, which also runs
-        # the handler, so nothing on the input path needs a lock.
-        self.input_owner = OwnerTask()
+        self._input_generation = 0
+        self._reply_handler = None
+        self._error_handler = None
+        # Items from the reader to the consumer, both created at the first
+        # start: the consumer outlives stop/start until `close()`.
+        self._items_tx = None
+        self._items_rx = None
         self._resize_handler = None
+        # The negotiation state and protocol flags: the reader and the
+        # protocol teardown (`drain_input`, `stop`).
+        self._protocol_lock = threading.RLock()
         self._kitty_protocol_active = False
         self._modify_other_keys_active = False
         self._keyboard_protocol_pushed = False
         self._negotiation_buffer = ""
-        self._negotiation_flush_timer: TimerHandle | None = None
+        # pi's negotiation flush `setTimeout`, as the time it would fire.
+        self._negotiation_deadline: float | None = None
         self._stdin_buffer: StdinBuffer | None = None
         self._stdin_data_handler = None
         self._progress_interval: Interval | None = None
@@ -269,8 +314,10 @@ class ProcessTerminal:
     def modify_other_keys_active(self) -> bool:
         return self._modify_other_keys_active
 
-    async def start(self, on_input, on_resize) -> None:
-        self._input_handler = on_input
+    async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
+        self._reply_handler = on_reply
+        # Kept after `stop()`: the consumer may still be finishing an item.
+        self._error_handler = on_error
         self._resize_handler = on_resize
 
         # Save previous state and enable raw mode
@@ -289,15 +336,18 @@ class ProcessTerminal:
         # Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
         self.write_sync("\x1b[?2004h")
 
-        # Set up the resize watcher and input pump; the pump plays the role of
-        # node's process.stdin "data" listener.
+        # Set up the resize watcher and the input reader; the reader plays the
+        # role of node's process.stdin "data" listener.
         os.set_blocking(self._input_fd, False)
         # One registration per fd: a pty test (and a caller passing the same
         # fd for both sides) shares the output pump's.
         self._sio = self._out_sio if self._input_fd == self._output_fd else tonio_io.register(self._input_fd)
+        if self._items_tx is None:
+            self._items_tx, self._items_rx = tonio_channel.unbounded()
+            tonio.spawn.without_tracking(self._consume_input(self._items_rx))
+        self._set_input_handler(on_input)
         self._scope = tonio.scope()
         await self._scope.__aenter__()
-        self.input_owner.start()
         if self._resize_handler is not None:
             # `None` means the caller has no interest in resize events (tests
             # exercising the pumps); skip the SIGWINCH machinery entirely.
@@ -306,7 +356,21 @@ class ProcessTerminal:
         # Query Kitty keyboard protocol and fall back to modifyOtherKeys when DA confirms no Kitty response.
         # See: https://sw.kovidgoyal.net/kitty/keyboard-protocol/
         self._query_and_enable_kitty_protocol()
-        self._scope.spawn(self._input_pump())
+        self._scope.spawn(self._read_input())
+
+    def _set_input_handler(self, handler) -> None:
+        """Every handler change starts a new input generation: items queued
+        before it are dropped."""
+        with self.state_lock:
+            self._input_handler = handler
+            self._input_generation += 1
+
+    def close(self) -> None:
+        """Ends the input consumer after the item it is handling; once, at app
+        shutdown (it outlives stop/start)."""
+        tx, self._items_tx, self._items_rx = self._items_tx, None, None
+        if tx is not None:
+            tx.close()
 
     def _setup_stdin_buffer(self) -> None:
         """Set up StdinBuffer to split batched input into individual sequences.
@@ -319,32 +383,36 @@ class ProcessTerminal:
         raw stdin to handle the case where the response arrives split across
         multiple events.
         """
-        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms(), owner=self.input_owner)
+        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms(), clock=_monotonic)
 
-        # Forward individual sequences to the input handler (on the owner)
-        async def on_data(sequence: str) -> None:
+        # Forward individual sequences to the input handler
+        def on_data(sequence: str) -> None:
             # `deferred` carries a buffered sequence that turned out not to be a
             # negotiation response; it is forwarded before the current one.
             deferred: list[str] = []
-            negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
-            if negotiation_sequence == "pending":
-                self._schedule_negotiation_buffer_flush()
-                consumed = True  # Wait briefly for the rest of a split Kitty response.
-            else:
-                consumed = self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence)
+            with self._protocol_lock:
+                kitty_was_active = self._kitty_protocol_active
+                negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
+                if negotiation_sequence == "pending":
+                    self._schedule_negotiation_buffer_flush()
+                    consumed = True  # Wait briefly for the rest of a split Kitty response.
+                else:
+                    consumed = self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence)
+                kitty_activated = self._kitty_protocol_active and not kitty_was_active
 
             for buffered in deferred:
-                await self._forward_input_sequence(buffered)
+                self._forward_input_sequence(buffered)
+            if kitty_activated:
+                # After the deferred sequence, which arrived before the reply.
+                self._enqueue_input(_KITTY_PROTOCOL_ACTIVE)
             if not consumed:
-                await self._forward_input_sequence(sequence)
+                self._forward_input_sequence(sequence)
 
         self._stdin_buffer.on_data(on_data)
 
         # Re-wrap paste content with bracketed paste markers for existing editor handling
-        async def on_paste(content: str) -> None:
-            handler = self._input_handler
-            if handler is not None:
-                await handler(f"\x1b[200~{content}\x1b[201~")
+        def on_paste(content: str) -> None:
+            self._enqueue_input(f"\x1b[200~{content}\x1b[201~")
 
         self._stdin_buffer.on_paste(on_paste)
 
@@ -379,9 +447,8 @@ class ProcessTerminal:
         if negotiation_sequence["type"] == "kitty-flags":
             if negotiation_sequence["flags"] != 0:
                 self._disable_modify_other_keys()
-                if not self._kitty_protocol_active:
-                    self._kitty_protocol_active = True
-                    set_kitty_protocol_active(True)
+                # The key parser follows in input order (`_KITTY_PROTOCOL_ACTIVE`).
+                self._kitty_protocol_active = True
             else:
                 self._enable_modify_other_keys()
             return True
@@ -394,8 +461,8 @@ class ProcessTerminal:
         self, sequence: str, deferred: list[str]
     ) -> KeyboardProtocolNegotiationSequence | str | None:
         """A buffered sequence that turns out not to be a negotiation response
-        is appended to `deferred` for the caller to forward (forwarding is
-        async; this is the sync classification step)."""
+        is appended to `deferred` for the caller to forward once
+        `_protocol_lock` is released."""
         if self._negotiation_buffer:
             buffered_sequence = self._negotiation_buffer + sequence
             negotiation_sequence = parse_keyboard_protocol_negotiation_sequence(buffered_sequence)
@@ -418,11 +485,11 @@ class ProcessTerminal:
         return None
 
     def _set_negotiation_buffer(self, sequence: str) -> None:
-        self._clear_negotiation_buffer_flush_timer()
+        self._negotiation_deadline = None
         self._negotiation_buffer = sequence
 
     def _clear_negotiation_buffer(self) -> None:
-        self._clear_negotiation_buffer_flush_timer()
+        self._negotiation_deadline = None
         self._negotiation_buffer = ""
 
     def _take_negotiation_buffer(self) -> str | None:
@@ -430,40 +497,55 @@ class ProcessTerminal:
         if not self._negotiation_buffer:
             return None
         sequence = self._negotiation_buffer
-        self._clear_negotiation_buffer_flush_timer()
+        self._negotiation_deadline = None
         self._negotiation_buffer = ""
         return sequence
 
     def _schedule_negotiation_buffer_flush(self) -> None:
-        if not self._negotiation_buffer or self._negotiation_flush_timer is not None:
+        if not self._negotiation_buffer or self._negotiation_deadline is not None:
             return
+        self._negotiation_deadline = _monotonic() + KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS / 1000
 
-        async def fire() -> None:
-            # On the owner: a cancelled timer never gets here.
-            self._negotiation_flush_timer = None
-            sequence = self._take_negotiation_buffer()
-            if sequence is not None:
-                await self._forward_input_sequence(sequence)
+    def _expire_input_deadlines(self) -> None:
+        """pi's flush timers firing, from the reader: a split negotiation
+        reply that never completed, and the StdinBuffer's pending remainder
+        (a lone ESC becomes Escape), take their place in the input order."""
+        sequence = None
+        with self._protocol_lock:
+            deadline = self._negotiation_deadline
+            if deadline is not None and _monotonic() >= deadline:
+                sequence = self._take_negotiation_buffer()
+        if sequence is not None:
+            self._forward_input_sequence(sequence)
+        if (buffer := self._stdin_buffer) is not None:
+            buffer.expire()
 
-        self._negotiation_flush_timer = self.input_owner.after(KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS, fire)
+    def _next_input_deadline(self) -> float | None:
+        with self._protocol_lock:
+            deadlines = [self._negotiation_deadline]
+        if (buffer := self._stdin_buffer) is not None:
+            deadlines.append(buffer.deadline)
+        pending = [deadline for deadline in deadlines if deadline is not None]
+        return min(pending) if pending else None
 
-    def _clear_negotiation_buffer_flush_timer(self) -> None:
-        if self._negotiation_flush_timer is None:
-            return
-        self._negotiation_flush_timer.cancel()
-        self._negotiation_flush_timer = None
-
-    async def _forward_input_sequence(self, sequence: str) -> None:
-        handler = self._input_handler
-        if handler is None:
-            return
+    def _forward_input_sequence(self, sequence: str) -> None:
         is_apple_terminal = sequence == "\r" and is_apple_terminal_session()
         input_ = normalize_apple_terminal_input(
             sequence,
             is_apple_terminal,
             is_apple_terminal and _is_native_modifier_pressed("shift"),
         )
-        await handler(input_)
+        on_reply = self._reply_handler
+        if on_reply is not None and on_reply(input_):
+            return
+        self._enqueue_input(input_)
+
+    def _enqueue_input(self, item) -> None:
+        """Queue an item (an input sequence, or `_KITTY_PROTOCOL_ACTIVE`) for
+        the consumer, tagged with the current input generation."""
+        tx = self._items_tx
+        if tx is not None:
+            tx.send((self._input_generation, item))
 
     def _enable_modify_other_keys(self) -> None:
         if self._kitty_protocol_active or self._modify_other_keys_active:
@@ -477,12 +559,16 @@ class ProcessTerminal:
         self.write_sync("\x1b[>4;0m")
         self._modify_other_keys_active = False
 
-    async def _input_pump(self) -> None:
+    async def _read_input(self) -> None:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         sio = self._sio
         fd = self._input_fd
         while True:
-            if (waiter := sio.arm_r()) is not None:
+            self._expire_input_deadlines()
+            deadline = self._next_input_deadline()
+            # More bytes, or the next parser deadline.
+            timeout = None if deadline is None else max(deadline - _monotonic(), _MIN_INPUT_WAIT_S)
+            if (waiter := sio.arm_r(timeout)) is not None:
                 await waiter
                 continue
             try:
@@ -502,24 +588,35 @@ class ProcessTerminal:
             self._last_read_time = _time.monotonic()
             data = decoder.decode(chunk)
             if data and (handler := self._stdin_data_handler) is not None:
-                # Awaited: the kernel buffer stays the backpressure, and a
-                # chunk is fully handled before the next read — as when the
-                # pump called the handler itself.
-                try:
-                    await self.input_owner.run(functools.partial(handler, data))
-                except BaseException as error:
-                    # A handler exception must not kill the pump: input would
-                    # be dead for good with no crash surfacing anywhere (the
-                    # 0.84.2.5 freeze). Route it like posted owner work —
-                    # loud, through the TUI's crash handler. The pump's own
-                    # cancellation (`stop()`, possibly from inside the very
-                    # job awaited here) is not a handler error: it unwinds.
-                    if isinstance(error, CancelledError):
-                        raise
-                    on_error = self.input_owner.on_error
-                    if on_error is None:
-                        raise
-                    on_error(error)
+                handler(data)
+
+    async def _consume_input(self, receiver) -> None:
+        """The input consumer: one item at a time, each fully handled
+        (completions included) before the next."""
+        while True:
+            try:
+                generation, item = await receiver.receive()
+            except BrokenPipeError:
+                return  # `close()`
+            with self.state_lock:
+                handler = self._input_handler if generation == self._input_generation else None
+                if handler is not None and item is _KITTY_PROTOCOL_ACTIVE:
+                    set_kitty_protocol_active(True)
+                    continue
+            if handler is None:
+                continue
+            try:
+                await handler(item)
+            except BaseException as error:
+                # A handler exception must not end the consumer: input would
+                # be dead for good with no crash surfacing anywhere (the
+                # 0.84.2.5 freeze). Route it through the TUI's crash handler.
+                if isinstance(error, (CancelledError, GeneratorExit)):
+                    raise
+                on_error = self._error_handler
+                if on_error is None:
+                    raise
+                on_error(error)
 
     async def _resize_watcher(self) -> None:
         with tonio_signals.signal_receiver(signal_module.SIGWINCH) as receiver:
@@ -530,48 +627,27 @@ class ProcessTerminal:
                 handler()
 
     def _disable_keyboard_protocols(self) -> None:
-        """Owner-confined: the negotiation buffer, its flush timer and the protocol
-        flags belong to the input owner."""
-        should_disable_kitty_protocol = self._keyboard_protocol_pushed or self._kitty_protocol_active
-        self._clear_negotiation_buffer()
-        if should_disable_kitty_protocol:
-            # Disable Kitty keyboard protocol first so any late key releases
-            # do not generate new Kitty escape sequences.
-            self.write_sync("\x1b[<u")
-            self._keyboard_protocol_pushed = False
-            self._kitty_protocol_active = False
-            set_kitty_protocol_active(False)
-        self._disable_modify_other_keys()
-
-    async def _run_on_input_owner(self, fn) -> None:
-        """Run input-owner state changes on the owner and wait for them. Callers
-        must be off the owner (`run` from the owner deadlocks): the shutdown paths
-        are — Ctrl+C/Ctrl+D and editor submits spawn it, and the signal watcher is
-        its own task. A crashed owner runs nothing anymore, so the changes are made
-        here directly."""
-
-        async def job() -> None:
-            fn()
-
-        try:
-            await self.input_owner.run(job)
-        except OwnerStopped:
-            fn()
+        with self._protocol_lock:
+            should_disable_kitty_protocol = self._keyboard_protocol_pushed or self._kitty_protocol_active
+            self._clear_negotiation_buffer()
+            if should_disable_kitty_protocol:
+                # Disable Kitty keyboard protocol first so any late key releases
+                # do not generate new Kitty escape sequences.
+                self.write_sync("\x1b[<u")
+                self._keyboard_protocol_pushed = False
+                self._kitty_protocol_active = False
+                set_kitty_protocol_active(False)
+            self._disable_modify_other_keys()
 
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
-        """Must be called off the input owner (see `_run_on_input_owner`)."""
-        previous_handler: list[Any] = []
+        self._disable_keyboard_protocols()
+        # pi's cut: input from here on finds no handler, and items still
+        # queued are dropped with their generation.
+        with self.state_lock:
+            previous_handler = self._input_handler
+        self._set_input_handler(None)
 
-        def detach() -> None:
-            # On the owner, between chunks: input handled before this is complete,
-            # input after it finds no handler — pi's synchronous cut.
-            self._disable_keyboard_protocols()
-            previous_handler.append(self._input_handler)
-            self._input_handler = None
-
-        await self._run_on_input_owner(detach)
-
-        # The running input pump stamps _last_read_time on every read; pi
+        # The running reader stamps _last_read_time on every read; pi
         # attaches a dedicated stdin listener for the same bookkeeping.
         last_data_time = _time.monotonic()
         end_time = _time.monotonic() + max_ms / 1000
@@ -587,47 +663,21 @@ class ProcessTerminal:
                     break
                 await tonio.sleep(min(idle_s, time_left))
         finally:
-            handler = previous_handler[0]
+            # Input read during the drain stays dropped, as in pi.
+            self._set_input_handler(previous_handler)
 
-            async def restore() -> None:
-                self._input_handler = handler
-
-            # Posted (sync): served even if this task is being cancelled, and FIFO
-            # puts it after every chunk read during the drain — those are dropped,
-            # as in pi. With no owner serving nothing races the write.
-            if self.input_owner.serving:
-                self.input_owner.post(restore)
-            else:
-                self._input_handler = handler
-
-    async def stop(self, *, on_owner: bool = False) -> None:
+    async def stop(self) -> None:
         if self._clear_progress_interval():
             self.write_sync(TERMINAL_PROGRESS_CLEAR_SEQUENCE)
 
         # Disable bracketed paste mode
         self.write_sync("\x1b[?2004l")
 
-        def detach_input() -> None:
-            # On the owner (like `drain_input`'s cut): the chunk being handled
-            # completes, later ones find no handler.
-            # Disable Kitty keyboard protocol if not already done by drain_input()
-            self._disable_keyboard_protocols()
-
-            # Clean up StdinBuffer (its flush timer fires on the owner)
-            if self._stdin_buffer is not None:
-                self._stdin_buffer.destroy()
-                self._stdin_buffer = None
-
-            # Remove event handlers
-            self._stdin_data_handler = None
-            self._input_handler = None
-
-        if on_owner:
-            # Already on the owner: the chunk being handled is this call's own
-            # job, and later ones find no handler.
-            detach_input()
-        else:
-            await self._run_on_input_owner(detach_input)
+        # Remove the input handler: items still queued are dropped, and the
+        # consumer carries on (it outlives stop/start). Nothing here waits
+        # on input handling, which may be what is stopping the terminal.
+        self._set_input_handler(None)
+        self._reply_handler = None
         # No nudge needed for the resize watcher: the scope cancel below
         # unwinds it through `signal_receiver.__exit__` (sync `with` cleanup
         # runs on cancellation), which removes the SIGWINCH registration. A
@@ -635,17 +685,21 @@ class ProcessTerminal:
         # listening for signals (the pytest runtime, by design).
         self._resize_handler = None
 
-        # Stop the pump before touching termios so buffered input (e.g.,
+        # Stop the reader before touching termios so buffered input (e.g.,
         # Ctrl+D) cannot be re-interpreted after raw mode is disabled (pi
-        # pauses stdin for the same reason). The owner is not stopped here:
-        # its consumer and its timers carry on across terminal restarts
-        # until the app closes it. From the owner (``on_owner``) the pump is
-        # parked waiting on this very owner job; the scope exit wakes it
-        # with the cancellation, and it unwinds.
+        # pauses stdin for the same reason). Its parser state goes with it.
         if self._scope is not None:
             self._scope.cancel()
             await self._scope.__aexit__(None, None, None)
             self._scope = None
+
+        # Disable Kitty keyboard protocol if not already done by drain_input()
+        self._disable_keyboard_protocols()
+        if self._stdin_buffer is not None:
+            self._stdin_buffer.destroy()
+            self._stdin_buffer = None
+        self._stdin_data_handler = None
+
         if self._sio is not None:
             if self._sio is not self._out_sio:
                 self._sio.close()
@@ -747,7 +801,7 @@ class ProcessTerminal:
                 if self._progress_interval is None:
                     interval: Interval | None = None
 
-                    async def fire() -> None:
+                    def fire() -> None:
                         with self._lock:
                             # set_progress(False) may have raced the firing
                             # callback past its cancellation check.
@@ -812,7 +866,7 @@ class ProcessTerminal:
     async def _output_pump(self) -> None:
         """The only writer of the output fd while the terminal is started.
 
-        Mirror of `_input_pump` on the write side: sequences are taken off the
+        Mirror of `_read_input` on the write side: sequences are taken off the
         queue in order and written with `arm_w` readiness, so a full tty
         buffer parks this task instead of blocking a worker thread, and no
         two writers can ever interleave. pi has no counterpart — one JS thread
@@ -860,9 +914,11 @@ class ProcessTerminal:
                 # loud, keep draining, and still release this writer below.
                 if isinstance(error, GeneratorExit):
                     raise
-                on_error = self.input_owner.on_error
+                on_error = self._error_handler
                 if on_error is not None:
-                    on_error(error)
+                    # Survives a handler that re-raises (none installed).
+                    with contextlib.suppress(Exception):
+                        on_error(error)
             if done is not None:
                 done.set()
 

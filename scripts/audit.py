@@ -32,7 +32,9 @@ itself instead.
      `inspect.isawaitable`/`iscoroutine`/`iscoroutinefunction`,
      `asyncio.iscoroutine`, `isinstance(x, Awaitable | Coroutine)`. Every
      callback contract is async-only (pi's `T | Promise<T>` unions are a
-     JS-ism); a probe is how a union creeps back in during a port.
+     JS-ism); a probe is how a union creeps back in during a port. Probes
+     that *refuse* an awaitable (synchronous-only contracts) are allowed by
+     enclosing function in ALLOWED_AWAITABLE_PROBES, each with a reason.
 
 Run via `make audit`. Exit code 1 on any finding.
 """
@@ -70,7 +72,6 @@ PACKAGE_UPSTREAM = {
 # synchronously up to their first await, and these mirror that by splitting a
 # sync prologue from the awaited remainder.
 ALLOWED_SYNC_AWAITS = {
-    "_load_scope",
     "_show_extension_selector",
     "_show_extension_editor",
     # server: queues the frame synchronously (wire ordering decided at call
@@ -98,8 +99,25 @@ JUSTIFIED_SYNC_PORTS = {
     # get off. Documented at both definitions.
     "FooterDataProvider._refresh_git_branch_async",
     "FooterDataProvider._resolve_git_branch_async",
-    # pi's run-until-first-await prologue: a sync def returning a coroutine.
+    # Synchronous handlers (UI_ISLAND_DESIGN.md §3, §5): pi's part before its
+    # first await runs in the caller (a keypress, a selector callback) under
+    # the UI state lock, and the handler spawns the rest itself, as pi's
+    # caller `void`s the promise. Callers never wait for these.
     "SessionSelectorComponent._load_scope",
+    "SessionSelectorComponent._confirm_rename",
+    "SessionSelectorComponent._refresh_sessions_after_mutation",
+    "InteractiveMode._handle_follow_up",
+    "InteractiveMode._flush_compaction_queue",
+    "InteractiveMode._handle_model_command",
+    "InteractiveMode.handle_clone_command",
+    "InteractiveMode._handle_login_command",
+    "InteractiveMode._start_provider_login",
+    "InteractiveMode._show_api_key_login_dialog",
+    "InteractiveMode._show_login_dialog",
+    "InteractiveMode.handle_import_command",
+    "InteractiveMode._handle_copy_command",
+    "InteractiveMode._handle_clear_command",
+    "InteractiveMode.handle_compact_command",
     # pi's is async only to `await this.init()` lazily; pidrei always
     # subscribes after init, so there is nothing to await. Documented.
     "InteractiveMode._handle_event",
@@ -144,6 +162,18 @@ def _collect_module_functions(paths: list[pathlib.Path]) -> tuple[set[str], set[
     return async_names - sync_names, sync_names
 
 
+# Probes that refuse an awaitable (enforcing synchronous-only) rather than
+# accepting both colours, by enclosing function (`Class.method` or a module
+# function name). Each with a reason.
+ALLOWED_AWAITABLE_PROBES = {
+    # What runs under the UI state lock must not await: `apply` and the
+    # extension UI contexts refuse an awaitable result (UI_ISLAND_DESIGN §10.2).
+    "call_sync",
+    # Extension timers refuse an async callback when the timer is created,
+    # not at its first fire (UI_ISLAND_DESIGN §10.3).
+    "ExtensionTui._guarded",
+}
+
 _AWAITABLE_PROBE_FUNCTIONS = {"isawaitable", "iscoroutine", "iscoroutinefunction"}
 _AWAITABLE_TYPES = {"Awaitable", "Coroutine"}
 
@@ -177,6 +207,22 @@ def _awaitable_probe(call: ast.Call) -> str | None:
     return None
 
 
+def _allowed_probe_nodes(tree: ast.Module) -> set[int]:
+    """The ids of every node inside a function named in ALLOWED_AWAITABLE_PROBES."""
+    allowed: set[int] = set()
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in tree.body:
+        scopes = []
+        if isinstance(node, functions):
+            scopes.append((node.name, node))
+        elif isinstance(node, ast.ClassDef):
+            scopes.extend((f"{node.name}.{item.name}", item) for item in node.body if isinstance(item, functions))
+        for name, scope in scopes:
+            if name in ALLOWED_AWAITABLE_PROBES:
+                allowed.update(id(inner) for inner in ast.walk(scope))
+    return allowed
+
+
 def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str]) -> None:
     source = path.read_text()
     tree = ast.parse(source, str(path))
@@ -191,8 +237,13 @@ def _check_file(path: pathlib.Path, findings: list[str], imported_async: set[str
             file_imports.update(alias.asname or alias.name for alias in node.names)
     module_async |= file_imports & imported_async
 
+    allowed_probes = _allowed_probe_nodes(tree)
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and (probe := _awaitable_probe(node)) is not None:
+        if (
+            isinstance(node, ast.Call)
+            and id(node) not in allowed_probes
+            and (probe := _awaitable_probe(node)) is not None
+        ):
             findings.append(f"{rel}:{node.lineno}: `{probe}` probes for an awaitable (callbacks are async-only)")
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(("tonio._", "tonio.colored._")):
             findings.append(f"{rel}:{node.lineno}: imports private tonio API `{node.module}`")

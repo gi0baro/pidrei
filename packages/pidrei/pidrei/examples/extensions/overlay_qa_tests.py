@@ -29,7 +29,6 @@ import time
 import tonio.colored as tonio
 
 from pidrei_tui import Input, matches_key, truncate_to_width, visible_width
-from pidrei_tui._timers import Interval, Timeout
 
 
 ANCHORS = [
@@ -82,7 +81,7 @@ class AnchorTestComponent(BaseOverlay):
         self._anchor = anchor
         self._done = done
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done("cancel")
         elif matches_key(data, "return"):
@@ -114,7 +113,7 @@ class MarginTestComponent(BaseOverlay):
         self._config = config
         self._done = done
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done("close")
         elif matches_key(data, "space") or matches_key(data, "right"):
@@ -144,7 +143,7 @@ class StackOverlayComponent(BaseOverlay):
         self._position = position
         self._done = done
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c") or matches_key(data, "return"):
             self._done(f"Overlay {self._num}")
 
@@ -213,7 +212,7 @@ class StreamingOverflowComponent(BaseOverlay):
         self._max_visible_lines = 15
         self._finished = False
         self._disposed = False
-        tonio.spawn.without_tracking(self._run_process())
+        self._tui.spawn(self._run_process())
 
     async def _run_process(self) -> None:
         self._process = await tonio.open_process(
@@ -222,6 +221,11 @@ class StreamingOverflowComponent(BaseOverlay):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        if self._disposed:
+            # Closed while the process was starting (pi spawns it in the
+            # constructor, so its dispose always finds it): kill it here.
+            self._kill_process()
+            return
         # Drain both streams concurrently, then mark finished
         await tonio.spawn.without_results(
             self._pump(self._process.stdout, is_error=False),
@@ -231,17 +235,17 @@ class StreamingOverflowComponent(BaseOverlay):
         if self._disposed:  # Guard against callbacks after dispose
             return
 
-        # Posted like the lines, so it lands after the last of them.
+        # After both pumps, so it lands after the last line.
         def finish() -> None:
             self._finished = True
             self._tui.request_render()
 
-        self._tui.post_ui(finish)
+        self._tui.apply(finish)
 
     async def _pump(self, stream, *, is_error: bool) -> None:
-        # The pumps run on their own tasks while the UI owner renders and
+        # The pumps run on their own coroutines while the UI renders and
         # scrolls this component: the lines are split here, and appended
-        # (with the auto-scroll) on the owner.
+        # (with the auto-scroll) under the UI state lock.
         buffer = ""
         with stream as source:
             while True:
@@ -253,7 +257,7 @@ class StreamingOverflowComponent(BaseOverlay):
                 buffer += bytes(chunk).decode("utf-8", "replace")
                 *complete, buffer = buffer.split("\n")
                 lines = [self._theme.fg("error", line.strip()) if is_error else line for line in complete if line]
-                self._tui.post_ui(functools.partial(self._append_lines, lines))
+                self._tui.apply(functools.partial(self._append_lines, lines))
 
     def _append_lines(self, lines: list[str]) -> None:
         if self._disposed:
@@ -263,7 +267,7 @@ class StreamingOverflowComponent(BaseOverlay):
         self._scroll_offset = max(0, len(self._lines) - self._max_visible_lines)
         self._tui.request_render()
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._kill_process()
             self._done(None)
@@ -325,7 +329,7 @@ class EdgeTestComponent(BaseOverlay):
         super().__init__(theme)
         self._done = done
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done(None)
 
@@ -355,7 +359,7 @@ class PercentTestComponent(BaseOverlay):
         self._config = config
         self._done = done
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done("close")
         elif matches_key(data, "space") or matches_key(data, "right"):
@@ -383,7 +387,7 @@ class MaxHeightTestComponent(BaseOverlay):
         super().__init__(theme)
         self._done = done
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done(None)
 
@@ -414,7 +418,7 @@ class SidepanelComponent(BaseOverlay):
         self._items = ["Dashboard", "Messages", "Settings", "Help", "About"]
         self._selected_index = 0
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done(None)
         elif matches_key(data, "up"):
@@ -464,7 +468,7 @@ class AnimationDemoComponent(BaseOverlay):
         self._tui = tui
         self._done = done
         self._frame = 0
-        self._interval: Interval | None = None
+        self._interval = None
         self._fps = 0
         self._last_fps_update = time.monotonic()
         self._frames_since_last_fps = 0
@@ -472,7 +476,7 @@ class AnimationDemoComponent(BaseOverlay):
 
     def _start_animation(self) -> None:
         # Run at ~30 FPS
-        async def on_tick() -> None:
+        def on_tick() -> None:
             self._frame += 1
             self._frames_since_last_fps += 1
 
@@ -485,9 +489,9 @@ class AnimationDemoComponent(BaseOverlay):
 
             self._tui.request_render()
 
-        self._interval = Interval(1000 / 30, on_tick)
+        self._interval = self._tui.interval(1000 / 30, on_tick)
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self.dispose()
             self._done(None)
@@ -547,7 +551,7 @@ class ToggleDemoComponent(BaseOverlay):
         self._toggle_count = 0
         self._is_toggling = False
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._done(None)
         elif matches_key(data, "t") and self._toggle_state["handle"] is not None and not self._is_toggling:
@@ -558,14 +562,14 @@ class ToggleDemoComponent(BaseOverlay):
             self._toggle_state["handle"].set_hidden(True)
 
             # Auto-restore after 1 second to demonstrate the API
-            async def restore() -> None:
+            def restore() -> None:
                 handle = self._toggle_state["handle"]
                 if handle is not None:
                     handle.set_hidden(False)
                     self._is_toggling = False
                     self._tui.request_render()
 
-            Timeout(1000, restore)
+            self._tui.timeout(1000, restore)
 
     def render(self, width: int) -> list[str]:
         th = self._theme
@@ -608,21 +612,21 @@ class PassiveDemoController(BaseOverlay):
         self._timer_component = TimerPanel(theme)
         self._timer_handle = None
 
-        # Built inside the `ctx.ui.custom` factory, on the UI owner: the
-        # overlay is shown here, ahead of this controller's mount (so the
+        # Built inside the `ctx.ui.custom` factory, under the UI state lock:
+        # the overlay is shown here, ahead of this controller's mount (so the
         # handle is set before any input reaches it).
         self._timer_handle = tui.show_overlay(
             self._timer_component,
             {"nonCapturing": True, "anchor": "top-right", "width": 22, "margin": {"top": 1, "right": 2}},
         )
 
-        async def on_tick() -> None:
+        def on_tick() -> None:
             self._timer_component.tick()
             self._tui.request_render()
 
-        self._interval: Interval | None = Interval(1000, on_tick)
+        self._interval = self._tui.interval(1000, on_tick)
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         self._input_count += 1
         self._last_input_debug = f"len={len(data)} c0={ord(data[0])}"
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
@@ -700,8 +704,8 @@ class FocusDemoController(BaseOverlay):
         self._closed = False
         panels = [(FocusPanel(theme=theme, config=config, controller=self), config) for config in FOCUS_PANEL_CONFIGS]
 
-        # Built inside the `ctx.ui.custom` factory, on the UI owner: the
-        # overlays are shown and focused here, ahead of this controller's
+        # Built inside the `ctx.ui.custom` factory, under the UI state lock:
+        # the overlays are shown and focused here, ahead of this controller's
         # mount.
         for panel, config in panels:
             handle = tui.show_overlay(panel, {"nonCapturing": True, **config["options"]})
@@ -739,7 +743,7 @@ class FocusDemoController(BaseOverlay):
         self._hide_panels()
         self._done(None)
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self.close()
         elif matches_key(data, "tab"):
@@ -807,7 +811,7 @@ class FocusPanel(BaseOverlay):
         self._input = Input()
         self._inputs: list[str] = []
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "tab"):
             self._controller.focus_next(self)
         elif matches_key(data, "shift+tab"):
@@ -823,16 +827,16 @@ class FocusPanel(BaseOverlay):
         elif matches_key(data, "down"):
             self._inputs.append("↓")
         elif matches_key(data, "left"):
-            await self._input.handle_input(data)
+            self._input.handle_input(data)
             self._inputs.append("←")
         elif matches_key(data, "right"):
-            await self._input.handle_input(data)
+            self._input.handle_input(data)
             self._inputs.append("→")
         elif matches_key(data, "backspace"):
-            await self._input.handle_input(data)
+            self._input.handle_input(data)
             self._inputs.append("Backspace")
         else:
-            await self._input.handle_input(data)
+            self._input.handle_input(data)
             self._inputs.append(repr(data))
 
     def render(self, width: int) -> list[str]:
@@ -879,8 +883,8 @@ class StreamingInputController(BaseOverlay):
 
         panels = [StreamingInputPanel(theme, labels[i], colors[i], self._cycle_focus, self._close) for i in range(3)]
 
-        # Built inside the `ctx.ui.custom` factory, on the UI owner: the
-        # overlays are shown here, ahead of this controller's mount.
+        # Built inside the `ctx.ui.custom` factory, under the UI state lock:
+        # the overlays are shown here, ahead of this controller's mount.
         for i, panel in enumerate(panels):
             handle = tui.show_overlay(panel, {"nonCapturing": True, "row": 1 + i * 9, "col": 2, "width": 35})
             panel.handle = handle
@@ -890,7 +894,7 @@ class StreamingInputController(BaseOverlay):
         # Start with controller focused (focus_index = -1)
 
         # Start simulated streaming
-        async def on_tick() -> None:
+        def on_tick() -> None:
             self._line_count += 1
             timestamp = time.strftime("%H:%M:%S")
             self._stream_lines.append(f"[{timestamp}] Streaming line {self._line_count}...")
@@ -898,7 +902,7 @@ class StreamingInputController(BaseOverlay):
                 self._stream_lines.pop(0)
             self._tui.request_render()
 
-        self._stream_interval: Interval | None = Interval(500, on_tick)
+        self._stream_interval = self._tui.interval(500, on_tick)
 
     def _cycle_focus(self) -> None:
         # Unfocus current panel if any
@@ -926,7 +930,7 @@ class StreamingInputController(BaseOverlay):
         self._panels = []
         self._done(None)
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._close()
         elif matches_key(data, "tab"):
@@ -978,7 +982,7 @@ class StreamingInputPanel:
         self._on_close = on_close
         self._typed = ""
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "tab"):
             self._on_tab()
         elif matches_key(data, "escape") or matches_key(data, "ctrl+c"):
@@ -1027,7 +1031,7 @@ async def extension(pi):
 
     # Animation demo - proves overlays can handle real-time updates
     async def overlay_animation(_args: str, ctx) -> None:
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return AnimationDemoComponent(tui, theme, done)
 
         await ctx.ui.custom(
@@ -1041,7 +1045,7 @@ async def extension(pi):
         while True:
             anchor = ANCHORS[index]
 
-            async def factory(_tui, theme, _kb, done, anchor=anchor):
+            def factory(_tui, theme, _kb, done, anchor=anchor):
                 return AnchorTestComponent(theme, anchor, done)
 
             result = await ctx.ui.custom(
@@ -1076,7 +1080,7 @@ async def extension(pi):
         while True:
             config = configs[index]
 
-            async def factory(_tui, theme, _kb, done, config=config):
+            def factory(_tui, theme, _kb, done, config=config):
                 return MarginTestComponent(theme, config, done)
 
             result = await ctx.ui.custom(factory, {"overlay": True, "overlayOptions": config["options"]})
@@ -1092,25 +1096,23 @@ async def extension(pi):
         # Each offset slightly so you can see the stacking
 
         def show(num: int, position: str, offset_x: int, offset_y: int):
-            async def factory(_tui, theme, _kb, done):
+            def factory(_tui, theme, _kb, done):
                 return StackOverlayComponent(theme, num, position, done)
 
-            # tonio.spawn starts the coroutine eagerly, so the overlay shows
-            # now and the join handle is awaited later (JS Promise.all shape)
-            return tonio.spawn(
-                ctx.ui.custom(
-                    factory,
-                    {
-                        "overlay": True,
-                        "overlayOptions": {
-                            "anchor": "center",
-                            "width": 50,
-                            "offsetX": offset_x,
-                            "offsetY": offset_y,
-                            "maxHeight": 15,
-                        },
+            # `custom` shows the overlay now and returns a handle for its
+            # result, awaited later (JS Promise.all shape)
+            return ctx.ui.custom(
+                factory,
+                {
+                    "overlay": True,
+                    "overlayOptions": {
+                        "anchor": "center",
+                        "width": 50,
+                        "offsetX": offset_x,
+                        "offsetY": offset_y,
+                        "maxHeight": 15,
                     },
-                )
+                },
             )
 
         ctx.ui.notify("Showing overlay 1 (back)...", "info")
@@ -1130,7 +1132,7 @@ async def extension(pi):
 
     # Test width overflow scenarios (original crash case) - streams real process output
     async def overlay_overflow(_args: str, ctx) -> None:
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return StreamingOverflowComponent(tui, theme, done)
 
         await ctx.ui.custom(
@@ -1140,7 +1142,7 @@ async def extension(pi):
 
     # Test overlay at terminal edge
     async def overlay_edge(_args: str, ctx) -> None:
-        async def factory(_tui, theme, _kb, done):
+        def factory(_tui, theme, _kb, done):
             return EdgeTestComponent(theme, done)
 
         await ctx.ui.custom(
@@ -1162,7 +1164,7 @@ async def extension(pi):
         while True:
             config = configs[index]
 
-            async def factory(_tui, theme, _kb, done, config=config):
+            def factory(_tui, theme, _kb, done, config=config):
                 return PercentTestComponent(theme, config, done)
 
             result = await ctx.ui.custom(
@@ -1180,7 +1182,7 @@ async def extension(pi):
 
     # Test maxHeight
     async def overlay_maxheight(_args: str, ctx) -> None:
-        async def factory(_tui, theme, _kb, done):
+        def factory(_tui, theme, _kb, done):
             return MaxHeightTestComponent(theme, done)
 
         await ctx.ui.custom(
@@ -1190,7 +1192,7 @@ async def extension(pi):
 
     # Test responsive sidepanel - only shows when terminal is wide enough
     async def overlay_sidepanel(_args: str, ctx) -> None:
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return SidepanelComponent(tui, theme, done)
 
         await ctx.ui.custom(
@@ -1216,7 +1218,7 @@ async def extension(pi):
             # visibility control
             toggle_state["handle"] = handle
 
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return ToggleDemoComponent(tui, theme, toggle_state, done)
 
         await ctx.ui.custom(
@@ -1233,7 +1235,7 @@ async def extension(pi):
     async def overlay_passive(_args: str, ctx) -> None:
         ctx.ui.set_editor_text("")
 
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return PassiveDemoController(tui, theme, done)
 
         await ctx.ui.custom(
@@ -1246,7 +1248,7 @@ async def extension(pi):
     async def overlay_focus(_args: str, ctx) -> None:
         ctx.ui.set_editor_text("")
 
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return FocusDemoController(tui, theme, done)
 
         await ctx.ui.custom(
@@ -1258,7 +1260,7 @@ async def extension(pi):
     async def overlay_streaming(_args: str, ctx) -> None:
         ctx.ui.set_editor_text("")
 
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return StreamingInputController(tui, theme, done)
 
         await ctx.ui.custom(

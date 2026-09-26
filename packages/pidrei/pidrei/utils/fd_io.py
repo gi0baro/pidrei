@@ -4,7 +4,7 @@ tonio's descriptor APIs are not interchangeable, and choosing between them is
 the caller's job rather than something to discover by trial:
 
 * **socket, pipe, tty** — `io.register` plus `arm_r`/`arm_w`, driving readiness
-  by hand. This is what `pidrei_tui/terminal.py`'s input pump does for the
+  by hand. This is what `pidrei_tui/terminal.py`'s input reader does for the
   TUI's stdin.
 * **regular file** — `fs.wrap_file`. Readiness is meaningless for a file (the
   kernel refuses to poll one), and reads genuinely block, so they belong on the
@@ -25,7 +25,7 @@ blocking flags of fds 0-2 at process start and registers an `atexit` restore,
 and `hard_exit()` replaces `os._exit()` everywhere so even the paths that
 skip interpreter shutdown put the shell's descriptors back. That applies to
 every in-process flipper — `FdReader`/`FdWriter` here, and tonio's own fd
-registration used by the TUI input pump — because the restore is a blanket
+registration used by the TUI input reader — because the restore is a blanket
 "put fds 0-2 back how we found them", not per-owner bookkeeping. SIGKILL is
 explicitly out of scope.
 

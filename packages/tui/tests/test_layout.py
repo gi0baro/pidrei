@@ -229,44 +229,59 @@ def test_tracks_follow_end_state_and_returns_unused_scroll_delta():
     assert scroll_view.is_following_end is True
 
 
+class _ManualClock:
+    """Stands in for scroll_view.py's `_time`: `monotonic()` holds still until
+    a fake timer's fire advances it."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
 class FakeTimeout:
-    """Hand-fired stand-in for `_timers.Timeout` (see `test_footer_data_provider.py`)."""
+    """Hand-fired stand-in for `_timers.Timeout` (see `test_footer_data_provider.py`).
+    Firing first moves `clock` to the timer's deadline, as pi's mocked timers
+    advance time."""
 
     instances: ClassVar[list] = []
+    clock: ClassVar[_ManualClock | None] = None
 
     def __init__(self, delay_ms: float, fn) -> None:
         self.delay_ms = delay_ms
         self.fn = fn
         self.cancelled = False
+        self.due = FakeTimeout.clock.now + delay_ms / 1000 if FakeTimeout.clock is not None else None
         FakeTimeout.instances.append(self)
 
     def cancel(self) -> None:
         self.cancelled = True
 
-    async def fire(self) -> None:
-        await self.fn()
+    def fire(self) -> None:
+        if self.due is not None:
+            FakeTimeout.clock.now = max(FakeTimeout.clock.now, self.due)
+        self.fn()
 
 
 @pytest.fixture
 def fake_scrollbar_hide_timers():
-    """Rebind the ScrollView's hide timer to `FakeTimeout` and yield its instances.
+    """Rebind the ScrollView's hide timer to `FakeTimeout` and its clock to a
+    manual one, and yield the timer instances.
 
-    pi's test lets the real 10 ms hide timer run and sleeps 30 ms for it. With
-    no TUI started, a pidrei `Timeout` fires on a task of its own, so a
-    `cancel()` that lands between the timer's cancelled-check and its callback
-    is a no-op — a scroll that re-shows the scrollbar right as the previous
-    hide expires can be undone by that stale hide (seen on the macOS runners).
-    A started TUI orders cancel and fire on its owner task, so only this
-    detached-timer test can lose that race; firing the timer by hand removes
-    the clock from the test altogether.
+    pi's test lets the real 10 ms hide timer run and sleeps 30 ms for it; here
+    the timer is fired by hand, which moves the clock to its deadline, so the
+    test depends on neither the wall clock nor the timer's task.
     """
-    original = scroll_view_module.Timeout
+    original_timeout, original_time = scroll_view_module.Timeout, scroll_view_module._time
     scroll_view_module.Timeout = FakeTimeout
+    FakeTimeout.clock = scroll_view_module._time = _ManualClock()
     FakeTimeout.instances = []
     try:
         yield FakeTimeout.instances
     finally:
-        scroll_view_module.Timeout = original
+        scroll_view_module.Timeout, scroll_view_module._time = original_timeout, original_time
+        FakeTimeout.clock = None
 
 
 @pytest.mark.tonio
@@ -317,7 +332,7 @@ async def test_renders_a_proportional_glyph_scrollbar_with_an_expanded_active_th
     scroll_view.set_scrollbar_active(False)
     hide_timer = fake_scrollbar_hide_timers[-1]
     assert hide_timer.delay_ms == 10 and not hide_timer.cancelled
-    await hide_timer.fire()
+    hide_timer.fire()
     lines = render()
     assert visible(lines) == source_lines[2:6]
 
@@ -459,3 +474,30 @@ def test_rebuilds_geometry_after_content_changes():
 
     assert len(first.root.children[0].lines) == 1
     assert len(second.root.children[0].lines) == 3
+
+
+@pytest.mark.tonio
+async def test_a_stale_hide_timer_does_not_hide_a_scrollbar_shown_again(fake_scrollbar_hide_timers):
+    """pidrei-only: the hide timer runs on its own task and can fire after new
+    activity cancelled it. It only asks for a frame; the scrollbar shows until
+    the latest activity's deadline."""
+    scroll_view = ScrollView(
+        Text("\n".join(f"line{i}" for i in range(8)), 0, 0), {"scrollbar": "auto", "scrollbarHideDelayMs": 10}
+    )
+
+    def scrollbar_shown() -> bool:
+        lines = render_layout_frame(scroll_view, 6, 4, _noop).lines
+        return any("│" in strip_terminal_sequences(line) for line in lines)
+
+    render_layout_frame(scroll_view, 6, 4, _noop)
+    scroll_view.scroll_by(1)
+    first_timer = fake_scrollbar_hide_timers[-1]
+    FakeTimeout.clock.now += 0.008
+    scroll_view.scroll_by(1)  # shown again: the first timer is cancelled
+    assert first_timer.cancelled
+    # ...but its fire was already due, and runs anyway.
+    first_timer.fn()
+    assert scrollbar_shown()
+
+    fake_scrollbar_hide_timers[-1].fire()
+    assert not scrollbar_shown()

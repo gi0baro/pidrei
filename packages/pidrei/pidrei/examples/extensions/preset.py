@@ -197,13 +197,13 @@ class PresetExtension:
         ]
         items.append({"value": "(none)", "label": "(none)", "description": "Clear active preset, restore defaults"})
 
-        async def factory(_tui, theme, _kb, done):
+        def factory(_tui, theme, _kb, done):
             def accent(text: str) -> str:
                 return theme.fg("accent", text)
 
             container = Container()
             container.add_child(DynamicBorder(accent))
-            container.add_child(Text(accent(theme.bold("Select Preset")), 1, 0))
+            container.add_child(Text(accent(theme.bold("Select Preset"))))
 
             select_list = SelectList(
                 items,
@@ -217,17 +217,17 @@ class PresetExtension:
                 },
             )
 
-            async def on_select(item) -> None:
+            def on_select(item) -> None:
                 done(item["value"])
 
-            async def on_cancel() -> None:
+            def on_cancel() -> None:
                 done(None)
 
             select_list.on_select = on_select
             select_list.on_cancel = on_cancel
             container.add_child(select_list)
 
-            container.add_child(Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel"), 1, 0))
+            container.add_child(Text(theme.fg("dim", "↑↓ navigate • enter select • esc cancel")))
             container.add_child(DynamicBorder(accent))
 
             class Selector:
@@ -239,8 +239,8 @@ class PresetExtension:
 
                 # The TUI re-renders after focused input, so delegating is all
                 # that is needed here.
-                async def handle_input(self, data: str) -> None:
-                    await select_list.handle_input(data)
+                def handle_input(self, data: str) -> None:
+                    select_list.handle_input(data)
 
             return Selector()
 

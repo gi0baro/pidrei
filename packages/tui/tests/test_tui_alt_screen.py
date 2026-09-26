@@ -52,17 +52,17 @@ class RecordingTerminal(VirtualTerminal):
         super().__init__(columns, rows)
         self.events: list[dict] = []
 
-    async def start(self, on_input, on_resize) -> None:
+    async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
         self.events.append({"type": "start"})
-        await super().start(on_input, on_resize)
+        await super().start(on_input, on_resize, on_reply, on_error)
 
     async def write(self, data: str) -> None:
         self.events.append({"type": "write", "data": data})
         await super().write(data)
 
-    async def stop(self, *, on_owner: bool = False) -> None:
+    async def stop(self) -> None:
         self.events.append({"type": "stop"})
-        await super().stop(on_owner=on_owner)
+        await super().stop()
 
     def index_of_write(self, needle: str) -> int:
         for index, event in enumerate(self.events):
@@ -84,7 +84,7 @@ class RecordingTerminal(VirtualTerminal):
 
         `wait_for_render(since)` waits for *a* frame after `since`, which is not
         the same as the frame that reflects the input just sent: the render loop
-        is a separate throttled task, so a frame already computed before the
+        is a separate task, so a frame already computed before the
         input can be the one that satisfies the wait. With several inputs per
         wait that is a real window, and it is how the mouse-selection tests here
         failed on the macOS CI runners while passing everywhere else. Use this
@@ -125,10 +125,6 @@ def _lines(count: int) -> str:
     return "\n".join(f"line {index + 1}" for index in range(count))
 
 
-async def _owner_barrier() -> None:
-    """Run on the owner: returns once everything posted before it applied."""
-
-
 def _viewport(terminal: VirtualTerminal) -> list[str]:
     return [line.rstrip() for line in terminal.get_viewport()]
 
@@ -164,15 +160,11 @@ class _ManualTimer:
     def cancel(self) -> None:
         self.cancelled = True
 
-    async def fire(self, tui) -> None:
-        """One fire, on the TUI's owner like a real one (ordered with input
-        handling and renders; a cancelled timer does not run)."""
-
-        async def run() -> None:
-            if not self.cancelled:
-                await self.fn()
-
-        await tui.input_owner.run(run)
+    def fire(self) -> None:
+        """One fire, as a real one does it: `fn` runs unless cancelled (it
+        guards what it touches itself)."""
+        if not self.cancelled:
+            self.fn()
 
 
 @contextmanager
@@ -196,7 +188,7 @@ def _manual_timers(module, name: str):
 
 # `wait_for_render(since)` returns on *a* frame, which is not necessarily the
 # frame reflecting the input just sent (the render loop is a separate
-# throttled task) — assertions on state or viewport content driven by an
+# task) — assertions on state or viewport content driven by an
 # input wait on the condition itself with `terminal.until`, re-checked on
 # every write. Same rationale as `RecordingTerminal.wait_for_write`.
 
@@ -689,7 +681,7 @@ async def test_populates_transcript_search_results_next_to_the_query():
     component = AltScreenSearchComponent(lambda _query: None)
     component.render(48)
 
-    await component.handle_input("n")
+    component.handle_input("n")
     component.set_result(0, 2)
     populated_render = component.render(48)
     populated = [strip_terminal_sequences(line) for line in populated_render]
@@ -820,7 +812,7 @@ async def test_searches_the_transcript_with_ctrl_shift_f_and_restores_editor_foc
         def invalidate(self):
             pass
 
-        async def handle_input(self, data):
+        def handle_input(self, data):
             editor_inputs.append(data)
 
     editor = _Editor()
@@ -944,7 +936,7 @@ async def test_routes_ctrl_modified_viewport_navigation_to_the_focused_component
         def invalidate(self) -> None:
             pass
 
-        async def handle_input(self, data: str) -> None:
+        def handle_input(self, data: str) -> None:
             editor_inputs.append(data)
 
     editor = _Editor()
@@ -1682,7 +1674,7 @@ async def test_retains_a_completed_visible_selection_across_focus_changes():
         assert await terminal.wait_for_write(_osc52("alpha\nbeta"))
         assert await _wait_for_viewport_text(terminal, "Copied!")
     assert len(flash_timers) == 1
-    await flash_timers[0].fire(tui)
+    flash_timers[0].fire()
     assert await terminal.until(lambda: not any("Copied!" in line for line in terminal.get_viewport()))
     # The expiry frame we just observed is the last requested render, but its
     # write may still be draining when the count is sampled: settle first.
@@ -1720,16 +1712,13 @@ async def test_stacks_flash_messages_and_collapses_them_as_they_expire():
         since = terminal.frames
         tui.flash("First", 80)
         tui.flash("Second", 500)
-        # `flash` posts its push: the timers are created when the owner
-        # applies it, so wait for that inside the manual-timer window.
-        await tui.input_owner.run(_owner_barrier)
     assert [timer.delay_ms for timer in timers] == [80, 500]
     await terminal.wait_for_render(since)
     viewport = terminal.get_viewport()
     assert viewport[0].rstrip().endswith(" First")
     assert viewport[1].rstrip().endswith(" Second")
 
-    await timers[0].fire(tui)
+    timers[0].fire()
     await terminal.wait_for_render()
     viewport = terminal.get_viewport()
     assert viewport[0].rstrip().endswith(" Second")
@@ -1755,8 +1744,8 @@ async def test_auto_scrolls_and_extends_a_drag_selection_held_at_the_viewport_ed
         await terminal.send_input("\x1b[<0;1;3M")
         await terminal.send_input("\x1b[<32;1;1M")
     assert [interval.delay_ms for interval in intervals] == [50]
-    await intervals[0].fire(tui)
-    await intervals[0].fire(tui)
+    intervals[0].fire()
+    intervals[0].fire()
     await terminal.wait_for_render()
 
     selection_top = tui.viewport_top
@@ -1852,7 +1841,7 @@ class InputOverlay:
         self.focused = False
         self.inputs: list[str] = []
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         self.inputs.append(data)
 
     def render(self, _width: int) -> list[str]:
@@ -1965,7 +1954,7 @@ class _MouseComponent:
     def invalidate(self) -> None:
         pass
 
-    async def handle_mouse(self, event):
+    def handle_mouse(self, event):
         return self._on_mouse(event)
 
 
@@ -1986,7 +1975,7 @@ async def test_does_not_vertically_redispatch_misses_through_horizontal_layout_c
         },
     )
 
-    async def on_select(_item) -> None:
+    def on_select(_item) -> None:
         selections[0] += 1
 
     select_list.on_select = on_select

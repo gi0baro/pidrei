@@ -4,15 +4,16 @@ Interactive mode for the coding agent. Handles TUI rendering and user
 interaction, delegating business logic to AgentSession.
 
 Parallelism/async deltas vs pi's single-threaded runtime:
-- fire-and-forget promises become ``tonio.spawn.without_tracking`` tasks
+- fire-and-forget promises become spawned tasks (``_spawn_flow`` for UI flows)
 - pi async methods whose synchronous prefix is observable are split into a
-  sync prologue returning the awaitable remainder
+  synchronous handler that runs the prefix and spawns the rest
+- UI state is guarded by the TUI's state lock (UI_ISLAND_DESIGN.md): helpers
+  take it around their bodies, flows around each stretch between awaits
 - ``ui.start()``/``ui.stop()`` are awaited (the tonio TUI driver is async)
 """
 
 import contextlib
 import errno
-import functools
 import json
 import os
 import posixpath
@@ -24,7 +25,7 @@ import threading
 import time
 import traceback
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -54,7 +55,7 @@ from pidrei_tui import (
     set_keybindings,
     visible_width,
 )
-from pidrei_tui._owner import OwnerStopped
+from pidrei_tui.tui import call_sync
 
 from ...config import (
     APP_NAME,
@@ -155,8 +156,8 @@ from .components import (
     key_hint,
     key_text,
     raw_key_hint,
-    sync_action,
 )
+from .extension_tui import ExtensionTui, guard_overlay_handle
 from .external_editor import edit_in_external_editor
 from .model_catalog_refresh import refresh_model_catalogs
 from .model_search import get_model_search_text
@@ -198,39 +199,32 @@ def _timeout_cancel(ms: float) -> AiCancelToken:
     return _TimeoutCancel(ms).token
 
 
-async def _noop_ui_settle() -> None:
-    """Owner barrier body for `_settle_ui_after_agent_event` (allocated once)."""
-
-
-async def _nothing_left() -> None:
-    """The remainder of a handler whose synchronous part did all the work."""
-
-
 async def _is_yes(choice: Awaitable) -> bool:
     return await choice == "Yes"
 
 
-async def _then(pending: Awaitable, after) -> None:
-    """Await ``pending``, then call ``after`` (a submit command's remainder)."""
-    await pending
-    after()
+async def _answer(value):
+    return value
 
 
-# Owner discipline (the TUI ownership contract). What a call site keeps from
-# pi is whether pi runs the call to completion before moving on or fires it
-# and forgets it — not its colour. UI state has one owner task, so:
-# - A shared UI-mutating helper has an owner side (`_apply_*`, or the helper
-#   itself when only owner-side code calls it) that mutates in place, and a
-#   posting side (`self.ui.post_ui(...)`, FIFO) for callers off the owner:
-#   detached submit/command handlers, extension handlers, spawned tasks.
-# - Owner-side code (input handling and the component callbacks it invokes,
-#   owner jobs, the routed agent-event handler) calls the owner side. Posting
-#   from there turns a call pi completes into one that lands behind the keys
-#   already queued.
+async def _wait_for_answer(done, outcome: dict):
+    """The wait an extension dialog's handle runs: the dialog's answer, once
+    it is settled."""
+    await done.wait(None)
+    return outcome["value"]
+
+
+# UI state discipline (UI_ISLAND_DESIGN.md). What a call site keeps from pi is
+# whether pi runs the call to completion before moving on or fires it and
+# forgets it — not its colour.
+# - A UI-mutating helper is one synchronous function that takes the UI state
+#   lock (`self.ui.state_lock`, reentrant) around its body; any task calls it
+#   directly. Nothing awaits under the lock.
+# - Task code (flows that await) takes the lock for each stretch between two
+#   of its awaits: one hold per stretch, so a frame never shows half of it.
 # - A handler pi calls without awaiting still runs its part up to its first
-#   await inside the caller. Here that part is a plain `def` that runs on the
-#   caller and returns the awaitable remainder, and only the remainder is
-#   spawned.
+#   await inside the caller: a synchronous handler does that part and spawns
+#   the rest with `_spawn_flow` (escapes reach the crash handler).
 
 
 def is_expandable(obj) -> bool:
@@ -389,18 +383,21 @@ class ExtensionUIContext:
 
     A snake_case object, matching `docs/extensions.md`, the shipped examples
     and `_NoOpUIContext` — pi's counterpart is a camelCase JS object; the
-    dict-of-callbacks it was ported as matched neither. Awaitability is part
-    of the contract and identical across the real, no-op and RPC contexts:
-    dialog/editor methods (`select`, `confirm`, `input`, `custom`, `editor`),
-    `paste_to_editor` and the theme accessors return awaitables; the
-    in-memory UI setters are sync.
+    dict-of-callbacks it was ported as matched neither. The shape is part of
+    the contract and identical across the real, no-op and RPC contexts
+    (UI_ISLAND_DESIGN §10.2):
 
-    The interface of extension code, which runs on its own tasks and never on
-    the UI owner: the setters hand their work to the owner (fire-and-forget)
-    and the awaitable methods wait for it. Component code extensions provide
-    (factories, the components' input and render, their callbacks) runs on
-    the owner and uses what it is handed (`tui`, `done`), never this object —
-    see "Where extension code and component code run" in docs/extensions.md.
+    - Setters and getters are synchronous, each one call through the UI
+      state lock: the change is whole, and the caller's next line sees it.
+    - `apply(fn)` runs a synchronous `fn` under the lock, to group several
+      changes into one frame.
+    - The waiting methods (`select`, `confirm`, `input`, `editor`,
+      `custom`) mount at call time and return an awaitable handle for the
+      answer, which may also be dropped. `get_all_themes`, `get_theme` and
+      `set_theme` are awaitable (theme loading reads files).
+
+    Callable from anywhere: extension handlers on their own coroutines, and
+    component code under the lock (it is reentrant).
     """
 
     def __init__(self, mode: InteractiveMode) -> None:
@@ -424,17 +421,19 @@ class ExtensionUIContext:
     def set_status(self, key, text) -> None:
         self._mode._set_extension_status(key, text)
 
+    def apply(self, fn):
+        """pidrei-only: run the synchronous `fn` under the UI state lock, as
+        one whole change, and return its result. Coroutines are refused."""
+        return self._mode.ui.apply(fn)
+
     def set_working_message(self, message=None) -> None:
         mode = self._mode
-
-        def apply() -> None:
+        with mode.ui.state_lock:
             mode._working_message = message
             if mode._active_status_indicator is not None and mode._active_status_indicator.kind == "working":
                 mode._active_status_indicator.set_message(
                     message if message is not None else mode._default_working_message
                 )
-
-        mode.ui.post_ui(apply)
 
     def set_working_visible(self, visible) -> None:
         self._mode._set_working_visible(visible)
@@ -473,29 +472,22 @@ class ExtensionUIContext:
     def custom(self, factory, options=None):
         return self._mode._show_extension_custom(factory, options)
 
-    async def paste_to_editor(self, text: str) -> None:
-        # On the input owner: extensions run on their own tasks, and editor
-        # state has one writer (§4.4). `run` falls back to a direct call when
-        # the owner is not running.
+    def paste_to_editor(self, text: str) -> None:
+        # pi's direct `editor.handleInput(paste)`, whatever has focus, as one
+        # hold of the lock (the editor is resolved inside it, behind any
+        # editor swap). Not through the input stream (UI_ISLAND_DESIGN §10.2).
         data = f"\x1b[200~{text}\x1b[201~"
-        # (The editor is resolved on the owner, behind any queued editor swap.)
-        await self._mode.ui.input_owner.run(lambda: self._mode.editor.handle_input(data))
+        with self._mode.ui.state_lock:
+            self._mode.editor.handle_input(data)
 
     def set_editor_text(self, text: str) -> None:
         self._mode._set_editor_text(text)
 
-    async def get_editor_text(self) -> str:
-        # Awaitable (pi's is sync): the editor is owner state, read on the
-        # owner like `paste_to_editor` writes it.
-        text = tonio.Result()
-
-        async def read() -> None:
+    def get_editor_text(self) -> str:
+        with self._mode.ui.state_lock:
             editor = self._mode.editor
             get_expanded = getattr(editor, "get_expanded_text", None)
-            text.store(get_expanded() if get_expanded is not None else editor.get_text())
-
-        await self._mode.ui.input_owner.run(read)
-        return text.fetch()
+            return get_expanded() if get_expanded is not None else editor.get_text()
 
     def editor(self, title, prefill=None):
         return self._mode._show_extension_editor(title, prefill)
@@ -510,7 +502,8 @@ class ExtensionUIContext:
         self._mode._set_custom_editor_component(factory)
 
     def get_editor_component(self):
-        return self._mode._editor_component_factory
+        with self._mode.ui.state_lock:
+            return self._mode._editor_component_factory
 
     @property
     def theme(self):
@@ -535,7 +528,8 @@ class ExtensionUIContext:
         return result
 
     def get_tools_expanded(self) -> bool:
-        return self._mode._tool_output_expanded
+        with self._mode.ui.state_lock:
+            return self._mode._tool_output_expanded
 
     def set_tools_expanded(self, expanded) -> None:
         self._mode.set_tools_expanded(expanded)
@@ -573,8 +567,8 @@ class InteractiveMode:
         self._auto_trust_on_reload_cwd = options.get("autoTrustOnReloadCwd")
         self.runtime_host.set_before_session_invalidate(lambda: self._reset_extension_ui())
 
-        async def _rebind_session(_session=None) -> None:
-            await self._rebind_current_session({"renderBeforeBind": True})
+        async def _rebind_session(new_session, swap) -> None:
+            await self._rebind_current_session({"renderBeforeBind": True}, new_session, swap)
             await self._theme_controller.apply_from_settings()
 
         self.runtime_host.set_rebind_session(_rebind_session)
@@ -589,6 +583,8 @@ class InteractiveMode:
         self._main_screen_render_state = None
         self._fullscreen_layout_root = None
         self.ui = create_interactive_tui_reference(lambda: self._renderer)
+        # What extension factories receive as `tui` (UI_ISLAND_DESIGN §10.3).
+        self._extension_tui = ExtensionTui(self.ui)
         self.ui.set_clear_on_shrink(self.settings_manager.get_clear_on_shrink())
         self.ui.set_render_error_handler(self._uncaught_crash)
         self._header_container = Container()
@@ -688,10 +684,9 @@ class InteractiveMode:
         # Tool execution tracking: tool_call_id -> component
         self._pending_tools: dict = {}
 
-        # Tool output expansion state. Set from the owner (keybinding) and
-        # from extension tasks: the check-and-set takes the guard.
+        # Tool output expansion state, under the UI state lock (set from the
+        # keybinding and from extension tasks).
         self._tool_output_expanded = False
-        self._tool_output_expanded_guard = threading.Lock()
 
         # Thinking block visibility state
         self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
@@ -706,6 +701,9 @@ class InteractiveMode:
 
         # Track if editor is in bash mode (text starts with !)
         self._is_bash_mode = False
+        # An editor `!` command is claimed from its submit until its flow
+        # ends (under the UI state lock): see `_handle_editor_submit`.
+        self._bash_claimed = False
 
         # (pi's current-bash-component field is a local of
         # `_handle_bash_command` here: bash commands run concurrently.)
@@ -725,8 +723,8 @@ class InteractiveMode:
         # Messages queued while compaction is running:
         # {"text", "mode": "steer" | "followUp"} records
         self._compaction_queued_messages: list = []
-        # Submit handlers (detached tasks) append while the owner clears or
-        # flushes it: every read-modify-write of the list takes this.
+        # Submit handlers append while flushes (from any task) take it:
+        # every read-modify-write of the list takes this.
         self._compaction_queue_guard = threading.Lock()
 
         # Shutdown state
@@ -943,41 +941,38 @@ class InteractiveMode:
         )
 
     def _setup_autocomplete_provider(self) -> None:
-        """Rebuild the autocomplete provider and install it on the editors. Called
-        from off-owner flows (extension registration, session bind, reload): the
-        editor mutation is posted to the UI owner."""
-        self.ui.post_ui(self._apply_autocomplete_provider)
+        """Rebuild the autocomplete provider and install it on the editors
+        (extension registration, session bind, reload, settings)."""
+        with self.ui.state_lock:
+            provider = self._create_base_autocomplete_provider()
+            trigger_characters: list = []
+            for wrap_provider in self._autocomplete_provider_wrappers:
+                provider = wrap_provider(provider)
+                trigger_characters.extend(getattr(provider, "trigger_characters", None) or [])
+            if trigger_characters:
+                provider.trigger_characters = list(dict.fromkeys(trigger_characters))
 
-    def _apply_autocomplete_provider(self) -> None:
-        """`_setup_autocomplete_provider`'s body; runs on the UI owner."""
-        provider = self._create_base_autocomplete_provider()
-        trigger_characters: list = []
-        for wrap_provider in self._autocomplete_provider_wrappers:
-            provider = wrap_provider(provider)
-            trigger_characters.extend(getattr(provider, "trigger_characters", None) or [])
-        if trigger_characters:
-            provider.trigger_characters = list(dict.fromkeys(trigger_characters))
-
-        self._autocomplete_provider = provider
-        self._default_editor.set_autocomplete_provider(provider)
-        if self.editor is not self._default_editor:
-            set_provider = getattr(self.editor, "set_autocomplete_provider", None)
-            if set_provider is not None:
-                set_provider(provider)
+            self._autocomplete_provider = provider
+            self._default_editor.set_autocomplete_provider(provider)
+            if self.editor is not self._default_editor:
+                set_provider = getattr(self.editor, "set_autocomplete_provider", None)
+                if set_provider is not None:
+                    set_provider(provider)
 
     # =========================================================================
     # Startup
     # =========================================================================
 
     def _show_startup_notices_if_needed(self) -> None:
-        if self._startup_notices_shown:
-            return
-        self._startup_notices_shown = True
+        # The check-and-set is under the lock too: every session bind calls this.
+        with self.ui.state_lock:
+            if self._startup_notices_shown:
+                return
+            self._startup_notices_shown = True
 
-        if not self._changelog_markdown:
-            return
+            if not self._changelog_markdown:
+                return
 
-        def apply() -> None:
             if self._chat_container.children:
                 self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder())
@@ -995,8 +990,6 @@ class InteractiveMode:
                 self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder())
 
-        self.ui.post_ui(apply)
-
     def _mount_interactive_tui(self, tui, components) -> None:
         for component in components:
             tui.add_child(component)
@@ -1009,65 +1002,58 @@ class InteractiveMode:
         if self._renderer.mode == "fullscreen" and fullscreen_exit_output == "transcript":
             renderer = self._renderer
 
-            # On the owner, which the switch's stop drains before it checks
-            # for overlays.
-            def hide_overlays() -> None:
+            # Under the UI state lock, like the switch's own overlay check.
+            with self.ui.state_lock:
                 while renderer.has_overlay_entries:
                     renderer.hide_overlay()
-
-            self.ui.post_ui(hide_overlays)
             await self._switch_tui_mode("regular", restore_progress=False, start_renderer=False)
             await self._renderer.render_now()
         await self.ui.stop({"preserveScreen": self._renderer.mode == "fullscreen"})
 
     async def _switch_tui_mode(self, mode: str, restore_progress: bool = True, start_renderer: bool = True) -> bool:
-        """Off the owner only: stopping the renderer waits on the owner's queue."""
+        """Task code: stops and starts renderers. Input handling runs it as a
+        completion (the settings switch)."""
         previous_ui = self._renderer
         if mode == previous_ui.mode:
             return True
 
         await previous_ui.stop({"preserveScreen": True})
 
-        # The owner keeps serving while the renderer is stopped: the component
-        # tree is checked and moved to the next renderer in one owner job.
+        # The tree is checked and moved to the next renderer in one hold of
+        # the UI state lock, which both renderers share (one terminal).
         # Overlays are checked there, not before the stop — one opened in
         # between could not be carried over.
-        moved = tonio.Result()
+        next_ui = None
+        with previous_ui.state_lock:
+            if not previous_ui.has_overlay_entries:
+                components = list(previous_ui.children)
+                focus = previous_ui.get_focused_component()
+                if isinstance(previous_ui, TuiMainScreen):
+                    self._main_screen_render_state = previous_ui.capture_render_state()
 
-        async def move_tree() -> None:
-            if previous_ui.has_overlay_entries:
-                return
-            components = list(previous_ui.children)
-            focus = previous_ui.get_focused_component()
-            if isinstance(previous_ui, TuiMainScreen):
-                self._main_screen_render_state = previous_ui.capture_render_state()
+                previous_ui.set_focus(None)
+                previous_ui.clear()
+                if is_viewport_tui(previous_ui):
+                    previous_ui.set_layout_root(None)
 
-            previous_ui.set_focus(None)
-            previous_ui.clear()
-            if is_viewport_tui(previous_ui):
-                previous_ui.set_layout_root(None)
+                next_ui = create_interactive_tui(
+                    tui_mode=mode,
+                    show_hardware_cursor=previous_ui.get_show_hardware_cursor(),
+                    log_directory=get_agent_dir(),
+                    terminal=previous_ui.terminal,
+                    fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
+                )
+                next_ui.set_clear_on_shrink(previous_ui.get_clear_on_shrink())
+                next_ui.set_render_error_handler(self._uncaught_crash)
+                next_ui.on_debug = previous_ui.on_debug
+                if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
+                    next_ui.restore_render_state(self._main_screen_render_state)
+                self._renderer = next_ui
+                self._options["tuiMode"] = mode
+                self._mount_interactive_tui(next_ui, components)
+                next_ui.invalidate()
+                next_ui.set_focus(focus)
 
-            next_ui = create_interactive_tui(
-                tui_mode=mode,
-                show_hardware_cursor=previous_ui.get_show_hardware_cursor(),
-                log_directory=get_agent_dir(),
-                terminal=previous_ui.terminal,
-                fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
-            )
-            next_ui.set_clear_on_shrink(previous_ui.get_clear_on_shrink())
-            next_ui.set_render_error_handler(self._uncaught_crash)
-            next_ui.on_debug = previous_ui.on_debug
-            if isinstance(next_ui, TuiMainScreen) and self._main_screen_render_state is not None:
-                next_ui.restore_render_state(self._main_screen_render_state)
-            self._renderer = next_ui
-            self._options["tuiMode"] = mode
-            self._mount_interactive_tui(next_ui, components)
-            next_ui.invalidate()
-            next_ui.set_focus(focus)
-            moved.store(next_ui)
-
-        await previous_ui.input_owner.run(move_tree)
-        next_ui = moved.fetch()
         if next_ui is None:
             if start_renderer:
                 await previous_ui.start()
@@ -1228,13 +1214,11 @@ class InteractiveMode:
             self._built_in_header = Text("", 0, 0)
             header_children = [self._built_in_header]
 
-        # The UI is started: the mount is owner work.
-        def mount_header() -> None:
+        # The UI is started: the mount is one hold of the UI state lock.
+        with self.ui.state_lock:
             for child in header_children:
                 self._header_container.add_child(child)
             self.ui.request_render()
-
-        self.ui.post_ui(mount_header)
 
         # Resolve fd and rg after mounting the TUI (pi also downloads them
         # here; pidrei only looks them up — see utils/tools_manager.py — so
@@ -1248,14 +1232,12 @@ class InteractiveMode:
         self._fd_path = fd_path
 
         # Enable the remaining input handlers only after managed-tool setup
-        # completes — on the owner, which is dispatching startup input
-        # through the handlers being replaced.
-        def enable_input_handlers() -> None:
+        # completes — in one hold, as startup input is dispatched through
+        # the handlers being replaced.
+        with self.ui.state_lock:
             self._setup_key_handlers()
             self._setup_editor_submit_handler()
             self.ui.request_render()
-
-        self.ui.post_ui(enable_input_handlers)
 
         # Initialize extensions first so resources are shown before messages
         await self._rebind_current_session()
@@ -1263,21 +1245,16 @@ class InteractiveMode:
         # Render initial messages AFTER showing loaded resources
         self._render_initial_messages()
 
-        # Set up theme file watcher. The reload fires on the UI owner
-        # (`_timers.Timeout` delivers on the owner since audit step 5), so
-        # invalidating the tree there is plain owner work — it can never
-        # overlap a frame. An in-memory theme set through the extension API
-        # (`set_theme_instance`) comes from the caller's task: posted.
-        def handle_theme_change(*, on_owner: bool = False) -> None:
-            def apply() -> None:
-                self.ui.invalidate()
-                self._apply_editor_border_color()
-                self.ui.request_render()
-
-            if on_owner:
-                apply()
-            else:
-                self.ui.post_ui(apply)
+        # Set up theme file watcher. Every theme change (the file reload's
+        # task, `set_theme`, an in-memory theme set through the extension
+        # API) arrives on the changing task: the swap and the refresh are one
+        # hold, so a frame never mixes two themes (§4.5c).
+        def handle_theme_change(apply_theme) -> None:
+            with self.ui.state_lock:
+                if apply_theme():
+                    self.ui.invalidate()
+                    self._update_editor_border_color()
+                    self.ui.request_render()
 
         on_theme_change(handle_theme_change)
 
@@ -1311,7 +1288,7 @@ class InteractiveMode:
                     await refresh_model_catalogs(self.session.model_runtime, _timeout_cancel(15_000))
                     self._update_available_provider_count()
 
-            tonio.spawn.without_tracking(refresh_models())
+            self._spawn_flow(refresh_models())
 
         # Start version check asynchronously
         async def version_check() -> None:
@@ -1319,7 +1296,7 @@ class InteractiveMode:
             if new_release:
                 self.show_new_version_notification(new_release)
 
-        tonio.spawn.without_tracking(version_check())
+        self._spawn_flow(version_check())
 
         # Start package update check asynchronously
         async def package_update_check() -> None:
@@ -1327,7 +1304,7 @@ class InteractiveMode:
             if updates:
                 self.show_package_update_notification(updates)
 
-        tonio.spawn.without_tracking(package_update_check())
+        self._spawn_flow(package_update_check())
 
         # Check tmux keyboard setup asynchronously
         async def tmux_check() -> None:
@@ -1335,7 +1312,7 @@ class InteractiveMode:
             if warning:
                 self.show_warning(warning)
 
-        tonio.spawn.without_tracking(tmux_check())
+        self._spawn_flow(tmux_check())
 
         # Show startup warnings
         migrated_providers = self._options.get("migratedProviders")
@@ -1363,7 +1340,7 @@ class InteractiveMode:
         if model_fallback_message:
             self.show_warning(model_fallback_message)
 
-        tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth())
+        self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth())
 
         # Process initial messages
         if initial_message:
@@ -1809,214 +1786,212 @@ class InteractiveMode:
         return "\n".join(lines)
 
     def _show_loaded_resources(self, options: dict | None = None) -> None:
-        """Called from off-owner flows (session bind, /reload): the listing is
-        rendered on the UI owner."""
-        self.ui.post_ui(functools.partial(self._apply_show_loaded_resources, options))
+        """From session bind and /reload."""
+        with self.ui.state_lock:
+            options = options or {}
+            # Resource rendering is idempotent; chat clears no longer clear this
+            # separate container.
+            self._loaded_resources_container.clear()
 
-    def _apply_show_loaded_resources(self, options: dict | None = None) -> None:
-        """`_show_loaded_resources`'s body; runs on the UI owner."""
-        options = options or {}
-        # Resource rendering is idempotent; chat clears no longer clear this
-        # separate container.
-        self._loaded_resources_container.clear()
-
-        show_listing = (
-            options.get("force") or self._options.get("verbose") or not self.settings_manager.get_quiet_startup()
-        )
-        show_diagnostics = show_listing or options.get("showDiagnosticsWhenQuiet") is True
-        if not show_listing and not show_diagnostics:
-            return
-
-        def section_header(name: str, color: str = "mdHeading") -> str:
-            return theme.fg(color, f"[{name}]")
-
-        def format_compact_list(items: list, list_options: dict | None = None) -> str:
-            labels = [item.strip() for item in items if item.strip()]
-            if (list_options or {}).get("sort") is not False:
-                labels.sort(key=lambda label: (label.lower(), label))
-            return theme.fg("dim", f"  {', '.join(labels)}")
-
-        def add_loaded_section(name: str, collapsed_body: str, expanded_body=None, color: str = "mdHeading") -> None:
-            expanded = expanded_body if expanded_body is not None else collapsed_body
-            section = ExpandableText(
-                lambda name=name, body=collapsed_body, color=color: f"{section_header(name, color)}\n{body}",
-                lambda name=name, body=expanded, color=color: f"{section_header(name, color)}\n{body}",
-                self._get_startup_expansion_state(),
-                0,
-                0,
+            show_listing = (
+                options.get("force") or self._options.get("verbose") or not self.settings_manager.get_quiet_startup()
             )
-            self._loaded_resources_container.add_child(section)
-            self._loaded_resources_container.add_child(Spacer(1))
+            show_diagnostics = show_listing or options.get("showDiagnosticsWhenQuiet") is True
+            if not show_listing and not show_diagnostics:
+                return
 
-        skills_result = self.session.resource_loader.get_skills()
-        prompts_result = self.session.resource_loader.get_prompts()
-        themes_result = self.session.resource_loader.get_themes()
-        if options.get("extensions") is not None:
-            extensions = options["extensions"]
-        else:
-            extensions = [
-                {"path": extension.path, "sourceInfo": extension.source_info}
-                for extension in self.session.resource_loader.get_extensions().extensions
-                if not getattr(extension, "hidden", False)
-            ]
-        source_infos: dict = {}
-        for extension in extensions:
-            if extension.get("sourceInfo") is not None:
-                source_infos[extension["path"]] = extension["sourceInfo"]
-        for skill in skills_result.skills:
-            if skill.source_info is not None:
-                source_infos[skill.file_path] = skill.source_info
-        for prompt in prompts_result.prompts:
-            if prompt.source_info is not None:
-                source_infos[prompt.file_path] = prompt.source_info
-        for loaded_theme in themes_result["themes"]:
-            if loaded_theme.source_path and loaded_theme.source_info is not None:
-                source_infos[loaded_theme.source_path] = loaded_theme.source_info
+            def section_header(name: str, color: str = "mdHeading") -> str:
+                return theme.fg(color, f"[{name}]")
 
-        if show_listing:
-            system_prompt_source = self.session.resource_loader.get_system_prompt_source()
-            context_files = [
-                *([system_prompt_source] if system_prompt_source is not None else []),
-                *self.session.resource_loader.get_append_system_prompt_sources(),
-                *self.session.resource_loader.get_agents_files(),
-            ]
-            if context_files:
-                self._loaded_resources_container.add_child(Spacer(1))
-                context_list = "\n".join(
-                    theme.fg("dim", f"  {self._format_display_path(f.path)}") for f in context_files
-                )
-                context_compact_list = format_compact_list(
-                    [self._format_context_path(context_file.path) for context_file in context_files],
-                    {"sort": False},
-                )
-                add_loaded_section("Context", context_compact_list, context_list)
+            def format_compact_list(items: list, list_options: dict | None = None) -> str:
+                labels = [item.strip() for item in items if item.strip()]
+                if (list_options or {}).get("sort") is not False:
+                    labels.sort(key=lambda label: (label.lower(), label))
+                return theme.fg("dim", f"  {', '.join(labels)}")
 
-            skills = skills_result.skills
-            if skills:
-                groups = self._build_scope_groups(
-                    [{"path": skill.file_path, "sourceInfo": skill.source_info} for skill in skills]
+            def add_loaded_section(
+                name: str, collapsed_body: str, expanded_body=None, color: str = "mdHeading"
+            ) -> None:
+                expanded = expanded_body if expanded_body is not None else collapsed_body
+                section = ExpandableText(
+                    lambda name=name, body=collapsed_body, color=color: f"{section_header(name, color)}\n{body}",
+                    lambda name=name, body=expanded, color=color: f"{section_header(name, color)}\n{body}",
+                    self._get_startup_expansion_state(),
+                    0,
+                    0,
                 )
-                skill_list = self._format_scope_groups(
-                    groups,
-                    {
-                        "formatPath": lambda item: self._format_display_path(item["path"]),
-                        "formatPackagePath": lambda item, source: self._get_short_path(
-                            item["path"], item.get("sourceInfo")
-                        ),
-                    },
-                )
-                skill_compact_list = format_compact_list([skill.name for skill in skills])
-                add_loaded_section("Skills", skill_compact_list, skill_list)
-
-            templates = self.session.prompt_templates
-            if templates:
-                groups = self._build_scope_groups(
-                    [{"path": template.file_path, "sourceInfo": template.source_info} for template in templates]
-                )
-                template_by_path = {t.file_path: t for t in templates}
-
-                def format_template(item, _source=None):
-                    template = template_by_path.get(item["path"])
-                    return f"/{template.name}" if template else self._format_display_path(item["path"])
-
-                template_list = self._format_scope_groups(
-                    groups,
-                    {
-                        "formatPath": format_template,
-                        "formatPackagePath": format_template,
-                    },
-                )
-                prompt_compact_list = format_compact_list([f"/{template.name}" for template in templates])
-                add_loaded_section("Prompts", prompt_compact_list, template_list)
-
-            if extensions:
-                groups = self._build_scope_groups(extensions)
-                ext_list = self._format_scope_groups(
-                    groups,
-                    {
-                        "formatPath": lambda item: self._format_extension_display_path(item["path"]),
-                        "formatPackagePath": lambda item, source: self._format_extension_display_path(
-                            self._get_short_path(item["path"], item.get("sourceInfo"))
-                        ),
-                    },
-                )
-                extension_compact_list = format_compact_list(self._get_compact_extension_labels(extensions))
-                add_loaded_section("Extensions", extension_compact_list, ext_list, "mdHeading")
-
-            # Show loaded themes (excluding built-in)
-            custom_themes = [t for t in themes_result["themes"] if t.source_path]
-            if custom_themes:
-                groups = self._build_scope_groups(
-                    [
-                        {"path": loaded_theme.source_path, "sourceInfo": loaded_theme.source_info}
-                        for loaded_theme in custom_themes
-                    ]
-                )
-                theme_list = self._format_scope_groups(
-                    groups,
-                    {
-                        "formatPath": lambda item: self._format_display_path(item["path"]),
-                        "formatPackagePath": lambda item, source: self._get_short_path(
-                            item["path"], item.get("sourceInfo")
-                        ),
-                    },
-                )
-                theme_compact_list = format_compact_list(
-                    [
-                        loaded_theme.name
-                        if loaded_theme.name is not None
-                        else self._get_compact_path_label(loaded_theme.source_path, loaded_theme.source_info)
-                        for loaded_theme in custom_themes
-                    ]
-                )
-                add_loaded_section("Themes", theme_compact_list, theme_list)
-
-        if show_diagnostics:
-            skill_diagnostics = skills_result.diagnostics
-            if skill_diagnostics:
-                warning_lines = self._format_diagnostics(skill_diagnostics, source_infos)
-                self._loaded_resources_container.add_child(
-                    Text(f"{theme.fg('warning', '[Skill conflicts]')}\n{warning_lines}", 0, 0)
-                )
+                self._loaded_resources_container.add_child(section)
                 self._loaded_resources_container.add_child(Spacer(1))
 
-            prompt_diagnostics = prompts_result.diagnostics
-            if prompt_diagnostics:
-                warning_lines = self._format_diagnostics(prompt_diagnostics, source_infos)
-                self._loaded_resources_container.add_child(
-                    Text(f"{theme.fg('warning', '[Prompt conflicts]')}\n{warning_lines}", 0, 0)
-                )
-                self._loaded_resources_container.add_child(Spacer(1))
+            skills_result = self.session.resource_loader.get_skills()
+            prompts_result = self.session.resource_loader.get_prompts()
+            themes_result = self.session.resource_loader.get_themes()
+            if options.get("extensions") is not None:
+                extensions = options["extensions"]
+            else:
+                extensions = [
+                    {"path": extension.path, "sourceInfo": extension.source_info}
+                    for extension in self.session.resource_loader.get_extensions().extensions
+                    if not getattr(extension, "hidden", False)
+                ]
+            source_infos: dict = {}
+            for extension in extensions:
+                if extension.get("sourceInfo") is not None:
+                    source_infos[extension["path"]] = extension["sourceInfo"]
+            for skill in skills_result.skills:
+                if skill.source_info is not None:
+                    source_infos[skill.file_path] = skill.source_info
+            for prompt in prompts_result.prompts:
+                if prompt.source_info is not None:
+                    source_infos[prompt.file_path] = prompt.source_info
+            for loaded_theme in themes_result["themes"]:
+                if loaded_theme.source_path and loaded_theme.source_info is not None:
+                    source_infos[loaded_theme.source_path] = loaded_theme.source_info
 
-            extension_diagnostics: list = []
-            extension_errors = self.session.resource_loader.get_extensions().errors
-            for error in extension_errors:
-                extension_diagnostics.append({"type": "error", "message": error.error, "path": error.path})
+            if show_listing:
+                system_prompt_source = self.session.resource_loader.get_system_prompt_source()
+                context_files = [
+                    *([system_prompt_source] if system_prompt_source is not None else []),
+                    *self.session.resource_loader.get_append_system_prompt_sources(),
+                    *self.session.resource_loader.get_agents_files(),
+                ]
+                if context_files:
+                    self._loaded_resources_container.add_child(Spacer(1))
+                    context_list = "\n".join(
+                        theme.fg("dim", f"  {self._format_display_path(f.path)}") for f in context_files
+                    )
+                    context_compact_list = format_compact_list(
+                        [self._format_context_path(context_file.path) for context_file in context_files],
+                        {"sort": False},
+                    )
+                    add_loaded_section("Context", context_compact_list, context_list)
 
-            runner = self.session.extension_runner
-            get_command_diagnostics = getattr(runner, "get_command_diagnostics", None)
-            if get_command_diagnostics is not None:
-                extension_diagnostics.extend(get_command_diagnostics())
-            extension_diagnostics.extend(self._get_built_in_command_conflict_diagnostics(runner))
+                skills = skills_result.skills
+                if skills:
+                    groups = self._build_scope_groups(
+                        [{"path": skill.file_path, "sourceInfo": skill.source_info} for skill in skills]
+                    )
+                    skill_list = self._format_scope_groups(
+                        groups,
+                        {
+                            "formatPath": lambda item: self._format_display_path(item["path"]),
+                            "formatPackagePath": lambda item, source: self._get_short_path(
+                                item["path"], item.get("sourceInfo")
+                            ),
+                        },
+                    )
+                    skill_compact_list = format_compact_list([skill.name for skill in skills])
+                    add_loaded_section("Skills", skill_compact_list, skill_list)
 
-            get_shortcut_diagnostics = getattr(runner, "get_shortcut_diagnostics", None)
-            if get_shortcut_diagnostics is not None:
-                extension_diagnostics.extend(get_shortcut_diagnostics())
+                templates = self.session.prompt_templates
+                if templates:
+                    groups = self._build_scope_groups(
+                        [{"path": template.file_path, "sourceInfo": template.source_info} for template in templates]
+                    )
+                    template_by_path = {t.file_path: t for t in templates}
 
-            if extension_diagnostics:
-                warning_lines = self._format_diagnostics(extension_diagnostics, source_infos)
-                self._loaded_resources_container.add_child(
-                    Text(f"{theme.fg('warning', '[Extension issues]')}\n{warning_lines}", 0, 0)
-                )
-                self._loaded_resources_container.add_child(Spacer(1))
+                    def format_template(item, _source=None):
+                        template = template_by_path.get(item["path"])
+                        return f"/{template.name}" if template else self._format_display_path(item["path"])
 
-            theme_diagnostics = themes_result["diagnostics"]
-            if theme_diagnostics:
-                warning_lines = self._format_diagnostics(theme_diagnostics, source_infos)
-                self._loaded_resources_container.add_child(
-                    Text(f"{theme.fg('warning', '[Theme conflicts]')}\n{warning_lines}", 0, 0)
-                )
-                self._loaded_resources_container.add_child(Spacer(1))
+                    template_list = self._format_scope_groups(
+                        groups,
+                        {
+                            "formatPath": format_template,
+                            "formatPackagePath": format_template,
+                        },
+                    )
+                    prompt_compact_list = format_compact_list([f"/{template.name}" for template in templates])
+                    add_loaded_section("Prompts", prompt_compact_list, template_list)
+
+                if extensions:
+                    groups = self._build_scope_groups(extensions)
+                    ext_list = self._format_scope_groups(
+                        groups,
+                        {
+                            "formatPath": lambda item: self._format_extension_display_path(item["path"]),
+                            "formatPackagePath": lambda item, source: self._format_extension_display_path(
+                                self._get_short_path(item["path"], item.get("sourceInfo"))
+                            ),
+                        },
+                    )
+                    extension_compact_list = format_compact_list(self._get_compact_extension_labels(extensions))
+                    add_loaded_section("Extensions", extension_compact_list, ext_list, "mdHeading")
+
+                # Show loaded themes (excluding built-in)
+                custom_themes = [t for t in themes_result["themes"] if t.source_path]
+                if custom_themes:
+                    groups = self._build_scope_groups(
+                        [
+                            {"path": loaded_theme.source_path, "sourceInfo": loaded_theme.source_info}
+                            for loaded_theme in custom_themes
+                        ]
+                    )
+                    theme_list = self._format_scope_groups(
+                        groups,
+                        {
+                            "formatPath": lambda item: self._format_display_path(item["path"]),
+                            "formatPackagePath": lambda item, source: self._get_short_path(
+                                item["path"], item.get("sourceInfo")
+                            ),
+                        },
+                    )
+                    theme_compact_list = format_compact_list(
+                        [
+                            loaded_theme.name
+                            if loaded_theme.name is not None
+                            else self._get_compact_path_label(loaded_theme.source_path, loaded_theme.source_info)
+                            for loaded_theme in custom_themes
+                        ]
+                    )
+                    add_loaded_section("Themes", theme_compact_list, theme_list)
+
+            if show_diagnostics:
+                skill_diagnostics = skills_result.diagnostics
+                if skill_diagnostics:
+                    warning_lines = self._format_diagnostics(skill_diagnostics, source_infos)
+                    self._loaded_resources_container.add_child(
+                        Text(f"{theme.fg('warning', '[Skill conflicts]')}\n{warning_lines}", 0, 0)
+                    )
+                    self._loaded_resources_container.add_child(Spacer(1))
+
+                prompt_diagnostics = prompts_result.diagnostics
+                if prompt_diagnostics:
+                    warning_lines = self._format_diagnostics(prompt_diagnostics, source_infos)
+                    self._loaded_resources_container.add_child(
+                        Text(f"{theme.fg('warning', '[Prompt conflicts]')}\n{warning_lines}", 0, 0)
+                    )
+                    self._loaded_resources_container.add_child(Spacer(1))
+
+                extension_diagnostics: list = []
+                extension_errors = self.session.resource_loader.get_extensions().errors
+                for error in extension_errors:
+                    extension_diagnostics.append({"type": "error", "message": error.error, "path": error.path})
+
+                runner = self.session.extension_runner
+                get_command_diagnostics = getattr(runner, "get_command_diagnostics", None)
+                if get_command_diagnostics is not None:
+                    extension_diagnostics.extend(get_command_diagnostics())
+                extension_diagnostics.extend(self._get_built_in_command_conflict_diagnostics(runner))
+
+                get_shortcut_diagnostics = getattr(runner, "get_shortcut_diagnostics", None)
+                if get_shortcut_diagnostics is not None:
+                    extension_diagnostics.extend(get_shortcut_diagnostics())
+
+                if extension_diagnostics:
+                    warning_lines = self._format_diagnostics(extension_diagnostics, source_infos)
+                    self._loaded_resources_container.add_child(
+                        Text(f"{theme.fg('warning', '[Extension issues]')}\n{warning_lines}", 0, 0)
+                    )
+                    self._loaded_resources_container.add_child(Spacer(1))
+
+                theme_diagnostics = themes_result["diagnostics"]
+                if theme_diagnostics:
+                    warning_lines = self._format_diagnostics(theme_diagnostics, source_infos)
+                    self._loaded_resources_container.add_child(
+                        Text(f"{theme.fg('warning', '[Theme conflicts]')}\n{warning_lines}", 0, 0)
+                    )
+                    self._loaded_resources_container.add_child(Spacer(1))
 
     async def _bind_current_session_extensions(self) -> None:
         """Initialize the extension system with TUI-based UI context."""
@@ -2060,7 +2035,7 @@ class InteractiveMode:
             if result.editor_text:
                 self._fill_empty_editor(result.editor_text)
             self.show_status("Navigated to selected point")
-            tonio.spawn.without_tracking(self._flush_compaction_queue({"willRetry": False}))
+            self._flush_compaction_queue({"willRetry": False})
             return {"cancelled": False}
 
         async def switch_session_action(session_path, options=None):
@@ -2070,7 +2045,7 @@ class InteractiveMode:
             await self._handle_reload_command()
 
         def shutdown_handler() -> None:
-            self._shutdown_requested = True
+            self._request_shutdown()
             if self.session.is_idle:
                 tonio.spawn.without_tracking(self.shutdown())
 
@@ -2094,40 +2069,42 @@ class InteractiveMode:
             )
         )
 
-        set_registered_themes(self.session.resource_loader.get_themes()["themes"])
-        self._setup_autocomplete_provider()
+        with self.ui.state_lock:
+            set_registered_themes(self.session.resource_loader.get_themes()["themes"])
+            self._setup_autocomplete_provider()
 
-        extension_runner = self.session.extension_runner
-        self._setup_extension_shortcuts(extension_runner)
-        self._show_loaded_resources({"force": False, "showDiagnosticsWhenQuiet": True})
-        self._show_startup_notices_if_needed()
+            extension_runner = self.session.extension_runner
+            self._setup_extension_shortcuts(extension_runner)
+            self._show_loaded_resources({"force": False, "showDiagnosticsWhenQuiet": True})
+            self._show_startup_notices_if_needed()
 
     def _apply_fullscreen_scrollbar_setting(self) -> None:
-        """Apply the fullscreen scrollbar setting; runs on the UI owner (the
-        settings selector), posted from the off-owner runtime-settings pass."""
+        """Apply the fullscreen scrollbar setting (under the UI state lock)."""
         if self._transcript_scroll_view is not None:
             self._transcript_scroll_view.set_scrollbar(self.settings_manager.get_fullscreen_scrollbar())
 
-    async def _apply_runtime_settings(self) -> None:
-        set_capability_overrides(self.settings_manager.get_terminal_capability_overrides())
-        # pi configures the undici HTTP dispatcher here; pidrei's HTTP
-        # transport is punkreq's concern (see core/http_config.py).
-        self.ui.post_ui(self._apply_fullscreen_scrollbar_setting)
-        self._footer.set_session(self.session)
-        self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
-        await self._footer_data_provider.set_cwd(self.session_manager.get_cwd())
-        self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
-        self._output_pad = self.settings_manager.get_output_pad()
-        show_hardware_cursor = self.settings_manager.get_show_hardware_cursor()
-        clear_on_shrink = self.settings_manager.get_clear_on_shrink()
-        editor_padding_x = self.settings_manager.get_editor_padding_x()
-        autocomplete_max_visible = self.settings_manager.get_autocomplete_max_visible()
-
-        def apply() -> None:
-            self.ui.set_show_hardware_cursor(show_hardware_cursor)
+    def _apply_runtime_settings(self, resolved_cwd: dict) -> bool:
+        """pi's applyRuntimeSettings, one synchronous block under the UI state
+        lock. Its cwd I/O is prefetched (`footer_data_provider.resolve_cwd`,
+        §4.5b). Returns whether the cwd changed; the caller then starts its
+        watcher (`watch_cwd`) after the hold."""
+        with self.ui.state_lock:
+            set_capability_overrides(self.settings_manager.get_terminal_capability_overrides())
+            # pi configures the undici HTTP dispatcher here; pidrei's HTTP
+            # transport is punkreq's concern (see core/http_config.py).
+            self._apply_fullscreen_scrollbar_setting()
+            self._footer.set_session(self.session)
+            self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
+            cwd_changed = self._footer_data_provider.apply_cwd(resolved_cwd)
+            self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
+            self._output_pad = self.settings_manager.get_output_pad()
+            self.ui.set_show_hardware_cursor(self.settings_manager.get_show_hardware_cursor())
+            clear_on_shrink = self.settings_manager.get_clear_on_shrink()
             self.ui.set_clear_on_shrink(clear_on_shrink)
             if not clear_on_shrink and self._active_status_indicator is None:
                 self._status_container.clear()
+            editor_padding_x = self.settings_manager.get_editor_padding_x()
+            autocomplete_max_visible = self.settings_manager.get_autocomplete_max_visible()
             self._default_editor.set_padding_x(editor_padding_x)
             self._default_editor.set_autocomplete_max_visible(autocomplete_max_visible)
             if self.editor is not self._default_editor:
@@ -2137,33 +2114,45 @@ class InteractiveMode:
                 set_max_visible = getattr(self.editor, "set_autocomplete_max_visible", None)
                 if set_max_visible is not None:
                     set_max_visible(autocomplete_max_visible)
+            return cwd_changed
 
-        self.ui.post_ui(apply)
-
-    async def _rebind_current_session(self, options: dict | None = None) -> None:
+    async def _rebind_current_session(self, options: dict | None = None, new_session=None, swap=None) -> None:
+        """pi's rebindCurrentSession. On a session replacement the runtime
+        host hands over `new_session` and its `swap`: the swap and pi's first
+        synchronous block (runtime settings, the chat redraw, the
+        subscription) are one hold of the UI state lock, so a frame shows the
+        old session or the new one, never a mix (§4.5c). The block's cwd I/O
+        is prefetched for the new session before the hold (§4.5b)."""
         options = options or {}
-        session = self.session
-
-        if self._unsubscribe is not None:
-            self._unsubscribe()
-        self._unsubscribe = None
-        await self._apply_runtime_settings()
-
-        if options.get("renderBeforeBind"):
-            self.render_current_session_state()
-            self._subscribe_to_agent()
+        resolved_cwd = await self._footer_data_provider.resolve_cwd(
+            (new_session if new_session is not None else self.session).session_manager.get_cwd()
+        )
+        with self.ui.state_lock:
+            if swap is not None:
+                swap()
+            session = self.session
+            if self._unsubscribe is not None:
+                self._unsubscribe()
+            self._unsubscribe = None
+            cwd_changed = self._apply_runtime_settings(resolved_cwd)
+            if options.get("renderBeforeBind"):
+                self.render_current_session_state()
+                self._subscribe_to_agent()
+        if cwd_changed:
+            await self._footer_data_provider.watch_cwd()
 
         await self._bind_current_session_extensions()
 
-        if self.session is not session:
-            return
+        with self.ui.state_lock:
+            if self.session is not session:
+                return
 
-        if not options.get("renderBeforeBind"):
-            self._subscribe_to_agent()
+            if not options.get("renderBeforeBind"):
+                self._subscribe_to_agent()
 
-        self._update_available_provider_count()
-        self._update_editor_border_color()
-        self._update_terminal_title()
+            self._update_available_provider_count()
+            self._update_editor_border_color()
+            self._update_terminal_title()
 
     async def _handle_fatal_runtime_error(self, prefix: str, error) -> None:
         self.show_error(f"{prefix}: {error}")
@@ -2172,7 +2161,7 @@ class InteractiveMode:
         hard_exit(1)
 
     def render_current_session_state(self) -> None:
-        def apply() -> None:
+        with self.ui.state_lock:
             self._loaded_resources_container.clear()
             self._chat_container.clear()
             self._pending_messages_container.clear()
@@ -2181,9 +2170,7 @@ class InteractiveMode:
             self._streaming_component = None
             self._streaming_message = None
             self._pending_tools.clear()
-            self._apply_initial_messages()
-
-        self.ui.post_ui(apply)
+            self._render_initial_messages()
 
     def _get_registered_tool_definition(self, tool_name: str):
         """Extension-registered definition, falling back to the built-in one.
@@ -2238,7 +2225,7 @@ class InteractiveMode:
                 signal=self.session.agent.signal,
                 abort=lambda: self._restore_queued_messages_to_editor({"abort": True}),
                 has_pending_messages=lambda: self.session.pending_message_count > 0,
-                shutdown=lambda: setattr(self, "_shutdown_requested", True),
+                shutdown=lambda: self._request_shutdown(),
                 get_context_usage=lambda: self.session.get_context_usage(),
                 compact=compact,
                 get_system_prompt=lambda: self.session.system_prompt,
@@ -2259,7 +2246,8 @@ class InteractiveMode:
                     return True
             return False
 
-        self._default_editor.on_extension_shortcut = on_extension_shortcut
+        with self.ui.state_lock:
+            self._default_editor.on_extension_shortcut = on_extension_shortcut
 
     def _set_extension_status(self, key: str, text) -> None:
         """Set extension status text in the footer."""
@@ -2267,10 +2255,10 @@ class InteractiveMode:
         self.ui.request_render()
 
     # The status-indicator state machine (`_active_status_indicator` and the
-    # working-message knobs) runs entirely on the UI owner: writers post
-    # (`_post_ui`), so kind-guards and set_message updates read FIFO-consistent
-    # state whether the caller is the routed agent listener, a detached
-    # command handler, or an extension task.
+    # working-message knobs) changes only under the UI state lock, so
+    # kind-guards and set_message updates read consistent state whether the
+    # caller is the agent listener, a detached command handler, or an
+    # extension.
 
     def _set_editor_working_status_indicator(self, indicator) -> bool:
         """Hand the status indicator to the editor's border; False when the
@@ -2282,48 +2270,41 @@ class InteractiveMode:
         return True
 
     def _show_status_indicator(self, indicator) -> None:
-        self.ui.post_ui(functools.partial(self._apply_show_status_indicator, indicator))
-
-    def _apply_show_status_indicator(self, indicator) -> None:
-        """`_show_status_indicator`'s body; runs on the UI owner."""
-        if self._active_status_indicator is not None:
-            self._active_status_indicator.dispose()
-        self._active_status_indicator = indicator
-        self._active_working_indicator_embedded = False
-        self._status_container.clear()
-        self._set_editor_working_status_indicator(None)
-        if self._set_editor_working_status_indicator(indicator):
-            self._active_working_indicator_embedded = True
-            return
-        self._status_container.set_children([indicator])
+        with self.ui.state_lock:
+            if self._active_status_indicator is not None:
+                self._active_status_indicator.dispose()
+            self._active_status_indicator = indicator
+            self._active_working_indicator_embedded = False
+            self._status_container.clear()
+            self._set_editor_working_status_indicator(None)
+            if self._set_editor_working_status_indicator(indicator):
+                self._active_working_indicator_embedded = True
+                return
+            self._status_container.set_children([indicator])
 
     def _clear_status_indicator(self, kind: str | None = None) -> None:
-        self.ui.post_ui(functools.partial(self._apply_clear_status_indicator, kind))
-
-    def _apply_clear_status_indicator(self, kind: str | None = None) -> None:
-        """`_clear_status_indicator`'s body; runs on the UI owner."""
-        if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
-            return
-        cleared_indicator = self._active_status_indicator
-        cleared_indicator_was_embedded = self._active_working_indicator_embedded
-        if cleared_indicator is not None:
-            cleared_indicator.dispose()
-        self._active_status_indicator = None
-        self._active_working_indicator_embedded = False
-        self._set_editor_working_status_indicator(None)
-        if (
-            cleared_indicator is not None
-            and not cleared_indicator_was_embedded
-            and self._options.get("tuiMode") == "regular"
-            and self.ui.get_clear_on_shrink()
-        ):
-            self._status_container.set_children([self._idle_status])
-        else:
-            self._status_container.clear()
+        with self.ui.state_lock:
+            if kind and (self._active_status_indicator is None or self._active_status_indicator.kind != kind):
+                return
+            cleared_indicator = self._active_status_indicator
+            cleared_indicator_was_embedded = self._active_working_indicator_embedded
+            if cleared_indicator is not None:
+                cleared_indicator.dispose()
+            self._active_status_indicator = None
+            self._active_working_indicator_embedded = False
+            self._set_editor_working_status_indicator(None)
+            if (
+                cleared_indicator is not None
+                and not cleared_indicator_was_embedded
+                and self._options.get("tuiMode") == "regular"
+                and self.ui.get_clear_on_shrink()
+            ):
+                self._status_container.set_children([self._idle_status])
+            else:
+                self._status_container.clear()
 
     def _show_working_status_indicator(self) -> None:
-        """Owner-side only (the event handler, `_set_working_visible`'s job):
-        applied inline, not posted."""
+        """Under the UI state lock (the event handler, `_set_working_visible`)."""
         color_fn = None
         if is_working_status_editor(self.editor):
 
@@ -2333,7 +2314,7 @@ class InteractiveMode:
                 )
                 return border_color(text)
 
-        self._apply_show_status_indicator(
+        self._show_status_indicator(
             WorkingStatusIndicator(
                 self.ui,
                 self._working_message if self._working_message is not None else self._default_working_message,
@@ -2343,10 +2324,10 @@ class InteractiveMode:
         )
 
     def _set_working_visible(self, visible: bool) -> None:
-        def apply() -> None:
+        with self.ui.state_lock:
             self._working_visible = visible
             if not visible:
-                self._apply_clear_status_indicator("working")
+                self._clear_status_indicator("working")
                 self.ui.request_render()
                 return
             if self.session.is_streaming and (
@@ -2355,30 +2336,22 @@ class InteractiveMode:
                 self._show_working_status_indicator()
             self.ui.request_render()
 
-        self.ui.post_ui(apply)
-
     def _set_working_indicator(self, options=None) -> None:
-        self.ui.post_ui(functools.partial(self._apply_working_indicator, options))
-
-    def _apply_working_indicator(self, options=None) -> None:
-        """`_set_working_indicator`'s body; runs on the UI owner."""
-        self._working_indicator_options = options
-        if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
-            self._active_status_indicator.set_indicator(options)
-        self.ui.request_render()
+        with self.ui.state_lock:
+            self._working_indicator_options = options
+            if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
+                self._active_status_indicator.set_indicator(options)
+            self.ui.request_render()
 
     def _set_hidden_thinking_label(self, label=None) -> None:
-        self.ui.post_ui(functools.partial(self._apply_hidden_thinking_label, label))
-
-    def _apply_hidden_thinking_label(self, label=None) -> None:
-        """`_set_hidden_thinking_label`'s body; runs on the UI owner."""
-        self._hidden_thinking_label = label if label is not None else self._default_hidden_thinking_label
-        for child in self._chat_container.children:
-            if isinstance(child, AssistantMessageComponent):
-                child.set_hidden_thinking_label(self._hidden_thinking_label)
-        if self._streaming_component is not None:
-            self._streaming_component.set_hidden_thinking_label(self._hidden_thinking_label)
-        self.ui.request_render()
+        with self.ui.state_lock:
+            self._hidden_thinking_label = label if label is not None else self._default_hidden_thinking_label
+            for child in self._chat_container.children:
+                if isinstance(child, AssistantMessageComponent):
+                    child.set_hidden_thinking_label(self._hidden_thinking_label)
+            if self._streaming_component is not None:
+                self._streaming_component.set_hidden_thinking_label(self._hidden_thinking_label)
+            self.ui.request_render()
 
     # Maximum total widget lines to prevent viewport overflow
     MAX_WIDGET_LINES = 10
@@ -2387,13 +2360,13 @@ class InteractiveMode:
         """Set an extension widget (list of strings or a component factory)."""
         placement = (options or {}).get("placement") or "aboveEditor"
 
-        def apply() -> None:
-            def remove_existing(widget_map: dict) -> None:
-                existing = widget_map.get(key)
-                if existing is not None and getattr(existing, "dispose", None) is not None:
-                    existing.dispose()
-                widget_map.pop(key, None)
+        def remove_existing(widget_map: dict) -> None:
+            existing = widget_map.get(key)
+            if existing is not None and getattr(existing, "dispose", None) is not None:
+                existing.dispose()
+            widget_map.pop(key, None)
 
+        with self.ui.state_lock:
             remove_existing(self._extension_widgets_above)
             remove_existing(self._extension_widgets_below)
 
@@ -2411,73 +2384,58 @@ class InteractiveMode:
                 component = container
             else:
                 # Factory function - create component
-                component = content(self.ui, theme)
+                component = content(self._extension_tui, theme)
 
             target_map = self._extension_widgets_below if placement == "belowEditor" else self._extension_widgets_above
             target_map[key] = component
             self._render_widgets()
 
-        self.ui.post_ui(apply)
+    def _clear_extension_widgets(self) -> None:
+        """Dispose and drop every extension widget."""
+        with self.ui.state_lock:
+            for widget in self._extension_widgets_above.values():
+                dispose = getattr(widget, "dispose", None)
+                if dispose is not None:
+                    dispose()
+            for widget in self._extension_widgets_below.values():
+                dispose = getattr(widget, "dispose", None)
+                if dispose is not None:
+                    dispose()
+            self._extension_widgets_above.clear()
+            self._extension_widgets_below.clear()
+            self._render_widgets()
 
-    def _apply_clear_extension_widgets(self) -> None:
-        """Dispose and drop every extension widget; runs on the UI owner."""
-        for widget in self._extension_widgets_above.values():
-            dispose = getattr(widget, "dispose", None)
-            if dispose is not None:
-                dispose()
-        for widget in self._extension_widgets_below.values():
-            dispose = getattr(widget, "dispose", None)
-            if dispose is not None:
-                dispose()
-        self._extension_widgets_above.clear()
-        self._extension_widgets_below.clear()
-        self._render_widgets()
-
-    def _reset_extension_ui(self, *, on_owner: bool = False) -> None:
-        # Called from off-owner flows (session invalidation, the extension
-        # `reload` action) and from /reload's owner-side start (``on_owner``).
-        # Extension state that the next extensions write directly resets right
-        # away, so a posted reset landing later cannot wipe what they
-        # registered meanwhile; component work is owner work: in place on the
-        # owner, posted otherwise (later posts queue behind it).
-        self._clear_extension_terminal_input_listeners()
-        self._footer_data_provider.clear_extension_statuses()
-        with self._extension_registry_guard:
-            self._autocomplete_provider_wrappers = ()
-        if on_owner:
-            self._editor_component_factory = None
-            self._apply_custom_editor_component(None)
-        else:
+    def _reset_extension_ui(self) -> None:
+        # From session invalidation, the extension `reload` action and
+        # /reload: the whole reset is one change under the UI state lock.
+        with self.ui.state_lock:
+            self._clear_extension_terminal_input_listeners()
+            self._footer_data_provider.clear_extension_statuses()
+            with self._extension_registry_guard:
+                self._autocomplete_provider_wrappers = ()
             self._set_custom_editor_component(None)
-        self._default_editor.on_extension_shortcut = None
-        self._working_message = None
-        self._working_visible = True
-
-        def apply() -> None:
+            self._default_editor.on_extension_shortcut = None
+            self._working_message = None
+            self._working_visible = True
             if self._extension_selector is not None:
-                self._apply_hide_extension_selector(self._extension_selector)
+                self._hide_extension_selector(self._extension_selector)
             if self._extension_input is not None:
-                self._apply_hide_extension_input(self._extension_input)
+                self._hide_extension_input(self._extension_input)
             if self._extension_editor is not None:
-                self._apply_hide_extension_editor(self._extension_editor)
+                self._hide_extension_editor(self._extension_editor)
             self.ui.hide_overlay()
-            self._apply_extension_footer(None)
-            self._apply_extension_header(None)
-            self._apply_clear_extension_widgets()
+            self._set_extension_footer(None)
+            self._set_extension_header(None)
+            self._clear_extension_widgets()
             self._footer.invalidate()
-            self._apply_autocomplete_provider()
+            self._setup_autocomplete_provider()
             self._update_terminal_title()
-            self._apply_working_indicator()
+            self._set_working_indicator()
             if self._active_status_indicator is not None and self._active_status_indicator.kind == "working":
                 self._active_status_indicator.set_message(
                     f"{self._default_working_message} ({key_text('app.interrupt')} to interrupt)"
                 )
-            self._apply_hidden_thinking_label()
-
-        if on_owner:
-            apply()
-        else:
-            self.ui.post_ui(apply)
+            self._set_hidden_thinking_label()
 
     def _render_widgets(self) -> None:
         """Render all extension widgets to the widget containers."""
@@ -2502,70 +2460,62 @@ class InteractiveMode:
 
     def _set_extension_footer(self, factory) -> None:
         """Set a custom footer component, or restore the built-in footer."""
-        self.ui.post_ui(functools.partial(self._apply_extension_footer, factory))
+        with self.ui.state_lock:
+            # Dispose existing custom footer
+            if self._custom_footer is not None and getattr(self._custom_footer, "dispose", None) is not None:
+                self._custom_footer.dispose()
 
-    def _apply_extension_footer(self, factory) -> None:
-        """`_set_extension_footer`'s body; runs on the UI owner."""
-        # Dispose existing custom footer
-        if self._custom_footer is not None and getattr(self._custom_footer, "dispose", None) is not None:
-            self._custom_footer.dispose()
+            self._footer_container.clear()
+            if factory is not None:
+                # Create and add custom footer, passing the data provider
+                self._custom_footer = factory(self._extension_tui, theme, self._footer_data_provider)
+                self._footer_container.add_child(self._custom_footer)
+            else:
+                # Restore built-in footer
+                self._custom_footer = None
+                self._footer_container.add_child(self._footer)
 
-        self._footer_container.clear()
-        if factory is not None:
-            # Create and add custom footer, passing the data provider
-            self._custom_footer = factory(self.ui, theme, self._footer_data_provider)
-            self._footer_container.add_child(self._custom_footer)
-        else:
-            # Restore built-in footer
-            self._custom_footer = None
-            self._footer_container.add_child(self._footer)
-
-        self.ui.request_render()
+            self.ui.request_render()
 
     def _set_extension_header(self, factory) -> None:
         """Set a custom header component, or restore the built-in header."""
-        # Header may not be initialized yet if called during early
-        # initialization
-        if self._built_in_header is None:
-            return
-        self.ui.post_ui(functools.partial(self._apply_extension_header, factory))
+        with self.ui.state_lock:
+            # Header may not be initialized yet if called during early
+            # initialization
+            if self._built_in_header is None:
+                return
 
-    def _apply_extension_header(self, factory) -> None:
-        """`_set_extension_header`'s body; runs on the UI owner."""
-        if self._built_in_header is None:
-            return  # not initialized yet (early initialization)
+            # Dispose existing custom header
+            if self._custom_header is not None and getattr(self._custom_header, "dispose", None) is not None:
+                self._custom_header.dispose()
 
-        # Dispose existing custom header
-        if self._custom_header is not None and getattr(self._custom_header, "dispose", None) is not None:
-            self._custom_header.dispose()
+            # Find the index of the current header in the header container
+            current_header = self._custom_header if self._custom_header is not None else self._built_in_header
+            try:
+                index = self._header_container.children.index(current_header)
+            except ValueError:
+                index = -1
 
-        # Find the index of the current header in the header container
-        current_header = self._custom_header if self._custom_header is not None else self._built_in_header
-        try:
-            index = self._header_container.children.index(current_header)
-        except ValueError:
-            index = -1
-
-        if factory is not None:
-            # Create and add custom header
-            self._custom_header = factory(self.ui, theme)
-            if is_expandable(self._custom_header):
-                self._custom_header.set_expanded(self._tool_output_expanded)
-            if index != -1:
-                self._header_container.children[index] = self._custom_header
+            if factory is not None:
+                # Create and add custom header
+                self._custom_header = factory(self._extension_tui, theme)
+                if is_expandable(self._custom_header):
+                    self._custom_header.set_expanded(self._tool_output_expanded)
+                if index != -1:
+                    self._header_container.children[index] = self._custom_header
+                else:
+                    # If not found (e.g. built-in header was never added), add
+                    # at the top
+                    self._header_container.children.insert(0, self._custom_header)
             else:
-                # If not found (e.g. built-in header was never added), add
-                # at the top
-                self._header_container.children.insert(0, self._custom_header)
-        else:
-            # Restore built-in header
-            self._custom_header = None
-            if is_expandable(self._built_in_header):
-                self._built_in_header.set_expanded(self._tool_output_expanded)
-            if index != -1:
-                self._header_container.children[index] = self._built_in_header
+                # Restore built-in header
+                self._custom_header = None
+                if is_expandable(self._built_in_header):
+                    self._built_in_header.set_expanded(self._tool_output_expanded)
+                if index != -1:
+                    self._header_container.children[index] = self._built_in_header
 
-        self.ui.request_render()
+            self.ui.request_render()
 
     # Extension tasks add and remove these while the renderer switch rebinds
     # and reset/stop clear them: every step runs under the registry guard, so
@@ -2613,28 +2563,22 @@ class InteractiveMode:
         """Create the ExtensionUIContext object for extensions."""
         return ExtensionUIContext(self)
 
-    def _show_extension_selector(self, title: str, options: list, opts: dict | None = None, *, on_owner: bool = False):
-        """Show a selector for extensions; returns an awaitable.
-
-        ``on_owner``: the caller runs on the UI owner (pi's sync prefix of an
-        awaited dialog): the dialog is mounted before this returns, instead
-        of posted.
-        """
+    def _show_extension_selector(self, title: str, options: list, opts: dict | None = None):
+        """Show a selector for extensions: mounted before this returns (pi's
+        synchronous mount, so a key that opens it sends the next key to it);
+        returns the spawn handle of the wait for the pick, which the caller
+        may await or drop (UI_ISLAND_DESIGN §10.2)."""
         opts = opts or {}
         done = tonio.Event()
-        # Settled from the owner (a pick, the countdown) or an abort callback
-        # on any task: the first settle claims under the guard.
+        # Settled by a pick, the countdown or an abort callback on any task:
+        # the first settle claims under the guard.
         settle_guard = threading.Lock()
         outcome: dict = {"value": None, "settled": False}
         remove_abort = None
 
         signal = opts.get("signal")
         if signal is not None and signal.cancelled:
-
-            async def already_aborted():
-                return None
-
-            return already_aborted()
+            return tonio.spawn(_answer(None))
 
         def settle(value, hide) -> None:
             with settle_guard:
@@ -2647,13 +2591,11 @@ class InteractiveMode:
             hide(component)
             done.set()
 
-        # A pick and the countdown come from the component, on the owner: the
-        # dialog closes there. An abort can fire on any task: posted.
         component = ExtensionSelectorComponent(
             title,
             options,
-            lambda option: settle(option, self._apply_hide_extension_selector),
-            lambda: settle(None, self._apply_hide_extension_selector),
+            lambda option: settle(option, self._hide_extension_selector),
+            lambda: settle(None, self._hide_extension_selector),
             {
                 "tui": self.ui,
                 "timeout": opts.get("timeout"),
@@ -2663,49 +2605,33 @@ class InteractiveMode:
         if signal is not None:
             remove_abort = signal.on_cancel(lambda _reason: settle(None, self._hide_extension_selector))
 
-        # The field is claimed on the owner, at mount: a hide still queued for
-        # the previous dialog must find that dialog there, not this one.
-        def mount() -> None:
-            if outcome["settled"]:
-                return  # aborted before it was shown
-            self._dispose_active_selector()
-            self._extension_selector = component
-            self._editor_container.clear()
-            self._editor_container.add_child(component)
-            self.ui.set_focus(component)
-            self.ui.request_render()
+        # The field is claimed at mount: a hide for the previous dialog must
+        # find that dialog there, not this one.
+        with self.ui.state_lock:
+            if not outcome["settled"]:  # else aborted before it was shown
+                self._dispose_active_selector()
+                self._extension_selector = component
+                self._editor_container.clear()
+                self._editor_container.add_child(component)
+                self.ui.set_focus(component)
+                self.ui.request_render()
 
-        if on_owner:
-            mount()
-        else:
-            self.ui.post_ui(mount)
-
-        async def wait():
-            await done.wait(None)
-            return outcome["value"]
-
-        return wait()
+        return tonio.spawn(_wait_for_answer(done, outcome))
 
     def _hide_extension_selector(self, component) -> None:
-        self.ui.post_ui(functools.partial(self._apply_hide_extension_selector, component))
+        with self.ui.state_lock:
+            component.dispose()
+            if self._extension_selector is not component:
+                return  # never mounted, or already replaced
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self._extension_selector = None
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
 
-    def _apply_hide_extension_selector(self, component) -> None:
-        """`_hide_extension_selector`'s body; runs on the UI owner."""
-        component.dispose()
-        if self._extension_selector is not component:
-            return  # never mounted, or already replaced
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self._extension_selector = None
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
-
-    def _show_extension_confirm(
-        self, title: str, message: str, opts: dict | None = None, *, on_owner: bool = False
-    ) -> Awaitable[bool]:
-        """Show a confirmation dialog for extensions (``on_owner``: see
-        `_show_extension_selector`)."""
-        return _is_yes(self._show_extension_selector(f"{title}\n{message}", ["Yes", "No"], opts, on_owner=on_owner))
+    def _show_extension_confirm(self, title: str, message: str, opts: dict | None = None) -> Awaitable[bool]:
+        """Show a confirmation dialog for extensions (see `_show_extension_selector`)."""
+        return tonio.spawn(_is_yes(self._show_extension_selector(f"{title}\n{message}", ["Yes", "No"], opts)))
 
     async def _prompt_for_missing_session_cwd(self, error) -> str | None:
         confirmed = await self._show_extension_confirm(
@@ -2714,7 +2640,7 @@ class InteractiveMode:
         return error.issue.fallback_cwd if confirmed else None
 
     def _show_extension_input(self, title: str, placeholder=None, opts: dict | None = None):
-        """Show a text input for extensions; returns an awaitable."""
+        """Show a text input for extensions (see `_show_extension_selector`)."""
         opts = opts or {}
         done = tonio.Event()
         # First settle claims: see `_show_extension_selector`.
@@ -2724,11 +2650,7 @@ class InteractiveMode:
 
         signal = opts.get("signal")
         if signal is not None and signal.cancelled:
-
-            async def already_aborted():
-                return None
-
-            return already_aborted()
+            return tonio.spawn(_answer(None))
 
         def settle(value, hide) -> None:
             with settle_guard:
@@ -2741,50 +2663,40 @@ class InteractiveMode:
             hide(component)
             done.set()
 
-        # Submit, cancel and the countdown come from the component, on the
-        # owner; an abort from any task (see `_show_extension_selector`).
+        # Submit, cancel and the countdown come from the component; an abort
+        # from any task (see `_show_extension_selector`).
         component = ExtensionInputComponent(
             title,
             placeholder,
-            lambda value: settle(value, self._apply_hide_extension_input),
-            lambda: settle(None, self._apply_hide_extension_input),
+            lambda value: settle(value, self._hide_extension_input),
+            lambda: settle(None, self._hide_extension_input),
             {"tui": self.ui, "timeout": opts.get("timeout")},
         )
         if signal is not None:
             remove_abort = signal.on_cancel(lambda _reason: settle(None, self._hide_extension_input))
 
         # Field claimed at mount: see `_show_extension_selector`.
-        def mount() -> None:
-            if outcome["settled"]:
-                return  # aborted before it was shown
-            self._dispose_active_selector()
-            self._extension_input = component
-            self._editor_container.clear()
-            self._editor_container.add_child(component)
-            self.ui.set_focus(component)
-            self.ui.request_render()
+        with self.ui.state_lock:
+            if not outcome["settled"]:  # else aborted before it was shown
+                self._dispose_active_selector()
+                self._extension_input = component
+                self._editor_container.clear()
+                self._editor_container.add_child(component)
+                self.ui.set_focus(component)
+                self.ui.request_render()
 
-        self.ui.post_ui(mount)
-
-        async def wait():
-            await done.wait(None)
-            return outcome["value"]
-
-        return wait()
+        return tonio.spawn(_wait_for_answer(done, outcome))
 
     def _hide_extension_input(self, component) -> None:
-        self.ui.post_ui(functools.partial(self._apply_hide_extension_input, component))
-
-    def _apply_hide_extension_input(self, component) -> None:
-        """`_hide_extension_input`'s body; runs on the UI owner."""
-        component.dispose()
-        if self._extension_input is not component:
-            return  # never mounted, or already replaced
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self._extension_input = None
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+        with self.ui.state_lock:
+            component.dispose()
+            if self._extension_input is not component:
+                return  # never mounted, or already replaced
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self._extension_input = None
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
 
     def _show_extension_editor(self, title: str, prefill=None):
         """Show a multi-line editor for extensions (with Ctrl+G support)."""
@@ -2799,11 +2711,9 @@ class InteractiveMode:
                     return
                 outcome["settled"] = True
             outcome["value"] = value
-            self._apply_hide_extension_editor(component)
+            self._hide_extension_editor(component)
             done.set()
 
-        # Submit and cancel come from the component's input handling, on the
-        # owner: the dialog closes there.
         component = ExtensionEditorComponent(
             self.ui,
             self._keybindings,
@@ -2816,7 +2726,7 @@ class InteractiveMode:
         )
 
         # Field claimed at mount: see `_show_extension_selector`.
-        def mount() -> None:
+        with self.ui.state_lock:
             self._dispose_active_selector()
             self._extension_editor = component
             self._editor_container.clear()
@@ -2824,117 +2734,107 @@ class InteractiveMode:
             self.ui.set_focus(component)
             self.ui.request_render()
 
-        self.ui.post_ui(mount)
+        return tonio.spawn(_wait_for_answer(done, outcome))
 
-        async def wait():
-            await done.wait(None)
-            return outcome["value"]
-
-        return wait()
-
-    def _apply_hide_extension_editor(self, component) -> None:
-        """Put the editor back in place of the extension editor dialog; runs on
-        the UI owner."""
-        if self._extension_editor is not component:
-            return  # already replaced
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self._extension_editor = None
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+    def _hide_extension_editor(self, component) -> None:
+        """Put the editor back in place of the extension editor dialog."""
+        with self.ui.state_lock:
+            if self._extension_editor is not component:
+                return  # already replaced
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self._extension_editor = None
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
 
     def _set_custom_editor_component(self, factory) -> None:
         """Set a custom editor component from an extension.
 
-        Pass None to restore the default editor. Extensions call this from their
-        own tasks: the swap is posted to the UI owner (tui-island contract). The
-        factory is published right away, so `get_editor_component()` sees it
-        immediately, as in pi.
+        Pass None to restore the default editor. The factory is published and
+        the editor swapped in one hold of the UI state lock, so
+        `get_editor_component()` sees it immediately, as in pi.
         """
-        self._editor_component_factory = factory
-        self.ui.post_ui(functools.partial(self._apply_custom_editor_component, factory))
+        with self.ui.state_lock:
+            self._editor_component_factory = factory
 
-    def _apply_custom_editor_component(self, factory) -> None:
-        """`_set_custom_editor_component`'s body; runs on the UI owner."""
+            # Save text from current editor before switching
+            current_text = self.editor.get_text()
 
-        # Save text from current editor before switching
-        current_text = self.editor.get_text()
+            self._dispose_active_selector()
+            self._editor_container.clear()
 
-        self._dispose_active_selector()
-        self._editor_container.clear()
+            if factory is not None:
+                # Create the custom editor with tui, theme, and keybindings
+                new_editor = factory(self._extension_tui, get_editor_theme(), self._keybindings)
 
-        if factory is not None:
-            # Create the custom editor with tui, theme, and keybindings
-            new_editor = factory(self.ui, get_editor_theme(), self._keybindings)
+                # Wire up callbacks from the default editor
+                new_editor.on_submit = self._default_editor.on_submit
+                new_editor.on_change = self._default_editor.on_change
 
-            # Wire up callbacks from the default editor
-            new_editor.on_submit = self._default_editor.on_submit
-            new_editor.on_change = self._default_editor.on_change
+                # Copy text from previous editor
+                new_editor.set_text(current_text)
 
-            # Copy text from previous editor
-            new_editor.set_text(current_text)
+                # Copy appearance settings if supported
+                if getattr(new_editor, "border_color", None) is not None:
+                    new_editor.border_color = self._default_editor.border_color
+                set_padding = getattr(new_editor, "set_padding_x", None)
+                if set_padding is not None:
+                    set_padding(self._default_editor.get_padding_x())
+                set_max_visible = getattr(new_editor, "set_autocomplete_max_visible", None)
+                if set_max_visible is not None:
+                    set_max_visible(self._default_editor.get_autocomplete_max_visible())
 
-            # Copy appearance settings if supported
-            if getattr(new_editor, "border_color", None) is not None:
-                new_editor.border_color = self._default_editor.border_color
-            set_padding = getattr(new_editor, "set_padding_x", None)
-            if set_padding is not None:
-                set_padding(self._default_editor.get_padding_x())
-            set_max_visible = getattr(new_editor, "set_autocomplete_max_visible", None)
-            if set_max_visible is not None:
-                set_max_visible(self._default_editor.get_autocomplete_max_visible())
+                # Set autocomplete if supported
+                set_provider = getattr(new_editor, "set_autocomplete_provider", None)
+                if set_provider is not None and self._autocomplete_provider is not None:
+                    set_provider(self._autocomplete_provider)
 
-            # Set autocomplete if supported
-            set_provider = getattr(new_editor, "set_autocomplete_provider", None)
-            if set_provider is not None and self._autocomplete_provider is not None:
-                set_provider(self._autocomplete_provider)
+                # If extending CustomEditor, copy app-level handlers (duck typed)
+                if isinstance(getattr(new_editor, "action_handlers", None), dict):
+                    if not getattr(new_editor, "on_escape", None):
 
-            # If extending CustomEditor, copy app-level handlers (duck typed)
-            if isinstance(getattr(new_editor, "action_handlers", None), dict):
-                if not getattr(new_editor, "on_escape", None):
+                        def forward_escape():
+                            if self._default_editor.on_escape:
+                                self._default_editor.on_escape()
 
-                    async def forward_escape():
-                        if self._default_editor.on_escape:
-                            await self._default_editor.on_escape()
+                        new_editor.on_escape = forward_escape
+                    if not getattr(new_editor, "on_ctrl_d", None):
 
-                    new_editor.on_escape = forward_escape
-                if not getattr(new_editor, "on_ctrl_d", None):
+                        def forward_ctrl_d():
+                            if self._default_editor.on_ctrl_d:
+                                self._default_editor.on_ctrl_d()
 
-                    async def forward_ctrl_d():
-                        if self._default_editor.on_ctrl_d:
-                            await self._default_editor.on_ctrl_d()
+                        new_editor.on_ctrl_d = forward_ctrl_d
+                    if not getattr(new_editor, "on_paste_image", None):
+                        new_editor.on_paste_image = lambda: (
+                            self._default_editor.on_paste_image() if self._default_editor.on_paste_image else None
+                        )
+                    if not getattr(new_editor, "on_extension_shortcut", None):
+                        new_editor.on_extension_shortcut = lambda data: (
+                            self._default_editor.on_extension_shortcut(data)
+                            if self._default_editor.on_extension_shortcut
+                            else False
+                        )
+                    # Copy action handlers (clear, suspend, model switching, ...)
+                    for action, handler in self._default_editor.action_handlers.items():
+                        new_editor.action_handlers[action] = handler
 
-                    new_editor.on_ctrl_d = forward_ctrl_d
-                if not getattr(new_editor, "on_paste_image", None):
-                    new_editor.on_paste_image = lambda: (
-                        self._default_editor.on_paste_image() if self._default_editor.on_paste_image else None
-                    )
-                if not getattr(new_editor, "on_extension_shortcut", None):
-                    new_editor.on_extension_shortcut = lambda data: (
-                        self._default_editor.on_extension_shortcut(data)
-                        if self._default_editor.on_extension_shortcut
-                        else False
-                    )
-                # Copy action handlers (clear, suspend, model switching, ...)
-                for action, handler in self._default_editor.action_handlers.items():
-                    new_editor.action_handlers[action] = handler
+                self.editor = new_editor
+            else:
+                # Restore default editor with text from custom editor
+                self._default_editor.set_text(current_text)
+                self.editor = self._default_editor
 
-            self.editor = new_editor
-        else:
-            # Restore default editor with text from custom editor (already on the owner)
-            self._default_editor.set_text(current_text)
-            self.editor = self._default_editor
-
-        self._editor_container.add_child(self.editor)
-        if self._active_status_indicator is not None:
-            self._status_container.clear()
-            self._active_working_indicator_embedded = self._set_editor_working_status_indicator(
-                self._active_status_indicator
-            )
-            if not self._active_working_indicator_embedded:
-                self._status_container.set_children([self._active_status_indicator])
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+            self._editor_container.add_child(self.editor)
+            if self._active_status_indicator is not None:
+                self._status_container.clear()
+                self._active_working_indicator_embedded = self._set_editor_working_status_indicator(
+                    self._active_status_indicator
+                )
+                if not self._active_working_indicator_embedded:
+                    self._status_container.set_children([self._active_status_indicator])
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
 
     def _show_extension_notify(self, message: str, type=None) -> None:
         """Show a notification for extensions."""
@@ -2945,24 +2845,23 @@ class InteractiveMode:
         else:
             self.show_status(message)
 
-    async def _show_extension_custom(self, factory, options: dict | None = None):
+    def _show_extension_custom(self, factory, options: dict | None = None):
         """Show a custom component with keyboard focus.
 
         Overlay mode renders on top of existing content.
 
-        Extensions await this from their own tasks: the handover below waits
-        for the owner job that builds and mounts the component, then for the
-        component's result. The factory is component-side code, like every
-        component factory (pi calls it on its UI thread): it runs on the UI
-        owner, and so does the `done` it receives (`close`), which closes the
-        component in place. Extension code closing from its own task hands it
-        over (`tui.post_ui`), as internal background work does.
+        The factory is synchronous and runs in one hold of the UI state lock
+        with the editor-text snapshot (pi takes it at call time) and the
+        mount (UI_ISLAND_DESIGN §10.2), so no frame or key lands in between.
+        Returns the spawn handle of the wait for the result, which the caller
+        may await or drop. `done` (`close`) takes the lock itself: callable
+        from input handling, a timer, spawned work or the factory itself.
         """
         options = options or {}
         is_overlay = bool(options.get("overlay"))
         done = tonio.Event()
-        # Owner-confined: written by the owner job below and by `close`, which
-        # runs on the owner; the waiting extension reads `value` after `done`.
+        # Written under the UI state lock (the mount hold and `close`); the
+        # waiting handle reads `value` after `done`.
         state: dict = {"component": None, "closed": False, "value": None, "editor_text": ""}
 
         def restore_editor() -> None:
@@ -2973,19 +2872,20 @@ class InteractiveMode:
             self.ui.request_render()
 
         def close(result=None) -> None:
-            if state["closed"]:
-                return
-            state["closed"] = True
-            state["value"] = result
-            component = state["component"]
-            if not is_overlay:
-                restore_editor()
-            elif component is not None:
-                self.ui.hide_overlay()
-            # Note: both branches above already request a render
-            with contextlib.suppress(Exception):
-                if component is not None and getattr(component, "dispose", None) is not None:
-                    component.dispose()
+            with self.ui.state_lock:
+                if state["closed"]:
+                    return
+                state["closed"] = True
+                state["value"] = result
+                component = state["component"]
+                if not is_overlay:
+                    restore_editor()
+                elif component is not None:
+                    self.ui.hide_overlay()
+                # Note: both branches above already request a render
+                with contextlib.suppress(Exception):
+                    if component is not None and getattr(component, "dispose", None) is not None:
+                        component.dispose()
             done.set()
 
         def mount(component) -> None:
@@ -3001,7 +2901,7 @@ class InteractiveMode:
                 # Expose handle to caller for visibility control
                 on_handle = options.get("onHandle")
                 if on_handle is not None:
-                    on_handle(handle)
+                    on_handle(guard_overlay_handle(self.ui, handle))
             else:
                 self._dispose_active_selector()
                 self._editor_container.clear()
@@ -3009,25 +2909,22 @@ class InteractiveMode:
                 self.ui.set_focus(component)
                 self.ui.request_render()
 
-        async def open_on_owner() -> None:
+        with self.ui.state_lock:
             state["editor_text"] = self.editor.get_text()
             try:
-                # Async-only (pi's `Component | Promise<Component>` union is not ported).
-                component = await factory(self.ui, theme, self._keybindings, close)
+                # Synchronous only: an `async def` factory is refused.
+                component = call_sync(lambda: factory(self._extension_tui, theme, self._keybindings, close))
             except Exception:
-                if state["closed"]:
-                    return  # closed from inside the factory: the result stands
-                if not is_overlay:
-                    restore_editor()
-                raise
-            if state["closed"] or component is None:
-                return  # closed from inside the factory (nothing to mount)
-            state["component"] = component
-            mount(component)
+                if not state["closed"]:
+                    if not is_overlay:
+                        restore_editor()
+                    raise
+                component = None  # closed from inside the factory: the result stands
+            if not state["closed"] and component is not None:
+                state["component"] = component
+                mount(component)
 
-        await self.ui.input_owner.run(open_on_owner)
-        await done.wait(None)
-        return state["value"]
+        return tonio.spawn(_wait_for_answer(done, state))
 
     def _show_extension_error(self, extension_path: str, error: str, stack=None) -> None:
         """Show an extension error in the UI."""
@@ -3038,13 +2935,11 @@ class InteractiveMode:
         stack_lines = "\n".join(theme.fg("dim", f"  {line.strip()}") for line in stack.split("\n")[1:]) if stack else ""
 
         # Raised on whatever task hit the extension error.
-        def apply() -> None:
+        with self.ui.state_lock:
             self._chat_container.add_child(error_text)
             if stack_lines:
                 self._chat_container.add_child(Text(stack_lines, 1, 0))
             self.ui.request_render()
-
-        self.ui.post_ui(apply)
 
     # =========================================================================
     # Key Handlers
@@ -3053,16 +2948,16 @@ class InteractiveMode:
     def _setup_key_handlers(self) -> None:
         # Set up handlers on the default editor - they use self.editor for
         # text access so they work correctly regardless of active editor
-        # Escape, from the editor's input handling on the owner.
-        async def on_escape() -> None:
+        # Escape, from the editor's input handling.
+        def on_escape() -> None:
             if self.session.is_streaming:
-                self._restore_queued_messages_to_editor({"abort": True}, on_owner=True)
+                self._restore_queued_messages_to_editor({"abort": True})
             elif self.session.is_bash_running:
                 self.session.abort_bash()
             elif self._is_bash_mode:
-                self._clear_editor_on_owner()
+                self._set_editor_text("")
                 self._is_bash_mode = False
-                self._apply_editor_border_color()
+                self._update_editor_border_color()
             elif not self.editor.get_text().strip():
                 # Double-escape with empty editor triggers /tree, /fork, or
                 # nothing based on setting
@@ -3080,64 +2975,69 @@ class InteractiveMode:
 
         self._default_editor.on_escape = on_escape
 
-        # Register app action handlers (awaitable-returning; sync ones adapt
-        # through `sync_action`, coroutine-returning lambdas qualify as-is)
-        self._default_editor.on_action("app.clear", sync_action(self._handle_ctrl_c))
-        self._default_editor.on_ctrl_d = sync_action(self._handle_ctrl_d)
-        # Awaited by the editor's input handling, on the owner: the UI stops
-        # before the next key, as pi's (synchronous) handler does.
-        self._default_editor.on_action("app.suspend", lambda: self._handle_ctrl_z())
-        self._default_editor.on_action("app.thinking.cycle", lambda: self._cycle_thinking_level())
+        # Register app action handlers (synchronous, as in pi)
+        self._default_editor.on_action("app.clear", self._handle_ctrl_c)
+        self._default_editor.on_ctrl_d = self._handle_ctrl_d
+        # The UI stops before the next key, as pi's (synchronous) handler does.
+        self._default_editor.on_action("app.suspend", lambda: self._finish_before_next_input(self._handle_ctrl_z()))
         self._default_editor.on_action(
-            "app.model.cycleForward", sync_action(lambda: tonio.spawn.without_tracking(self._cycle_model("forward")))
+            "app.thinking.cycle", lambda: self._finish_before_next_input(self._cycle_thinking_level())
         )
+        self._default_editor.on_action("app.model.cycleForward", lambda: self._spawn_flow(self._cycle_model("forward")))
         self._default_editor.on_action(
-            "app.model.cycleBackward", sync_action(lambda: tonio.spawn.without_tracking(self._cycle_model("backward")))
+            "app.model.cycleBackward", lambda: self._spawn_flow(self._cycle_model("backward"))
         )
 
         # Global debug handler on TUI (works regardless of focus)
-        # (Called on the owner: detached, since it renders through the owner.)
-        async def debug_from_key() -> None:
-            try:
-                await self._handle_debug_command()
-            except Exception as error:
-                # What the owner's error handler did while this ran there.
-                await self._uncaught_crash(error)
-
-        self.ui.on_debug = lambda: tonio.spawn.without_tracking(debug_from_key())
-        self._default_editor.on_action("app.model.select", sync_action(self._show_model_selector))
-        self._default_editor.on_action("app.tools.expand", sync_action(self._toggle_tool_output_expansion))
-        self._default_editor.on_action("app.thinking.toggle", sync_action(self._toggle_thinking_block_visibility))
-        self._default_editor.on_action("app.editor.external", lambda: self._open_external_editor())
+        self.ui.on_debug = lambda: self._spawn_flow(self._handle_debug_command())
+        self._default_editor.on_action("app.model.select", self._show_model_selector)
+        self._default_editor.on_action("app.tools.expand", self._toggle_tool_output_expansion)
+        self._default_editor.on_action("app.thinking.toggle", self._toggle_thinking_block_visibility)
+        self._default_editor.on_action(
+            "app.editor.external", lambda: self._finish_before_next_input(self._open_external_editor())
+        )
         self._default_editor.on_action(
             "app.message.copy",
-            sync_action(
-                lambda: tonio.spawn.without_tracking(
-                    self._handle_copy_command({"flashConfirmation": True, "preferSelection": True})
-                )
-            ),
+            lambda: self._handle_copy_command({"flashConfirmation": True, "preferSelection": True}),
         )
-        self._default_editor.on_action("app.message.followUp", sync_action(self._handle_follow_up))
-        self._default_editor.on_action("app.message.dequeue", sync_action(self._handle_dequeue))
-        self._default_editor.on_action(
-            "app.session.new", sync_action(lambda: tonio.spawn.without_tracking(self._handle_clear_command()))
-        )
-        self._default_editor.on_action("app.session.tree", sync_action(self._show_tree_selector))
-        self._default_editor.on_action("app.session.fork", sync_action(self._show_user_message_selector))
-        self._default_editor.on_action("app.session.resume", sync_action(self._show_session_selector))
+        self._default_editor.on_action("app.message.followUp", self._handle_follow_up)
+        self._default_editor.on_action("app.message.dequeue", self._handle_dequeue)
+        self._default_editor.on_action("app.session.new", self._handle_clear_command)
+        self._default_editor.on_action("app.session.tree", self._show_tree_selector)
+        self._default_editor.on_action("app.session.fork", self._show_user_message_selector)
+        self._default_editor.on_action("app.session.resume", self._show_session_selector)
 
-        # From editor mutations, on the owner.
+        # From editor mutations.
         def on_change(text: str) -> None:
             was_bash_mode = self._is_bash_mode
             self._is_bash_mode = text.lstrip().startswith("!")
             if was_bash_mode != self._is_bash_mode:
-                self._apply_editor_border_color()
+                self._update_editor_border_color()
 
         self._default_editor.on_change = on_change
 
         # Handle clipboard paste (triggered on Ctrl+V). Images are attached
         # by path; otherwise, paste plain text from the system clipboard.
-        self._default_editor.on_paste_image = lambda: tonio.spawn.without_tracking(self._handle_clipboard_paste())
+        self._default_editor.on_paste_image = lambda: self._spawn_flow(self._handle_clipboard_paste())
+
+    def _spawn_flow(self, flow: Awaitable[None]) -> None:
+        """Run `flow` on its own task, fire-and-forget (pi's `void` call).
+        Whatever escapes it goes to the crash handler, as an unhandled
+        rejection does in pi (UI_ISLAND_DESIGN §4.7)."""
+
+        async def run() -> None:
+            try:
+                await flow
+            except Exception as error:
+                await self._uncaught_crash(error)
+
+        tonio.spawn.without_tracking(run())
+
+    def _finish_before_next_input(self, work: Awaitable[None]) -> None:
+        """Spawn a key's slow work and hold the next key until it finishes
+        (pi does that work synchronously). The input consumer waits for it
+        before the next item, and the work applies its UI changes in place."""
+        self.ui.finish_before_next_input(tonio.spawn(work))
 
     async def _handle_clipboard_paste(self) -> None:
         try:
@@ -3160,207 +3060,202 @@ class InteractiveMode:
             # Silently ignore clipboard errors (permissions etc.)
             pass
 
-    def _post_editor_mutation(self, fn) -> None:
-        """Apply an editor mutation on the input-owner task (§4.4 single-writer).
-
-        Handlers running off the owner (detached submit handlers, extension
-        actions, selector callbacks) must not touch editor state while the
-        owner is mid-keystroke — an in-place `_state` swap under a running
-        `_move_cursor` crashes it (and pi runs all of this on one thread).
-        `post` keeps this safe to call from the owner itself too (a nested
-        `run` would deadlock) at the cost of the mutation landing after any
-        already-queued keys; the posted job requests a render so the deferred
-        application always reaches the screen. Falls back to a direct call
-        when the owner is not running (tests, mode switches mid-stop).
-        """
-        owner = self.ui.input_owner
-        if not owner.started:
-            fn()
-            return
-
-        async def apply() -> None:
-            fn()
-            self.ui.request_render()
-
-        owner.post(apply)
-
-    # The editor these helpers act on is resolved when the mutation applies:
-    # a custom-editor swap queued ahead of it must not leave it writing to
-    # the editor that was current when it was posted.
+    # pi's `this.editor.setText(...)` and friends: like pi's, they request no
+    # render of their own (their callers do, or a render follows anyway).
 
     def _set_editor_text(self, text: str) -> None:
-        self._post_editor_mutation(lambda: self.editor.set_text(text))
+        with self.ui.state_lock:
+            self.editor.set_text(text)
 
     def _insert_into_editor(self, text: str) -> None:
-        def apply() -> None:
+        with self.ui.state_lock:
             insert = getattr(self.editor, "insert_text_at_cursor", None)
             if insert is not None:
                 insert(text)
 
-        self._post_editor_mutation(apply)
-
     def _fill_empty_editor(self, text: str) -> None:
-        """Put `text` in the editor unless it holds something already — the
-        check and the write both on the owner, so keys typed meanwhile win."""
-
-        def apply() -> None:
+        """Put `text` in the editor unless it holds something already: the
+        check and the write are one hold, so keys typed meanwhile win."""
+        with self.ui.state_lock:
             if not self.editor.get_text().strip():
                 self.editor.set_text(text)
 
-        self._post_editor_mutation(apply)
-
     def _apply_editor_history(self, text: str) -> None:
-        """Add ``text`` to the current editor's history; runs on the UI owner."""
-        add_to_history = getattr(self.editor, "add_to_history", None)
-        if add_to_history is not None:
-            add_to_history(text)
+        """Add ``text`` to the current editor's history."""
+        with self.ui.state_lock:
+            add_to_history = getattr(self.editor, "add_to_history", None)
+            if add_to_history is not None:
+                add_to_history(text)
 
     def _setup_startup_input_handlers(self) -> None:
         """The startup-window bindings (pi wires these inline in `init()`;
         extracted so the wiring is unit-testable like `_setup_editor_submit_handler`).
 
-        `on_submit` is the editor's sync `(text) -> None` callback, not an
-        action handler: wrapping it in `sync_action` dropped the argument, and
-        a submit landing before `_setup_editor_submit_handler` ran crashed the
-        input pump (reachable on a slow runner — macOS CI, 0.85.1)."""
-        self._default_editor.on_action("app.clear", sync_action(self._handle_ctrl_c))
-        self._default_editor.on_ctrl_d = sync_action(self._handle_ctrl_d)
+        `on_submit` is the editor's `(text) -> None` callback, not an action
+        handler: a submit landing before `_setup_editor_submit_handler` ran
+        crashed the input pump (reachable on a slow runner — macOS CI, 0.85.1)."""
+        self._default_editor.on_action("app.clear", self._handle_ctrl_c)
+        self._default_editor.on_ctrl_d = self._handle_ctrl_d
         self._default_editor.on_submit = self._handle_startup_submit
 
     def _setup_editor_submit_handler(self) -> None:
-        def on_submit(text: str) -> None:
-            # `_handle_editor_submit` runs its synchronous part here, on the
-            # owner; only the returned remainder is spawned.
-            tonio.spawn.without_tracking(self._handle_editor_submit(text))
+        self._default_editor.on_submit = self._handle_editor_submit
 
-        self._default_editor.on_submit = on_submit
+    async def _then_clear_editor(self, command: Awaitable[None]) -> None:
+        """pi's submit branch `await this.handleX(); this.editor.setText("")`."""
+        await command
+        self._set_editor_text("")
 
-    def _handle_editor_submit(self, text: str) -> Awaitable[None]:
-        """The editor's submit, on the UI owner (its input handling, or the
-        follow-up action). pi's handler is called without awaiting: its part
-        up to the first await — clearing the editor, mounting a selector,
-        queueing — runs in the keypress, before the next key. That part runs
-        here, in place; the rest of a command is the returned remainder,
-        spawned by the caller (after an await it is off the owner, so its UI
-        work posts)."""
+    def _handle_editor_submit(self, text: str) -> None:
+        """The editor's submit (its input handling, or the follow-up action).
+        pi's handler is called without awaiting: its part up to the first
+        await — clearing the editor, mounting a selector, queueing — runs in
+        the keypress, before the next key. That part runs here; the rest of a
+        command is spawned."""
         text = text.strip()
         if not text:
-            return _nothing_left()
-
-        clear_editor_later = functools.partial(self._set_editor_text, "")
+            return
 
         # Handle commands
+        # Commands that are synchronous in pi but start with I/O here: the
+        # next key waits for them (and for the editor clear after them).
         if text == "/settings":
-            return _then(self._show_settings_selector(), clear_editor_later)
+            self._finish_before_next_input(self._then_clear_editor(self._show_settings_selector()))
+            return
         if text == "/scoped-models":
-            self._clear_editor_on_owner()
+            self._set_editor_text("")
             self._show_models_selector()
-            return _nothing_left()
+            return
         if text == "/model" or text.startswith("/model "):
             search_term = text[7:].strip() if text.startswith("/model ") else None
-            self._clear_editor_on_owner()
-            return self._handle_model_command(search_term)
+            self._set_editor_text("")
+            self._handle_model_command(search_term)
+            return
         if text == "/thinking" or text.startswith("/thinking "):
             search_term = text[10:].strip() if text.startswith("/thinking ") else None
-            self._clear_editor_on_owner()
-            return self._handle_thinking_command(search_term)
+            self._set_editor_text("")
+            self._handle_thinking_command(search_term)
+            return
         if text == "/export" or text.startswith("/export "):
-            return _then(self._handle_export_command(text), clear_editor_later)
+            self._spawn_flow(self._then_clear_editor(self._handle_export_command(text)))
+            return
         if text == "/import" or text.startswith("/import "):
-            return _then(self.handle_import_command(text), clear_editor_later)
+            self.handle_import_command(text, and_then=lambda: self._set_editor_text(""))
+            return
         if text == "/share":
-            return _then(self._handle_share_command(), clear_editor_later)
+            self._spawn_flow(self._then_clear_editor(self._handle_share_command()))
+            return
         if text == "/copy":
-            return _then(self._handle_copy_command(), clear_editor_later)
+            self._handle_copy_command(and_then=lambda: self._set_editor_text(""))
+            return
         if text == "/name" or text.startswith("/name "):
-            return _then(self._handle_name_command(text), clear_editor_later)
+            self._handle_name_command(text)
+            return
         if text == "/session":
             self.handle_session_command()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/changelog":
-            return _then(self._handle_changelog_command(), clear_editor_later)
+            self._finish_before_next_input(self._then_clear_editor(self._handle_changelog_command()))
+            return
         if text == "/hotkeys":
             self._handle_hotkeys_command()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/fork":
             self._show_user_message_selector()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/clone":
-            self._clear_editor_on_owner()
-            return self.handle_clone_command()
+            self._set_editor_text("")
+            self.handle_clone_command()
+            return
         if text == "/tree":
             self._show_tree_selector()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/trust":
-            return _then(self._show_trust_selector(), clear_editor_later)
+            self._finish_before_next_input(self._then_clear_editor(self._show_trust_selector()))
+            return
         if text == "/login" or text.startswith("/login "):
             provider_ref = text[7:].strip() if text.startswith("/login ") else None
-            self._clear_editor_on_owner()
-            return self._handle_login_command(provider_ref)
+            self._set_editor_text("")
+            self._handle_login_command(provider_ref)
+            return
         if text == "/logout":
             self._show_oauth_selector("logout")
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/new":
-            self._clear_editor_on_owner()
-            return self._handle_clear_command()
+            self._set_editor_text("")
+            self._handle_clear_command()
+            return
         if text == "/compact" or text.startswith("/compact "):
             custom_instructions = text[9:].strip() if text.startswith("/compact ") else None
-            self._clear_editor_on_owner()
-            return self.handle_compact_command(custom_instructions)
+            self._set_editor_text("")
+            self.handle_compact_command(custom_instructions)
+            return
         if text == "/reload":
-            self._clear_editor_on_owner()
-            return self._start_reload()
+            self._set_editor_text("")
+            previous_editor = self._start_reload()
+            if previous_editor is not None:
+                self._spawn_flow(self._reload(previous_editor))
+            return
         if text == "/debug":
-            return _then(self._handle_debug_command(), clear_editor_later)
+            self._finish_before_next_input(self._then_clear_editor(self._handle_debug_command()))
+            return
         if text == "/arminsayshi":
             self._handle_armin_says_hi()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/dementedelves":
             self._handle_demented_elves()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/resume":
             self._show_session_selector()
-            self._clear_editor_on_owner()
-            return _nothing_left()
+            self._set_editor_text("")
+            return
         if text == "/quit":
-            self._clear_editor_on_owner()
-            return self.shutdown()
+            self._set_editor_text("")
+            self._spawn_flow(self.shutdown())
+            return
 
         # Handle bash command (! for normal, !! for excluded from context)
         if text.startswith("!"):
             is_excluded = text.startswith("!!")
             command = text[2:].strip() if is_excluded else text[1:].strip()
             if command:
-                if self.session.is_bash_running:
-                    self._apply_show_warning("A bash command is already running. Press Esc to cancel it first.")
-                    self.editor.set_text(text)
-                    return _nothing_left()
+                # "Running" is set only once the flow reaches the executor,
+                # after the extensions' hook: the claim, taken here with the
+                # check, closes that window (§7.3).
+                if self.session.is_bash_running or self._bash_claimed:
+                    self.show_warning("A bash command is already running. Press Esc to cancel it first.")
+                    self._set_editor_text(text)
+                    return
+                self._bash_claimed = True
                 self._apply_editor_history(text)
-                return self._run_editor_bash_command(command, is_excluded)
+                self._spawn_flow(self._run_editor_bash_command(command, is_excluded))
+                return
 
         # Queue input during compaction (extension commands run immediately)
         if self.session.is_compacting:
             if self._is_extension_command(text):
                 self._apply_editor_history(text)
-                self._clear_editor_on_owner()
-                return self.session.prompt(text)
+                self._set_editor_text("")
+                self._spawn_flow(self.session.prompt(text))
+                return
             self._queue_compaction_message(text, "steer")
-            return _nothing_left()
+            return
 
         # If streaming, use prompt() with steer behavior. This handles
         # extension commands (execute immediately), prompt template
         # expansion, and queueing
         if self.session.is_streaming:
             self._apply_editor_history(text)
-            self._clear_editor_on_owner()
-            return self._steer(text)
+            self._set_editor_text("")
+            self._spawn_flow(self._steer(text))
+            return
 
         # Normal message submission. First, move any pending bash components
         # to chat
@@ -3373,18 +3268,16 @@ class InteractiveMode:
         if on_input is not None:
             on_input(text)
         self._apply_editor_history(text)
-        return _nothing_left()
 
     async def _run_editor_bash_command(self, command: str, is_excluded: bool) -> None:
-        await self._handle_bash_command(command, is_excluded)
-
-        # The flag is the editor's (`on_change` writes it on the owner):
-        # written there, ahead of the border update reading it.
-        def leave_bash_mode() -> None:
+        try:
+            await self._handle_bash_command(command, is_excluded)
+        finally:
+            with self.ui.state_lock:
+                self._bash_claimed = False
+        with self.ui.state_lock:
             self._is_bash_mode = False
-
-        self.ui.post_ui(leave_bash_mode)
-        self._update_editor_border_color()
+            self._update_editor_border_color()
 
     async def _steer(self, text: str) -> None:
         await self.session.prompt(text, PromptOptions(streaming_behavior="steer"))
@@ -3392,38 +3285,21 @@ class InteractiveMode:
         self.ui.request_render()
 
     def _subscribe_to_agent(self) -> None:
-        # The island contract: `_handle_event` mutates components, so it runs
-        # on the UI owner. The session's sync fan-out posts each event
-        # (`_route_event`, FIFO — order preserved); an agent-level async
-        # listener then awaits an owner barrier per agent event, so the fused
-        # emit contract ("listeners settled" ⇒ UI updated) holds by
-        # construction and the dispatch window still bounds every observation
-        # of the live streaming message. When the owner is not running the
-        # route degrades to pi's inline handling (tests, headless).
-        unsubscribe_session = self.session.subscribe(self._route_event)
-        unsubscribe_barrier = self.session.agent.subscribe(self._settle_ui_after_agent_event)
+        # The fused emit contract (UI_ISLAND_DESIGN §4.8): the session's
+        # listener applies each event in place, under the UI state lock, as
+        # synchronously as pi's listener — the UI reflects an event when its
+        # emit returns, and an apply error propagates to the emitter (for
+        # agent events the run fails, as in pi). An event from a session that
+        # is no longer current is dropped (pi's `this.session !== session`).
+        session = self.session
 
-        def unsubscribe() -> None:
-            unsubscribe_session()
-            unsubscribe_barrier()
+        def apply_event(event) -> None:
+            with self.ui.state_lock:
+                if self.session is not session:
+                    return
+                self._handle_event(event)
 
-        self._unsubscribe = unsubscribe
-
-    def _route_event(self, event) -> None:
-        self.ui.post_ui(functools.partial(self._handle_event, event))
-
-    async def _settle_ui_after_agent_event(self, _event, _cancel=None) -> None:
-        # Owner barrier: FIFO means every event apply posted by `_route_event`
-        # during this emit has run when this returns. The dispatcher is never
-        # the owner, so `run` is safe here (post-vs-run rule); an un-started
-        # owner runs the no-op inline.
-        try:
-            await self.ui.input_owner.run(_noop_ui_settle)
-        except OwnerStopped:
-            # A stopped owner discharges the contract the other way: nothing
-            # will ever settle again, and UI death is not the dispatcher's to
-            # report (that is `on_error`'s job).
-            pass
+        self._unsubscribe = session.subscribe(apply_event)
 
     def _handle_event(self, event) -> None:  # noqa: C901
         # pi lazily awaits init() here; pidrei always subscribes after init.
@@ -3449,11 +3325,11 @@ class InteractiveMode:
                 if self._active_status_indicator is None or self._active_status_indicator.kind != "working":
                     self._show_working_status_indicator()
             else:
-                self._apply_clear_status_indicator()
+                self._clear_status_indicator()
             self.ui.request_render()
 
         elif event_type == "queue_update":
-            self._apply_pending_messages_display()
+            self._update_pending_messages_display()
             self.ui.request_render()
 
         elif event_type == "entry_appended":
@@ -3487,7 +3363,7 @@ class InteractiveMode:
 
         elif event_type == "thinking_level_changed":
             self._footer.invalidate()
-            self._apply_editor_border_color()
+            self._update_editor_border_color()
 
         elif event_type == "message_start":
             if event.message.role == "custom":
@@ -3495,7 +3371,7 @@ class InteractiveMode:
                 self.ui.request_render()
             elif event.message.role == "user":
                 self._add_message_to_chat(event.message)
-                self._apply_pending_messages_display()
+                self._update_pending_messages_display()
                 self.ui.request_render()
             elif event.message.role == "assistant":
                 self._streaming_component = AssistantMessageComponent(
@@ -3636,7 +3512,7 @@ class InteractiveMode:
         elif event_type == "agent_end":
             if self.settings_manager.get_show_terminal_progress():
                 self.ui.terminal.set_progress(False)
-            self._apply_clear_status_indicator("working")
+            self._clear_status_indicator("working")
             if self._streaming_component is not None:
                 self._chat_container.remove_child(self._streaming_component)
                 self._streaming_component = None
@@ -3646,15 +3522,15 @@ class InteractiveMode:
             self.ui.request_render()
 
         elif event_type == "agent_settled":
-            tonio.spawn.without_tracking(self._check_shutdown_requested())
+            self._spawn_flow(self._check_shutdown_requested())
 
         elif event_type == "compaction_start":
             if self.settings_manager.get_show_terminal_progress():
                 self.ui.terminal.set_progress(True)
             # Keep editor active; submissions are queued during compaction.
             self._auto_compaction_escape_handler = self._default_editor.on_escape
-            self._default_editor.on_escape = sync_action(self.session.abort_compaction)
-            self._apply_show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
+            self._default_editor.on_escape = self.session.abort_compaction
+            self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
             self.ui.request_render()
 
         elif event_type == "compaction_end":
@@ -3663,12 +3539,12 @@ class InteractiveMode:
             if self._auto_compaction_escape_handler is not None:
                 self._default_editor.on_escape = self._auto_compaction_escape_handler
                 self._auto_compaction_escape_handler = None
-            self._apply_clear_status_indicator("compaction")
+            self._clear_status_indicator("compaction")
             if event.aborted:
                 if event.reason == "manual":
-                    self._apply_show_error("Compaction cancelled")
+                    self.show_error("Compaction cancelled")
                 else:
-                    self._apply_show_status("Auto-compaction cancelled")
+                    self.show_status("Auto-compaction cancelled")
             elif event.result is not None:
                 entries = self.session_manager.build_context_entries()
                 if not entries or entries[0].get("type") != "compaction":
@@ -3690,18 +3566,18 @@ class InteractiveMode:
                 self._footer.invalidate()
             elif event.error_message:
                 if event.reason == "manual":
-                    self._apply_show_error(event.error_message)
+                    self.show_error(event.error_message)
                 else:
                     self._chat_container.add_child(Spacer(1))
                     self._chat_container.add_child(Text(theme.fg("error", event.error_message), 1, 0))
-            tonio.spawn.without_tracking(self._flush_compaction_queue({"willRetry": event.will_retry}, on_owner=True))
+            self._flush_compaction_queue({"willRetry": event.will_retry})
             self.ui.request_render()
 
         elif event_type == "auto_retry_start":
             # Set up escape to abort retry
             self._retry_escape_handler = self._default_editor.on_escape
-            self._default_editor.on_escape = sync_action(self.session.abort_retry)
-            self._apply_show_status_indicator(
+            self._default_editor.on_escape = self.session.abort_retry
+            self._show_status_indicator(
                 RetryStatusIndicator(self.ui, event.attempt, event.max_attempts, event.delay_ms)
             )
             self.ui.request_render()
@@ -3711,32 +3587,30 @@ class InteractiveMode:
             if self._retry_escape_handler is not None:
                 self._default_editor.on_escape = self._retry_escape_handler
                 self._retry_escape_handler = None
-            self._apply_clear_status_indicator("retry")
+            self._clear_status_indicator("retry")
             # Show error only on final failure (success shows normal
             # response)
             if not event.success:
-                self._apply_show_error(
-                    f"Retry failed after {event.attempt} attempts: {event.final_error or 'Unknown error'}"
-                )
+                self.show_error(f"Retry failed after {event.attempt} attempts: {event.final_error or 'Unknown error'}")
             self.ui.request_render()
 
         elif event_type == "summarization_retry_scheduled":
-            self._apply_show_error(event.error_message)
-            self._apply_show_status_indicator(
+            self.show_error(event.error_message)
+            self._show_status_indicator(
                 RetryStatusIndicator(self.ui, event.attempt, event.max_attempts, event.delay_ms)
             )
             self.ui.request_render()
 
         elif event_type == "summarization_retry_attempt_start":
-            self._apply_clear_status_indicator("retry")
+            self._clear_status_indicator("retry")
             if event.source == "branchSummary":
-                self._apply_show_status_indicator(BranchSummaryStatusIndicator(self.ui))
+                self._show_status_indicator(BranchSummaryStatusIndicator(self.ui))
             else:
-                self._apply_show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
+                self._show_status_indicator(CompactionStatusIndicator(self.ui, event.reason))
             self.ui.request_render()
 
         elif event_type == "summarization_retry_finished":
-            self._apply_clear_status_indicator("retry")
+            self._clear_status_indicator("retry")
             self.ui.request_render()
 
     def _get_user_message_text(self, message) -> str:
@@ -3752,14 +3626,14 @@ class InteractiveMode:
         )
 
     def _handle_startup_submit(self, text: str) -> None:
-        # The editor's submit, on the owner.
+        # The editor's submit.
         self.editor.set_text(text)
-        self._apply_show_status("Startup is still in progress")
+        self.show_status("Startup is still in progress")
 
     def _show_managed_tool_status(self, status: dict) -> None:
         """Show a managed-tool status update in the chat."""
 
-        def apply() -> None:
+        with self.ui.state_lock:
             if not self._managed_tool_status_started:
                 self._chat_container.add_child(Spacer(1))
                 self._managed_tool_status_started = True
@@ -3770,21 +3644,12 @@ class InteractiveMode:
             self._last_status_text = None
             self.ui.request_render()
 
-        self.ui.post_ui(apply)
-
     def _append_to_chat(self, *components) -> None:
-        """Append components to the chat, in order, on the owner.
-
-        For command handlers and other off-owner flows: components are built
-        (unmounted) on the caller's task, the mount is owner work.
-        """
-        self.ui.post_ui(functools.partial(self._apply_append_to_chat, *components))
-
-    def _apply_append_to_chat(self, *components) -> None:
-        """`_append_to_chat`'s body; runs on the UI owner."""
-        for component in components:
-            self._chat_container.add_child(component)
-        self.ui.request_render()
+        """Append components to the chat, in order, in one hold."""
+        with self.ui.state_lock:
+            for component in components:
+                self._chat_container.add_child(component)
+            self.ui.request_render()
 
     def show_status(self, message: str) -> None:
         """Show a status message in the chat.
@@ -3792,31 +3657,28 @@ class InteractiveMode:
         Back-to-back status messages update the previous status line instead
         of appending new ones, to avoid log spam.
         """
-        self.ui.post_ui(functools.partial(self._apply_show_status, message))
+        with self.ui.state_lock:
+            children = self._chat_container.children
+            last = children[-1] if children else None
+            second_last = children[-2] if len(children) > 1 else None
 
-    def _apply_show_status(self, message: str) -> None:
-        """`show_status`'s body; runs on the UI owner."""
-        children = self._chat_container.children
-        last = children[-1] if children else None
-        second_last = children[-2] if len(children) > 1 else None
+            if (
+                last is not None
+                and second_last is not None
+                and last is self._last_status_text
+                and second_last is self._last_status_spacer
+            ):
+                self._last_status_text.set_text(theme.fg("dim", message))
+                self.ui.request_render()
+                return
 
-        if (
-            last is not None
-            and second_last is not None
-            and last is self._last_status_text
-            and second_last is self._last_status_spacer
-        ):
-            self._last_status_text.set_text(theme.fg("dim", message))
+            spacer = Spacer(1)
+            text = Text(theme.fg("dim", message), 1, 0)
+            self._chat_container.add_child(spacer)
+            self._chat_container.add_child(text)
+            self._last_status_spacer = spacer
+            self._last_status_text = text
             self.ui.request_render()
-            return
-
-        spacer = Spacer(1)
-        text = Text(theme.fg("dim", message), 1, 0)
-        self._chat_container.add_child(spacer)
-        self._chat_container.add_child(text)
-        self._last_status_spacer = spacer
-        self._last_status_text = text
-        self.ui.request_render()
 
     def _add_custom_entry_to_chat(self, entry: dict) -> None:
         renderer = self.session.extension_runner.get_entry_renderer(entry.get("customType"))
@@ -3934,7 +3796,7 @@ class InteractiveMode:
 
         if options.get("updateFooter"):
             self._footer.invalidate()
-            self._apply_editor_border_color()
+            self._update_editor_border_color()
 
         for item in items:
             if _is_custom_session_entry(item):
@@ -4093,7 +3955,7 @@ class InteractiveMode:
             return
 
         # Compare against the previous response on the branch. pi relies on message_end
-        # reaching the UI before persistence; here the UI owner can run after the session
+        # reaching the UI before persistence; here the UI update can run after the session
         # persisted the message, so the current message is skipped by identity.
         previous_dropped_count = 0
         for entry in reversed(self.session_manager.get_branch()):
@@ -4144,30 +4006,24 @@ class InteractiveMode:
         self._chat_container.add_child(Text(text, 1, 0))
 
     def _render_initial_messages(self) -> None:
-        self.ui.post_ui(self._apply_initial_messages)
+        with self.ui.state_lock:
+            entries = self.session_manager.build_context_entries()
+            self._render_session_entries(entries, {"updateFooter": True, "populateHistory": True})
+            self._render_project_trust_warning_if_needed()
 
-    def _apply_initial_messages(self) -> None:
-        """Owner side of `_render_initial_messages`."""
-        entries = self.session_manager.build_context_entries()
-        self._render_session_entries(entries, {"updateFooter": True, "populateHistory": True})
-        self._render_project_trust_warning_if_needed()
-
-        # Show compaction info if session was compacted
-        all_entries = self.session_manager.get_entries()
-        compaction_count = sum(1 for entry in all_entries if entry.get("type") == "compaction")
-        if compaction_count > 0:
-            times = "1 time" if compaction_count == 1 else f"{compaction_count} times"
-            self._apply_show_status(f"Session compacted {times}")
+            # Show compaction info if session was compacted
+            all_entries = self.session_manager.get_entries()
+            compaction_count = sum(1 for entry in all_entries if entry.get("type") == "compaction")
+            if compaction_count > 0:
+                times = "1 time" if compaction_count == 1 else f"{compaction_count} times"
+                self.show_status(f"Session compacted {times}")
 
     def _rerender_initial_messages(self) -> None:
-        """Clear the chat and render the session again, as one owner job:
-        nothing posted meanwhile lands between the clear and the render."""
-
-        def apply() -> None:
+        """Clear the chat and render the session again, in one hold: nothing
+        lands between the clear and the render."""
+        with self.ui.state_lock:
             self._chat_container.clear()
-            self._apply_initial_messages()
-
-        self.ui.post_ui(apply)
+            self._render_initial_messages()
 
     def _render_project_trust_warning_if_needed(self) -> None:
         if self.settings_manager.is_project_trusted() or not has_trust_requiring_project_resources(
@@ -4205,35 +4061,27 @@ class InteractiveMode:
         await received.wait(None)
         return outcome["text"]
 
-    def _rebuild_chat_from_messages(self, *, on_owner: bool = False) -> None:
-        """In place from owner-side code (the settings selector: ``on_owner``),
-        posted otherwise (the reload flow)."""
-
-        def apply() -> None:
+    def _rebuild_chat_from_messages(self) -> None:
+        with self.ui.state_lock:
             self._chat_container.clear()
             self._render_session_entries(self.session_manager.build_context_entries())
-
-        if on_owner:
-            apply()
-        else:
-            self.ui.post_ui(apply)
 
     # =========================================================================
     # Key handlers
     # =========================================================================
 
     def _handle_ctrl_c(self) -> None:
-        # The clear action, on the owner.
+        # The clear action.
         now = time.time() * 1000
         if now - self._last_sigint_time < 500:
-            tonio.spawn.without_tracking(self.shutdown())
+            self._spawn_flow(self.shutdown())
         else:
-            self._clear_editor_on_owner()
+            self._set_editor_text("")
             self._last_sigint_time = now
 
     def _handle_ctrl_d(self) -> None:
         # Only called when editor is empty (enforced by CustomEditor)
-        tonio.spawn.without_tracking(self.shutdown())
+        self._spawn_flow(self.shutdown())
 
     async def shutdown(self, options: dict | None = None) -> None:
         """Gracefully shutdown the agent.
@@ -4293,7 +4141,8 @@ class InteractiveMode:
         hard_exit(0)
 
     def _emergency_terminal_exit(self) -> None:
-        self._is_shutting_down = True
+        with self._shutdown_guard:
+            self._is_shutting_down = True
         self._unregister_signal_handlers()
         kill_tracked_detached_children()
         # The terminal is gone. Do not run normal shutdown because TUI and
@@ -4329,9 +4178,15 @@ class InteractiveMode:
         traceback.print_exception(error, file=sys.stderr)
         hard_exit(1)
 
+    def _request_shutdown(self) -> None:
+        with self._shutdown_guard:
+            self._shutdown_requested = True
+
     async def _check_shutdown_requested(self) -> None:
         """Check if shutdown was requested and perform shutdown if so."""
-        if not self._shutdown_requested:
+        with self._shutdown_guard:
+            requested = self._shutdown_requested
+        if not requested:
             return
         await self.shutdown()
 
@@ -4349,13 +4204,16 @@ class InteractiveMode:
         and the run loop's crash guard covers _uncaught_crash.
         """
         self._unregister_signal_handlers()
-        generation = self._signal_watch_generation
+        with self._shutdown_guard:
+            generation = self._signal_watch_generation
 
         async def watch_signals() -> None:
             try:
                 with tonio_signals.signal_receiver(signal.SIGTERM, signal.SIGHUP) as receiver:
                     async for _sig in receiver:
-                        if self._signal_watch_generation != generation:
+                        with self._shutdown_guard:
+                            superseded = self._signal_watch_generation != generation
+                        if superseded:
                             return
                         kill_tracked_detached_children()
                         await self.shutdown({"fromSignal": True})
@@ -4366,14 +4224,18 @@ class InteractiveMode:
         tonio.spawn.without_tracking(watch_signals())
 
     def _unregister_signal_handlers(self) -> None:
-        self._signal_watch_generation += 1
+        with self._shutdown_guard:
+            self._signal_watch_generation += 1
 
     async def _handle_ctrl_z(self) -> None:
-        """Suspend to background (Ctrl+Z) and restore the TUI on resume.
+        """Suspend to background (Ctrl+Z): the suspend action's work, which
+        the next key waits for.
 
-        The suspend action, awaited on the UI owner: the TUI stops in place,
-        as pi's synchronous handler does. The owner then waits for the resume
-        — the whole process is stopped meanwhile anyway.
+        pi's synchronous handler: the SIGCONT handler is installed, the TUI
+        stopped and SIGTSTP sent. The resume is its own task, as pi's
+        `process.once("SIGCONT")` handler is: it restores the TUI when
+        SIGCONT comes, and input handling never waits for it
+        (UI_ISLAND_DESIGN §4.4).
 
         Deviations: Python processes stay alive without pi's event-loop
         keep-alive timer, and SIGCONT is awaited through a tonio signal
@@ -4385,31 +4247,33 @@ class InteractiveMode:
         except ValueError:
             previous_sigint = None
 
-        try:
-            with tonio_signals.signal_receiver(signal.SIGCONT) as sigcont:
-                # Stop the TUI (restore terminal to normal mode)
-                await self.ui.stop(on_owner=True)
-
-                # Send SIGTSTP to the process group (pid 0 means all
-                # processes in the group)
-                os.kill(0, signal.SIGTSTP)
-
-                # Stopped here until `fg`; SIGCONT resumes and wakes the
-                # receiver so the TUI can be restored.
-                async for _sig in sigcont:
-                    break
-        finally:
+        # Undone here if the suspend fails, else by the resume.
+        with contextlib.ExitStack() as suspended:
             if previous_sigint is not None:
-                signal.signal(signal.SIGINT, previous_sigint)
+                suspended.callback(signal.signal, signal.SIGINT, previous_sigint)
+            sigcont = suspended.enter_context(tonio_signals.signal_receiver(signal.SIGCONT))
 
+            # Stop the TUI (restore terminal to normal mode)
+            await self.ui.stop()
+
+            # Send SIGTSTP to the process group (pid 0 means all
+            # processes in the group)
+            os.kill(0, signal.SIGTSTP)
+
+            self._spawn_flow(self._resume_after_suspend(sigcont, suspended.pop_all()))
+
+    async def _resume_after_suspend(self, sigcont, suspended: contextlib.ExitStack) -> None:
+        with suspended:
+            # Stopped until `fg`; SIGCONT wakes the receiver.
+            async for _sig in sigcont:
+                break
         await self.ui.start()
         self.ui.request_render(True)
 
     def _handle_follow_up(self) -> None:
-        # The keybinding action, on the owner: the editor is read and cleared
-        # in one step, as pi's sync handler does (a posted clear would land
-        # after keys queued meanwhile, and wipe them); only the prompt goes
-        # to a detached task.
+        # The keybinding action: the editor is read and cleared in one step,
+        # as pi's sync handler does (a later clear would land after keys typed
+        # meanwhile, and wipe them); only the prompt goes to a detached task.
         get_expanded = getattr(self.editor, "get_expanded_text", None)
         text = (get_expanded() if get_expanded is not None else self.editor.get_text()).strip()
         if not text:
@@ -4419,8 +4283,8 @@ class InteractiveMode:
         if self.session.is_compacting:
             if self._is_extension_command(text):
                 self._apply_editor_history(text)
-                self._clear_editor_on_owner()
-                tonio.spawn.without_tracking(self.session.prompt(text))
+                self._set_editor_text("")
+                self._spawn_flow(self.session.prompt(text))
             else:
                 self._queue_compaction_message(text, "followUp")
             return
@@ -4430,11 +4294,11 @@ class InteractiveMode:
         # template expansion, and queueing
         if self.session.is_streaming:
             self._apply_editor_history(text)
-            self._clear_editor_on_owner()
-            tonio.spawn.without_tracking(self._queue_follow_up(text))
+            self._set_editor_text("")
+            self._spawn_flow(self._queue_follow_up(text))
         # If not streaming, Alt+Enter acts like regular Enter (trigger on_submit)
         elif self.editor.on_submit:
-            self._clear_editor_on_owner()
+            self._set_editor_text("")
             self.editor.on_submit(text)
 
     async def _queue_follow_up(self, text: str) -> None:
@@ -4442,87 +4306,71 @@ class InteractiveMode:
         self._update_pending_messages_display()
         self.ui.request_render()
 
-    def _clear_editor_on_owner(self) -> None:
-        """For code already on the owner: clear now, not behind queued keys."""
-        self.editor.set_text("")
-        self.ui.request_render()
-
     def _handle_dequeue(self) -> None:
-        # The dequeue action, on the owner.
-        restored = self._restore_queued_messages_to_editor(on_owner=True)
+        # The dequeue action.
+        restored = self._restore_queued_messages_to_editor()
         if restored == 0:
-            self._apply_show_status("No queued messages to restore")
+            self.show_status("No queued messages to restore")
         else:
-            self._apply_show_status(f"Restored {restored} queued message{'s' if restored > 1 else ''} to editor")
+            self.show_status(f"Restored {restored} queued message{'s' if restored > 1 else ''} to editor")
 
-    def _on_theme_changed(self, *, on_owner: bool = False) -> None:
-        """The theme controller's change hook: in place when it reports from
-        the owner (the terminal's color-scheme change), posted otherwise."""
-        if on_owner:
-            self._apply_editor_border_color()
-        else:
-            self._update_editor_border_color()
+    def _on_theme_changed(self) -> None:
+        """The theme controller's change hook."""
+        self._update_editor_border_color()
 
     def _update_editor_border_color(self) -> None:
-        self.ui.post_ui(self._apply_editor_border_color)
-
-    def _apply_editor_border_color(self) -> None:
-        """`_update_editor_border_color`'s body; runs on the UI owner."""
-        if self._is_bash_mode:
-            self.editor.border_color = theme.get_bash_mode_border_color()
-        else:
-            level = self.session.thinking_level or "off"
-            self.editor.border_color = theme.get_thinking_border_color(level)
-        if self._active_status_indicator is not None:
-            self._active_status_indicator.invalidate()
-        self.ui.request_render()
+        with self.ui.state_lock:
+            if self._is_bash_mode:
+                self.editor.border_color = theme.get_bash_mode_border_color()
+            else:
+                level = self.session.thinking_level or "off"
+                self.editor.border_color = theme.get_thinking_border_color(level)
+            if self._active_status_indicator is not None:
+                self._active_status_indicator.invalidate()
+            self.ui.request_render()
 
     async def _cycle_thinking_level(self) -> None:
-        # The thinking-cycle action, awaited by the editor's input handling on
-        # the owner: the UI updates apply in place.
+        # The thinking-cycle action's work, which the next key waits for (pi
+        # persists synchronously): the UI updates apply in place.
         new_level = await self.session.cycle_thinking_level()
         if new_level is None:
-            self._apply_show_status("Current model does not support thinking")
+            self.show_status("Current model does not support thinking")
         else:
             self._footer.invalidate()
-            self._apply_editor_border_color()
-            self._apply_show_status(f"Thinking level: {new_level}")
+            self._update_editor_border_color()
+            self.show_status(f"Thinking level: {new_level}")
 
     async def _cycle_model(self, direction: str) -> None:
         try:
             result = await self.session.cycle_model(direction)
-            if result is None:
-                msg = "Only one model in scope" if self.session.scoped_models else "Only one model available"
-                self.show_status(msg)
-            else:
-                self._footer.invalidate()
-                self._update_editor_border_color()
-                thinking_str = (
-                    f" (thinking: {result.thinking_level})"
-                    if result.model.reasoning and result.thinking_level != "off"
-                    else ""
-                )
-                self.show_status(f"Switched to {result.model.name or result.model.id}{thinking_str}")
-                tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(result.model))
+            with self.ui.state_lock:
+                if result is None:
+                    msg = "Only one model in scope" if self.session.scoped_models else "Only one model available"
+                    self.show_status(msg)
+                else:
+                    self._footer.invalidate()
+                    self._update_editor_border_color()
+                    thinking_str = (
+                        f" (thinking: {result.thinking_level})"
+                        if result.model.reasoning and result.thinking_level != "off"
+                        else ""
+                    )
+                    self.show_status(f"Switched to {result.model.name or result.model.id}{thinking_str}")
+                    self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(result.model))
         except Exception as error:
             self.show_error(str(error))
 
     def _toggle_tool_output_expansion(self) -> None:
-        # The expand action and the extension selector's toggle, on the owner.
-        self.set_tools_expanded(not self._tool_output_expanded, on_owner=True)
+        # The expand action and the extension selector's toggle.
+        with self.ui.state_lock:
+            self.set_tools_expanded(not self._tool_output_expanded)
 
-    def set_tools_expanded(self, expanded: bool, *, on_owner: bool = False) -> None:
-        # Published now (`get_tools_expanded` reads it synchronously); the
-        # children follow on the owner, from the flag as it stands then — in
-        # place from owner-side code (the expand action: ``on_owner``), posted
-        # otherwise (the extension API).
-        with self._tool_output_expanded_guard:
+    def set_tools_expanded(self, expanded: bool) -> None:
+        # The flag, the children and the status change in one hold.
+        with self.ui.state_lock:
             if expanded == self._tool_output_expanded:
                 return
             self._tool_output_expanded = expanded
-
-        def apply() -> None:
-            expanded = self._tool_output_expanded
             active_header = self._custom_header if self._custom_header is not None else self._built_in_header
             if is_expandable(active_header):
                 active_header.set_expanded(expanded)
@@ -4530,14 +4378,7 @@ class InteractiveMode:
                 for child in container.children:
                     if is_expandable(child):
                         child.set_expanded(expanded)
-
-        message = f"Tool output: {'expanded' if expanded else 'collapsed'}"
-        if on_owner:
-            apply()
-            self._apply_show_status(message)
-        else:
-            self.ui.post_ui(apply)
-            self.show_status(message)
+            self.show_status(f"Tool output: {'expanded' if expanded else 'collapsed'}")
 
     def _update_thinking_block_visibility(self) -> None:
         """Update rendered assistant messages without rebuilding live tool components."""
@@ -4550,19 +4391,19 @@ class InteractiveMode:
         self._hide_thinking_block = not self._hide_thinking_block
         self.settings_manager.set_hide_thinking_block(self._hide_thinking_block)
         self._update_thinking_block_visibility()
-        self._apply_show_status(f"Thinking blocks: {'hidden' if self._hide_thinking_block else 'visible'}")
+        self.show_status(f"Thinking blocks: {'hidden' if self._hide_thinking_block else 'visible'}")
 
     async def _open_external_editor(self) -> None:
-        """The external-editor action, awaited by the editor's input handling
-        on the owner: the text is read and the TUI stopped here, as pi's
-        handler does before its first await; the edit (the user's editor, then
-        the restart) runs on its own task, so the agent keeps running
-        meanwhile, as in pi."""
+        """The external-editor action's work, which the next key waits for:
+        the text is read and the TUI stopped here, as pi's handler does before
+        its first await; the edit (the user's editor, then the restart) runs
+        on its own task, so the agent keeps running meanwhile, as in pi
+        (UI_ISLAND_DESIGN §4.4)."""
         editor_cmd = self.settings_manager.get_external_editor_command()
         get_expanded = getattr(self.editor, "get_expanded_text", None)
         content = get_expanded() if get_expanded is not None else self.editor.get_text()
-        await self.ui.stop(on_owner=True)
-        tonio.spawn.without_tracking(self._edit_in_external_editor(editor_cmd, content))
+        await self.ui.stop()
+        self._spawn_flow(self._edit_in_external_editor(editor_cmd, content))
 
     async def _edit_in_external_editor(self, editor_cmd, content: str) -> None:
         try:
@@ -4578,22 +4419,16 @@ class InteractiveMode:
     # =========================================================================
 
     def show_error(self, error_message: str) -> None:
-        self.ui.post_ui(functools.partial(self._apply_show_error, error_message))
-
-    def _apply_show_error(self, error_message: str) -> None:
-        """`show_error`'s body; runs on the UI owner."""
-        self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), self._output_pad, 0))
-        self.ui.request_render()
+        with self.ui.state_lock:
+            self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), self._output_pad, 0))
+            self.ui.request_render()
 
     def show_warning(self, warning_message: str) -> None:
-        self.ui.post_ui(functools.partial(self._apply_show_warning, warning_message))
-
-    def _apply_show_warning(self, warning_message: str) -> None:
-        """`show_warning`'s body; runs on the UI owner."""
-        self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
-        self.ui.request_render()
+        with self.ui.state_lock:
+            self._chat_container.add_child(Spacer(1))
+            self._chat_container.add_child(Text(theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
+            self.ui.request_render()
 
     def show_new_version_notification(self, release: dict) -> None:
         action = theme.fg("accent", f"{APP_NAME} update")
@@ -4608,7 +4443,7 @@ class InteractiveMode:
         changelog_line = theme.fg("muted", "Release notes: ") + changelog_link
         note = (release.get("note") or "").strip()
 
-        def apply() -> None:
+        with self.ui.state_lock:
             self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self._chat_container.add_child(
@@ -4630,14 +4465,12 @@ class InteractiveMode:
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self.ui.request_render()
 
-        self.ui.post_ui(apply)
-
     def show_package_update_notification(self, packages: list) -> None:
         action = theme.fg("accent", f"{APP_NAME} update --extensions")
         update_instruction = theme.fg("muted", "Package updates are available. Run ") + action
         package_lines = "\n".join(f"- {pkg}" for pkg in packages)
 
-        def apply() -> None:
+        with self.ui.state_lock:
             self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self._chat_container.add_child(
@@ -4650,8 +4483,6 @@ class InteractiveMode:
             )
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self.ui.request_render()
-
-        self.ui.post_ui(apply)
 
     def _get_all_queued_messages(self) -> dict:
         """Get all queued messages (read-only).
@@ -4687,77 +4518,60 @@ class InteractiveMode:
         }
 
     def _update_pending_messages_display(self) -> None:
-        self.ui.post_ui(self._apply_pending_messages_display)
+        with self.ui.state_lock:
+            self._pending_messages_container.clear()
+            queued = self._get_all_queued_messages()
+            steering_messages = queued["steering"]
+            follow_up_messages = queued["followUp"]
+            if steering_messages or follow_up_messages:
+                self._pending_messages_container.add_child(Spacer(1))
+                for message in steering_messages:
+                    text = theme.fg("dim", f"Steering: {message}")
+                    self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
+                for message in follow_up_messages:
+                    text = theme.fg("dim", f"Follow-up: {message}")
+                    self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
+                dequeue_hint = self._get_app_key_display("app.message.dequeue")
+                hint_text = theme.fg("dim", f"↳ {dequeue_hint} to edit all queued messages")
+                self._pending_messages_container.add_child(TruncatedText(hint_text, 1, 0))
 
-    def _apply_pending_messages_display(self) -> None:
-        """`_update_pending_messages_display`'s body; runs on the UI owner."""
-        self._pending_messages_container.clear()
-        queued = self._get_all_queued_messages()
-        steering_messages = queued["steering"]
-        follow_up_messages = queued["followUp"]
-        if steering_messages or follow_up_messages:
-            self._pending_messages_container.add_child(Spacer(1))
-            for message in steering_messages:
-                text = theme.fg("dim", f"Steering: {message}")
-                self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
-            for message in follow_up_messages:
-                text = theme.fg("dim", f"Follow-up: {message}")
-                self._pending_messages_container.add_child(TruncatedText(text, 1, 0))
-            dequeue_hint = self._get_app_key_display("app.message.dequeue")
-            hint_text = theme.fg("dim", f"↳ {dequeue_hint} to edit all queued messages")
-            self._pending_messages_container.add_child(TruncatedText(hint_text, 1, 0))
-
-    def _restore_queued_messages_to_editor(self, options: dict | None = None, *, on_owner: bool = False) -> int:
+    def _restore_queued_messages_to_editor(self, options: dict | None = None) -> int:
         """options: {"abort"?, "currentText"?}
 
-        The editor and the pending display change in place from owner-side
-        code (Escape, the dequeue action: ``on_owner``), posted otherwise
-        (extension `ctx.abort()`, the tree navigation's task)."""
-        cleared = self._clear_all_queues()
-        all_queued = [*cleared["steering"], *cleared["followUp"]]
-        update_display = self._apply_pending_messages_display if on_owner else self._update_pending_messages_display
-        if not all_queued:
-            update_display()
-            if options and options.get("abort"):
-                # pi: `void this.session.abort()` — the cancel lands synchronously
-                # (an extension's `ctx.abort()` routes here, regression #8935);
-                # only the idle wait is discarded.
-                self.session._request_abort()
-            return 0
-        queued_text = "\n\n".join(all_queued)
-        explicit_text = options.get("currentText") if options else None
-
-        def restore() -> None:
-            # On the input owner: the editor read and write are one step there
-            # (callers include extension `ctx.abort()` on its own task).
-            current_text = explicit_text if explicit_text is not None else self.editor.get_text()
-            combined_text = "\n\n".join(t for t in (queued_text, current_text) if t.strip())
-            self.editor.set_text(combined_text)
-
-        if on_owner:
-            restore()
-            self.ui.request_render()
-        else:
-            self._post_editor_mutation(restore)
-        update_display()
+        The queues move into the editor and the pending display updates in one
+        hold (callers include extension `ctx.abort()` on its own task)."""
+        with self.ui.state_lock:
+            cleared = self._clear_all_queues()
+            all_queued = [*cleared["steering"], *cleared["followUp"]]
+            if all_queued:
+                queued_text = "\n\n".join(all_queued)
+                explicit_text = options.get("currentText") if options else None
+                current_text = explicit_text if explicit_text is not None else self.editor.get_text()
+                combined_text = "\n\n".join(t for t in (queued_text, current_text) if t.strip())
+                self.editor.set_text(combined_text)
+                self.ui.request_render()
+            self._update_pending_messages_display()
         if options and options.get("abort"):
+            # pi: `void this.session.abort()` — the cancel lands synchronously
+            # (an extension's `ctx.abort()` routes here, regression #8935);
+            # only the idle wait is discarded.
             self.session._request_abort()
         return len(all_queued)
 
     def _queue_compaction_message(self, text: str, mode: str) -> None:
-        """On the owner (the submit handler, the follow-up action): the editor
-        is cleared right away rather than behind queued keys. The queue itself
-        is guarded (the flush takes it from any task)."""
+        """From the submit handler and the follow-up action: the editor is
+        cleared right away rather than behind queued keys. The queue itself is
+        guarded (the flush takes it from any task)."""
         with self._compaction_queue_guard:
             self._compaction_queued_messages.append({"text": text, "mode": mode})
         self._apply_editor_history(text)
-        self._clear_editor_on_owner()
+        self._set_editor_text("")
         self._show_compaction_queue()
 
     def _show_compaction_queue(self) -> None:
-        """On the owner (`_queue_compaction_message`)."""
-        self._apply_pending_messages_display()
-        self._apply_show_status("Queued message for after compaction")
+        """From `_queue_compaction_message`."""
+        self._update_pending_messages_display()
+        self.show_status("Queued message for after compaction")
 
     def _is_extension_command(self, text: str) -> bool:
         if not text.startswith("/"):
@@ -4769,30 +4583,27 @@ class InteractiveMode:
         command_name = text[1:] if space_index == -1 else text[1:space_index]
         return extension_runner.get_command(command_name) is not None
 
-    def _flush_compaction_queue(self, options: dict | None = None, *, on_owner: bool = False) -> Awaitable[None]:
-        """pi's part before its first await: take the queued messages and
-        refresh the pending display — in place from owner-side code (the agent
-        event handler: ``on_owner``), posted otherwise. Sending them is the
-        returned remainder."""
-        with self._compaction_queue_guard:
-            queued_messages, self._compaction_queued_messages = self._compaction_queued_messages, []
-        if not queued_messages:
-            return _nothing_left()
-        if on_owner:
-            self._apply_pending_messages_display()
-        else:
+    def _flush_compaction_queue(self, options: dict | None = None) -> None:
+        """pi's part before its first await (take the queued messages, refresh
+        the pending display) runs here; sending them is spawned."""
+        with self.ui.state_lock:
+            with self._compaction_queue_guard:
+                queued_messages, self._compaction_queued_messages = self._compaction_queued_messages, []
+            if not queued_messages:
+                return
             self._update_pending_messages_display()
-        return self._send_compaction_queue(queued_messages, options)
+        self._spawn_flow(self._send_compaction_queue(queued_messages, options))
 
     async def _send_compaction_queue(self, queued_messages: list, options: dict | None) -> None:
         def restore_queue(error) -> None:
-            self.session.clear_queue()
-            with self._compaction_queue_guard:
-                # Ahead of anything queued since the flush took the list (pi
-                # restores the list as it was; nothing else could have queued).
-                self._compaction_queued_messages = [*queued_messages, *self._compaction_queued_messages]
-            self._update_pending_messages_display()
-            self.show_error(f"Failed to send queued message{'s' if len(queued_messages) > 1 else ''}: {error}")
+            with self.ui.state_lock:
+                self.session.clear_queue()
+                with self._compaction_queue_guard:
+                    # Ahead of anything queued since the flush took the list (pi
+                    # restores the list as it was; nothing else could have queued).
+                    self._compaction_queued_messages = [*queued_messages, *self._compaction_queued_messages]
+                self._update_pending_messages_display()
+                self.show_error(f"Failed to send queued message{'s' if len(queued_messages) > 1 else ''}: {error}")
 
         try:
             if options and options.get("willRetry"):
@@ -4840,7 +4651,7 @@ class InteractiveMode:
                 except Exception as error:
                     restore_queue(error)
 
-            tonio.spawn.without_tracking(send_first_prompt())
+            self._spawn_flow(send_first_prompt())
 
             # Queue remaining messages
             for message in rest:
@@ -4855,8 +4666,8 @@ class InteractiveMode:
             restore_queue(error)
 
     def _flush_pending_bash_components(self) -> None:
-        """Move pending bash components from pending area to chat; on the UI
-        owner (the submit handler)."""
+        """Move pending bash components from pending area to chat; under the UI
+        state lock (the submit handler)."""
         for component in self._pending_bash_components:
             self._pending_messages_container.remove_child(component)
             self._chat_container.add_child(component)
@@ -4867,11 +4678,12 @@ class InteractiveMode:
     # =========================================================================
 
     def _dispose_active_selector(self) -> None:
-        dispose = self._active_selector_dispose
-        self._active_selector_token = None
-        self._active_selector_dispose = None
-        if dispose is not None:
-            dispose()
+        with self.ui.state_lock:
+            dispose = self._active_selector_dispose
+            self._active_selector_token = None
+            self._active_selector_dispose = None
+            if dispose is not None:
+                dispose()
 
     def _show_selector(self, create) -> None:
         """Show a selector component in place of the editor.
@@ -4879,35 +4691,35 @@ class InteractiveMode:
         ``create`` receives a ``done`` callback and returns a
         ``{"component", "focus"}`` record with an optional ``"dispose"``.
 
-        Runs on the UI owner, like pi's (sync) showSelector: the selector is
-        mounted before the next key is handled. Off-owner callers post it.
-        ``done`` restores the editor right away, so it is owner-side too: the
-        selector callbacks run on the owner (component input handling), and
-        the ones that finish after an await on their own task post it.
+        Like pi's (sync) showSelector, the selector is mounted before this
+        returns (from input handling: before the next key). ``done`` restores
+        the editor right away; both run under the UI state lock, from any task.
         """
         token = object()
-        created = create(lambda: done())
-        dispose = created.get("dispose")
 
         def done() -> None:
-            if dispose is not None:
-                dispose()
-            if self._active_selector_token is not token:
-                return
-            self._active_selector_token = None
-            self._active_selector_dispose = None
-            self._editor_container.clear()
-            self._editor_container.add_child(self.editor)
-            self.ui.set_focus(self.editor)
-            self.ui.request_render()
+            with self.ui.state_lock:
+                if dispose is not None:
+                    dispose()
+                if self._active_selector_token is not token:
+                    return
+                self._active_selector_token = None
+                self._active_selector_dispose = None
+                self._editor_container.clear()
+                self._editor_container.add_child(self.editor)
+                self.ui.set_focus(self.editor)
+                self.ui.request_render()
 
-        self._dispose_active_selector()
-        self._active_selector_token = token
-        self._active_selector_dispose = dispose
-        self._editor_container.clear()
-        self._editor_container.add_child(created["component"])
-        self.ui.set_focus(created["focus"])
-        self.ui.request_render()
+        with self.ui.state_lock:
+            created = create(done)
+            dispose = created.get("dispose")
+            self._dispose_active_selector()
+            self._active_selector_token = token
+            self._active_selector_dispose = dispose
+            self._editor_container.clear()
+            self._editor_container.add_child(created["component"])
+            self.ui.set_focus(created["focus"])
+            self.ui.request_render()
 
     async def _show_settings_selector(self) -> None:
         # Resolved before `create` runs: listing themes reads the custom-theme
@@ -4939,7 +4751,7 @@ class InteractiveMode:
 
             def on_enable_skill_commands_change(enabled: bool) -> None:
                 self.settings_manager.set_enable_skill_commands(enabled)
-                self._apply_autocomplete_provider()
+                self._setup_autocomplete_provider()
 
             def on_transport_change(transport: str) -> None:
                 self.settings_manager.set_transport(transport)
@@ -4950,34 +4762,37 @@ class InteractiveMode:
                 # counterpart (HTTP transport is punkreq's concern; see
                 # core/http_config.py).
                 self.settings_manager.set_http_idle_timeout_ms(timeout_ms)
-                self._apply_show_status(f"HTTP idle timeout: {format_http_idle_timeout_ms(timeout_ms)}")
+                self.show_status(f"HTTP idle timeout: {format_http_idle_timeout_ms(timeout_ms)}")
 
             def on_cache_warming_mode_change(mode: str) -> None:
                 self.session.set_cache_warming_mode(mode)
-                self._apply_show_status(f"Cache warming: {mode}")
+                self.show_status(f"Cache warming: {mode}")
 
-            async def on_model_thinking_level_change(provider: str, model_id: str, level: str) -> None:
+            async def set_session_thinking_level(level: str) -> None:
+                # The next key waits for this (pi's setThinkingLevel is
+                # synchronous), so the UI updates apply in place.
+                await self.session.set_thinking_level(level)
+                self._footer.invalidate()
+                self._update_editor_border_color()
+
+            def on_model_thinking_level_change(provider: str, model_id: str, level: str) -> None:
                 self.settings_manager.set_model_thinking_level(provider, model_id, level)
                 # If the override is for the current model, apply it to the session too
                 current = self.session.model
                 if current is not None and current.provider == provider and current.id == model_id:
-                    await self.session.set_thinking_level(level)
-                    self._footer.invalidate()
-                    self._apply_editor_border_color()
+                    self._finish_before_next_input(set_session_thinking_level(level))
 
-            async def on_model_thinking_level_remove(provider: str, model_id: str) -> None:
+            def on_model_thinking_level_remove(provider: str, model_id: str) -> None:
                 self.settings_manager.remove_model_thinking_level(provider, model_id)
                 # If the override was for the current model, revert to global default
                 current = self.session.model
                 if current is not None and current.provider == provider and current.id == model_id:
                     global_default = self.settings_manager.get_default_thinking_level() or DEFAULT_THINKING_LEVEL
-                    await self.session.set_thinking_level(global_default)
-                    self._footer.invalidate()
-                    self._apply_editor_border_color()
+                    self._finish_before_next_input(set_session_thinking_level(global_default))
 
             def on_theme_change(theme_setting: str) -> None:
                 self.settings_manager.set_theme(theme_setting)
-                tonio.spawn.without_tracking(self._theme_controller.set_theme_setting(theme_setting))
+                self._spawn_flow(self._theme_controller.set_theme_setting(theme_setting))
 
             def on_hide_thinking_block_change(hidden: bool) -> None:
                 self._hide_thinking_block = hidden
@@ -4986,7 +4801,7 @@ class InteractiveMode:
 
             def on_show_cache_miss_notices_change(shown: bool) -> None:
                 self.settings_manager.set_show_cache_miss_notices(shown)
-                self._rebuild_chat_from_messages(on_owner=True)
+                self._rebuild_chat_from_messages()
 
             def on_show_hardware_cursor_change(enabled: bool) -> None:
                 self.settings_manager.set_show_hardware_cursor(enabled)
@@ -5011,7 +4826,7 @@ class InteractiveMode:
                         self._streaming_component.set_output_pad(padding)
                     self.ui.request_render()
                     return
-                self._rebuild_chat_from_messages(on_owner=True)
+                self._rebuild_chat_from_messages()
 
             def on_autocomplete_max_visible_change(max_visible: int) -> None:
                 self.settings_manager.set_autocomplete_max_visible(max_visible)
@@ -5036,7 +4851,7 @@ class InteractiveMode:
                 if isinstance(self._renderer, TuiAltScreen):
                     self._renderer.set_copy_on_select(enabled)
 
-            async def on_cancel() -> None:
+            def on_cancel() -> None:
                 done()
                 self.ui.request_render()
 
@@ -5097,7 +4912,9 @@ class InteractiveMode:
                     "onModelThinkingLevelChange": on_model_thinking_level_change,
                     "onModelThinkingLevelRemove": on_model_thinking_level_remove,
                     "onThemeChange": on_theme_change,
-                    "onThemePreview": lambda theme_name: self._theme_controller.preview(theme_name),
+                    "onThemePreview": lambda theme_name: self._finish_before_next_input(
+                        self._theme_controller.preview(theme_name)
+                    ),
                     "onHideThinkingBlockChange": on_hide_thinking_block_change,
                     "onShowCacheMissNoticesChange": on_show_cache_miss_notices_change,
                     "onCollapseChangelogChange": lambda collapsed: self.settings_manager.set_collapse_changelog(
@@ -5132,87 +4949,66 @@ class InteractiveMode:
             )
             return {"component": selector, "focus": selector.get_settings_list()}
 
-        # After an await, off the owner: the selector is mounted there.
-        self.ui.post_ui(functools.partial(self._show_selector, create))
+        self._show_selector(create)
 
     def _on_settings_tui_mode_change(self, mode: str, selector) -> None:
-        # Called on the owner (settings input), and the switch stops the
-        # renderer, which waits on the owner's queue: detached, not awaited —
-        # and not the owner's child, whose scope the stop exits.
-        tonio.spawn.without_tracking(self._switch_tui_mode_from_settings(mode, selector))
+        # From the settings input. pi switches in place; here the switch is
+        # the key's completion, so the next key goes to the new renderer
+        # (UI_ISLAND_DESIGN §4.4).
+        self._finish_before_next_input(self._switch_tui_mode_from_settings(mode, selector))
 
     async def _switch_tui_mode_from_settings(self, mode: str, selector) -> None:
-        try:
-            switched = await self._switch_tui_mode(mode)
-        except Exception as error:
-            # What the owner's error handler did while this ran there.
-            await self._uncaught_crash(error)
-            return
+        switched = await self._switch_tui_mode(mode)
         if not switched:
-
-            def refuse() -> None:
+            with self.ui.state_lock:
                 selector.get_settings_list().update_value("tui-mode", self._renderer.mode)
-
-            self.ui.post_ui(refuse)
-            self.show_status("Close active overlays before changing TUI mode")
+                self.show_status("Close active overlays before changing TUI mode")
             return
         self.settings_manager.set_tui_mode(mode)
-
-        def clear_status() -> None:
+        with self.ui.state_lock:
             if self._active_status_indicator is None:
                 self._status_container.clear()
+            self.show_status(f"TUI mode: {mode}")
 
-        self.ui.post_ui(clear_status)
-        self.show_status(f"TUI mode: {mode}")
-
-    def _handle_thinking_command(self, search_term: str | None = None) -> Awaitable[None]:
-        """From the submit handler, on the owner: the selector or the error is
-        shown here; setting a level is the returned remainder."""
+    def _handle_thinking_command(self, search_term: str | None = None) -> None:
+        """From the submit handler: the selector or the error is shown here;
+        setting a level is spawned."""
         available_levels = self.session.get_available_thinking_levels()
         if not search_term:
             self._show_thinking_selector()
-            return _nothing_left()
+            return
 
         normalized = search_term.strip().lower()
         level = next((candidate for candidate in available_levels if candidate.lower() == normalized), None)
         if level is None:
-            self._apply_show_error(
-                f'Unknown thinking level "{search_term}". Available levels: {", ".join(available_levels)}.'
-            )
-            return _nothing_left()
+            self.show_error(f'Unknown thinking level "{search_term}". Available levels: {", ".join(available_levels)}.')
+            return
 
-        return self._select_thinking_level(level, False)
+        self._spawn_flow(self._select_thinking_level(level, False))
 
-    async def _select_thinking_level(self, level: str, persist: bool, *, on_owner: bool = False) -> None:
-        """``on_owner``: awaited on the UI owner (the thinking selector), so
-        the UI updates apply in place; posted otherwise (/thinking's spawned
-        remainder)."""
+    async def _select_thinking_level(self, level: str, persist: bool) -> None:
         try:
             await self.session.set_thinking_level(level, persist=persist)
-            self._footer.invalidate()
             message = f"Default thinking level: {level}" if persist else f"Thinking level: {level}"
-            if on_owner:
-                self._apply_editor_border_color()
-                self._apply_show_status(message)
-            else:
+            with self.ui.state_lock:
+                self._footer.invalidate()
                 self._update_editor_border_color()
                 self.show_status(message)
         except Exception as error:
-            if on_owner:
-                self._apply_show_error(str(error))
-            else:
-                self.show_error(str(error))
+            self.show_error(str(error))
 
     def _show_thinking_selector(self) -> None:
         def create(done):
-            # Awaited by the selector's input handling, on the owner.
-            async def select_level(level: str, persist: bool) -> None:
-                await self._select_thinking_level(level, persist, on_owner=True)
-                done()
+            # From the selector's input handling: pi's selectThinkingLevel is
+            # synchronous, so the next key waits for the level and `done()`.
+            def select_level(level: str, persist: bool) -> None:
+                async def select() -> None:
+                    await self._select_thinking_level(level, persist)
+                    done()
 
-            # `SelectList.on_cancel` is awaited (async-only callbacks), so this
-            # must return an awaitable even though the body never suspends.
-            async def on_cancel() -> None:
+                self._finish_before_next_input(select())
+
+            def on_cancel() -> None:
                 done()
                 self.ui.request_render()
 
@@ -5228,31 +5024,30 @@ class InteractiveMode:
 
         self._show_selector(create)
 
-    def _handle_model_command(self, search_term: str | None = None) -> Awaitable[None]:
-        """From the submit handler, on the owner: no search term shows the
-        selector here (pi's part before its first await); a search is the
-        returned remainder."""
+    def _handle_model_command(self, search_term: str | None = None) -> None:
+        """From the submit handler: no search term shows the selector here
+        (pi's part before its first await); a search is spawned."""
         if not search_term:
             self._show_model_selector()
-            return _nothing_left()
-        return self._select_model_by_search(search_term)
+            return
+        self._spawn_flow(self._select_model_by_search(search_term))
 
     async def _select_model_by_search(self, search_term: str) -> None:
         model = await self._find_exact_model_match(search_term)
         if model is not None:
             try:
                 await self.session.set_model(model, persist=False)
-                self._footer.invalidate()
-                self._update_editor_border_color()
-                self.show_status(f"Model: {model.id}")
-                tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(model))
-                self._check_daxnuts_easter_egg(model)
+                with self.ui.state_lock:
+                    self._footer.invalidate()
+                    self._update_editor_border_color()
+                    self.show_status(f"Model: {model.id}")
+                    self._check_daxnuts_easter_egg(model)
+                self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(model))
             except Exception as error:
                 self.show_error(str(error))
             return
 
-        # After the await, off the owner: the selector is shown there.
-        self.ui.post_ui(functools.partial(self._show_model_selector, search_term))
+        self._show_model_selector(search_term)
 
     async def _find_exact_model_match(self, search_term: str):
         cached_models = (
@@ -5324,24 +5119,26 @@ class InteractiveMode:
             # Ignore auth lookup failures for warning-only checks.
             return
 
-    async def _maybe_save_implicit_project_trust_after_reload(self) -> bool:
+    async def _maybe_save_implicit_project_trust_after_reload(self) -> tuple[bool, str | None]:
+        """Whether project trust was saved, and the warning to show if saving
+        failed. The caller shows it where pi does (after the resource
+        listing): this I/O runs ahead of that block (§4.5b)."""
         cwd = self.session_manager.get_cwd()
         if self._auto_trust_on_reload_cwd != cwd:
-            return False
+            return False, None
         if not self.settings_manager.is_project_trusted() or not has_trust_requiring_project_resources(cwd):
-            return False
+            return False, None
 
         trust_store = ProjectTrustStore(self.runtime_host.services.agent_dir)
         try:
             if await trust_store.get(cwd) is not None:
                 self._auto_trust_on_reload_cwd = None
-                return False
+                return False, None
             await trust_store.set(cwd, True)
             self._auto_trust_on_reload_cwd = None
-            return True
+            return True, None
         except Exception as error:
-            self.show_warning(f"Could not save project trust after reload: {error}")
-            return False
+            return False, f"Could not save project trust after reload: {error}"
 
     async def _show_trust_selector(self) -> None:
         cwd = self.session_manager.get_cwd()
@@ -5349,14 +5146,18 @@ class InteractiveMode:
         saved_decision = await trust_store.get_entry(cwd)
 
         def create(done):
-            # Awaited by the selector's input handling, on the owner.
-            async def on_select(selection: dict) -> None:
-                await trust_store.set_many(selection["updates"])
-                done()
-                self._apply_show_status(
-                    f"Saved trust decision: {'trusted' if selection['trusted'] else 'untrusted'}. "
-                    f"Restart {APP_NAME} for this to take effect."
-                )
+            # From the selector's input handling: pi saves synchronously, so
+            # the next key waits for the save, `done()` and the status.
+            def on_select(selection: dict) -> None:
+                async def save() -> None:
+                    await trust_store.set_many(selection["updates"])
+                    done()
+                    self.show_status(
+                        f"Saved trust decision: {'trusted' if selection['trusted'] else 'untrusted'}. "
+                        f"Restart {APP_NAME} for this to take effect."
+                    )
+
+                self._finish_before_next_input(save())
 
             def on_cancel() -> None:
                 done()
@@ -5373,25 +5174,29 @@ class InteractiveMode:
             )
             return {"component": selector, "focus": selector}
 
-        # After an await, off the owner: the selector is mounted there.
-        self.ui.post_ui(functools.partial(self._show_selector, create))
+        self._show_selector(create)
 
     def _show_model_selector(self, initial_search_input: str | None = None) -> None:
         def create(done):
-            # Spawned: after the await it is off the owner, so `done` is posted.
+            # Spawned from the selector's callbacks; after the await, the UI
+            # changes are one hold.
             async def select_model(model, persist: bool) -> None:
                 try:
                     await self.session.set_model(model, persist=persist)
-                    self._update_available_provider_count()
-                    self._footer.invalidate()
-                    self._update_editor_border_color()
-                    self.ui.post_ui(done)
-                    self.show_status(f"Default model: {model.provider}/{model.id}" if persist else f"Model: {model.id}")
-                    tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(model))
-                    self._check_daxnuts_easter_egg(model)
+                    with self.ui.state_lock:
+                        self._update_available_provider_count()
+                        self._footer.invalidate()
+                        self._update_editor_border_color()
+                        done()
+                        self.show_status(
+                            f"Default model: {model.provider}/{model.id}" if persist else f"Model: {model.id}"
+                        )
+                        self._check_daxnuts_easter_egg(model)
+                    self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(model))
                 except Exception as error:
-                    self.ui.post_ui(done)
-                    self.show_error(str(error))
+                    with self.ui.state_lock:
+                        done()
+                        self.show_error(str(error))
 
             def on_cancel() -> None:
                 done()
@@ -5404,10 +5209,10 @@ class InteractiveMode:
                 self.session.model,
                 self.session.model_runtime,
                 self.session.scoped_models,
-                lambda model: tonio.spawn.without_tracking(select_model(model, False)),
+                lambda model: self._spawn_flow(select_model(model, False)),
                 on_cancel,
                 initial_search_input,
-                lambda model: tonio.spawn.without_tracking(select_model(model, True)),
+                lambda model: self._spawn_flow(select_model(model, True)),
                 {"provider": default_provider, "id": default_model} if default_provider and default_model else None,
             )
             return {"component": selector, "focus": selector, "dispose": selector.dispose}
@@ -5477,7 +5282,7 @@ class InteractiveMode:
                 )
                 new_patterns = None if enabled_ids is None or all_enabled else enabled_ids
                 self.settings_manager.set_enabled_models(list(new_patterns) if new_patterns else None)
-                self._apply_show_status("Model selection saved to settings")
+                self.show_status("Model selection saved to settings")
 
             def on_cancel() -> None:
                 done()
@@ -5497,9 +5302,9 @@ class InteractiveMode:
             )
 
             async def refresh_catalogs() -> None:
-                # Detached: the refresh is awaited here, its outcome applied on
-                # the owner, where the selector takes input and `state` is
-                # written by `on_change`.
+                # Spawned: the outcome is applied under the UI state lock,
+                # which also guards `state` (written by `on_change`) and the
+                # disposed check (set by the selector's dispose).
                 try:
                     result = await refresh_model_catalogs(self.session.model_runtime, timeout.token)
                 except Exception as error:
@@ -5508,17 +5313,13 @@ class InteractiveMode:
                         if timeout.timed_out
                         else f"Could not refresh model catalogs: {error}"
                     )
-
-                    def show_failure() -> None:
-                        if disposed["value"]:
-                            return
-                        selector.set_refresh_status(failure, "warning")
-                        self.ui.request_render()
-
-                    self.ui.post_ui(show_failure)
+                    with self.ui.state_lock:
+                        if not disposed["value"]:
+                            selector.set_refresh_status(failure, "warning")
+                            self.ui.request_render()
                     return
 
-                def apply() -> None:
+                with self.ui.state_lock:
                     if disposed["value"]:
                         return
                     state["availableModels"] = list(self.session.model_runtime.get_available_snapshot())
@@ -5540,9 +5341,7 @@ class InteractiveMode:
                         selector.set_refresh_status("Model catalogs refreshed.", "success")
                     self.ui.request_render()
 
-                self.ui.post_ui(apply)
-
-            tonio.spawn.without_tracking(refresh_catalogs())
+            self._spawn_flow(refresh_catalogs())
 
             def dispose() -> None:
                 disposed["value"] = True
@@ -5556,17 +5355,17 @@ class InteractiveMode:
         user_messages = self.session.get_user_messages_for_forking()
 
         if not user_messages:
-            self._apply_show_status("No messages to fork from")
+            self.show_status("No messages to fork from")
             return
 
         initial_selected_id = user_messages[-1]["entryId"]
 
         def create(done):
-            # From the selector's input handling, on the owner: the selector
-            # closes there; the fork runs on its own task.
-            def select_entry(entry_id: str) -> Awaitable[None]:
+            # From the selector's input handling: the selector closes there;
+            # the fork runs on its own task.
+            def select_entry(entry_id: str) -> None:
                 done()
-                return fork(entry_id)
+                self._spawn_flow(fork(entry_id))
 
             async def fork(entry_id: str) -> None:
                 try:
@@ -5575,8 +5374,9 @@ class InteractiveMode:
                         self.ui.request_render()
                         return
 
-                    self._set_editor_text(result.get("selectedText") or "")
-                    self.show_status("Forked to new session")
+                    with self.ui.state_lock:
+                        self._set_editor_text(result.get("selectedText") or "")
+                        self.show_status("Forked to new session")
                 except Exception as error:
                     self.show_error(str(error))
 
@@ -5586,7 +5386,7 @@ class InteractiveMode:
 
             selector = UserMessageSelectorComponent(
                 [{"id": message["entryId"], "text": message["text"]} for message in user_messages],
-                lambda entry_id: tonio.spawn.without_tracking(select_entry(entry_id)),
+                select_entry,
                 on_cancel,
                 initial_selected_id,
             )
@@ -5594,14 +5394,14 @@ class InteractiveMode:
 
         self._show_selector(create)
 
-    def handle_clone_command(self) -> Awaitable[None]:
-        """From the submit handler, on the owner: the nothing-to-clone status
-        is shown here; the clone is the returned remainder."""
+    def handle_clone_command(self) -> None:
+        """From the submit handler: the nothing-to-clone status is shown
+        here; the clone is spawned."""
         leaf_id = self.session_manager.get_leaf_id()
         if not leaf_id:
-            self._apply_show_status("Nothing to clone yet")
-            return _nothing_left()
-        return self._clone_session(leaf_id)
+            self.show_status("Nothing to clone yet")
+            return
+        self._spawn_flow(self._clone_session(leaf_id))
 
     async def _clone_session(self, leaf_id: str) -> None:
         try:
@@ -5610,8 +5410,9 @@ class InteractiveMode:
                 self.ui.request_render()
                 return
 
-            self._set_editor_text("")
-            self.show_status("Cloned to new session")
+            with self.ui.state_lock:
+                self._set_editor_text("")
+                self.show_status("Cloned to new session")
         except Exception as error:
             self.show_error(str(error))
 
@@ -5621,22 +5422,22 @@ class InteractiveMode:
         initial_filter_mode = self.settings_manager.get_tree_filter_mode()
 
         if not tree:
-            self._apply_show_status("No entries in session")
+            self.show_status("No entries in session")
             return
 
         summary_title = "Summarize branch?"
         summary_options = ["No summary", "Summarize", "Summarize with custom prompt"]
 
         def create(done):
-            # From the selector's input handling, on the owner: pi closes the
-            # selector (and shows the first summary prompt) before its first
-            # await; the navigation runs on its own task.
-            def select_entry(entry_id: str) -> Awaitable[None]:
+            # From the selector's input handling: pi closes the selector (and
+            # shows the first summary prompt) before its first await; the
+            # navigation runs on its own task.
+            def select_entry(entry_id: str) -> None:
                 # Selecting the current leaf is a no-op (already there)
                 if entry_id == self.session_manager.get_leaf_id():
                     done()
-                    self._apply_show_status("Already at this point")
-                    return _nothing_left()
+                    self.show_status("Already at this point")
+                    return
 
                 # Ask about summarization
                 done()  # Close selector first
@@ -5645,8 +5446,8 @@ class InteractiveMode:
                 # always default to no summary)
                 first_choice = None
                 if not self.settings_manager.get_branch_summary_skip_prompt():
-                    first_choice = self._show_extension_selector(summary_title, summary_options, on_owner=True)
-                return navigate(entry_id, first_choice)
+                    first_choice = self._show_extension_selector(summary_title, summary_options)
+                self._spawn_flow(navigate(entry_id, first_choice))
 
             async def navigate(entry_id: str, first_choice) -> None:
                 # Loop until user makes a complete choice or cancels to tree
@@ -5661,7 +5462,7 @@ class InteractiveMode:
                         if summary_choice is None:
                             # User pressed escape - re-show tree selector with
                             # same selection
-                            self.ui.post_ui(functools.partial(self._show_tree_selector, entry_id))
+                            self._show_tree_selector(entry_id)
                             return
 
                         wants_summary = summary_choice != "No summary"
@@ -5681,68 +5482,65 @@ class InteractiveMode:
                     self._restore_queued_messages_to_editor()
                     await self.session.abort()
 
-                # Recheck after the dialogs and streaming abort, before replacing another operation's UI.
-                if self.session.is_compacting:
-                    self.show_error(
-                        "Wait for the current compaction or tree navigation to finish before navigating the session tree."
-                    )
-                    return
-
-                # Set up escape handler and status indicator if summarizing.
-                # The handler slot is owner state (`_handle_event` swaps it
-                # too): saved and restored on the owner, in post order.
+                # Recheck after the dialogs and streaming abort, before
+                # replacing another operation's UI. The escape handler slot is
+                # UI state (`_handle_event` swaps it too): saved and restored
+                # under the UI state lock. Each stretch is one hold.
                 showing_summary_indicator = False
                 escape_handler: dict = {"original": None}
-
-                def install_escape_handler() -> None:
+                with self.ui.state_lock:
+                    if self.session.is_compacting:
+                        self.show_error(
+                            "Wait for the current compaction or tree navigation to finish before navigating the session tree."
+                        )
+                        return
                     escape_handler["original"] = self._default_editor.on_escape
                     if wants_summary:
-                        self._default_editor.on_escape = sync_action(self.session.abort_branch_summary)
+                        self._default_editor.on_escape = self.session.abort_branch_summary
+                        self._append_to_chat(Spacer(1))
+                        self._show_status_indicator(BranchSummaryStatusIndicator(self.ui))
+                        showing_summary_indicator = True
 
-                def restore_escape_handler() -> None:
-                    self._default_editor.on_escape = escape_handler["original"]
-
-                self.ui.post_ui(install_escape_handler)
-                if wants_summary:
-                    self._append_to_chat(Spacer(1))
-                    self._show_status_indicator(BranchSummaryStatusIndicator(self.ui))
-                    showing_summary_indicator = True
-
+                failure = None
                 try:
                     result = await self.session.navigate_tree(
                         entry_id,
                         {"summarize": wants_summary, "custom_instructions": custom_instructions},
                     )
-
-                    if result.aborted:
-                        # Summarization aborted - re-show tree selector with
-                        # same selection
-                        self.show_status("Branch summarization cancelled")
-                        self.ui.post_ui(functools.partial(self._show_tree_selector, entry_id))
-                        return
-                    if result.cancelled:
-                        self.show_status("Navigation cancelled")
-                        return
-
-                    # Update UI
-                    self._rerender_initial_messages()
-                    if result.editor_text:
-                        self._fill_empty_editor(result.editor_text)
-                    self.show_status("Navigated to selected point")
-                    tonio.spawn.without_tracking(self._flush_compaction_queue({"willRetry": False}))
                 except Exception as error:
-                    self.show_error(str(error))
-                finally:
-                    if showing_summary_indicator:
-                        self._clear_status_indicator("branchSummary")
-                    self.ui.post_ui(restore_escape_handler)
+                    failure = error
 
-            # From the selector's input handling, on the owner (see select_entry).
-            def copy_entry(text) -> Awaitable[None]:
+                with self.ui.state_lock:
+                    try:
+                        if failure is not None:
+                            self.show_error(str(failure))
+                        elif result.aborted:
+                            # Summarization aborted - re-show tree selector with
+                            # same selection
+                            self.show_status("Branch summarization cancelled")
+                            self._show_tree_selector(entry_id)
+                        elif result.cancelled:
+                            self.show_status("Navigation cancelled")
+                        else:
+                            # Update UI
+                            self._rerender_initial_messages()
+                            if result.editor_text:
+                                self._fill_empty_editor(result.editor_text)
+                            self.show_status("Navigated to selected point")
+                            self._flush_compaction_queue({"willRetry": False})
+                    except Exception as error:
+                        self.show_error(str(error))
+                    finally:
+                        if showing_summary_indicator:
+                            self._clear_status_indicator("branchSummary")
+                        self._default_editor.on_escape = escape_handler["original"]
+
+            # From the selector's input handling (see select_entry).
+            def copy_entry(text) -> None:
                 if not text:
-                    self._apply_show_error("Selected entry has no text to copy")
-                    return _nothing_left()
-                return copy(text)
+                    self.show_error("Selected entry has no text to copy")
+                    return
+                self._spawn_flow(copy(text))
 
             async def copy(text) -> None:
                 try:
@@ -5755,32 +5553,37 @@ class InteractiveMode:
                 done()
                 self.ui.request_render()
 
-            async def on_label_edit(entry_id: str, label) -> None:
-                await self.session_manager.append_label_change(entry_id, label)
-                self.ui.request_render()
+            # From the label input's submit: pi appends synchronously, so the
+            # next key waits for the write.
+            def on_label_edit(entry_id: str, label) -> None:
+                async def append() -> None:
+                    await self.session_manager.append_label_change(entry_id, label)
+                    self.ui.request_render()
+
+                self._finish_before_next_input(append())
 
             selector = TreeSelectorComponent(
                 tree,
                 real_leaf_id,
                 self.ui.terminal.rows,
-                lambda entry_id: tonio.spawn.without_tracking(select_entry(entry_id)),
+                select_entry,
                 on_cancel,
                 on_label_edit,
                 initial_selected_id,
                 initial_filter_mode,
             )
-            selector.on_copy = lambda text: tonio.spawn.without_tracking(copy_entry(text))
+            selector.on_copy = copy_entry
             return {"component": selector, "focus": selector}
 
         self._show_selector(create)
 
     def _show_session_selector(self) -> None:
         def create(done):
-            # From the selector's input handling, on the owner: the selector
-            # closes there; the resume runs on its own task.
-            def select_session(session_path: str) -> Awaitable[None]:
+            # From the selector's input handling: the selector closes there;
+            # the resume runs on its own task.
+            def select_session(session_path: str) -> None:
                 done()
-                return self._handle_resume_session(session_path, on_owner=True)
+                self._spawn_flow(self._handle_resume_session(session_path))
 
             def on_cancel() -> None:
                 done()
@@ -5802,9 +5605,9 @@ class InteractiveMode:
                     if self.session_manager.uses_default_session_dir()
                     else SessionManager.list_all(self.session_manager.get_session_dir(), on_progress, cancel)
                 ),
-                lambda session_path: tonio.spawn.without_tracking(select_session(session_path)),
+                select_session,
                 on_cancel,
-                lambda: tonio.spawn.without_tracking(self.shutdown()),
+                lambda: self._spawn_flow(self.shutdown()),
                 lambda: self.ui.request_render(),
                 {
                     "renameSession": rename_session,
@@ -5812,25 +5615,15 @@ class InteractiveMode:
                     "keybindings": self._keybindings,
                 },
                 self.session_manager.get_session_file(),
-                post_ui=self.ui.post_ui,
+                state_lock=self.ui.state_lock,
+                finish_before_next_input=self.ui.finish_before_next_input,
             )
             return {"component": selector, "focus": selector}
 
         self._show_selector(create)
 
-    def _handle_resume_session(
-        self, session_path: str, options: dict | None = None, *, on_owner: bool = False
-    ) -> Awaitable[dict]:
-        """pi clears the status indicator before its first await: in place
-        when the caller is on the UI owner (``on_owner``), posted otherwise;
-        returns the switch itself."""
-        if on_owner:
-            self._apply_clear_status_indicator()
-        else:
-            self._clear_status_indicator()
-        return self._resume_session(session_path, options)
-
-    async def _resume_session(self, session_path: str, options: dict | None) -> dict:
+    async def _handle_resume_session(self, session_path: str, options: dict | None = None) -> dict:
+        self._clear_status_indicator()
         with_session = options.get("withSession") if options else None
         try:
             result = await self.runtime_host.switch_session(
@@ -5921,36 +5714,37 @@ class InteractiveMode:
             if provider["id"].lower() == normalized_provider_ref or provider["name"].lower() == normalized_provider_ref
         ]
 
-    def _handle_login_command(self, provider_ref: str | None = None) -> Awaitable[None]:
-        """From the submit handler, on the owner: the selector or the login
-        dialog is shown here; a login flow is the returned remainder."""
+    def _handle_login_command(self, provider_ref: str | None = None) -> None:
+        """From the submit handler: the selector or the login dialog is shown
+        here; a login flow is spawned."""
         if not provider_ref:
             self._show_login_auth_type_selector()
-            return _nothing_left()
+            return
 
         provider_options = self._find_login_provider_options(provider_ref)
         if len(provider_options) == 1:
-            return self._start_provider_login(provider_options[0])
+            self._start_provider_login(provider_options[0])
+            return
 
         if len(provider_options) > 1:
             provider_ids = {provider["id"] for provider in provider_options}
             if len(provider_ids) == 1:
                 self._show_login_auth_type_selector(provider_options)
-                return _nothing_left()
+                return
 
         self._show_login_provider_selector(None, provider_ref)
-        return _nothing_left()
 
-    def _start_provider_login(self, provider_option: dict) -> Awaitable[None]:
-        """From owner-side code (the login selectors, /login): the dialog is
-        mounted before this returns, as pi's is before its first await; the
-        login flow is the returned remainder."""
+    def _start_provider_login(self, provider_option: dict) -> None:
+        """From the login selectors and /login: the dialog is mounted before
+        this returns, as pi's is before its first await; the login flow is
+        spawned."""
         if provider_option["authType"] == "oauth":
-            return self._show_login_dialog(provider_option["id"], provider_option["name"])
+            self._show_login_dialog(provider_option["id"], provider_option["name"])
+            return
         if getattr(provider_option.get("method"), "login", None):
-            return self._show_api_key_login_dialog(provider_option["id"], provider_option["name"])
+            self._show_api_key_login_dialog(provider_option["id"], provider_option["name"])
+            return
         self._show_ambient_auth_dialog(provider_option)
-        return _nothing_left()
 
     def _show_login_auth_type_selector(self, provider_options: list | None = None) -> None:
         oauth_provider = (
@@ -5975,13 +5769,13 @@ class InteractiveMode:
             options.append(api_key_label)
 
         if not options:
-            self._apply_show_status("No login methods available.")
+            self.show_status("No login methods available.")
             return
 
         if provider_options and len(options) == 1:
             provider_option = provider_options[0]
             if provider_option:
-                tonio.spawn.without_tracking(self._start_provider_login(provider_option))
+                self._start_provider_login(provider_option)
             return
 
         title = (
@@ -5999,7 +5793,7 @@ class InteractiveMode:
                         (provider for provider in provider_options if provider["authType"] == auth_type), None
                     )
                     if provider_option:
-                        tonio.spawn.without_tracking(self._start_provider_login(provider_option))
+                        self._start_provider_login(provider_option)
                     return
                 self._show_login_provider_selector(auth_type)
 
@@ -6023,13 +5817,13 @@ class InteractiveMode:
                 message = "No API key providers available."
             else:
                 message = "No login providers available."
-            self._apply_show_status(message)
+            self.show_status(message)
             return
 
         def create(done):
-            # From the selector's input handling, on the owner: the selector
-            # closes and the login dialog mounts there.
-            def select_provider(provider_id: str, selected_auth_type: str) -> Awaitable[None]:
+            # From the selector's input handling: the selector closes and the
+            # login dialog mounts there.
+            def select_provider(provider_id: str, selected_auth_type: str) -> None:
                 done()
 
                 provider_option = next(
@@ -6040,10 +5834,8 @@ class InteractiveMode:
                     ),
                     None,
                 )
-                if provider_option is None:
-                    return _nothing_left()
-
-                return self._start_provider_login(provider_option)
+                if provider_option is not None:
+                    self._start_provider_login(provider_option)
 
             def on_cancel() -> None:
                 done()
@@ -6055,9 +5847,7 @@ class InteractiveMode:
             selector = OAuthSelectorComponent(
                 "login",
                 provider_options,
-                lambda provider_id, selected_auth_type: tonio.spawn.without_tracking(
-                    select_provider(provider_id, selected_auth_type)
-                ),
+                select_provider,
                 on_cancel,
                 initial_search_input,
             )
@@ -6072,7 +5862,7 @@ class InteractiveMode:
             self._show_login_auth_type_selector()
             return
 
-        tonio.spawn.without_tracking(self._show_logout_selector(mode))
+        self._spawn_flow(self._show_logout_selector(mode))
 
     async def _show_logout_selector(self, mode: str) -> None:
         try:
@@ -6088,17 +5878,16 @@ class InteractiveMode:
             return
 
         def create(done):
-            # From the selector's input handling, on the owner: the selector
-            # closes there; the logout runs on its own task.
-            def select_provider(provider_id: str) -> Awaitable[None]:
+            # From the selector's input handling: the selector closes there;
+            # the logout runs on its own task.
+            def select_provider(provider_id: str) -> None:
                 done()
 
                 provider_option = next(
                     (provider for provider in provider_options if provider["id"] == provider_id), None
                 )
-                if provider_option is None:
-                    return _nothing_left()
-                return logout(provider_option)
+                if provider_option is not None:
+                    self._spawn_flow(logout(provider_option))
 
             async def logout(provider_option: dict) -> None:
                 try:
@@ -6128,18 +5917,32 @@ class InteractiveMode:
             selector = OAuthSelectorComponent(
                 mode,
                 provider_options,
-                lambda provider_id, _auth_type: tonio.spawn.without_tracking(select_provider(provider_id)),
+                lambda provider_id, _auth_type: select_provider(provider_id),
                 on_cancel,
             )
             return {"component": selector, "focus": selector}
 
-        # After an await, off the owner: the selector is mounted there.
-        self.ui.post_ui(functools.partial(self._show_selector, create))
+        self._show_selector(create)
 
     async def _complete_provider_authentication(
-        self, provider_id: str, provider_name: str, auth_type: str, previous_model
+        self,
+        provider_id: str,
+        provider_name: str,
+        auth_type: str,
+        previous_model,
+        first_step: Callable[[], None] | None = None,
     ) -> None:
+        """`first_step` is the caller's UI step that pi runs in the same
+        synchronous stretch as this flow's start (the login flows restore the
+        editor slot): it applies in this flow's first hold."""
         action_label = f"Logged in to {provider_name}" if auth_type == "oauth" else f"Saved API key for {provider_name}"
+        # UI steps of the current stretch, applied at the start of its hold (or
+        # just before the stretch's await): see `first_step`.
+        pending_steps: list = [first_step] if first_step is not None else []
+
+        def apply_pending_steps() -> None:
+            while pending_steps:
+                pending_steps.pop(0)()
 
         session = self.session
         # Dynamic catalogs may be empty until the first authenticated network refresh.
@@ -6152,7 +5955,7 @@ class InteractiveMode:
             )
         )
 
-        async def finish_authentication() -> None:
+        async def finish_authentication(then: Callable[[], None] | None = None) -> None:
             selected_model = None
             selection_error: str | None = None
             if _is_unknown_model(previous_model):
@@ -6181,6 +5984,8 @@ class InteractiveMode:
                             "Use /model to select a model."
                         )
                     else:
+                        with self.ui.state_lock:
+                            apply_pending_steps()  # the stretch ends at this await
                         try:
                             await self.session.set_model(selected_model, persist=True)
                         except Exception as error:
@@ -6190,29 +5995,32 @@ class InteractiveMode:
                                 "Use /model to select a model."
                             )
 
-            def apply() -> None:
-                # Reached from the login flow and from the detached catalog refresh
-                # below: the UI updates run on the owner, in this one job.
+            # Reached from the login flow and from the spawned catalog refresh
+            # below: the UI updates are one hold.
+            with self.ui.state_lock:
+                apply_pending_steps()
                 self._update_available_provider_count()
                 self._footer.invalidate()
-                self._apply_editor_border_color()
+                self._update_editor_border_color()
                 if selected_model is not None:
-                    self._apply_show_status(
+                    self.show_status(
                         f"{action_label}. Selected {selected_model.id}. Credentials saved to {get_auth_path()}"
                     )
-                    tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth(selected_model))
-                    self._check_daxnuts_easter_egg(selected_model, on_owner=True)
+                    self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth(selected_model))
+                    self._check_daxnuts_easter_egg(selected_model)
                 else:
-                    self._apply_show_status(f"{action_label}. Credentials saved to {get_auth_path()}")
+                    self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}")
                     if selection_error:
-                        self._apply_show_error(selection_error)
+                        self.show_error(selection_error)
                     else:
-                        tonio.spawn.without_tracking(self._maybe_warn_about_anthropic_subscription_auth())
-
-            self.ui.post_ui(apply)
+                        self._spawn_flow(self._maybe_warn_about_anthropic_subscription_auth())
+                if then is not None:
+                    then()
 
         if defer_selection:
-            self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}. Refreshing model catalog…")
+            with self.ui.state_lock:
+                apply_pending_steps()
+                self.show_status(f"{action_label}. Credentials saved to {get_auth_path()}. Refreshing model catalog…")
         else:
             await finish_authentication()
 
@@ -6227,52 +6035,51 @@ class InteractiveMode:
                 self.show_warning(f"{action_label}, but its model catalog could not be refreshed: {error}")
                 return
             if result.aborted:
-                self.show_warning(f"{action_label}, but its model catalog refresh timed out; using cached models.")
+                warning = f"{action_label}, but its model catalog refresh timed out; using cached models."
+                pending_steps.append(lambda: self.show_warning(warning))
             elif result.errors:
-                self.show_warning(f"{action_label}, but its model catalog could not be refreshed; using cached models.")
-            # Do not replace a model or session selected while the refresh was running.
-            if defer_selection and self.session is session and session.model is previous_model:
-                await finish_authentication()
+                warning = f"{action_label}, but its model catalog could not be refreshed; using cached models."
+                pending_steps.append(lambda: self.show_warning(warning))
 
-            def apply() -> None:
+            def refreshed() -> None:
                 self._update_available_provider_count()
                 self._footer.invalidate()
                 self.ui.request_render()
 
-            self.ui.post_ui(apply)
+            # Do not replace a model or session selected while the refresh was running.
+            if defer_selection and self.session is session and session.model is previous_model:
+                await finish_authentication(then=refreshed)
+                return
+            with self.ui.state_lock:
+                apply_pending_steps()
+                refreshed()
 
-        tonio.spawn.without_tracking(refresh_provider_catalog())
+        self._spawn_flow(refresh_provider_catalog())
 
     def _show_in_editor_slot(self, component) -> None:
-        """Swap `component` into the editor slot and focus it, on the owner
-        (the login flows drive their dialogs from the login task)."""
-        self.ui.post_ui(functools.partial(self._apply_show_in_editor_slot, component))
-
-    def _apply_show_in_editor_slot(self, component) -> None:
-        """`_show_in_editor_slot`'s body; runs on the UI owner."""
-        self._editor_container.clear()
-        self._editor_container.add_child(component)
-        self.ui.set_focus(component)
-        self.ui.request_render()
+        """Swap `component` into the editor slot and focus it (the login
+        flows drive their dialogs from the login task)."""
+        with self.ui.state_lock:
+            self._editor_container.clear()
+            self._editor_container.add_child(component)
+            self.ui.set_focus(component)
+            self.ui.request_render()
 
     def _restore_editor_slot(self) -> None:
-        """Put the editor (as it stands when applied) back in the editor slot."""
-        self.ui.post_ui(self._apply_restore_editor_slot)
-
-    def _apply_restore_editor_slot(self) -> None:
-        """`_restore_editor_slot`'s body; runs on the UI owner."""
-        self._editor_container.clear()
-        self._editor_container.add_child(self.editor)
-        self.ui.set_focus(self.editor)
-        self.ui.request_render()
+        """Put the editor back in the editor slot."""
+        with self.ui.state_lock:
+            self._editor_container.clear()
+            self._editor_container.add_child(self.editor)
+            self.ui.set_focus(self.editor)
+            self.ui.request_render()
 
     def _show_ambient_auth_dialog(self, provider_option: dict) -> None:
-        """On the UI owner (reached from `_start_provider_login`)."""
+        """Reached from `_start_provider_login`."""
         dialog = LoginDialogComponent(
             self.ui,
             provider_option["id"],
-            # The dialog's only completion is its cancel key, on the owner.
-            lambda *_args: self._apply_restore_editor_slot(),
+            # The dialog's only completion is its cancel key.
+            lambda *_args: self._restore_editor_slot(),
             provider_option["name"],
             f"{provider_option['name']} setup",
         )
@@ -6281,15 +6088,14 @@ class InteractiveMode:
             f"{method_name if method_name is not None else 'Authentication'} is configured outside {APP_NAME}.",
             [],
             True,
-            on_owner=True,
         )
 
-        self._apply_show_in_editor_slot(dialog)
+        self._show_in_editor_slot(dialog)
 
-    def _show_api_key_login_dialog(self, provider_id: str, provider_name: str) -> Awaitable[None]:
-        """On the UI owner (reached from `_start_provider_login`): the dialog
-        is set up and mounted here, as pi's is before its first await; the
-        login flow is the returned remainder, driven off the owner."""
+    def _show_api_key_login_dialog(self, provider_id: str, provider_name: str) -> None:
+        """Reached from `_start_provider_login`: the dialog is set up and
+        mounted here, as pi's is before its first await; the login flow is
+        spawned."""
         previous_model = self.session.model
 
         dialog = LoginDialogComponent(
@@ -6305,27 +6111,30 @@ class InteractiveMode:
                     theme.fg("text", "You can also use an AWS profile, IAM keys, or role-based credentials."),
                     theme.fg("muted", "See:"),
                     theme.fg("accent", f"  {os.path.join(get_docs_path(), 'providers.md')}"),
-                ],
-                on_owner=True,
+                ]
             )
 
-        self._apply_show_in_editor_slot(dialog)
-        return self._api_key_login(dialog, provider_id, provider_name, previous_model)
+        self._show_in_editor_slot(dialog)
+        self._spawn_flow(self._api_key_login(dialog, provider_id, provider_name, previous_model))
 
     async def _api_key_login(self, dialog, provider_id: str, provider_name: str, previous_model) -> None:
         try:
             await self._login_provider(dialog, provider_id, "api_key")
-            self._restore_editor_slot()
-            await self._complete_provider_authentication(provider_id, provider_name, "api_key", previous_model)
+            # pi restores the editor in the stretch that starts completing the
+            # login: it applies in that flow's first hold.
+            await self._complete_provider_authentication(
+                provider_id, provider_name, "api_key", previous_model, self._restore_editor_slot
+            )
         except Exception as error:
-            self._restore_editor_slot()
             error_msg = str(error)
-            if isinstance(error, CredentialSynchronizationError):
-                self.show_error(
-                    f"Saved API key for {provider_name}, but local model state could not be synchronized: {error_msg}"
-                )
-            elif error_msg != "Login cancelled":
-                self.show_error(f"Failed to save API key for {provider_name}: {error_msg}")
+            with self.ui.state_lock:
+                self._restore_editor_slot()
+                if isinstance(error, CredentialSynchronizationError):
+                    self.show_error(
+                        f"Saved API key for {provider_name}, but local model state could not be synchronized: {error_msg}"
+                    )
+                elif error_msg != "Login cancelled":
+                    self.show_error(f"Failed to save API key for {provider_name}: {error_msg}")
 
     async def _show_auth_select(self, dialog, prompt) -> str:
         done = tonio.Event()
@@ -6333,17 +6142,17 @@ class InteractiveMode:
 
         labels = [option.label for option in prompt.options]
 
-        # From the selector's input handling, on the owner: the dialog is back
-        # in the slot before the next key.
+        # From the selector's input handling: the dialog is back in the slot
+        # before the next key.
         def on_select(option_label: str) -> None:
-            self._apply_show_in_editor_slot(dialog)
+            self._show_in_editor_slot(dialog)
             option_id = next((option.id for option in prompt.options if option.label == option_label), None)
             if option_id:
                 outcome["value"] = option_id
             done.set()
 
         def on_cancel() -> None:
-            self._apply_show_in_editor_slot(dialog)
+            self._show_in_editor_slot(dialog)
             done.set()
 
         selector = ExtensionSelectorComponent(prompt.message, labels, on_select, on_cancel)
@@ -6393,15 +6202,16 @@ class InteractiveMode:
         return payload
 
     def _notify_auth_dialog(self, dialog, event) -> None:
-        if event.type == "auth_url":
-            dialog.show_auth(event.url, event.instructions)
-        elif event.type == "device_code":
-            dialog.show_device_code({"verificationUri": event.verification_uri, "userCode": event.user_code})
-            dialog.show_waiting("Waiting for authentication...")
-        elif event.type == "info":
-            dialog.show_info(event.message, event.links)
-        else:
-            dialog.show_progress(event.message)
+        with self.ui.state_lock:
+            if event.type == "auth_url":
+                dialog.show_auth(event.url, event.instructions)
+            elif event.type == "device_code":
+                dialog.show_device_code({"verificationUri": event.verification_uri, "userCode": event.user_code})
+                dialog.show_waiting("Waiting for authentication...")
+            elif event.type == "info":
+                dialog.show_info(event.message, event.links)
+            else:
+                dialog.show_progress(event.message)
 
     async def _login_provider(self, dialog, provider_id: str, method: str) -> None:
         mode = self
@@ -6417,94 +6227,94 @@ class InteractiveMode:
 
         await self.session.model_runtime.login(provider_id, method, DialogInteraction())
 
-    def _show_login_dialog(self, provider_id: str, provider_name: str) -> Awaitable[None]:
-        """On the UI owner (reached from `_start_provider_login`): mounted
-        here; the OAuth flow is the returned remainder."""
+    def _show_login_dialog(self, provider_id: str, provider_name: str) -> None:
+        """Reached from `_start_provider_login`: mounted here; the OAuth flow
+        is spawned."""
         previous_model = self.session.model
         dialog = LoginDialogComponent(self.ui, provider_id, lambda *_args: None, provider_name)
-        self._apply_show_in_editor_slot(dialog)
-        return self._oauth_login(dialog, provider_id, provider_name, previous_model)
+        self._show_in_editor_slot(dialog)
+        self._spawn_flow(self._oauth_login(dialog, provider_id, provider_name, previous_model))
 
     async def _oauth_login(self, dialog, provider_id: str, provider_name: str, previous_model) -> None:
         try:
             await self._login_provider(dialog, provider_id, "oauth")
-            self._restore_editor_slot()
-            await self._complete_provider_authentication(provider_id, provider_name, "oauth", previous_model)
+            # pi restores the editor in the stretch that starts completing the
+            # login: it applies in that flow's first hold.
+            await self._complete_provider_authentication(
+                provider_id, provider_name, "oauth", previous_model, self._restore_editor_slot
+            )
         except Exception as error:
-            self._restore_editor_slot()
             error_msg = str(error)
-            if isinstance(error, CredentialSynchronizationError):
-                self.show_error(
-                    f"Logged in to {provider_name}, but local model state could not be synchronized: {error_msg}"
-                )
-            elif error_msg != "Login cancelled":
-                self.show_error(f"Failed to login to {provider_name}: {error_msg}")
+            with self.ui.state_lock:
+                self._restore_editor_slot()
+                if isinstance(error, CredentialSynchronizationError):
+                    self.show_error(
+                        f"Logged in to {provider_name}, but local model state could not be synchronized: {error_msg}"
+                    )
+                elif error_msg != "Login cancelled":
+                    self.show_error(f"Failed to login to {provider_name}: {error_msg}")
 
     # =========================================================================
     # Command handlers
     # =========================================================================
 
     async def _handle_reload_command(self) -> None:
-        """The extension `reload` action's entry, off the owner: the reload's
-        start runs on the owner, the reload itself here."""
-        reload = tonio.Result()
+        """The extension `reload` action's entry: the reload's start (one hold
+        of the UI state lock), then the reload itself."""
+        previous_editor = self._start_reload()
+        if previous_editor is not None:
+            await self._reload(previous_editor)
 
-        async def start() -> None:
-            reload.store(self._start_reload())
+    def _start_reload(self):
+        """pi's part before its first await (the guards' warnings, the
+        extension-UI reset and the reload box), in one hold. Returns the
+        editor to restore when the reload ends, or None when the reload was
+        refused; the reload itself is `_reload`."""
+        with self.ui.state_lock:
+            if self.session.is_streaming:
+                self.show_warning("Wait for the current response to finish before reloading.")
+                return None
+            if self.session.is_compacting:
+                self.show_warning("Wait for compaction to finish before reloading.")
+                return None
 
-        await self.ui.input_owner.run(start)
-        await reload.fetch()
+            self._reset_extension_ui()
 
-    def _start_reload(self) -> Awaitable[None]:
-        """On the UI owner (/reload, or run there by `_handle_reload_command`):
-        pi's part before its first await — the guards' warnings, the
-        extension-UI reset and the reload box. The reload itself is the
-        returned remainder."""
-        if self.session.is_streaming:
-            self._apply_show_warning("Wait for the current response to finish before reloading.")
-            return _nothing_left()
-        if self.session.is_compacting:
-            self._apply_show_warning("Wait for compaction to finish before reloading.")
-            return _nothing_left()
+            def border_color(s: str) -> str:
+                return theme.fg("border", s)
 
-        self._reset_extension_ui(on_owner=True)
-
-        def border_color(s: str) -> str:
-            return theme.fg("border", s)
-
-        reload_box = Container()
-        reload_box.add_child(DynamicBorder(border_color))
-        reload_box.add_child(Spacer(1))
-        reload_box.add_child(
-            Text(
-                theme.fg("muted", "Reloading keybindings, extensions, skills, prompts, themes, and context files..."),
-                1,
-                0,
+            reload_box = Container()
+            reload_box.add_child(DynamicBorder(border_color))
+            reload_box.add_child(Spacer(1))
+            reload_box.add_child(
+                Text(
+                    theme.fg(
+                        "muted", "Reloading keybindings, extensions, skills, prompts, themes, and context files..."
+                    ),
+                    1,
+                    0,
+                )
             )
-        )
-        reload_box.add_child(Spacer(1))
-        reload_box.add_child(DynamicBorder(border_color))
+            reload_box.add_child(Spacer(1))
+            reload_box.add_child(DynamicBorder(border_color))
 
-        # The box is up before the reload work starts, which runs on its own
-        # task; rendering happens on the owner meanwhile (pi yields a tick
-        # here so the box can paint).
-        previous_editor = self.editor
-        self._editor_container.clear()
-        self._editor_container.add_child(reload_box)
-        self.ui.set_focus(reload_box)
-        self.ui.request_render(True)
-        return self._reload(previous_editor)
+            # The box is up before the reload work starts, which runs on its
+            # own task (pi yields a tick here so the box can paint).
+            previous_editor = self.editor
+            self._editor_container.clear()
+            self._editor_container.add_child(reload_box)
+            self.ui.set_focus(reload_box)
+            self.ui.request_render(True)
+            return previous_editor
 
     async def _reload(self, previous_editor) -> None:
         def dismiss_reload_box(restore_previous: bool) -> None:
-            def apply() -> None:
+            with self.ui.state_lock:
                 editor = previous_editor if restore_previous else self.editor
                 self._editor_container.clear()
                 self._editor_container.add_child(editor)
                 self.ui.set_focus(editor)
                 self.ui.request_render()
-
-            self.ui.post_ui(apply)
 
         chat_restored_before_session_start = False
         reload_box_dismissed = False
@@ -6513,39 +6323,52 @@ class InteractiveMode:
             nonlocal chat_restored_before_session_start
             if chat_restored_before_session_start:
                 return
-            self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
-            self._output_pad = self.settings_manager.get_output_pad()
-            self._rebuild_chat_from_messages()
+            with self.ui.state_lock:
+                self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
+                self._output_pad = self.settings_manager.get_output_pad()
+                self._rebuild_chat_from_messages()
             chat_restored_before_session_start = True
 
         try:
             await self.session.reload(restore_chat_before_session_start)
-            await restore_chat_before_session_start()
+            # pi's next two blocks are synchronous: their pidrei-only I/O (the
+            # keybindings file, the cwd, the trust save) runs first, then
+            # each block applies in one hold (§4.5b). `applyFromSettings` is
+            # awaited in pi too.
             await self._keybindings.reload()
-
-            def expand_header() -> None:
+            resolved_cwd = await self._footer_data_provider.resolve_cwd(self.session_manager.get_cwd())
+            with self.ui.state_lock:
+                if not chat_restored_before_session_start:
+                    self._hide_thinking_block = self.settings_manager.get_hide_thinking_block()
+                    self._output_pad = self.settings_manager.get_output_pad()
+                    self._rebuild_chat_from_messages()
+                    chat_restored_before_session_start = True
                 active_header = self._custom_header if self._custom_header is not None else self._built_in_header
                 if is_expandable(active_header):
                     active_header.set_expanded(self._tool_output_expanded)
-
-            self.ui.post_ui(expand_header)
-            set_registered_themes(self.session.resource_loader.get_themes()["themes"])
-            await self._apply_runtime_settings()
+                set_registered_themes(self.session.resource_loader.get_themes()["themes"])
+                cwd_changed = self._apply_runtime_settings(resolved_cwd)
+            if cwd_changed:
+                await self._footer_data_provider.watch_cwd()
             await self._theme_controller.apply_from_settings()
-            self._setup_autocomplete_provider()
-            runner = self.session.extension_runner
-            self._setup_extension_shortcuts(runner)
-            self._show_loaded_resources({"force": False, "showDiagnosticsWhenQuiet": True})
-            saved_implicit_project_trust = await self._maybe_save_implicit_project_trust_after_reload()
-            models_json_error = self.session.model_runtime.get_error()
-            if models_json_error:
-                self.show_error(f"models.json error: {models_json_error}")
-            self.show_status(
-                "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
-                if saved_implicit_project_trust
-                else "Reloaded keybindings, extensions, skills, prompts, themes, and context files"
-            )
-            dismiss_reload_box(restore_previous=False)
+
+            saved_implicit_project_trust, trust_warning = await self._maybe_save_implicit_project_trust_after_reload()
+            with self.ui.state_lock:
+                self._setup_autocomplete_provider()
+                runner = self.session.extension_runner
+                self._setup_extension_shortcuts(runner)
+                self._show_loaded_resources({"force": False, "showDiagnosticsWhenQuiet": True})
+                if trust_warning is not None:
+                    self.show_warning(trust_warning)
+                models_json_error = self.session.model_runtime.get_error()
+                if models_json_error:
+                    self.show_error(f"models.json error: {models_json_error}")
+                self.show_status(
+                    "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
+                    if saved_implicit_project_trust
+                    else "Reloaded keybindings, extensions, skills, prompts, themes, and context files"
+                )
+                dismiss_reload_box(restore_previous=False)
             reload_box_dismissed = True
         except Exception as error:
             if not reload_box_dismissed:
@@ -6587,18 +6410,25 @@ class InteractiveMode:
             return args_string
         return args_string[: whitespace_match.start()]
 
-    def handle_import_command(self, text: str) -> Awaitable[None]:
-        """From the submit handler, on the owner: the usage error or the
-        confirmation dialog is shown here; the import is the remainder."""
+    def handle_import_command(self, text: str, and_then: Callable[[], None] | None = None) -> None:
+        """From the submit handler: the usage error or the confirmation
+        dialog is shown here; the import is spawned. `and_then` runs once the
+        command is done (pi's submit clears the editor after it)."""
         input_path = self._get_path_command_argument(text, "/import")
         if not input_path:
-            self._apply_show_error("Usage: /import <path.jsonl>")
-            return _nothing_left()
+            self.show_error("Usage: /import <path.jsonl>")
+            if and_then is not None:
+                and_then()
+            return
 
-        confirmed = self._show_extension_confirm(
-            "Import session", f"Replace current session with {input_path}?", on_owner=True
-        )
-        return self._import_session(input_path, confirmed)
+        confirmed = self._show_extension_confirm("Import session", f"Replace current session with {input_path}?")
+
+        async def run() -> None:
+            await self._import_session(input_path, confirmed)
+            if and_then is not None:
+                and_then()
+
+        self._spawn_flow(run())
 
     async def _import_session(self, input_path: str, confirmed: Awaitable[bool]) -> None:
         if not await confirmed:
@@ -6678,11 +6508,12 @@ class InteractiveMode:
         # when the cancel token fires (pi kills the spawned gh directly).
         gist_cancel = AiCancelToken()
 
-        # The loader's abort key, on the owner.
+        # The loader's abort key.
         def on_abort() -> None:
             gist_cancel.cancel()
-            self._restore_share_editor(loader, on_owner=True)
-            self._apply_show_status("Share cancelled")
+            with self.ui.state_lock:
+                self._restore_share_editor(loader)
+                self.show_status("Share cancelled")
 
         loader.on_abort = on_abort
 
@@ -6694,43 +6525,46 @@ class InteractiveMode:
                 cancel=gist_cancel,
             )
 
-            if loader.signal.cancelled:
-                return
+            # One hold: the cancelled check and the restore are atomic
+            # against the loader's abort key, which restores under the lock.
+            with self.ui.state_lock:
+                if loader.signal.cancelled:
+                    return
 
-            self._restore_share_editor(loader)
-
-            if result.code != 0:
-                error_msg = result.stderr.strip() or "Unknown error"
-                self.show_error(f"Failed to create gist: {error_msg}")
-                return
-
-            # Extract gist ID from the URL returned by gh
-            # gh returns something like: https://gist.github.com/username/GIST_ID
-            gist_url = result.stdout.strip()
-            gist_id = gist_url.split("/")[-1] if gist_url else None
-            if not gist_id:
-                self.show_error("Failed to parse gist ID from gh output")
-                return
-
-            # The gist URL is the share URL; a viewer link is added only when
-            # one is configured (PIDREI_SHARE_VIEWER_URL).
-            preview_url = get_share_viewer_url(gist_id)
-            gist_link = hyperlink(gist_url, gist_url)
-            self.show_status(
-                f"Share URL: {hyperlink(preview_url, preview_url)}\nGist: {gist_link}"
-                if preview_url
-                else f"Gist: {gist_link}"
-            )
-        except Exception as error:
-            if not loader.signal.cancelled:
                 self._restore_share_editor(loader)
-                self.show_error(f"Failed to create gist: {error if str(error) else 'Unknown error'}")
 
-    def _restore_share_editor(self, loader: BorderedLoader, *, on_owner: bool = False) -> None:
-        # From the share task (posted) and from the loader's abort (on the
-        # owner: in place): both can land, so the restore acts only while this
-        # loader holds the slot.
-        def apply() -> None:
+                if result.code != 0:
+                    error_msg = result.stderr.strip() or "Unknown error"
+                    self.show_error(f"Failed to create gist: {error_msg}")
+                    return
+
+                # Extract gist ID from the URL returned by gh
+                # gh returns something like: https://gist.github.com/username/GIST_ID
+                gist_url = result.stdout.strip()
+                gist_id = gist_url.split("/")[-1] if gist_url else None
+                if not gist_id:
+                    self.show_error("Failed to parse gist ID from gh output")
+                    return
+
+                # The gist URL is the share URL; a viewer link is added only when
+                # one is configured (PIDREI_SHARE_VIEWER_URL).
+                preview_url = get_share_viewer_url(gist_id)
+                gist_link = hyperlink(gist_url, gist_url)
+                self.show_status(
+                    f"Share URL: {hyperlink(preview_url, preview_url)}\nGist: {gist_link}"
+                    if preview_url
+                    else f"Gist: {gist_link}"
+                )
+        except Exception as error:
+            with self.ui.state_lock:
+                if not loader.signal.cancelled:
+                    self._restore_share_editor(loader)
+                    self.show_error(f"Failed to create gist: {error if str(error) else 'Unknown error'}")
+
+    def _restore_share_editor(self, loader: BorderedLoader) -> None:
+        # From the share task and from the loader's abort: both can land, so
+        # the restore acts only while this loader holds the slot.
+        with self.ui.state_lock:
             loader.dispose()
             if loader not in self._editor_container.children:
                 return
@@ -6739,32 +6573,38 @@ class InteractiveMode:
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
-        if on_owner:
-            apply()
-        else:
-            self.ui.post_ui(apply)
-
-    def _handle_copy_command(self, options: dict | None = None) -> Awaitable:
-        """On the owner (the copy action, /copy): the selection is read and
-        the no-text error shown here, as pi does before its first await; the
-        clipboard write is the returned remainder."""
+    def _handle_copy_command(self, options: dict | None = None, and_then: Callable[[], None] | None = None) -> None:
+        """The copy action and /copy: the selection is read and the no-text
+        error shown here, as pi does before its first await; the clipboard
+        write is spawned. `and_then` runs once the command is done (pi's
+        submit clears the editor after it)."""
         options = options or {}
-        # pi narrows with `instanceof TuiAltScreen`; the reference proxy is
-        # deliberately not isinstance-transparent, so ask the renderer.
-        renderer = self._renderer
-        if (
-            options.get("preferSelection")
-            and isinstance(renderer, TuiAltScreen)
-            and not renderer.get_copy_on_select()
-            and renderer.has_active_selection()
-        ):
-            return renderer.copy_active_selection_to_clipboard()
+        with self.ui.state_lock:
+            # pi narrows with `instanceof TuiAltScreen`; the reference proxy is
+            # deliberately not isinstance-transparent, so ask the renderer.
+            renderer = self._renderer
+            if (
+                options.get("preferSelection")
+                and isinstance(renderer, TuiAltScreen)
+                and not renderer.get_copy_on_select()
+                and renderer.has_active_selection()
+            ):
+                copy = renderer.copy_active_selection_to_clipboard()
+            else:
+                text = self.session.get_last_assistant_text()
+                if not text:
+                    self.show_error("No agent messages to copy yet.")
+                    if and_then is not None:
+                        and_then()
+                    return
+                copy = self._copy_last_message(text, options)
 
-        text = self.session.get_last_assistant_text()
-        if not text:
-            self._apply_show_error("No agent messages to copy yet.")
-            return _nothing_left()
-        return self._copy_last_message(text, options)
+        async def run() -> None:
+            await copy
+            if and_then is not None:
+                and_then()
+
+        self._spawn_flow(run())
 
     async def _copy_last_message(self, text: str, options: dict) -> None:
         try:
@@ -6778,19 +6618,21 @@ class InteractiveMode:
         except Exception as error:
             self.show_error(str(error))
 
-    def _handle_name_command(self, text: str) -> Awaitable[None]:
-        """From the submit handler, on the owner: showing the name (or the
-        usage) happens here; setting it is the returned remainder."""
+    def _handle_name_command(self, text: str) -> None:
+        """From the submit handler: showing the name (or the usage) happens
+        here. Setting it is synchronous in pi, so the next key waits for it;
+        the editor clears after, as pi's submit does."""
         name = re.sub(r"^/name\s*", "", text).strip()
         if not name:
-            current_name = self.session_manager.get_session_name()
-            if current_name:
-                self._apply_append_to_chat(Spacer(1), Text(theme.fg("dim", f"Session name: {current_name}"), 1, 0))
-            else:
-                self._apply_show_warning("Usage: /name <name>")
-            self.ui.request_render()
-            return _nothing_left()
-        return self._set_session_name(name)
+            with self.ui.state_lock:
+                current_name = self.session_manager.get_session_name()
+                if current_name:
+                    self._append_to_chat(Spacer(1), Text(theme.fg("dim", f"Session name: {current_name}"), 1, 0))
+                else:
+                    self.show_warning("Usage: /name <name>")
+                self._set_editor_text("")
+            return
+        self._finish_before_next_input(self._then_clear_editor(self._set_session_name(name)))
 
     async def _set_session_name(self, name: str) -> None:
         await self.session.set_session_name(name)
@@ -6875,7 +6717,7 @@ class InteractiveMode:
                     else f"\n{theme.fg('dim', 'Cache Re-billed:')} {detail}"
                 )
 
-        self._apply_append_to_chat(Spacer(1), Text(info, 1, 0))
+        self._append_to_chat(Spacer(1), Text(info, 1, 0))
 
     async def _handle_changelog_command(self) -> None:
         changelog_path = get_changelog_path()
@@ -7007,7 +6849,7 @@ class InteractiveMode:
                 key_display = format_key_text(key, {"capitalize": True})
                 hotkeys += f"| `{key_display}` | {description} |\n"
 
-        self._apply_append_to_chat(
+        self._append_to_chat(
             Spacer(1),
             DynamicBorder(),
             Text(theme.bold(theme.fg("accent", "Keyboard Shortcuts")), 1, 0),
@@ -7016,32 +6858,27 @@ class InteractiveMode:
             DynamicBorder(),
         )
 
-    def _handle_clear_command(self) -> Awaitable[None]:
-        """On the owner (the new-session action, /new): the status indicator
-        is cleared here; the new session is the returned remainder."""
-        self._apply_clear_status_indicator()
-        return self._new_session()
+    def _handle_clear_command(self) -> None:
+        """The new-session action and /new: the status indicator is cleared
+        here; the new session is spawned."""
+        self._clear_status_indicator()
+        self._spawn_flow(self._new_session())
 
     async def _new_session(self) -> None:
         try:
             result = await self.runtime_host.new_session()
             if result.get("cancelled"):
                 return
-            # Posted behind the new session's (posted) chat reset.
+            # After the new session's chat reset (the rebind, inside `new_session`).
             self._append_to_chat(Spacer(1), Text(theme.fg("accent", "✓ New session started"), 1, 1))
         except Exception as error:
             await self._handle_fatal_runtime_error("Failed to create session", error)
 
     async def _handle_debug_command(self) -> None:
-        # Off the owner (both callers): the tree is rendered on it.
-        frame = tonio.Result()
-
-        async def render() -> None:
+        with self.ui.state_lock:
             width = self.ui.terminal.columns
-            frame.store((width, self.ui.terminal.rows, self.ui.render(width)))
-
-        await self.ui.input_owner.run(render)
-        width, height, all_lines = frame.fetch()
+            height = self.ui.terminal.rows
+            all_lines = self.ui.render(width)
 
         debug_log_path = get_debug_log_path()
         debug_lines = [
@@ -7073,20 +6910,17 @@ class InteractiveMode:
         )
 
     def _handle_armin_says_hi(self) -> None:
-        self._apply_append_to_chat(Spacer(1), ArminComponent(self.ui))
+        self._append_to_chat(Spacer(1), ArminComponent(self.ui))
 
     def _handle_demented_elves(self) -> None:
-        self._apply_append_to_chat(Spacer(1), EarendilAnnouncementComponent())
+        self._append_to_chat(Spacer(1), EarendilAnnouncementComponent())
 
-    def _handle_daxnuts(self, *, on_owner: bool = False) -> None:
-        if on_owner:
-            self._apply_append_to_chat(Spacer(1), DaxnutsComponent(self.ui))
-        else:
-            self._append_to_chat(Spacer(1), DaxnutsComponent(self.ui))
+    def _handle_daxnuts(self) -> None:
+        self._append_to_chat(Spacer(1), DaxnutsComponent(self.ui))
 
-    def _check_daxnuts_easter_egg(self, model, *, on_owner: bool = False) -> None:
+    def _check_daxnuts_easter_egg(self, model) -> None:
         if model.provider == "opencode" and "kimi-k2.5" in model.id.lower():
-            self._handle_daxnuts(on_owner=on_owner)
+            self._handle_daxnuts()
 
     async def _handle_bash_command(self, command: str, exclude_from_context: bool = False) -> None:
         extension_runner = self.session.extension_runner
@@ -7109,12 +6943,10 @@ class InteractiveMode:
         if event_result and event_result.get("result"):
             result = event_result["result"]
 
-            # Create UI component for display
+            # Create UI component for display, show output and complete
             component = BashExecutionComponent(command, self.ui, exclude_from_context)
-            self._mount_bash_component(component, self.session.is_streaming)
-
-            # Show output and complete
-            def show_result() -> None:
+            with self.ui.state_lock:
+                self._mount_bash_component(component, self.session.is_streaming)
                 if result.get("output"):
                     component.append_output(result["output"])
                 component.set_complete(
@@ -7123,8 +6955,6 @@ class InteractiveMode:
                     _partial_truncation_result(result.get("output") or "") if result.get("truncated") else None,
                     result.get("fullOutputPath"),
                 )
-
-            self.ui.post_ui(show_result)
 
             # Record the result in session
             await self.session.record_bash_result(
@@ -7149,8 +6979,9 @@ class InteractiveMode:
         self.ui.request_render()
 
         def on_chunk(chunk: str) -> None:
-            # On the executor's task: posted, so chunks apply in order.
-            self.ui.post_ui(functools.partial(component.append_output, chunk))
+            # On the executor's task, in order.
+            with self.ui.state_lock:
+                component.append_output(chunk)
             self.ui.request_render()
 
         try:
@@ -7163,39 +6994,36 @@ class InteractiveMode:
                 },
             )
 
-            self.ui.post_ui(
-                functools.partial(
-                    component.set_complete,
+            with self.ui.state_lock:
+                component.set_complete(
                     result.exit_code,
                     result.cancelled,
                     _partial_truncation_result(result.output) if result.truncated else None,
                     result.full_output_path,
                 )
-            )
         except Exception as error:
-            self.ui.post_ui(functools.partial(component.set_complete, None, False))
-            self.show_error(f"Bash command failed: {error if str(error) else 'Unknown error'}")
+            with self.ui.state_lock:
+                component.set_complete(None, False)
+                self.show_error(f"Bash command failed: {error if str(error) else 'Unknown error'}")
 
         self.ui.request_render()
 
     def _mount_bash_component(self, component, deferred: bool) -> None:
-        def apply() -> None:
+        with self.ui.state_lock:
             if deferred:
-                # Show in pending area when agent is streaming (the pending
-                # list is the owner's: `_flush_pending_bash_components` moves it)
+                # Show in pending area when agent is streaming
+                # (`_flush_pending_bash_components` moves the pending list)
                 self._pending_messages_container.add_child(component)
                 self._pending_bash_components.append(component)
             else:
                 # Show in chat immediately when agent is idle
                 self._chat_container.add_child(component)
 
-        self.ui.post_ui(apply)
-
-    def handle_compact_command(self, custom_instructions: str | None = None) -> Awaitable[None]:
-        """From the submit handler, on the owner: the status indicator is
-        cleared here; the compaction is the returned remainder."""
-        self._apply_clear_status_indicator()
-        return self._compact(custom_instructions)
+    def handle_compact_command(self, custom_instructions: str | None = None) -> None:
+        """From the submit handler: the status indicator is cleared here; the
+        compaction is spawned."""
+        self._clear_status_indicator()
+        self._spawn_flow(self._compact(custom_instructions))
 
     async def _compact(self, custom_instructions: str | None) -> None:
         with contextlib.suppress(Exception):
@@ -7205,22 +7033,22 @@ class InteractiveMode:
     async def stop(self, fullscreen_exit_output: str | None = None) -> None:
         if fullscreen_exit_output is None:
             fullscreen_exit_output = self.settings_manager.get_fullscreen_exit_output()
-        # Off the owner (shutdown flows), which still serves input until the
-        # renderer stops: posted, and drained by the stop's barrier.
-        self.ui.post_ui(self._dispose_active_selector)
-        if self.settings_manager.get_show_terminal_progress():
-            self.ui.terminal.set_progress(False)
-        self._clear_status_indicator()
+        with self.ui.state_lock:
+            self._dispose_active_selector()
+            if self.settings_manager.get_show_terminal_progress():
+                self.ui.terminal.set_progress(False)
+            self._clear_status_indicator()
         await self._theme_controller.disable_auto_sync()
-        self._clear_extension_terminal_input_listeners()
-        self._footer.dispose()
-        self._footer_data_provider.dispose()
-        if self._unsubscribe:
-            self._unsubscribe()
+        with self.ui.state_lock:
+            self._clear_extension_terminal_input_listeners()
+            self._footer.dispose()
+            self._footer_data_provider.dispose()
+            if self._unsubscribe:
+                self._unsubscribe()
         if self._is_initialized:
             await self._stop_interactive_tui(fullscreen_exit_output)
             self._is_initialized = False
-        # The owner outlives renderer stops (suspend, switches); this is the
-        # app's shutdown, so its queue is closed here, once.
-        self.ui.input_owner.close()
+        # The input consumer outlives renderer stops (suspend,
+        # switches); this is the app's shutdown, so it ends here, once.
+        self.ui.close()
         self._unregister_signal_handlers()

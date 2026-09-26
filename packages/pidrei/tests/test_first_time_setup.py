@@ -58,7 +58,7 @@ class TestFirstTimeSetupComponent:
     async def test_confirming_the_theme_finishes_setup_without_an_analytics_step(self):
         submitted: list[dict] = []
 
-        async def on_theme_preview(_theme_name: str) -> None:
+        def on_theme_preview(_theme_name: str) -> None:
             return None
 
         component = FirstTimeSetupComponent(
@@ -70,6 +70,6 @@ class TestFirstTimeSetupComponent:
             }
         )
 
-        await component.handle_input("\n")
+        component.handle_input("\n")
 
         assert submitted == [{"theme": "light"}]

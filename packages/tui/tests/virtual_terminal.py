@@ -18,6 +18,7 @@ pi uses @xterm/headless; pyte differences the harness papers over:
 
 import re
 import threading
+import weakref
 
 import pyte
 import tonio.colored as tonio
@@ -35,6 +36,7 @@ class VirtualTerminal:
         self._columns = columns
         self._rows = rows
         self._input_handler = None
+        self._reply_handler = None
         self._resize_handler = None
         self._screen = pyte.HistoryScreen(columns, rows, history=_HISTORY)
         self._stream = pyte.Stream(self._screen)
@@ -54,20 +56,24 @@ class VirtualTerminal:
         # re-points it at the renderer now in charge.
         self._tui = None
 
-    async def start(self, on_input, on_resize) -> None:
+    async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
         self._input_handler = on_input
+        self._reply_handler = on_reply
         self._resize_handler = on_resize
         self._tui = getattr(on_resize, "__self__", None)
+        if self._tui is not None:
+            _RenderWatch.install(self._tui)
         # Enable bracketed paste mode for consistency with ProcessTerminal
         self._feed("\x1b[?2004h")
 
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
         """No-op for virtual terminal - no stdin to drain."""
 
-    async def stop(self, *, on_owner: bool = False) -> None:
+    async def stop(self) -> None:
         # Disable bracketed paste mode
         self._feed("\x1b[?2004l")
         self._input_handler = None
+        self._reply_handler = None
         self._resize_handler = None
 
     def _feed(self, data: str) -> None:
@@ -102,8 +108,8 @@ class VirtualTerminal:
         visible no later than a terminal write — the viewport, a recording
         subclass's write log (they log before delegating here), the frame
         counter, and TUI state published before its frame goes out (focus,
-        `_previous_screen`, the layout: `_do_render` publishes them, then the
-        frame is written). Registered first, then checked, so a write landing
+        the visible screen, the layout: `_compose_frame` publishes them, then
+        the frame is written). Registered first, then checked, so a write landing
         in between is not missed. Bounded: a condition that never holds
         returns False to the caller's assertion instead of hanging the suite.
         """
@@ -170,8 +176,15 @@ class VirtualTerminal:
 
     # Test-specific methods not in the Terminal protocol
 
+    def close(self) -> None:
+        pass
+
     async def send_input(self, data: str) -> None:
-        """Simulate keyboard input."""
+        """Simulate keyboard input: offered to ``on_reply`` first, as
+        ProcessTerminal's reader does, then awaited as its consumer does."""
+        on_reply = self._reply_handler
+        if on_reply is not None and on_reply(data):
+            return
         if self._input_handler is not None:
             await self._input_handler(data)
 
@@ -251,7 +264,7 @@ class VirtualTerminal:
         """Wait until the TUI has actually written a frame.
 
         This used to be `await tonio.sleep(0.05)` — a hope, not a wait. The
-        render loop is throttled to 16ms but runs as a separate task, so under
+        render loop runs as a separate task, so under
         load (the full suite, a busy CI runner) the frame could land after the
         sleep and the assertion would read a stale viewport. That produced a
         long-standing flake across the overlay/focus suites: different test
@@ -259,10 +272,13 @@ class VirtualTerminal:
         originally misdiagnosed as order-dependent.
 
         Pass `since` — the frame count captured *before* requesting the render
-        — to wait for that frame. Without it this waits for the TUI to settle
-        (`settle()`): most callers do not request a render at all, so waiting
-        for a frame that never comes would cost the timeout each time. (It
-        used to be a 50ms settle-sleep, the same hope in a smaller dose.)
+        — to wait for a frame after it, then for the TUI to settle: requests
+        made back to back can each get their own frame (there is no
+        throttle to merge them), so the first new frame need not cover them
+        all. Without `since` this only settles (`settle()`): most callers do
+        not request a render at all, so waiting for a frame that never comes
+        would cost the timeout each time. (It used to be a 50ms
+        settle-sleep, the same hope in a smaller dose.)
 
         `timeout` bounds the wait so a render that never lands fails the
         assertion it was blocking, rather than hanging the suite.
@@ -277,34 +293,100 @@ class VirtualTerminal:
             await self.settle()
             return
         await self.until(lambda: self._frames > since, timeout)
+        await self.settle()
 
-    async def settle(self) -> None:
+    async def settle(self, timeout: float = 5.0) -> None:
         """Wait until the TUI is render-idle: every render requested so far
         has been drawn, and every frame is on the wire.
 
-        Probes on the TUI's input owner, where render requests are scheduled
-        (`request_render` posts `_schedule_render`; FIFO puts the probe behind
-        every request made before it). A pending render is either queued
-        behind the probe or parked in the 16ms throttle timer; the probe folds
-        the latter into an immediate render — the same single frame with the
-        same coalescing, only the wait dropped — and the next probe queues
-        behind it. An idle probe flushes the frame writer. Work the TUI does
-        off its owner (a detached copy, a spawned query) is not covered:
-        wait for its own signal.
+        `_RenderWatch` counts the TUI's render requests and, per frame, the
+        requests made before the frame began: those it covers, since each
+        request's change comes before its send. Settled once a frame covers
+        every request made before this call (or the TUI stopped rendering).
+        Work the TUI does off the render loop (a detached copy, a spawned
+        query) is not covered: wait for its own signal. Bounded: a frame
+        that never comes fails the caller instead of hanging the suite.
         """
         tui = self._tui
         assert tui is not None, "settle() needs a TUI started on this terminal"
-        idle = tonio.Event()
+        watch = _RenderWatch.install(tui)
+        target = watch.requested()
+        while True:
+            frame_drawn = watch.pending(target)
+            if frame_drawn is None or not tui._render_active:
+                break
+            await frame_drawn.wait(timeout)
+            assert frame_drawn.is_set(), "no frame covered the render requests"
+        await tui._flush_frames()
 
-        async def probe() -> None:
-            if tui._render_scheduled and tui._render_active:
-                await tui._schedule_render(False, True)
-                return
-            await tui._flush_frames()
-            idle.set()
 
-        while not idle.is_set():
-            await tui.input_owner.run(probe)
+class _RenderWatch:
+    """Test-side bookkeeping for `VirtualTerminal.settle`, installed on a TUI
+    by wrapping its request sender (`_render_requests`, replaced at each
+    start) and its `_render_frame` (once)."""
+
+    _watches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._requested = 0
+        self._covered = 0
+        self._frame_drawn = tonio.Event()
+
+    @classmethod
+    def install(cls, tui) -> _RenderWatch:
+        watch = cls._watches.get(tui)
+        if watch is None:
+            watch = cls._watches[tui] = cls()
+            render_frame = tui._render_frame
+
+            async def counted_frame() -> None:
+                covered = watch.requested()
+                await render_frame()
+                watch.drawn(covered)
+
+            tui._render_frame = counted_frame
+        requests = tui._render_requests
+        if requests is not None and not isinstance(requests, _CountingSender):
+            tui._render_requests = _CountingSender(requests, watch)
+        return watch
+
+    def count_request(self) -> None:
+        with self._lock:
+            self._requested += 1
+
+    def requested(self) -> int:
+        with self._lock:
+            return self._requested
+
+    def drawn(self, covered: int) -> None:
+        with self._lock:
+            self._covered = max(self._covered, covered)
+            frame_drawn, self._frame_drawn = self._frame_drawn, tonio.Event()
+        frame_drawn.set()
+
+    def pending(self, target: int):
+        """None once `target` requests are covered, else the event the next
+        frame sets."""
+        with self._lock:
+            return None if self._covered >= target else self._frame_drawn
+
+
+class _CountingSender:
+    def __init__(self, sender, watch: _RenderWatch) -> None:
+        self._sender = sender
+        self._watch = watch
+
+    def send_nowait(self, message):
+        # Counted before the send: once the token is in the channel the loop
+        # can start the frame at once, and that frame must see this request
+        # in the count it covers. A send refused as closed needs nothing:
+        # `settle` returns once the TUI stops rendering.
+        self._watch.count_request()
+        return self._sender.send_nowait(message)
+
+    def close(self) -> None:
+        self._sender.close()
 
 
 class _Waiter:

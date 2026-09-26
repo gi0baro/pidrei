@@ -2,20 +2,23 @@
 
 pi's harness patches the `process.stdout.write`/`process.stdin.on` globals
 and reaches into the terminal's privates; here the same seams are instance
-attributes (`write_sync`, `_input_handler`, `_stdin_data_handler`).
+attributes (`write_sync`, `_enqueue_input`, `_stdin_data_handler`).
 pi drives the split-response timers with mocked clocks; here both (the
-StdinBuffer sequence flush and the negotiation flush) are input-owner timers,
-ticked by hand through `ManualOwnerTimers`.
+StdinBuffer sequence flush and the negotiation flush) are deadlines the
+input reader expires, on the clock terminal.py reads through its `_time`
+alias: `_ManualTimers.tick` advances that clock and expires them, as pi's
+mocked timers fire.
 """
 
 import os
 
 import pytest
 
+from pidrei_tui import terminal as terminal_module
 from pidrei_tui.keys import set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input, resolve_escape_timeout_ms
 
-from .tui_helpers import ManualOwnerTimers, env_var
+from .tui_helpers import env_var
 
 
 # resolve_escape_timeout_ms
@@ -65,23 +68,46 @@ def test_leaves_non_return_input_unchanged():
 # ProcessTerminal Kitty keyboard protocol negotiation
 
 
+class _ManualTimers:
+    """Stands in for terminal.py's `_time` while installed: `monotonic()`
+    holds still until `tick`, which then expires the reader's deadlines."""
+
+    def __init__(self, terminal):
+        self._terminal = terminal
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def tick(self, ms):
+        self.now += ms / 1000
+        self._terminal._expire_input_deadlines()
+
+
 class _NegotiationHarness:
     def __init__(self):
         self.terminal = ProcessTerminal()
         self.writes = []
         self.input = None
+        self.protocol_changes = []
         self._cleaned = False
         self.terminal.write_sync = self.writes.append
-        self.terminal._input_handler = self._on_input
-        self.timers = ManualOwnerTimers(self.terminal.input_owner)
+        # What the reader would queue for the input consumer.
+        self.terminal._enqueue_input = self._on_input
+        self.timers = _ManualTimers(self.terminal)
+        self._time = terminal_module._time
+        terminal_module._time = self.timers
         self.terminal._query_and_enable_kitty_protocol()
 
-    async def _on_input(self, data):
-        # Terminal awaits its input handler now, so the double must be async too.
-        self.input = data
+    def _on_input(self, data):
+        # The Kitty activation is queued in input order, as an item of its own.
+        if isinstance(data, str):
+            self.input = data
+        else:
+            self.protocol_changes.append(data)
 
     async def send(self, data):
-        await self.terminal._stdin_data_handler(data)
+        self.terminal._stdin_data_handler(data)
 
     async def cleanup(self):
         if self._cleaned:
@@ -90,6 +116,7 @@ class _NegotiationHarness:
         try:
             await self.terminal.stop()
         finally:
+            terminal_module._time = self._time
             set_kitty_protocol_active(False)
 
 
@@ -168,7 +195,7 @@ async def test_tracks_split_kitty_confirmation():
     harness = _NegotiationHarness()
     try:
         await harness.send("\x1b[?7")
-        await harness.timers.tick(50)
+        harness.timers.tick(50)
 
         assert harness.input is None
 
@@ -185,11 +212,11 @@ async def test_replays_buffered_csi_prefix_input_when_it_is_not_a_kitty_response
     harness = _NegotiationHarness()
     try:
         await harness.send("\x1b[")
-        await harness.timers.tick(50)
+        harness.timers.tick(50)
 
         assert harness.input is None
 
-        await harness.timers.tick(150)
+        harness.timers.tick(150)
 
         assert harness.input == "\x1b["
     finally:

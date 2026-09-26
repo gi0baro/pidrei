@@ -106,8 +106,11 @@ class ToolExecutionComponent(Container):
 
     def _get_render_context(self, last_component) -> dict:
         def invalidate() -> None:
-            self.invalidate()
-            self._ui.request_render()
+            # Renderers call this from their own tasks (the bash renderer's
+            # elapsed-time interval): the rebuild is UI state.
+            with self._ui.state_lock:
+                self.invalidate()
+                self._ui.request_render()
 
         return {
             "args": self._args,
@@ -197,9 +200,9 @@ class ToolExecutionComponent(Container):
                 if not converted:
                     return
 
-                def apply() -> None:
-                    # On the owner, ordered with `update_result`: ignore a conversion
-                    # that finishes after its image was replaced.
+                # Under the UI state lock, ordered with `update_result`: ignore
+                # a conversion that finishes after its image was replaced.
+                with self._ui.state_lock:
                     current_images = [c for c in (self._result or {}).get("content", []) if _block_type(c) == "image"]
                     current = current_images[index] if index < len(current_images) else None
                     if (
@@ -215,8 +218,6 @@ class ToolExecutionComponent(Container):
                     }
                     self._update_display()
                     self._ui.request_render()
-
-                self._ui.post_ui(apply)
 
             tonio.spawn.without_tracking(convert())
 
@@ -257,14 +258,12 @@ class ToolExecutionComponent(Container):
 
         return super().render(width)
 
-    async def handle_mouse(self, event: TuiMouseEvent):
+    def handle_mouse(self, event: TuiMouseEvent):
         if not self._has_renderer_definition() or self._get_render_shell() != "self":
-            return await super().handle_mouse(event)
+            return super().handle_mouse(event)
         if event.y <= 0 or event.y > self._self_render_height:
             return None
-        return await self._self_render_container.handle_mouse(
-            replace(event, y=event.y - 1, height=self._self_render_height)
-        )
+        return self._self_render_container.handle_mouse(replace(event, y=event.y - 1, height=self._self_render_height))
 
     def _update_display(self) -> None:
         if self._is_partial:

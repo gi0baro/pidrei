@@ -73,7 +73,7 @@ class UserMessageList:
 
         return lines
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Up arrow - go to previous (older) message, wrap to bottom when at top
         if kb.matches(key_data, "tui.select.up"):
@@ -127,7 +127,7 @@ class UserMessageSelectorComponent(Container):
         # Auto-cancel if no messages
         if not messages:
 
-            async def auto_cancel() -> None:
+            def auto_cancel() -> None:
                 on_cancel()
 
             Timeout(100, auto_cancel)

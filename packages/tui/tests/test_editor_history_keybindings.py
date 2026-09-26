@@ -27,20 +27,20 @@ async def test_browses_history_directly_without_first_moving_the_cursor():
     editor.add_to_history("older prompt")
     editor.add_to_history("newer\nmultiline prompt")
     editor.set_text("draft")
-    await editor.handle_input("\x1b[D")
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
 
-    await editor.handle_input("\x10")  # Ctrl+P
+    editor.handle_input("\x10")  # Ctrl+P
     assert editor.get_text() == "newer\nmultiline prompt"
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x10")  # Ctrl+P
+    editor.handle_input("\x10")  # Ctrl+P
     assert editor.get_text() == "older prompt"
 
-    await editor.handle_input("\x0e")  # Ctrl+N
+    editor.handle_input("\x0e")  # Ctrl+N
     assert editor.get_text() == "newer\nmultiline prompt"
     assert editor.get_cursor() == {"line": 1, "col": 16}
 
-    await editor.handle_input("\x0e")  # Ctrl+N
+    editor.handle_input("\x0e")  # Ctrl+N
     assert editor.get_text() == "draft"
     assert editor.get_cursor() == {"line": 0, "col": 3}

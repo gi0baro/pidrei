@@ -309,13 +309,13 @@ def render_visual_board(state: dict, max_width: int) -> list[str]:
 
 
 class TicTacToeComponent:
-    # The game state is shared with the tool, which runs off the UI owner:
+    # The game state is shared with the tool, which runs on its own coroutine:
     # every read-modify-write of it (and of `_version`) holds `guard`, the
     # extension's state lock — pi's run-to-completion blocks, made explicit.
     def __init__(self, tui, on_close, on_user_play, state: dict, guard) -> None:
         self._tui = tui
         self._on_close = on_close
-        self._on_user_play = on_user_play  # async (row, col) -> None
+        self._on_user_play = on_user_play  # (row, col) -> None
         self._guard = guard
         self._state = state
         self._cached_lines: list[str] = []
@@ -329,17 +329,17 @@ class TicTacToeComponent:
             self._version += 1
         self._tui.request_render()
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or data in ("q", "Q"):
             self._on_close()
             return
         with self._guard:
             outcome = self._apply_key(data)
-        # Outside the guard: the play awaits, and takes the guard itself.
+        # Outside the guard: the play takes the guard itself.
         if outcome == "close":
             self._on_close()
         elif outcome is not None:
-            await self._on_user_play(*outcome)
+            self._on_user_play(*outcome)
 
     def _apply_key(self, data: str):
         """The key's effect, under the guard: "close", the (row, col) to
@@ -592,7 +592,7 @@ class TicTacToe:
         self.pi = pi
         self.state = create_initial_state()
         # pi's handlers each run to completion on one thread; here the tool
-        # (off the UI owner), the board's input (on it) and session events
+        # (on its own coroutine), the board's input (the UI's input loop) and session events
         # interleave, so every read-modify-write of the state holds this.
         # Reentrant: the details snapshot and `update_state` are also taken
         # from inside locked sections.
@@ -649,25 +649,25 @@ class TicTacToe:
                 "currentTurn": self.state["currentTurn"],
             }
 
-    def emit_game_over_message(self) -> None:
-        """Sent once per game at end-of-game. The custom renderer paints the
-        banner; `content` is a plain-text fallback for any non-TUI consumer
-        and for the LLM (in case the message ends up in future context)."""
+    def game_over_message(self) -> dict:
+        """The message sent once per game at end-of-game, built under the
+        guard from the game that just ended (sent after it is released). The
+        custom renderer paints the banner; `content` is a plain-text fallback
+        for any non-TUI consumer and for the LLM (in case the message ends up
+        in future context)."""
         with self.state_guard:
             status = self.state["status"]
-        label = {
-            "win_X": "Player X (human) wins",
-            "win_O": "Player O (agent) wins",
-            "draw": "Draw",
-        }.get(status, "Game over")
-        self.pi.send_message(
-            {
+            label = {
+                "win_X": "Player X (human) wins",
+                "win_O": "Player O (agent) wins",
+                "draw": "Draw",
+            }.get(status, "Game over")
+            return {
                 "customType": GAME_OVER_MESSAGE_TYPE,
                 "content": f"Game over: {label}.",
                 "display": True,
                 "details": self.get_board_details(),
             }
-        )
 
     # -- message renderers ---------------------------------------------------
 
@@ -707,55 +707,53 @@ class TicTacToe:
             self.game_active = True
         await self.pi.set_session_name("Tic-Tac-Toe")
 
-        async def on_user_play(row: int, col: int) -> None:
-            # The play and everything read from it happen under the guard; the
-            # save and the message use what was captured there.
-            with self.state_guard:
-                state = self.state
-                # Re-checked: the key was read in an earlier locked step.
-                if state["status"] != "playing" or state["board"][row][col] != " ":
-                    return
-                state["board"][row][col] = state["userMark"]
-                state["status"] = check_win(state["board"])
-                if state["status"] == "playing":
-                    state["currentTurn"] = state["agentMark"]
-                component = self.component
-                if component is not None:
-                    component.update_state(state)
-                status = state["status"]
-                agent_row, agent_col = state["agentCursorRow"], state["agentCursorCol"]
-                board_ascii = board_to_ascii(state["board"], agent_row, agent_col)
-                save_details = self.get_board_details()
-                message_details = self.get_board_details()
-            await self.pi.append_entry(SAVE_TYPE, save_details)
-
-            if status == "playing":
-                # IMPORTANT: user play does NOT touch the agent cursor.
-                # The agent cursor is only reset after a successful agent play.
-                self.pi.send_message(
-                    {
-                        "customType": MOVE_MESSAGE_TYPE,
-                        "content": (
-                            f"Player X played at (row={row}, col={col}). It is now Player O's turn.\n\n"
-                            f"Board (your cursor marked with <>):\n{board_ascii}\n\n"
-                            f"Your cursor is at (row={agent_row}, col={agent_col}). "
-                            "Decide your target cell, then emit every move_* and the final play "
-                            "as separate tic_tac_toe tool calls in THIS response."
-                        ),
-                        "display": True,
-                        "details": message_details,
-                    },
-                    {"triggerTurn": True},
-                )
-            else:
-                self.emit_game_over_message()
-                self.game_active = False
-
-        async def factory(tui, _theme, _kb, done):
+        def factory(tui, _theme, _kb, done):
             def close() -> None:
                 self.component = None
                 self.game_active = False
                 done(None)
+
+            def on_user_play(row: int, col: int) -> None:
+                # The play and everything read from it happen under the guard,
+                # in the key (pi's play is synchronous), so the next key sees
+                # it; the save and the message use what was captured there,
+                # and the next key waits for them (pi's are synchronous too).
+                with self.state_guard:
+                    state = self.state
+                    # Re-checked: the key was read in an earlier locked step.
+                    if state["status"] != "playing" or state["board"][row][col] != " ":
+                        return
+                    state["board"][row][col] = state["userMark"]
+                    state["status"] = check_win(state["board"])
+                    if state["status"] == "playing":
+                        state["currentTurn"] = state["agentMark"]
+                    component = self.component
+                    if component is not None:
+                        component.update_state(state)
+                    status = state["status"]
+                    agent_row, agent_col = state["agentCursorRow"], state["agentCursorCol"]
+                    board_ascii = board_to_ascii(state["board"], agent_row, agent_col)
+                    save_details = self.get_board_details()
+                    message_details = self.get_board_details()
+                    game_over = None
+                    if status != "playing":
+                        self.game_active = False
+                        game_over = self.game_over_message()
+                tui.finish_before_next_input(
+                    tonio.spawn(
+                        self.finish_user_play(
+                            row,
+                            col,
+                            status,
+                            agent_row,
+                            agent_col,
+                            board_ascii,
+                            save_details,
+                            message_details,
+                            game_over,
+                        )
+                    )
+                )
 
             with self.state_guard:
                 component = TicTacToeComponent(tui, close, on_user_play, self.state, self.state_guard)
@@ -763,6 +761,33 @@ class TicTacToe:
             return component
 
         await ctx.ui.custom(factory)
+
+    async def finish_user_play(
+        self, row, col, status, agent_row, agent_col, board_ascii, save_details, message_details, game_over
+    ) -> None:
+        """A user play's session write and follow-up message, after the play."""
+        await self.pi.append_entry(SAVE_TYPE, save_details)
+
+        if status == "playing":
+            # IMPORTANT: user play does NOT touch the agent cursor.
+            # The agent cursor is only reset after a successful agent play.
+            self.pi.send_message(
+                {
+                    "customType": MOVE_MESSAGE_TYPE,
+                    "content": (
+                        f"Player X played at (row={row}, col={col}). It is now Player O's turn.\n\n"
+                        f"Board (your cursor marked with <>):\n{board_ascii}\n\n"
+                        f"Your cursor is at (row={agent_row}, col={agent_col}). "
+                        "Decide your target cell, then emit every move_* and the final play "
+                        "as separate tic_tac_toe tool calls in THIS response."
+                    ),
+                    "display": True,
+                    "details": message_details,
+                },
+                {"triggerTurn": True},
+            )
+        else:
+            self.pi.send_message(game_over)
 
     # -- tools ---------------------------------------------------------------
 
@@ -772,12 +797,13 @@ class TicTacToe:
         if delay > 0:
             await tonio.time.sleep(delay)
 
-        # The action runs under the guard (the board takes input on the UI
-        # owner meanwhile); the save and the result use what it captured.
+        # The action runs under the guard (the board takes input meanwhile);
+        # the save and the result use what it captured.
         with self.state_guard:
             result, error, game_over, save_details, result_details = self._apply_action(action)
-        if game_over:
-            self.emit_game_over_message()
+            game_over_message = self.game_over_message() if game_over else None
+        if game_over_message is not None:
+            self.pi.send_message(game_over_message)
         if save_details is not None:
             await self.pi.append_entry(SAVE_TYPE, save_details)
         if error is not None:
@@ -850,7 +876,7 @@ class TicTacToe:
         return result, None, False, self.get_board_details(), self.get_board_details()
 
     def _show_state(self, state: dict) -> None:
-        # Read once: the board's Esc (on the owner) clears the field.
+        # Read once: the board's Esc (in input handling) clears the field.
         component = self.component
         if component is not None:
             component.update_state(state)

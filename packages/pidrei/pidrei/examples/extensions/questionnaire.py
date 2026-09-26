@@ -159,14 +159,14 @@ class QuestionnaireComponent:
 
     # -- input ---------------------------------------------------------------
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         # Input mode: route to editor
         if self._input_mode:
             if matches_key(data, Key.escape):
                 self._leave_input_mode()
                 self._refresh()
                 return
-            await self._editor.handle_input(data)
+            self._editor.handle_input(data)
             self._refresh()
             return
 
@@ -360,7 +360,7 @@ async def extension(pi):
             for index, q in enumerate(params["questions"])
         ]
 
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return QuestionnaireComponent(tui, theme, questions, done)
 
         result = await ctx.ui.custom(factory)

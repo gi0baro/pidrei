@@ -5,6 +5,7 @@ Executes extension handlers and owns the hook bus AgentSession emits into.
 
 import copy
 import sys
+import threading
 import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ import tonio.colored as tonio
 
 from pidrei.core.diagnostics import ResourceDiagnostic
 from pidrei_ai.utils.transcript import get_current_system_message
+from pidrei_tui.tui import call_sync
 
 from ..system_prompt import BuildSystemPromptOptions, build_system_prompt, normalize_build_system_prompt_options
 from .types import (
@@ -147,21 +149,29 @@ def _is_user_bash_event_result(value: Any) -> bool:
     )
 
 
+async def _answer(value: Any) -> Any:
+    return value
+
+
 class _NoOpUIContext:
     """pi's noOpUIContext: UI surface used when no interactive UI is bound.
 
-    The theme system is Phase 4; `theme` is None here (pi returns the default
-    theme object).
+    `theme` is the global theme, as pi's is: `main` initialises it in every
+    mode, so handlers can style strings without checking `has_ui`.
     """
 
-    async def select(self, *args: Any, **kwargs: Any) -> None:
-        return None
+    def select(self, *args: Any, **kwargs: Any) -> Any:
+        return tonio.spawn(_answer(None))
 
-    async def confirm(self, *args: Any, **kwargs: Any) -> bool:
-        return False
+    def confirm(self, *args: Any, **kwargs: Any) -> Any:
+        return tonio.spawn(_answer(False))
 
-    async def input(self, *args: Any, **kwargs: Any) -> None:
-        return None
+    def input(self, *args: Any, **kwargs: Any) -> Any:
+        return tonio.spawn(_answer(None))
+
+    def apply(self, fn: Callable[[], Any]) -> Any:
+        # No UI state to guard: run it (coroutines refused, as in the TUI).
+        return call_sync(fn)
 
     def notify(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -199,20 +209,20 @@ class _NoOpUIContext:
     def write_terminal(self, *args: Any, **kwargs: Any) -> None:
         pass
 
-    async def custom(self, *args: Any, **kwargs: Any) -> None:
-        return None
+    def custom(self, *args: Any, **kwargs: Any) -> Any:
+        return tonio.spawn(_answer(None))
 
-    async def paste_to_editor(self, *args: Any, **kwargs: Any) -> None:
+    def paste_to_editor(self, *args: Any, **kwargs: Any) -> None:
         pass
 
     def set_editor_text(self, *args: Any, **kwargs: Any) -> None:
         pass
 
-    async def get_editor_text(self) -> str:
+    def get_editor_text(self) -> str:
         return ""
 
-    async def editor(self, *args: Any, **kwargs: Any) -> None:
-        return None
+    def editor(self, *args: Any, **kwargs: Any) -> Any:
+        return tonio.spawn(_answer(None))
 
     def add_autocomplete_provider(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -224,8 +234,11 @@ class _NoOpUIContext:
         return None
 
     @property
-    def theme(self) -> None:
-        return None
+    def theme(self) -> Any:
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
+        from ...modes.interactive.theme import theme
+
+        return theme
 
     async def get_all_themes(self) -> list[Any]:
         return []
@@ -258,20 +271,20 @@ class _UIPromptContext:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._ui, name)
 
-    async def select(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
-        return await self._runner._with_ui_prompt("select", title, lambda: self._ui.select(title, *args, **kwargs))
+    def select(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return self._runner._with_ui_prompt("select", title, lambda: self._ui.select(title, *args, **kwargs))
 
-    async def confirm(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
-        return await self._runner._with_ui_prompt("confirm", title, lambda: self._ui.confirm(title, *args, **kwargs))
+    def confirm(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return self._runner._with_ui_prompt("confirm", title, lambda: self._ui.confirm(title, *args, **kwargs))
 
-    async def input(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
-        return await self._runner._with_ui_prompt("input", title, lambda: self._ui.input(title, *args, **kwargs))
+    def input(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return self._runner._with_ui_prompt("input", title, lambda: self._ui.input(title, *args, **kwargs))
 
-    async def editor(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
-        return await self._runner._with_ui_prompt("editor", title, lambda: self._ui.editor(title, *args, **kwargs))
+    def editor(self, title: Any = None, *args: Any, **kwargs: Any) -> Any:
+        return self._runner._with_ui_prompt("editor", title, lambda: self._ui.editor(title, *args, **kwargs))
 
-    async def custom(self, *args: Any, **kwargs: Any) -> Any:
-        return await self._runner._with_ui_prompt("custom", None, lambda: self._ui.custom(*args, **kwargs))
+    def custom(self, *args: Any, **kwargs: Any) -> Any:
+        return self._runner._with_ui_prompt("custom", None, lambda: self._ui.custom(*args, **kwargs))
 
 
 @dataclass(slots=True)
@@ -491,6 +504,9 @@ class ExtensionRunner:
         self._error_listeners: list[Callable[[ExtensionError], None]] = []
         self._shortcut_diagnostics: list[ResourceDiagnostic] = []
         self._stale_message: str | None = None
+        # Prompts open and settle on any coroutine (a handler's, a key's): the
+        # depth and the active prompt change under the guard.
+        self._ui_prompt_guard = threading.Lock()
         self._ui_prompt_depth = 0
         self._active_ui_prompt: dict[str, Any] | None = None
 
@@ -643,36 +659,55 @@ class ExtensionRunner:
         self._ui_context = _UIPromptContext(self, ui_context) if ui_context is not None else _NO_OP_UI_CONTEXT
         self._mode = mode
 
-    async def _with_ui_prompt(self, kind: str, title: str | None, run: Callable[[], Any]) -> Any:
-        outer_prompt = self._ui_prompt_depth == 0
-        self._ui_prompt_depth += 1
-        if outer_prompt:
-            self._active_ui_prompt = {"kind": kind, "title": title}
-            self._emit_ui_prompt_event(
-                {"type": "ui_prompt_start", "reason": "ui_prompt", "kind": kind, **({"title": title} if title else {})}
-            )
+    def _with_ui_prompt(self, kind: str, title: str | None, run: Callable[[], Any]) -> Any:
+        """pi's withUIPrompt: the prompt opens (and mounts, through `run`) at
+        call time; returns the spawn handle of the wait for its answer, after
+        which the prompt ends (UI_ISLAND_DESIGN §10.2)."""
+        with self._ui_prompt_guard:
+            outer_prompt = self._ui_prompt_depth == 0
+            self._ui_prompt_depth += 1
+            if outer_prompt:
+                self._active_ui_prompt = {"kind": kind, "title": title}
+                self._emit_ui_prompt_event(
+                    {
+                        "type": "ui_prompt_start",
+                        "reason": "ui_prompt",
+                        "kind": kind,
+                        **({"title": title} if title else {}),
+                    }
+                )
 
         def finish() -> None:
-            self._ui_prompt_depth -= 1
-            if self._ui_prompt_depth > 0:
-                return
-            self._ui_prompt_depth = 0
+            with self._ui_prompt_guard:
+                self._ui_prompt_depth -= 1
+                if self._ui_prompt_depth > 0:
+                    return
+                self._ui_prompt_depth = 0
 
-            prompt = self._active_ui_prompt or {"kind": kind, "title": title}
-            self._active_ui_prompt = None
-            self._emit_ui_prompt_event(
-                {
-                    "type": "ui_prompt_end",
-                    "reason": "ui_prompt",
-                    "kind": prompt["kind"],
-                    **({"title": prompt["title"]} if prompt.get("title") else {}),
-                }
-            )
+                prompt = self._active_ui_prompt or {"kind": kind, "title": title}
+                self._active_ui_prompt = None
+                self._emit_ui_prompt_event(
+                    {
+                        "type": "ui_prompt_end",
+                        "reason": "ui_prompt",
+                        "kind": prompt["kind"],
+                        **({"title": prompt["title"]} if prompt.get("title") else {}),
+                    }
+                )
 
         try:
-            return await run()
-        finally:
+            answer = run()
+        except BaseException:
             finish()
+            raise
+
+        async def wait() -> Any:
+            try:
+                return await answer
+            finally:
+                finish()
+
+        return tonio.spawn(wait())
 
     def _emit_ui_prompt_event(self, event: dict[str, Any]) -> None:
         # pi queueMicrotask's the emit so a prompt call never awaits its own

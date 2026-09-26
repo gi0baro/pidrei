@@ -84,7 +84,7 @@ class ExtensionEditorComponent(Container):
         self._focused = value
         self._editor.focused = value
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         # Escape or Ctrl+C to cancel
         if kb.matches(key_data, "tui.select.cancel"):
@@ -93,23 +93,26 @@ class ExtensionEditorComponent(Container):
 
         # External editor (app keybinding)
         if self._keybindings.matches(key_data, "app.editor.external"):
-            # On the owner, as pi's handler before its first await: the text
-            # is read and the TUI stopped here; the edit (the user's editor,
-            # then the restart) runs on its own task.
+            # The text is read here, as pi's handler does; the TUI stops
+            # before the next key, and the edit (the user's editor, then the
+            # restart) runs on its own task.
             content = self._editor.get_text()
-            await self._tui.stop(on_owner=True)
-            tonio.spawn.without_tracking(self._edit_in_external_editor(content))
+            self._tui.finish_before_next_input(tonio.spawn(self._stop_for_external_editor(content)))
             return
 
         # Forward to editor
-        await self._editor.handle_input(key_data)
+        self._editor.handle_input(key_data)
+
+    async def _stop_for_external_editor(self, content: str) -> None:
+        # A completion may stop the UI (UI_ISLAND_DESIGN §4.4).
+        await self._tui.stop()
+        tonio.spawn.without_tracking(self._edit_in_external_editor(content))
 
     async def _edit_in_external_editor(self, content: str) -> None:
         try:
             result = await edit_in_external_editor({"command": self._external_editor_command, "content": content})
             if result["status"] == "complete":
-                # Posted: applied first thing once the owner is back.
-                self._tui.post_ui(functools.partial(self._editor.set_text, result["content"]))
+                self._tui.apply(functools.partial(self._editor.set_text, result["content"]))
         finally:
             await self._tui.start()
             self._tui.request_render(True)

@@ -13,7 +13,7 @@ from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
-from .session_selector_helpers import PostedUpdates, lists_sessions
+from .session_selector_helpers import InputCompletions, StateUpdates, lists_sessions
 
 
 def make_session(*, id, **overrides):
@@ -80,11 +80,11 @@ def _setup():
     set_keybindings(KeybindingsManager())
 
 
-def _make_selector(current_loader, all_loader, current_session_file_path=None):
+def _make_selector(current_loader, all_loader, current_session_file_path=None, completions=None):
     """pi's `await flushPromises()` after an async step becomes `await
-    posted.until(<the state that step produces>)`: see `PostedUpdates`."""
+    state_updates.until(<the state that step produces>)`: see `StateUpdates`."""
     keybindings = KeybindingsManager()
-    posted = PostedUpdates()
+    state_updates = StateUpdates()
     selector = SessionSelectorComponent(
         current_loader,
         all_loader,
@@ -94,9 +94,10 @@ def _make_selector(current_loader, all_loader, current_session_file_path=None):
         lambda: None,
         {"keybindings": keybindings},
         current_session_file_path,
-        post_ui=posted,
+        state_lock=state_updates,
+        finish_before_next_input=completions if completions is not None else InputCompletions(),
     )
-    return selector, posted
+    return selector, state_updates
 
 
 class TestSessionSelectorPathDeleteInteractions:
@@ -104,15 +105,15 @@ class TestSessionSelectorPathDeleteInteractions:
     async def test_does_not_treat_ctrl_backspace_as_delete_when_search_query_is_non_empty(self):
         sessions = [make_session(id="a"), make_session(id="b")]
 
-        selector, posted = _make_selector(_loader(sessions), _loader([]))
-        await posted.until(lists_sessions(selector, sessions))
+        selector, state_updates = _make_selector(_loader(sessions), _loader([]))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         session_list = selector.get_session_list()
         confirmation_changes = []
         session_list.on_delete_confirmation_change = lambda path: confirmation_changes.append(path)
 
-        await session_list.handle_input("a")
-        await session_list.handle_input(CTRL_BACKSPACE)
+        session_list.handle_input("a")
+        session_list.handle_input(CTRL_BACKSPACE)
 
         assert confirmation_changes == []
 
@@ -120,15 +121,15 @@ class TestSessionSelectorPathDeleteInteractions:
     async def test_enters_confirmation_mode_on_ctrl_d_even_with_a_non_empty_search_query(self):
         sessions = [make_session(id="a"), make_session(id="b")]
 
-        selector, posted = _make_selector(_loader(sessions), _loader([]))
-        await posted.until(lists_sessions(selector, sessions))
+        selector, state_updates = _make_selector(_loader(sessions), _loader([]))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         session_list = selector.get_session_list()
         confirmation_changes = []
         session_list.on_delete_confirmation_change = lambda path: confirmation_changes.append(path)
 
-        await session_list.handle_input("a")
-        await session_list.handle_input(CTRL_D)
+        session_list.handle_input("a")
+        session_list.handle_input(CTRL_D)
 
         assert confirmation_changes == [sessions[0].path]
 
@@ -136,8 +137,8 @@ class TestSessionSelectorPathDeleteInteractions:
     async def test_enters_confirmation_mode_on_ctrl_backspace_when_search_query_is_empty(self):
         sessions = [make_session(id="a"), make_session(id="b")]
 
-        selector, posted = _make_selector(_loader(sessions), _loader([]))
-        await posted.until(lists_sessions(selector, sessions))
+        selector, state_updates = _make_selector(_loader(sessions), _loader([]))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         session_list = selector.get_session_list()
         confirmation_changes = []
@@ -153,10 +154,10 @@ class TestSessionSelectorPathDeleteInteractions:
 
         session_list.on_delete_session = on_delete_session
 
-        await session_list.handle_input(CTRL_BACKSPACE)
+        session_list.handle_input(CTRL_BACKSPACE)
         assert confirmation_changes == [sessions[0].path]
 
-        await session_list.handle_input("\r")
+        session_list.handle_input("\r")
         # The delete handler runs on a detached task.
         await deleted.wait(5)
         assert confirmation_changes == [sessions[0].path, None]
@@ -174,16 +175,17 @@ class TestSessionSelectorPathDeleteInteractions:
             await all_ready.wait(None)
             return [make_session(id="all")]
 
-        selector, posted = _make_selector(_loader(current_sessions), all_loader)
-        await posted.until(lists_sessions(selector, current_sessions))
+        completions = InputCompletions()
+        selector, state_updates = _make_selector(_loader(current_sessions), all_loader, completions=completions)
+        await state_updates.until(lists_sessions(selector, current_sessions))
 
         session_list = selector.get_session_list()
-        await session_list.handle_input("\t")  # current -> all (starts async load)
-        await session_list.handle_input("\t")  # all -> current
+        await completions.press(session_list, "\t")  # current -> all (starts async load)
+        await completions.press(session_list, "\t")  # all -> current
 
         all_ready.set()
         # The "all" load has finished and been applied.
-        await posted.until(lambda: selector._all_load is None)
+        await state_updates.until(lambda: selector._all_load is None)
 
         assert all_load_calls == 1
         output = "\n".join(selector.render(120))
@@ -205,23 +207,24 @@ class TestSessionSelectorPathDeleteInteractions:
             await all_ready.wait(None)
             return all_sessions
 
-        selector, posted = _make_selector(_loader(current_sessions), all_loader)
-        await posted.until(lists_sessions(selector, current_sessions))
+        completions = InputCompletions()
+        selector, state_updates = _make_selector(_loader(current_sessions), all_loader, completions=completions)
+        await state_updates.until(lists_sessions(selector, current_sessions))
 
         session_list = selector.get_session_list()
-        await session_list.handle_input("\t")  # current -> all (starts async load)
-        await session_list.handle_input("\t")  # all -> current
-        await session_list.handle_input("\t")  # current -> all again while load pending
+        await completions.press(session_list, "\t")  # current -> all (starts async load)
+        await completions.press(session_list, "\t")  # all -> current
+        await completions.press(session_list, "\t")  # current -> all again while load pending
         # The loader's progress (partial "all" sessions) is shown, before or after
         # the third toggle depending on when the detached load reached it.
-        await posted.until(lists_sessions(selector, all_sessions))
+        await state_updates.until(lists_sessions(selector, all_sessions))
 
         assert all_load_calls == 1
         assert selector.get_session_list().get_selected_session_path() == all_sessions[0].path
         assert "Loading" in "\n".join(selector.render(120))
 
         all_ready.set()
-        await posted.until(lambda: selector._all_load is None)
+        await state_updates.until(lambda: selector._all_load is None)
 
     @pytest.mark.tonio
     async def test_threads_sessions_when_parent_and_child_paths_use_different_symlink_aliases(self, tmp_path):
@@ -243,8 +246,8 @@ class TestSessionSelectorPathDeleteInteractions:
             ),
         ]
 
-        selector, posted = _make_selector(_loader(sessions), _loader([]))
-        await posted.until(lists_sessions(selector, sessions))
+        selector, state_updates = _make_selector(_loader(sessions), _loader([]))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         output = strip_ansi("\n".join(selector.render(120)))
         assert "Parent" in output
@@ -262,8 +265,8 @@ class TestSessionSelectorPathDeleteInteractions:
         )
 
         sessions = [parent_one, parent_two, child_two]
-        selector, posted = _make_selector(_loader(sessions), _loader([]))
-        await posted.until(lists_sessions(selector, sessions))
+        selector, state_updates = _make_selector(_loader(sessions), _loader([]))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         output = strip_ansi("\n".join(selector.render(120)))
         parent_two_index = output.find("Parent two")
@@ -279,8 +282,8 @@ class TestSessionSelectorPathDeleteInteractions:
         paths = create_symlinked_session_paths(tmp_path)
 
         sessions = [make_session(id="parent", path=paths["parentAliasB"], name="Parent")]
-        selector, posted = _make_selector(_loader(sessions), _loader([]), paths["parentAliasA"])
-        await posted.until(lists_sessions(selector, sessions))
+        selector, state_updates = _make_selector(_loader(sessions), _loader([]), paths["parentAliasA"])
+        await state_updates.until(lists_sessions(selector, sessions))
 
         session_list = selector.get_session_list()
         confirmation_changes = []
@@ -293,7 +296,7 @@ class TestSessionSelectorPathDeleteInteractions:
 
         session_list.on_error = on_error
 
-        await session_list.handle_input(CTRL_D)
+        session_list.handle_input(CTRL_D)
 
         assert confirmation_changes == []
         assert error_message == "Cannot delete the currently active session"

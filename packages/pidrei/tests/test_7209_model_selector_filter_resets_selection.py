@@ -69,14 +69,14 @@ async def test_moves_selection_to_the_first_row_in_the_all_tab_when_typing_a_que
         assert selected_model_id(render(selector)) == "alpha-1"
 
         # Move selection down two rows to alpha-3.
-        await selector.handle_input(DOWN)
-        await selector.handle_input(DOWN)
+        selector.handle_input(DOWN)
+        selector.handle_input(DOWN)
         assert selected_model_id(render(selector)) == "alpha-3"
 
         # Type a query that matches the three alpha models. The selection must
         # move back to the top row (alpha-1), not stay clamped at index 2.
         for char in "alpha":
-            await selector.handle_input(char)
+            selector.handle_input(char)
 
         rendered = render(selector)
         assert selected_model_id(rendered) == "alpha-1"
@@ -115,7 +115,7 @@ async def test_moves_selection_to_the_first_row_in_the_scoped_tab_when_typing_a_
         # Type a query matching all three scoped models. Selection must move to
         # the top row (alpha-2), not stay clamped at index 2 (alpha-1).
         for char in "alpha":
-            await selector.handle_input(char)
+            selector.handle_input(char)
 
         assert selected_model_id(render(selector)) == "alpha-2"
     finally:

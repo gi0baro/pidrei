@@ -11,8 +11,9 @@ Start pidrei with this extension:
 import copy
 import random
 
+import tonio.colored as tonio
+
 from pidrei_tui import Key, is_key_release, matches_key, visible_width
-from pidrei_tui._timers import Interval
 
 
 GAME_WIDTH = 60
@@ -81,9 +82,9 @@ class SpaceInvadersComponent:
     def __init__(self, tui, on_close, on_save, saved_state: dict | None = None) -> None:
         self._tui = tui
         self._on_close = on_close
-        self._on_save = on_save  # async callback
+        self._on_save = on_save
         self._keys = {"left": False, "right": False, "fire": False}
-        self._interval: Interval | None = None
+        self._interval = None
         self._cached_lines: list[str] = []
         self._cached_width = 0
         self._version = 0
@@ -100,13 +101,14 @@ class SpaceInvadersComponent:
             self._start_game()
 
     def _start_game(self) -> None:
-        async def on_tick() -> None:
+        # `tui.interval` runs the tick under the UI state lock.
+        def on_tick() -> None:
             if not self._state["gameOver"] and not self._state["victory"]:
                 self._tick()
                 self._version += 1
                 self._tui.request_render()
 
-        self._interval = Interval(TICK_MS, on_tick)
+        self._interval = self._tui.interval(TICK_MS, on_tick)
 
     def _tick(self) -> None:
         state = self._state
@@ -248,7 +250,7 @@ class SpaceInvadersComponent:
 
         state["bullets"] = [b for b in state["bullets"] if not any(b is r for r in bullets_to_remove)]
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         state = self._state
         released = is_key_release(data)
 
@@ -265,14 +267,14 @@ class SpaceInvadersComponent:
         # ESC to pause and save
         if not released and matches_key(data, Key.escape):
             self.dispose()
-            await self._on_save(state)
+            self._on_save(state)
             self._on_close()
             return
 
         # Q to quit without saving
         if not released and data in ("q", "Q"):
             self.dispose()
-            await self._on_save(None)
+            self._on_save(None)
             self._on_close()
             return
 
@@ -293,7 +295,7 @@ class SpaceInvadersComponent:
             next_level = state["level"] + 1 if state["victory"] else 1
             self._state = create_initial_state(high_score, next_level)
             self._keys = {"left": False, "right": False, "fire": False}
-            await self._on_save(None)
+            self._on_save(None)
             self._version += 1
             self._tui.request_render()
 
@@ -424,11 +426,13 @@ async def extension(pi):
                 saved_state = copy.deepcopy(entry.get("data"))
                 break
 
-        async def on_save(state: dict | None) -> None:
-            # A copy for the same reason: the entry keeps what is passed.
-            await pi.append_entry(INVADERS_SAVE_TYPE, copy.deepcopy(state))
+        def factory(tui, _theme, _keybindings, done):
+            def on_save(state: dict | None) -> None:
+                # A copy for the same reason: the entry keeps what is passed.
+                # The next key waits for the write, as pi's synchronous
+                # appendEntry does, so saves land in key order.
+                tui.finish_before_next_input(tonio.spawn(pi.append_entry(INVADERS_SAVE_TYPE, copy.deepcopy(state))))
 
-        async def factory(tui, _theme, _keybindings, done):
             return SpaceInvadersComponent(tui, lambda: done(None), on_save, saved_state)
 
         await ctx.ui.custom(factory)

@@ -281,9 +281,9 @@ class AltScreenSearchComponent:
         self._hovered_navigation_direction = direction
         return True
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         previous = self._input.get_value()
-        await self._input.handle_input(data)
+        self._input.handle_input(data)
         query = self._input.get_value()
         if query != previous:
             self._on_query_change(query)

@@ -58,7 +58,7 @@ async def extension(pi):
 
             if bash_result.killed:
                 expansions.append(Expansion(command=command, output="", error="timed out"))
-                result = result.replace(f"!{{{command}}}", "[error: timed out]")
+                result = result.replace(f"!{{{command}}}", "[error: timed out]", 1)
                 continue
 
             if bash_result.code != 0 and bash_result.stderr:
@@ -66,7 +66,7 @@ async def extension(pi):
             else:
                 expansions.append(Expansion(command=command, output=trimmed))
 
-            result = result.replace(f"!{{{command}}}", trimmed)
+            result = result.replace(f"!{{{command}}}", trimmed, 1)
 
         # Show what was expanded (if UI available)
         if ctx.has_ui and expansions:

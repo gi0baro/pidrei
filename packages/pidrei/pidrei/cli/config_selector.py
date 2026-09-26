@@ -5,7 +5,6 @@ the rest of the TUI in Phase 4 and has had no caller until now — this is its
 only one, in pi too.
 """
 
-import sys
 from typing import Any
 
 import tonio.colored as tonio
@@ -14,6 +13,7 @@ from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen
 
 from ..modes.interactive.components.config_selector import ConfigSelectorComponent
 from ..modes.interactive.theme import init_theme, stop_theme_watcher
+from ..utils.fd_io import hard_exit
 
 
 async def select_config(
@@ -32,24 +32,32 @@ async def select_config(
     ui.set_clear_on_shrink(settings_manager.get_clear_on_shrink())
     closed = tonio.Event()
 
-    # `TUI.start`/`stop` are async; these callbacks are sync (the component
-    # invokes them directly), so the stop is spawned. Pre-existing bug found
-    # while auditing the render path: both coroutines used to be dropped
-    # outright, so the config TUI never started and never restored the terminal.
+    # The component calls these from its input handling. pi stops the UI in
+    # place there; here the stop is the key's completion, which the next key
+    # waits for (UI_ISLAND_DESIGN §4.4), and `closed` is set only once the
+    # terminal is restored.
+    finishing = False
+
     async def stop_and_close() -> None:
         await ui.stop()
-        ui.input_owner.close()
+        stop_theme_watcher()
+        ui.close()
+        closed.set()
 
     def finish() -> None:
-        if not closed.is_set():
-            tonio.spawn.without_tracking(stop_and_close())
-            stop_theme_watcher()
-            closed.set()
+        nonlocal finishing
+        if finishing:
+            return
+        finishing = True
+        ui.finish_before_next_input(tonio.spawn(stop_and_close()))
+
+    async def stop_and_exit() -> None:
+        await ui.stop()
+        stop_theme_watcher()
+        hard_exit(0)
 
     def exit_now() -> None:
-        tonio.spawn.without_tracking(ui.stop())
-        stop_theme_watcher()
-        sys.exit(0)
+        ui.finish_before_next_input(tonio.spawn(stop_and_exit()))
 
     selector = ConfigSelectorComponent(
         resolved_paths,

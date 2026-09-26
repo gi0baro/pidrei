@@ -14,7 +14,7 @@ from pidrei_tui.tui_main_screen import TuiMainScreen
 from pidrei_tui.utils import visible_width
 
 from .themes import default_editor_theme
-from .tui_helpers import ManualOwnerTimers
+from .tui_helpers import ManualTimers
 from .virtual_terminal import VirtualTerminal
 
 
@@ -25,37 +25,31 @@ def strip_ansi(line: str) -> str:
     return _ANSI_RE.sub("", line)
 
 
-class SpawnTracker:
-    """Wraps an owner's `spawn` so a test can wait for everything it spawned.
+class RequestTracker:
+    """The autocomplete requests one TUI's editors started, so a test can wait
+    until every one has finished, its apply included (`settle`), instead of
+    sleeping or polling a condition that holds before the apply is done."""
 
-    The editor spawns each autocomplete request; the owner is never started in
-    these tests, so the request applies its result inline on its own task
-    (`OwnerTask.run`'s headless contract) while the test task keeps typing. A
-    test waits on `settle()` — every spawned task finished, apply included —
-    instead of sleeping or polling a condition that holds before the apply is
-    done."""
-
-    def __init__(self, owner) -> None:
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pending: list[tonio.Event] = []
         self.count = 0
-        spawn = owner.spawn
 
-        def tracked_spawn(coro) -> None:
-            done = tonio.Event()
-            with self._lock:
-                self._pending.append(done)
-                self.count += 1
+    def track(self, request):
+        """Registered now, when the editor spawns `request`: `settle` cannot
+        miss one that has not started running yet."""
+        done = tonio.Event()
+        with self._lock:
+            self._pending.append(done)
+            self.count += 1
 
-            async def run() -> None:
-                try:
-                    await coro
-                finally:
-                    done.set()
+        async def run() -> None:
+            try:
+                await request
+            finally:
+                done.set()
 
-            spawn(run())
-
-        owner.spawn = tracked_spawn
+        return run()
 
     async def settle(self) -> None:
         while True:
@@ -64,14 +58,28 @@ class SpawnTracker:
                     return
                 done = self._pending.pop(0)
             await done.wait(5)
-            assert done.is_set(), "a spawned task never finished"
+            assert done.is_set(), "an autocomplete request never finished"
+
+
+@pytest.fixture(autouse=True)
+def _track_autocomplete_requests(monkeypatch):
+    """Route every `Editor._run_autocomplete_request` through its TUI's
+    `RequestTracker` (set by `create_test_tui`)."""
+    run = Editor._run_autocomplete_request
+
+    def tracked(self, *args, **kwargs):
+        request = run(self, *args, **kwargs)
+        tracker = getattr(self._tui, "requests", None)
+        return request if tracker is None else tracker.track(request)
+
+    monkeypatch.setattr(Editor, "_run_autocomplete_request", tracked)
 
 
 def create_test_tui(cols=80, rows=24):
-    """Create a TUI with a virtual terminal for testing; `tui.spawned` tracks
-    what its input owner spawns."""
+    """Create a TUI with a virtual terminal for testing; `tui.requests`
+    tracks the autocomplete requests its editors start."""
     tui = TuiMainScreen(VirtualTerminal(cols, rows))
-    tui.spawned = SpawnTracker(tui.input_owner)
+    tui.requests = RequestTracker()
     return tui
 
 
@@ -101,7 +109,7 @@ class MockProvider:
 
 def flush_autocomplete(editor) -> Awaitable[None]:
     """Wait until every autocomplete request the editor spawned has finished."""
-    return editor._tui.spawned.settle()
+    return editor._tui.requests.settle()
 
 
 # Prompt history navigation
@@ -111,7 +119,7 @@ def flush_autocomplete(editor) -> Awaitable[None]:
 async def test_does_nothing_on_up_arrow_when_history_is_empty():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\x1b[A")  # Up arrow
+    editor.handle_input("\x1b[A")  # Up arrow
 
     assert editor.get_text() == ""
 
@@ -123,7 +131,7 @@ async def test_shows_most_recent_history_entry_on_up_arrow_when_editor_is_empty(
     editor.add_to_history("first prompt")
     editor.add_to_history("second prompt")
 
-    await editor.handle_input("\x1b[A")  # Up arrow
+    editor.handle_input("\x1b[A")  # Up arrow
 
     assert editor.get_text() == "second prompt"
 
@@ -136,16 +144,16 @@ async def test_cycles_through_history_entries_on_repeated_up_arrow():
     editor.add_to_history("second")
     editor.add_to_history("third")
 
-    await editor.handle_input("\x1b[A")  # Up - shows "third"
+    editor.handle_input("\x1b[A")  # Up - shows "third"
     assert editor.get_text() == "third"
 
-    await editor.handle_input("\x1b[A")  # Up - shows "second"
+    editor.handle_input("\x1b[A")  # Up - shows "second"
     assert editor.get_text() == "second"
 
-    await editor.handle_input("\x1b[A")  # Up - shows "first"
+    editor.handle_input("\x1b[A")  # Up - shows "first"
     assert editor.get_text() == "first"
 
-    await editor.handle_input("\x1b[A")  # Up - stays at "first" (oldest)
+    editor.handle_input("\x1b[A")  # Up - stays at "first" (oldest)
     assert editor.get_text() == "first"
 
 
@@ -155,17 +163,17 @@ async def test_jumps_to_start_before_entering_history_from_a_non_empty_draft():
 
     editor.add_to_history("prompt")
     editor.set_text("draft")
-    await editor.handle_input("\x1b[D")
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
 
-    await editor.handle_input("\x1b[A")  # Up - jumps to start before history browsing
+    editor.handle_input("\x1b[A")  # Up - jumps to start before history browsing
     assert editor.get_text() == "draft"
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1b[A")  # Up at start - shows "prompt"
+    editor.handle_input("\x1b[A")  # Up at start - shows "prompt"
     assert editor.get_text() == "prompt"
 
-    await editor.handle_input("\x1b[B")  # Down - restores draft
+    editor.handle_input("\x1b[B")  # Down - restores draft
     assert editor.get_text() == "draft"
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
@@ -180,19 +188,19 @@ async def test_navigates_forward_through_history_with_down_arrow():
     editor.set_text("draft")
 
     # Go to oldest
-    await editor.handle_input("\x1b[A")  # start of draft
-    await editor.handle_input("\x1b[A")  # third
-    await editor.handle_input("\x1b[A")  # second
-    await editor.handle_input("\x1b[A")  # first
+    editor.handle_input("\x1b[A")  # start of draft
+    editor.handle_input("\x1b[A")  # third
+    editor.handle_input("\x1b[A")  # second
+    editor.handle_input("\x1b[A")  # first
 
     # Navigate back
-    await editor.handle_input("\x1b[B")  # second
+    editor.handle_input("\x1b[B")  # second
     assert editor.get_text() == "second"
 
-    await editor.handle_input("\x1b[B")  # third
+    editor.handle_input("\x1b[B")  # third
     assert editor.get_text() == "third"
 
-    await editor.handle_input("\x1b[B")  # draft
+    editor.handle_input("\x1b[B")  # draft
     assert editor.get_text() == "draft"
 
 
@@ -202,8 +210,8 @@ async def test_exits_history_mode_when_typing_a_character():
 
     editor.add_to_history("old prompt")
 
-    await editor.handle_input("\x1b[A")  # Up - shows "old prompt"
-    await editor.handle_input("x")  # Type a character - exits history mode
+    editor.handle_input("\x1b[A")  # Up - shows "old prompt"
+    editor.handle_input("x")  # Type a character - exits history mode
 
     assert editor.get_text() == "xold prompt"
 
@@ -215,11 +223,11 @@ async def test_exits_history_mode_on_set_text():
     editor.add_to_history("first")
     editor.add_to_history("second")
 
-    await editor.handle_input("\x1b[A")  # Up - shows "second"
+    editor.handle_input("\x1b[A")  # Up - shows "second"
     editor.set_text("")  # External clear
 
     # Up should start fresh from most recent
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_text() == "second"
 
 
@@ -231,11 +239,11 @@ async def test_does_not_add_empty_strings_to_history():
     editor.add_to_history("   ")
     editor.add_to_history("valid")
 
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_text() == "valid"
 
     # Should not have more entries
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_text() == "valid"
 
 
@@ -247,10 +255,10 @@ async def test_does_not_add_consecutive_duplicates_to_history():
     editor.add_to_history("same")
     editor.add_to_history("same")
 
-    await editor.handle_input("\x1b[A")  # "same"
+    editor.handle_input("\x1b[A")  # "same"
     assert editor.get_text() == "same"
 
-    await editor.handle_input("\x1b[A")  # stays at "same" (only one entry)
+    editor.handle_input("\x1b[A")  # stays at "same" (only one entry)
     assert editor.get_text() == "same"
 
 
@@ -262,13 +270,13 @@ async def test_allows_non_consecutive_duplicates_in_history():
     editor.add_to_history("second")
     editor.add_to_history("first")  # Not consecutive, should be added
 
-    await editor.handle_input("\x1b[A")  # "first"
+    editor.handle_input("\x1b[A")  # "first"
     assert editor.get_text() == "first"
 
-    await editor.handle_input("\x1b[A")  # "second"
+    editor.handle_input("\x1b[A")  # "second"
     assert editor.get_text() == "second"
 
-    await editor.handle_input("\x1b[A")  # "first" (older one)
+    editor.handle_input("\x1b[A")  # "first" (older one)
     assert editor.get_text() == "first"
 
 
@@ -280,10 +288,10 @@ async def test_uses_cursor_movement_instead_of_history_when_editor_has_content()
     editor.set_text("line1\nline2")
 
     # Cursor is at end of line2, Up should move to line1
-    await editor.handle_input("\x1b[A")  # Up - cursor movement
+    editor.handle_input("\x1b[A")  # Up - cursor movement
 
     # Insert character to verify cursor position
-    await editor.handle_input("X")
+    editor.handle_input("X")
 
     # X should be inserted in line1, not replace with history
     assert editor.get_text() == "line1X\nline2"
@@ -299,13 +307,13 @@ async def test_limits_history_to_100_entries():
 
     # Navigate to oldest
     for _ in range(100):
-        await editor.handle_input("\x1b[A")
+        editor.handle_input("\x1b[A")
 
     # Should be at entry 5 (oldest kept), not entry 0
     assert editor.get_text() == "prompt 5"
 
     # One more Up should not change anything
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_text() == "prompt 5"
 
 
@@ -316,11 +324,11 @@ async def test_places_cursor_at_start_after_browsing_history_upward():
     editor.add_to_history("older entry")
     editor.add_to_history("line1\nline2\nline3")
 
-    await editor.handle_input("\x1b[A")  # Up - shows multi-line entry at start
+    editor.handle_input("\x1b[A")  # Up - shows multi-line entry at start
     assert editor.get_text() == "line1\nline2\nline3"
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1b[A")  # Up again - immediately navigates to older entry
+    editor.handle_input("\x1b[A")  # Up again - immediately navigates to older entry
     assert editor.get_text() == "older entry"
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
@@ -333,15 +341,15 @@ async def test_places_cursor_at_end_after_browsing_history_downward():
     editor.add_to_history("line1\nline2\nline3")
     editor.add_to_history("newer entry")
 
-    await editor.handle_input("\x1b[A")  # newer entry
-    await editor.handle_input("\x1b[A")  # multi-line entry
-    await editor.handle_input("\x1b[A")  # older entry
+    editor.handle_input("\x1b[A")  # newer entry
+    editor.handle_input("\x1b[A")  # multi-line entry
+    editor.handle_input("\x1b[A")  # older entry
 
-    await editor.handle_input("\x1b[B")  # Down - shows multi-line entry at end
+    editor.handle_input("\x1b[B")  # Down - shows multi-line entry at end
     assert editor.get_text() == "line1\nline2\nline3"
     assert editor.get_cursor() == {"line": 2, "col": 5}
 
-    await editor.handle_input("\x1b[B")  # Down again - immediately navigates to newer entry
+    editor.handle_input("\x1b[B")  # Down again - immediately navigates to newer entry
     assert editor.get_text() == "newer entry"
 
 
@@ -351,14 +359,14 @@ async def test_allows_opposite_direction_cursor_movement_within_multi_line_histo
 
     editor.add_to_history("line1\nline2\nline3")
 
-    await editor.handle_input("\x1b[A")  # Up - shows entry at start
+    editor.handle_input("\x1b[A")  # Up - shows entry at start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1b[B")  # Down - cursor moves to line2
+    editor.handle_input("\x1b[B")  # Down - cursor moves to line2
     assert editor.get_text() == "line1\nline2\nline3"
     assert editor.get_cursor() == {"line": 1, "col": 0}
 
-    await editor.handle_input("\x1b[A")  # Up - cursor moves back to line1
+    editor.handle_input("\x1b[A")  # Up - cursor moves back to line1
     assert editor.get_text() == "line1\nline2\nline3"
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
@@ -372,13 +380,13 @@ async def test_returns_cursor_position():
 
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("a")
-    await editor.handle_input("b")
-    await editor.handle_input("c")
+    editor.handle_input("a")
+    editor.handle_input("b")
+    editor.handle_input("c")
 
     assert editor.get_cursor() == {"line": 0, "col": 3}
 
-    await editor.handle_input("\x1b[D")  # Left
+    editor.handle_input("\x1b[D")  # Left
     assert editor.get_cursor() == {"line": 0, "col": 2}
 
 
@@ -400,7 +408,7 @@ def test_returns_lines_as_a_defensive_copy():
 async def test_inserts_backslash_immediately_no_buffering():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\\")
+    editor.handle_input("\\")
 
     # Backslash should be visible immediately, not buffered
     assert editor.get_text() == "\\"
@@ -410,8 +418,8 @@ async def test_inserts_backslash_immediately_no_buffering():
 async def test_converts_standalone_backslash_to_newline_on_enter():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\\")
-    await editor.handle_input("\r")
+    editor.handle_input("\\")
+    editor.handle_input("\r")
 
     assert editor.get_text() == "\n"
 
@@ -420,8 +428,8 @@ async def test_converts_standalone_backslash_to_newline_on_enter():
 async def test_inserts_backslash_normally_when_followed_by_other_characters():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\\")
-    await editor.handle_input("x")
+    editor.handle_input("\\")
+    editor.handle_input("x")
 
     assert editor.get_text() == "\\x"
 
@@ -433,9 +441,9 @@ async def test_does_not_trigger_newline_when_backslash_is_not_immediately_before
 
     editor.on_submit = lambda text: submitted.append(text)
 
-    await editor.handle_input("\\")
-    await editor.handle_input("x")
-    await editor.handle_input("\r")
+    editor.handle_input("\\")
+    editor.handle_input("x")
+    editor.handle_input("\r")
 
     # Should submit, not insert newline (backslash not at cursor)
     assert len(submitted) == 1
@@ -445,12 +453,12 @@ async def test_does_not_trigger_newline_when_backslash_is_not_immediately_before
 async def test_only_removes_one_backslash_when_multiple_are_present():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\\")
-    await editor.handle_input("\\")
-    await editor.handle_input("\\")
+    editor.handle_input("\\")
+    editor.handle_input("\\")
+    editor.handle_input("\\")
     assert editor.get_text() == "\\\\\\"
 
-    await editor.handle_input("\r")
+    editor.handle_input("\r")
     # Only the last backslash is removed, newline inserted
     assert editor.get_text() == "\\\\\n"
 
@@ -462,7 +470,7 @@ async def test_only_removes_one_backslash_when_multiple_are_present():
 async def test_ignores_printable_csi_u_sequences_with_unsupported_modifiers():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\x1b[99;9u")
+    editor.handle_input("\x1b[99;9u")
 
     assert editor.get_text() == ""
 
@@ -471,7 +479,7 @@ async def test_ignores_printable_csi_u_sequences_with_unsupported_modifiers():
 async def test_inserts_shifted_csi_u_letters_as_text():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\x1b[69;2u")
+    editor.handle_input("\x1b[69;2u")
 
     assert editor.get_text() == "E"
 
@@ -480,7 +488,7 @@ async def test_inserts_shifted_csi_u_letters_as_text():
 async def test_inserts_shifted_xterm_modify_other_keys_letters_as_text():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\x1b[27;2;69~")
+    editor.handle_input("\x1b[27;2;69~")
 
     assert editor.get_text() == "E"
 
@@ -492,17 +500,17 @@ async def test_inserts_shifted_xterm_modify_other_keys_letters_as_text():
 async def test_inserts_mixed_ascii_umlauts_and_emojis_as_literal_text():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("H")
-    await editor.handle_input("e")
-    await editor.handle_input("l")
-    await editor.handle_input("l")
-    await editor.handle_input("o")
-    await editor.handle_input(" ")
-    await editor.handle_input("ä")
-    await editor.handle_input("ö")
-    await editor.handle_input("ü")
-    await editor.handle_input(" ")
-    await editor.handle_input("😀")
+    editor.handle_input("H")
+    editor.handle_input("e")
+    editor.handle_input("l")
+    editor.handle_input("l")
+    editor.handle_input("o")
+    editor.handle_input(" ")
+    editor.handle_input("ä")
+    editor.handle_input("ö")
+    editor.handle_input("ü")
+    editor.handle_input(" ")
+    editor.handle_input("😀")
 
     assert editor.get_text() == "Hello äöü 😀"
 
@@ -511,12 +519,12 @@ async def test_inserts_mixed_ascii_umlauts_and_emojis_as_literal_text():
 async def test_deletes_single_code_unit_unicode_characters_umlauts_with_backspace():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("ä")
-    await editor.handle_input("ö")
-    await editor.handle_input("ü")
+    editor.handle_input("ä")
+    editor.handle_input("ö")
+    editor.handle_input("ü")
 
     # Delete the last character (ü)
-    await editor.handle_input("\x7f")  # Backspace
+    editor.handle_input("\x7f")  # Backspace
 
     assert editor.get_text() == "äö"
 
@@ -525,11 +533,11 @@ async def test_deletes_single_code_unit_unicode_characters_umlauts_with_backspac
 async def test_deletes_multi_code_unit_emojis_with_single_backspace():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("😀")
-    await editor.handle_input("👍")
+    editor.handle_input("😀")
+    editor.handle_input("👍")
 
     # Delete the last emoji (👍) - single backspace deletes whole grapheme cluster
-    await editor.handle_input("\x7f")  # Backspace
+    editor.handle_input("\x7f")  # Backspace
 
     assert editor.get_text() == "😀"
 
@@ -538,16 +546,16 @@ async def test_deletes_multi_code_unit_emojis_with_single_backspace():
 async def test_inserts_characters_at_the_correct_position_after_cursor_movement_over_umlauts():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("ä")
-    await editor.handle_input("ö")
-    await editor.handle_input("ü")
+    editor.handle_input("ä")
+    editor.handle_input("ö")
+    editor.handle_input("ü")
 
     # Move cursor left twice
-    await editor.handle_input("\x1b[D")  # Left arrow
-    await editor.handle_input("\x1b[D")  # Left arrow
+    editor.handle_input("\x1b[D")  # Left arrow
+    editor.handle_input("\x1b[D")  # Left arrow
 
     # Insert 'x' in the middle
-    await editor.handle_input("x")
+    editor.handle_input("x")
 
     assert editor.get_text() == "äxöü"
 
@@ -556,18 +564,18 @@ async def test_inserts_characters_at_the_correct_position_after_cursor_movement_
 async def test_moves_cursor_across_multi_code_unit_emojis_with_single_arrow_key():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("😀")
-    await editor.handle_input("👍")
-    await editor.handle_input("🎉")
+    editor.handle_input("😀")
+    editor.handle_input("👍")
+    editor.handle_input("🎉")
 
     # Move cursor left over last emoji (🎉) - single arrow moves over whole grapheme
-    await editor.handle_input("\x1b[D")  # Left arrow
+    editor.handle_input("\x1b[D")  # Left arrow
 
     # Move cursor left over second emoji (👍)
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
 
     # Insert 'x' between first and second emoji
-    await editor.handle_input("x")
+    editor.handle_input("x")
 
     assert editor.get_text() == "😀x👍🎉"
 
@@ -576,13 +584,13 @@ async def test_moves_cursor_across_multi_code_unit_emojis_with_single_arrow_key(
 async def test_preserves_umlauts_across_line_breaks():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("ä")
-    await editor.handle_input("ö")
-    await editor.handle_input("ü")
-    await editor.handle_input("\n")  # new line
-    await editor.handle_input("Ä")
-    await editor.handle_input("Ö")
-    await editor.handle_input("Ü")
+    editor.handle_input("ä")
+    editor.handle_input("ö")
+    editor.handle_input("ü")
+    editor.handle_input("\n")  # new line
+    editor.handle_input("Ä")
+    editor.handle_input("Ö")
+    editor.handle_input("Ü")
 
     assert editor.get_text() == "äöü\nÄÖÜ"
 
@@ -600,10 +608,10 @@ def test_replaces_the_entire_document_with_unicode_text_via_set_text_paste_simul
 async def test_moves_cursor_to_document_start_on_ctrl_a_and_inserts_at_the_beginning():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("a")
-    await editor.handle_input("b")
-    await editor.handle_input("\x01")  # Ctrl+A (move to start)
-    await editor.handle_input("x")  # Insert at start
+    editor.handle_input("a")
+    editor.handle_input("b")
+    editor.handle_input("\x01")  # Ctrl+A (move to start)
+    editor.handle_input("x")  # Insert at start
 
     assert editor.get_text() == "xab"
 
@@ -614,48 +622,48 @@ async def test_deletes_words_correctly_with_ctrl_w_and_alt_backspace():
 
     # Basic word deletion
     editor.set_text("foo bar baz")
-    await editor.handle_input("\x17")  # Ctrl+W
+    editor.handle_input("\x17")  # Ctrl+W
     assert editor.get_text() == "foo bar "
 
     # Trailing whitespace
     editor.set_text("foo bar   ")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "foo "
 
     # Punctuation run
     editor.set_text("foo bar...")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "foo bar"
 
     # ASCII punctuation inside Intl word-like segments preserves old boundaries
     editor.set_text("foo.bar")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "foo."
 
     editor.set_text("foo:bar")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "foo:"
 
     # Delete across multiple lines
     editor.set_text("line one\nline two")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "line one\nline "
 
     # Delete empty line (merge)
     editor.set_text("line one\n")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "line one"
 
     # Grapheme safety (emoji as a word)
     editor.set_text("foo 😀😀 bar")
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "foo 😀😀 "
-    await editor.handle_input("\x17")
+    editor.handle_input("\x17")
     assert editor.get_text() == "foo "
 
     # Alt+Backspace
     editor.set_text("foo bar")
-    await editor.handle_input("\x1b\x7f")  # Alt+Backspace (legacy)
+    editor.handle_input("\x1b\x7f")  # Alt+Backspace (legacy)
     assert editor.get_text() == "foo "
 
 
@@ -667,50 +675,50 @@ async def test_navigates_words_correctly_with_ctrl_left_right():
     # Cursor at end
 
     # Move left over baz
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 11}  # after '...'
 
     # Move left over punctuation
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 7}  # after 'bar'
 
     # Move left over bar
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 4}  # after 'foo '
 
     # Move right over bar
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 7}  # at end of 'bar'
 
     # Move right over punctuation run
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 10}  # after '...'
 
     # Move right skips space and lands after baz
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 14}  # end of line
 
     # Test forward from start with leading whitespace
     editor.set_text("   foo bar")
-    await editor.handle_input("\x01")  # Ctrl+A to go to start
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x01")  # Ctrl+A to go to start
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 6}  # after 'foo'
 
     # ASCII punctuation inside Intl word-like segments preserves old boundaries
     editor.set_text("foo.bar baz")
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left over baz
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left over baz
     assert editor.get_cursor() == {"line": 0, "col": 8}
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left over bar
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left over bar
     assert editor.get_cursor() == {"line": 0, "col": 4}
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left over .
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left over .
     assert editor.get_cursor() == {"line": 0, "col": 3}
 
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right over foo
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right over foo
     assert editor.get_cursor() == {"line": 0, "col": 3}
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right over .
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right over .
     assert editor.get_cursor() == {"line": 0, "col": 4}
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right over bar
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right over bar
     assert editor.get_cursor() == {"line": 0, "col": 7}
 
 
@@ -723,27 +731,27 @@ async def test_stops_at_fullwidth_chinese_punctuation_issue_4972():
     # Cursor at end (col 5)
 
     # Move left over 世界
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 3}  # after ，
 
     # Move left over ，
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 2}  # after 你好
 
     # Move left over 你好
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 0}  # start
 
     # Move right over 你好
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 2}  # after 你好
 
     # Move right over ，
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 3}  # after ，
 
     # Move right over 世界
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 5}  # end
 
 
@@ -756,39 +764,39 @@ async def test_handles_mixed_cjk_and_ascii_word_movement():
     # Cursor at end (col 15)
 
     # Move left over 世界
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 13}  # after 'world'
 
     # Move left over world
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 8}  # after ，
 
     # Move left over ，
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 7}  # after 你好
 
     # Move left over 你好
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 5}  # after 'hello'
 
     # Move left over hello
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 0}  # start
 
     # Forward from start
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 5}  # after 'hello'
 
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 7}  # after 你好
 
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 8}  # after ，
 
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 13}  # after 'world'
 
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 0, "col": 15}  # end
 
 
@@ -803,7 +811,7 @@ async def test_centers_scroll_indicators_on_wide_borders():
 
     editor.render(width)
     for _ in range(10):
-        await editor.handle_input("\x1b[A")
+        editor.handle_input("\x1b[A")
 
     lines = editor.render(width)
     assert strip_ansi(lines[0]) == f"{'─' * 15} ↑ 9 more {'─' * 15}"
@@ -820,7 +828,7 @@ async def test_keeps_truncated_scroll_indicators_within_width_and_preserves_thei
     # Render once to initialize wrapping, then move the cursor so content remains above and below the viewport.
     editor.render(width)
     for _ in range(10):
-        await editor.handle_input("\x1b[A")
+        editor.handle_input("\x1b[A")
 
     lines = editor.render(width)
     top_border = lines[0]
@@ -949,14 +957,14 @@ async def test_shows_cursor_at_end_of_line_before_wrap_wraps_on_next_char():
 
         # Type 9 chars → fills layoutWidth exactly, cursor at end on same line
         for ch in "aaaaaaaaa":
-            await editor.handle_input(ch)
+            editor.handle_input(ch)
         lines = editor.render(width + padding_x)
         content_lines = lines[1:-1]
         assert len(content_lines) == 1, "Should be 1 content line before wrap"
         assert content_lines[0].endswith("\x1b[7m \x1b[0m"), "Cursor should be at end of line"
 
         # Type 1 more → text wraps to second line
-        await editor.handle_input("a")
+        editor.handle_input("a")
         lines = editor.render(width + padding_x)
         content_lines = lines[1:-1]
         assert len(content_lines) == 2, "Should wrap to 2 content lines"
@@ -1280,12 +1288,12 @@ async def test_ctrl_w_saves_deleted_text_to_kill_ring_and_ctrl_y_yanks_it():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("foo bar baz")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "baz"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "baz"
     assert editor.get_text() == "foo bar "
 
     # Move to beginning and yank
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "bazfoo bar "
 
 
@@ -1295,18 +1303,18 @@ async def test_ctrl_u_saves_deleted_text_to_kill_ring():
 
     editor.set_text("hello world")
     # Move cursor to middle
-    await editor.handle_input("\x01")  # Ctrl+A (start)
-    await editor.handle_input("\x1b[C")  # Right 6 times
-    await editor.handle_input("\x1b[C")
-    await editor.handle_input("\x1b[C")
-    await editor.handle_input("\x1b[C")
-    await editor.handle_input("\x1b[C")
-    await editor.handle_input("\x1b[C")  # After "hello "
+    editor.handle_input("\x01")  # Ctrl+A (start)
+    editor.handle_input("\x1b[C")  # Right 6 times
+    editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")  # After "hello "
 
-    await editor.handle_input("\x15")  # Ctrl+U - deletes "hello "
+    editor.handle_input("\x15")  # Ctrl+U - deletes "hello "
     assert editor.get_text() == "world"
 
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "hello world"
 
 
@@ -1315,12 +1323,12 @@ async def test_ctrl_k_saves_deleted_text_to_kill_ring():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A (start)
-    await editor.handle_input("\x0b")  # Ctrl+K - deletes "hello world"
+    editor.handle_input("\x01")  # Ctrl+A (start)
+    editor.handle_input("\x0b")  # Ctrl+K - deletes "hello world"
 
     assert editor.get_text() == ""
 
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "hello world"
 
 
@@ -1329,7 +1337,7 @@ async def test_ctrl_y_does_nothing_when_kill_ring_is_empty():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("test")
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "test"
 
 
@@ -1339,25 +1347,25 @@ async def test_alt_y_cycles_through_kill_ring_after_ctrl_y():
 
     # Create kill ring with multiple entries
     editor.set_text("first")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "first"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "first"
     editor.set_text("second")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "second"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "second"
     editor.set_text("third")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "third"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "third"
 
     # Kill ring now has: [first, second, third]
     assert editor.get_text() == ""
 
-    await editor.handle_input("\x19")  # Ctrl+Y - yanks "third" (most recent)
+    editor.handle_input("\x19")  # Ctrl+Y - yanks "third" (most recent)
     assert editor.get_text() == "third"
 
-    await editor.handle_input("\x1by")  # Alt+Y - cycles to "second"
+    editor.handle_input("\x1by")  # Alt+Y - cycles to "second"
     assert editor.get_text() == "second"
 
-    await editor.handle_input("\x1by")  # Alt+Y - cycles to "first"
+    editor.handle_input("\x1by")  # Alt+Y - cycles to "first"
     assert editor.get_text() == "first"
 
-    await editor.handle_input("\x1by")  # Alt+Y - cycles back to "third"
+    editor.handle_input("\x1by")  # Alt+Y - cycles back to "third"
     assert editor.get_text() == "third"
 
 
@@ -1366,15 +1374,15 @@ async def test_alt_y_does_nothing_if_not_preceded_by_yank():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("test")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "test"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "test"
     editor.set_text("other")
 
     # Type something to break the yank chain
-    await editor.handle_input("x")
+    editor.handle_input("x")
     assert editor.get_text() == "otherx"
 
     # Alt+Y should do nothing
-    await editor.handle_input("\x1by")  # Alt+Y
+    editor.handle_input("\x1by")  # Alt+Y
     assert editor.get_text() == "otherx"
 
 
@@ -1383,12 +1391,12 @@ async def test_alt_y_does_nothing_if_kill_ring_has_at_most_1_entry():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("only")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "only"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "only"
 
-    await editor.handle_input("\x19")  # Ctrl+Y - yanks "only"
+    editor.handle_input("\x19")  # Ctrl+Y - yanks "only"
     assert editor.get_text() == "only"
 
-    await editor.handle_input("\x1by")  # Alt+Y - should do nothing (only 1 entry)
+    editor.handle_input("\x1by")  # Alt+Y - should do nothing (only 1 entry)
     assert editor.get_text() == "only"
 
 
@@ -1397,14 +1405,14 @@ async def test_consecutive_ctrl_w_accumulates_into_one_kill_ring_entry():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("one two three")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "three"
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "two " (prepended)
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "one " (prepended)
+    editor.handle_input("\x17")  # Ctrl+W - deletes "three"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "two " (prepended)
+    editor.handle_input("\x17")  # Ctrl+W - deletes "one " (prepended)
 
     assert editor.get_text() == ""
 
     # Should be one combined entry
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "one two three"
 
 
@@ -1417,27 +1425,27 @@ async def test_ctrl_u_accumulates_multiline_deletes_including_newlines():
     # Cursor is at end of line3 (line 2, col 5)
 
     # Delete "line3"
-    await editor.handle_input("\x15")  # Ctrl+U
+    editor.handle_input("\x15")  # Ctrl+U
     assert editor.get_text() == "line1\nline2\n"
 
     # Delete newline (at start of empty line 2, merges with line1)
-    await editor.handle_input("\x15")  # Ctrl+U
+    editor.handle_input("\x15")  # Ctrl+U
     assert editor.get_text() == "line1\nline2"
 
     # Delete "line2"
-    await editor.handle_input("\x15")  # Ctrl+U
+    editor.handle_input("\x15")  # Ctrl+U
     assert editor.get_text() == "line1\n"
 
     # Delete newline
-    await editor.handle_input("\x15")  # Ctrl+U
+    editor.handle_input("\x15")  # Ctrl+U
     assert editor.get_text() == "line1"
 
     # Delete "line1"
-    await editor.handle_input("\x15")  # Ctrl+U
+    editor.handle_input("\x15")  # Ctrl+U
     assert editor.get_text() == ""
 
     # All deletions accumulated into one entry: "line1\nline2\nline3"
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "line1\nline2\nline3"
 
 
@@ -1447,15 +1455,15 @@ async def test_backward_deletions_prepend_forward_deletions_append_during_accumu
 
     editor.set_text("prefix|suffix")
     # Position cursor at |
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(6):
-        await editor.handle_input("\x1b[C")  # Move right 6 times
+        editor.handle_input("\x1b[C")  # Move right 6 times
 
-    await editor.handle_input("\x0b")  # Ctrl+K - deletes "suffix" (forward)
-    await editor.handle_input("\x0b")  # Ctrl+K - deletes "|" (forward, appended)
+    editor.handle_input("\x0b")  # Ctrl+K - deletes "suffix" (forward)
+    editor.handle_input("\x0b")  # Ctrl+K - deletes "|" (forward, appended)
     assert editor.get_text() == "prefix"
 
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "prefix|suffix"
 
 
@@ -1465,21 +1473,21 @@ async def test_non_delete_actions_break_kill_accumulation():
 
     # Delete "baz", then type "x" to break accumulation, then delete "x"
     editor.set_text("foo bar baz")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "baz"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "baz"
     assert editor.get_text() == "foo bar "
 
-    await editor.handle_input("x")  # Typing breaks accumulation
+    editor.handle_input("x")  # Typing breaks accumulation
     assert editor.get_text() == "foo bar x"
 
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "x" (separate entry, not accumulated)
+    editor.handle_input("\x17")  # Ctrl+W - deletes "x" (separate entry, not accumulated)
     assert editor.get_text() == "foo bar "
 
     # Yank most recent - should be "x", not "xbaz"
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "foo bar x"
 
     # Cycle to previous - should be "baz" (separate entry)
-    await editor.handle_input("\x1by")  # Alt+Y
+    editor.handle_input("\x1by")  # Alt+Y
     assert editor.get_text() == "foo bar baz"
 
 
@@ -1488,18 +1496,18 @@ async def test_non_yank_actions_break_alt_y_chain():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("first")
-    await editor.handle_input("\x17")  # Ctrl+W
+    editor.handle_input("\x17")  # Ctrl+W
     editor.set_text("second")
-    await editor.handle_input("\x17")  # Ctrl+W
+    editor.handle_input("\x17")  # Ctrl+W
     editor.set_text("")
 
-    await editor.handle_input("\x19")  # Ctrl+Y - yanks "second"
+    editor.handle_input("\x19")  # Ctrl+Y - yanks "second"
     assert editor.get_text() == "second"
 
-    await editor.handle_input("x")  # Type breaks yank chain
+    editor.handle_input("x")  # Type breaks yank chain
     assert editor.get_text() == "secondx"
 
-    await editor.handle_input("\x1by")  # Alt+Y - should do nothing
+    editor.handle_input("\x1by")  # Alt+Y - should do nothing
     assert editor.get_text() == "secondx"
 
 
@@ -1508,27 +1516,27 @@ async def test_kill_ring_rotation_persists_after_cycling():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("first")
-    await editor.handle_input("\x17")  # deletes "first"
+    editor.handle_input("\x17")  # deletes "first"
     editor.set_text("second")
-    await editor.handle_input("\x17")  # deletes "second"
+    editor.handle_input("\x17")  # deletes "second"
     editor.set_text("third")
-    await editor.handle_input("\x17")  # deletes "third"
+    editor.handle_input("\x17")  # deletes "third"
     editor.set_text("")
 
     # Ring: [first, second, third]
 
-    await editor.handle_input("\x19")  # Ctrl+Y - yanks "third"
-    await editor.handle_input("\x1by")  # Alt+Y - cycles to "second", ring rotates
+    editor.handle_input("\x19")  # Ctrl+Y - yanks "third"
+    editor.handle_input("\x1by")  # Alt+Y - cycles to "second", ring rotates
 
     # Now ring is: [third, first, second]
     assert editor.get_text() == "second"
 
     # Do something else
-    await editor.handle_input("x")
+    editor.handle_input("x")
     editor.set_text("")
 
     # New yank should get "second" (now at end after rotation)
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "second"
 
 
@@ -1538,23 +1546,23 @@ async def test_consecutive_deletions_across_lines_coalesce_into_one_entry():
 
     # "1\n2\n3" with cursor at end, delete everything with Ctrl+W
     editor.set_text("1\n2\n3")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "3"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "3"
     assert editor.get_text() == "1\n2\n"
 
-    await editor.handle_input("\x17")  # Ctrl+W - deletes newline (merge with prev line)
+    editor.handle_input("\x17")  # Ctrl+W - deletes newline (merge with prev line)
     assert editor.get_text() == "1\n2"
 
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "2"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "2"
     assert editor.get_text() == "1\n"
 
-    await editor.handle_input("\x17")  # Ctrl+W - deletes newline
+    editor.handle_input("\x17")  # Ctrl+W - deletes newline
     assert editor.get_text() == "1"
 
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "1"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "1"
     assert editor.get_text() == ""
 
     # All deletions should have accumulated into one entry
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "1\n2\n3"
 
 
@@ -1564,25 +1572,25 @@ async def test_ctrl_k_at_line_end_deletes_newline_and_coalesces():
 
     # "ab" on line 1, "cd" on line 2, cursor at end of line 1
     editor.set_text("")
-    await editor.handle_input("a")
-    await editor.handle_input("b")
-    await editor.handle_input("\n")
-    await editor.handle_input("c")
-    await editor.handle_input("d")
+    editor.handle_input("a")
+    editor.handle_input("b")
+    editor.handle_input("\n")
+    editor.handle_input("c")
+    editor.handle_input("d")
     # Move to end of first line
-    await editor.handle_input("\x1b[A")  # Up arrow
-    await editor.handle_input("\x05")  # Ctrl+E - end of line
+    editor.handle_input("\x1b[A")  # Up arrow
+    editor.handle_input("\x05")  # Ctrl+E - end of line
 
     # Now at end of "ab", Ctrl+K should delete newline (merge with "cd")
-    await editor.handle_input("\x0b")  # Ctrl+K - deletes newline
+    editor.handle_input("\x0b")  # Ctrl+K - deletes newline
     assert editor.get_text() == "abcd"
 
     # Continue deleting
-    await editor.handle_input("\x0b")  # Ctrl+K - deletes "cd"
+    editor.handle_input("\x0b")  # Ctrl+K - deletes "cd"
     assert editor.get_text() == "ab"
 
     # Both deletions should accumulate
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "ab\ncd"
 
 
@@ -1591,15 +1599,15 @@ async def test_handles_yank_in_middle_of_text():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("word")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "word"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "word"
     editor.set_text("hello world")
 
     # Move to middle (after "hello ")
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(6):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "hello wordworld"
 
 
@@ -1609,24 +1617,24 @@ async def test_handles_yank_pop_in_middle_of_text():
 
     # Create two kill ring entries
     editor.set_text("FIRST")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "FIRST"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "FIRST"
     editor.set_text("SECOND")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "SECOND"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "SECOND"
 
     # Ring: ["FIRST", "SECOND"]
 
     # Set up "hello world" and position cursor after "hello "
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start of line
+    editor.handle_input("\x01")  # Ctrl+A - go to start of line
     for _ in range(6):
-        await editor.handle_input("\x1b[C")  # Move right 6
+        editor.handle_input("\x1b[C")  # Move right 6
 
     # Yank "SECOND" in the middle
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "hello SECONDworld"
 
     # Yank-pop replaces "SECOND" with "FIRST"
-    await editor.handle_input("\x1by")  # Alt+Y
+    editor.handle_input("\x1by")  # Alt+Y
     assert editor.get_text() == "hello FIRSTworld"
 
 
@@ -1636,27 +1644,27 @@ async def test_multiline_yank_and_yank_pop_in_middle_of_text():
 
     # Create single-line entry
     editor.set_text("SINGLE")
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "SINGLE"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "SINGLE"
 
     # Create multiline entry via consecutive Ctrl+U
     editor.set_text("A\nB")
-    await editor.handle_input("\x15")  # Ctrl+U - deletes "B"
-    await editor.handle_input("\x15")  # Ctrl+U - deletes newline
-    await editor.handle_input("\x15")  # Ctrl+U - deletes "A"
+    editor.handle_input("\x15")  # Ctrl+U - deletes "B"
+    editor.handle_input("\x15")  # Ctrl+U - deletes newline
+    editor.handle_input("\x15")  # Ctrl+U - deletes "A"
     # Ring: ["SINGLE", "A\nB"]
 
     # Insert in middle of "hello world"
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(6):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
     # Yank multiline "A\nB"
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "hello A\nBworld"
 
     # Yank-pop replaces with "SINGLE"
-    await editor.handle_input("\x1by")  # Alt+Y
+    editor.handle_input("\x1by")  # Alt+Y
     assert editor.get_text() == "hello SINGLEworld"
 
 
@@ -1665,16 +1673,16 @@ async def test_alt_d_deletes_word_forward_and_saves_to_kill_ring():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world test")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
 
-    await editor.handle_input("\x1bd")  # Alt+D - deletes "hello"
+    editor.handle_input("\x1bd")  # Alt+D - deletes "hello"
     assert editor.get_text() == " world test"
 
-    await editor.handle_input("\x1bd")  # Alt+D - deletes " world" (skips whitespace, then word)
+    editor.handle_input("\x1bd")  # Alt+D - deletes " world" (skips whitespace, then word)
     assert editor.get_text() == " test"
 
     # Yank should get accumulated text
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "hello world test"
 
 
@@ -1684,13 +1692,13 @@ async def test_alt_d_at_end_of_line_deletes_newline():
 
     editor.set_text("line1\nline2")
     # Move to start of document, then to end of first line
-    await editor.handle_input("\x1b[A")  # Up arrow - go to first line
-    await editor.handle_input("\x05")  # Ctrl+E - end of line
+    editor.handle_input("\x1b[A")  # Up arrow - go to first line
+    editor.handle_input("\x05")  # Ctrl+E - end of line
 
-    await editor.handle_input("\x1bd")  # Alt+D - deletes newline (merges lines)
+    editor.handle_input("\x1bd")  # Alt+D - deletes newline (merges lines)
     assert editor.get_text() == "line1line2"
 
-    await editor.handle_input("\x19")  # Ctrl+Y
+    editor.handle_input("\x19")  # Ctrl+Y
     assert editor.get_text() == "line1\nline2"
 
 
@@ -1701,7 +1709,7 @@ async def test_alt_d_at_end_of_line_deletes_newline():
 async def test_does_nothing_when_undo_stack_is_empty():
     editor = Editor(create_test_tui(), default_editor_theme)
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
 
@@ -1710,15 +1718,15 @@ async def test_coalesces_consecutive_word_characters_into_one_undo_unit():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello world":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello world"
 
     # Undo removes " world" (space captured state before it, so we restore to "hello")
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello"
 
     # Undo removes "hello"
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
 
@@ -1727,16 +1735,16 @@ async def test_undoes_spaces_one_at_a_time():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello  ":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello  "
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo) - removes second " "
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo) - removes second " "
     assert editor.get_text() == "hello "
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo) - removes first " "
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo) - removes first " "
     assert editor.get_text() == "hello"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo) - removes "hello"
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo) - removes "hello"
     assert editor.get_text() == ""
 
 
@@ -1745,19 +1753,19 @@ async def test_undoes_newlines_and_signals_next_word_to_capture_state():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello":
-        await editor.handle_input(ch)
-    await editor.handle_input("\n")
+        editor.handle_input(ch)
+    editor.handle_input("\n")
     for ch in "world":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello\nworld"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello\n"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
 
@@ -1766,11 +1774,11 @@ async def test_undoes_backspace():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello":
-        await editor.handle_input(ch)
-    await editor.handle_input("\x7f")  # Backspace
+        editor.handle_input(ch)
+    editor.handle_input("\x7f")  # Backspace
     assert editor.get_text() == "hell"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello"
 
 
@@ -1779,13 +1787,13 @@ async def test_undoes_forward_delete():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello":
-        await editor.handle_input(ch)
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
-    await editor.handle_input("\x1b[C")  # Right arrow
-    await editor.handle_input("\x1b[3~")  # Delete key
+        editor.handle_input(ch)
+    editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x1b[C")  # Right arrow
+    editor.handle_input("\x1b[3~")  # Delete key
     assert editor.get_text() == "hllo"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello"
 
 
@@ -1794,13 +1802,13 @@ async def test_undoes_ctrl_w_delete_word_backward():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello world":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello world"
 
-    await editor.handle_input("\x17")  # Ctrl+W
+    editor.handle_input("\x17")  # Ctrl+W
     assert editor.get_text() == "hello "
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
 
@@ -1809,18 +1817,18 @@ async def test_undoes_ctrl_k_delete_to_line_end():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello world":
-        await editor.handle_input(ch)
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+        editor.handle_input(ch)
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     for _ in range(6):
-        await editor.handle_input("\x1b[C")  # Move right 6 times
+        editor.handle_input("\x1b[C")  # Move right 6 times
 
-    await editor.handle_input("\x0b")  # Ctrl+K
+    editor.handle_input("\x0b")  # Ctrl+K
     assert editor.get_text() == "hello "
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
-    await editor.handle_input("|")
+    editor.handle_input("|")
     assert editor.get_text() == "hello |world"
 
 
@@ -1829,15 +1837,15 @@ async def test_undoes_ctrl_u_delete_to_line_start():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello world":
-        await editor.handle_input(ch)
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+        editor.handle_input(ch)
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     for _ in range(6):
-        await editor.handle_input("\x1b[C")  # Move right 6 times
+        editor.handle_input("\x1b[C")  # Move right 6 times
 
-    await editor.handle_input("\x15")  # Ctrl+U
+    editor.handle_input("\x15")  # Ctrl+U
     assert editor.get_text() == "world"
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
 
@@ -1846,12 +1854,12 @@ async def test_undoes_yank():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello ":
-        await editor.handle_input(ch)
-    await editor.handle_input("\x17")  # Ctrl+W - delete "hello "
-    await editor.handle_input("\x19")  # Ctrl+Y - yank
+        editor.handle_input(ch)
+    editor.handle_input("\x17")  # Ctrl+W - delete "hello "
+    editor.handle_input("\x19")  # Ctrl+Y - yank
     assert editor.get_text() == "hello "
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
 
@@ -1860,19 +1868,19 @@ async def test_undoes_single_line_paste_atomically():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     for _ in range(5):
-        await editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
+        editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
 
     # Simulate bracketed paste of "beep boop"
-    await editor.handle_input("\x1b[200~beep boop\x1b[201~")
+    editor.handle_input("\x1b[200~beep boop\x1b[201~")
     assert editor.get_text() == "hellobeep boop world"
 
     # Single undo should restore entire pre-paste state
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
-    await editor.handle_input("|")
+    editor.handle_input("|")
     assert editor.get_text() == "hello| world"
 
 
@@ -1885,7 +1893,7 @@ async def test_does_not_trigger_autocomplete_during_single_line_paste():
         suggestion_calls.append(1)
 
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
-    await editor.handle_input("\x1b[200~look at @node_modules/react/index.js please\x1b[201~")
+    editor.handle_input("\x1b[200~look at @node_modules/react/index.js please\x1b[201~")
 
     assert editor.get_text() == "look at @node_modules/react/index.js please"
     assert len(suggestion_calls) == 0
@@ -1899,7 +1907,7 @@ async def test_decodes_csi_u_ctrl_letter_sequences_inside_bracketed_paste_tmux_p
     # tmux popups with extended-keys-format=csi-u re-encode \n in pastes as
     # \x1b[106;5u (Ctrl+J). Without decoding, the per-char filter strips ESC
     # and leaks "[106;5u" between lines. See issue #3599.
-    await editor.handle_input("\x1b[200~line1\x1b[106;5uline2\x1b[106;5uline3\x1b[201~")
+    editor.handle_input("\x1b[200~line1\x1b[106;5uline2\x1b[106;5uline3\x1b[201~")
     assert editor.get_text() == "line1\nline2\nline3"
 
 
@@ -1908,19 +1916,19 @@ async def test_undoes_multi_line_paste_atomically():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     for _ in range(5):
-        await editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
+        editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
 
     # Simulate bracketed paste of multi-line text
-    await editor.handle_input("\x1b[200~line1\nline2\nline3\x1b[201~")
+    editor.handle_input("\x1b[200~line1\nline2\nline3\x1b[201~")
     assert editor.get_text() == "helloline1\nline2\nline3 world"
 
     # Single undo should restore entire pre-paste state
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
-    await editor.handle_input("|")
+    editor.handle_input("|")
     assert editor.get_text() == "hello| world"
 
 
@@ -1929,19 +1937,19 @@ async def test_undoes_insert_text_at_cursor_atomically():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     for _ in range(5):
-        await editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
+        editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
 
     # Programmatic insertion (e.g., clipboard image path)
     editor.insert_text_at_cursor("/tmp/image.png")
     assert editor.get_text() == "hello/tmp/image.png world"
 
     # Single undo should restore entire pre-insert state
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
-    await editor.handle_input("|")
+    editor.handle_input("|")
     assert editor.get_text() == "hello| world"
 
 
@@ -1950,9 +1958,9 @@ async def test_insert_text_at_cursor_handles_multiline_text():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     for _ in range(5):
-        await editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
+        editor.handle_input("\x1b[C")  # Move right 5 (after "hello", before space)
 
     # Insert multiline text
     editor.insert_text_at_cursor("line1\nline2\nline3")
@@ -1964,7 +1972,7 @@ async def test_insert_text_at_cursor_handles_multiline_text():
     assert cursor["col"] == 5  # len("line3")
 
     # Single undo should restore entire pre-insert state
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
 
@@ -1978,7 +1986,7 @@ async def test_insert_text_at_cursor_normalizes_crlf_and_cr_line_endings():
     editor.insert_text_at_cursor("a\r\nb\r\nc")
     assert editor.get_text() == "a\nb\nc"
 
-    await editor.handle_input("\x1b[45;5u")  # Undo
+    editor.handle_input("\x1b[45;5u")  # Undo
     assert editor.get_text() == ""
 
     # Insert text with CR only
@@ -1991,13 +1999,13 @@ async def test_undoes_set_text_to_empty_string():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello world":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello world"
 
     editor.set_text("")
     assert editor.get_text() == ""
 
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
 
@@ -2008,14 +2016,14 @@ async def test_clears_undo_stack_on_submit():
     editor.on_submit = lambda text: submitted.append(text)
 
     for ch in "hello":
-        await editor.handle_input(ch)
-    await editor.handle_input("\r")  # Enter - submit
+        editor.handle_input(ch)
+    editor.handle_input("\r")  # Enter - submit
 
     assert submitted == ["hello"]
     assert editor.get_text() == ""
 
     # Undo should do nothing - stack was cleared
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
 
@@ -2029,23 +2037,23 @@ async def test_exits_history_browsing_mode_on_undo():
 
     # Type "world"
     for ch in "world":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "world"
 
     # Ctrl+W - delete word
-    await editor.handle_input("\x17")  # Ctrl+W
+    editor.handle_input("\x17")  # Ctrl+W
     assert editor.get_text() == ""
 
     # Press Up - enter history browsing, shows "hello"
-    await editor.handle_input("\x1b[A")  # Up arrow
+    editor.handle_input("\x1b[A")  # Up arrow
     assert editor.get_text() == "hello"
 
     # Undo should restore to "" (state before entering history browsing)
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
     # Undo again should restore to "world" (state before Ctrl+W)
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "world"
 
 
@@ -2060,27 +2068,27 @@ async def test_undo_restores_to_pre_history_state_even_after_multiple_history_na
 
     # Type something
     for ch in "current":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "current"
 
     # Clear editor
-    await editor.handle_input("\x17")  # Ctrl+W
+    editor.handle_input("\x17")  # Ctrl+W
     assert editor.get_text() == ""
 
     # Navigate through history multiple times
-    await editor.handle_input("\x1b[A")  # Up - "third"
+    editor.handle_input("\x1b[A")  # Up - "third"
     assert editor.get_text() == "third"
-    await editor.handle_input("\x1b[A")  # Up - "second"
+    editor.handle_input("\x1b[A")  # Up - "second"
     assert editor.get_text() == "second"
-    await editor.handle_input("\x1b[A")  # Up - "first"
+    editor.handle_input("\x1b[A")  # Up - "first"
     assert editor.get_text() == "first"
 
     # Undo should go back to "" (state before we started browsing), not intermediate states
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == ""
 
     # Another undo goes back to "current"
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "current"
 
 
@@ -2089,24 +2097,24 @@ async def test_cursor_movement_starts_new_undo_unit():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello world":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello world"
 
     # Move cursor left 5 (to after "hello ")
     for _ in range(5):
-        await editor.handle_input("\x1b[D")
+        editor.handle_input("\x1b[D")
 
     # Type "lol" in the middle
-    await editor.handle_input("l")
-    await editor.handle_input("o")
-    await editor.handle_input("l")
+    editor.handle_input("l")
+    editor.handle_input("o")
+    editor.handle_input("l")
     assert editor.get_text() == "hello lolworld"
 
     # Undo should restore to "hello world" (before inserting "lol")
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello world"
 
-    await editor.handle_input("|")
+    editor.handle_input("|")
     assert editor.get_text() == "hello |world"
 
 
@@ -2115,22 +2123,22 @@ async def test_no_op_delete_operations_do_not_push_undo_snapshots():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     for ch in "hello":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "hello"
 
     # Delete word on empty - multiple times (should be no-ops)
-    await editor.handle_input("\x17")  # Ctrl+W - deletes "hello"
+    editor.handle_input("\x17")  # Ctrl+W - deletes "hello"
     assert editor.get_text() == ""
-    await editor.handle_input("\x17")  # Ctrl+W - no-op (nothing to delete)
-    await editor.handle_input("\x17")  # Ctrl+W - no-op
+    editor.handle_input("\x17")  # Ctrl+W - no-op (nothing to delete)
+    editor.handle_input("\x17")  # Ctrl+W - no-op
 
     # Single undo should restore "hello"
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "hello"
 
 
 @pytest.mark.tonio
-async def test_undoes_autocomplete():
+async def test_undoes_autocomplete(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
 
     # Create a mock autocomplete provider
@@ -2144,33 +2152,33 @@ async def test_undoes_autocomplete():
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
 
     # Type "di"
-    await editor.handle_input("d")
-    await editor.handle_input("i")
+    editor.handle_input("d")
+    editor.handle_input("i")
     assert editor.get_text() == "di"
 
     # Press Tab to trigger autocomplete
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     await flush_autocomplete(editor)
     assert editor.get_text() == "dist/"
     assert editor.is_showing_autocomplete() is False
 
     # Undo should restore to "di"
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "di"
 
 
 # Autocomplete
 #
-# `ManualOwnerTimers(editor._tui.input_owner)` is pi's `t.mock.timers` for one
-# editor's TUI (the debounce is an input-owner timer).
+# `ManualTimers(monkeypatch)` is pi's `t.mock.timers` for the editor's
+# debounce `Timeout`.
 
 
 @pytest.mark.tonio
-async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
+async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation(monkeypatch):
     for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]:
         for trigger in ["@", "#", "$", "-"]:
             editor = Editor(create_test_tui(), default_editor_theme)
-            timers = ManualOwnerTimers(editor._tui.input_owner)
+            timers = ManualTimers(monkeypatch)
             requests: list[str] = []
 
             async def get_suggestions(lines, cursor_line, cursor_col, options, requests=requests):
@@ -2178,7 +2186,7 @@ async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
 
             editor.set_autocomplete_provider(MockProvider(get_suggestions, trigger_characters=["$", "-"]))
             editor.set_text(before)
-            await editor.handle_input(trigger)
+            editor.handle_input(trigger)
             await timers.tick(19)
             # The request is still debounced (an undebounced one queues no timer).
             assert timers.remaining == [1]
@@ -2187,8 +2195,8 @@ async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
             await flush_autocomplete(editor)
             assert requests == [before + trigger]
 
-            await editor.handle_input("r")
-            await editor.handle_input("e")
+            editor.handle_input("r")
+            editor.handle_input("e")
             await timers.tick(19)
             assert timers.remaining == [1]
             assert len(requests) == 1
@@ -2198,9 +2206,9 @@ async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation():
 
 
 @pytest.mark.tonio
-async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths():
+async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     requests = 0
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2233,16 +2241,16 @@ async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths()
     ]:
         editor.set_text("")
         for char in text:
-            await editor.handle_input(char)
+            editor.handle_input(char)
         await timers.tick(20)
         await flush_autocomplete(editor)
         assert requests == 0, text
 
 
 @pytest.mark.tonio
-async def test_requests_path_completion_after_cjk_punctuation_only_on_tab():
+async def test_requests_path_completion_after_cjk_punctuation_only_on_tab(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     requests: list[dict] = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2251,11 +2259,11 @@ async def test_requests_path_completion_after_cjk_punctuation_only_on_tab():
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
     text = "查看，/path/"
     for char in text:
-        await editor.handle_input(char)
+        editor.handle_input(char)
     await timers.tick(20)
     await flush_autocomplete(editor)
     assert requests == []
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     await flush_autocomplete(editor)
     assert requests == [{"text": text, "force": True}]
 
@@ -2269,23 +2277,23 @@ async def test_completes_chinese_path_prefixes_after_whitespace_or_cjk_punctuati
     for separator in [" ", "\t", "　", " ", "，", "。"]:
         editor.set_text(f"查看{separator}")
         before = editor.get_text()
-        await editor.handle_input("文")
-        await editor.handle_input("\t")
+        editor.handle_input("文")
+        editor.handle_input("\t")
         await flush_autocomplete(editor)
         assert editor.get_text() == f"{before}文档/"
-        await editor.handle_input("说")
-        await editor.handle_input("\t")
+        editor.handle_input("说")
+        editor.handle_input("\t")
         await flush_autocomplete(editor)
         assert editor.get_text() == f"{before}文档/说明.md"
         assert editor.get_cursor() == {"line": 0, "col": len(editor.get_text())}
 
 
 @pytest.mark.tonio
-async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_punctuation():
+async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_punctuation(monkeypatch):
     for separator in [" ", "　", "，", "。"]:
         for trigger in ["@", "#", "$"]:
             editor = Editor(create_test_tui(), default_editor_theme)
-            timers = ManualOwnerTimers(editor._tui.input_owner)
+            timers = ManualTimers(monkeypatch)
             requests: list[str] = []
             prefix = f"{trigger}src"
 
@@ -2298,22 +2306,22 @@ async def test_ends_unquoted_trigger_and_debounce_contexts_at_whitespace_or_cjk_
 
             editor.set_autocomplete_provider(MockProvider(get_suggestions, trigger_characters=["$"]))
             editor.set_text(f"{trigger}sr")
-            await editor.handle_input("c")
+            editor.handle_input("c")
             await timers.tick(20)
             await flush_autocomplete(editor)
             assert editor.is_showing_autocomplete()
-            await editor.handle_input(separator)
+            editor.handle_input(separator)
             await flush_autocomplete(editor)
             assert not editor.is_showing_autocomplete()
             assert requests == [prefix, prefix + separator]
-            await editor.handle_input("文")
+            editor.handle_input("文")
             await timers.tick(20)
             await flush_autocomplete(editor)
             assert requests == [prefix, prefix + separator]
 
 
 @pytest.mark.tonio
-async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_deleting():
+async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_deleting(monkeypatch):
     provider = CombinedAutocompleteProvider([], os.getcwd())
     for directory in ["文档", "我的 文档", "资料，归档"]:
         quoted = directory != "文档"
@@ -2322,7 +2330,7 @@ async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_d
         file_value = f'@"{directory}/说明.md"' if quoted else f"@{directory}/说明.md"
         file_prefix = f'@"{directory}/说' if quoted else f"@{directory}/说"
         editor = Editor(create_test_tui(), default_editor_theme)
-        timers = ManualOwnerTimers(editor._tui.input_owner)
+        timers = ManualTimers(monkeypatch)
 
         async def get_suggestions(
             lines,
@@ -2345,30 +2353,30 @@ async def test_re_triggers_cjk_path_completion_after_accepting_directories_and_d
 
         editor.set_autocomplete_provider(MockProvider(get_suggestions, provider.apply_completion))
         editor.set_text(f"查看：{initial}")
-        await editor.handle_input("\t")
+        editor.handle_input("\t")
         expected = f"查看：{directory_value}"
         await flush_autocomplete(editor)
         assert editor.get_text() == expected
         assert editor.is_showing_autocomplete() is False
 
-        await editor.handle_input("说")
+        editor.handle_input("说")
         await timers.tick(20)
         await flush_autocomplete(editor)
         assert editor.is_showing_autocomplete()
 
         for deletion in ["\x7f", "\x1b[3~"]:
-            await editor.handle_input("错")
+            editor.handle_input("错")
             await timers.tick(20)
             await flush_autocomplete(editor)
             assert not editor.is_showing_autocomplete()
             if deletion == "\x1b[3~":
-                await editor.handle_input("\x1b[D")
-            await editor.handle_input(deletion)
+                editor.handle_input("\x1b[D")
+            editor.handle_input(deletion)
             await timers.tick(20)
             await flush_autocomplete(editor)
             assert editor.is_showing_autocomplete()
 
-        await editor.handle_input("\t")
+        editor.handle_input("\t")
         assert editor.get_text() == f"查看：{file_value} "
         assert editor.get_cursor() == {"line": 0, "col": len(editor.get_text())}
 
@@ -2390,17 +2398,17 @@ async def test_auto_applies_single_force_file_suggestion_without_showing_menu():
 
     # Type "Work"
     for ch in "Work":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "Work"
 
     # Press Tab - should auto-apply without showing menu
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     await flush_autocomplete(editor)
     assert editor.get_text() == "Workspace/"
     assert editor.is_showing_autocomplete() is False
 
     # Undo should restore to "Work"
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "Work"
 
 
@@ -2427,17 +2435,17 @@ async def test_shows_menu_when_force_file_has_multiple_suggestions():
 
     # Type "src"
     for ch in "src":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     assert editor.get_text() == "src"
 
     # Press Tab - should show menu because there are multiple suggestions
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     await flush_autocomplete(editor)
     assert editor.get_text() == "src"
     assert editor.is_showing_autocomplete() is True
 
     # Press Tab again to accept first suggestion
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     assert editor.get_text() == "src/"
     assert editor.is_showing_autocomplete() is False
 
@@ -2467,34 +2475,34 @@ async def test_keeps_suggestions_open_when_typing_in_force_mode_tab_triggered():
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
 
     # Press Tab on empty prompt - should show all files (force mode)
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Type "r" - should narrow to "readme.md" (force mode keeps suggestions open)
-    await editor.handle_input("r")
+    editor.handle_input("r")
     await flush_autocomplete(editor)
     assert editor.get_text() == "r"
     assert editor.is_showing_autocomplete() is True
 
     # Type "e" - should still show "readme.md"
-    await editor.handle_input("e")
+    editor.handle_input("e")
     await flush_autocomplete(editor)
     assert editor.get_text() == "re"
     assert editor.is_showing_autocomplete() is True
 
     # Accept with Tab
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     assert editor.get_text() == "readme.md"
     assert editor.is_showing_autocomplete() is False
 
 
 @pytest.mark.tonio
-async def test_debounces_at_autocomplete_while_typing():
+async def test_debounces_at_autocomplete_while_typing(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
     # Manual debounce (pi uses real timers): the "no query between keystrokes"
     # assertion then holds however slowly the runner gets to it.
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     suggestion_calls = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2504,10 +2512,10 @@ async def test_debounces_at_autocomplete_while_typing():
 
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
 
-    await editor.handle_input("@")
-    await editor.handle_input("m")
-    await editor.handle_input("a")
-    await editor.handle_input("i")
+    editor.handle_input("@")
+    editor.handle_input("m")
+    editor.handle_input("a")
+    editor.handle_input("i")
 
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
@@ -2550,7 +2558,7 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
 
     # Type `/cmd ` so the picker ends up showing the argument list.
     for ch in "/cmd ":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
         await flush_autocomplete(editor)
     assert editor.get_text() == "/cmd "
     assert editor.is_showing_autocomplete() is True
@@ -2558,7 +2566,7 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
     assert "repo" in at_arg, "argument menu should be visible at `/cmd `"
 
     # Arrow Left back into the command name (`/cmd`).
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
     await flush_autocomplete(editor)
 
     # The picker must have re-queried: the stale argument items are gone
@@ -2569,10 +2577,10 @@ async def test_re_queries_the_autocomplete_picker_when_the_cursor_moves_back_int
 
 
 @pytest.mark.tonio
-async def test_debounces_hash_autocomplete_while_typing():
+async def test_debounces_hash_autocomplete_while_typing(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
     # Manual debounce, as in the `@` case above.
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     suggestion_calls = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2582,10 +2590,10 @@ async def test_debounces_hash_autocomplete_while_typing():
 
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
 
-    await editor.handle_input("#")
-    await editor.handle_input("2")
-    await editor.handle_input("9")
-    await editor.handle_input("8")
+    editor.handle_input("#")
+    editor.handle_input("2")
+    editor.handle_input("9")
+    editor.handle_input("8")
 
     assert len(suggestion_calls) == 0
     assert editor.is_showing_autocomplete() is False
@@ -2598,10 +2606,10 @@ async def test_debounces_hash_autocomplete_while_typing():
 
 
 @pytest.mark.tonio
-async def test_debounces_custom_trigger_characters_autocomplete_while_typing():
+async def test_debounces_custom_trigger_characters_autocomplete_while_typing(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
     # Manual debounce, as in the `@` case above.
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     suggestion_calls = []
 
     async def get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2611,9 +2619,9 @@ async def test_debounces_custom_trigger_characters_autocomplete_while_typing():
 
     editor.set_autocomplete_provider(MockProvider(get_suggestions, trigger_characters=["$"]))
 
-    await editor.handle_input("$")
-    await editor.handle_input("s")
-    await editor.handle_input("k")
+    editor.handle_input("$")
+    editor.handle_input("s")
+    editor.handle_input("k")
 
     assert len(suggestion_calls) == 0
     await timers.tick(20)
@@ -2624,11 +2632,11 @@ async def test_debounces_custom_trigger_characters_autocomplete_while_typing():
 
 
 @pytest.mark.tonio
-async def test_resets_custom_trigger_characters_when_provider_changes():
+async def test_resets_custom_trigger_characters_when_provider_changes(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
     # Manual debounce: pi waits out the real window before asserting nothing
     # was queried; here the tick fires whatever the keystrokes debounced.
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     suggestion_calls = []
 
     async def first_get_suggestions(lines, cursor_line, cursor_col, options):
@@ -2641,8 +2649,8 @@ async def test_resets_custom_trigger_characters_when_provider_changes():
     editor.set_autocomplete_provider(MockProvider(first_get_suggestions, trigger_characters=["$"]))
     editor.set_autocomplete_provider(MockProvider(second_get_suggestions))
 
-    await editor.handle_input("$")
-    await editor.handle_input("s")
+    editor.handle_input("$")
+    editor.handle_input("s")
     await timers.tick(20)
     await flush_autocomplete(editor)
 
@@ -2651,10 +2659,10 @@ async def test_resets_custom_trigger_characters_when_provider_changes():
 
 
 @pytest.mark.tonio
-async def test_aborts_active_at_autocomplete_when_typing_continues():
+async def test_aborts_active_at_autocomplete_when_typing_continues(monkeypatch):
     editor = Editor(create_test_tui(), default_editor_theme)
     # Manual debounce: exactly one request starts, at the tick.
-    timers = ManualOwnerTimers(editor._tui.input_owner)
+    timers = ManualTimers(monkeypatch)
     aborts = []
     signals = []
     entered = tonio.Event()
@@ -2670,15 +2678,15 @@ async def test_aborts_active_at_autocomplete_when_typing_continues():
 
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
 
-    await editor.handle_input("@")
-    await editor.handle_input("m")
-    await editor.handle_input("a")
-    await editor.handle_input("i")
+    editor.handle_input("@")
+    editor.handle_input("m")
+    editor.handle_input("a")
+    editor.handle_input("i")
     await timers.tick(20)
     await entered.wait(5)
     assert len(signals) == 1
     active = signals[0]
-    await editor.handle_input("n")
+    editor.handle_input("n")
 
     await flush_autocomplete(editor)
     assert aborts == [active]
@@ -2707,13 +2715,13 @@ async def test_hides_autocomplete_when_backspacing_slash_command_to_empty():
     editor.set_autocomplete_provider(MockProvider(get_suggestions))
 
     # Type "/" - should show slash command suggestions
-    await editor.handle_input("/")
+    editor.handle_input("/")
     await flush_autocomplete(editor)
     assert editor.get_text() == "/"
     assert editor.is_showing_autocomplete() is True
 
     # Backspace to delete "/" - should hide autocomplete completely
-    await editor.handle_input("\x7f")  # Backspace
+    editor.handle_input("\x7f")  # Backspace
     await flush_autocomplete(editor)
     assert editor.get_text() == ""
     assert editor.is_showing_autocomplete() is False
@@ -2747,14 +2755,14 @@ async def test_applies_exact_typed_slash_argument_value_on_enter_even_when_first
 
     # Type "/argtest two"
     for ch in "/argtest two":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
 
     assert editor.get_text() == "/argtest two"
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - should apply the exact typed value "two", not the first item
-    await editor.handle_input("\r")
+    editor.handle_input("\r")
 
     # The exact typed value "two" should be retained
     assert editor.get_text() == "/argtest two"
@@ -2788,13 +2796,13 @@ async def test_selects_first_prefix_match_on_enter_when_typed_arg_is_not_exact_m
 
     # Type "/argtest t" - filtered to [two, three, twelve], prefix "t" matches "two" first
     for ch in "/argtest t":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
 
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - "t" prefix matches "two" (first in list), so "two" is applied
-    await editor.handle_input("\r")
+    editor.handle_input("\r")
     assert editor.get_text() == "/argtest two"
 
 
@@ -2823,14 +2831,14 @@ async def test_highlights_unique_prefix_match_as_user_types_before_full_exact_ma
 
     # Type "/argtest tw" - "tw" is a prefix of only "two"
     for ch in "/argtest tw":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
 
     assert editor.get_text() == "/argtest tw"
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - "tw" uniquely matches "two", so "two" should be applied
-    await editor.handle_input("\r")
+    editor.handle_input("\r")
     assert editor.get_text() == "/argtest two"
 
 
@@ -2858,13 +2866,13 @@ async def test_selects_first_prefix_match_when_multiple_items_match():
 
     # Type "/argtest t" - "t" is a prefix of both "two" and "three"
     for ch in "/argtest t":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
 
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - "t" matches "two" first, so "two" is selected
-    await editor.handle_input("\r")
+    editor.handle_input("\r")
     assert editor.get_text() == "/argtest two"
 
 
@@ -2896,14 +2904,14 @@ async def test_works_for_built_in_style_command_argument_completion_path_model_l
 
     # Type "/model gpt-4o-mini" - exact match for second item in list
     for ch in "/model gpt-4o-mini":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
 
     assert editor.get_text() == "/model gpt-4o-mini"
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
     # Press Enter - should retain exact typed value, not apply first highlighted item
-    await editor.handle_input("\r")
+    editor.handle_input("\r")
 
     # The exact typed value should be retained
     assert editor.get_text() == "/model gpt-4o-mini"
@@ -2923,11 +2931,11 @@ async def test_awaits_async_slash_command_argument_completions(tmp_path):
     editor.set_autocomplete_provider(provider)
     editor.set_text("/load-skills ")
 
-    await editor.handle_input("s")
+    editor.handle_input("s")
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     assert editor.get_text() == "/load-skills skill-a"
     assert editor.is_showing_autocomplete() is False
 
@@ -2952,7 +2960,7 @@ async def test_ignores_invalid_slash_command_argument_completion_results(tmp_pat
     editor.set_autocomplete_provider(provider)
     editor.set_text("/load-skills ")
 
-    await editor.handle_input("s")
+    editor.handle_input("s")
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is False
     assert editor.get_text() == "/load-skills s"
@@ -2978,13 +2986,13 @@ async def test_does_not_show_argument_completions_when_command_has_no_argument_c
     )
     editor.set_autocomplete_provider(provider)
 
-    await editor.handle_input("/")
-    await editor.handle_input("h")
-    await editor.handle_input("e")
+    editor.handle_input("/")
+    editor.handle_input("h")
+    editor.handle_input("e")
     await flush_autocomplete(editor)
     assert editor.is_showing_autocomplete() is True
 
-    await editor.handle_input("\t")
+    editor.handle_input("\t")
     assert editor.get_text() == "/help "
     assert editor.is_showing_autocomplete() is False
 
@@ -2997,11 +3005,11 @@ async def test_jumps_forward_to_first_occurrence_of_character_on_same_line():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1d")  # Ctrl+] (legacy sequence for ctrl+])
-    await editor.handle_input("o")  # Jump to first 'o'
+    editor.handle_input("\x1d")  # Ctrl+] (legacy sequence for ctrl+])
+    editor.handle_input("o")  # Jump to first 'o'
 
     assert editor.get_cursor() == {"line": 0, "col": 4}  # 'o' in "hello"
 
@@ -3011,14 +3019,14 @@ async def test_jumps_forward_to_next_occurrence_after_cursor():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     # Move cursor to the 'o' in "hello" (col 4)
     for _ in range(4):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 4}
 
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("o")  # Jump to next 'o' (in "world")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("o")  # Jump to next 'o' (in "world")
 
     assert editor.get_cursor() == {"line": 0, "col": 7}  # 'o' in "world"
 
@@ -3029,13 +3037,13 @@ async def test_jumps_forward_across_multiple_lines():
 
     editor.set_text("abc\ndef\nghi")
     # Cursor is at end (line 2, col 3). Move to line 0 via up arrows, then Ctrl+A
-    await editor.handle_input("\x1b[A")  # Up
-    await editor.handle_input("\x1b[A")  # Up - now on line 0
-    await editor.handle_input("\x01")  # Ctrl+A - go to start of line
+    editor.handle_input("\x1b[A")  # Up
+    editor.handle_input("\x1b[A")  # Up - now on line 0
+    editor.handle_input("\x01")  # Ctrl+A - go to start of line
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("g")  # Jump to 'g' on line 3
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("g")  # Jump to 'g' on line 3
 
     assert editor.get_cursor() == {"line": 2, "col": 0}
 
@@ -3048,8 +3056,8 @@ async def test_jumps_backward_to_first_occurrence_before_cursor_on_same_line():
     # Cursor at end (col 11)
     assert editor.get_cursor() == {"line": 0, "col": 11}
 
-    await editor.handle_input("\x1b\x1d")  # Ctrl+Alt+] (ESC followed by Ctrl+])
-    await editor.handle_input("o")  # Jump to last 'o' before cursor
+    editor.handle_input("\x1b\x1d")  # Ctrl+Alt+] (ESC followed by Ctrl+])
+    editor.handle_input("o")  # Jump to last 'o' before cursor
 
     assert editor.get_cursor() == {"line": 0, "col": 7}  # 'o' in "world"
 
@@ -3062,8 +3070,8 @@ async def test_jumps_backward_across_multiple_lines():
     # Cursor at end of line 3
     assert editor.get_cursor() == {"line": 2, "col": 3}
 
-    await editor.handle_input("\x1b\x1d")  # Ctrl+Alt+]
-    await editor.handle_input("a")  # Jump to 'a' on line 1
+    editor.handle_input("\x1b\x1d")  # Ctrl+Alt+]
+    editor.handle_input("a")  # Jump to 'a' on line 1
 
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
@@ -3073,11 +3081,11 @@ async def test_does_nothing_when_character_is_not_found_forward():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("z")  # 'z' doesn't exist
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("z")  # 'z' doesn't exist
 
     assert editor.get_cursor() == {"line": 0, "col": 0}  # Cursor unchanged
 
@@ -3090,8 +3098,8 @@ async def test_does_nothing_when_character_is_not_found_backward():
     # Cursor at end
     assert editor.get_cursor() == {"line": 0, "col": 11}
 
-    await editor.handle_input("\x1b\x1d")  # Ctrl+Alt+]
-    await editor.handle_input("z")  # 'z' doesn't exist
+    editor.handle_input("\x1b\x1d")  # Ctrl+Alt+]
+    editor.handle_input("z")  # 'z' doesn't exist
 
     assert editor.get_cursor() == {"line": 0, "col": 11}  # Cursor unchanged
 
@@ -3101,18 +3109,18 @@ async def test_jump_is_case_sensitive():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("Hello World")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
     # Search for lowercase 'h' - should not find it (only 'H' exists)
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("h")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("h")
 
     assert editor.get_cursor() == {"line": 0, "col": 0}  # Cursor unchanged
 
     # Search for uppercase 'W' - should find it
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("W")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("W")
 
     assert editor.get_cursor() == {"line": 0, "col": 6}  # 'W' in "World"
 
@@ -3122,14 +3130,14 @@ async def test_cancels_jump_mode_when_ctrl_bracket_is_pressed_again():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1d")  # Ctrl+] - enter jump mode
-    await editor.handle_input("\x1d")  # Ctrl+] again - cancel
+    editor.handle_input("\x1d")  # Ctrl+] - enter jump mode
+    editor.handle_input("\x1d")  # Ctrl+] again - cancel
 
     # Type 'o' normally - should insert, not jump
-    await editor.handle_input("o")
+    editor.handle_input("o")
     assert editor.get_text() == "ohello world"
 
 
@@ -3138,17 +3146,17 @@ async def test_cancels_jump_mode_on_escape_and_processes_the_escape():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1d")  # Ctrl+] - enter jump mode
-    await editor.handle_input("\x1b")  # Escape - cancel jump mode
+    editor.handle_input("\x1d")  # Ctrl+] - enter jump mode
+    editor.handle_input("\x1b")  # Escape - cancel jump mode
 
     # Cursor should be unchanged (Escape itself doesn't move cursor in editor)
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
     # Type 'o' normally - should insert, not jump
-    await editor.handle_input("o")
+    editor.handle_input("o")
     assert editor.get_text() == "ohello world"
 
 
@@ -3160,11 +3168,11 @@ async def test_cancels_backward_jump_mode_when_ctrl_alt_bracket_is_pressed_again
     # Cursor at end
     assert editor.get_cursor() == {"line": 0, "col": 11}
 
-    await editor.handle_input("\x1b\x1d")  # Ctrl+Alt+] - enter backward jump mode
-    await editor.handle_input("\x1b\x1d")  # Ctrl+Alt+] again - cancel
+    editor.handle_input("\x1b\x1d")  # Ctrl+Alt+] - enter backward jump mode
+    editor.handle_input("\x1b\x1d")  # Ctrl+Alt+] again - cancel
 
     # Type 'o' normally - should insert, not jump
-    await editor.handle_input("o")
+    editor.handle_input("o")
     assert editor.get_text() == "hello worldo"
 
 
@@ -3173,18 +3181,18 @@ async def test_jump_searches_for_special_characters():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("foo(bar) = baz;")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
     # Jump to '('
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("(")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("(")
 
     assert editor.get_cursor() == {"line": 0, "col": 3}
 
     # Jump to '='
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("=")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("=")
 
     assert editor.get_cursor() == {"line": 0, "col": 9}
 
@@ -3196,8 +3204,8 @@ async def test_jump_handles_empty_text_gracefully():
     editor.set_text("")
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("x")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("x")
 
     assert editor.get_cursor() == {"line": 0, "col": 0}  # Cursor unchanged
 
@@ -3207,22 +3215,22 @@ async def test_resets_last_action_when_jumping():
     editor = Editor(create_test_tui(), default_editor_theme)
 
     editor.set_text("hello world")
-    await editor.handle_input("\x01")  # Ctrl+A - go to start
+    editor.handle_input("\x01")  # Ctrl+A - go to start
 
     # Type to set last action to "type-word"
-    await editor.handle_input("x")
+    editor.handle_input("x")
     assert editor.get_text() == "xhello world"
 
     # Jump forward
-    await editor.handle_input("\x1d")  # Ctrl+]
-    await editor.handle_input("o")
+    editor.handle_input("\x1d")  # Ctrl+]
+    editor.handle_input("o")
 
     # Type more - should start a new undo unit (last action was reset)
-    await editor.handle_input("Y")
+    editor.handle_input("Y")
     assert editor.get_text() == "xhellYo world"
 
     # Undo should only undo "Y", not "x" as well
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "xhello world"
 
 
@@ -3233,14 +3241,14 @@ async def _position_cursor(editor, line, col):
     """Position cursor at a specific line and column."""
     # Go to line 0 first
     for _ in range(20):
-        await editor.handle_input("\x1b[A")
+        editor.handle_input("\x1b[A")
     # Go to target line
     for _ in range(line):
-        await editor.handle_input("\x1b[B")
+        editor.handle_input("\x1b[B")
     # Go to target col
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(col):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
 
 @pytest.mark.tonio
@@ -3254,17 +3262,17 @@ async def test_preserves_target_column_when_moving_up_through_a_shorter_line():
 
     # Position cursor on _ (line 2, col 10)
     assert editor.get_cursor() == {"line": 2, "col": 23}  # At end
-    await editor.handle_input("\x01")  # Ctrl+A - go to start of line
+    editor.handle_input("\x01")  # Ctrl+A - go to start of line
     for _ in range(10):
-        await editor.handle_input("\x1b[C")  # Move right to col 10
+        editor.handle_input("\x1b[C")  # Move right to col 10
     assert editor.get_cursor() == {"line": 2, "col": 10}
 
     # Press Up - should move to empty line (col clamped to 0)
-    await editor.handle_input("\x1b[A")  # Up arrow
+    editor.handle_input("\x1b[A")  # Up arrow
     assert editor.get_cursor() == {"line": 1, "col": 0}
 
     # Press Up again - should move to line 0 at col 10 (on 'x')
-    await editor.handle_input("\x1b[A")  # Up arrow
+    editor.handle_input("\x1b[A")  # Up arrow
     assert editor.get_cursor() == {"line": 0, "col": 10}
 
 
@@ -3275,19 +3283,19 @@ async def test_preserves_target_column_when_moving_down_through_a_shorter_line()
     editor.set_text("1111111111_111\n\n2222222222x222222222222")
 
     # Position cursor on _ (line 0, col 10)
-    await editor.handle_input("\x1b[A")  # Up to line 1
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[A")  # Up to line 1
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(10):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 10}
 
     # Press Down - should move to empty line (col clamped to 0)
-    await editor.handle_input("\x1b[B")  # Down arrow
+    editor.handle_input("\x1b[B")  # Down arrow
     assert editor.get_cursor() == {"line": 1, "col": 0}
 
     # Press Down again - should move to line 2 at col 10 (on 'x')
-    await editor.handle_input("\x1b[B")  # Down arrow
+    editor.handle_input("\x1b[B")  # Down arrow
     assert editor.get_cursor() == {"line": 2, "col": 10}
 
 
@@ -3298,23 +3306,23 @@ async def test_resets_sticky_column_on_horizontal_movement_left_arrow():
     editor.set_text("1234567890\n\n1234567890")
 
     # Start at line 2, col 5
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(5):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 2, "col": 5}
 
     # Move up through empty line
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 5 (sticky)
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 5 (sticky)
     assert editor.get_cursor() == {"line": 0, "col": 5}
 
     # Move left - resets sticky column
-    await editor.handle_input("\x1b[D")  # Left
+    editor.handle_input("\x1b[D")  # Left
     assert editor.get_cursor() == {"line": 0, "col": 4}
 
     # Move down twice
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 4 (new sticky from col 4)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 4 (new sticky from col 4)
     assert editor.get_cursor() == {"line": 2, "col": 4}
 
 
@@ -3325,25 +3333,25 @@ async def test_resets_sticky_column_on_horizontal_movement_right_arrow():
     editor.set_text("1234567890\n\n1234567890")
 
     # Start at line 0, col 5
-    await editor.handle_input("\x1b[A")  # Up to line 1
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[A")  # Up to line 1
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(5):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 5}
 
     # Move down through empty line
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 5 (sticky)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 5 (sticky)
     assert editor.get_cursor() == {"line": 2, "col": 5}
 
     # Move right - resets sticky column
-    await editor.handle_input("\x1b[C")  # Right
+    editor.handle_input("\x1b[C")  # Right
     assert editor.get_cursor() == {"line": 2, "col": 6}
 
     # Move up twice
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 6 (new sticky from col 6)
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 6 (new sticky from col 6)
     assert editor.get_cursor() == {"line": 0, "col": 6}
 
 
@@ -3354,22 +3362,22 @@ async def test_resets_sticky_column_on_typing():
     editor.set_text("1234567890\n\n1234567890")
 
     # Start at line 2, col 8
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(8):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
     # Move up through empty line
-    await editor.handle_input("\x1b[A")  # Up
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 8
+    editor.handle_input("\x1b[A")  # Up
+    editor.handle_input("\x1b[A")  # Up - line 0, col 8
     assert editor.get_cursor() == {"line": 0, "col": 8}
 
     # Type a character - resets sticky column
-    await editor.handle_input("X")
+    editor.handle_input("X")
     assert editor.get_cursor() == {"line": 0, "col": 9}
 
     # Move down twice
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 9 (new sticky from col 9)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 9 (new sticky from col 9)
     assert editor.get_cursor() == {"line": 2, "col": 9}
 
 
@@ -3380,22 +3388,22 @@ async def test_resets_sticky_column_on_backspace():
     editor.set_text("1234567890\n\n1234567890")
 
     # Start at line 2, col 8
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(8):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
     # Move up through empty line
-    await editor.handle_input("\x1b[A")  # Up
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 8
+    editor.handle_input("\x1b[A")  # Up
+    editor.handle_input("\x1b[A")  # Up - line 0, col 8
     assert editor.get_cursor() == {"line": 0, "col": 8}
 
     # Backspace - resets sticky column
-    await editor.handle_input("\x7f")  # Backspace
+    editor.handle_input("\x7f")  # Backspace
     assert editor.get_cursor() == {"line": 0, "col": 7}
 
     # Move down twice
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 7 (new sticky from col 7)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 7 (new sticky from col 7)
     assert editor.get_cursor() == {"line": 2, "col": 7}
 
 
@@ -3406,19 +3414,19 @@ async def test_resets_sticky_column_on_ctrl_a_move_to_line_start():
     editor.set_text("1234567890\n\n1234567890")
 
     # Start at line 2, col 8
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(8):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
     # Move up - establishes sticky col 8
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
 
     # Ctrl+A - resets sticky column to 0
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     assert editor.get_cursor() == {"line": 1, "col": 0}
 
     # Move up
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 0 (new sticky from col 0)
+    editor.handle_input("\x1b[A")  # Up - line 0, col 0 (new sticky from col 0)
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
 
@@ -3429,22 +3437,22 @@ async def test_resets_sticky_column_on_ctrl_e_move_to_line_end():
     editor.set_text("12345\n\n1234567890")
 
     # Start at line 2, col 3
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(3):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
     # Move up through empty line - establishes sticky col 3
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 3
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 3
     assert editor.get_cursor() == {"line": 0, "col": 3}
 
     # Ctrl+E - resets sticky column to end
-    await editor.handle_input("\x05")  # Ctrl+E
+    editor.handle_input("\x05")  # Ctrl+E
     assert editor.get_cursor() == {"line": 0, "col": 5}
 
     # Move down twice
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 5 (new sticky from col 5)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 5 (new sticky from col 5)
     assert editor.get_cursor() == {"line": 2, "col": 5}
 
 
@@ -3458,17 +3466,17 @@ async def test_resets_sticky_column_on_word_movement_ctrl_left():
     assert editor.get_cursor() == {"line": 2, "col": 11}
 
     # Move up through empty line - establishes sticky col 11
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 11
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 11
     assert editor.get_cursor() == {"line": 0, "col": 11}
 
     # Ctrl+Left - word movement resets sticky column
-    await editor.handle_input("\x1b[1;5D")  # Ctrl+Left
+    editor.handle_input("\x1b[1;5D")  # Ctrl+Left
     assert editor.get_cursor() == {"line": 0, "col": 6}  # Before "world"
 
     # Move down twice
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 6 (new sticky from col 6)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 6 (new sticky from col 6)
     assert editor.get_cursor() == {"line": 2, "col": 6}
 
 
@@ -3479,23 +3487,23 @@ async def test_resets_sticky_column_on_word_movement_ctrl_right():
     editor.set_text("hello world\n\nhello world")
 
     # Start at line 0, col 0
-    await editor.handle_input("\x1b[A")  # Up
-    await editor.handle_input("\x1b[A")  # Up
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[A")  # Up
+    editor.handle_input("\x1b[A")  # Up
+    editor.handle_input("\x01")  # Ctrl+A
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
     # Move down through empty line - establishes sticky col 0
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 0
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 0
     assert editor.get_cursor() == {"line": 2, "col": 0}
 
     # Ctrl+Right - word movement resets sticky column
-    await editor.handle_input("\x1b[1;5C")  # Ctrl+Right
+    editor.handle_input("\x1b[1;5C")  # Ctrl+Right
     assert editor.get_cursor() == {"line": 2, "col": 5}  # After "hello"
 
     # Move up twice
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 5 (new sticky from col 5)
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 5 (new sticky from col 5)
     assert editor.get_cursor() == {"line": 0, "col": 5}
 
 
@@ -3506,36 +3514,36 @@ async def test_resets_sticky_column_on_undo():
     editor.set_text("1234567890\n\n1234567890")
 
     # Go to line 0, col 8
-    await editor.handle_input("\x1b[A")  # Up to line 1
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[A")  # Up to line 1
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(8):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 8}
 
     # Move down through empty line - establishes sticky col 8
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 8 (sticky)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 0
+    editor.handle_input("\x1b[B")  # Down - line 2, col 8 (sticky)
     assert editor.get_cursor() == {"line": 2, "col": 8}
 
     # Type something to create undo state - this clears sticky and sets col to 9
-    await editor.handle_input("X")
+    editor.handle_input("X")
     assert editor.get_text() == "1234567890\n\n12345678X90"
     assert editor.get_cursor() == {"line": 2, "col": 9}
 
     # Move up - establishes new sticky col 9
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 9
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 9
     assert editor.get_cursor() == {"line": 0, "col": 9}
 
     # Undo - resets sticky column and restores cursor to line 2, col 8
-    await editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
+    editor.handle_input("\x1b[45;5u")  # Ctrl+- (undo)
     assert editor.get_text() == "1234567890\n\n1234567890"
     assert editor.get_cursor() == {"line": 2, "col": 8}
 
     # Move up - should capture new sticky from restored col 8, not old col 9
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 8 (new sticky from restored position)
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 8 (new sticky from restored position)
     assert editor.get_cursor() == {"line": 0, "col": 8}
 
 
@@ -3546,23 +3554,23 @@ async def test_handles_multiple_consecutive_up_down_movements():
     editor.set_text("1234567890\nab\ncd\nef\n1234567890")
 
     # Start at line 4, col 7
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(7):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 4, "col": 7}
 
     # Move up multiple times through short lines
-    await editor.handle_input("\x1b[A")  # Up - line 3, col 2 (clamped)
-    await editor.handle_input("\x1b[A")  # Up - line 2, col 2 (clamped)
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 2 (clamped)
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 7 (restored)
+    editor.handle_input("\x1b[A")  # Up - line 3, col 2 (clamped)
+    editor.handle_input("\x1b[A")  # Up - line 2, col 2 (clamped)
+    editor.handle_input("\x1b[A")  # Up - line 1, col 2 (clamped)
+    editor.handle_input("\x1b[A")  # Up - line 0, col 7 (restored)
     assert editor.get_cursor() == {"line": 0, "col": 7}
 
     # Move down multiple times - sticky should still be 7
-    await editor.handle_input("\x1b[B")  # Down - line 1, col 2
-    await editor.handle_input("\x1b[B")  # Down - line 2, col 2
-    await editor.handle_input("\x1b[B")  # Down - line 3, col 2
-    await editor.handle_input("\x1b[B")  # Down - line 4, col 7 (restored)
+    editor.handle_input("\x1b[B")  # Down - line 1, col 2
+    editor.handle_input("\x1b[B")  # Down - line 2, col 2
+    editor.handle_input("\x1b[B")  # Down - line 3, col 2
+    editor.handle_input("\x1b[B")  # Down - line 4, col 7 (restored)
     assert editor.get_cursor() == {"line": 4, "col": 7}
 
 
@@ -3581,13 +3589,13 @@ async def test_moves_correctly_through_wrapped_visual_lines_without_getting_stuc
 
     # Move up repeatedly - should traverse all visual lines of the wrapped text
     # and eventually reach line 0
-    await editor.handle_input("\x1b[A")  # Up - to previous visual line within line 1
+    editor.handle_input("\x1b[A")  # Up - to previous visual line within line 1
     assert editor.get_cursor()["line"] == 1
 
-    await editor.handle_input("\x1b[A")  # Up - another visual line
+    editor.handle_input("\x1b[A")  # Up - another visual line
     assert editor.get_cursor()["line"] == 1
 
-    await editor.handle_input("\x1b[A")  # Up - should reach line 0
+    editor.handle_input("\x1b[A")  # Up - should reach line 0
     assert editor.get_cursor()["line"] == 0
 
 
@@ -3598,18 +3606,18 @@ async def test_handles_set_text_resetting_sticky_column():
     editor.set_text("1234567890\n\n1234567890")
 
     # Establish sticky column
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(8):
-        await editor.handle_input("\x1b[C")
-    await editor.handle_input("\x1b[A")  # Up
+        editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[A")  # Up
 
     # set_text should reset sticky column
     editor.set_text("abcdefghij\n\nabcdefghij")
     assert editor.get_cursor() == {"line": 2, "col": 10}  # At end
 
     # Move up - should capture new sticky from current position (10)
-    await editor.handle_input("\x1b[A")  # Up - line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 10
+    editor.handle_input("\x1b[A")  # Up - line 1, col 0
+    editor.handle_input("\x1b[A")  # Up - line 0, col 10
     assert editor.get_cursor() == {"line": 0, "col": 10}
 
 
@@ -3623,23 +3631,23 @@ async def test_sets_preferred_visual_col_when_pressing_right_at_end_of_prompt_la
     editor.set_text("111111111x1111111111\n\n333333333_")
 
     # Go to line 0, press Ctrl+E (end of line) - col 20
-    await editor.handle_input("\x1b[A")  # Up to line 1
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x05")  # Ctrl+E - move to end of line
+    editor.handle_input("\x1b[A")  # Up to line 1
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x05")  # Ctrl+E - move to end of line
     assert editor.get_cursor() == {"line": 0, "col": 20}
 
     # Move down to line 2 - cursor clamped to col 10 (end of line)
-    await editor.handle_input("\x1b[B")  # Down to line 1, col 0
-    await editor.handle_input("\x1b[B")  # Down to line 2, col 10 (clamped)
+    editor.handle_input("\x1b[B")  # Down to line 1, col 0
+    editor.handle_input("\x1b[B")  # Down to line 2, col 10 (clamped)
     assert editor.get_cursor() == {"line": 2, "col": 10}
 
     # Press Right at end of prompt - nothing visible happens, but sets preferred visual col to 10
-    await editor.handle_input("\x1b[C")  # Right - can't move, but sets preferred visual col
+    editor.handle_input("\x1b[C")  # Right - can't move, but sets preferred visual col
     assert editor.get_cursor() == {"line": 2, "col": 10}  # Still at same position
 
     # Move up twice to line 0 - should use preferred visual col (10) to land on 'x'
-    await editor.handle_input("\x1b[A")  # Up to line 1, col 0
-    await editor.handle_input("\x1b[A")  # Up to line 0, col 10 (on 'x')
+    editor.handle_input("\x1b[A")  # Up to line 1, col 0
+    editor.handle_input("\x1b[A")  # Up to line 0, col 10 (on 'x')
     assert editor.get_cursor() == {"line": 0, "col": 10}
 
 
@@ -3652,21 +3660,21 @@ async def test_handles_editor_resizes_when_preferred_visual_col_is_on_the_same_l
     editor.set_text("12345678901234567890\n\n12345678901234567890")
 
     # Start at line 2, col 15
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(15):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
 
     # Move up through empty line - establishes sticky col 15
-    await editor.handle_input("\x1b[A")  # Up
-    await editor.handle_input("\x1b[A")  # Up - line 0, col 15
+    editor.handle_input("\x1b[A")  # Up
+    editor.handle_input("\x1b[A")  # Up - line 0, col 15
     assert editor.get_cursor() == {"line": 0, "col": 15}
 
     # Render with narrower width to simulate resize
     editor.render(12)  # Width 12
 
     # Move down - sticky should be clamped to new width
-    await editor.handle_input("\x1b[B")  # Down - line 1
-    await editor.handle_input("\x1b[B")  # Down - line 2, col should be clamped
+    editor.handle_input("\x1b[B")  # Down - line 1
+    editor.handle_input("\x1b[B")  # Down - line 2, col should be clamped
     assert editor.get_cursor()["col"] == 4
 
 
@@ -3680,13 +3688,13 @@ async def test_handles_editor_resizes_when_preferred_visual_col_is_on_a_differen
     editor.set_text("short\n12345678901234567890")
 
     # Go to line 1, col 15
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(15):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 1, "col": 15}
 
     # Move up to establish sticky col 15
-    await editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x1b[A")  # Up to line 0
     # Line 0 has only 5 chars, so cursor at col 5
     assert editor.get_cursor() == {"line": 0, "col": 5}
 
@@ -3695,18 +3703,18 @@ async def test_handles_editor_resizes_when_preferred_visual_col_is_on_a_differen
 
     # Move down - preferred visual col was 15, but width is 10
     # Should land on line 1, clamped to width (visual col 9, which is logical col 9)
-    await editor.handle_input("\x1b[B")  # Down to line 1
+    editor.handle_input("\x1b[B")  # Down to line 1
     assert editor.get_cursor() == {"line": 1, "col": 8}
 
     # Move up
-    await editor.handle_input("\x1b[A")  # Up - should go to line 0
+    editor.handle_input("\x1b[A")  # Up - should go to line 0
     assert editor.get_cursor() == {"line": 0, "col": 5}  # Line 0 only has 5 chars
 
     # Restore the original width
     editor.render(80)
 
     # Move down - preferred visual col was kept at 15
-    await editor.handle_input("\x1b[B")  # Down to line 1
+    editor.handle_input("\x1b[B")  # Down to line 1
     assert editor.get_cursor() == {"line": 1, "col": 15}
 
 
@@ -3724,16 +3732,16 @@ async def test_rewrapped_lines_target_fits_current_visual_column():
     editor.render(10)
 
     # Move down: cursor clamps to 8
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 1, "col": 8}
 
     # Widen back. Move up, the current visual col wins
     editor.render(80)
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_cursor() == {"line": 0, "col": 8}
 
     # Preferred was cleared by the rewrapped branch
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 1, "col": 8}
 
 
@@ -3748,7 +3756,7 @@ async def test_rewrapped_lines_target_shorter_than_current_visual_column():
 
     # Narrow to width 10 (layoutWidth = 9). Moving down clamps to col 8
     editor.render(10)
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 1, "col": 8}
 
     # Widen the editor
@@ -3756,11 +3764,11 @@ async def test_rewrapped_lines_target_shorter_than_current_visual_column():
 
     # Move down to short line "ab".
     # preferred visual col is replaced with current visual col (8), cursor clamps to 2
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 2, "col": 2}
 
     # Moving up restores to preferred col 8
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_cursor() == {"line": 1, "col": 8}
 
 
@@ -3770,7 +3778,7 @@ async def test_rewrapped_lines_target_shorter_than_current_visual_column():
 async def _paste_with_marker(editor):
     """Simulate a large paste that creates a marker."""
     big_content = ("line\n" * 20).rstrip()  # 20 lines
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
     # The editor replaces large pastes with a marker like "[paste #1 +20 lines]"
     return editor.get_text()
 
@@ -3790,71 +3798,71 @@ async def test_creates_a_paste_marker_for_large_pastes():
 @pytest.mark.tonio
 async def test_treats_paste_marker_as_single_unit_for_right_arrow():
     editor = Editor(create_test_tui(), default_editor_theme)
-    await editor.handle_input("A")
+    editor.handle_input("A")
     await _paste_with_marker(editor)
-    await editor.handle_input("B")
+    editor.handle_input("B")
     # Text: "A[paste #1 +20 lines]B", cursor at end
 
     # Go to start
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
     # Right arrow: should move past "A"
-    await editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 1}
 
     # Right arrow: should skip the entire marker
-    await editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
     marker = re.search(r"\[paste #\d+ \+\d+ lines\]", editor.get_text()).group(0)
     assert editor.get_cursor() == {"line": 0, "col": 1 + len(marker)}
 
     # Right arrow: should move past "B"
-    await editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 1 + len(marker) + 1}
 
 
 @pytest.mark.tonio
 async def test_treats_paste_marker_as_single_unit_for_left_arrow():
     editor = Editor(create_test_tui(), default_editor_theme)
-    await editor.handle_input("A")
+    editor.handle_input("A")
     await _paste_with_marker(editor)
-    await editor.handle_input("B")
+    editor.handle_input("B")
     # Cursor at end
 
     # Left arrow: past "B"
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
     text = editor.get_text()
     marker = re.search(r"\[paste #\d+ \+\d+ lines\]", text).group(0)
     assert editor.get_cursor() == {"line": 0, "col": 1 + len(marker)}
 
     # Left arrow: skip the entire marker
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
     assert editor.get_cursor() == {"line": 0, "col": 1}
 
     # Left arrow: past "A"
-    await editor.handle_input("\x1b[D")
+    editor.handle_input("\x1b[D")
     assert editor.get_cursor() == {"line": 0, "col": 0}
 
 
 @pytest.mark.tonio
 async def test_treats_paste_marker_as_single_unit_for_backspace():
     editor = Editor(create_test_tui(), default_editor_theme)
-    await editor.handle_input("A")
+    editor.handle_input("A")
     await _paste_with_marker(editor)
-    await editor.handle_input("B")
+    editor.handle_input("B")
 
     text = editor.get_text()
     marker = re.search(r"\[paste #\d+ \+\d+ lines\]", text).group(0)
 
     # Position cursor right after the marker (before "B")
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
     # Move past "A" and the marker
-    await editor.handle_input("\x1b[C")  # past "A"
-    await editor.handle_input("\x1b[C")  # past marker
+    editor.handle_input("\x1b[C")  # past "A"
+    editor.handle_input("\x1b[C")  # past marker
     assert editor.get_cursor() == {"line": 0, "col": 1 + len(marker)}
 
     # Backspace: should delete the entire marker at once
-    await editor.handle_input("\x7f")
+    editor.handle_input("\x7f")
     assert editor.get_text() == "AB"
     assert editor.get_cursor() == {"line": 0, "col": 1}
 
@@ -3862,16 +3870,16 @@ async def test_treats_paste_marker_as_single_unit_for_backspace():
 @pytest.mark.tonio
 async def test_treats_paste_marker_as_single_unit_for_forward_delete():
     editor = Editor(create_test_tui(), default_editor_theme)
-    await editor.handle_input("A")
+    editor.handle_input("A")
     await _paste_with_marker(editor)
-    await editor.handle_input("B")
+    editor.handle_input("B")
 
     # Position cursor on "A" (col 0) then move right once to be just before marker
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input("\x1b[C")  # past "A", now at col 1 (start of marker)
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[C")  # past "A", now at col 1 (start of marker)
 
     # Forward delete: should delete the entire marker at once
-    await editor.handle_input("\x1b[3~")  # Delete key
+    editor.handle_input("\x1b[3~")  # Delete key
     assert editor.get_text() == "AB"
     assert editor.get_cursor() == {"line": 0, "col": 1}
 
@@ -3879,48 +3887,48 @@ async def test_treats_paste_marker_as_single_unit_for_forward_delete():
 @pytest.mark.tonio
 async def test_treats_paste_marker_as_single_unit_for_word_movement():
     editor = Editor(create_test_tui(), default_editor_theme)
-    await editor.handle_input("X")
-    await editor.handle_input(" ")
+    editor.handle_input("X")
+    editor.handle_input(" ")
     await _paste_with_marker(editor)
-    await editor.handle_input(" ")
-    await editor.handle_input("Y")
+    editor.handle_input(" ")
+    editor.handle_input("Y")
     # Text: "X [paste #1 +20 lines] Y"
 
     text = editor.get_text()
     marker = re.search(r"\[paste #\d+ \+\d+ lines\]", text).group(0)
 
     # Go to start
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x01")  # Ctrl+A
 
     # Ctrl+Right: skip "X"
-    await editor.handle_input("\x1b[1;5C")
+    editor.handle_input("\x1b[1;5C")
     assert editor.get_cursor() == {"line": 0, "col": 1}
 
     # Ctrl+Right: skip whitespace + marker (marker treated as single non-ws, non-punct unit)
-    await editor.handle_input("\x1b[1;5C")
+    editor.handle_input("\x1b[1;5C")
     assert editor.get_cursor() == {"line": 0, "col": 2 + len(marker)}
 
 
 @pytest.mark.tonio
 async def test_undo_restores_marker_after_backspace_deletion():
     editor = Editor(create_test_tui(), default_editor_theme)
-    await editor.handle_input("A")
+    editor.handle_input("A")
     await _paste_with_marker(editor)
-    await editor.handle_input("B")
+    editor.handle_input("B")
 
     text_before = editor.get_text()
 
     # Position after marker
-    await editor.handle_input("\x01")
-    await editor.handle_input("\x1b[C")  # past A
-    await editor.handle_input("\x1b[C")  # past marker
+    editor.handle_input("\x01")
+    editor.handle_input("\x1b[C")  # past A
+    editor.handle_input("\x1b[C")  # past marker
 
     # Delete marker
-    await editor.handle_input("\x7f")
+    editor.handle_input("\x7f")
     assert editor.get_text() == "AB"
 
     # Undo
-    await editor.handle_input("\x1b[45;5u")
+    editor.handle_input("\x1b[45;5u")
     assert editor.get_text() == text_before
 
 
@@ -3931,10 +3939,10 @@ async def test_undo_after_paste_marker_deletion_restores_the_paste_registry():
     editor.on_submit = lambda t: submitted.append(t)
 
     paste = _big_paste("alpha")
-    await editor.handle_input(f"\x1b[200~{paste}\x1b[201~")
-    await editor.handle_input("\x7f")  # delete the marker
-    await editor.handle_input("\x1b[45;5u")  # undo: restores marker text and registry
-    await editor.handle_input("\r")
+    editor.handle_input(f"\x1b[200~{paste}\x1b[201~")
+    editor.handle_input("\x7f")  # delete the marker
+    editor.handle_input("\x1b[45;5u")  # undo: restores marker text and registry
+    editor.handle_input("\r")
     assert submitted == [paste]
 
 
@@ -3946,13 +3954,13 @@ async def test_undo_after_deleting_the_first_of_two_paste_markers_restores_both_
 
     paste_a = _big_paste("alpha")
     paste_b = _big_paste("beta")
-    await editor.handle_input(f"\x1b[200~{paste_a}\x1b[201~")  # #1 = A
-    await editor.handle_input(f"\x1b[200~{paste_b}\x1b[201~")  # #2 = B, cursor at end
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input("\x1b[C")  # right over marker #1
-    await editor.handle_input("\x7f")  # delete marker #1, renumbers #2 -> #1
-    await editor.handle_input("\x1b[45;5u")  # undo
-    await editor.handle_input("\r")
+    editor.handle_input(f"\x1b[200~{paste_a}\x1b[201~")  # #1 = A
+    editor.handle_input(f"\x1b[200~{paste_b}\x1b[201~")  # #2 = B, cursor at end
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[C")  # right over marker #1
+    editor.handle_input("\x7f")  # delete marker #1, renumbers #2 -> #1
+    editor.handle_input("\x1b[45;5u")  # undo
+    editor.handle_input("\r")
     assert submitted == [paste_a + paste_b]
 
 
@@ -3965,14 +3973,14 @@ async def test_renumbers_the_paste_registry_in_ascending_id_order_when_markers_a
     paste_a = _big_paste("alpha")
     paste_b = _big_paste("beta")
     paste_c = _big_paste("gamma")
-    await editor.handle_input(f"\x1b[200~{paste_a}\x1b[201~")  # #1 = A
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input(f"\x1b[200~{paste_b}\x1b[201~")  # #2 = B, text: [#2][#1]
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input(f"\x1b[200~{paste_c}\x1b[201~")  # #3 = C, text: [#3][#2][#1]
-    await editor.handle_input("\x05")  # Ctrl+E
-    await editor.handle_input("\x7f")  # delete marker #1, renumber #3 -> #2 and #2 -> #1
-    await editor.handle_input("\r")
+    editor.handle_input(f"\x1b[200~{paste_a}\x1b[201~")  # #1 = A
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input(f"\x1b[200~{paste_b}\x1b[201~")  # #2 = B, text: [#2][#1]
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input(f"\x1b[200~{paste_c}\x1b[201~")  # #3 = C, text: [#3][#2][#1]
+    editor.handle_input("\x05")  # Ctrl+E
+    editor.handle_input("\x7f")  # delete marker #1, renumber #3 -> #2 and #2 -> #1
+    editor.handle_input("\r")
     assert submitted == [paste_c + paste_b]
 
 
@@ -3983,10 +3991,10 @@ async def test_undo_after_set_text_restores_paste_markers_and_registry():
     editor.on_submit = lambda t: submitted.append(t)
 
     paste = _big_paste("alpha")
-    await editor.handle_input(f"\x1b[200~{paste}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{paste}\x1b[201~")
     editor.set_text("replacement")
-    await editor.handle_input("\x1b[45;5u")  # undo
-    await editor.handle_input("\r")
+    editor.handle_input("\x1b[45;5u")  # undo
+    editor.handle_input("\r")
     assert submitted == [paste]
 
 
@@ -3994,7 +4002,7 @@ async def test_undo_after_set_text_restores_paste_markers_and_registry():
 async def test_handles_multiple_paste_markers_in_same_line():
     editor = Editor(create_test_tui(), default_editor_theme)
     await _paste_with_marker(editor)
-    await editor.handle_input(" ")
+    editor.handle_input(" ")
     await _paste_with_marker(editor)
 
     text = editor.get_text()
@@ -4002,18 +4010,18 @@ async def test_handles_multiple_paste_markers_in_same_line():
     assert len(markers) == 2
 
     # Go to start
-    await editor.handle_input("\x01")
+    editor.handle_input("\x01")
 
     # Right arrow: should skip first marker atomically
-    await editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": len(markers[0])}
 
     # Right arrow: past space
-    await editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": len(markers[0]) + 1}
 
     # Right arrow: should skip second marker atomically
-    await editor.handle_input("\x1b[C")
+    editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": len(markers[0]) + 1 + len(markers[1])}
 
 
@@ -4023,14 +4031,14 @@ async def test_does_not_treat_manually_typed_marker_like_text_as_atomic_no_valid
     # Type text that matches the pattern but was typed manually (no paste entry)
     fake_marker = "[paste #99 +5 lines]"
     for ch in fake_marker:
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
 
     assert editor.get_text() == fake_marker
 
     # No paste with ID 99 exists, so the marker is NOT treated atomically.
     # Right arrow should move one grapheme at a time.
-    await editor.handle_input("\x01")  # Ctrl+A
-    await editor.handle_input("\x1b[C")  # Right
+    editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[C")  # Right
     assert editor.get_cursor() == {"line": 0, "col": 1}  # Just past "["
 
 
@@ -4040,7 +4048,7 @@ async def test_does_not_crash_when_paste_marker_is_wider_than_terminal_width():
     tui = create_test_tui()
     editor = Editor(tui, default_editor_theme)
     big_content = ("line\n" * 47).rstrip()
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
 
     text = editor.get_text()
     marker = re.search(r"\[paste #\d+ \+\d+ lines\]", text)
@@ -4064,22 +4072,22 @@ async def test_does_not_crash_when_text_plus_paste_marker_exceeds_terminal_width
 
     # Type 35 'b' characters
     for _ in range(35):
-        await editor.handle_input("b")
+        editor.handle_input("b")
 
     # Paste 27 lines
     big_content = ("line\n" * 27).rstrip()
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
 
     # Type a few more characters
     for _ in range(4):
-        await editor.handle_input("b")
+        editor.handle_input("b")
 
     # Move cursor left to land on the paste marker
-    await editor.handle_input("\x1b[D")  # past last 'b'
-    await editor.handle_input("\x1b[D")  # past last 'b'
-    await editor.handle_input("\x1b[D")  # past last 'b'
-    await editor.handle_input("\x1b[D")  # past last 'b'
-    await editor.handle_input("\x1b[D")  # now on the paste marker
+    editor.handle_input("\x1b[D")  # past last 'b'
+    editor.handle_input("\x1b[D")  # past last 'b'
+    editor.handle_input("\x1b[D")  # past last 'b'
+    editor.handle_input("\x1b[D")  # past last 'b'
+    editor.handle_input("\x1b[D")  # now on the paste marker
 
     # Render at width 54 - should not throw
     render_width = 54
@@ -4099,17 +4107,17 @@ async def test_word_wrap_line_re_checks_overflow_after_backtracking_to_wrap_oppo
     editor = Editor(tui, default_editor_theme)
 
     # Type a space, then 35 b's
-    await editor.handle_input(" ")
+    editor.handle_input(" ")
     for _ in range(35):
-        await editor.handle_input("b")
+        editor.handle_input("b")
 
     # Paste 27 lines to create marker
     big_content = ("line\n" * 27).rstrip()
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
 
     # Type trailing chars
     for _ in range(4):
-        await editor.handle_input("b")
+        editor.handle_input("b")
 
     # Render at width 54 (contentWidth=54, layoutWidth=53 with paddingX=0)
     render_width = 54
@@ -4127,7 +4135,7 @@ async def test_expands_large_pasted_content_literally_in_get_expanded_text():
         "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\ntokens $1 $2 $& $$ $` $' end"
     )
 
-    await editor.handle_input(f"\x1b[200~{pasted_text}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{pasted_text}\x1b[201~")
 
     assert re.search(r"\[paste #\d+ \+\d+ lines\]", editor.get_text())
     assert editor.get_expanded_text() == pasted_text
@@ -4142,7 +4150,7 @@ async def test_snaps_to_the_paste_marker_start_when_navigating_down_into_it():
 
     # Create a large paste to get a marker
     big_content = "x" * 2000
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
     editor.render(80)
 
     text = editor.get_text()
@@ -4153,20 +4161,20 @@ async def test_snaps_to_the_paste_marker_start_when_navigating_down_into_it():
     #         marker starts at col 6
 
     # Navigate to line 0, col 10
-    await editor.handle_input("\x1b[A")  # Up to line 1
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A (start of line)
+    editor.handle_input("\x1b[A")  # Up to line 1
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A (start of line)
     for _ in range(10):
-        await editor.handle_input("\x1b[C")  # Right 10
+        editor.handle_input("\x1b[C")  # Right 10
     assert editor.get_cursor() == {"line": 0, "col": 10}
 
     # Down to empty line
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 1, "col": 0}
 
     # Down to paste marker line - sticky col 10 falls inside marker (starts at col 6).
     # Cursor should snap to start of marker (col 6), not end (col 6 + len(marker)).
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 2, "col": 6}
 
 
@@ -4182,38 +4190,38 @@ async def test_preserves_sticky_column_when_navigating_through_paste_marker_line
     # Line 3: "" (empty)
     # Line 4: "abcdefghijklmnop" (16 chars)
     for ch in "1234567890123456":
-        await editor.handle_input(ch)
-    await editor.handle_input("\n")
-    await editor.handle_input("\n")
-    await editor.handle_input(f"\x1b[200~{'x' * 2000}\x1b[201~")
-    await editor.handle_input("\n")
-    await editor.handle_input("\n")
+        editor.handle_input(ch)
+    editor.handle_input("\n")
+    editor.handle_input("\n")
+    editor.handle_input(f"\x1b[200~{'x' * 2000}\x1b[201~")
+    editor.handle_input("\n")
+    editor.handle_input("\n")
     for ch in "abcdefghijklmnop":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     editor.render(30)
 
     # Navigate to line 0, col 10
     for _ in range(4):
-        await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A
+        editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(10):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 10}
 
     # Down to empty line - sticky col 10 established
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 1, "col": 0}
 
     # Down to paste marker - cursor snapped to col 0 (start of marker)
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 2, "col": 0}
 
     # Down to empty line
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 3, "col": 0}
 
     # Down to last line - should restore sticky col 10
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 4, "col": 10}
 
 
@@ -4237,14 +4245,14 @@ async def test_does_not_get_stuck_moving_down_from_a_multi_visual_line_paste_mar
     # On VL3 the marker tail "lines]" occupies visual cols 0-5.
     # Content ("i") starts at visual col 6 = logical col 29.
     for ch in "abcdefgh":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     big_content = ("line\n" * 100).rstrip()
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
     for ch in "ijklmnopqr":
-        await editor.handle_input(ch)
-    await editor.handle_input("\n")
+        editor.handle_input(ch)
+    editor.handle_input("\n")
     for ch in "123456789012345678":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     editor.render(20)
 
     text = editor.get_text()
@@ -4258,28 +4266,28 @@ async def test_does_not_get_stuck_moving_down_from_a_multi_visual_line_paste_mar
     # Navigate to line 0, col 6 (on "g"). Preferred col 6 is past the
     # marker tail on VL3, so the cursor should land on content ("i" at
     # col 29) without snapping back.
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A (start of line)
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A (start of line)
     for _ in range(6):
-        await editor.handle_input("\x1b[C")  # Right to col 6
+        editor.handle_input("\x1b[C")  # Right to col 6
     assert editor.get_cursor() == {"line": 0, "col": 6}
 
     # Down: cursor lands on paste marker start
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 0, "col": marker_start}
 
     # Down again: preferred col 6 lands at VL3 col 29 ("i"), which is
     # past the marker. Cursor stays on line 0.
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor()["line"] == 0
     assert editor.get_cursor()["col"] == marker_end  # col 29 = "i"
 
     # Up: back to paste marker
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_cursor() == {"line": 0, "col": marker_start}
 
     # Up again: back to col 6 ("g")
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_cursor() == {"line": 0, "col": 6}
 
 
@@ -4297,35 +4305,35 @@ async def test_skips_marker_continuation_vls_when_preferred_col_falls_in_marker_
     #   VL3: lines]ijklmnopqr      (startCol 23, len 16) <- marker tail + content
     #   VL4: 123456789012345678    (line 1)
     for ch in "abcdefgh":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     big_content = ("line\n" * 100).rstrip()
-    await editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
+    editor.handle_input(f"\x1b[200~{big_content}\x1b[201~")
     for ch in "ijklmnopqr":
-        await editor.handle_input(ch)
-    await editor.handle_input("\n")
+        editor.handle_input(ch)
+    editor.handle_input("\n")
     for ch in "123456789012345678":
-        await editor.handle_input(ch)
+        editor.handle_input(ch)
     editor.render(20)
 
     # Navigate to line 0, col 3 (on "d")
-    await editor.handle_input("\x1b[A")  # Up to line 0
-    await editor.handle_input("\x01")  # Ctrl+A
+    editor.handle_input("\x1b[A")  # Up to line 0
+    editor.handle_input("\x01")  # Ctrl+A
     for _ in range(3):
-        await editor.handle_input("\x1b[C")
+        editor.handle_input("\x1b[C")
     assert editor.get_cursor() == {"line": 0, "col": 3}
 
     # Down: marker
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor()["col"] == 8
 
     # Down: skips VL3 (col 3 in marker tail) and lands on line 1
-    await editor.handle_input("\x1b[B")
+    editor.handle_input("\x1b[B")
     assert editor.get_cursor() == {"line": 1, "col": 3}
 
     # Round-trip back
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_cursor()["col"] == 8  # marker
-    await editor.handle_input("\x1b[A")
+    editor.handle_input("\x1b[A")
     assert editor.get_cursor() == {"line": 0, "col": 3}
 
 
@@ -4338,7 +4346,7 @@ async def test_submits_large_pasted_content_literally():
     submitted = []
     editor.on_submit = lambda text: submitted.append(text)
 
-    await editor.handle_input(f"\x1b[200~{pasted_text}\x1b[201~")
-    await editor.handle_input("\r")
+    editor.handle_input(f"\x1b[200~{pasted_text}\x1b[201~")
+    editor.handle_input("\r")
 
     assert submitted == [pasted_text]

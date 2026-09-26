@@ -284,9 +284,10 @@ _UI_PROBE_EXTENSION = """
 async def extension(pi):
     async def on_session_start(_event, ctx):
         # Exercise the documented `ctx.ui` surface against the real TUI:
-        # awaitable theme accessors, the theme object, and the sync setters.
+        # awaitable theme accessors, the theme object, the sync editor read
+        # and the sync setters.
         themes = await ctx.ui.get_all_themes()
-        await ctx.ui.get_editor_text()
+        ctx.ui.get_editor_text()
         marker = "EXT-STATUS-OK" if themes else "EXT-STATUS-NO-THEMES"
         ctx.ui.set_status("ui-probe", ctx.ui.theme.fg("accent", marker))
         ctx.ui.set_widget("ui-probe", ["EXT-WIDGET-OK"])

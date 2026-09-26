@@ -3,10 +3,10 @@
 Shows a braille spinner animation in the terminal title while the agent is
 working, via `ctx.ui.set_title()`.
 
-pi drives the animation with `setInterval`; here it is a cooperative tonio
-task that ticks until a cancel event is set (the same pattern as
-`pidrei_tui`'s internal timers), stopped on `agent_settled` and
-`session_shutdown`.
+pi drives the animation with `setInterval`; here it is a coroutine that
+ticks until a cancel event is set (`Event.wait(timeout)` between ticks),
+stopped on `agent_settled` and `session_shutdown`. The handlers have no
+`tui`, so there is no `tui.interval` to use.
 
 Start pidrei with this extension:
     pidrei -e ./examples/extensions/titlebar_spinner.py
@@ -28,8 +28,8 @@ async def extension(pi):
     state: dict = {"cancel": None}
     # Start and stop run from agent events and from session_shutdown (quit
     # does not abort the agent first), so they can overlap; the animation
-    # ticks on its own task. The cancel swap and the title each one posts
-    # happen under this lock, so the last title posted is the right one.
+    # ticks on its own coroutine. The cancel swap and the title each one sets
+    # happen under this lock, so the last title set is the right one.
     title_guard = threading.Lock()
 
     def make_title(ctx, frame: str | None = None) -> str:

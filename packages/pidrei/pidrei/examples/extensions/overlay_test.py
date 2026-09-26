@@ -30,7 +30,7 @@ class OverlayTestComponent:
             {"label": "Cancel", "has_input": False, "text": "", "cursor": 0},
         ]
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape"):
             self._done(None)
             return
@@ -135,7 +135,7 @@ class OverlayTestComponent:
 
 async def extension(pi):
     async def handle(_args: str, ctx) -> None:
-        async def factory(_tui, theme, _keybindings, done):
+        def factory(_tui, theme, _keybindings, done):
             return OverlayTestComponent(theme, done)
 
         result = await ctx.ui.custom(factory, {"overlay": True})

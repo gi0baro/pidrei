@@ -15,8 +15,8 @@ async def extension(pi):
         if event["toolName"] not in ("write", "edit"):
             return None
 
-        # Both tools name the parameter `path` and accept `file_path` too.
-        path = event["input"].get("path") or event["input"].get("file_path") or ""
+        # Both tools name the parameter `path`.
+        path = event["input"].get("path") or ""
         if not any(protected in path for protected in PROTECTED_PATHS):
             return None
 

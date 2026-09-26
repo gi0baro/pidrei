@@ -6,11 +6,11 @@ and reports changes as ``(event_type, filename)`` callbacks — the same
 listener shape pi consumers use (they debounce and re-read on their side,
 so poll granularity only affects reload latency).
 
-The poll is a TUI timer (`pidrei_tui._timers.Interval`): each tick runs the
-scan on the blocking pool and calls the listener on the UI owner task, the
-way node delivers watcher events on its one thread. Listeners therefore run
-where the state they touch lives (theme reload, footer refresh), and the
-watchers are reaped with the TUI's scope. A watcher needs a tonio runtime.
+The poll is a TUI timer (`pidrei_tui._timers.Interval`): each tick spawns
+the scan on the blocking pool, and the listener runs on the scan's task once
+it returns — so listeners take their own locks (theme reload, footer
+refresh). The watchers are reaped with the TUI's scope. A watcher needs a
+tonio runtime.
 
 Construction is awaited (`await FsWatcher(...)`, the codebase's convention for
 classes whose init does async work) for the same reason: the baseline
@@ -80,10 +80,13 @@ class FsWatcher:
     def _scan(self) -> dict:
         return _scan_path(self._path, self._is_dir)
 
-    async def _tick(self) -> None:
+    def _tick(self) -> None:
         if self._closed or self._scanning:
             return  # a scan slower than the poll interval does not pile up
         self._scanning = True
+        tonio.spawn.without_tracking(self._scan_and_report())
+
+    async def _scan_and_report(self) -> None:
         try:
             current = await tonio.spawn_blocking(self._scan)
         except OSError:
@@ -165,10 +168,13 @@ class _FileStatPoller:
         self._interval = Interval(self._interval_ms, self._tick)
         return self
 
-    async def _tick(self) -> None:
+    def _tick(self) -> None:
         if self._stopped or self._polling:
             return
         self._polling = True
+        tonio.spawn.without_tracking(self._poll())
+
+    async def _poll(self) -> None:
         try:
             current = await tonio.spawn_blocking(_stat_record, self._path)
         finally:

@@ -165,31 +165,27 @@ class ModelSelectorComponent(Container):
         timeout_ms = 15_000
         timed_out = False
 
-        async def on_timeout() -> None:
+        def on_timeout() -> None:
             nonlocal timed_out
             timed_out = True
             self._refresh_abort_controller.cancel()
 
         self._refresh_timeout = Timeout(timeout_ms, on_timeout)
-        # Detached: the refresh is awaited here, its outcome applied on the UI
-        # owner, where the list takes input (and the timeout fires).
+        # Detached: the refresh is awaited here, its outcome applied under the
+        # UI state lock, which the list's input handling (and the timeout
+        # fire) take too.
         try:
             result = await refresh_model_catalogs(self._model_runtime, self._refresh_abort_controller)
         except Exception as error:
-            failure = f"Could not refresh model catalogs: {error}"  # `error` is unbound past this block
-
-            def show_failure() -> None:
-                if self._closed:
-                    return
-                self._refresh_status_message = ""
-                self._error_message = "Model refresh timed out; showing cached models." if timed_out else failure
-                self._filter_models(self._search_input.get_value())
-                self._tui.request_render()
-
-            self._tui.post_ui(show_failure)
+            failure = f"Could not refresh model catalogs: {error}"
+            with self._tui.state_lock:
+                if not self._closed:
+                    self._refresh_status_message = ""
+                    self._error_message = "Model refresh timed out; showing cached models." if timed_out else failure
+                    self._filter_models(self._search_input.get_value())
+                    self._tui.request_render()
         else:
-
-            def apply() -> None:
+            with self._tui.state_lock:
                 if self._closed:
                     return
                 self._refresh_status_message = ""
@@ -211,8 +207,6 @@ class ModelSelectorComponent(Container):
                 self._load_models_from_snapshot()
                 self._filter_models(self._search_input.get_value())
                 self._tui.request_render()
-
-            self._tui.post_ui(apply)
         finally:
             if self._refresh_timeout is not None:
                 self._refresh_timeout.cancel()
@@ -355,7 +349,7 @@ class ModelSelectorComponent(Container):
 
         self._list_container.set_children(rows)
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.input.tab"):
             if self._scoped_model_items:
@@ -396,7 +390,7 @@ class ModelSelectorComponent(Container):
                 self._on_select_as_default_callback(selected_model)
         # Pass everything else to search input
         else:
-            await self._search_input.handle_input(key_data)
+            self._search_input.handle_input(key_data)
             self._filter_models(self._search_input.get_value())
 
     def _handle_select(self, model) -> None:

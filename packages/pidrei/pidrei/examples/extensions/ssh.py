@@ -194,21 +194,27 @@ async def extension(pi):
     local_edit = create_edit_tool_definition(local_cwd)
     local_bash = create_bash_tool_definition(local_cwd)
 
-    # Resolved lazily on session_start (CLI flags not available during factory)
-    state: dict = {"remote": None, "remote_cwd": None}
+    # Resolved lazily on session_start (CLI flags not available during
+    # factory). One slot holding (remote, remote_cwd), as pi's one object:
+    # tools and handlers on other coroutines read it once and never see a
+    # remote without its cwd.
+    state: dict = {"resolved": None}
 
-    def remote_bash_operations() -> RemoteBashOperations:
-        return RemoteBashOperations(state["remote"], state["remote_cwd"], local_cwd)
+    def remote_bash_operations(resolved: tuple[str, str]) -> RemoteBashOperations:
+        remote, remote_cwd = resolved
+        return RemoteBashOperations(remote, remote_cwd, local_cwd)
 
     def wrap(local_definition, create_definition, remote_operations_cls):
         """Same-named override of the built-in tool: at call time, route to a
         remote-operations definition when SSH is on, the local one otherwise."""
 
         async def execute(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-            if state["remote"] is not None:
+            resolved = state["resolved"]
+            if resolved is not None:
+                remote, remote_cwd = resolved
                 definition = create_definition(
                     local_cwd,
-                    operations=remote_operations_cls(pi, state["remote"], state["remote_cwd"], local_cwd),
+                    operations=remote_operations_cls(pi, remote, remote_cwd, local_cwd),
                 )
                 return await definition.execute(tool_call_id, params, cancel, on_update, ctx)
             return await local_definition.execute(tool_call_id, params, cancel, on_update, ctx)
@@ -220,8 +226,9 @@ async def extension(pi):
     pi.register_tool(wrap(local_edit, create_edit_tool_definition, RemoteEditOperations))
 
     async def execute_bash(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        if state["remote"] is not None:
-            definition = create_bash_tool_definition(local_cwd, operations=remote_bash_operations())
+        resolved = state["resolved"]
+        if resolved is not None:
+            definition = create_bash_tool_definition(local_cwd, operations=remote_bash_operations(resolved))
             return await definition.execute(tool_call_id, params, cancel, on_update, ctx)
         return await local_bash.execute(tool_call_id, params, cancel, on_update, ctx)
 
@@ -238,24 +245,26 @@ async def extension(pi):
             # No path given, evaluate pwd on remote
             remote = arg
             path = (await _ssh_exec(pi, remote, "pwd")).strip()
-        state["remote"] = remote
-        state["remote_cwd"] = path
+        state["resolved"] = (remote, path)
         ctx.ui.set_status("ssh", ctx.ui.theme.fg("accent", f"SSH: {remote}:{path}"))
         ctx.ui.notify(f"SSH mode: {remote}:{path}", "info")
 
     # Handle user ! commands via SSH
     async def on_user_bash(_event, _ctx):
-        if state["remote"] is None:
+        resolved = state["resolved"]
+        if resolved is None:
             return None  # No SSH, use local execution
-        return {"operations": remote_bash_operations()}
+        return {"operations": remote_bash_operations(resolved)}
 
     # Replace local cwd with remote cwd in system prompt
     async def on_before_agent_start(event, _ctx):
-        if state["remote"] is None:
+        resolved = state["resolved"]
+        if resolved is None:
             return None
+        remote, remote_cwd = resolved
         modified = event["systemPrompt"].replace(
             f"Current working directory: {local_cwd}",
-            f"Current working directory: {state['remote_cwd']} (via SSH: {state['remote']})",
+            f"Current working directory: {remote_cwd} (via SSH: {remote})",
         )
         return {"systemPrompt": modified}
 

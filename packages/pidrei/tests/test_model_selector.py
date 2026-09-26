@@ -28,7 +28,7 @@ def _setup():
 
 
 def fake_tui():
-    return SimpleNamespace(request_render=lambda: None, post_ui=lambda fn: fn())
+    return SimpleNamespace(request_render=lambda: None)
 
 
 def render(selector: ModelSelectorComponent) -> str:
@@ -69,7 +69,7 @@ async def test_keeps_the_current_model_marked_while_browsing():
             return row.rstrip() if row is not None else None
 
         assert get_model_row("current-model") == f"→ ✓ current-model [{current_model.provider}]"
-        await selector.handle_input("\x1b[B")
+        selector.handle_input("\x1b[B")
         assert get_model_row("current-model") == f"  ✓ current-model [{current_model.provider}]"
         assert get_model_row("browsed-model") == f"→   browsed-model [{current_model.provider}]"
         selector.dispose()
@@ -97,9 +97,9 @@ async def test_uses_the_configured_save_binding():
         )
 
         assert "Ctrl+R to set as default" in render(selector)
-        await selector.handle_input("\x13")
+        selector.handle_input("\x13")
         assert save_default_calls == []
-        await selector.handle_input("\x12")
+        selector.handle_input("\x12")
         assert save_default_calls == [current_model]
     finally:
         harness.cleanup()

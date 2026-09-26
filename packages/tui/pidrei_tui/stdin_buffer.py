@@ -23,19 +23,18 @@ Port deviations (pi is single-threaded JS):
 
 - Events: pi extends EventEmitter with "data"/"paste"; here listeners are
   registered via ``on_data``/``on_paste`` returning unsubscribe callables.
-- The flush timeout is scheduled on an `OwnerTask` (pi: the JS thread's
-  `setTimeout`). Inside `ProcessTerminal` that is the input owner, so
-  `process()`, the flush and every listener run on one task and clearTimeout
-  is exact by construction. A buffer built without an owner (standalone, as
-  in the mirrored tests) fires on a detached timer task instead; the
-  callback's identity re-check is what keeps that mode honest.
+- No timer of its own: pi's flush `setTimeout` becomes a deadline
+  (``deadline``, on the ``clock``, monotonic seconds by default) that the
+  buffer's reader honours by calling ``expire()`` once it passes. In
+  `ProcessTerminal` the stdin reader waits on "more bytes, or the deadline"
+  (UI_ISLAND_DESIGN §4.2), so a flushed ESC takes its place in the input
+  order and nothing fires from another task.
 - Non-escape input is split per Unicode codepoint, not per UTF-16 unit, so
   astral-plane characters are never cut into surrogate halves.
 """
 
 import re
-
-from ._owner import OwnerTask, TimerHandle
+import time
 
 
 ESC = "\x1b"
@@ -235,20 +234,22 @@ class StdinBuffer:
     sequence such as CSI or mouse (default 50); after that the buffer is
     flushed even if incomplete. ``escape_timeout`` is the maximum time to wait
     after a lone ESC before treating it as Escape (default 10); increase for
-    high-latency Alt+key input (SSH).
+    high-latency Alt+key input (SSH). ``clock`` returns the current time in
+    seconds (default: ``time.monotonic``); ``deadline`` is on it.
     """
 
     def __init__(
         self,
         timeout: float | None = None,
         escape_timeout: float | None = None,
-        owner: OwnerTask | None = None,
+        clock=None,
     ) -> None:
         self._timeout_ms = timeout if timeout is not None else DEFAULT_SEQUENCE_TIMEOUT_MS
         self._escape_timeout_ms = escape_timeout if escape_timeout is not None else DEFAULT_ESCAPE_TIMEOUT_MS
-        self._owner = owner if owner is not None else OwnerTask()
+        self._clock = clock if clock is not None else time.monotonic
         self._buffer = ""
-        self._timeout: TimerHandle | None = None
+        # pi's pending flush `setTimeout`, as the time it would fire.
+        self._deadline: float | None = None
         self._paste_mode = False
         self._paste_buffer = ""
         self._pending_kitty_printable_codepoint: int | None = None
@@ -273,7 +274,7 @@ class StdinBuffer:
 
         return unsubscribe
 
-    async def process(self, data: str | bytes | bytearray) -> None:
+    def process(self, data: str | bytes | bytearray) -> None:
         """Parse `data` and deliver whatever it completes to the listeners.
 
         `_process` *collects* emissions (the recursive paste path appends to
@@ -283,21 +284,34 @@ class StdinBuffer:
         """
         emissions: list[tuple[str, str]] = []
         self._process(data, emissions)
-        await self._dispatch(emissions)
+        self._dispatch(emissions)
 
-    async def _dispatch(self, emissions: list[tuple[str, str]]) -> None:
+    @property
+    def deadline(self) -> float | None:
+        """When the buffered remainder must be flushed (on ``clock``), or
+        None when nothing is pending: pi's flush timer."""
+        return self._deadline
+
+    def expire(self) -> None:
+        """pi's flush timer firing: once ``deadline`` has passed, the
+        buffered remainder is delivered as it stands."""
+        if self._deadline is None or self._clock() < self._deadline:
+            return
+        self._deadline = None
+        emissions: list[tuple[str, str]] = []
+        for sequence in self._flush():
+            self._emit_data_sequence(sequence, emissions)
+        self._dispatch(emissions)
+
+    def _dispatch(self, emissions: list[tuple[str, str]]) -> None:
         for kind, payload in emissions:
             listeners = self._data_listeners if kind == "data" else self._paste_listeners
             for listener in list(listeners):
-                # Listeners are awaitable-returning (async-only policy): they
-                # re-enter the async input chain.
-                await listener(payload)
+                listener(payload)
 
     def _process(self, data: str | bytes | bytearray, out: list[tuple[str, str]]) -> None:
         # Clear any pending timeout
-        if self._timeout is not None:
-            self._timeout.cancel()
-            self._timeout = None
+        self._deadline = None
 
         # Handle high-byte conversion (for compatibility with parseKeypress)
         # If buffer has single byte > 127, convert to ESC + (byte - 128)
@@ -374,23 +388,8 @@ class StdinBuffer:
             self._schedule_flush_timer()
 
     def _schedule_flush_timer(self) -> None:
-        timer: TimerHandle | None = None
-
-        async def fire() -> None:
-            # Only the current timer may flush (standalone mode: a detached
-            # timer can pass its cancellation check while process()/flush()
-            # replaces it; on the owner this never happens).
-            if self._timeout is not timer:
-                return
-            self._timeout = None
-            emissions: list[tuple[str, str]] = []
-            for sequence in self._flush():
-                self._emit_data_sequence(sequence, emissions)
-            await self._dispatch(emissions)
-
         timeout_ms = self._escape_timeout_ms if self._buffer == ESC else self._timeout_ms
-        timer = self._owner.after(timeout_ms, fire)
-        self._timeout = timer
+        self._deadline = self._clock() + timeout_ms / 1000
 
     def _emit_data_sequence(self, sequence: str, out: list[tuple[str, str]]) -> None:
         """Apply the Kitty codepoint de-duplication and queue the sequence for
@@ -407,9 +406,7 @@ class StdinBuffer:
         return self._flush()
 
     def _flush(self) -> list[str]:
-        if self._timeout is not None:
-            self._timeout.cancel()
-            self._timeout = None
+        self._deadline = None
 
         if len(self._buffer) == 0:
             return []
@@ -420,9 +417,7 @@ class StdinBuffer:
         return sequences
 
     def clear(self) -> None:
-        if self._timeout is not None:
-            self._timeout.cancel()
-            self._timeout = None
+        self._deadline = None
         self._buffer = ""
         self._paste_mode = False
         self._paste_buffer = ""

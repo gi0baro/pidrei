@@ -64,8 +64,12 @@ class RgDetails:
 
 
 def _details_get(details, key: str):
+    """Read `key` from the live `RgDetails` (or `TruncationResult`), or from
+    pi's wire shape once the session is reloaded: a dict with camelCase keys,
+    nested values included."""
     if isinstance(details, dict):
-        return details.get(key)
+        head, *rest = key.split("_")
+        return details.get(head + "".join(part.capitalize() for part in rest))
     return getattr(details, key, None)
 
 
@@ -173,7 +177,7 @@ async def extension(pi):
 
         # Show truncation warning if applicable
         truncation = _details_get(details, "truncation")
-        if truncation is not None and truncation.truncated:
+        if truncation is not None and _details_get(truncation, "truncated"):
             text += theme.fg("warning", " (truncated)")
 
         # In expanded view, show the actual matches

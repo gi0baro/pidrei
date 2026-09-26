@@ -16,9 +16,8 @@ from .theme import (
 
 class InteractiveThemeController:
     def __init__(self, ui, options: dict) -> None:
-        """``options``: ``getSettingsManager``, ``showError``, ``onChanged``
-        (called with ``on_owner``: see `_notify_changed`), optional
-        ``initialThemeSetting`` (pi's constructor options record)."""
+        """``options``: ``getSettingsManager``, ``showError``, ``onChanged``,
+        optional ``initialThemeSetting`` (pi's constructor options record)."""
         self._ui = ui
         self._get_settings_manager = options["getSettingsManager"]
         self._show_error = options["showError"]
@@ -62,7 +61,9 @@ class InteractiveThemeController:
         )
         auto_theme = parse_auto_theme_setting(theme_setting)
         if auto_theme:
-            self._terminal_theme = await detect_terminal_theme_for_auto({"ui": self._ui, "timeoutMs": 100})
+            terminal_theme = await detect_terminal_theme_for_auto({"ui": self._ui, "timeoutMs": 100})
+            with self._ui.state_lock:
+                self._terminal_theme = terminal_theme
             await self._set_auto_sync(True)
             await self._apply_theme_name(
                 auto_theme["lightTheme"] if self._terminal_theme == "light" else auto_theme["darkTheme"],
@@ -76,7 +77,8 @@ class InteractiveThemeController:
             return
 
         detection = await detect_terminal_background_theme({"ui": self._ui, "timeoutMs": 100})
-        self._terminal_theme = detection["theme"]
+        with self._ui.state_lock:
+            self._terminal_theme = detection["theme"]
         if not (await self._apply_theme_name(detection["theme"]))["success"]:
             return
         if detection["confidence"] == "high":
@@ -94,18 +96,21 @@ class InteractiveThemeController:
         await self._set_auto_sync(False)
         result = await self._apply_theme_name(theme_name, show_error)
         if result["success"]:
-            self._current_theme_setting = theme_name
+            with self._ui.state_lock:
+                self._current_theme_setting = theme_name
         return result
 
     async def set_theme_setting(self, theme_setting: str) -> None:
-        self._current_theme_setting = theme_setting
+        with self._ui.state_lock:
+            self._current_theme_setting = theme_setting
         await self.apply_from_settings()
 
     async def set_theme_instance(self, theme_instance) -> dict:
         await self._set_auto_sync(False)
         apply_theme_instance(theme_instance)
-        self._active_theme_name = "<in-memory>"
-        self._notify_changed()
+        with self._ui.state_lock:
+            self._active_theme_name = "<in-memory>"
+            self._notify_changed()
         return {"success": True}
 
     async def preview(self, theme_setting_or_name: str) -> None:
@@ -113,8 +118,9 @@ class InteractiveThemeController:
         if not theme_name:
             return
         if (await set_theme(theme_name, True))["success"]:
-            self._ui.invalidate()
-            self._ui.request_render()
+            with self._ui.state_lock:
+                self._ui.invalidate()
+                self._ui.request_render()
 
     def disable_auto_sync(self) -> Awaitable[None]:
         return self._set_auto_sync(False)
@@ -128,36 +134,34 @@ class InteractiveThemeController:
     def get_terminal_theme(self) -> str:
         return self._terminal_theme
 
-    async def _apply_theme_name(self, theme_name: str, show_error: bool = False, *, on_owner: bool = False) -> dict:
+    async def _apply_theme_name(self, theme_name: str, show_error: bool = False) -> dict:
         result = await set_theme(theme_name, True)
-        self._active_theme_name = theme_name if result["success"] else "dark"
-        self._notify_changed(on_owner=on_owner)
+        with self._ui.state_lock:
+            self._active_theme_name = theme_name if result["success"] else "dark"
+            self._notify_changed()
         if not result["success"] and show_error:
             self._show_error(f'Failed to load theme "{theme_name}": {result.get("error")}\nFell back to dark theme.')
         return result
 
-    def _notify_changed(self, *, on_owner: bool = False) -> None:
-        # From the terminal's color-scheme report, awaited by the TUI's input
-        # handling (``on_owner``): the tree is invalidated in place and
-        # `onChanged` applies in place. From settings, extension and /reload
-        # tasks, off the owner: the cache walk is posted, resolved at apply
-        # time; `onChanged` posts its own work behind it.
-        if on_owner:
+    def _notify_changed(self) -> None:
+        with self._ui.state_lock:
             self._ui.invalidate()
-        else:
-            self._ui.post_ui(lambda: self._ui.invalidate())
-        self._on_changed(on_owner=on_owner)
+            self._on_changed()
 
     async def _set_auto_sync(self, enabled: bool) -> None:
-        if self._auto_sync_enabled == enabled:
-            return
-        self._auto_sync_enabled = enabled
+        # Claimed under the lock, before the await: two callers never both
+        # act on the same transition.
+        with self._ui.state_lock:
+            if self._auto_sync_enabled == enabled:
+                return
+            self._auto_sync_enabled = enabled
         await self._ui.set_terminal_color_scheme_notifications(enabled)
 
     async def _apply_terminal_theme(self, terminal_theme: str) -> None:
-        if not self._auto_sync_enabled:
-            return
-        self._terminal_theme = terminal_theme
+        with self._ui.state_lock:
+            if not self._auto_sync_enabled:
+                return
+            self._terminal_theme = terminal_theme
         auto_theme = parse_auto_theme_setting(
             self._current_theme_setting
             if self._current_theme_setting is not None
@@ -168,5 +172,4 @@ class InteractiveThemeController:
             return
         theme_name = auto_theme["lightTheme"] if terminal_theme == "light" else auto_theme["darkTheme"]
         if theme_name != self._active_theme_name:
-            # Awaited by the TUI's input handling, on the owner.
-            await self._apply_theme_name(theme_name, on_owner=True)
+            await self._apply_theme_name(theme_name)

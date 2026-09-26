@@ -31,8 +31,10 @@ the terminal diffs frames and writes only what changed.
 
 A component implements `render(width) -> list[str]` and `invalidate()`, which
 must drop any cached output — it is called on theme changes and whenever a
-full re-render is needed. Keyboard input (`async handle_input(data)`) and
-mouse input are optional. Every rendered line must fit `width` in terminal
+full re-render is needed. Keyboard input (`handle_input(data)`, synchronous)
+and mouse input are optional; slow work goes to `tui.spawn(...)` (see
+"Where extension code and component code run" in
+[extensions.md](extensions.md)). Every rendered line must fit `width` in terminal
 cells (see [Width and unicode](#width-and-unicode)). Styling and hyperlinks are
 reset after every line, so reapply styles per line. After changing state,
 invalidate what changed and call the injected `tui.request_render()`; requests
@@ -170,10 +172,10 @@ Both return `None` if the user dismisses them. They only work when
 `ctx.has_ui` is true.
 
 When those are not enough, `await ctx.ui.custom(factory, options)` hands the
-interactive area to one component until it finishes. The factory must be an
-`async def` returning the component; it is awaited as
-`await factory(tui, theme, keybindings, done)`, and calling `done(result)`
-resolves `custom()` with `result` and disposes the component.
+interactive area to one component until it finishes. The factory is a plain
+synchronous function, called as `factory(tui, theme, keybindings, done)`
+before `custom()` returns; calling `done(result)` (from anywhere) resolves
+`custom()` with `result` and disposes the component.
 By default the component replaces the editor; `{"overlay": True}` draws it on
 top of existing content instead, with `"overlayOptions"` (size, anchor,
 offsets, margins, responsive visibility — a dict or a callable returning one)

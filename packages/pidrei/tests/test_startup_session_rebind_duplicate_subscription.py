@@ -6,6 +6,7 @@ same way. The two binds are gated on events so the startup rebind is still
 in flight when the replacement session takes over.
 """
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -14,14 +15,18 @@ import tonio.colored as tonio
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 
 
-async def _async_noop() -> None:
-    pass
+async def _resolve_cwd(cwd: str) -> dict:
+    return {"cwd": cwd}
+
+
+def _session() -> SimpleNamespace:
+    return SimpleNamespace(session_manager=SimpleNamespace(get_cwd=lambda: "/project"))
 
 
 @pytest.mark.tonio
 async def test_does_not_subscribe_from_the_stale_startup_rebind():
-    startup_session = object()
-    replacement_session = object()
+    startup_session = _session()
+    replacement_session = _session()
     startup_bind = tonio.Event()
     replacement_bind = tonio.Event()
 
@@ -45,7 +50,9 @@ async def test_does_not_subscribe_from_the_stale_startup_rebind():
     context = SimpleNamespace(
         session=startup_session,
         _unsubscribe=None,
-        _apply_runtime_settings=_async_noop,
+        ui=SimpleNamespace(state_lock=threading.RLock()),
+        _footer_data_provider=SimpleNamespace(resolve_cwd=_resolve_cwd),
+        _apply_runtime_settings=lambda _resolved_cwd: False,
         render_current_session_state=lambda: None,
         _bind_current_session_extensions=bind_current_session_extensions,
         _subscribe_to_agent=lambda: subscribe_calls.append(True),

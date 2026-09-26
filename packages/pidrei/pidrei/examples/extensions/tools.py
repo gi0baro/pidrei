@@ -9,6 +9,8 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/tools.py
 """
 
+import tonio.colored as tonio
+
 from pidrei.modes.interactive.theme import get_settings_list_theme
 from pidrei_tui import Container, SettingsList, Spacer, Text
 
@@ -25,8 +27,8 @@ class ToolsExtension:
         # Restore state when navigating the session tree.
         self.pi.on("session_tree", self.restore)
 
-    async def persist_state(self) -> None:
-        await self.pi.append_entry("tools-config", {"enabledTools": sorted(self.enabled_tools)})
+    async def persist_state(self, enabled_tools: list[str]) -> None:
+        await self.pi.append_entry("tools-config", {"enabledTools": enabled_tools})
 
     def apply_tools(self) -> None:
         self.pi.set_active_tools(list(self.enabled_tools))
@@ -60,7 +62,7 @@ class ToolsExtension:
         # Refresh the tool list.
         self.all_tools = self.pi.get_all_tools()
 
-        async def factory(_tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             # A settings row per tool, toggling between enabled and disabled.
             items = [
                 {
@@ -73,19 +75,22 @@ class ToolsExtension:
             ]
 
             container = Container()
-            container.add_child(Text(theme.fg("accent", theme.bold("Tool Configuration")), 1, 0))
+            container.add_child(Text(theme.fg("accent", theme.bold("Tool Configuration")), 0, 0))
             container.add_child(Spacer(1))
 
-            async def on_change(tool_id: str, new_value: str) -> None:
-                # Update the enabled state and apply immediately.
+            def on_change(tool_id: str, new_value: str) -> None:
+                # Update the enabled state and apply immediately. The write
+                # saves the selection taken here, and the next key waits for
+                # it, as pi's synchronous appendEntry does, so saves land in
+                # toggle order.
                 if new_value == "enabled":
                     self.enabled_tools.add(tool_id)
                 else:
                     self.enabled_tools.discard(tool_id)
                 self.apply_tools()
-                await self.persist_state()
+                tui.finish_before_next_input(tonio.spawn(self.persist_state(sorted(self.enabled_tools))))
 
-            async def on_cancel() -> None:
+            def on_cancel() -> None:
                 # Close the dialog.
                 done(None)
 
@@ -101,8 +106,8 @@ class ToolsExtension:
                 def invalidate(self) -> None:
                     container.invalidate()
 
-                async def handle_input(self, data: str) -> None:
-                    await settings_list.handle_input(data)
+                def handle_input(self, data: str) -> None:
+                    settings_list.handle_input(data)
 
             return ToolsDialog()
 

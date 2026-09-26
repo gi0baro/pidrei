@@ -72,7 +72,7 @@ class ExtensionSelectorComponent(Container):
                 text = f"  {theme.fg('text', option)}"
             self._list_container.add_child(Text(text, 1, 0))
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "app.tools.expand"):
             if self._on_toggle_tools_expanded is not None:

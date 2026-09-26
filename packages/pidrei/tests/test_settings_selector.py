@@ -73,7 +73,7 @@ async def test_cycles_through_fullscreen_settings():
     scrollbar_changes: list[str] = []
     copy_on_select_changes: list[bool] = []
 
-    async def on_cancel() -> None:
+    def on_cancel() -> None:
         pass
 
     callbacks = {
@@ -87,9 +87,9 @@ async def test_cycles_through_fullscreen_settings():
     async def cycle(label: str, count: int) -> None:
         settings_list = SettingsSelectorComponent(dict(BASE_CONFIG), callbacks).get_settings_list()
         for character in label:
-            await settings_list.handle_input(character)
+            settings_list.handle_input(character)
         for _ in range(count):
-            await settings_list.handle_input("\r")
+            settings_list.handle_input("\r")
 
     await cycle("Fullscreen exit output", 2)
     assert exit_output_changes == ["resume-hint", "transcript"]
@@ -103,11 +103,11 @@ def _render(settings_list) -> str:
     return strip_ansi("\n".join(settings_list.render(120)))
 
 
-async def _noop_cancel() -> None:
+def _noop_cancel() -> None:
     pass
 
 
-async def _noop_preview(_theme) -> None:
+def _noop_preview(_theme) -> None:
     pass
 
 
@@ -118,12 +118,12 @@ async def test_keeps_the_configured_fixed_theme_marked_while_browsing():
     settings_list = SettingsSelectorComponent(config, callbacks).get_settings_list()
 
     settings_list.select_item("theme")
-    await settings_list.handle_input("\r")
+    settings_list.handle_input("\r")
     output = _render(settings_list)
     assert "    Automatic" in output
     assert "→ ✓ dark" in output
 
-    await settings_list.handle_input(DOWN)
+    settings_list.handle_input(DOWN)
     output = _render(settings_list)
     assert "  ✓ dark" in output
     assert "→   light" in output
@@ -141,12 +141,12 @@ async def test_keeps_a_configured_automatic_theme_marked_while_browsing():
     settings_list = SettingsSelectorComponent(config, callbacks).get_settings_list()
 
     settings_list.select_item("theme")
-    await settings_list.handle_input("\r")
-    await settings_list.handle_input("\r")
+    settings_list.handle_input("\r")
+    settings_list.handle_input("\r")
     output = _render(settings_list)
     assert "→ ✓ light" in output
 
-    await settings_list.handle_input(DOWN)
+    settings_list.handle_input(DOWN)
     output = _render(settings_list)
     assert "  ✓ light" in output
     assert "→   other" in output
@@ -168,14 +168,14 @@ async def test_keeps_the_configured_per_model_thinking_level_marked_while_browsi
         settings_list = SettingsSelectorComponent(config, {"onCancel": _noop_cancel}).get_settings_list()
 
         settings_list.select_item("model-thinking")
-        await settings_list.handle_input("\r")
-        await settings_list.handle_input("\r")
+        settings_list.handle_input("\r")
+        settings_list.handle_input("\r")
 
         output = _render(settings_list)
         assert "→ ✓ medium" in output
         assert "    (clear override)" in output
 
-        await settings_list.handle_input(DOWN)
+        settings_list.handle_input(DOWN)
         output = _render(settings_list)
         assert "  ✓ medium" in output
         assert "→   high" in output

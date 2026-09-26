@@ -74,6 +74,11 @@ class SessionSelectorHeader:
         self._show_path = False
         self._confirming_delete_path: str | None = None
         self._status_message: dict | None = None
+        # Until when (monotonic seconds) an auto-hiding status shows, or None.
+        # The timer only asks for the frame at that deadline: it runs on its
+        # own task and mutates nothing, so a fire racing a newer status is
+        # one extra frame (pi's timer clears the message itself).
+        self._status_hide_at: float | None = None
         self._status_timeout: Timeout | None = None
         self._show_rename_hint = False
 
@@ -114,15 +119,27 @@ class SessionSelectorHeader:
         """``msg`` is a ``{"type": "info" | "error", "message"}`` record."""
         self._clear_status_timeout()
         self._status_message = msg
+        self._status_hide_at = None
         if not msg or not auto_hide_ms:
             return
+        self._status_hide_at = time.monotonic() + auto_hide_ms / 1000
 
-        async def hide() -> None:
-            self._status_message = None
-            self._status_timeout = None
+        def hidden() -> None:
+            # A fire ahead of the clock asks again for the remainder.
+            hide_at = self._status_hide_at
+            remaining = hide_at - time.monotonic() if hide_at is not None else 0
+            if remaining > 0:
+                Timeout(remaining * 1000, hidden)
+                return
             self._request_render()
 
-        self._status_timeout = Timeout(auto_hide_ms, hide)
+        self._status_timeout = Timeout(auto_hide_ms, hidden)
+
+    def _visible_status_message(self) -> dict | None:
+        hide_at = self._status_hide_at
+        if hide_at is not None and time.monotonic() >= hide_at:
+            return None
+        return self._status_message
 
     def invalidate(self) -> None:
         pass
@@ -167,9 +184,9 @@ class SessionSelectorHeader:
             )
             hint_line1 = theme.fg("error", truncate_to_width(confirm_hint, width, "…"))
             hint_line2 = ""
-        elif self._status_message:
-            color = "error" if self._status_message["type"] == "error" else "accent"
-            hint_line1 = theme.fg(color, truncate_to_width(self._status_message["message"], width, "…"))
+        elif status_message := self._visible_status_message():
+            color = "error" if status_message["type"] == "error" else "accent"
+            hint_line1 = theme.fg(color, truncate_to_width(status_message["message"], width, "…"))
             hint_line2 = ""
         else:
             path_state = "(on)" if self._show_path else "(off)"
@@ -300,11 +317,11 @@ class SessionList:
         keybindings,
         current_session_file_path: str | None = None,
         *,
-        post_ui,
+        state_lock,
     ) -> None:
-        # The UI owner's front door (`TUI.post_ui`): list state is owner-confined,
-        # and `set_sessions` finishes off the runtime.
-        self._post_ui = post_ui
+        # The UI state lock (`TUI.state_lock`): `set_sessions` finishes on
+        # another task and applies under it.
+        self._state_lock = state_lock
         self._all_sessions = sessions
         # Populated by `set_sessions`; empty here because a constructor cannot
         # await, and `build_session_tree` falls back to resolving inline.
@@ -370,29 +387,28 @@ class SessionList:
         self._name_filter = name_filter
         self._filter_sessions(self._search_input.get_value())
 
-    def set_sessions(self, sessions: list, show_cwd: bool, *, on_owner: bool = False) -> Awaitable[None]:
+    def set_sessions(self, sessions: list, show_cwd: bool) -> Awaitable[None]:
         """Replace the listed sessions; returns the awaitable remainder.
 
         pi's setSessions is synchronous; here the canonical-path map is built
         off the runtime first, so progressive loads can have several calls in
         flight. The call order is taken synchronously and only the latest call
         applies, whichever finishes last. The awaitable resolves once the list
-        is applied: in place when it is awaited on the UI owner (``on_owner``),
-        else posted to it — anything posted after it sees the new list.
+        is applied under the UI state lock.
         """
         with self._set_sessions_guard:
             self._set_sessions_seq += 1
             seq = self._set_sessions_seq
-        return self._apply_sessions(seq, sessions, show_cwd, on_owner)
+        return self._apply_sessions(seq, sessions, show_cwd)
 
-    async def _apply_sessions(self, seq: int, sessions: list, show_cwd: bool, on_owner: bool) -> None:
+    async def _apply_sessions(self, seq: int, sessions: list, show_cwd: bool) -> None:
         # Resolve every session path once here, off the runtime, so the
         # per-keystroke filter below never touches the filesystem.
         canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map, sessions)
 
-        def apply() -> None:
-            # On the owner, where input handling and rendering read this state;
-            # the sequence check there is what makes the latest call win.
+        # Input handling and rendering read this state under the UI state
+        # lock; the sequence check there is what makes the latest call win.
+        with self._state_lock:
             if seq != self._set_sessions_seq:
                 return
             selected_path = self.get_selected_session_path() if self._selection_touched else None
@@ -409,11 +425,6 @@ class SessionList:
                 )
                 if selected_index >= 0:
                     self._selected_index = selected_index
-
-        if on_owner:
-            apply()
-        else:
-            self._post_ui(apply)
 
     def _filter_sessions(self, query: str) -> None:
         trimmed = query.strip()
@@ -566,7 +577,7 @@ class SessionList:
         branch = "└─ " if node["isLast"] else "├─ "
         return "".join(parts) + branch
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
 
         # Handle delete confirmation state first - intercept all keys
@@ -585,9 +596,7 @@ class SessionList:
 
         if kb.matches(key_data, "tui.input.tab"):
             if self.on_toggle_scope is not None:
-                # Coroutine-returning by contract: toggling reloads sessions
-                # from disk (never-block rule).
-                await self.on_toggle_scope()
+                self.on_toggle_scope()
             return
 
         if kb.matches(key_data, "app.session.toggleSort"):
@@ -624,7 +633,7 @@ class SessionList:
         # forwarded to the input
         if kb.matches(key_data, "app.session.deleteNoninvasive"):
             if len(self._search_input.get_value()) > 0:
-                await self._search_input.handle_input(key_data)
+                self._search_input.handle_input(key_data)
                 self._filter_sessions(self._search_input.get_value())
                 return
 
@@ -654,7 +663,7 @@ class SessionList:
                 self.on_cancel()
         # Pass everything else to search input
         else:
-            await self._search_input.handle_input(key_data)
+            self._search_input.handle_input(key_data)
             self._filter_sessions(self._search_input.get_value())
 
 
@@ -702,14 +711,6 @@ async def delete_session_file(session_path: str) -> dict:
         return {"ok": False, "method": "unlink", "error": error}
 
 
-async def _already_loading() -> None:
-    """The remainder of a `_load_scope` call that found its scope already loading."""
-
-
-async def _nothing_left() -> None:
-    """The remainder of a handler whose synchronous part did all the work."""
-
-
 class SessionSelectorComponent(Container):
     """Component that renders a session selector."""
 
@@ -724,14 +725,18 @@ class SessionSelectorComponent(Container):
         options: dict | None = None,
         current_session_file_path: str | None = None,
         *,
-        post_ui,
+        state_lock,
+        finish_before_next_input,
     ) -> None:
-        """`post_ui` is the UI owner's front door (`TUI.post_ui`), a pidrei-only
-        argument: loads, deletes and renames finish on detached tasks, and every
-        selector mutation they make is posted to the owner (tui-island contract)."""
+        """pidrei-only arguments: `state_lock` (`TUI.state_lock`): loads,
+        deletes and renames finish on their own tasks and apply their selector
+        changes under it. `finish_before_next_input`
+        (`TUI.finish_before_next_input`) holds the next key until a scope
+        toggle's list update has applied."""
         super().__init__()
         options = options or {}
-        self._post_ui = post_ui
+        self._state_lock = state_lock
+        self._finish_before_next_input = finish_before_next_input
         # Construction-time reads are hoisted out of constructors (PLAN: never
         # block the runtime). Both callers pass `keybindings`; the fallback is
         # the already-loaded global rather than a fresh read from disk.
@@ -767,12 +772,12 @@ class SessionSelectorComponent(Container):
             self._name_filter,
             self._keybindings,
             current_session_file_path,
-            post_ui=post_ui,
+            state_lock=state_lock,
         )
 
         self._build_base_layout(self._session_list)
 
-        self._rename_input.on_submit = lambda value: tonio.spawn.without_tracking(self._confirm_rename(value))
+        self._rename_input.on_submit = self._confirm_rename
 
         # Ensure header status timeouts are cleared when leaving the selector
         def clear_status_message() -> None:
@@ -829,11 +834,11 @@ class SessionSelectorComponent(Container):
         self._session_list.on_delete_confirmation_change = handle_delete_confirmation_change
         self._session_list.on_error = handle_error
 
-        # Handle session deletion (runs detached; the outcome is applied on the owner)
+        # Handle session deletion (runs detached; the outcome applies under the lock)
         async def handle_delete_session(session_path: str) -> None:
             result = await delete_session_file(session_path)
 
-            def apply() -> None:
+            with self._state_lock:
                 if result["ok"]:
                     if self._current_sessions is not None:
                         self._current_sessions = [s for s in self._current_sessions if s.path != session_path]
@@ -846,7 +851,7 @@ class SessionSelectorComponent(Container):
 
                     msg = "Session moved to trash" if result["method"] == "trash" else "Session deleted"
                     self._header.set_status_message({"type": "info", "message": msg}, 2000)
-                    self._refresh_sessions_after_mutation(on_owner=True)
+                    self._refresh_sessions_after_mutation()
                 else:
                     error_message = result.get("error") or "Unknown error"
                     self._header.set_status_message(
@@ -855,12 +860,10 @@ class SessionSelectorComponent(Container):
 
                 self._request_render()
 
-            self._post_ui(apply)
-
         self._session_list.on_delete_session = handle_delete_session
 
         # Start loading current sessions immediately
-        tonio.spawn.without_tracking(self._load_scope("current"))
+        self._load_scope("current")
 
     # Focusable implementation - propagate to session list for IME cursor
     # positioning
@@ -876,16 +879,16 @@ class SessionSelectorComponent(Container):
         if value and self._mode == "rename":
             self._rename_input.focused = True
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if self._mode == "rename":
             kb = get_keybindings()
             if kb.matches(data, "tui.select.cancel"):
                 self._exit_rename_mode()
                 return
-            await self._rename_input.handle_input(data)
+            self._rename_input.handle_input(data)
             return
 
-        await self._session_list.handle_input(data)
+        self._session_list.handle_input(data)
 
     def _build_base_layout(self, content, options: dict | None = None) -> None:
         options = options or {}
@@ -944,49 +947,56 @@ class SessionSelectorComponent(Container):
 
         self._request_render()
 
-    def _confirm_rename(self, value: str) -> Awaitable[None]:
-        """From the rename input's submit, on the owner: pi's part before its
-        first await (leaving rename mode when there is nothing to rename)
-        runs here; the rename is the returned remainder, spawned."""
+    def _confirm_rename(self, value: str) -> None:
+        """From the rename input's submit: pi's part before its first await
+        (leaving rename mode when there is nothing to rename) runs here; the
+        rename is spawned."""
         next_name = value.strip()
         if not next_name:
-            return _nothing_left()
+            return
         target = self._rename_target_path
         rename_session = self._rename_session
         if not target or rename_session is None:
             self._exit_rename_mode()
-            return _nothing_left()
-        return self._rename(target, next_name, rename_session)
+            return
+        tonio.spawn.without_tracking(self._rename(target, next_name, rename_session))
 
     async def _rename(self, target: str, next_name: str, rename_session) -> None:
-        # Off the owner (spawned): the selector changes are posted.
         try:
             await rename_session(target, next_name)
         except BaseException:
-            self._post_ui(self._exit_rename_mode)
+            with self._state_lock:
+                self._exit_rename_mode()
             raise
         # pi awaits the reload before leaving rename mode.
         self._refresh_sessions_after_mutation(then=self._exit_rename_mode)
 
-    def _load_scope(self, scope: str) -> Awaitable[None]:
-        """Start a scope load; returns the awaitable remainder.
+    def _load_scope(self, scope: str) -> None:
+        """Start a scope load, unless one is in flight.
 
         pi's async loadScope runs synchronously up to its first await, so the
-        in-flight load is observable immediately after the call; this sync
-        prologue mirrors that before handing back the coroutine.
+        in-flight load is observable immediately after the call; that part
+        runs here, and the load itself is spawned.
         """
-        if (self._current_load if scope == "current" else self._all_load) is not None:
-            return _already_loading()
+        cancel = self._claim_load(scope)
+        if cancel is not None:
+            tonio.spawn.without_tracking(self._load_scope_rest(scope, cancel))
 
-        cancel = CancelToken()
-        if scope == "current":
-            self._current_load = cancel
-        else:
-            self._all_load = cancel
-        self._header.set_scope(scope)
-        self._header.set_loading(True)
-        self._request_render()
-        return self._load_scope_rest(scope, cancel)
+    def _claim_load(self, scope: str) -> CancelToken | None:
+        """`_load_scope`'s synchronous part: the in-flight load's token, or
+        None when that scope is already loading."""
+        with self._state_lock:
+            if (self._current_load if scope == "current" else self._all_load) is not None:
+                return None
+            cancel = CancelToken()
+            if scope == "current":
+                self._current_load = cancel
+            else:
+                self._all_load = cancel
+            self._header.set_scope(scope)
+            self._header.set_loading(True)
+            self._request_render()
+            return cancel
 
     def _set_scope_sessions(self, scope: str, sessions: list | None) -> None:
         if scope == "current":
@@ -995,9 +1005,9 @@ class SessionSelectorComponent(Container):
             self._all_sessions = sessions
 
     def _show_sessions(self, sessions: list, show_cwd: bool) -> None:
-        """pi's `sessionList.setSessions(...)` + `requestRender()`, called on the
-        owner: the call order is taken now, and the list applies and renders
-        once its canonical-path map is built off the runtime."""
+        """pi's `sessionList.setSessions(...)` + `requestRender()`: the call
+        order is taken now, and the list applies and renders once its
+        canonical-path map is built off the runtime."""
         update = self._session_list.set_sessions(sessions, show_cwd)
 
         async def finish() -> None:
@@ -1008,8 +1018,8 @@ class SessionSelectorComponent(Container):
 
     async def _load_scope_rest(self, scope: str, cancel: CancelToken) -> None:
         # Runs detached, and progress arrives from the loader's parallel tasks:
-        # every selector read and write below happens in a closure posted to the
-        # owner, whose FIFO orders them against input and `_cancel_loads()`.
+        # every selector read and write below is under the UI state lock, which
+        # orders them against input and `_cancel_loads()` (the active check).
         show_cwd = scope == "all"
 
         def is_active() -> bool:
@@ -1025,7 +1035,7 @@ class SessionSelectorComponent(Container):
         def on_progress(loaded: int, total: int, partial_sessions: list | None) -> None:
             sessions = [*partial_sessions] if partial_sessions is not None else None
 
-            def apply() -> None:
+            with self._state_lock:
                 if not is_active():
                     return
                 if sessions is not None:
@@ -1037,29 +1047,22 @@ class SessionSelectorComponent(Container):
                 self._header.set_progress(loaded, total)
                 self._request_render()
 
-            self._post_ui(apply)
-
         loader = self._current_sessions_loader if scope == "current" else self._all_sessions_loader
         try:
             sessions = await loader(on_progress, cancel)
         except Exception as err:
-            # `err` is unbound when the except block ends; the posted closure keeps the text.
-            failure = f"Failed to load sessions: {err}"
-
-            def apply_failure() -> None:
+            with self._state_lock:
                 if not is_active():
                     return
                 finish_load(None)
                 if scope != self._scope:
                     return
                 self._header.set_loading(False)
-                self._header.set_status_message({"type": "error", "message": failure}, 4000)
+                self._header.set_status_message({"type": "error", "message": f"Failed to load sessions: {err}"}, 4000)
                 self._show_sessions([], show_cwd)
-
-            self._post_ui(apply_failure)
             return
 
-        def apply_loaded() -> None:
+        with self._state_lock:
             if not is_active():
                 return
             finish_load(sessions)
@@ -1067,8 +1070,6 @@ class SessionSelectorComponent(Container):
                 return
             self._header.set_loading(False)
             self._show_sessions(sessions, show_cwd)
-
-        self._post_ui(apply_loaded)
 
     def _toggle_sort_mode(self) -> None:
         # Cycle: threaded -> recent -> relevance -> threaded
@@ -1088,51 +1089,43 @@ class SessionSelectorComponent(Container):
         self._session_list.set_name_filter(self._name_filter)
         self._request_render()
 
-    def _refresh_sessions_after_mutation(
-        self, then: Callable[[], None] | None = None, *, on_owner: bool = False
-    ) -> None:
-        """pi's refresh (cancel loads, reload the scope): in place from an
-        owner job (``on_owner``), posted to the owner otherwise. pi's callers
-        await the reload before their follow-up; `then` is that follow-up,
-        posted once the reload has settled."""
-
-        def apply() -> None:
+    def _refresh_sessions_after_mutation(self, then: Callable[[], None] | None = None) -> None:
+        """pi's refresh (cancel loads, reload the scope). pi's callers await
+        the reload before their follow-up; `then` is that follow-up, applied
+        once the reload has settled."""
+        with self._state_lock:
             self._cancel_loads()
             self._current_sessions = None
             self._all_sessions = None
-            load = self._load_scope(self._scope)
-            if then is None:
-                tonio.spawn.without_tracking(load)
-                return
+            scope = self._scope
+            cancel = self._claim_load(scope)
 
-            async def reload_then() -> None:
-                try:
-                    await load
-                finally:
-                    self._post_ui(then)
+        async def reload_then() -> None:
+            try:
+                if cancel is not None:
+                    await self._load_scope_rest(scope, cancel)
+            finally:
+                if then is not None:
+                    with self._state_lock:
+                        then()
 
-            tonio.spawn.without_tracking(reload_then())
+        tonio.spawn.without_tracking(reload_then())
 
-        if on_owner:
-            apply()
-        else:
-            self._post_ui(apply)
-
-    async def _toggle_scope(self) -> None:
-        # Awaited by the session list's input handling, on the owner: the
-        # list update applies in place once its path map is built.
+    def _toggle_scope(self) -> None:
+        # From the session list's input handling. pi's setSessions is
+        # synchronous, so the next key waits for the list update.
         self._scope = "all" if self._scope == "current" else "current"
         sessions = self._current_sessions if self._scope == "current" else self._all_sessions
         loading = (self._current_load if self._scope == "current" else self._all_load) is not None
         self._header.set_scope(self._scope)
         self._header.set_loading(loading)
-        update = self._session_list.set_sessions(sessions or [], self._scope == "all", on_owner=True)
+        update = self._session_list.set_sessions(sessions or [], self._scope == "all")
         self._request_render()
-        # Start the load before awaiting the list update, as pi's synchronous
+        # Start the load before the list update, as pi's synchronous
         # setSessions lets it (the in-flight load is visible immediately).
         if sessions is None and not loading:
-            tonio.spawn.without_tracking(self._load_scope(self._scope))
-        await update
+            self._load_scope(self._scope)
+        self._finish_before_next_input(tonio.spawn(update))
 
     def get_session_list(self) -> SessionList:
         return self._session_list

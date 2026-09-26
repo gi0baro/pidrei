@@ -11,7 +11,7 @@ from pidrei.modes.interactive.components import SessionSelectorComponent
 from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei_tui import set_keybindings
 
-from .session_selector_helpers import PostedUpdates, lists_sessions
+from .session_selector_helpers import InputCompletions, StateUpdates, lists_sessions
 
 
 def make_session(*, id, **overrides):
@@ -52,8 +52,8 @@ class TestSessionSelectorRename:
     async def test_shows_rename_hint_in_interactive_resume_picker_configuration(self):
         sessions = [make_session(id="a")]
         keybindings = KeybindingsManager()
-        # pidrei-only `post_ui`: pi's `flushPromises()` becomes waiting for the state.
-        posted = PostedUpdates()
+        # pidrei-only `state_lock`: pi's `flushPromises()` becomes waiting for the state.
+        state_updates = StateUpdates()
         selector = SessionSelectorComponent(
             _make_loader(sessions),
             _make_loader([]),
@@ -62,9 +62,10 @@ class TestSessionSelectorRename:
             lambda: None,
             lambda: None,
             {"showRenameHint": True, "keybindings": keybindings},
-            post_ui=posted,
+            state_lock=state_updates,
+            finish_before_next_input=InputCompletions(),
         )
-        await posted.until(lists_sessions(selector, sessions))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         output = "\n".join(selector.render(120))
         assert "ctrl+r" in output
@@ -74,7 +75,7 @@ class TestSessionSelectorRename:
     async def test_does_not_show_rename_hint_in_resume_picker_configuration(self):
         sessions = [make_session(id="a")]
         keybindings = KeybindingsManager()
-        posted = PostedUpdates()
+        state_updates = StateUpdates()
         selector = SessionSelectorComponent(
             _make_loader(sessions),
             _make_loader([]),
@@ -83,9 +84,10 @@ class TestSessionSelectorRename:
             lambda: None,
             lambda: None,
             {"showRenameHint": False, "keybindings": keybindings},
-            post_ui=posted,
+            state_lock=state_updates,
+            finish_before_next_input=InputCompletions(),
         )
-        await posted.until(lists_sessions(selector, sessions))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         output = "\n".join(selector.render(120))
         assert "ctrl+r" not in output
@@ -102,7 +104,7 @@ class TestSessionSelectorRename:
             renamed.set()
 
         keybindings = KeybindingsManager()
-        posted = PostedUpdates()
+        state_updates = StateUpdates()
         selector = SessionSelectorComponent(
             _make_loader(sessions),
             _make_loader([]),
@@ -111,12 +113,13 @@ class TestSessionSelectorRename:
             lambda: None,
             lambda: None,
             {"renameSession": rename_session, "showRenameHint": True, "keybindings": keybindings},
-            post_ui=posted,
+            state_lock=state_updates,
+            finish_before_next_input=InputCompletions(),
         )
-        await posted.until(lists_sessions(selector, sessions))
+        await state_updates.until(lists_sessions(selector, sessions))
 
         # Entering rename mode is synchronous.
-        await selector.get_session_list().handle_input(CTRL_R)
+        selector.get_session_list().handle_input(CTRL_R)
 
         # Rename mode layout
         output = "\n".join(selector.render(120))
@@ -124,8 +127,8 @@ class TestSessionSelectorRename:
         assert "Resume Session" not in output
 
         # Type and submit (the rename runs on a detached task)
-        await selector.handle_input("X")
-        await selector.handle_input("\r")
+        selector.handle_input("X")
+        selector.handle_input("\r")
         await renamed.wait(5)
 
         assert rename_calls == [(sessions[0].path, "XOld")]

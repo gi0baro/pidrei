@@ -6,7 +6,7 @@ This extension overrides built-in tools to provide custom rendering:
 - Collapsed mode: Only shows the tool call (command/path), no output
 - Expanded mode: Shows full output like the built-in renderers
 
-This demonstrates how a "minimal mode" could work, where ctrl+e cycles
+This demonstrates how a "minimal mode" could work, where ctrl+o cycles
 through:
 - Standard: Shows truncated output (current default)
 - Expanded: Shows full output (current expanded)
@@ -15,7 +15,7 @@ through:
 Start pidrei with this extension:
     pidrei -e ./examples/extensions/minimal_mode.py
 
-Then use ctrl+e to toggle between minimal (collapsed) and full (expanded)
+Then use ctrl+o to toggle between minimal (collapsed) and full (expanded)
 views.
 """
 
@@ -103,6 +103,17 @@ async def extension(pi):
         output = "\n".join(theme.fg("toolOutput", line) for line in text.strip().split("\n"))
         return Text(f"\n{output}", 0, 0)
 
+    def render_read_result(result, options, theme, _context):
+        """read's result renderer: like the shared one, but the output is not
+        trimmed (pi's read keeps leading indentation and blank lines)."""
+        if not options.get("expanded"):
+            return Text("", 0, 0)
+        text = _find_text_block(result)
+        if text is None:
+            return Text("", 0, 0)
+        output = "\n".join(theme.fg("toolOutput", line) for line in text.split("\n"))
+        return Text(f"\n{output}", 0, 0)
+
     def make_count_result_renderer(unit: str):
         """Result renderer for search/list tools: a count collapsed, full
         output expanded."""
@@ -147,7 +158,7 @@ async def extension(pi):
             parameters=registration_tools["read"].parameters,
             execute=make_delegate("read"),
             render_call=render_read_call,
-            render_result=render_minimal_result,
+            render_result=render_read_result,
         )
     )
 

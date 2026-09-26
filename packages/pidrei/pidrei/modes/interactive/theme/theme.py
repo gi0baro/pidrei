@@ -8,9 +8,9 @@ Deviations:
 - Validation is hand-rolled against pi's typebox schema (same required color
   set, same error message layout) instead of a JSON-schema engine.
 - The custom-theme watcher polls (utils/fs_watch) instead of node fs.watch;
-  its events and the 100 ms debounced reload (a ``_timers.Timeout``) run on
-  the TUI's owner task with the file read on the pool. The module lock
-  guards the theme globals against `set_theme` callers on other tasks.
+  the 100 ms debounced reload is a ``_timers.Timeout`` whose file read runs
+  on the pool, on its own task. The module lock guards the theme globals
+  against `set_theme` callers on other tasks.
 - Syntax highlighting is pygments (utils/syntax_highlight), keyed by the same
   scope names pi feeds cli-highlight.
 """
@@ -21,7 +21,7 @@ import math
 import os
 import re
 import threading
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 
 import tonio.colored as tonio
 from tonio.colored import fs
@@ -646,15 +646,20 @@ _current_theme_name: str | None = None
 _theme_watcher = None
 _theme_reload_timer: Timeout | None = None
 _on_theme_change_callback = None
+# Copy-on-write: replaced whole under `_theme_state_lock`, never changed in
+# place, so a reader iterating the dict it read cannot see it change.
 _registered_themes: dict = {}
 
 
 def set_registered_themes(themes: list) -> None:
-    _registered_themes.clear()
+    global _registered_themes
+    registered = {}
     for theme_instance in themes:
         if theme_instance.name:
             _assert_theme_name_is_valid(theme_instance.name)
-            _registered_themes[theme_instance.name] = theme_instance
+            registered[theme_instance.name] = theme_instance
+    with _theme_state_lock:
+        _registered_themes = registered
 
 
 def init_theme_sync(theme_name: str | None = None, enable_watcher: bool = False) -> None:
@@ -716,37 +721,57 @@ async def _load_theme_or_fallback(name: str) -> tuple[Theme, str | None]:
         return await _load_theme("dark"), str(error)
 
 
-async def set_theme(name: str, enable_watcher: bool = False) -> dict:
-    global _current_theme_name
-    loaded, error = await _load_theme_or_fallback(name)
+def _change_theme(apply: Callable[[], bool]) -> None:
+    """Swap the theme through the registered change callback, which runs
+    `apply` under the host's UI lock together with its refresh, so a frame
+    never mixes two themes (UI_ISLAND_DESIGN §4.5c). With no callback
+    registered (the startup screens) the swap happens here."""
     with _theme_state_lock:
-        _current_theme_name = "dark" if error else name
-        _set_global_theme(loaded)
         callback = _on_theme_change_callback
-    # Outside the lock: the watcher start awaits, the callback re-enters UI code.
+    # Outside the lock: the callback takes the host's lock, then `apply`
+    # takes this one (the host's lock always comes first).
+    if callback is None:
+        apply()
+    else:
+        callback(apply)
+
+
+async def set_theme(name: str, enable_watcher: bool = False) -> dict:
+    loaded, error = await _load_theme_or_fallback(name)
+
+    def apply() -> bool:
+        global _current_theme_name
+        with _theme_state_lock:
+            _current_theme_name = "dark" if error else name
+            _set_global_theme(loaded)
+        # pi notifies only a successful change (its fallback swaps silently).
+        return not error
+
+    _change_theme(apply)
     if error:
         return {"success": False, "error": error}
     if enable_watcher:
         await _start_theme_watcher()
-    if callback is not None:
-        callback()
     return {"success": True}
 
 
 def set_theme_instance(theme_instance: Theme) -> None:
-    global _current_theme_name
-    with _theme_state_lock:
-        _set_global_theme(theme_instance)
-        _current_theme_name = "<in-memory>"
-        stop_theme_watcher()  # Can't watch a direct instance
-        if _on_theme_change_callback is not None:
-            _on_theme_change_callback()
+    def apply() -> bool:
+        global _current_theme_name
+        with _theme_state_lock:
+            _set_global_theme(theme_instance)
+            _current_theme_name = "<in-memory>"
+            stop_theme_watcher()  # Can't watch a direct instance
+        return True
+
+    _change_theme(apply)
 
 
 def on_theme_change(callback) -> None:
-    """``callback(on_owner=...)`` runs after the theme changed under the UI:
-    ``on_owner=True`` from the theme-file reload (a UI-owner timer), the
-    default from `set_theme_instance` (the caller's task, either side)."""
+    """Register the host's ``callback(apply)``. A theme change (`set_theme`,
+    `set_theme_instance`, the theme-file reload) calls it on the changing
+    task; the host runs ``apply()`` under its UI lock, which swaps the theme
+    and returns whether the change must be shown (invalidate and render)."""
     global _on_theme_change_callback
     _on_theme_change_callback = callback
 
@@ -782,26 +807,33 @@ async def _start_theme_watcher() -> None:
         except Exception:
             return None
 
-    async def reload_theme() -> None:
-        # On the UI owner (a `_timers.Timeout` fire); the read is a pool hop.
+    def reload_theme() -> None:
+        # A `_timers.Timeout` fire; pi reads the file synchronously, here the
+        # read is a pool hop on its own task.
         global _theme_reload_timer
         with _theme_state_lock:
             _theme_reload_timer = None
             # Ignore stale timers after switching themes or stopping the watcher
             if _current_theme_name != watched_theme_name:
                 return
+        tonio.spawn.without_tracking(apply_reloaded_theme())
+
+    async def apply_reloaded_theme() -> None:
         reloaded_theme = await tonio.spawn_blocking(_reload_from_disk)
         if reloaded_theme is None:
             return
-        with _theme_state_lock:
-            if _current_theme_name != watched_theme_name:
-                return
-            # Refresh the registry cache and notify (to invalidate UI)
-            _registered_themes[watched_theme_name] = reloaded_theme
-            _set_global_theme(reloaded_theme)
-            callback = _on_theme_change_callback
-        if callback is not None:
-            callback(on_owner=True)
+
+        def apply() -> bool:
+            global _registered_themes
+            with _theme_state_lock:
+                if _current_theme_name != watched_theme_name:
+                    return False
+                # Refresh the registry cache and notify (to invalidate UI)
+                _registered_themes = {**_registered_themes, watched_theme_name: reloaded_theme}
+                _set_global_theme(reloaded_theme)
+                return True
+
+        _change_theme(apply)
 
     def schedule_reload() -> None:
         global _theme_reload_timer

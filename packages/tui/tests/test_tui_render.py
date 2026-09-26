@@ -5,6 +5,7 @@ Viewport expectations are right-stripped (see virtual_terminal.py).
 
 import os
 import re
+import threading
 from contextlib import contextmanager
 
 import pytest
@@ -50,63 +51,11 @@ class InputComponent(TestComponent):
         self.render_count += 1
         return super().render(width)
 
-    async def handle_input(self, data):
+    def handle_input(self, data):
         self.lines = [data]
 
 
 # TUI render scheduling
-
-
-@pytest.mark.tonio
-async def test_renders_keyboard_input_without_waiting_for_a_throttled_frame():
-    """pi asserts one render on the next tick; the throttle here is a real
-    wait, so it is stretched to 60s for the test — any frame that lands
-    inside the wait was preempted, a throttled one could not have. (A 2s
-    throttle against a 1s wait made that a race with the runner's speed.)"""
-    terminal = VirtualTerminal(40, 10)
-    tui = TuiMainScreen(terminal)
-    component = InputComponent()
-    component.lines = ["initial"]
-    tui.add_child(component)
-    tui.set_focus(component)
-    await tui.start()
-    await terminal.wait_for_render()
-    render_count_before_input = component.render_count
-
-    original_interval = tui_module._MIN_RENDER_INTERVAL_S
-    tui_module._MIN_RENDER_INTERVAL_S = 60.0
-    try:
-        # Queue a normal throttled render first, and let the loop park in the
-        # throttle. Keyboard input must preempt it.
-        component.lines = ["pending"]
-        since = terminal.frames
-        tui.request_render()
-        parked = []
-
-        async def probe() -> None:
-            # Behind the request's scheduling job on the owner (FIFO).
-            parked.append(tui._render_scheduled and tui._throttle_timer is not None)
-
-        await tui.input_owner.run(probe)
-        assert parked == [True], "the render should be parked in the throttle"
-        assert terminal.frames == since, "the throttled frame should still be pending"
-
-        await terminal.send_input("first")
-        await terminal.send_input("second")
-        await terminal.send_input("typed")
-        await terminal.wait_for_render(since)
-    finally:
-        tui_module._MIN_RENDER_INTERVAL_S = original_interval
-
-    assert terminal.frames > since, "keyboard input should not wait for the throttle"
-    # How many of the three inputs coalesce into one frame is a property of
-    # the machine, not of the preemption: a slower box lets the render loop
-    # wake between them and renders more than once (CI saw 2 extra renders).
-    # What this test pins is that a render happened at all inside the 1s wait
-    # while the throttle was 2s, so only "more than before" is asserted here.
-    assert component.render_count > render_count_before_input
-    assert component.lines == ["typed"]
-    await tui.stop()
 
 
 # TUI debug logging
@@ -920,11 +869,11 @@ async def test_overlay_and_cursor_changes_write_cursor_state_only_from_the_rende
 
 
 @pytest.mark.tonio
-async def test_posted_mutation_lands_before_the_frame_it_requests():
+async def test_applied_mutation_lands_before_the_frame_it_requests():
     """The island's replacement for the old `post_before_render` hook: a
-    mutation posted to the UI owner runs before the frame its
-    `request_render()` schedules, never in between that frame's component
-    renders — mutation and render are serialized on one task."""
+    mutation applied under the UI state lock (`apply`) runs before the frame
+    its `request_render()` schedules, never in between that frame's
+    component renders — the frame's tree walk holds the same lock."""
     terminal = VirtualTerminal(40, 10)
     tui = TuiMainScreen(terminal)
     component = InputComponent()
@@ -936,12 +885,12 @@ async def test_posted_mutation_lands_before_the_frame_it_requests():
     since = terminal.frames
     render_count = component.render_count
 
-    async def mutate() -> None:
+    def mutate() -> None:
         assert component.render_count == render_count
         component.lines = ["after"]
         tui.request_render()
 
-    tui.input_owner.post(mutate)
+    tui.apply(mutate)
     await terminal.wait_for_render(since, timeout=1.0)
 
     assert component.render_count > render_count
@@ -951,9 +900,10 @@ async def test_posted_mutation_lands_before_the_frame_it_requests():
 
 
 @pytest.mark.tonio
-async def test_renders_requested_from_other_tasks_funnel_onto_the_owner():
-    """Renders requested from arbitrary tasks and input through the terminal
-    both land as owner work — frames and key effects keep flowing."""
+async def test_renders_requested_from_other_tasks_and_input_both_draw():
+    """Renders requested from arbitrary coroutines and input through the
+    terminal both reach the render loop — frames and key effects keep
+    flowing."""
     terminal = VirtualTerminal(40, 10)
     tui = TuiMainScreen(terminal)
     component = InputComponent()
@@ -977,6 +927,170 @@ async def test_renders_requested_from_other_tasks_funnel_onto_the_owner():
     await terminal.send_input("typed")
     await terminal.wait_for_render(since, timeout=1.0)
     assert component.lines == ["typed"]
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_next_key_waits_for_work_a_key_registered_and_its_error_takes_the_input_error_path():
+    """pidrei-only: a synchronous key handler spawns the I/O pi does
+    synchronously and registers it with `finish_before_next_input`; the next
+    key is handled only once that work has finished, and the work's error
+    reaches the installed error handler."""
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    handled: list[str] = []
+    errors: list[BaseException] = []
+    reported = tonio.Event()
+
+    async def on_error(error: BaseException) -> None:
+        errors.append(error)
+        reported.set()
+
+    async def persist() -> None:
+        await tonio.yield_now()
+        handled.append("persisted")
+        raise RuntimeError("write failed")
+
+    class Sink:
+        def render(self, width):
+            return []
+
+        def invalidate(self):
+            pass
+
+        def handle_input(self, data):
+            handled.append(data)
+            if data == "a":
+                tui.finish_before_next_input(tonio.spawn(persist()))
+
+    sink = Sink()
+    tui.add_child(sink)
+    tui.set_focus(sink)
+    tui.set_render_error_handler(on_error)
+    await tui.start()
+
+    await terminal.send_input("a")
+    await terminal.send_input("b")
+
+    assert handled == ["a", "persisted", "b"]
+    await reported.wait(5)
+    assert [str(error) for error in errors] == ["write failed"]
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_finish_before_next_input_is_refused_outside_input_handling():
+    """pidrei-only (UI_ISLAND_DESIGN §10.5): a completion registered outside
+    input handling would be awaited by an unrelated key, or never."""
+    tui = TuiMainScreen(VirtualTerminal(40, 10))
+
+    with pytest.raises(RuntimeError, match="outside input handling"):
+        tui.finish_before_next_input(object())
+
+
+@pytest.mark.tonio
+async def test_apply_refuses_what_would_await_under_the_lock():
+    """pidrei-only: `apply` runs a synchronous change under the UI state lock,
+    so a coroutine function, or a callable returning a coroutine, is refused
+    (and the coroutine closed, not left unawaited)."""
+    tui = TuiMainScreen(VirtualTerminal(40, 10))
+    created: list = []
+
+    async def change() -> None:
+        pass
+
+    def returns_coroutine():
+        coroutine = change()
+        created.append(coroutine)
+        return coroutine
+
+    with pytest.raises(TypeError):
+        tui.apply(change)
+    with pytest.raises(TypeError):
+        tui.apply(returns_coroutine)
+    assert created[0].cr_frame is None  # closed
+    assert tui.apply(lambda: "result") == "result"
+
+
+def _held(lock) -> bool:
+    """Whether `lock` is held: a probe thread cannot take it without waiting."""
+    taken: list[bool] = []
+
+    def probe() -> None:
+        acquired = lock.acquire(blocking=False)
+        if acquired:
+            lock.release()
+        taken.append(acquired)
+
+    thread = threading.Thread(target=probe)
+    thread.start()
+    thread.join()
+    return not taken[0]
+
+
+class _LockProbe:
+    """A focusable component recording whether the UI state lock is held
+    while the TUI renders it and hands it input."""
+
+    def __init__(self) -> None:
+        self.tui = None
+        self.held_in_render: list[bool] = []
+        self.held_in_input: list[bool] = []
+
+    def render(self, width):
+        self.held_in_render.append(_held(self.tui.state_lock))
+        return ["probe"]
+
+    def invalidate(self):
+        pass
+
+    def handle_input(self, data):
+        self.held_in_input.append(_held(self.tui.state_lock))
+
+
+async def _started_probe_tui():
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    probe = _LockProbe()
+    probe.tui = tui
+    tui.add_child(probe)
+    tui.set_focus(probe)
+    await tui.start()
+    await terminal.wait_for_render()
+    return terminal, tui, probe
+
+
+@pytest.mark.tonio
+async def test_tree_walk_input_and_apply_hold_the_ui_state_lock():
+    """pidrei-only (UI_ISLAND_DESIGN §4.1): the tree walk, input handling and
+    `apply` each hold the UI state lock."""
+    terminal, tui, probe = await _started_probe_tui()
+    assert not _held(tui.state_lock)
+    assert probe.held_in_render and all(probe.held_in_render)
+
+    await terminal.send_input("x")
+    assert probe.held_in_input == [True]
+
+    assert tui.apply(lambda: _held(tui.state_lock)) is True
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_color_scheme_listeners_run_without_the_ui_state_lock():
+    """pidrei-only: the listeners can load a theme from disk, so the
+    terminal-event loop awaits them without the UI state lock."""
+    terminal, tui, _probe = await _started_probe_tui()
+    held_in_listener: list[bool] = []
+    notified = tonio.Event()
+
+    async def listener(scheme: str) -> None:
+        held_in_listener.append(_held(tui.state_lock))
+        notified.set()
+
+    tui.on_terminal_color_scheme_change(listener)
+    await terminal.send_input("\x1b[?997;2n")
+    await notified.wait(5)
+    assert held_in_listener == [False]
     await tui.stop()
 
 
@@ -1007,6 +1121,98 @@ async def test_render_error_is_handed_to_the_installed_handler():
 
     assert failed.is_set()
     assert isinstance(seen[0], RuntimeError)
+    await tui.stop()
+
+
+class _RequestsWhileRendered(InputComponent):
+    """Makes `requests` render requests from inside its next render: the
+    render loop is mid-frame then, past its receive."""
+
+    __test__ = False
+
+    def __init__(self, tui) -> None:
+        super().__init__()
+        self._tui = tui
+        self.requests: list[bool] = []
+
+    def render(self, width):
+        requests, self.requests = self.requests, []
+        for force in requests:
+            self._tui.request_render(force)
+        return super().render(width)
+
+
+@pytest.mark.tonio
+async def test_a_forced_request_that_finds_one_pending_still_repaints_everything():
+    """pidrei-only (UI_ISLAND_DESIGN §4.1): `force` rides in the pending
+    request, so a forced request whose send finds the channel full is not
+    lost (the Ctrl+Z resume: `start()`'s request, then `request_render(True)`)."""
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = _RequestsWhileRendered(tui)
+    component.lines = ["content"]
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+    full_redraws = tui.full_redraws
+
+    # The first fills the channel, the forced one finds it full.
+    component.requests = [False, True]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    assert tui.full_redraws == full_redraws + 1
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_requests_made_during_a_frame_queue_exactly_one_more_frame():
+    """pidrei-only (UI_ISLAND_DESIGN §4.1): the loop receives before it walks
+    the tree, so changes after the receive get one more frame, and
+    duplicate requests collapse into it."""
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = _RequestsWhileRendered(tui)
+    component.lines = ["content"]
+    tui.add_child(component)
+    await tui.start()
+    await terminal.wait_for_render()
+    renders = component.render_count
+
+    component.requests = [False, False, False]
+    tui.request_render()
+    await terminal.wait_for_render()
+
+    assert component.render_count == renders + 2
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_a_frame_holds_the_ui_state_lock_for_the_tree_walk_only():
+    """pidrei-only (UI_ISLAND_DESIGN §4.1): the diff and the output run under
+    the render lock only."""
+    terminal = VirtualTerminal(40, 10)
+    tui = TuiMainScreen(terminal)
+    component = TestComponent()
+    component.lines = ["content"]
+    tui.add_child(component)
+    held: list[tuple[str, bool]] = []
+    compose_frame, write_frame = tui._compose_frame, tui._write_frame
+
+    def recorded_compose():
+        held.append(("walk", _held(tui.state_lock)))
+        return compose_frame()
+
+    def recorded_write(frame):
+        held.append(("diff", _held(tui.state_lock)))
+        write_frame(frame)
+
+    tui._compose_frame = recorded_compose
+    tui._write_frame = recorded_write
+    await tui.start()
+    await terminal.wait_for_render()
+
+    assert held and held[:2] == [("walk", True), ("diff", False)]
     await tui.stop()
 
 

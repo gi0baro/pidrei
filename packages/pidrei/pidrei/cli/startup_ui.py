@@ -149,7 +149,7 @@ async def show_startup_selector(settings_manager: SettingsManager, title: str, o
         outcome["value"] = result
         await _clear_startup_tui(ui)
         await ui.stop()
-        ui.input_owner.close()
+        ui.close()
         done.set()
 
     def on_select(option: str) -> None:
@@ -189,16 +189,20 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
             await settings_manager.flush()
         await _clear_startup_tui(ui)
         await ui.stop()
-        ui.input_owner.close()
+        ui.close()
         done.set()
 
     await ui.start()
     detected_theme = await detect_terminal_theme_for_auto({"ui": ui, "timeoutMs": 100})
     await set_theme(detected_theme)
 
-    async def on_theme_preview(theme_name: str) -> None:
+    async def preview(theme_name: str) -> None:
         await set_theme(theme_name)
         ui.request_render()
+
+    def on_theme_preview(theme_name: str) -> None:
+        # pi's preview is synchronous: the next key waits for the theme.
+        ui.finish_before_next_input(tonio.spawn(preview(theme_name)))
 
     component = FirstTimeSetupComponent(
         {
@@ -229,7 +233,7 @@ async def show_startup_input(settings_manager: SettingsManager, title: str, plac
         input_component.dispose()
         await _clear_startup_tui(ui)
         await ui.stop()
-        ui.input_owner.close()
+        ui.close()
         done.set()
 
     input_component = ExtensionInputComponent(

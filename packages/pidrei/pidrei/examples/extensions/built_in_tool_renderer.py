@@ -20,7 +20,7 @@ How it works:
 - render_shell="self" lets a tool render its own outer shell instead of
   using the default boxed shell from ToolExecutionComponent
 - The `expanded` flag in render_result's options indicates whether the user
-  has toggled the tool output open (ctrl+e)
+  has toggled the tool output open (ctrl+o)
 
 Start pidrei with this extension:
     pidrei -e ./examples/extensions/built_in_tool_renderer.py
@@ -79,8 +79,8 @@ async def extension(pi):
     # --- Read tool: show path and line count ---
     original_read = create_read_tool(cwd)
 
-    async def execute_read(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return await original_read.execute(tool_call_id, params, cancel, on_update, ctx)
+    def execute_read(tool_call_id, params, cancel=None, on_update=None, ctx=None):
+        return original_read.execute(tool_call_id, params, cancel, on_update, ctx)
 
     def render_read_call(args, theme, _context):
         args = args or {}
@@ -135,8 +135,8 @@ async def extension(pi):
     # --- Bash tool: show command and exit code ---
     original_bash = create_bash_tool(cwd)
 
-    async def execute_bash(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return await original_bash.execute(tool_call_id, params, cancel, on_update, ctx)
+    def execute_bash(tool_call_id, params, cancel=None, on_update=None, ctx=None):
+        return original_bash.execute(tool_call_id, params, cancel, on_update, ctx)
 
     def render_bash_call(args, theme, _context):
         args = args or {}
@@ -196,8 +196,8 @@ async def extension(pi):
     # --- Edit tool: show path and diff stats ---
     original_edit = create_edit_tool(cwd)
 
-    async def execute_edit(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return await original_edit.execute(tool_call_id, params, cancel, on_update, ctx)
+    def execute_edit(tool_call_id, params, cancel=None, on_update=None, ctx=None):
+        return original_edit.execute(tool_call_id, params, cancel, on_update, ctx)
 
     def render_edit_call(args, theme, _context):
         args = args or {}
@@ -255,8 +255,8 @@ async def extension(pi):
     # --- Write tool: show path and size ---
     original_write = create_write_tool(cwd)
 
-    async def execute_write(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return await original_write.execute(tool_call_id, params, cancel, on_update, ctx)
+    def execute_write(tool_call_id, params, cancel=None, on_update=None, ctx=None):
+        return original_write.execute(tool_call_id, params, cancel, on_update, ctx)
 
     def render_write_call(args, theme, _context):
         args = args or {}

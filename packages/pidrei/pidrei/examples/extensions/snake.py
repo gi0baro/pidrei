@@ -1,7 +1,7 @@
 """Snake game.
 
 Play snake with the /snake command. Shows a full custom component with a game
-loop (`Interval`, pidrei's `setInterval` equivalent), cached rendering keyed on
+loop (`tui.interval`, pidrei's `setInterval` equivalent), cached rendering keyed on
 a version counter, and pause/resume persisted across sessions through custom
 session entries.
 
@@ -12,8 +12,9 @@ Start pidrei with this extension:
 import copy
 import random
 
+import tonio.colored as tonio
+
 from pidrei_tui import matches_key, visible_width
-from pidrei_tui._timers import Interval
 
 
 GAME_WIDTH = 40
@@ -53,8 +54,8 @@ class SnakeComponent:
     def __init__(self, tui, on_close, on_save, saved_state: dict | None = None) -> None:
         self._tui = tui
         self._on_close = on_close
-        self._on_save = on_save  # async callback
-        self._interval: Interval | None = None
+        self._on_save = on_save
+        self._interval = None
         self._cached_lines: list[str] = []
         self._cached_width = 0
         self._version = 0
@@ -73,13 +74,14 @@ class SnakeComponent:
             self._start_game()
 
     def _start_game(self) -> None:
-        async def on_tick() -> None:
+        # `tui.interval` runs the tick under the UI state lock.
+        def on_tick() -> None:
             if not self._state["gameOver"]:
                 self._tick()
                 self._version += 1
                 self._tui.request_render()
 
-        self._interval = Interval(TICK_MS, on_tick)
+        self._interval = self._tui.interval(TICK_MS, on_tick)
 
     def _tick(self) -> None:
         state = self._state
@@ -113,7 +115,7 @@ class SnakeComponent:
         else:
             state["snake"].pop()
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         state = self._state
 
         # If paused (resuming), wait for any key
@@ -131,14 +133,14 @@ class SnakeComponent:
         # ESC to pause and save
         if matches_key(data, "escape"):
             self.dispose()
-            await self._on_save(state)
+            self._on_save(state)
             self._on_close()
             return
 
         # Q to quit without saving (clears saved state)
         if data in ("q", "Q"):
             self.dispose()
-            await self._on_save(None)  # Clear saved state
+            self._on_save(None)  # Clear saved state
             self._on_close()
             return
 
@@ -160,7 +162,7 @@ class SnakeComponent:
             high_score = state["highScore"]
             self._state = create_initial_state()
             self._state["highScore"] = high_score
-            await self._on_save(None)  # Clear saved state on restart
+            self._on_save(None)  # Clear saved state on restart
             self._version += 1
             self._tui.request_render()
 
@@ -268,12 +270,13 @@ async def extension(pi):
                 saved_state = copy.deepcopy(entry.get("data"))
                 break
 
-        async def on_save(state: dict | None) -> None:
-            # Save or clear state (a copy for the same reason: the entry
-            # keeps what is passed)
-            await pi.append_entry(SNAKE_SAVE_TYPE, copy.deepcopy(state))
+        def factory(tui, _theme, _keybindings, done):
+            def on_save(state: dict | None) -> None:
+                # Save or clear state (a copy for the same reason: the entry
+                # keeps what is passed). The next key waits for the write, as
+                # pi's synchronous appendEntry does, so saves land in key order.
+                tui.finish_before_next_input(tonio.spawn(pi.append_entry(SNAKE_SAVE_TYPE, copy.deepcopy(state))))
 
-        async def factory(tui, _theme, _keybindings, done):
             return SnakeComponent(tui, lambda: done(None), on_save, saved_state)
 
         await ctx.ui.custom(factory)

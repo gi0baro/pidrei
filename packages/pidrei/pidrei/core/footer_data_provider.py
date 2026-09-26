@@ -138,6 +138,9 @@ class FooterDataProvider:
         self._refresh_in_flight = False
         self._refresh_pending = False
         self._disposed = False
+        # `resolve_cwd` request order (see there).
+        self._cwd_request = 0
+        self._cwd_applied_request = 0
         # No I/O here: `_find_git_paths` reads git metadata and the watcher
         # touches the filesystem, and a constructor cannot await. `prime()`
         # does both from an async caller; until then `get_git_branch()` falls
@@ -209,29 +212,50 @@ class FooterDataProvider:
         return self._available_provider_count
 
     def set_available_provider_count(self, count: int) -> None:
-        self._available_provider_count = count
+        with self._lock:
+            self._available_provider_count = count
 
     async def set_cwd(self, cwd: str) -> None:
         with self._lock:
             if self._cwd == cwd:
                 return
+        if self.apply_cwd(await self.resolve_cwd(cwd)):
+            await self.watch_cwd()
 
-            self._cwd = cwd
+    # `set_cwd` in three steps, so a caller can apply the change together with
+    # its own (UI_ISLAND_DESIGN §4.5b): resolve (filesystem I/O, no state
+    # change), apply (instant), then watch (I/O again, after the apply).
+
+    async def resolve_cwd(self, cwd: str) -> dict:
+        """Read what `cwd` needs (its git paths and branch) without changing
+        anything. Requests are ordered when made: applying one supersedes the
+        ones made before it, and a superseded one no longer applies."""
+        with self._lock:
+            self._cwd_request += 1
+            request = self._cwd_request
+        git_paths = await tonio.spawn_blocking(_find_git_paths, cwd)
+        branch = await tonio.spawn_blocking(self._resolve_git_branch_async, git_paths)
+        return {"cwd": cwd, "request": request, "gitPaths": git_paths, "branch": branch}
+
+    def apply_cwd(self, resolved: dict) -> bool:
+        """Switch to a resolved cwd; True when it changed (then `watch_cwd`)."""
+        with self._lock:
+            if self._disposed or resolved["request"] <= self._cwd_applied_request:
+                return False  # superseded by a later request already applied
+            self._cwd_applied_request = resolved["request"]
+            if self._cwd == resolved["cwd"]:
+                return False
+            self._cwd = resolved["cwd"]
             if self._refresh_timer is not None:
                 self._refresh_timer.cancel()
                 self._refresh_timer = None
             self._clear_git_watchers()
+            self._git_paths = resolved["gitPaths"]
+            self._cached_branch = resolved["branch"]
+            return True
 
-        # Off the lock: both reads are filesystem I/O. The old branch stays
-        # cached until the new one is known, so a render in between shows it
-        # rather than resolving lazily against the wrong paths.
-        git_paths = await tonio.spawn_blocking(_find_git_paths, cwd)
-        branch = await tonio.spawn_blocking(self._resolve_git_branch_async, git_paths)
-        with self._lock:
-            if self._cwd != cwd or self._disposed:
-                return  # superseded by a later set_cwd
-            self._git_paths = git_paths
-            self._cached_branch = branch
+    async def watch_cwd(self) -> None:
+        """Watch the applied cwd's git state and report the branch change."""
         await self._setup_git_watcher()
         with self._lock:
             callbacks = list(self._branch_change_callbacks)
@@ -261,10 +285,10 @@ class FooterDataProvider:
                 self._refresh_pending = True
                 return
 
-            async def fire() -> None:
+            def fire() -> None:
                 with self._lock:
                     self._refresh_timer = None
-                await self._refresh_git_branch_async()
+                tonio.spawn.without_tracking(self._refresh_git_branch_async())
 
             self._refresh_timer = Timeout(FooterDataProvider.WATCH_DEBOUNCE_MS, fire)
 
@@ -352,10 +376,10 @@ class FooterDataProvider:
         if self._disposed or self._git_watcher_retry_timer is not None:
             return
 
-        async def fire() -> None:
+        def fire() -> None:
             with self._lock:
                 self._git_watcher_retry_timer = None
-            await self._setup_git_watcher()
+            tonio.spawn.without_tracking(self._setup_git_watcher())
 
         # Read the delay via the module so tests can shorten it
         self._git_watcher_retry_timer = Timeout(fs_watch.FS_WATCH_RETRY_DELAY_MS, fire)

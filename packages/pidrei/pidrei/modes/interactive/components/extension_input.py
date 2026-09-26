@@ -59,14 +59,14 @@ class ExtensionInputComponent(Container):
         self._focused = value
         self._input.focused = value
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
             self._on_submit_callback(self._input.get_value())
         elif kb.matches(key_data, "tui.select.cancel"):
             self._on_cancel_callback()
         else:
-            await self._input.handle_input(key_data)
+            self._input.handle_input(key_data)
 
     def dispose(self) -> None:
         if self._countdown is not None:

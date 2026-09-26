@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
-from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
+from pidrei_ai.api.lazy import call_stream_into, lazy_stream
 from pidrei_ai.api.openai_responses_lazy import openai_responses_api
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.pkce import generate_pkce
@@ -368,7 +368,7 @@ class _GitLabDuoApi:
 
         # lazy_stream turns setup failures (token exchange included) into
         # error events instead of raising out of the stream call.
-        return lazy_stream(model, _setup, _cancel_of(options))
+        return lazy_stream(model, _setup, options.cancel if options is not None else None)
 
 
 # =============================================================================

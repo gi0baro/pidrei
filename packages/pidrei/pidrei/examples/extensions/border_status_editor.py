@@ -16,7 +16,6 @@ import tonio.colored as tonio
 
 from pidrei.modes.interactive.components import CustomEditor
 from pidrei_tui import truncate_to_width, visible_width
-from pidrei_tui._timers import Interval
 
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -89,7 +88,7 @@ async def extension(pi):
         if state["tui"] is not None:
             state["tui"].request_render()
 
-    def swap_spinner(spinner: Interval | None) -> None:
+    def swap_spinner(spinner) -> None:
         with spinner_guard:
             previous, state["spinner"] = state["spinner"], spinner
         if previous is not None:
@@ -101,13 +100,15 @@ async def extension(pi):
     async def on_agent_start(_event, _ctx) -> None:
         state["is_working"] = True
 
-        # pi's setInterval: the ticks fire on the UI owner, where the editor
-        # renders the spinner.
-        async def spin() -> None:
+        # pi's setInterval: the editor's `tui.interval` runs the ticks under
+        # the UI state lock, like the editor's render that reads the index.
+        # Without the editor there is nothing to animate.
+        def spin() -> None:
             state["spinner_index"] = (state["spinner_index"] + 1) % len(SPINNER_FRAMES)
             request_render()
 
-        swap_spinner(Interval(SPINNER_INTERVAL_MS, spin))
+        tui = state["tui"]
+        swap_spinner(tui.interval(SPINNER_INTERVAL_MS, spin) if tui is not None else None)
         request_render()
 
     async def on_agent_settled(_event, _ctx) -> None:

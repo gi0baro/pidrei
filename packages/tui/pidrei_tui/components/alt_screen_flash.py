@@ -2,6 +2,10 @@
 
 Transient messages the alternate-screen renderer composites over the top-right
 of the viewport. Each entry expires on its own timer.
+
+Port deviation: the constructor also takes the renderer's UI state lock; an
+entry expires on its timer's task, and the frame walks the entries under
+that lock.
 """
 
 from .._timers import Timeout
@@ -14,10 +18,11 @@ DEFAULT_DURATION_MS = 1000
 class AltScreenFlashContainer:
     """Stack of transient flash messages. Entries are {"id", "message", "timer"}."""
 
-    def __init__(self, request_render) -> None:
+    def __init__(self, request_render, state_lock) -> None:
         self._entries: list[dict] = []
         self._next_id = 0
         self._request_render = request_render
+        self._state_lock = state_lock
 
     def flash(self, message: str, duration_ms: float | None = None) -> None:
         if duration_ms is None:
@@ -25,12 +30,13 @@ class AltScreenFlashContainer:
         entry_id = self._next_id
         self._next_id += 1
 
-        async def expire() -> None:
-            for index, entry in enumerate(self._entries):
-                if entry["id"] == entry_id:
-                    del self._entries[index]
-                    self._request_render()
-                    return
+        def expire() -> None:
+            with self._state_lock:
+                for index, entry in enumerate(self._entries):
+                    if entry["id"] == entry_id:
+                        del self._entries[index]
+                        self._request_render()
+                        return
 
         timer = Timeout(max(0, duration_ms), expire)
         self._entries.append({"id": entry_id, "message": message, "timer": timer})

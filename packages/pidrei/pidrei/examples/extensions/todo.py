@@ -41,7 +41,7 @@ class TodoListComponent:
         self._cached_width: int | None = None
         self._cached_lines: list[str] | None = None
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if matches_key(data, "escape") or matches_key(data, "ctrl+c"):
             self._on_close()
 
@@ -244,12 +244,12 @@ async def extension(pi):
             ctx.ui.notify("/todos requires interactive mode", "error")
             return
 
-        # A snapshot: the component renders on the UI owner while the tool
+        # A snapshot: the component renders on the UI's render loop while the tool
         # changes the list (pi's view is cached too, so it never was live).
         with state_guard:
             todos = [dict(t) for t in state["todos"]]
 
-        async def factory(_tui, theme, _kb, done):
+        def factory(_tui, theme, _kb, done):
             return TodoListComponent(todos, theme, lambda: done(None))
 
         await ctx.ui.custom(factory)

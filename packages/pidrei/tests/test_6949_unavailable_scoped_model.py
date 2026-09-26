@@ -7,6 +7,7 @@ the prototype method on a mock — the selector factory runs synchronously via
 the stubbed `_show_selector`.
 """
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -83,7 +84,9 @@ def create_interactive_context(*, all_models, enabled_model_ids, scoped_models=N
         show_status=lambda message: None,
         _show_selector=show_selector,
         _update_available_provider_count=lambda: None,
-        ui=SimpleNamespace(request_render=lambda: None),
+        # Spawned flows run detached, as `_spawn_flow` runs them.
+        _spawn_flow=tonio.spawn.without_tracking,
+        ui=SimpleNamespace(request_render=lambda: None, state_lock=threading.RLock()),
     )
     return context, get_available_calls, holder, set_scoped_models_calls
 
@@ -91,8 +94,7 @@ def create_interactive_context(*, all_models, enabled_model_ids, scoped_models=N
 async def show_models_selector(context) -> None:
     """Open the selector; the assertions below hold before *and* after refresh.
 
-    `_show_models_selector` detaches `refresh_catalogs()` with
-    `spawn.without_tracking`, so on a threaded runtime it can be mutating the
+    `_show_models_selector` spawns `refresh_catalogs()` detached, so on a threaded runtime it can be mutating the
     selector while the test renders it. Deliberately no wait here: an
     unavailable row is present from construction and survives the refresh's
     `update_models`, so both states satisfy these tests. What used to make the
@@ -128,9 +130,9 @@ class TestUnavailableScopedModels:
         rendered = "\n".join(selector.render(100))
         assert f"{unavailable_id} [unavailable]" in strip_ansi(rendered)
         assert theme.strikethrough(unavailable_id) in rendered
-        await selector.handle_input(ENTER)
+        selector.handle_input(ENTER)
         assert changes == [[available_id]]
-        await selector.handle_input(CTRL_S)
+        selector.handle_input(CTRL_S)
         assert persisted == [[available_id]]
 
     @pytest.mark.tonio
@@ -181,7 +183,7 @@ class TestUnavailableScopedModels:
         await show_models_selector(context)
         selector = holder["selector"]
         assert selector is not None, "Expected scoped-model selector to open"
-        await selector.handle_input(ALT_DOWN)
+        selector.handle_input(ALT_DOWN)
 
         # onChange resolves the session scope in a spawned task.
         await holder["scoped_updated"].wait(5)

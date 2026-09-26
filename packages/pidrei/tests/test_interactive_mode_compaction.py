@@ -14,6 +14,8 @@ from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import Usage, UsageCost
 from pidrei_tui import Container
 
+from .flow_helpers import SpawnedFlows
+
 
 def _usage(total_cost: float) -> Usage:
     return Usage(
@@ -108,11 +110,9 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
     latest_compaction = _compaction_entry("latest", "previous", "summary", 123, usage)
     previous_compaction = _compaction_entry("previous", None, "previous summary", 100, usage)
     flush_calls: list = []
-    flush_done = tonio.Event()
 
-    async def flush_compaction_queue(options=None, *, on_owner=False):
+    def flush_compaction_queue(options=None):
         flush_calls.append(options)
-        flush_done.set()
 
     fake = SimpleNamespace(
         _is_initialized=True,
@@ -132,13 +132,13 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
         settings_manager=SimpleNamespace(get_show_terminal_progress=lambda: False),
     )
     fake._footer = SimpleNamespace(invalidate=lambda: fake.invalidate_calls.append(True))
-    fake._apply_clear_status_indicator = lambda kind=None: fake.clear_status_calls.append(kind)
+    fake._clear_status_indicator = lambda kind=None: fake.clear_status_calls.append(kind)
     fake._chat_container = SimpleNamespace(clear=lambda: fake.chat_clear_calls.append(True))
     fake._render_session_entries = lambda entries: fake.render_entries_calls.append(entries)
     fake._add_message_to_chat = fake.added_messages.append
     fake._add_compaction_cost_notice = fake.cost_notices.append
-    fake._apply_show_error = fake.show_error_calls.append
-    fake._apply_show_status = fake.show_status_calls.append
+    fake.show_error = fake.show_error_calls.append
+    fake.show_status = fake.show_status_calls.append
     fake.ui = SimpleNamespace(
         request_render=lambda force=False: fake.request_render_calls.append(force),
         terminal=SimpleNamespace(set_progress=lambda active: None),
@@ -153,10 +153,6 @@ async def test_renders_retained_entries_and_appends_the_latest_summary_cost_at_t
             will_retry=False,
         ),
     )
-    # The compaction queue flush is spawned; wait on the fake, not a drain.
-    await flush_done.wait(2.0)
-    assert flush_done.is_set(), "spawned compaction-queue flush must run"
-
     assert fake.chat_clear_calls == [True]
     assert fake.render_entries_calls == [[previous_compaction]]
     assert len(fake.added_messages) == 1
@@ -185,7 +181,7 @@ def test_updates_the_working_state_when_the_same_agent_run_resumes_after_compact
         ),
     )
     fake._show_working_status_indicator = lambda: show_working_calls.append(True)
-    fake._apply_clear_status_indicator = lambda kind=None: clear_status_calls.append(kind)
+    fake._clear_status_indicator = lambda kind=None: clear_status_calls.append(kind)
 
     InteractiveMode._handle_event(fake, SimpleNamespace(type="turn_start"))
 
@@ -214,6 +210,7 @@ async def test_routes_interactive_response_aborts_through_agent_session():
         _clear_all_queues=lambda: {"steering": [], "followUp": []},
         _update_pending_messages_display=lambda: None,
         session=SimpleNamespace(_request_abort=lambda: abort_calls.append(True)),
+        ui=SimpleNamespace(state_lock=threading.RLock()),
     )
 
     InteractiveMode._restore_queued_messages_to_editor(context, {"abort": True})
@@ -248,14 +245,16 @@ async def test_preserves_steering_behavior_when_flushing_into_an_active_agent_ru
         _is_extension_command=lambda text: False,
         update_display_calls=[],
         show_error_calls=[],
+        ui=SimpleNamespace(state_lock=threading.RLock()),
+        _spawn_flow=SpawnedFlows(),
     )
     fake._update_pending_messages_display = lambda: fake.update_display_calls.append(True)
     fake.show_error = fake.show_error_calls.append
     fake._send_compaction_queue = partial(InteractiveMode._send_compaction_queue, fake)
 
-    await InteractiveMode._flush_compaction_queue(fake, {"willRetry": False})
-    # The first prompt is dispatched on a spawned task; wait on the fake, not a drain.
-    await prompt_dispatched.wait(2.0)
+    InteractiveMode._flush_compaction_queue(fake, {"willRetry": False})
+    # Sending the queue and its first prompt are spawned flows.
+    await fake._spawn_flow.finish()
     assert prompt_dispatched.is_set(), "spawned first prompt must be dispatched"
 
     assert prompt_calls == [("change direction", PromptOptions(streaming_behavior="steer"))]

@@ -21,10 +21,10 @@ ITEMS = [{"id": "tui-mode", "label": "TUI mode", "currentValue": "regular", "val
 
 
 def _make_list(changes: list[dict]) -> SettingsList:
-    async def on_change(item_id, value) -> None:
+    def on_change(item_id, value) -> None:
         changes.append({"id": item_id, "value": value})
 
-    async def on_cancel() -> None:
+    def on_cancel() -> None:
         pass
 
     return SettingsList([dict(item) for item in ITEMS], 10, TEST_THEME, on_change, on_cancel, {"enableSearch": True})
@@ -36,12 +36,12 @@ async def test_includes_spaces_in_an_active_search_instead_of_changing_the_selec
     settings_list = _make_list(changes)
 
     for character in "TUI mode":
-        await settings_list.handle_input(character)
+        settings_list.handle_input(character)
 
     assert changes == []
     assert re.search("TUI mode", settings_list.render(80)[0])
 
-    await settings_list.handle_input("\r")
+    settings_list.handle_input("\r")
     assert changes == [{"id": "tui-mode", "value": "fullscreen"}]
 
 
@@ -50,6 +50,6 @@ async def test_keeps_space_as_a_change_shortcut_before_a_search_query_is_entered
     changes: list[dict] = []
     settings_list = _make_list(changes)
 
-    await settings_list.handle_input(" ")
+    settings_list.handle_input(" ")
 
     assert changes == [{"id": "tui-mode", "value": "fullscreen"}]

@@ -198,7 +198,7 @@ class TestFilterSwitchingWithParentTraversal:
         assert tree_list.get_selected_node().entry["id"] == "asst-2"
 
         # Simulate Ctrl+U (user-only filter)
-        await selector.handle_input("\x15")
+        selector.handle_input("\x15")
 
         # Should now be on user-2 (the parent user message), not user-3
         assert tree_list.get_selected_node().entry["id"] == "user-2"
@@ -221,12 +221,12 @@ class TestFilterSwitchingWithParentTraversal:
         assert tree_list.get_selected_node().entry["id"] == "asst-2"
 
         # Switch to user-only
-        await selector.handle_input("\x15")  # Ctrl+U
+        selector.handle_input("\x15")  # Ctrl+U
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
         # Switch back to default - should stay on user-2
         # (since that's what we navigated to via parent traversal)
-        await selector.handle_input("\x04")  # Ctrl+D
+        selector.handle_input("\x04")  # Ctrl+D
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
 
@@ -261,7 +261,7 @@ class TestCopy:
 
         selector.on_copy = on_copy
 
-        await selector.handle_input("\x18")
+        selector.handle_input("\x18")
 
         assert copied == message
 
@@ -283,11 +283,29 @@ class TestLabelTimestamps:
         assert "3/28 14:32" not in render
         assert "[+label time]" not in render
 
-        await selector.handle_input("T")
+        selector.handle_input("T")
 
         render = "\n".join(tree_list.render(200))
         assert "3/28 14:32" in render
         assert "[+label time]" in render
+
+
+class TestLabelEdit:
+    @pytest.mark.tonio
+    async def test_edits_the_selected_node_label_with_shift_l(self):
+        """pidrei-only regression: the edit-label key awaited the synchronous
+        label-input opener, so pressing it raised `TypeError`."""
+        tree = build_tree([user_message("user-1", None, "hello"), assistant_message("asst-1", "user-1", "hi")])
+        changes = []
+        selector = _make_selector(tree, "asst-1", lambda entry_id, label: changes.append((entry_id, label)))
+
+        selector.handle_input("L")
+        for character in "checkpoint":
+            selector.handle_input(character)
+        selector.handle_input("\r")
+
+        assert changes == [("asst-1", "checkpoint")]
+        assert "[checkpoint]" in "\n".join(selector.get_tree_list().render(200))
 
 
 class TestEmptyFilterPreservation:
@@ -308,13 +326,13 @@ class TestEmptyFilterPreservation:
         assert tree_list.get_selected_node().entry["id"] == "asst-2"
 
         # Switch to labeled-only filter (no labels exist, so empty result)
-        await selector.handle_input("\x0c")  # Ctrl+L
+        selector.handle_input("\x0c")  # Ctrl+L
 
         # The list should be empty, get_selected_node returns None
         assert tree_list.get_selected_node() is None
 
         # Switch back to default filter
-        await selector.handle_input("\x04")  # Ctrl+D
+        selector.handle_input("\x04")  # Ctrl+D
 
         # Should restore to asst-2 (the selection before the empty filter)
         assert tree_list.get_selected_node().entry["id"] == "asst-2"
@@ -330,18 +348,18 @@ class TestEmptyFilterPreservation:
         assert tree_list.get_selected_node().entry["id"] == "asst-1"
 
         # Switch to labeled-only (empty) - Ctrl+L toggles labeled ↔ default
-        await selector.handle_input("\x0c")  # Ctrl+L -> labeled-only
+        selector.handle_input("\x0c")  # Ctrl+L -> labeled-only
         assert tree_list.get_selected_node() is None
 
         # Switch to default, then back to labeled-only
-        await selector.handle_input("\x0c")  # Ctrl+L -> default (toggle back)
+        selector.handle_input("\x0c")  # Ctrl+L -> default (toggle back)
         assert tree_list.get_selected_node().entry["id"] == "asst-1"
 
-        await selector.handle_input("\x0c")  # Ctrl+L -> labeled-only again
+        selector.handle_input("\x0c")  # Ctrl+L -> labeled-only again
         assert tree_list.get_selected_node() is None
 
         # Switch back to default with Ctrl+D
-        await selector.handle_input("\x04")  # Ctrl+D
+        selector.handle_input("\x04")  # Ctrl+D
         assert tree_list.get_selected_node().entry["id"] == "asst-1"
 
 
@@ -394,28 +412,28 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         selector = _make_selector(tree, "asst-4a")
         tree_list = selector.get_tree_list()
 
-        await selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
+        selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-3a
+        selector.handle_input(CTRL_LEFT)  # fold user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(DOWN)  # user-3a → user-3b (children hidden)
+        selector.handle_input(DOWN)  # user-3a → user-3b (children hidden)
         assert tree_list.get_selected_node().entry["id"] == "user-3b"
 
-        await selector.handle_input(UP)  # user-3b → user-3a
+        selector.handle_input(UP)  # user-3b → user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(CTRL_RIGHT)  # unfold user-3a
+        selector.handle_input(CTRL_RIGHT)  # unfold user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(DOWN)  # user-3a → asst-3a (children restored)
+        selector.handle_input(DOWN)  # user-3a → asst-3a (children restored)
         assert tree_list.get_selected_node().entry["id"] == "asst-3a"
 
-        await selector.handle_input(CTRL_LEFT)  # asst-3a → user-3a
+        selector.handle_input(CTRL_LEFT)  # asst-3a → user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(CTRL_RIGHT)  # user-3a → asst-4a (segment jump to leaf)
+        selector.handle_input(CTRL_RIGHT)  # user-3a → asst-4a (segment jump to leaf)
         assert tree_list.get_selected_node().entry["id"] == "asst-4a"
 
     @pytest.mark.tonio
@@ -424,16 +442,16 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         selector = _make_selector(tree, "asst-4a")
         tree_list = selector.get_tree_list()
 
-        await selector.handle_input(ALT_LEFT)  # asst-4a → user-3a
+        selector.handle_input(ALT_LEFT)  # asst-4a → user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(ALT_LEFT)  # fold user-3a
+        selector.handle_input(ALT_LEFT)  # fold user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(ALT_RIGHT)  # unfold user-3a
+        selector.handle_input(ALT_RIGHT)  # unfold user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(ALT_RIGHT)  # user-3a → asst-4a
+        selector.handle_input(ALT_RIGHT)  # user-3a → asst-4a
         assert tree_list.get_selected_node().entry["id"] == "asst-4a"
 
     @pytest.mark.tonio
@@ -442,28 +460,28 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         selector = _make_selector(tree, "asst-4a")
         tree_list = selector.get_tree_list()
 
-        await selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
+        selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-3a
+        selector.handle_input(CTRL_LEFT)  # fold user-3a
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(CTRL_LEFT)  # user-3a (folded) → user-1
+        selector.handle_input(CTRL_LEFT)  # user-3a (folded) → user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-1
+        selector.handle_input(CTRL_LEFT)  # fold user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(DOWN)  # wrap (only visible node)
+        selector.handle_input(DOWN)  # wrap (only visible node)
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(CTRL_RIGHT)  # unfold user-1
+        selector.handle_input(CTRL_RIGHT)  # unfold user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(CTRL_RIGHT)  # user-1 → user-3a (segment jump, user-3a still folded)
+        selector.handle_input(CTRL_RIGHT)  # user-1 → user-3a (segment jump, user-3a still folded)
         assert tree_list.get_selected_node().entry["id"] == "user-3a"
 
-        await selector.handle_input(DOWN)  # user-3a → user-3b (user-3a still folded)
+        selector.handle_input(DOWN)  # user-3a → user-3b (user-3a still folded)
         assert tree_list.get_selected_node().entry["id"] == "user-3b"
 
     @pytest.mark.tonio
@@ -475,22 +493,22 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         # Navigate down to user-3b (branch B)
         found = False
         for _ in range(20):
-            await selector.handle_input(DOWN)
+            selector.handle_input(DOWN)
             if tree_list.get_selected_node().entry["id"] == "user-3b":
                 found = True
                 break
         assert found is True
 
-        await selector.handle_input(CTRL_RIGHT)  # user-3b → user-4b (segment jump to leaf)
+        selector.handle_input(CTRL_RIGHT)  # user-3b → user-4b (segment jump to leaf)
         assert tree_list.get_selected_node().entry["id"] == "user-4b"
 
-        await selector.handle_input(CTRL_LEFT)  # user-4b → user-3b
+        selector.handle_input(CTRL_LEFT)  # user-4b → user-3b
         assert tree_list.get_selected_node().entry["id"] == "user-3b"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-3b
+        selector.handle_input(CTRL_LEFT)  # fold user-3b
         assert tree_list.get_selected_node().entry["id"] == "user-3b"
 
-        await selector.handle_input(CTRL_LEFT)  # user-3b (folded) → user-1
+        selector.handle_input(CTRL_LEFT)  # user-3b (folded) → user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
     @pytest.mark.tonio
@@ -507,25 +525,25 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
 
         assert tree_list.get_selected_node().entry["id"] == "asst-1"
 
-        await selector.handle_input(CTRL_LEFT)  # asst-1 → user-1
+        selector.handle_input(CTRL_LEFT)  # asst-1 → user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-1
+        selector.handle_input(CTRL_LEFT)  # fold user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(DOWN)  # user-1 → user-2 (children hidden)
+        selector.handle_input(DOWN)  # user-1 → user-2 (children hidden)
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
-        await selector.handle_input(CTRL_RIGHT)  # user-2 → asst-2 (segment jump to leaf)
+        selector.handle_input(CTRL_RIGHT)  # user-2 → asst-2 (segment jump to leaf)
         assert tree_list.get_selected_node().entry["id"] == "asst-2"
 
-        await selector.handle_input(CTRL_LEFT)  # asst-2 → user-2
+        selector.handle_input(CTRL_LEFT)  # asst-2 → user-2
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-2
+        selector.handle_input(CTRL_LEFT)  # fold user-2
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
-        await selector.handle_input(CTRL_LEFT)  # user-2 (folded, root) → stays on user-2
+        selector.handle_input(CTRL_LEFT)  # user-2 (folded, root) → stays on user-2
         assert tree_list.get_selected_node().entry["id"] == "user-2"
 
     @pytest.mark.tonio
@@ -541,13 +559,13 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         selector = _make_selector(tree, "asst-2")
         tree_list = selector.get_tree_list()
 
-        await selector.handle_input(CTRL_LEFT)  # asst-2 → user-1
+        selector.handle_input(CTRL_LEFT)  # asst-2 → user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(CTRL_LEFT)  # fold user-1
+        selector.handle_input(CTRL_LEFT)  # fold user-1
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
-        await selector.handle_input(DOWN)  # wrap (only visible node)
+        selector.handle_input(DOWN)  # wrap (only visible node)
         assert tree_list.get_selected_node().entry["id"] == "user-1"
 
     @pytest.mark.tonio
@@ -556,26 +574,26 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         selector = _make_selector(tree, "asst-4a")
         tree_list = selector.get_tree_list()
 
-        await selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
-        await selector.handle_input(CTRL_LEFT)  # fold user-3a
+        selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
+        selector.handle_input(CTRL_LEFT)  # fold user-3a
 
-        await selector.handle_input(DOWN)  # user-3a → user-3b (children hidden)
+        selector.handle_input(DOWN)  # user-3a → user-3b (children hidden)
         assert tree_list.get_selected_node().entry["id"] == "user-3b"
 
-        await selector.handle_input("b")  # search resets folds
-        await selector.handle_input("\x1b")  # clear search
+        selector.handle_input("b")  # search resets folds
+        selector.handle_input("\x1b")  # clear search
 
         # Navigate to user-3a to verify fold was reset
         current_id = ""
         for _ in range(20):
-            await selector.handle_input(DOWN)
+            selector.handle_input(DOWN)
             node = tree_list.get_selected_node()
             current_id = node.entry["id"] if node is not None else ""
             if current_id == "user-3a":
                 break
         assert current_id == "user-3a"
 
-        await selector.handle_input(DOWN)  # user-3a → asst-3a (not user-3b)
+        selector.handle_input(DOWN)  # user-3a → asst-3a (not user-3b)
         assert tree_list.get_selected_node().entry["id"] == "asst-3a"
 
     @pytest.mark.tonio
@@ -584,21 +602,21 @@ class TestBranchNavigationAndFoldingWithCtrlArrowKeys:
         selector = _make_selector(tree, "asst-4a")
         tree_list = selector.get_tree_list()
 
-        await selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
-        await selector.handle_input(CTRL_LEFT)  # fold user-3a
+        selector.handle_input(CTRL_LEFT)  # asst-4a → user-3a
+        selector.handle_input(CTRL_LEFT)  # fold user-3a
 
-        await selector.handle_input("\x15")  # ctrl+u: user-only filter resets folds
-        await selector.handle_input("\x04")  # ctrl+d: back to default
+        selector.handle_input("\x15")  # ctrl+u: user-only filter resets folds
+        selector.handle_input("\x04")  # ctrl+d: back to default
 
         # Navigate to user-3a to verify fold was reset
         current_id = ""
         for _ in range(20):
-            await selector.handle_input(DOWN)
+            selector.handle_input(DOWN)
             node = tree_list.get_selected_node()
             current_id = node.entry["id"] if node is not None else ""
             if current_id == "user-3a":
                 break
         assert current_id == "user-3a"
 
-        await selector.handle_input(DOWN)  # user-3a → asst-3a (not user-3b)
+        selector.handle_input(DOWN)  # user-3a → asst-3a (not user-3b)
         assert tree_list.get_selected_node().entry["id"] == "asst-3a"

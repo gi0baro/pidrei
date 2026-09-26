@@ -37,9 +37,9 @@ async def test_gives_an_explicit_history_binding_precedence_over_model_cycling()
     editor.add_to_history("previous prompt")
     editor.set_text("draft")
 
-    await editor.handle_input("\x10")  # Ctrl+P
+    editor.handle_input("\x10")  # Ctrl+P
     assert editor.get_text() == "previous prompt"
     assert model_cycles == 0
 
-    await editor.handle_input("\x0e")  # Ctrl+N
+    editor.handle_input("\x0e")  # Ctrl+N
     assert editor.get_text() == "draft"

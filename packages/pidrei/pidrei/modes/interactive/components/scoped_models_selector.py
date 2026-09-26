@@ -266,7 +266,7 @@ class ScopedModelsSelectorComponent(Container):
 
         self._list_container.set_children(rows)
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         kb = get_keybindings()
 
         # Navigation
@@ -375,7 +375,7 @@ class ScopedModelsSelectorComponent(Container):
             return
 
         # Pass everything else to search input
-        await self._search_input.handle_input(data)
+        self._search_input.handle_input(data)
         self._refresh()
 
     def get_search_input(self) -> Input:

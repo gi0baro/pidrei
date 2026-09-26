@@ -9,9 +9,11 @@ either, so a stub session with the one attribute `run` reads is enough.
 """
 
 import os
+import threading
 from types import SimpleNamespace
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei.core.agent_session_services import AgentSessionRuntimeDiagnostic
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
@@ -51,9 +53,9 @@ async def test_renders_startup_diagnostics_inside_the_transcript():
         _chat_container=chat_container,
         _output_pad=1,
         _version="test",
-        # post_ui applies inline like an un-started TUI (island relaxation,
-        # PROPER_MT_DESIGN step 1).
-        ui=SimpleNamespace(request_render=lambda force=False: None, post_ui=lambda fn: fn()),
+        ui=SimpleNamespace(request_render=lambda force=False: None, state_lock=threading.RLock()),
+        # Spawned flows run detached, as `_spawn_flow` runs them.
+        _spawn_flow=tonio.spawn.without_tracking,
         session=SimpleNamespace(model_runtime=SimpleNamespace(get_error=lambda: None)),
         _check_for_package_updates=no_updates,
         _check_tmux_keyboard_setup=noop,
@@ -63,9 +65,6 @@ async def test_renders_startup_diagnostics_inside_the_transcript():
     fake.show_warning = lambda message: InteractiveMode.show_warning(fake, message)
     fake.show_error = lambda message: InteractiveMode.show_error(fake, message)
     fake.show_status = lambda message: InteractiveMode.show_status(fake, message)
-    fake._apply_show_warning = lambda message: InteractiveMode._apply_show_warning(fake, message)
-    fake._apply_show_error = lambda message: InteractiveMode._apply_show_error(fake, message)
-    fake._apply_show_status = lambda message: InteractiveMode._apply_show_status(fake, message)
 
     try:
         with pytest.raises(_ReachedInput):

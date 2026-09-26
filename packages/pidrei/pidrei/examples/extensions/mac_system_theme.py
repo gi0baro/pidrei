@@ -18,7 +18,6 @@ _APPEARANCE_SCRIPT = 'tell application "System Events" to tell appearance prefer
 
 async def extension(pi):
     stopped = tonio.Event()
-    state = {"polling": False}
 
     async def is_dark_mode() -> bool:
         result = await pi.exec("osascript", ["-e", _APPEARANCE_SCRIPT])
@@ -28,12 +27,8 @@ async def extension(pi):
         current_theme = "dark" if await is_dark_mode() else "light"
         await ctx.ui.set_theme(current_theme)
 
-        # session_start fires again on new/resumed sessions; one poller is
-        # enough, it keeps following the system appearance across all of them.
-        if state["polling"]:
-            return
-        state["polling"] = True
-
+        # One poller per extension instance: a new or resumed session loads
+        # the extensions again (and this one's session_shutdown stops it).
         async def poll() -> None:
             nonlocal current_theme
             while True:
@@ -41,6 +36,8 @@ async def extension(pi):
                 if stopped.is_set():
                     return
                 new_theme = "dark" if await is_dark_mode() else "light"
+                if stopped.is_set():
+                    return  # shut down during the check: this ctx is stale
                 if new_theme != current_theme:
                     current_theme = new_theme
                     await ctx.ui.set_theme(current_theme)

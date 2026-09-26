@@ -719,15 +719,65 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/ai/src/api/mistral-conversations.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/bedrock-converse-stream.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/providers/faux.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    # PROPER_MT_DESIGN.md step 1 (the TUI island): rendering and component
-    # mutation are UI-owner work.
+    # UI_ISLAND_DESIGN.md (the TUI island): passive UI state under one
+    # reentrant lock, with input, render and terminal-event loops.
     "packages/tui/src/tui.ts": (
         (
             "tui-island",
             (
-                "render scheduling is owner work (request_render posts a "
-                "coalescing _schedule_render; throttle is an owner timer; no "
-                "render loop); pi's requestRender/renderLoop diffs land there"
+                "requestRender is a one-slot channel send to a render loop "
+                "(no throttle; force rides in the request object); "
+                "handleInput's stages run under the state lock in "
+                "_route_input, terminal replies are split off by the reader "
+                "(_consume_terminal_reply), key I/O uses "
+                "finish_before_next_input"
+            ),
+        ),
+    ),
+    "packages/tui/src/terminal.ts": (
+        (
+            "tui-island",
+            (
+                "stdin is a read-ahead reader (_read_input) plus one consumer "
+                "(_consume_input); parser deadlines are the reader's; the "
+                "Kitty activation is queued in input order; start takes "
+                "on_reply/on_error; stop drops queued items"
+            ),
+        ),
+    ),
+    "packages/tui/src/stdin-buffer.ts": (
+        (
+            "tui-island",
+            "a synchronous parser: the flush setTimeout is a deadline (deadline/expire) the reader expires",
+        ),
+    ),
+    "packages/tui/src/tui-main-screen.ts": (
+        (
+            "tui-island",
+            (
+                "doRender splits into _compose_frame (tree walk, under the "
+                "state lock) and _write_frame (diff and output, render lock "
+                "only)"
+            ),
+        ),
+    ),
+    "packages/tui/src/tui-alt-screen.ts": (
+        (
+            "tui-island",
+            (
+                "doRender splits into _compose_frame (layout, published "
+                "layout and visible screen, under the state lock) and "
+                "_write_frame (diff and output, render lock only)"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/extensions/runner.ts": (
+        (
+            "tui-island",
+            (
+                "withUIPrompt opens the prompt at call time and returns the "
+                "spawn handle of the wait (UI_ISLAND_DESIGN §10.2); the prompt "
+                "depth is guarded; noOpUIContext mirrors the TUI context's shape"
             ),
         ),
     ),
@@ -735,11 +785,14 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
         (
             "tui-island",
             (
-                "the session listener routes through the UI owner "
-                "(_route_event + _settle_ui_after_agent_event) and shared "
-                "UI-mutating helpers wrap their bodies in apply() + "
-                "ui.post_ui(apply); diffs inside those bodies port 1:1 "
-                "inside the closure"
+                "helpers mutate in place under `with self.ui.state_lock:` "
+                "(diffs port 1:1 inside the hold); the session listener "
+                "applies _handle_event under the lock; multi-await flows "
+                "apply each stretch in one hold; sync-reached async handlers "
+                "spawn their rest with _spawn_flow; extension UI (§10): ctx.ui "
+                "setters sync under the lock, dialogs mount at call time and "
+                "return a spawn handle, component factories are sync and get "
+                "the guarded ExtensionTui"
             ),
         ),
         (

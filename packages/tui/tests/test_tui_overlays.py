@@ -48,7 +48,7 @@ async def render_and_flush(tui, terminal):
     """Render and wait until the frame on screen reflects the current state.
 
     Waiting for *a* frame is not enough: if the render loop is already inside
-    `_do_render()` when the test mutates focus or overlay order, it writes a
+    a frame when the test mutates focus or overlay order, it writes a
     *stale* frame, the counter advances and the wait returns early — the
     assertion then reads the previous frame. (Two frame round-trips narrowed
     that without closing it: a stale frame still in the writer plus one mid-

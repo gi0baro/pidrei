@@ -5,17 +5,23 @@ diffs frame against frame, moves the cursor to the first changed row, and
 repaints only what changed. ``tui_alt_screen`` is the other renderer; the
 machinery both share lives in ``tui``.
 
-Port deviations: ``_do_render`` and the exit sequence are async (the terminal
-driver is); the crash/debug logs go through ``spawn_blocking`` rather than
-Node's sync fs calls; env renames PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW,
+Port deviations: the exit sequence is async (the terminal driver is); pi's
+``doRender`` is split in two (UI_ISLAND_DESIGN §4.1): ``_compose_frame``
+walks the tree under the UI state lock and ``_write_frame`` diffs and emits
+under the render lock only. The crash/debug logs a frame writes are deferred
+until the frame is done (``_defer_frame_io``) and go through the async fs /
+``spawn_blocking`` rather than Node's sync fs calls; env renames
+PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW,
 PI_TUI_DEBUG → PIDREI_TUI_DEBUG, log files pidrei-tui-debug.log /
 pidrei-tui-crash.log.
 """
 
+import functools
 import os
 import secrets
 import tempfile
 import time as _time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import tonio.colored as tonio
@@ -31,6 +37,11 @@ KITTY_SEQUENCE_PREFIX = "\x1b_G"
 # Crash-dump fallback when no log directory is configured. Resolved once at
 # import, before the runtime starts: the first gettempdir() probes the filesystem.
 _DEFAULT_LOG_DIRECTORY = fs.Path(tempfile.gettempdir())
+
+
+async def _write_log(path: fs.Path, data: str) -> None:
+    await path.parent.mkdir(parents=True, exist_ok=True)
+    await path.write_text(data, encoding="utf-8")
 
 
 def _parse_kitty_image_header(line: str) -> dict | None:
@@ -72,6 +83,19 @@ def _extract_kitty_image_ids(line: str) -> list[int]:
 def _extract_kitty_image_rows(line: str) -> int:
     header = _parse_kitty_image_header(line)
     return header["rows"] if header else 1
+
+
+@dataclass(frozen=True, slots=True)
+class _MainScreenFrame:
+    """What `_compose_frame` read under the UI state lock, for `_write_frame`."""
+
+    width: int
+    height: int
+    lines: list[str]
+    cursor_pos: dict | None
+    overlays_shown: bool
+    clear_on_shrink: bool
+    show_hardware_cursor: bool
 
 
 def _is_termux_session() -> bool:
@@ -216,11 +240,35 @@ class TuiMainScreen(TuiBase):
     # Differential rendering
     # ------------------------------------------------------------------
 
-    async def _do_render(self) -> None:  # noqa: C901
+    def _compose_frame(self) -> _MainScreenFrame | None:
         if self._stopped:
-            return
+            return None
         width = self.terminal.columns
         height = self.terminal.rows
+
+        # Render all components to get new lines
+        new_lines = self.render(width)
+
+        # Composite overlays into the rendered lines (before differential compare)
+        if self._overlay_stack:
+            new_lines = self._composite_overlays(new_lines, width, height)
+
+        # Extract cursor position before applying line resets (marker must be found first)
+        cursor_pos = self._extract_cursor_position(new_lines, height)
+        return _MainScreenFrame(
+            width=width,
+            height=height,
+            lines=new_lines,
+            cursor_pos=cursor_pos,
+            overlays_shown=bool(self._overlay_stack),
+            clear_on_shrink=self._clear_on_shrink,
+            show_hardware_cursor=self._show_hardware_cursor,
+        )
+
+    def _write_frame(self, frame: _MainScreenFrame) -> None:
+        width = frame.width
+        height = frame.height
+        cursor_pos = frame.cursor_pos
         width_changed = self._previous_width != 0 and self._previous_width != width
         height_changed = self._previous_height != 0 and self._previous_height != height
         previous_buffer_length = (
@@ -235,20 +283,10 @@ class TuiMainScreen(TuiBase):
             target_screen_row = target_row - viewport_top
             return target_screen_row - current_screen_row
 
-        # Render all components to get new lines
-        new_lines = self.render(width)
-
-        # Composite overlays into the rendered lines (before differential compare)
-        if self._overlay_stack:
-            new_lines = self._composite_overlays(new_lines, width, height)
-
-        # Extract cursor position before applying line resets (marker must be found first)
-        cursor_pos = self._extract_cursor_position(new_lines, height)
-
-        new_lines = self._apply_line_resets(new_lines)
+        new_lines = self._apply_line_resets(frame.lines)
 
         # Helper to clear scrollback and viewport and render all new lines
-        async def full_render(clear: bool) -> None:
+        def full_render(clear: bool) -> None:
             self._full_redraw_count += 1
             buffer = "\x1b[?2026h"  # Begin synchronized output
             if clear:
@@ -281,7 +319,7 @@ class TuiMainScreen(TuiBase):
                 self._max_lines_rendered = max(self._max_lines_rendered, len(new_lines))
             buffer_length = max(height, len(new_lines))
             self._previous_viewport_top = max(0, buffer_length - height)
-            await self._position_hardware_cursor(cursor_pos, len(new_lines))
+            self._position_hardware_cursor(cursor_pos, len(new_lines), frame.show_hardware_cursor)
             self._previous_lines = new_lines
             self._previous_kitty_image_ids = self._collect_kitty_image_ids(new_lines)
             self._previous_width = width
@@ -289,7 +327,7 @@ class TuiMainScreen(TuiBase):
 
         redraw_log_directory = self._log_directory if os.environ.get("PIDREI_TUI_DEBUG_REDRAW") == "1" else None
 
-        async def log_redraw(reason: str) -> None:
+        def log_redraw(reason: str) -> None:
             if redraw_log_directory is None:
                 return
             log_path = os.path.join(redraw_log_directory, "pidrei-tui-debug.log")
@@ -298,33 +336,33 @@ class TuiMainScreen(TuiBase):
                 f"[{timestamp}] fullRender: {reason} "
                 f"(prev={len(self._previous_lines)}, new={len(new_lines)}, height={height})\n"
             )
-            await tonio.spawn_blocking(_append_debug_log, log_path, msg)
+            self._defer_frame_io(functools.partial(tonio.spawn_blocking, _append_debug_log, log_path, msg))
 
         # First render - just output everything without clearing (assumes clean screen)
         if not self._previous_lines and not width_changed and not height_changed:
-            await log_redraw("first render")
-            await full_render(False)
+            log_redraw("first render")
+            full_render(False)
             return
 
         # Width changes always need a full re-render because wrapping changes.
         if width_changed:
-            await log_redraw(f"terminal width changed ({self._previous_width} -> {width})")
-            await full_render(True)
+            log_redraw(f"terminal width changed ({self._previous_width} -> {width})")
+            full_render(True)
             return
 
         # Height changes normally need a full re-render to keep the visible viewport aligned,
         # but Termux changes height when the software keyboard shows or hides.
         # In that environment, a full redraw causes the entire history to replay on every toggle.
         if height_changed and not _is_termux_session():
-            await log_redraw(f"terminal height changed ({self._previous_height} -> {height})")
-            await full_render(True)
+            log_redraw(f"terminal height changed ({self._previous_height} -> {height})")
+            full_render(True)
             return
 
         # Content shrunk below the working area and no overlays - re-render to clear empty rows
         # (overlays need the padding, so only do this when no overlays are active)
-        if self._clear_on_shrink and len(new_lines) < self._max_lines_rendered and not self._overlay_stack:
-            await log_redraw(f"clearOnShrink (maxLinesRendered={self._max_lines_rendered})")
-            await full_render(True)
+        if frame.clear_on_shrink and len(new_lines) < self._max_lines_rendered and not frame.overlays_shown:
+            log_redraw(f"clearOnShrink (maxLinesRendered={self._max_lines_rendered})")
+            full_render(True)
             return
 
         # Find first and last changed lines
@@ -352,7 +390,7 @@ class TuiMainScreen(TuiBase):
 
         # No changes - but still need to update hardware cursor position if it moved
         if first_changed == -1:
-            await self._position_hardware_cursor(cursor_pos, len(new_lines))
+            self._position_hardware_cursor(cursor_pos, len(new_lines), frame.show_hardware_cursor)
             self._previous_viewport_top = prev_viewport_top
             self._previous_height = height
             return
@@ -365,8 +403,8 @@ class TuiMainScreen(TuiBase):
                 # Move to end of new content (clamp to 0 for empty content)
                 target_row = max(0, len(new_lines) - 1)
                 if target_row < prev_viewport_top:
-                    await log_redraw(f"deleted lines moved viewport up ({target_row} < {prev_viewport_top})")
-                    await full_render(True)
+                    log_redraw(f"deleted lines moved viewport up ({target_row} < {prev_viewport_top})")
+                    full_render(True)
                     return
                 line_diff = compute_line_diff(target_row)
                 if line_diff > 0:
@@ -377,8 +415,8 @@ class TuiMainScreen(TuiBase):
                 # Clear extra lines without scrolling
                 extra_lines = len(self._previous_lines) - len(new_lines)
                 if extra_lines > height:
-                    await log_redraw(f"extraLines > height ({extra_lines} > {height})")
-                    await full_render(True)
+                    log_redraw(f"extraLines > height ({extra_lines} > {height})")
+                    full_render(True)
                     return
                 clear_start_offset = 0 if len(new_lines) == 0 else 1
                 if extra_lines > 0 and clear_start_offset > 0:
@@ -394,7 +432,7 @@ class TuiMainScreen(TuiBase):
                 self._emit(buffer)
                 self._cursor_row = target_row
                 self._hardware_cursor_row = target_row
-            await self._position_hardware_cursor(cursor_pos, len(new_lines))
+            self._position_hardware_cursor(cursor_pos, len(new_lines), frame.show_hardware_cursor)
             self._previous_lines = new_lines
             self._previous_kitty_image_ids = self._collect_kitty_image_ids(new_lines)
             self._previous_width = width
@@ -405,8 +443,8 @@ class TuiMainScreen(TuiBase):
         # Differential rendering can only touch what was actually visible.
         # If the first changed line is above the previous viewport, we need a full redraw.
         if first_changed < prev_viewport_top:
-            await log_redraw(f"firstChanged < viewportTop ({first_changed} < {prev_viewport_top})")
-            await full_render(True)
+            log_redraw(f"firstChanged < viewportTop ({first_changed} < {prev_viewport_top})")
+            full_render(True)
             return
 
         # Render from first changed line to end
@@ -448,10 +486,10 @@ class TuiMainScreen(TuiBase):
             if image_reserved_rows > 1:
                 image_start_screen_row = i - viewport_top
                 if image_start_screen_row < 0 or image_start_screen_row + image_reserved_rows > height:
-                    await log_redraw(
+                    log_redraw(
                         f"kitty image pre-clear would scroll ({image_start_screen_row} + {image_reserved_rows} > {height})"
                     )
-                    await full_render(True)
+                    full_render(True)
                     return
 
                 buffer += "\x1b[2K"
@@ -481,12 +519,11 @@ class TuiMainScreen(TuiBase):
                         "",
                     ]
                 )
-                await crash_log_path.parent.mkdir(parents=True, exist_ok=True)
-                await crash_log_path.write_text(crash_data, encoding="utf-8")
+                self._defer_frame_io(functools.partial(_write_log, crash_log_path, crash_data))
 
                 # Terminal cleanup happens in the caller's shutdown path; pi
                 # calls the sync stop() here, but stop() is async in the port
-                # and _do_render runs inside an owner render job.
+                # and this runs inside the render loop's frame.
                 raise Exception(
                     "\n".join(
                         [
@@ -546,8 +583,7 @@ class TuiMainScreen(TuiBase):
                     repr(buffer),
                 ]
             )
-            await debug_dir.mkdir(parents=True, exist_ok=True)
-            await debug_path.write_text(debug_data, encoding="utf-8")
+            self._defer_frame_io(functools.partial(_write_log, debug_path, debug_data))
 
         # Write entire buffer at once
         self._emit(buffer)
@@ -562,14 +598,14 @@ class TuiMainScreen(TuiBase):
         self._previous_viewport_top = max(prev_viewport_top, final_cursor_row - height + 1)
 
         # Position hardware cursor for IME
-        await self._position_hardware_cursor(cursor_pos, len(new_lines))
+        self._position_hardware_cursor(cursor_pos, len(new_lines), frame.show_hardware_cursor)
 
         self._previous_lines = new_lines
         self._previous_kitty_image_ids = self._collect_kitty_image_ids(new_lines)
         self._previous_width = width
         self._previous_height = height
 
-    async def _position_hardware_cursor(self, cursor_pos: dict | None, total_lines: int) -> None:
+    def _position_hardware_cursor(self, cursor_pos: dict | None, total_lines: int, show: bool) -> None:
         """Position the hardware cursor for IME candidate window.
 
         Port deviation: pi ends with `terminal.showCursor()/hideCursor()` as
@@ -593,6 +629,6 @@ class TuiMainScreen(TuiBase):
             buffer += f"\x1b[{-row_delta}A"  # Move up
         # Move to absolute column (1-indexed)
         buffer += f"\x1b[{target_col + 1}G"
-        buffer += "\x1b[?25h" if self._show_hardware_cursor else "\x1b[?25l"
+        buffer += "\x1b[?25h" if show else "\x1b[?25l"
         self._emit(buffer)
         self._hardware_cursor_row = target_row

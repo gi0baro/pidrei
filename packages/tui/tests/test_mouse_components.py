@@ -54,8 +54,8 @@ class InputOverlay(Container):
         self.input = Input()
         self.add_child(self.input)
 
-    async def handle_input(self, data: str) -> None:
-        await self.input.handle_input(data)
+    def handle_input(self, data: str) -> None:
+        self.input.handle_input(data)
 
 
 @pytest.mark.tonio
@@ -64,9 +64,9 @@ async def test_positions_a_single_line_input_cursor_on_press():
     input_component.set_value("hello")
     input_component.render(20)
 
-    result = await input_component.handle_mouse(mouse("press", 4, 0, 20, 1))
+    result = input_component.handle_mouse(mouse("press", 4, 0, 20, 1))
     assert result is not None and result.handled is True
-    await input_component.handle_input("X")
+    input_component.handle_input("X")
     assert input_component.get_value() == "heXllo"
 
 
@@ -85,15 +85,15 @@ async def test_selects_and_activates_list_rows():
     )
     selected: list[str] = []
 
-    async def on_select(item: dict) -> None:
+    def on_select(item: dict) -> None:
         selected.append(item["value"])
 
     select_list.on_select = on_select
 
-    result = await select_list.handle_mouse(mouse("press", 1, 2, 40, 3))
+    result = select_list.handle_mouse(mouse("press", 1, 2, 40, 3))
     assert result is not None and result.handled is True
     assert select_list.get_selected_item()["value"] == "c"
-    result = await select_list.handle_mouse(mouse("click", 1, 2, 40, 3))
+    result = select_list.handle_mouse(mouse("click", 1, 2, 40, 3))
     assert result is not None and result.handled is True
     assert selected == ["c"]
 
@@ -102,10 +102,10 @@ async def test_selects_and_activates_list_rows():
 async def test_activates_settings_rows():
     changes: list[dict] = []
 
-    async def on_change(item_id: str, value: str) -> None:
+    def on_change(item_id: str, value: str) -> None:
         changes.append({"id": item_id, "value": value})
 
-    async def on_cancel() -> None:
+    def on_cancel() -> None:
         pass
 
     settings_list = SettingsList(
@@ -121,8 +121,8 @@ async def test_activates_settings_rows():
         on_cancel,
     )
 
-    await settings_list.handle_mouse(mouse("press", 1, 2, 40, 5))
-    await settings_list.handle_mouse(mouse("click", 1, 2, 40, 5))
+    settings_list.handle_mouse(mouse("press", 1, 2, 40, 5))
+    settings_list.handle_mouse(mouse("click", 1, 2, 40, 5))
     assert changes == [{"id": "third", "value": "high"}]
 
 
@@ -137,31 +137,31 @@ async def test_ignores_hover_and_clicks_visible_select_list_row_after_scrolling(
     changes: list[str] = []
     selected: list[str] = []
 
-    async def on_selection_change(item: dict) -> None:
+    def on_selection_change(item: dict) -> None:
         changes.append(item["value"])
 
-    async def on_select(item: dict) -> None:
+    def on_select(item: dict) -> None:
         selected.append(item["value"])
 
     select_list.on_selection_change = on_selection_change
     select_list.on_select = on_select
     select_list.set_selected_index(5)
-    await select_list.handle_mouse(replace(mouse("wheel", 1, row), wheel_delta=1))
+    select_list.handle_mouse(replace(mouse("wheel", 1, row), wheel_delta=1))
     assert select_list.get_selected_item()["value"] == "item-6"
     assert changes == ["item-6"]
     before = select_list.render(80)
     assert before[row].endswith(f"Item {4 + row}")
 
     for y in [0, 1, 2, 3, 4, row]:
-        assert await select_list.handle_mouse(replace(mouse("move", 1, y), button="none")) is None
+        assert select_list.handle_mouse(replace(mouse("move", 1, y), button="none")) is None
         assert select_list.render(80) == before
     assert select_list.get_selected_item()["value"] == "item-6"
     assert changes == ["item-6"]
     assert selected == []
 
-    await select_list.handle_mouse(mouse("press", 1, row))
+    select_list.handle_mouse(mouse("press", 1, row))
     select_list.render(80)
-    await select_list.handle_mouse(mouse("click", 1, row))
+    select_list.handle_mouse(mouse("click", 1, row))
     assert selected == [f"item-{4 + row}"]
     assert changes == ["item-6", f"item-{4 + row}"]
 
@@ -171,10 +171,10 @@ async def test_ignores_hover_and_clicks_visible_select_list_row_after_scrolling(
 async def test_ignores_hover_and_clicks_visible_settings_row_after_scrolling(row):
     changes: list[dict] = []
 
-    async def on_change(item_id: str, value: str) -> None:
+    def on_change(item_id: str, value: str) -> None:
         changes.append({"id": item_id, "value": value})
 
-    async def on_cancel() -> None:
+    def on_cancel() -> None:
         pass
 
     settings_list = SettingsList(
@@ -195,19 +195,19 @@ async def test_ignores_hover_and_clicks_visible_settings_row_after_scrolling(row
         {"enableSearch": True},
     )
     settings_list.select_item("item-5")
-    await settings_list.handle_mouse(replace(mouse("wheel", 1, row + 2), wheel_delta=1))
+    settings_list.handle_mouse(replace(mouse("wheel", 1, row + 2), wheel_delta=1))
     before = settings_list.render(80)
     assert before[4].startswith("> Item 6")
     assert f"Item {4 + row} " in before[row + 2]
 
     for y in [0, 1, 2, 3, 4, row]:
-        assert await settings_list.handle_mouse(replace(mouse("move", 1, y + 2), button="none")) is None
+        assert settings_list.handle_mouse(replace(mouse("move", 1, y + 2), button="none")) is None
         assert settings_list.render(80) == before
     assert changes == []
 
-    await settings_list.handle_mouse(mouse("press", 1, row + 2))
+    settings_list.handle_mouse(mouse("press", 1, row + 2))
     settings_list.render(80)
-    await settings_list.handle_mouse(mouse("click", 1, row + 2))
+    settings_list.handle_mouse(mouse("click", 1, row + 2))
     assert changes == [{"id": f"item-{4 + row}", "value": "on"}]
 
 

@@ -55,7 +55,7 @@ async def test_propagates_reordered_scoped_models_back_to_the_session_state(harn
         },
     )
 
-    await selector.handle_input("\x1b[1;3B")
+    selector.handle_input("\x1b[1;3B")
 
     assert changes == [[ordered_ids[1], ordered_ids[0], ordered_ids[2]]]
 

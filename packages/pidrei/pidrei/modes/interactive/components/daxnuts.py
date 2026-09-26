@@ -73,12 +73,16 @@ class DaxnutsComponent:
         self._cached_width = 0
 
     def _start_animation(self) -> None:
-        async def on_tick() -> None:
-            self._tick += 1
-            if self._tick >= self._max_ticks:
-                self._stop_animation()
-            self._cached_width = 0
-            self._ui.request_render()
+        def on_tick() -> None:
+            # On the interval's task: the animation state is UI state.
+            with self._ui.state_lock:
+                if self._interval is None:
+                    return  # stopped after this tick was already due
+                self._tick += 1
+                if self._tick >= self._max_ticks:
+                    self._stop_animation()
+                self._cached_width = 0
+                self._ui.request_render()
 
         self._interval = Interval(80, on_tick)
 

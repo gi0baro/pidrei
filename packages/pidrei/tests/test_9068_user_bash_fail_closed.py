@@ -9,6 +9,7 @@ event the fake stdout sets (pi uses `vi.waitFor`).
 
 import contextlib
 import json
+import threading
 from functools import partial
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from pidrei.core.bash_executor import BashResult
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.rpc import rpc_mode
 
+from .flow_helpers import SpawnedFlows
 from .harness import create_harness
 
 
@@ -207,18 +209,20 @@ async def test_interactive_user_bash_fails_closed_when_a_handler_returns_an_empt
             session=harness.session,
             session_manager=harness.session_manager,
             _is_bash_mode=True,
+            _bash_claimed=False,
             history=[],
             show_warning=lambda _message: None,
-            _apply_show_warning=lambda _message: None,
             _update_editor_border_color=lambda: None,
             _set_editor_text=lambda _text: None,
-            ui=SimpleNamespace(post_ui=lambda fn: fn()),
+            ui=SimpleNamespace(state_lock=threading.RLock()),
+            _spawn_flow=SpawnedFlows(),
         )
         context._apply_editor_history = context.history.append
         context._handle_bash_command = partial(InteractiveMode._handle_bash_command, context)
         context._run_editor_bash_command = partial(InteractiveMode._run_editor_bash_command, context)
 
-        await InteractiveMode._handle_editor_submit(context, text)
+        InteractiveMode._handle_editor_submit(context, text)
+        await context._spawn_flow.finish()
 
         assert events == [
             {

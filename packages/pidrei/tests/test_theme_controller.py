@@ -8,6 +8,7 @@ in-test try/finally (predates tonio 0.9.14; `monkeypatch` works now).
 
 import contextlib
 import os
+import threading
 
 import pytest
 
@@ -24,12 +25,10 @@ class _FakeUi:
         self.notification_calls: list[bool] = []
         self.unsubscribe_calls = 0
         self._listener = None
+        self.state_lock = threading.RLock()
 
     def invalidate(self) -> None:
         pass
-
-    def post_ui(self, fn) -> None:
-        fn()
 
     def request_render(self) -> None:
         pass
@@ -102,7 +101,7 @@ def _create_controller(ui, get_settings_manager, initial_theme_setting=None):
         {
             "getSettingsManager": get_settings_manager,
             "showError": lambda _message: None,
-            "onChanged": lambda *, on_owner=False: None,
+            "onChanged": lambda: None,
             "initialThemeSetting": initial_theme_setting,
         },
     )

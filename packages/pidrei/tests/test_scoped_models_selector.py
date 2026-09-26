@@ -72,7 +72,7 @@ async def test_marks_every_model_after_enabling_all(harnesses):
     ]
     selector = await create_selector(harnesses, models)
 
-    await selector.handle_input(CTRL_A)
+    selector.handle_input(CTRL_A)
 
     assert [model["enabled"] for model in models] == [True, True, True]
     assert get_marker_states(selector, models) == [True, True, True]
@@ -88,8 +88,8 @@ async def test_disables_only_the_selected_model_after_enabling_all(harnesses):
     ]
     selector = await create_selector(harnesses, models)
 
-    await selector.handle_input(CTRL_A)
-    await selector.handle_input(ENTER)
+    selector.handle_input(CTRL_A)
+    selector.handle_input(ENTER)
 
     assert [model["enabled"] for model in models] == [False, True, True]
     assert get_marker_states(selector, models) == [False, True, True]
@@ -104,11 +104,11 @@ async def test_enables_only_the_selected_model_after_clearing_all(harnesses):
     ]
     selector = await create_selector(harnesses, models)
 
-    await selector.handle_input(CTRL_X)
+    selector.handle_input(CTRL_X)
     assert [model["enabled"] for model in models] == [False, False, False]
     assert get_marker_states(selector, models) == [False, False, False]
 
-    await selector.handle_input(ENTER)
+    selector.handle_input(ENTER)
     assert [model["enabled"] for model in models] == [True, False, False]
     assert get_marker_states(selector, models) == [True, False, False]
 
@@ -122,11 +122,11 @@ async def test_restores_the_all_enabled_state_after_re_enabling_the_last_disable
     ]
     selector = await create_selector(harnesses, models)
 
-    await selector.handle_input(CTRL_A)  # enable all -> None
-    await selector.handle_input(ENTER)  # disable model-a; enabled models re-sort first: [b, c, a]
-    await selector.handle_input(DOWN)
-    await selector.handle_input(DOWN)  # move selection back to model-a
-    await selector.handle_input(ENTER)  # re-enable model-a
+    selector.handle_input(CTRL_A)  # enable all -> None
+    selector.handle_input(ENTER)  # disable model-a; enabled models re-sort first: [b, c, a]
+    selector.handle_input(DOWN)
+    selector.handle_input(DOWN)  # move selection back to model-a
+    selector.handle_input(ENTER)  # re-enable model-a
 
     assert [model["enabled"] for model in models] == [True, True, True]
     assert get_marker_states(selector, models) == [True, True, True]

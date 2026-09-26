@@ -68,7 +68,7 @@ class Box:
             if invalidate is not None:
                 invalidate()
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
         content_width = max(1, event.width - self._padding_x * 2)
         content_y = event.y - self._padding_y
         content_x = event.x - self._padding_x
@@ -84,7 +84,7 @@ class Box:
         child_y = 0
         for child, child_height in mouse_children:
             if child_y <= content_y < child_y + child_height:
-                return await dispatch_mouse_event(
+                return dispatch_mouse_event(
                     child,
                     replace(event, x=content_x, y=content_y - child_y, width=content_width, height=child_height),
                 )

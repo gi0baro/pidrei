@@ -7,19 +7,16 @@ import tonio.colored as tonio
 
 
 class RenderRequests:
-    """Stands in for the TUI handed to a component, which only posts its
-    updates (`post_ui`, applied inline here: there is no owner) and calls
-    `request_render()`. Components that refresh in the background (the model
-    selector's catalog refresh) request a render as the last step of each
-    update, so a test waits for the state it needs with `until` instead of
-    polling the render output."""
+    """Stands in for the TUI handed to a component, which applies its updates
+    under `state_lock` and calls `request_render()`. Components that refresh
+    in the background (the model selector's catalog refresh) request a render
+    as the last step of each update, so a test waits for the state it needs
+    with `until` instead of polling the render output."""
 
     def __init__(self) -> None:
+        self.state_lock = threading.RLock()
         self._lock = threading.Lock()
         self._waiters: list[tuple[Callable[[], bool], tonio.Event]] = []
-
-    def post_ui(self, fn: Callable[[], None]) -> None:
-        fn()
 
     def request_render(self, force: bool = False) -> None:
         with self._lock:

@@ -116,12 +116,12 @@ class ThinkingSelectorComponent(Container):
         self.set_children(children)
         self._select_list = new_list
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "app.thinking.save") and self._on_select_as_default is not None:
             item = self._select_list.get_selected_item()
             if item is not None:
-                await self._on_select_as_default(item["value"])
+                self._on_select_as_default(item["value"])
             return
 
         is_nav = (
@@ -131,10 +131,10 @@ class ThinkingSelectorComponent(Container):
             or kb.matches(key_data, "tui.select.cancel")
         )
         if is_nav:
-            await self._select_list.handle_input(key_data)
+            self._select_list.handle_input(key_data)
             return
 
-        await self._search_input.handle_input(key_data)
+        self._search_input.handle_input(key_data)
         self._apply_filter(self._search_input.get_value())
 
     def get_select_list(self) -> SelectList:

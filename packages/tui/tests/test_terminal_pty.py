@@ -1,9 +1,9 @@
 """pidrei-specific: ProcessTerminal end-to-end over a real pty.
 
 No pi counterpart (node tests cannot re-point process.stdin at a pty); this
-covers the port's tonio input pump, raw-mode handling, and live Kitty
-negotiation, with the test playing the terminal-emulator side on the pty
-master.
+covers the port's input reader and consumer, raw-mode handling, and live
+Kitty negotiation, with the test playing the terminal-emulator side on the
+pty master.
 """
 
 import contextlib
@@ -19,7 +19,7 @@ from tonio.colored.io import FdStream
 
 from pidrei_tui import terminal as terminal_module
 from pidrei_tui.components import Text
-from pidrei_tui.keys import set_kitty_protocol_active
+from pidrei_tui.keys import matches_key, set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal
 from pidrei_tui.tui_main_screen import TuiMainScreen
 
@@ -51,7 +51,7 @@ async def _receive_until(stream: FdStream, *needles: bytes, timeout: float = 5.0
 
 class _InputLog:
     """The terminal's input handler for these tests: records each input and
-    wakes `until` (the pump delivers on the terminal's input owner, another
+    wakes `until` (the terminal's input consumer delivers it, on another
     task) — the wait is for the input itself, not a sleep."""
 
     def __init__(self) -> None:
@@ -97,6 +97,13 @@ class _ManualClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+# Past the drain tests' 50 ms idle window, not exactly on it: the manual clock
+# starts at the real monotonic reading, and at a large reading
+# `(t + 0.05) - t` can round below 0.05 (it did at t ≈ 132237 s), so an exact
+# advance may never read as idle and the drain loops on its frozen clock.
+_PAST_DRAIN_IDLE_S = 0.06
 
 
 @contextlib.contextmanager
@@ -159,6 +166,7 @@ async def test_pty_pump_negotiation_and_input_end_to_end():
         assert await _receive_until(emulator, b"out") == b"out"
     finally:
         await terminal.stop()
+        terminal.close()
         set_kitty_protocol_active(False)
 
     # stop() restored the tty state and disabled what it enabled.
@@ -187,16 +195,16 @@ async def test_pty_drain_input_returns_after_idle():
 
         # Late input during drain is swallowed, and drain returns on idle
         # well before max_ms. The input used to be written *before* calling
-        # drain_input, so the pump could forward it before drain detached
-        # the handler; and "idle" was 50ms of wall clock. Here drain's clock
+        # drain_input, so it could be handled before drain detached the
+        # handler; and "idle" was 50ms of wall clock. Here drain's clock
         # is manual: its first read (stamped right after it detaches the
         # handler) says the window is open, and nothing idles it out until
         # the test advances the clock.
         handle = terminal._stdin_data_handler
         delivered = tonio.Event()
 
-        async def handle_then_signal(data: str) -> None:
-            await handle(data)
+        def handle_then_signal(data: str) -> None:
+            handle(data)
             delivered.set()
 
         terminal._stdin_data_handler = handle_then_signal
@@ -207,7 +215,7 @@ async def test_pty_drain_input_returns_after_idle():
             drained.set()
 
         with _manual_terminal_clock() as clock:
-            async with tonio.scope() as scope:
+            async with tonio.scope(cancel_on_exc=True) as scope:
                 scope.spawn(drain())
                 await clock.read.wait(5)
                 assert clock.read.is_set(), "drain_input never started"
@@ -215,16 +223,18 @@ async def test_pty_drain_input_returns_after_idle():
                 await delivered.wait(5)
                 assert delivered.is_set(), "the late input never reached the terminal"
                 assert inputs.items == []
-                clock.advance(0.05)
+                clock.advance(_PAST_DRAIN_IDLE_S)
                 await drained.wait(5)
                 assert drained.is_set(), "drain_input did not return on idle"
         assert inputs.items == []
 
-        # The input handler is restored afterwards.
+        # The input handler is restored afterwards; the key read during the
+        # drain stays dropped.
         os.write(master, b"x")
         assert await inputs.until(1) == ["x"]
     finally:
         await terminal.stop()
+        terminal.close()
         set_kitty_protocol_active(False)
 
     emulator._fd.close()  # closes master
@@ -232,44 +242,49 @@ async def test_pty_drain_input_returns_after_idle():
 
 
 @pytest.mark.tonio
-async def test_pty_drain_input_cuts_between_chunks():
+async def test_pty_drain_input_drops_items_queued_behind_the_one_being_handled():
     # pidrei-only: in pi the handler change and input events share one thread, so
-    # drain's cut falls between events. Here input is handled on the input owner;
-    # the cut is an owner job, so a chunk being handled when drain is called
-    # completes — "b", in the same chunk as the parked "a", is still delivered.
+    # drain's cut falls between events. Here the reader reads ahead of input
+    # handling, and drain cuts at once (it never waits on input handling, which
+    # may be what asked for it): "b", read while "a" is being handled, is dropped
+    # with the rest of the typeahead, as `stop` drops it (UI_ISLAND_DESIGN §4.4).
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     emulator = FdStream(master)  # owns `master` from here
     items: list[str] = []
     parked = tonio.Event()
     release = tonio.Event()
+    handled_x = tonio.Event()
 
     async def record(data: str) -> None:
         items.append(data)
         if data == "a":
             parked.set()
             await release.wait(5)
+        if data == "x":
+            handled_x.set()
 
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
     try:
         await terminal.start(record, None)
         await _receive_until(emulator, KITTY_QUERY)
 
-        # One chunk; its handling parks on "a".
-        os.write(master, b"ab")
+        read = terminal._stdin_data_handler
+        read_b = tonio.Event()
+
+        def observed_read(data: str) -> None:
+            read(data)
+            if "b" in data:
+                read_b.set()
+
+        terminal._stdin_data_handler = observed_read
+        os.write(master, b"a")
         await parked.wait(5)
         assert parked.is_set()
+        os.write(master, b"b")
+        await read_b.wait(5)
+        assert read_b.is_set(), "the reader must read ahead of input handling"
 
-        # The pump is inside `run` for that chunk, so the next `run` is drain
-        # asking the owner for its cut.
-        owner_run = terminal.input_owner.run
-        cut_requested = tonio.Event()
-
-        async def observed_run(fn):
-            cut_requested.set()
-            await owner_run(fn)
-
-        terminal.input_owner.run = observed_run
         drained = tonio.Event()
 
         async def drain() -> None:
@@ -280,26 +295,28 @@ async def test_pty_drain_input_cuts_between_chunks():
             async with tonio.scope() as scope:
                 scope.spawn(drain())
                 try:
-                    await cut_requested.wait(5)
-                    assert cut_requested.is_set(), "drain_input did not cut on the input owner"
-                    # Queued behind the chunk being handled: nothing cut yet.
-                    assert terminal._input_handler is record
-                    release.set()
-                    # Drain's first clock read follows its cut.
                     await clock.read.wait(5)
-                    assert clock.read.is_set()
-                    assert items == ["a", "b"]
+                    assert clock.read.is_set(), "drain_input never started"
+                    # The cut did not wait for "a" to be handled.
                     assert terminal._input_handler is None
-                    clock.advance(0.05)
+                    clock.advance(_PAST_DRAIN_IDLE_S)
                     await drained.wait(5)
                     assert drained.is_set()
+                    # "a" finishes after the handler is back: "b" is still
+                    # dropped, with the generation it was read under.
+                    release.set()
                 finally:
                     # On a failed check the scope still joins drain: let it end.
                     release.set()
                     clock.advance(10)
+
+        os.write(master, b"x")
+        await handled_x.wait(5)
+        assert items == ["a", "x"]
     finally:
         release.set()
         await terminal.stop()
+        terminal.close()
         set_kitty_protocol_active(False)
 
     emulator._fd.close()  # closes master
@@ -363,6 +380,7 @@ async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
             assert done.is_set(), "write() must complete once its bytes are on the wire"
     finally:
         await terminal.stop()
+        terminal.close()
         reader._fd.close()  # closes out_r
         for fd in (in_r, in_w, out_w):
             os.close(fd)
@@ -371,8 +389,9 @@ async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
 
 @pytest.mark.tonio
 async def test_pty_input_survives_a_raising_input_handler():
-    """A handler exception is routed to the owner's on_error and the pump
-    keeps reading — input must not die for good (the 0.84.2.5 freeze)."""
+    """A handler exception is routed to the crash handler (`start`'s
+    `on_error`) and the consumer carries on — input must not die for good (the
+    0.84.2.5 freeze)."""
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     inputs = []
@@ -392,13 +411,12 @@ async def test_pty_input_survives_a_raising_input_handler():
         got_error.set()
 
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
-    terminal.input_owner.on_error = on_error
     try:
-        await terminal.start(record_input, None)
+        await terminal.start(record_input, None, None, on_error)
 
         os.write(master, b"x")
         await got_error.wait(2.0)
-        assert got_error.is_set(), "handler exception must reach input_owner.on_error"
+        assert got_error.is_set(), "handler exception must reach on_error"
         assert [type(error).__name__ for error in errors] == ["RuntimeError"]
 
         os.write(master, b"y")
@@ -407,41 +425,352 @@ async def test_pty_input_survives_a_raising_input_handler():
         assert inputs == ["y"]
     finally:
         await terminal.stop()
+        terminal.close()
         set_kitty_protocol_active(False)
     os.close(master)
     os.close(slave)
 
 
 @pytest.mark.tonio
-async def test_pty_terminal_stops_from_inside_its_own_input_job():
-    """A key handler stops the terminal in place (pi's UI-thread stop): the
-    stop runs on the owner, inside the job the input pump is parked on. It
-    must complete — no handover to the owner it is running on — and the
-    pump's cancellation must unwind, not surface as a handler error."""
+async def test_pty_terminal_stops_from_inside_its_own_input_handling():
+    """Input handling stops the terminal (pi's key handler stopping the UI in
+    place; here a key's completion, which the consumer waits on): the stop
+    never waits on input handling, so it completes (UI_ISLAND_DESIGN §4.4)."""
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     errors = []
     stopped = tonio.Event()
     terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
-    terminal.input_owner.on_error = errors.append
 
     async def stop_on_z(data: str) -> None:
         if data == "z":
-            await terminal.stop(on_owner=True)
+            await terminal.stop()
             stopped.set()
 
     try:
-        await terminal.start(stop_on_z, None)
+        await terminal.start(stop_on_z, None, None, errors.append)
         os.write(master, b"z")
         await stopped.wait(5.0)
-        assert stopped.is_set(), "a stop from the owner's own input job must complete"
+        assert stopped.is_set(), "a stop from input handling must complete"
         assert errors == []
     finally:
-        # A stop that never completed holds the owner: another stop would
-        # wait on it forever, so the failure is reported instead.
-        terminal.input_owner.close()
+        terminal.close()
         set_kitty_protocol_active(False)
     os.close(master)
+    os.close(slave)
+
+
+@pytest.mark.tonio
+async def test_pty_items_queued_when_the_terminal_stops_are_dropped():
+    """Stopping drops the items read ahead and not yet handled, with the
+    parser state (UI_ISLAND_DESIGN §4.4): after a restart, input starts from
+    what is typed then — even when the restart comes from the same input
+    handling (the TUI-mode switch), before the queued item is taken."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    inputs = _InputLog()
+    parked = tonio.Event()
+    go = tonio.Event()
+    stopped = tonio.Event()
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+
+    async def handle(data: str) -> None:
+        await inputs.record(data)
+        if data == "a":
+            parked.set()
+            await go.wait(5)
+            await terminal.stop()
+            await terminal.start(handle, None)
+            stopped.set()
+
+    try:
+        await terminal.start(handle, None)
+        await _receive_until(emulator, KITTY_QUERY)
+        read = terminal._stdin_data_handler
+        read_b = tonio.Event()
+
+        def observed_read(data: str) -> None:
+            read(data)
+            if "b" in data:
+                read_b.set()
+
+        terminal._stdin_data_handler = observed_read
+        os.write(master, b"a")
+        await parked.wait(5)
+        assert parked.is_set()
+        # "b" is read and queued behind "a", then "a" stops the terminal.
+        os.write(master, b"b")
+        await read_b.wait(5)
+        assert read_b.is_set()
+        go.set()
+        await stopped.wait(5)
+        assert stopped.is_set()
+
+        os.write(master, b"c")
+        assert await inputs.until(2) == ["a", "c"]
+    finally:
+        go.set()
+        await terminal.stop()
+        terminal.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
+    os.close(slave)
+
+
+@pytest.mark.tonio
+async def test_pty_a_lone_escape_is_flushed_by_the_reader_deadline():
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    inputs = _InputLog()
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    try:
+        await terminal.start(inputs.record, None)
+        await _receive_until(emulator, KITTY_QUERY)
+        # Nothing follows the ESC: only the escape timeout delivers it.
+        os.write(master, b"\x1b")
+        assert await inputs.until(1) == ["\x1b"]
+        os.write(master, b"q")
+        assert await inputs.until(2) == ["\x1b", "q"]
+    finally:
+        await terminal.stop()
+        terminal.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
+    os.close(slave)
+
+
+@pytest.mark.tonio
+async def test_pty_keys_read_before_the_kitty_reply_parse_in_the_old_mode():
+    """pidrei-only (UI_ISLAND_DESIGN §7.2): the reader reads ahead, so the
+    Kitty activation travels in input order. With Kitty on, a legacy `\n`
+    is shift+enter (Ghostty's mapping); one typed before the reply is not."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    parked = tonio.Event()
+    release = tonio.Event()
+    done = tonio.Event()
+    shift_enter: list[bool] = []
+
+    async def handle(data: str) -> None:
+        if data == "a":
+            parked.set()
+            await release.wait(5)
+            return
+        shift_enter.append(matches_key(data, "shift+enter"))
+        if len(shift_enter) == 2:
+            done.set()
+
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    try:
+        await terminal.start(handle, None)
+        await _receive_until(emulator, KITTY_QUERY)
+        read = terminal._stdin_data_handler
+        all_read = tonio.Event()
+
+        def observed_read(data: str) -> None:
+            read(data)
+            # The last `\n` came after the reply.
+            if terminal.kitty_protocol_active and data.endswith("\n"):
+                all_read.set()
+
+        terminal._stdin_data_handler = observed_read
+        os.write(master, b"a")
+        await parked.wait(5)
+        assert parked.is_set()
+        # Queued behind "a": a key, the reply, then another key.
+        os.write(master, b"\n\x1b[?7u\n")
+        await all_read.wait(5)
+        assert all_read.is_set()
+        release.set()
+        await done.wait(5)
+        assert shift_enter == [False, True]
+    finally:
+        release.set()
+        await terminal.stop()
+        terminal.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
+    os.close(slave)
+
+
+async def _drain_output(stream: FdStream, seen: dict[bytes, tonio.Event]) -> None:
+    """Keep the pty drained (so the output pump never wedges on a full
+    buffer), setting each event once its needle has gone by. Parked here at
+    the end; the caller's scope cancel unwinds it."""
+    received = b""
+    while True:
+        data = await stream.receive_some()
+        if not data:
+            return
+        received += data
+        for needle, event in seen.items():
+            if needle in received:
+                event.set()
+
+
+class _KeyWork:
+    """A focused component whose key "k" registers `work` as the key's
+    completion (`finish_before_next_input`): input handling waits on it."""
+
+    def __init__(self, tui, work) -> None:
+        self._tui = tui
+        self._work = work
+
+    def render(self, width):
+        return ["key work"]
+
+    def invalidate(self):
+        pass
+
+    def handle_input(self, data):
+        if data == "k":
+            self._tui.finish_before_next_input(tonio.spawn(self._work()))
+
+
+@pytest.mark.tonio
+async def test_pty_a_query_from_a_key_completion_gets_its_reply():
+    """A key's completion queries the terminal: the reader settles the query
+    with the reply while input handling waits on that same completion
+    (UI_ISLAND_DESIGN §4.2). Queued as input, the reply would wait behind
+    the completion, and the query would time out."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    tui = TuiMainScreen(terminal)
+    results = []
+    answered = tonio.Event()
+
+    async def ask() -> None:
+        results.append(await tui.query_terminal_background_color(timeout_ms=5000))
+        answered.set()
+
+    component = _KeyWork(tui, ask)
+    tui.add_child(component)
+    tui.set_focus(component)
+    queried = tonio.Event()
+    try:
+        await tui.start()
+        async with tonio.scope(cancel_on_exc=True) as scope:
+            scope.spawn(_drain_output(emulator, {b"\x1b]11;?\x07": queried}))
+            os.write(master, b"k")
+            await queried.wait(5)
+            assert queried.is_set(), "the completion never queried"
+            os.write(master, b"\x1b]11;rgb:ffff/ffff/ffff\x07")
+            await answered.wait(10)
+            scope.cancel()
+        assert answered.is_set()
+        assert results[0] is not None, "the query timed out: its reply waited behind the completion"
+    finally:
+        await tui.stop()
+        tui.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
+    os.close(slave)
+
+
+@pytest.mark.tonio
+async def test_pty_a_colour_scheme_report_reaches_listeners_while_input_waits():
+    """A colour-scheme report is a terminal event (UI_ISLAND_DESIGN §4.2): its
+    listeners run while input handling is parked on a key's completion."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    tui = TuiMainScreen(terminal)
+    parked = tonio.Event()
+    release = tonio.Event()
+
+    async def park() -> None:
+        parked.set()
+        await release.wait(10)
+
+    component = _KeyWork(tui, park)
+    tui.add_child(component)
+    tui.set_focus(component)
+    schemes = []
+    notified = tonio.Event()
+
+    async def on_scheme(scheme) -> None:
+        schemes.append(scheme)
+        notified.set()
+
+    tui.on_terminal_color_scheme_change(on_scheme)
+    try:
+        await tui.start()
+        async with tonio.scope(cancel_on_exc=True) as scope:
+            scope.spawn(_drain_output(emulator, {}))
+            os.write(master, b"k")
+            await parked.wait(5)
+            assert parked.is_set()
+            os.write(master, b"\x1b[?997;1n")
+            await notified.wait(5)
+            still_parked = not release.is_set()
+            release.set()
+            scope.cancel()
+        assert schemes == ["dark"]
+        assert still_parked
+    finally:
+        release.set()
+        await tui.stop()
+        tui.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
+    os.close(slave)
+
+
+@pytest.mark.tonio
+async def test_pty_tui_reports_input_and_output_errors_to_its_handler():
+    """pidrei-only (UI_ISLAND_DESIGN §4.7, step 8): the terminal's own tasks
+    hand what they cannot take to the TUI's installed handler through
+    `report_error`: a key handler's exception (the input consumer) and a
+    payload the output pump cannot write."""
+    master, slave = pty.openpty()
+    os.set_blocking(master, False)
+    emulator = FdStream(master)  # owns `master` from here
+    terminal = ProcessTerminal(input_fd=slave, output_fd=slave)
+    tui = TuiMainScreen(terminal)
+    errors: list[BaseException] = []
+    reported = [tonio.Event(), tonio.Event()]
+
+    async def on_error(error: BaseException) -> None:
+        errors.append(error)
+        reported[len(errors) - 1].set()
+
+    class Raising:
+        def render(self, width):
+            return ["raising"]
+
+        def invalidate(self):
+            pass
+
+        def handle_input(self, data):
+            if data == "x":
+                raise RuntimeError("key handler failed")
+
+    component = Raising()
+    tui.add_child(component)
+    tui.set_focus(component)
+    tui.set_render_error_handler(on_error)
+    try:
+        await tui.start()
+        async with tonio.scope(cancel_on_exc=True) as scope:
+            scope.spawn(_drain_output(emulator, {}))
+            os.write(master, b"x")
+            await reported[0].wait(5)
+            assert reported[0].is_set(), "the key handler's error never reached the handler"
+            terminal.write_sync("\ud800")  # not encodable: the pump's write fails
+            await reported[1].wait(5)
+            scope.cancel()
+        assert [type(error).__name__ for error in errors] == ["RuntimeError", "UnicodeEncodeError"]
+    finally:
+        await tui.stop()
+        tui.close()
+        set_kitty_protocol_active(False)
+    emulator._fd.close()  # closes master
     os.close(slave)
 
 
@@ -472,7 +801,7 @@ async def test_pty_tui_survives_an_input_storm_with_concurrent_mutations():
         def invalidate(self):
             pass
 
-        async def handle_input(self, data):
+        def handle_input(self, data):
             received.append(data)
             if data == "z":
                 sentinel_seen.set()
@@ -507,16 +836,12 @@ async def test_pty_tui_survives_an_input_storm_with_concurrent_mutations():
                 frames_flowing.set()
 
     async def mutate_loop() -> None:
-        # The agent-listener shape: mutations posted to the owner from
-        # another task, each followed by a render request.
+        # The agent-listener shape: mutations applied under the UI state
+        # lock from another coroutine, each followed by a render request.
         i = 0
         while not stop_mutating.is_set():
             i += 1
-
-            async def apply(i=i) -> None:
-                streamed.set_text(f"streamed content {i}")
-
-            tui.input_owner.post(apply)
+            tui.apply(lambda i=i: streamed.set_text(f"streamed content {i}"))
             tui.request_render()
             await stop_mutating.wait(0.005)
 
@@ -545,6 +870,7 @@ async def test_pty_tui_survives_an_input_storm_with_concurrent_mutations():
         assert frames_flowing.is_set(), "frames stopped flowing"
     finally:
         await tui.stop()
+        tui.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)

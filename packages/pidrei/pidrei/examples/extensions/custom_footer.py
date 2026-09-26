@@ -67,9 +67,9 @@ class CustomFooter:
 
 async def extension(pi):
     state = {"enabled": False}
-    # Commands run concurrently (each submit on its own task): the flip and
-    # the footer swap it posts are one step, so the installed footer always
-    # matches the flag.
+    # Commands run concurrently (each submit on its own coroutine): the flip
+    # and the footer swap made from it are one step, so the installed footer
+    # always matches the flag.
     toggle_guard = threading.Lock()
 
     async def toggle_footer(_args, ctx) -> None:

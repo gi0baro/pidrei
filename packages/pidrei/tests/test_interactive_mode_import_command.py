@@ -8,6 +8,8 @@ import pytest
 from pidrei.core.agent_session_runtime import SessionImportFileNotFoundError
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 
+from .flow_helpers import SpawnedFlows
+
 
 _get_path_command_argument = partial(InteractiveMode._get_path_command_argument, None)
 
@@ -39,12 +41,10 @@ def _create_import_context(import_from_jsonl):
         confirm_calls=[],
     )
     context._clear_status_indicator = lambda kind=None: context.clear_status_calls.append(kind)
-    # The owner-side part applies in place, the import's remainder posts:
-    # both record into the same lists.
-    context.show_error = context._apply_show_error = context.show_error_calls.append
+    context.show_error = context.show_error_calls.append
     context.show_status = context.show_status_calls.append
 
-    async def show_extension_confirm(title, message, opts=None, *, on_owner=False):
+    async def show_extension_confirm(title, message, opts=None):
         context.confirm_calls.append((title, message))
         return True
 
@@ -61,6 +61,7 @@ def _create_import_context(import_from_jsonl):
 
     context._prompt_for_missing_session_cwd = prompt_for_missing_session_cwd
     context._get_path_command_argument = partial(InteractiveMode._get_path_command_argument, context)
+    context._spawn_flow = context.flows = SpawnedFlows()
     return context
 
 
@@ -74,7 +75,8 @@ async def test_passes_unquoted_path_to_runtime_host_import_from_jsonl():
 
     context = _create_import_context(import_from_jsonl)
 
-    await InteractiveMode.handle_import_command(context, '/import "path/to/session.jsonl"')
+    InteractiveMode.handle_import_command(context, '/import "path/to/session.jsonl"')
+    await context.flows.finish()
 
     assert context.confirm_calls == [("Import session", "Replace current session with path/to/session.jsonl?")]
     assert import_calls == [("path/to/session.jsonl", None)]
@@ -92,7 +94,8 @@ async def test_passes_unquoted_apostrophe_path_to_runtime_host_import_from_jsonl
 
     context = _create_import_context(import_from_jsonl)
 
-    await InteractiveMode.handle_import_command(context, "/import john's/session.jsonl")
+    InteractiveMode.handle_import_command(context, "/import john's/session.jsonl")
+    await context.flows.finish()
 
     assert import_calls == [("john's/session.jsonl", None)]
     assert context.show_error_calls == []
@@ -106,7 +109,8 @@ async def test_shows_a_non_fatal_error_when_import_path_does_not_exist():
 
     context = _create_import_context(import_from_jsonl)
 
-    await InteractiveMode.handle_import_command(context, "/import /tmp/missing-session.jsonl")
+    InteractiveMode.handle_import_command(context, "/import /tmp/missing-session.jsonl")
+    await context.flows.finish()
 
     assert context.show_error_calls == ["Failed to import session: File not found: /tmp/missing-session.jsonl"]
     assert context.show_status_calls == []

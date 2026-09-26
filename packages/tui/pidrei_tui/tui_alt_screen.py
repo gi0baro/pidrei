@@ -9,15 +9,18 @@ renderer; the machinery both share lives in ``tui``.
 With no layout root set, the whole child list is wrapped in one
 end-following ``ScrollView`` so the renderer behaves like the main screen.
 
-Port deviations: ``_do_render`` and the lifecycle hooks are async (the
-terminal driver is). pi handles pointer input inside its sync viewport input
-listener; here component ``handle_mouse`` is async (list selections await
-their callbacks, like ``handle_input``), so the pointer path is the awaited
-``_handle_pointer_input`` hook the base TUI runs before its input listeners,
-and the keyboard half stays in the sync listener. The OSC 52 clipboard write
-selection triggers is spawned rather than awaited — pi's ``terminal.write``
-is sync — with the selection text captured on the release itself, since the
-spawned task may first run after the next press has changed the selection.
+Port deviations: the lifecycle hooks are async (the terminal driver is), and
+take the UI state lock around the component state they touch. pi handles
+pointer input inside its sync viewport input listener; here the pointer half
+is the ``_handle_pointer_input`` hook the base TUI runs before its input
+listeners, and the keyboard half stays in the listener. The OSC 52 clipboard
+write selection triggers is spawned rather than awaited — pi's
+``terminal.write`` is sync — with the selection text captured on the release
+itself, since the spawned task may first run after the next press has changed
+the selection. pi's ``doRender`` is split in two (UI_ISLAND_DESIGN §4.1):
+``_compose_frame`` lays the frame out and publishes the layout input reads
+back, under the UI state lock; ``_write_frame`` diffs and emits under the
+render lock only.
 """
 
 import base64
@@ -26,7 +29,7 @@ import os
 import re
 import time
 from collections.abc import Awaitable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import tonio.colored as tonio
 
@@ -55,7 +58,7 @@ from .terminal_image import (
     get_capabilities,
     get_kitty_image_placement,
     is_image_line,
-    set_capabilities,
+    replace_capabilities,
 )
 from .tui import (
     CURSOR_MARKER,
@@ -114,6 +117,17 @@ async def _resolved(value: bool) -> bool:
     return value
 
 
+@dataclass(frozen=True, slots=True)
+class _AltScreenFrame:
+    """What `_compose_frame` read under the UI state lock, for `_write_frame`."""
+
+    width: int
+    height: int
+    screen: list[str]
+    cursor_pos: dict | None
+    show_hardware_cursor: bool
+
+
 class _ImplicitDocument:
     """Renders the TUI's own child list, for the no-layout-root case."""
 
@@ -123,8 +137,8 @@ class _ImplicitDocument:
     def render(self, width: int) -> list[str]:
         return super(TuiAltScreen, self._tui).render(width)
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
-        return await super(TuiAltScreen, self._tui).handle_mouse(event)
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+        return super(TuiAltScreen, self._tui).handle_mouse(event)
 
     def invalidate(self) -> None:
         for child in self._tui.children:
@@ -169,7 +183,10 @@ class TuiAltScreen(TuiBase):
         copy_selection=None,
     ) -> None:
         super().__init__(terminal, show_hardware_cursor, log_directory)
+        # The diff's previous frame (render lock), and the screen the last
+        # composed frame shows, which input reads back (UI state lock).
         self._previous_screen: list[str] = []
+        self._visible_screen: list[str] = []
         self._last_document: list[str] = []
         self._previous_screen_width = 0
         self._previous_screen_height = 0
@@ -177,10 +194,13 @@ class TuiAltScreen(TuiBase):
         self._current_layout = None
         self._implicit_document = _ImplicitDocument(self)
         self._implicit_scroll_view = ScrollView(self._implicit_document, {"follow": "end", "primary": True})
-        self._flashes = AltScreenFlashContainer(self.request_render)
+        self._flashes = AltScreenFlashContainer(self.request_render, self.state_lock)
         self._alt_screen_active = False
         self._image_protocol = None
+        # The iTerm2 capabilities masked while the alt screen is up, and the
+        # mask installed in their place (restored only while still in place).
         self._saved_capabilities: dict | None = None
+        self._masked_capabilities: dict | None = None
         # image id -> {"transmissionGeneration", "transmissionBytes",
         # "estimatedDecodedBytes"} for what this session already uploaded,
         # in least-recently-placed order
@@ -224,7 +244,8 @@ class TuiAltScreen(TuiBase):
         return self._copy_on_select
 
     def set_copy_on_select(self, enabled: bool) -> None:
-        self._copy_on_select = enabled
+        with self.state_lock:
+            self._copy_on_select = enabled
 
     def has_active_selection(self) -> bool:
         """Whether the fullscreen viewport has a non-empty active text selection."""
@@ -252,10 +273,11 @@ class TuiAltScreen(TuiBase):
         return self._get_primary_scroll_view().is_following_end
 
     def set_layout_root(self, component) -> None:
-        if self._layout_root is component:
-            return
-        self._layout_root = component
-        self._current_layout = None
+        with self.state_lock:
+            if self._layout_root is component:
+                return
+            self._layout_root = component
+            self._current_layout = None
         self.request_render()
 
     def render(self, width: int) -> list[str]:
@@ -276,12 +298,19 @@ class TuiAltScreen(TuiBase):
         self._stop_scrollbar_drag()
         self._flashes.dispose()
         self._alt_screen_active = True
-        capabilities = get_capabilities()
+        while True:
+            capabilities = get_capabilities()
+            if capabilities["images"] != "iterm2":
+                break
+            masked = {**capabilities, "images": None}
+            # Fails only if the overrides changed meanwhile: look again.
+            if replace_capabilities(capabilities, masked):
+                self._saved_capabilities = capabilities
+                self._masked_capabilities = masked
+                break
         self._image_protocol = capabilities["images"]
         self._uploaded_kitty_images.clear()
-        if capabilities["images"] == "iterm2":
-            self._saved_capabilities = capabilities
-            set_capabilities({**capabilities, "images": None})
+        if self._saved_capabilities is not None:
             self.invalidate()
         self._last_document = []
         self._selection_anchor = None
@@ -309,13 +338,14 @@ class TuiAltScreen(TuiBase):
         )
 
     async def _before_terminal_stop(self, _options: dict) -> None:
-        self._close_search()
-        self._stop_selection_auto_scroll()
-        self._selection_press_active = False
-        self._stop_scrollbar_hover()
-        self._stop_scrollbar_drag()
-        self._clear_component_mouse_gesture()
-        self._flashes.dispose()
+        with self.state_lock:
+            self._close_search()
+            self._stop_selection_auto_scroll()
+            self._selection_press_active = False
+            self._stop_scrollbar_hover()
+            self._stop_scrollbar_drag()
+            self._clear_component_mouse_gesture()
+            self._flashes.dispose()
         if not self._alt_screen_active:
             return
         await self.terminal.write(
@@ -334,7 +364,9 @@ class TuiAltScreen(TuiBase):
             await self.terminal.write(f"{BEGIN_SYNCHRONIZED_OUTPUT}{EXIT_ALT_SCREEN}\x1b[?25h{END_SYNCHRONIZED_OUTPUT}")
         else:
             width = max(1, self.terminal.columns)
-            document_lines = [OSC133_ZONE_PREFIX.sub("", line) for line in self.render(width)]
+            with self.state_lock:
+                document = self.render(width)
+            document_lines = [OSC133_ZONE_PREFIX.sub("", line) for line in document]
             self._last_document = [
                 line if is_image_line(line) or visible_width(line) <= width else slice_by_column(line, 0, width, True)
                 for line in self._apply_line_resets([line.replace(CURSOR_MARKER, "") for line in document_lines])
@@ -347,8 +379,9 @@ class TuiAltScreen(TuiBase):
             buffer += f"\x1b[0m{ENABLE_AUTOWRAP}\r\n\x1b[?25h{END_SYNCHRONIZED_OUTPUT}"
             await self.terminal.write(buffer)
         if self._saved_capabilities:
-            set_capabilities(self._saved_capabilities)
-            self._saved_capabilities = None
+            # A change of overrides meanwhile dropped the mask already.
+            replace_capabilities(self._masked_capabilities, self._saved_capabilities)
+            self._saved_capabilities = self._masked_capabilities = None
 
     def _delete_kitty_images(self) -> str:
         return delete_all_kitty_images() if self._image_protocol == "kitty" else ""
@@ -414,6 +447,7 @@ class TuiAltScreen(TuiBase):
 
     def _reset_render_state(self) -> None:
         self._previous_screen = []
+        self._visible_screen = []
         self._previous_screen_width = 0
         self._previous_screen_height = 0
         self._current_layout = None
@@ -618,9 +652,10 @@ class TuiAltScreen(TuiBase):
         """Show a transient message in the alternate-screen flash stack.
 
         Callable from any task (a detached clipboard write reports through
-        it): the stack is owner state, so the push is posted.
+        it): the stack is UI state, pushed under the UI state lock.
         """
-        self.post_ui(lambda: self._flashes.flash(message, duration_ms))
+        with self.state_lock:
+            self._flashes.flash(message, duration_ms)
 
     def _should_defer_viewport_input_to_overlay(self) -> bool:
         search = self._active_search
@@ -634,7 +669,7 @@ class TuiAltScreen(TuiBase):
         self._mouse_press_point = None
         self._mouse_press_moved = False
 
-    async def _handle_pointer_input(self, data: str) -> bool:
+    def _handle_pointer_input(self, data: str) -> bool:
         """The pointer half of pi's viewport input listener (see the module docstring)."""
         if data == FOCUS_OUT:
             had_active_selection = self._selection_press_active
@@ -672,9 +707,9 @@ class TuiAltScreen(TuiBase):
                 wheel_event["y"],
                 wheel_delta=wheel_event["direction"] * self._get_wheel_scroll_lines(wheel_event["button"]),
             )
-            hit, result = await self._dispatch_mouse_to_overlay(event)
+            hit, result = self._dispatch_mouse_to_overlay(event)
             if result is None and not hit:
-                result = await self._dispatch_mouse_to_layout(event)
+                result = self._dispatch_mouse_to_layout(event)
             if result is not None:
                 if self._apply_mouse_dispatch_result(event, result):
                     self.request_render()
@@ -685,7 +720,7 @@ class TuiAltScreen(TuiBase):
             return True
         mouse_event = self._parse_sgr_mouse_event(data)
         if mouse_event:
-            await self._handle_mouse_event(mouse_event)
+            self._handle_mouse_event(mouse_event)
             return True
         return self._is_mouse_sequence(data)
 
@@ -791,7 +826,7 @@ class TuiAltScreen(TuiBase):
             click_count=click_count,
         )
 
-    async def _dispatch_mouse_to_layout(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
+    def _dispatch_mouse_to_layout(self, event: TuiMouseEvent) -> TuiMouseDispatchResult | None:
         if self._current_layout is None:
             return None
         visited: list = []
@@ -805,7 +840,7 @@ class TuiAltScreen(TuiBase):
             if get_layout_node(component) and type(component).handle_mouse is Container.handle_mouse:
                 continue
             visited.append(component)
-            result = await dispatch_mouse_event(
+            result = dispatch_mouse_event(
                 component,
                 replace(
                     event,
@@ -832,10 +867,10 @@ class TuiAltScreen(TuiBase):
             return result.render
         return focus_changed or event.type in ("press", "click", "drag", "wheel")
 
-    async def _dispatch_mouse_to_target(
+    def _dispatch_mouse_to_target(
         self, event: TuiMouseEvent, target: TuiMouseDispatchTarget
     ) -> TuiMouseDispatchResult | None:
-        return await dispatch_mouse_event(target.component, retarget_mouse_event(event, target))
+        return dispatch_mouse_event(target.component, retarget_mouse_event(event, target))
 
     def _get_component_click_count(self, target: TuiMouseDispatchTarget, x: int, y: int) -> int:
         now = time.monotonic()
@@ -863,7 +898,7 @@ class TuiAltScreen(TuiBase):
         self._pressed_url = None
         self._selection_dragged = False
 
-    async def _handle_mouse_event(self, raw: dict) -> None:
+    def _handle_mouse_event(self, raw: dict) -> None:
         is_motion = (raw["button"] & 32) != 0
         if raw["release"]:
             event_type = "release"
@@ -880,7 +915,7 @@ class TuiAltScreen(TuiBase):
                 self._mouse_press_moved = True
                 self._last_component_click = None
             render = False
-            target_result = await self._dispatch_mouse_to_target(event, target)
+            target_result = self._dispatch_mouse_to_target(event, target)
             if target_result is not None:
                 render = self._apply_mouse_dispatch_result(event, target_result)
             if raw["release"]:
@@ -892,7 +927,7 @@ class TuiAltScreen(TuiBase):
                         raw["y"],
                         click_count=self._get_component_click_count(target, raw["x"], raw["y"]),
                     )
-                    click_result = await self._dispatch_mouse_to_target(click_event, target)
+                    click_result = self._dispatch_mouse_to_target(click_event, target)
                     if click_result is not None:
                         render = self._apply_mouse_dispatch_result(click_event, click_result) or render
                 self._clear_component_mouse_gesture()
@@ -903,7 +938,7 @@ class TuiAltScreen(TuiBase):
         if self._handle_search_mouse_event(raw):
             return
 
-        hit, result = await self._dispatch_mouse_to_overlay(event)
+        hit, result = self._dispatch_mouse_to_overlay(event)
         if not hit:
             if self._handle_scroll_to_end_indicator_mouse_event(raw):
                 return
@@ -916,7 +951,7 @@ class TuiAltScreen(TuiBase):
             self._stop_scrollbar_hover()
 
         if result is None and not hit:
-            result = await self._dispatch_mouse_to_layout(event)
+            result = self._dispatch_mouse_to_layout(event)
         if result is not None:
             render = self._apply_mouse_dispatch_result(event, result)
             if event_type == "press":
@@ -929,7 +964,7 @@ class TuiAltScreen(TuiBase):
             return
 
         # pi's right-click paste fallback is win32-only (dropped, POSIX port).
-        await self._handle_selection_mouse_event(raw)
+        self._handle_selection_mouse_event(raw)
 
     def _parse_wheel_event(self, data: str) -> dict | None:
         sgr = _SGR_MOUSE_RE.match(data)
@@ -1126,7 +1161,7 @@ class TuiAltScreen(TuiBase):
             lines = box.scroll_content_lines if box is not None else None
             if lines is not None:
                 return lines[point["row"]] if point["row"] < len(lines) else ""
-        return self._previous_screen[point["row"]] if point["row"] < len(self._previous_screen) else ""
+        return self._visible_screen[point["row"]] if point["row"] < len(self._visible_screen) else ""
 
     def _get_word_selection(self, point: dict) -> dict | None:
         """Selection range {"start", "end"} covering the word under `point`."""
@@ -1253,21 +1288,23 @@ class TuiAltScreen(TuiBase):
             return
         self._selection_auto_scroll_timer = Interval(50, self._auto_scroll_selection)
 
-    async def _auto_scroll_selection(self) -> None:
-        scroll_view = self._selection_anchor.get("scrollView") if self._selection_anchor else None
-        pointer = self._selection_drag_pointer
-        direction = self._selection_auto_scroll_direction
-        if scroll_view is None or pointer is None or direction == 0:
-            self._stop_selection_auto_scroll()
-            return
-        remaining = scroll_view.scroll_by(direction)
-        if remaining == direction:
-            self._stop_selection_auto_scroll()
-            return
-        point = self._get_scroll_selection_point(scroll_view, pointer["x"], pointer["y"])
-        if point:
-            self._update_selection_focus(point)
-        self.request_render()
+    def _auto_scroll_selection(self) -> None:
+        # The interval's fire: on the timer's task, so under the state lock.
+        with self.state_lock:
+            scroll_view = self._selection_anchor.get("scrollView") if self._selection_anchor else None
+            pointer = self._selection_drag_pointer
+            direction = self._selection_auto_scroll_direction
+            if scroll_view is None or pointer is None or direction == 0:
+                self._stop_selection_auto_scroll()
+                return
+            remaining = scroll_view.scroll_by(direction)
+            if remaining == direction:
+                self._stop_selection_auto_scroll()
+                return
+            point = self._get_scroll_selection_point(scroll_view, pointer["x"], pointer["y"])
+            if point:
+                self._update_selection_focus(point)
+            self.request_render()
 
     def _stop_selection_auto_scroll(self) -> None:
         if self._selection_auto_scroll_timer is not None:
@@ -1276,7 +1313,7 @@ class TuiAltScreen(TuiBase):
         self._selection_auto_scroll_direction = 0
         self._selection_drag_pointer = None
 
-    async def _handle_selection_mouse_event(self, event: dict) -> None:
+    def _handle_selection_mouse_event(self, event: dict) -> None:
         button = event["button"] & 3
         if button != 0 and not (event["release"] and button == 3):
             return
@@ -1316,9 +1353,9 @@ class TuiAltScreen(TuiBase):
                     event["y"],
                     click_count=self._last_click["count"] if self._last_click is not None else 1,
                 )
-                hit, result = await self._dispatch_mouse_to_overlay(click_event)
+                hit, result = self._dispatch_mouse_to_overlay(click_event)
                 if result is None and not hit:
-                    result = await self._dispatch_mouse_to_layout(click_event)
+                    result = self._dispatch_mouse_to_layout(click_event)
                 if result is not None:
                     render = self._apply_mouse_dispatch_result(click_event, result)
                     self._clear_text_selection()
@@ -1366,7 +1403,7 @@ class TuiAltScreen(TuiBase):
         else:
             screen_row = max(0, min(self.terminal.rows - 1, event["y"]))
             self._pressed_url = get_osc8_link_at_column(
-                self._previous_screen[screen_row] if screen_row < len(self._previous_screen) else "",
+                self._visible_screen[screen_row] if screen_row < len(self._visible_screen) else "",
                 max(0, min(self.terminal.columns - 1, event["x"])),
             )
         self.request_render()
@@ -1408,7 +1445,7 @@ class TuiAltScreen(TuiBase):
         selection = self._get_selection_bounds()
         if not selection:
             return None
-        source_lines: list[str] = self._previous_screen
+        source_lines: list[str] = self._visible_screen
         if selection["start"].get("scrollView") is not None:
             if self._current_layout is None:
                 return None
@@ -1653,9 +1690,9 @@ class TuiAltScreen(TuiBase):
             result[row] = composite_tui_line(result[row], line, width - flash_width, flash_width, width)
         return result
 
-    async def _do_render(self) -> None:
+    def _compose_frame(self) -> _AltScreenFrame | None:
         if self._stopped or not self._alt_screen_active:
-            return
+            return None
         width = max(1, self.terminal.columns)
         height = max(1, self.terminal.rows)
         root = self._layout_root if self._layout_root is not None else self._implicit_scroll_view
@@ -1676,6 +1713,26 @@ class TuiAltScreen(TuiBase):
             line if is_image_line(line) or visible_width(line) <= width else slice_by_column(line, 0, width, True)
             for line in self._apply_line_resets(screen)
         ]
+        # Published with the tree they were laid out from: input reads them
+        # back (hit-testing, the primary scroll view, selection text and
+        # links) under the same lock, and the frame drawn from them goes out
+        # after. pi assigns after the write, and reads `previousScreen`; on
+        # one thread nothing can look between.
+        self._current_layout = next_layout
+        self._visible_screen = screen
+        return _AltScreenFrame(
+            width=width,
+            height=height,
+            screen=screen,
+            cursor_pos=cursor_pos,
+            show_hardware_cursor=self.get_show_hardware_cursor(),
+        )
+
+    def _write_frame(self, frame: _AltScreenFrame) -> None:
+        width = frame.width
+        height = frame.height
+        cursor_pos = frame.cursor_pos
+        screen = frame.screen
 
         full_redraw = (
             not self._previous_screen or self._previous_screen_width != width or self._previous_screen_height != height
@@ -1731,15 +1788,10 @@ class TuiAltScreen(TuiBase):
 
         if cursor_pos:
             buffer += f"\x1b[{cursor_pos['row'] + 1};{min(width, cursor_pos['col']) + 1}H"
-            buffer += "\x1b[?25h" if self.get_show_hardware_cursor() else "\x1b[?25l"
+            buffer += "\x1b[?25h" if frame.show_hardware_cursor else "\x1b[?25l"
         else:
             buffer += "\x1b[?25l"
         buffer += END_SYNCHRONIZED_OUTPUT
-        # Publish the layout before the frame goes out: readers that wake on
-        # the write (`_get_primary_scroll_view`, input handlers keyed on the
-        # primary scroll view) must see the layout that frame was drawn from.
-        # pi assigns after the write; on one thread nothing can look between.
-        self._current_layout = next_layout
         self._emit(buffer)
 
         self._previous_screen = screen

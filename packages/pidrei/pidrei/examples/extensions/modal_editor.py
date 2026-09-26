@@ -34,18 +34,18 @@ class ModalEditor(CustomEditor):
         super().__init__(tui, theme, keybindings)
         self.mode = "insert"  # "normal" | "insert"
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         # Escape toggles to normal mode, or passes through for app handling
         if matches_key(data, "escape"):
             if self.mode == "insert":
                 self.mode = "normal"
             else:
-                await super().handle_input(data)  # abort agent, etc.
+                super().handle_input(data)  # abort agent, etc.
             return
 
         # Insert mode: pass everything through
         if self.mode == "insert":
-            await super().handle_input(data)
+            super().handle_input(data)
             return
 
         # Normal mode: check mapped keys
@@ -55,15 +55,15 @@ class ModalEditor(CustomEditor):
                 self.mode = "insert"
             elif data == "a":
                 self.mode = "insert"
-                await super().handle_input("\x1b[C")  # move right first
+                super().handle_input("\x1b[C")  # move right first
             elif seq:
-                await super().handle_input(seq)
+                super().handle_input(seq)
             return
 
         # Pass control sequences (ctrl+c, etc.) to super, ignore printable chars
         if len(data) == 1 and ord(data) >= 32:
             return
-        await super().handle_input(data)
+        super().handle_input(data)
 
     def render(self, width: int) -> list[str]:
         lines = super().render(width)

@@ -1,5 +1,11 @@
-"""Mirror of pi coding-agent src/modes/interactive/components/countdown-timer.ts."""
+"""Mirror of pi coding-agent src/modes/interactive/components/countdown-timer.ts.
 
+Port deviation: the tick runs on its timer's task, so it takes the TUI's UI
+state lock, and a tick that races `dispose()` does nothing (pi's
+`clearInterval` guarantees no tick after it).
+"""
+
+import contextlib
 import math
 
 from pidrei_tui._timers import Interval
@@ -16,15 +22,18 @@ class CountdownTimer:
         self._on_tick(self._remaining_seconds)
         self._interval: Interval | None = Interval(1000, self._tick)
 
-    async def _tick(self) -> None:
-        self._remaining_seconds -= 1
-        self._on_tick(self._remaining_seconds)
-        if self._tui is not None:
-            self._tui.request_render()
+    def _tick(self) -> None:
+        with self._tui.state_lock if self._tui is not None else contextlib.nullcontext():
+            if self._interval is None:
+                return  # disposed after this tick was already due
+            self._remaining_seconds -= 1
+            self._on_tick(self._remaining_seconds)
+            if self._tui is not None:
+                self._tui.request_render()
 
-        if self._remaining_seconds <= 0:
-            self.dispose()
-            self._on_expire()
+            if self._remaining_seconds <= 0:
+                self.dispose()
+                self._on_expire()
 
     def dispose(self) -> None:
         if self._interval is not None:

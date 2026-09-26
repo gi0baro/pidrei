@@ -5,6 +5,7 @@ fake `this`; the Python functions are called the same way on a stub object.
 """
 
 import os
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +32,7 @@ async def test_preserves_partial_bash_output():
     # which needs a runtime to land in (detached timers outside one only
     # produce an unawaited-coroutine warning).
     render_requests: list = []
-    ui = SimpleNamespace(request_render=lambda: render_requests.append(True))
+    ui = SimpleNamespace(request_render=lambda: render_requests.append(True), state_lock=threading.RLock())
     chat_container = Container()
     component = ToolExecutionComponent(
         "bash",
@@ -53,7 +54,7 @@ async def test_preserves_partial_bash_output():
         settings_manager=SimpleNamespace(set_hide_thinking_block=set_hidden_calls.append),
         _chat_container=chat_container,
         ui=ui,
-        _apply_show_status=status_calls.append,
+        show_status=status_calls.append,
     )
     fake_self._update_thinking_block_visibility = lambda: InteractiveMode._update_thinking_block_visibility(fake_self)
 

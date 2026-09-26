@@ -887,7 +887,7 @@ class TreeList:
         args_str = args_json[:40]
         return f"[{name}: {args_str}{'...' if len(args_json) > 40 else ''}]"
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.up"):
             self._selected_index = (
@@ -983,7 +983,7 @@ class TreeList:
         elif kb.matches(key_data, "app.tree.editLabel"):
             if 0 <= self._selected_index < len(self._filtered_nodes) and self.on_label_edit is not None:
                 selected = self._filtered_nodes[self._selected_index]
-                await self.on_label_edit(selected["node"].entry["id"], selected["node"].label)
+                self.on_label_edit(selected["node"].entry["id"], selected["node"].label)
         elif kb.matches(key_data, "app.tree.toggleLabelTimestamp"):
             self._show_label_timestamps = not self._show_label_timestamps
         else:
@@ -1059,7 +1059,7 @@ class SearchLine:
             return [truncate_to_width(f"  {theme.fg('muted', 'Type to search:')} {theme.fg('accent', query)}", width)]
         return [truncate_to_width(f"  {theme.fg('muted', 'Type to search:')}", width)]
 
-    async def handle_input(self, _key_data: str) -> None:
+    def handle_input(self, _key_data: str) -> None:
         pass
 
 
@@ -1204,19 +1204,17 @@ class LabelInput:
         )
         return lines
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.confirm"):
             value = self._input.get_value().strip()
             if self.on_submit is not None:
-                # Coroutine-returning by contract: submitting persists the
-                # label change (never-block rule).
-                await self.on_submit(self._entry_id, value or None)
+                self.on_submit(self._entry_id, value or None)
         elif kb.matches(key_data, "tui.select.cancel"):
             if self.on_cancel is not None:
                 self.on_cancel()
         else:
-            await self._input.handle_input(key_data)
+            self._input.handle_input(key_data)
 
 
 class TreeSelectorComponent(Container):
@@ -1271,7 +1269,7 @@ class TreeSelectorComponent(Container):
 
         if not tree:
 
-            async def auto_cancel() -> None:
+            def auto_cancel() -> None:
                 on_cancel()
 
             Timeout(100, auto_cancel)
@@ -1292,10 +1290,10 @@ class TreeSelectorComponent(Container):
     def _show_label_input(self, entry_id: str, current_label: str | None) -> None:
         self._label_input = LabelInput(entry_id, current_label)
 
-        async def on_submit(entry_id: str, label: str | None) -> None:
+        def on_submit(entry_id: str, label: str | None) -> None:
             self._tree_list.update_node_label(entry_id, label)
             if self._on_label_change_callback is not None:
-                await self._on_label_change_callback(entry_id, label)
+                self._on_label_change_callback(entry_id, label)
             self._hide_label_input()
 
         self._label_input.on_submit = on_submit
@@ -1314,11 +1312,11 @@ class TreeSelectorComponent(Container):
         self._tree_container.clear()
         self._tree_container.add_child(self._tree_list)
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         if self._label_input is not None:
-            await self._label_input.handle_input(key_data)
+            self._label_input.handle_input(key_data)
         else:
-            await self._tree_list.handle_input(key_data)
+            self._tree_list.handle_input(key_data)
 
     def get_tree_list(self) -> TreeList:
         return self._tree_list

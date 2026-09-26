@@ -41,13 +41,13 @@ def _open_model_thinking_submenu(model_thinking_levels: dict):
     changes: list = []
     removals: list = []
 
-    async def on_change(provider: str, model_id: str, level: str) -> None:
+    def on_change(provider: str, model_id: str, level: str) -> None:
         changes.append((provider, model_id, level))
 
-    async def on_remove(provider: str, model_id: str) -> None:
+    def on_remove(provider: str, model_id: str) -> None:
         removals.append((provider, model_id))
 
-    async def on_cancel() -> None:
+    def on_cancel() -> None:
         pass
 
     selector = SettingsSelectorComponent(
@@ -71,8 +71,8 @@ def _open_model_thinking_submenu(model_thinking_levels: dict):
 
 async def _select_item(settings_list, label: str) -> None:
     for character in label:
-        await settings_list.handle_input(character)
-    await settings_list.handle_input(ENTER)
+        settings_list.handle_input(character)
+    settings_list.handle_input(ENTER)
 
 
 def _render(settings_list) -> str:
@@ -87,12 +87,12 @@ async def test_records_a_per_model_override_and_loops_back_to_the_model_step():
     assert "Step 1/2 · Select a model to configure" in _render(settings_list)
 
     # Second model, second level: faux-2 → minimal.
-    await settings_list.handle_input(DOWN)
-    await settings_list.handle_input(ENTER)
+    settings_list.handle_input(DOWN)
+    settings_list.handle_input(ENTER)
     assert "Thinking Level for faux-2 [faux]" in _render(settings_list)
 
-    await settings_list.handle_input(DOWN)
-    await settings_list.handle_input(ENTER)
+    settings_list.handle_input(DOWN)
+    settings_list.handle_input(ENTER)
 
     assert changes == [("faux", "faux-2", "minimal")]
     assert removals == []
@@ -103,7 +103,7 @@ async def test_records_a_per_model_override_and_loops_back_to_the_model_step():
     assert "faux-2 [faux]  minimal" in rendered
 
     # Leaving the submenu writes the summary back onto the settings item.
-    await settings_list.handle_input(ESCAPE)
+    settings_list.handle_input(ESCAPE)
     assert "Default thinking level per model  1 configured" in _render(settings_list)
 
 
@@ -112,8 +112,8 @@ async def test_offers_clearing_an_existing_override():
     settings_list, changes, removals = _open_model_thinking_submenu({"faux/faux-2": "minimal"})
 
     await _select_item(settings_list, "Default thinking level per model")
-    await settings_list.handle_input(DOWN)
-    await settings_list.handle_input(ENTER)
+    settings_list.handle_input(DOWN)
+    settings_list.handle_input(ENTER)
 
     rendered = _render(settings_list)
     assert "(clear override)" in rendered
@@ -122,11 +122,11 @@ async def test_offers_clearing_an_existing_override():
     # The clear entry sits after the five supported levels; the list preselects
     # the current override, so walk down from there.
     for _ in range(4):
-        await settings_list.handle_input(DOWN)
-    await settings_list.handle_input(ENTER)
+        settings_list.handle_input(DOWN)
+    settings_list.handle_input(ENTER)
 
     assert removals == [("faux", "faux-2")]
     assert changes == []
 
-    await settings_list.handle_input(ESCAPE)
+    settings_list.handle_input(ESCAPE)
     assert "Default thinking level per model  none" in _render(settings_list)

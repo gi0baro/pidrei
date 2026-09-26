@@ -3,36 +3,28 @@
 
 import contextlib
 
-from pidrei_tui._owner import TimerHandle
-from pidrei_tui._timers import set_ui_owner
+from pidrei_tui import _timers as timers_module
 
 
 class ManualUiTimers:
-    """Stands in for the ambient UI owner's timers: `Timeout`/`Interval` created
-    while installed are recorded and never fire, so spinner frames and countdowns
-    only move when a test moves them. Real ones run on another task (no UI owner
-    runs in these tests) and change what the component renders under the test."""
-
-    serving = True
+    """While installed, `Timeout`/`Interval` are recorded instead of started,
+    so spinner frames and countdowns only move when a test moves them. Each
+    entry is `(delay_ms, cancelled_event, fn)`; `fn` is the timer's callback."""
 
     def __init__(self) -> None:
-        self.scheduled: list[tuple[float, TimerHandle, object]] = []
+        self.scheduled: list[tuple[float, object, object]] = []
 
-    def every(self, delay_ms, fn) -> TimerHandle:
-        handle = TimerHandle()
-        self.scheduled.append((delay_ms, handle, fn))
-        return handle
-
-    after = every
+    def _start(self, cancelled, delay_ms, fn, repeat, on_error) -> None:
+        self.scheduled.append((delay_ms, cancelled, fn))
 
 
 @contextlib.contextmanager
 def manual_ui_timers():
-    """Install `ManualUiTimers` as the ambient UI owner for the block (the
-    conftest guard fails loudly if a test leaves one installed)."""
+    """Swap the timers' start for `ManualUiTimers` for the block."""
     timers = ManualUiTimers()
-    set_ui_owner(timers)
+    original = timers_module._start
+    timers_module._start = timers._start
     try:
         yield timers
     finally:
-        set_ui_owner(None)
+        timers_module._start = original

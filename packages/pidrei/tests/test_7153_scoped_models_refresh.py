@@ -81,6 +81,8 @@ class OpenedSelector:
             _update_available_provider_count=lambda: None,
             show_status=lambda message: None,
             ui=self.renders,
+            # Spawned flows run detached, as `_spawn_flow` runs them.
+            _spawn_flow=tonio.spawn.without_tracking,
         )
 
         InteractiveMode._show_models_selector(self.context)
@@ -132,7 +134,7 @@ async def test_cancels_the_background_refresh_when_the_selector_closes(harnesses
     try:
         await opened.refresh_started.wait(5)
         assert opened.refresh_cancel is not None
-        await opened.selector.handle_input(ESC)
+        opened.selector.handle_input(ESC)
         # 7d8c11d3: the shared coordinator aborts the runtime refresh only
         # after the last waiter detaches (pi switched this to vi.waitFor).
         await opened.refresh_cancel.wait(5)

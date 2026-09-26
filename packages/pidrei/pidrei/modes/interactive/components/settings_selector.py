@@ -57,7 +57,7 @@ class WarningSettingsSubmenu(Container):
             },
         ]
 
-        async def handle_change(item_id: str, new_value: str) -> None:
+        def handle_change(item_id: str, new_value: str) -> None:
             if item_id == "anthropic-extra-usage":
                 self._state = {**self._state, "anthropicExtraUsage": new_value == "true"}
                 on_change(dict(self._state))
@@ -72,8 +72,8 @@ class WarningSettingsSubmenu(Container):
 
         self.add_child(self._settings_list)
 
-    async def handle_input(self, data: str) -> None:
-        await self._settings_list.handle_input(data)
+    def handle_input(self, data: str) -> None:
+        self._settings_list.handle_input(data)
 
 
 CLEAR_OVERRIDE_VALUE = "__clear__"
@@ -165,18 +165,16 @@ class ThemeSubmenu(Container):
         else:
             self._show_single_menu()
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if self._input_component is not None:
             handle = getattr(self._input_component, "handle_input", None)
             if handle is not None:
-                await handle(data)
+                handle(data)
 
-    async def _preview(self, value: str) -> None:
+    def _preview(self, value: str) -> None:
         on_theme_preview = self._callbacks.get("onThemePreview")
         if on_theme_preview is not None:
-            # Applying a preview loads the theme from disk; the callback is
-            # coroutine-returning by contract (never-block rule).
-            await on_theme_preview(value)
+            on_theme_preview(value)
 
     def _set_content(self, render_component, input_component=None) -> None:
         self.clear()
@@ -186,18 +184,18 @@ class ThemeSubmenu(Container):
     def _show_single_menu(self) -> None:
         self._mode = "single"
 
-        async def on_select(value: str) -> None:
+        def on_select(value: str) -> None:
             if value == AUTOMATIC_THEME_VALUE:
                 self._mode = "automatic"
-                await self._preview(self._get_theme_setting())
+                self._preview(self._get_theme_setting())
                 self._show_automatic_menu()
                 return
 
             self._single_theme = value
-            await self._apply(value)
+            self._apply(value)
 
-        async def on_selection_change(value: str) -> None:
-            await self._preview(self._get_automatic_theme_setting() if value == AUTOMATIC_THEME_VALUE else value)
+        def on_selection_change(value: str) -> None:
+            self._preview(self._get_automatic_theme_setting() if value == AUTOMATIC_THEME_VALUE else value)
 
         menu = SelectSubmenu(
             "Theme",
@@ -220,10 +218,10 @@ class ThemeSubmenu(Container):
         content.add_child(Spacer(1))
 
         def light_submenu(current_value, done):
-            async def on_select(value: str) -> None:
+            def on_select(value: str) -> None:
                 self._light_theme = value
-                await self._preview(self._get_theme_setting())
-                await done(value)
+                self._preview(self._get_theme_setting())
+                done(value)
 
             return self._create_theme_select(
                 "Light Theme",
@@ -234,10 +232,10 @@ class ThemeSubmenu(Container):
             )
 
         def dark_submenu(current_value, done):
-            async def on_select(value: str) -> None:
+            def on_select(value: str) -> None:
                 self._dark_theme = value
-                await self._preview(self._get_theme_setting())
-                await done(value)
+                self._preview(self._get_theme_setting())
+                done(value)
 
             return self._create_theme_select(
                 "Dark Theme",
@@ -278,14 +276,14 @@ class ThemeSubmenu(Container):
             },
         ]
 
-        async def handle_change(item_id: str, _new_value: str) -> None:
+        def handle_change(item_id: str, _new_value: str) -> None:
             if item_id == "single-mode":
                 self._mode = "single"
                 self._single_theme = self._get_active_automatic_theme()
-                await self._preview(self._single_theme)
+                self._preview(self._single_theme)
                 self._show_single_menu()
             elif item_id == "apply":
-                await self._apply(self._get_automatic_theme_setting())
+                self._apply(self._get_automatic_theme_setting())
 
         settings_list = SettingsList(
             items,
@@ -298,9 +296,9 @@ class ThemeSubmenu(Container):
         self._set_content(content, settings_list)
 
     def _create_theme_select(self, title: str, description: str, current_value: str, done, on_select) -> SelectSubmenu:
-        async def on_cancel() -> None:
-            await self._preview(self._get_theme_setting())
-            await done()
+        def on_cancel() -> None:
+            self._preview(self._get_theme_setting())
+            done()
 
         return SelectSubmenu(
             title,
@@ -321,12 +319,12 @@ class ThemeSubmenu(Container):
     def _get_automatic_theme_setting(self) -> str:
         return f"{self._light_theme}/{self._dark_theme}"
 
-    async def _apply(self, theme_setting: str) -> None:
-        await self._on_done(theme_setting)
+    def _apply(self, theme_setting: str) -> None:
+        self._on_done(theme_setting)
 
-    async def _cancel(self) -> None:
-        await self._preview(self._original_theme_setting)
-        await self._on_done()
+    def _cancel(self) -> None:
+        self._preview(self._original_theme_setting)
+        self._on_done()
 
 
 def _make_model_thinking_submenu(config: dict, callbacks: dict, current_model_thinking_levels: dict):
@@ -419,19 +417,19 @@ def _make_model_thinking_submenu(config: dict, callbacks: dict, current_model_th
             },
         ]
 
-        async def on_complete(selections: dict) -> None:
+        def on_complete(selections: dict) -> None:
             model = default_model_by_value.get(selections["model"])
             if model is None:
                 return
             if selections["level"] == CLEAR_OVERRIDE_VALUE:
-                await callbacks["onModelThinkingLevelRemove"](model.provider, model.id)
+                callbacks["onModelThinkingLevelRemove"](model.provider, model.id)
                 current_model_thinking_levels.pop(selections["model"], None)
             else:
-                await callbacks["onModelThinkingLevelChange"](model.provider, model.id, selections["level"])
+                callbacks["onModelThinkingLevelChange"](model.provider, model.id, selections["level"])
                 current_model_thinking_levels[selections["model"]] = selections["level"]
 
-        async def on_cancel() -> None:
-            await done(_model_thinking_overrides_summary(current_model_thinking_levels))
+        def on_cancel() -> None:
+            done(_model_thinking_overrides_summary(current_model_thinking_levels))
 
         return SteppedSubmenu(steps, on_complete, on_cancel, {"loop": True})
 
@@ -765,7 +763,7 @@ class SettingsSelectorComponent(Container):
         # Add borders
         self.add_child(DynamicBorder())
 
-        async def handle_change(item_id: str, new_value: str) -> None:
+        def handle_change(item_id: str, new_value: str) -> None:
             if item_id == "autocompact":
                 callbacks["onAutoCompactChange"](new_value == "true")
             elif item_id == "show-images":

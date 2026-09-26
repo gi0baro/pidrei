@@ -2,12 +2,14 @@
 
 pi calls `showTreeSelector` on a fake `this` and awaits the tree list's
 `onSelect`. pidrei's `on_select` is sync (the list calls it from key
-handling) and spawns the selection flow, so the fake records when the flow
-reaches its end — the busy error, or the "Navigated" status — on an Event.
+handling) and spawns the selection flow, so the fake records the spawned flow
+(`SpawnedFlows`) and the test runs it to its end — the busy error, or the
+"Navigated" status.
 Driving `get_tree_list().on_select` also pins that `_show_tree_selector`
 hands its callbacks to the component in pi's constructor order.
 """
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +23,7 @@ from pidrei.modes.interactive.theme import init_theme_sync
 from pidrei_tui import Container, set_keybindings
 
 from .coding_session_helpers import assistant_msg, user_msg
+from .flow_helpers import SpawnedFlows
 
 
 BUSY_MESSAGE = "Wait for the current compaction or tree navigation to finish before navigating the session tree."
@@ -40,8 +43,6 @@ class _Recorder:
         self.effect = effect
 
     async def __call__(self, *args, **_kwargs):
-        # Keyword arguments (the dialogs' `on_owner`) are not part of pi's
-        # recorded calls.
         self.calls.append(args)
         if self.effect is not None:
             return await self.effect(*args)
@@ -89,7 +90,7 @@ async def _create_tree_ui():
         error_calls.append(message)
         finished.set()
 
-    async def flush_compaction_queue(*_args):
+    def flush_compaction_queue(*_args):
         return None
 
     ui = SimpleNamespace(
@@ -102,7 +103,7 @@ async def _create_tree_ui():
         _chat_container=Container(),
         _append_to_chat=lambda *_components: None,
         ui=SimpleNamespace(
-            terminal=SimpleNamespace(rows=24), request_render=lambda force=False: None, post_ui=lambda fn: fn()
+            terminal=SimpleNamespace(rows=24), request_render=lambda force=False: None, state_lock=threading.RLock()
         ),
         _show_selector=lambda create: selectors.append(create(lambda: None)["component"]),
         _show_extension_selector=_Recorder(no_summary),
@@ -113,6 +114,7 @@ async def _create_tree_ui():
         show_status=show_status,
         show_error=show_error,
         _flush_compaction_queue=flush_compaction_queue,
+        _spawn_flow=SpawnedFlows(),
     )
     ui._show_tree_selector = lambda initial_selected_id=None: InteractiveMode._show_tree_selector(
         ui, initial_selected_id
@@ -122,7 +124,7 @@ async def _create_tree_ui():
     async def select() -> None:
         assert len(selectors) == 1
         selectors[0].get_tree_list().on_select(target_id)
-        await finished.wait(5)
+        await ui._spawn_flow.finish()
         assert finished.is_set(), "the tree selection flow never finished"
 
     return SimpleNamespace(

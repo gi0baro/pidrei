@@ -23,6 +23,7 @@ from typing import Any
 import tonio.colored as tonio
 
 from pidrei_ai.types import ImageContent
+from pidrei_tui.tui import call_sync
 
 from ...core.agent_session import ExtensionBindings, PromptOptions
 from ...core.bash_executor import BashResult
@@ -36,12 +37,17 @@ from ...core.output_guard import (
 from ...core.session_manager import SessionManager
 from ...utils.fd_io import FdReader, hard_exit
 from ...utils.shell import kill_tracked_detached_children
+from ..interactive.theme import theme
 from ..json_event import to_json_event
 from .jsonl import JsonlLineDecoder, serialize_json_line
 from .rpc_types import RpcSessionState, RpcSlashCommand
 
 
 _STDIN_READ_SIZE = 65536
+
+
+async def _answer(value: Any) -> Any:
+    return value
 
 
 def _compact(payload: dict[str, Any]) -> dict[str, Any]:
@@ -62,36 +68,36 @@ class _RpcExtensionUIContext:
         self._create_dialog_promise = create_dialog_promise
         self._pending_extension_requests = pending_extension_requests
 
-    async def select(self, title: str, options: list[str], opts: Any = None) -> str | None:
+    def select(self, title: str, options: list[str], opts: Any = None) -> Any:
         def parse(response: dict[str, Any]) -> str | None:
             if response.get("cancelled"):
                 return None
             return response.get("value")
 
         timeout = getattr(opts, "timeout", None) if opts is not None else None
-        return await self._create_dialog_promise(
+        return self._create_dialog_promise(
             opts, None, {"method": "select", "title": title, "options": options, "timeout": timeout}, parse
         )
 
-    async def confirm(self, title: str, message: str, opts: Any = None) -> bool:
+    def confirm(self, title: str, message: str, opts: Any = None) -> Any:
         def parse(response: dict[str, Any]) -> bool:
             if response.get("cancelled"):
                 return False
             return bool(response.get("confirmed", False))
 
         timeout = getattr(opts, "timeout", None) if opts is not None else None
-        return await self._create_dialog_promise(
+        return self._create_dialog_promise(
             opts, False, {"method": "confirm", "title": title, "message": message, "timeout": timeout}, parse
         )
 
-    async def input(self, title: str, placeholder: str | None = None, opts: Any = None) -> str | None:
+    def input(self, title: str, placeholder: str | None = None, opts: Any = None) -> Any:
         def parse(response: dict[str, Any]) -> str | None:
             if response.get("cancelled"):
                 return None
             return response.get("value")
 
         timeout = getattr(opts, "timeout", None) if opts is not None else None
-        return await self._create_dialog_promise(
+        return self._create_dialog_promise(
             opts, None, {"method": "input", "title": title, "placeholder": placeholder, "timeout": timeout}, parse
         )
 
@@ -168,11 +174,15 @@ class _RpcExtensionUIContext:
     def write_terminal(self, sequence: str) -> None:
         """Raw terminal output not supported in RPC mode - the host owns the terminal."""
 
-    async def custom(self, *_args, **_kwargs):
+    def custom(self, *_args, **_kwargs) -> Any:
         # Custom UI not supported in RPC mode
-        return None
+        return tonio.spawn(_answer(None))
 
-    async def paste_to_editor(self, text: str) -> None:
+    def apply(self, fn) -> Any:
+        # No UI state to guard: run it (coroutines refused, as in the TUI).
+        return call_sync(fn)
+
+    def paste_to_editor(self, text: str) -> None:
         # Paste handling not supported in RPC mode - falls back to set_editor_text
         self.set_editor_text(text)
 
@@ -182,12 +192,12 @@ class _RpcExtensionUIContext:
             {"type": "extension_ui_request", "id": str(uuid.uuid4()), "method": "set_editor_text", "text": text}
         )
 
-    async def get_editor_text(self) -> str:
+    def get_editor_text(self) -> str:
         # No request round-trip (pi's method is sync and returns ""): the
         # host should track editor state locally if needed.
         return ""
 
-    async def editor(self, title: str, prefill: str | None = None) -> str | None:
+    def editor(self, title: str, prefill: str | None = None) -> Any:
         request_id = str(uuid.uuid4())
         event = tonio.Event()
         slot: dict[str, Any] = {}
@@ -208,11 +218,15 @@ class _RpcExtensionUIContext:
                 }
             )
         )
-        await event.wait()
-        response = slot.get("response") or {}
-        if response.get("cancelled"):
-            return None
-        return response.get("value")
+
+        async def wait() -> str | None:
+            await event.wait()
+            response = slot.get("response") or {}
+            if response.get("cancelled"):
+                return None
+            return response.get("value")
+
+        return tonio.spawn(wait())
 
     def add_autocomplete_provider(self, *_args, **_kwargs) -> None:
         """Autocomplete provider composition is not supported in RPC mode."""
@@ -226,8 +240,8 @@ class _RpcExtensionUIContext:
 
     @property
     def theme(self) -> Any:
-        # The theme system lands with the Phase 4 TUI slice.
-        return None
+        # The global theme, as pi's (`main` initialises it in every mode).
+        return theme
 
     async def get_all_themes(self) -> list[Any]:
         return []
@@ -285,12 +299,14 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     shutting_down = False
     signal_cleanup_handlers: list[Any] = []
 
-    async def create_dialog_promise(opts: Any, default_value: Any, request: dict[str, Any], parse_response) -> Any:
-        """Helper for dialog methods with cancel/timeout support."""
+    def create_dialog_promise(opts: Any, default_value: Any, request: dict[str, Any], parse_response) -> Any:
+        """Helper for dialog methods with cancel/timeout support. The request
+        goes out at call time; returns the spawn handle of the wait for the
+        answer, which the caller may await or drop (UI_ISLAND_DESIGN §10.5)."""
         cancel = getattr(opts, "cancel", None) if opts is not None else None
         timeout = getattr(opts, "timeout", None) if opts is not None else None
         if cancel is not None and cancel.cancelled:
-            return default_value
+            return tonio.spawn(_answer(default_value))
 
         request_id = str(uuid.uuid4())
         event = tonio.Event()
@@ -303,26 +319,31 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
         pending_extension_requests[request_id] = resolve
 
         output(_compact({"type": "extension_ui_request", "id": request_id, **request}))
-        try:
-            if cancel is not None:
-                # `timeout` is in milliseconds; `Waiter.any` takes microseconds.
-                await tonio.Waiter.any(event, cancel.event, timeout=round(timeout * 1000) if timeout else None)
-            elif timeout:
-                await event.wait(timeout / 1000)
-            else:
-                await event.wait()
-        finally:
-            pending_extension_requests.pop(request_id, None)
 
-        response = slot.fetch()
-        if response is None:
-            return default_value
-        return parse_response(response)
+        async def wait() -> Any:
+            try:
+                if cancel is not None:
+                    # `timeout` is in milliseconds; `Waiter.any` takes microseconds.
+                    await tonio.Waiter.any(event, cancel.event, timeout=round(timeout * 1000) if timeout else None)
+                elif timeout:
+                    await event.wait(timeout / 1000)
+                else:
+                    await event.wait()
+            finally:
+                pending_extension_requests.pop(request_id, None)
+
+            response = slot.fetch()
+            if response is None:
+                return default_value
+            return parse_response(response)
+
+        return tonio.spawn(wait())
 
     def create_extension_ui_context() -> _RpcExtensionUIContext:
         return _RpcExtensionUIContext(output, create_dialog_promise, pending_extension_requests)
 
-    async def rebind_from_runtime(_session=None) -> None:
+    async def rebind_from_runtime(_session, swap) -> None:
+        swap()
         await rebind_session()
 
     runtime_host.set_rebind_session(rebind_from_runtime)

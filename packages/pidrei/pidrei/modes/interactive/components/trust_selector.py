@@ -97,7 +97,7 @@ class TrustSelectorComponent(Container):
             label = theme.fg("accent", option.label) if is_selected else theme.fg("text", option.label)
             self._list_container.add_child(Text(f"{prefix}{current_marker}{label}", 1, 0))
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.up") or key_data == "k":
             self._selected_index = max(0, self._selected_index - 1)
@@ -108,6 +108,6 @@ class TrustSelectorComponent(Container):
         elif kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
             if 0 <= self._selected_index < len(self._trust_options):
                 selected = self._trust_options[self._selected_index]
-                await self._on_select_callback({"trusted": selected.trusted, "updates": selected.updates})
+                self._on_select_callback({"trusted": selected.trusted, "updates": selected.updates})
         elif kb.matches(key_data, "tui.select.cancel"):
             self._on_cancel_callback()

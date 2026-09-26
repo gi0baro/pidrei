@@ -22,8 +22,6 @@ POLL_INTERVAL_SECONDS = 1.0
 
 
 async def extension(pi):
-    state = {"watching": False}
-
     async def watch_loop() -> None:
         # Baseline mtime: content already present at startup does not trigger,
         # matching fs.watch, which only reports changes after the watch starts.
@@ -64,14 +62,18 @@ async def extension(pi):
                 # watcher dies with it.
                 return
             # Clear after reading. The write bumps mtime, but the now-empty
-            # content is skipped on the next poll.
-            await fs.Path(TRIGGER_FILE).write_text("", encoding="utf-8")
+            # content is skipped on the next poll. A failed clear is ignored,
+            # as pi's `catch {}` does: the watcher keeps running.
+            try:
+                await fs.Path(TRIGGER_FILE).write_text("", encoding="utf-8")
+            except OSError:
+                pass
 
     async def on_session_start(_event, ctx) -> None:
-        # session_start also fires on new and switched sessions; keep one watcher.
-        if not state["watching"]:
-            state["watching"] = True
-            tonio.spawn.without_tracking(watch_loop())
+        # One watcher per extension instance: a new or switched session loads
+        # the extensions again, and the old watcher ends at its first trigger
+        # after its runtime went stale.
+        tonio.spawn.without_tracking(watch_loop())
 
         if ctx.has_ui:
             ctx.ui.notify(f"Watching {TRIGGER_FILE}", "info")

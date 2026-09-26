@@ -8,9 +8,17 @@ Options (camelCase like pi's ``ScrollViewOptions``): ``axis`` ("vertical"),
 ``follow`` ("none" | "end"), ``primary``, ``overscroll`` ("chain" |
 "contain"), ``scrollbar`` ("hidden" | "auto" | "always"), ``scrollbarStyle``
 (a ``str -> str`` styler) and ``scrollbarHideDelayMs``.
+
+Port deviation: pi's hide timer flips the auto scrollbar off. Here activity
+records until when the scrollbar shows (``_scrollbar_visible_until``, on the
+monotonic clock) and render compares it with the clock; the timer only asks
+for the frame at that deadline. The timer runs on its own task and mutates
+nothing, so a fire that races new activity is one extra frame, never a
+scrollbar hidden too early.
 """
 
 import math
+import time as _time
 
 from .._timers import Timeout
 from ..layout_node import LAYOUT_NODE
@@ -43,7 +51,9 @@ class ScrollView(Container):
         self._content_height = 0
         self._current_viewport_height = 0
         self._request_render_callback = None
-        self._transient_scrollbar_visible = False
+        # Until when (monotonic seconds) the auto scrollbar shows: `inf` while
+        # the scrollbar is active, 0 once hidden.
+        self._scrollbar_visible_until = 0.0
         self._scrollbar_active = False
         self._scrollbar_hide_timer: Timeout | None = None
 
@@ -78,7 +88,7 @@ class ScrollView(Container):
         return (
             self.scrollbar == "auto"
             and self._content_height > self._current_viewport_height
-            and self._transient_scrollbar_visible
+            and _time.monotonic() < self._scrollbar_visible_until
         )
 
     def set_scrollbar(self, scrollbar: str) -> None:
@@ -98,23 +108,30 @@ class ScrollView(Container):
     def _mark_scrollbar_activity(self) -> None:
         if self.scrollbar != "auto" or self._content_height <= self._current_viewport_height:
             return
-        self._transient_scrollbar_visible = True
         if self._scrollbar_hide_timer is not None:
             self._scrollbar_hide_timer.cancel()
             self._scrollbar_hide_timer = None
         if self._scrollbar_active:
+            self._scrollbar_visible_until = math.inf
             return
+        self._scrollbar_visible_until = _time.monotonic() + self._scrollbar_hide_delay_ms / 1000
 
-        async def hide() -> None:
-            self._scrollbar_hide_timer = None
-            self._transient_scrollbar_visible = False
-            if self._request_render_callback is not None:
-                self._request_render_callback()
+        def hidden() -> None:
+            # Past the deadline, the next frame draws no scrollbar. A fire
+            # ahead of the clock asks again for the remainder (that timer,
+            # too, only asks for a frame); later activity has its own timer.
+            remaining = self._scrollbar_visible_until - _time.monotonic()
+            if 0 < remaining < math.inf:
+                Timeout(remaining * 1000, hidden)
+                return
+            request_render = self._request_render_callback
+            if request_render is not None:
+                request_render()
 
-        self._scrollbar_hide_timer = Timeout(self._scrollbar_hide_delay_ms, hide)
+        self._scrollbar_hide_timer = Timeout(self._scrollbar_hide_delay_ms, hidden)
 
     def _hide_transient_scrollbar(self) -> None:
-        self._transient_scrollbar_visible = False
+        self._scrollbar_visible_until = 0.0
         if self._scrollbar_hide_timer is None:
             return
         self._scrollbar_hide_timer.cancel()

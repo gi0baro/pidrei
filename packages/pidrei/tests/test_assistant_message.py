@@ -121,7 +121,7 @@ class TestAssistantMessageComponent:
             height=len(lines),
             click_count=1,
         )
-        result = await component.handle_mouse(event)
+        result = component.handle_mouse(event)
         assert result is not None and result.handled is True
 
         collapsed = strip_ansi("\n".join(component.render(width)))

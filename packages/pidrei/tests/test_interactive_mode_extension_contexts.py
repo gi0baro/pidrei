@@ -6,6 +6,7 @@ pi builds both as object literals typed `ExtensionContext` /
 `ctx.cwd`, `ctx.has_ui`), which a dict translation broke.
 """
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +31,7 @@ async def test_a_shortcut_handler_gets_an_attribute_context():
         _keybindings=SimpleNamespace(get_effective_config=dict),
         _default_editor=editor,
         _create_extension_ui_context=lambda: ui,
+        ui=SimpleNamespace(state_lock=threading.RLock()),
         session_manager=SimpleNamespace(get_cwd=lambda: "/project"),
         session=SimpleNamespace(model=None, scoped_models=[], thinking_level="off", agent=SimpleNamespace(signal=None)),
         show_error=lambda message: received.store(("error", message)) or handled.set(),

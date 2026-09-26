@@ -75,21 +75,19 @@ class FirstTimeSetupComponent(Container):
             label = theme.fg("accent", raw_label) if is_selected else theme.fg("text", raw_label)
             self.add_child(Text(f"{prefix}{label}", 1, 0))
 
-    async def _move_selection(self, delta: int) -> None:
+    def _move_selection(self, delta: int) -> None:
         next_index = max(0, min(len(THEME_OPTIONS) - 1, self._theme_index + delta))
         if next_index != self._theme_index:
             self._theme_index = next_index
-            # Coroutine-returning by contract: previewing loads the theme
-            # from disk (never-block rule).
-            await self._options["onThemePreview"](THEME_OPTIONS[self._theme_index]["value"])
+            self._options["onThemePreview"](THEME_OPTIONS[self._theme_index]["value"])
         self._update()
 
-    async def handle_input(self, key_data: str) -> None:
+    def handle_input(self, key_data: str) -> None:
         kb = get_keybindings()
         if kb.matches(key_data, "tui.select.up") or key_data == "k":
-            await self._move_selection(-1)
+            self._move_selection(-1)
         elif kb.matches(key_data, "tui.select.down") or key_data == "j":
-            await self._move_selection(1)
+            self._move_selection(1)
         elif kb.matches(key_data, "tui.select.confirm") or key_data == "\n":
             self._options["onSubmit"]({"theme": THEME_OPTIONS[self._theme_index]["value"]})
         elif kb.matches(key_data, "tui.select.cancel"):

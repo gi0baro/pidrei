@@ -94,7 +94,7 @@ class SummaryView:
     def invalidate(self):
         self._container.invalidate()
 
-    async def handle_input(self, data):
+    def handle_input(self, data):
         if matches_key(data, "enter") or matches_key(data, "escape"):
             self._done(None)
 
@@ -103,7 +103,7 @@ async def show_summary_ui(summary, ctx):
     if ctx.mode != "tui":
         return
 
-    async def factory(_tui, theme, _kb, done):
+    def factory(_tui, theme, _kb, done):
         return SummaryView(theme, summary, done)
 
     await ctx.ui.custom(factory)

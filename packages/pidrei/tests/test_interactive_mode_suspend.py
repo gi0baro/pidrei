@@ -4,7 +4,9 @@ pi spies on process.on/once/kill and setInterval; here the module's os.kill,
 signal.signal, and tonio signal receiver are swapped by hand (predates
 tonio 0.9.14; `monkeypatch` works in tonio tests now). The pi test for the
 win32 status message is not ported (POSIX-only port), and Python needs no
-event-loop keep-alive timer while suspended.
+event-loop keep-alive timer while suspended. The SIGCONT handler is a
+spawned resume flow (`SpawnedFlows`): the test fires SIGCONT by finishing
+it, where pi's test calls the registered listener.
 """
 
 import signal as signal_module
@@ -14,6 +16,8 @@ import pytest
 
 import pidrei.modes.interactive.interactive_mode as interactive_mode_module
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
+
+from .flow_helpers import SpawnedFlows
 
 
 class _FakeSigcontReceiver:
@@ -38,13 +42,19 @@ def _create_ui():
     async def start():
         ui.start_calls.append(True)
 
-    async def stop(*, on_owner=False):
+    async def stop():
         ui.stop_calls.append(True)
 
     ui.start = start
     ui.stop = stop
     ui.request_render = lambda force=False: ui.request_render_calls.append(force)
     return ui
+
+
+def _create_context(ui):
+    context = SimpleNamespace(ui=ui, _spawn_flow=SpawnedFlows())
+    context._resume_after_suspend = lambda *args: InteractiveMode._resume_after_suspend(context, *args)
+    return context
 
 
 class _Swaps:
@@ -65,7 +75,7 @@ class _Swaps:
 @pytest.mark.tonio
 async def test_ignores_sigint_while_suspended_and_restores_the_tui_on_sigcont():
     ui = _create_ui()
-    context = SimpleNamespace(ui=ui)
+    context = _create_context(ui)
     kill_calls: list = []
     signal_calls: list = []
 
@@ -83,12 +93,17 @@ async def test_ignores_sigint_while_suspended_and_restores_the_tui_on_sigcont():
     )
     try:
         await InteractiveMode._handle_ctrl_z(context)
+
+        assert signal_calls == [(signal_module.SIGINT, signal_module.SIG_IGN)]
+        assert ui.stop_calls == [True]
+        assert kill_calls == [(0, signal_module.SIGTSTP)]
+        # Suspended: the resume waits for SIGCONT on its own task.
+        assert ui.start_calls == []
+
+        await context._spawn_flow.finish()
     finally:
         swaps.restore()
 
-    assert signal_calls[0] == (signal_module.SIGINT, signal_module.SIG_IGN)
-    assert ui.stop_calls == [True]
-    assert kill_calls == [(0, signal_module.SIGTSTP)]
     # SIGINT is restored to the previous handler after resume
     assert signal_calls[-1] == (signal_module.SIGINT, "previous-sigint-handler")
     assert ui.start_calls == [True]
@@ -98,7 +113,7 @@ async def test_ignores_sigint_while_suspended_and_restores_the_tui_on_sigcont():
 @pytest.mark.tonio
 async def test_cleans_up_the_temporary_handlers_if_suspension_fails():
     ui = _create_ui()
-    context = SimpleNamespace(ui=ui)
+    context = _create_context(ui)
     signal_calls: list = []
     suspend_error = RuntimeError("suspend failed")
 
@@ -125,5 +140,6 @@ async def test_cleans_up_the_temporary_handlers_if_suspension_fails():
 
     assert ui.stop_calls == [True]
     assert signal_calls[-1] == (signal_module.SIGINT, "previous-sigint-handler")
+    assert context._spawn_flow == []
     assert ui.start_calls == []
     assert ui.request_render_calls == []

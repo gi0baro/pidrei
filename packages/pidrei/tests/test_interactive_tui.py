@@ -67,17 +67,17 @@ class RecordingTerminal(VirtualTerminal):
         self.start_count = 0
         self.stop_count = 0
 
-    async def start(self, on_input, on_resize) -> None:
+    async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
         self.start_count += 1
-        await super().start(on_input, on_resize)
+        await super().start(on_input, on_resize, on_reply, on_error)
 
     async def write(self, data: str) -> None:
         self.writes.append(data)
         await super().write(data)
 
-    async def stop(self, *, on_owner: bool = False) -> None:
+    async def stop(self) -> None:
         self.stop_count += 1
-        await super().stop(on_owner=on_owner)
+        await super().stop()
 
 
 class _BareInteractiveMode(InteractiveMode):
@@ -190,56 +190,84 @@ async def test_replaces_the_renderer_and_restores_the_previous_screen_for_resume
     assert [terminal.start_count, terminal.stop_count] == [2, 2]
 
 
+class _SettingsKeyProbe(_InvalidationProbe):
+    """The settings list: "m" changes the TUI mode, as its change callback
+    does from input handling; every key is recorded with the renderer
+    handling it."""
+
+    def __init__(self, context) -> None:
+        super().__init__(lambda: context.ui.mode)
+        self._context = context
+        self.keys: list[tuple[str, str]] = []
+
+    def handle_input(self, data: str) -> None:
+        self.keys.append((data, self._context.ui.mode))
+        if data == "m":
+            self._context._on_settings_tui_mode_change("fullscreen", selector=None)
+
+
 @pytest.mark.tonio
-async def test_a_settings_tui_mode_change_made_on_the_owner_switches_the_renderer():
-    # The settings list runs its change callback on the owner (it is input
-    # handling), and the switch stops the renderer, whose barrier waits on
-    # that owner: awaited there, the switch never returned.
+async def test_the_key_after_a_settings_tui_mode_change_goes_to_the_new_renderer():
+    # pi switches in place from the settings input. Here the switch is the
+    # key's completion (UI_ISLAND_DESIGN §4.4): the next key waits for it and
+    # reaches the new renderer.
     terminal = RecordingTerminal(40, 8)
     renderer = create_interactive_tui(
         tui_mode="regular", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
     )
     context = _SwitchContext(renderer, None)
-    component = _InvalidationProbe(lambda: context.ui.mode)
+    component = _SettingsKeyProbe(context)
     context._fullscreen_layout_root = component
     renderer.add_child(component)
+    renderer.set_focus(component)
     saved_modes: list[str] = []
     context.runtime_host.session.settings_manager.set_tui_mode = saved_modes.append
     context.runtime_host.session.settings_manager.get_show_terminal_progress = lambda: False
     context._active_status_indicator = None
     context._status_container = Container()
     statuses: list[str] = []
-    announced = tonio.Event()
-
-    def show_status(message: str) -> None:
-        statuses.append(message)
-        announced.set()
-
-    context.show_status = show_status
+    context.show_status = statuses.append
 
     await renderer.start()
     await terminal.wait_for_render()
 
-    async def settings_input() -> None:
-        context._on_settings_tui_mode_change("fullscreen", selector=None)
-
-    renderer.input_owner.post(settings_input)
-    await announced.wait(5)
+    # `send_input` returns once the item is handled, completions included.
+    await terminal.send_input("m")
 
     assert statuses == ["TUI mode: fullscreen"]
     assert saved_modes == ["fullscreen"]
     assert context.ui.mode == "fullscreen"
+    assert context._renderer is not renderer
     assert context._renderer.children == [component]
+
+    await terminal.send_input("x")
+    assert component.keys == [("m", "regular"), ("x", "fullscreen")]
     await context._stop_interactive_tui("resume-hint")
+
+
+class _GatedStopTerminal(RecordingTerminal):
+    """Its stop parks until `release`, once one is set: a window in which
+    another task can change the UI while the renderer is stopping."""
+
+    def __init__(self, columns: int, rows: int) -> None:
+        super().__init__(columns, rows)
+        self.stopping = tonio.Event()
+        self.release: tonio.Event | None = None
+
+    async def stop(self) -> None:
+        if self.release is not None:
+            self.stopping.set()
+            await self.release.wait(5)
+        await super().stop()
 
 
 @pytest.mark.tonio
 async def test_an_overlay_opened_while_the_switch_stops_the_renderer_keeps_the_previous_one():
-    # Overlays cannot be carried to the next renderer. One whose opening was
-    # queued on the owner when the switch began is shown by the time the
+    # Overlays cannot be carried to the next renderer. One opened by another
+    # task while the switch is stopping the renderer is shown by the time the
     # renderer has stopped: the switch must see it, and resume the previous
     # renderer with it instead of dropping it.
-    terminal = RecordingTerminal(40, 8)
+    terminal = _GatedStopTerminal(40, 8)
     renderer = create_interactive_tui(
         tui_mode="regular", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
     )
@@ -249,30 +277,8 @@ async def test_an_overlay_opened_while_the_switch_stops_the_renderer_keeps_the_p
     await renderer.start()
     await terminal.wait_for_render()
 
-    owner = renderer.input_owner
-    release = tonio.Event()
-
-    async def busy() -> None:
-        await release.wait(5)
-
     overlay = _InvalidationProbe(lambda: context.ui.mode)
-
-    async def open_overlay() -> None:
-        renderer.show_overlay(overlay)
-
-    owner.post(busy)
-    owner.post(open_overlay)
-
-    # The stop's barrier queues behind the busy job: release it only once
-    # the switch has committed to stopping.
-    stopping = tonio.Event()
-    owner_run = owner.run
-
-    async def run(fn) -> None:
-        stopping.set()
-        await owner_run(fn)
-
-    owner.run = run
+    terminal.release = tonio.Event()
     switched = tonio.Result()
 
     async def switch() -> None:
@@ -280,9 +286,11 @@ async def test_an_overlay_opened_while_the_switch_stops_the_renderer_keeps_the_p
 
     async with tonio.scope() as scope:
         scope.spawn(switch())
-        await stopping.wait(5)
-        del owner.run
-        release.set()
+        await terminal.stopping.wait(5)
+        assert terminal.stopping.is_set()
+        with renderer.state_lock:
+            renderer.show_overlay(overlay)
+        terminal.release.set()
 
     assert switched.fetch() is False
     assert context._renderer is renderer
@@ -301,6 +309,7 @@ class _CopyRecorder:
         self.session = SimpleNamespace(get_last_assistant_text=lambda: "assistant response")
         self.statuses: list[str] = []
         self.errors: list[str] = []
+        self.flows: list = []
 
     def show_status(self, message: str) -> None:
         self.statuses.append(message)
@@ -308,22 +317,19 @@ class _CopyRecorder:
     def show_error(self, message: str) -> None:
         self.errors.append(message)
 
-    _apply_show_error = show_error
+    def _spawn_flow(self, flow) -> None:
+        self.flows.append(flow)
 
     def _copy_last_message(self, text: str, options: dict):
         return InteractiveMode._copy_last_message(self, text, options)
 
 
-async def _copy_on_owner(ui, context, options: dict) -> None:
-    """Run the copy action where production runs it: its first part on the UI
-    owner (the selection is owner state), the returned clipboard write here."""
-    remainder = tonio.Result()
-
-    async def action() -> None:
-        remainder.store(InteractiveMode._handle_copy_command(context, options))
-
-    await ui.input_owner.run(action)
-    await remainder.fetch()
+async def _run_copy_action(context, options: dict) -> None:
+    """Run the copy action: its first part here (under the UI state lock: the
+    selection is UI state), then the clipboard write it spawns."""
+    InteractiveMode._handle_copy_command(context, options)
+    while context.flows:
+        await context.flows.pop(0)
 
 
 @pytest.mark.tonio
@@ -359,7 +365,7 @@ async def test_copies_an_active_fullscreen_selection_when_copy_on_select_is_disa
             copied.clear()
 
             since = terminal.frames
-            await _copy_on_owner(ui, context, {"flashConfirmation": True, "preferSelection": True})
+            await _run_copy_action(context, {"flashConfirmation": True, "preferSelection": True})
             await terminal.wait_for_render(since)
 
         assert copied == ["alpha\nbeta"]
@@ -400,7 +406,7 @@ async def test_copies_the_last_assistant_message_with_an_active_fullscreen_selec
             copied.clear()
 
             since = terminal.frames
-            await _copy_on_owner(ui, context, {"flashConfirmation": True, "preferSelection": True})
+            await _run_copy_action(context, {"flashConfirmation": True, "preferSelection": True})
             await terminal.wait_for_render(since)
 
         assert copied == ["assistant response"]
@@ -426,7 +432,7 @@ async def test_flashes_copied_for_the_copy_shortcut_in_fullscreen_mode():
         await terminal.wait_for_render()
         with _recording_clipboard(copied):
             since = terminal.frames
-            await _copy_on_owner(ui, context, {"flashConfirmation": True, "preferSelection": True})
+            await _run_copy_action(context, {"flashConfirmation": True, "preferSelection": True})
             await terminal.wait_for_render(since)
 
         assert copied == ["assistant response"]
@@ -446,7 +452,7 @@ async def test_keeps_the_status_line_confirmation_for_the_copy_shortcut_in_regul
     context = _CopyRecorder(ui)
 
     with _recording_clipboard(copied):
-        await _copy_on_owner(ui, context, {"flashConfirmation": True, "preferSelection": True})
+        await _run_copy_action(context, {"flashConfirmation": True, "preferSelection": True})
 
     assert context.statuses == ["Copied last agent message to clipboard"]
     assert context.errors == []
@@ -471,12 +477,10 @@ def _clear_status_context(*, tui_mode: str, indicator, embedded: bool, default_e
     mode._default_editor = default_editor
     mode.editor = editor
     mode._options = {"tuiMode": tui_mode}
-    # post_ui applies inline like an un-started TUI (island relaxation,
-    # PROPER_MT_DESIGN step 1).
     mode.ui = type(
         "_Ui",
         (),
-        {"get_clear_on_shrink": staticmethod(lambda: True), "post_ui": staticmethod(lambda fn: fn())},
+        {"get_clear_on_shrink": staticmethod(lambda: True), "state_lock": threading.RLock()},
     )()
     mode._idle_status = Text("", 0, 0)
     return mode
@@ -578,3 +582,48 @@ async def test_shows_the_configured_jump_to_bottom_shortcut_while_scrolled_up():
     finally:
         await ui.stop()
         set_keybindings(previous_keybindings)
+
+
+@pytest.mark.tonio
+async def test_debug_run_as_work_a_key_waits_for_completes(monkeypatch, tmp_path):
+    """pidrei-only regression (UI_ISLAND_DESIGN step 1): `/debug` is work the
+    next key waits for. Its tree render used to wait on the UI owner, which
+    that very input job was parked on, so input froze for good."""
+    init_theme_sync("dark")
+    log_path = tmp_path / "debug.log"
+    monkeypatch.setattr(interactive_mode, "get_debug_log_path", lambda: str(log_path))
+    terminal = RecordingTerminal(40, 6)
+    ui = create_interactive_tui(tui_mode="regular", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal)
+    appended: list = []
+    context = SimpleNamespace(
+        ui=ui,
+        session=SimpleNamespace(messages=[]),
+        _append_to_chat=lambda *components: appended.append(components),
+    )
+
+    class DebugKey:
+        def render(self, _width):
+            return ["debug key"]
+
+        def invalidate(self):
+            pass
+
+        def handle_input(self, _data):
+            ui.finish_before_next_input(tonio.spawn(InteractiveMode._handle_debug_command(context)))
+
+    key = DebugKey()
+    ui.add_child(key)
+    ui.set_focus(key)
+    await ui.start()
+    handled = tonio.Event()
+
+    async def press() -> None:
+        await terminal.send_input("x")
+        handled.set()
+
+    tonio.spawn.without_tracking(press())
+    await handled.wait(5)
+    assert handled.is_set(), "input froze on /debug"
+    await ui.stop()
+    assert len(appended) == 1
+    assert "debug key" in log_path.read_text()

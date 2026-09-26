@@ -11,6 +11,11 @@ swap the module-level `Timeout` for a hand-fired fake (pi 082f7577:
 `reftableWatcher.emit` under `vi.useFakeTimers`, because native fs.watch
 delivery raced watcher startup); pidrei's polling watcher has the same
 timing dependency, so the shape is mirrored rather than the file writes.
+
+Timer callbacks are synchronous and spawn their async work, as pi's `void`
+calls do; pi's `advanceTimersByTimeAsync` also runs the promises a fired timer
+started. Here the provider method a callback spawns is wrapped on the instance
+(`finishes`), and the test waits for it after firing.
 """
 
 from contextlib import contextmanager
@@ -103,8 +108,24 @@ class FakeTimeout:
     def cancel(self) -> None:
         self.cancelled = True
 
-    async def fire(self) -> None:
-        await self.fn()
+    def fire(self) -> None:
+        self.fn()
+
+
+def finishes(provider: FooterDataProvider, method: str) -> tonio.Event:
+    """Wrap `provider.<method>` (spawned by a timer callback) on the instance;
+    the returned Event is set when a call to it finishes."""
+    finished = tonio.Event()
+    original = getattr(provider, method)
+
+    async def tracked() -> None:
+        try:
+            await original()
+        finally:
+            finished.set()
+
+    setattr(provider, method, tracked)
+    return finished
 
 
 @contextmanager
@@ -194,7 +215,9 @@ async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_bra
             emit_reftable_change(provider)
             assert len(timers) == 1
             assert timers[0].delay_ms == FooterDataProvider.WATCH_DEBOUNCE_MS
-            await timers[0].fire()
+            refreshed = finishes(provider, "_refresh_git_branch_async")
+            timers[0].fire()
+            await _wait(refreshed)
 
             assert len(git_mock["async_calls"]) == 1
             assert git_mock["sync_calls"] == []
@@ -222,7 +245,9 @@ async def test_debounces_rapid_reftable_updates_into_a_single_async_refresh(tmp_
             assert len(timers) == 1
             assert git_mock["async_calls"] == []
             # 501 ms in: it fires once.
-            await timers[0].fire()
+            refreshed = finishes(provider, "_refresh_git_branch_async")
+            timers[0].fire()
+            await _wait(refreshed)
             assert len(git_mock["async_calls"]) == 1
             # A further window later nothing else was armed.
             assert len(timers) == 1
@@ -255,7 +280,8 @@ async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp
 @pytest.mark.tonio
 async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_mock):
     # pi advances fake timers across the 5s retry delay; here the retry
-    # `Timeout` is recorded by manual UI timers and its callback awaited.
+    # `Timeout` is recorded by manual UI timers, fired, and the watcher setup
+    # it spawns waited for.
     repo_dir = _create_plain_repo(tmp_path)
 
     provider = FooterDataProvider(str(repo_dir))
@@ -270,7 +296,9 @@ async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_
 
         retries = [fn for delay, _handle, fn in timers.scheduled if delay == fs_watch.FS_WATCH_RETRY_DELAY_MS]
         assert len(retries) == 1
-        await retries[0]()
+        set_up = finishes(provider, "_setup_git_watcher")
+        retries[0]()
+        await _wait(set_up)
         assert provider._head_watcher is not None
         assert provider._head_watcher is not original_watcher
     finally:

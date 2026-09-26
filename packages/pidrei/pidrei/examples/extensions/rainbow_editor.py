@@ -9,7 +9,6 @@ Start pidrei with this extension:
 import re
 
 from pidrei.modes.interactive.components import CustomEditor
-from pidrei_tui._timers import Interval
 
 
 # Base colors (coral → yellow → green → teal → blue → purple → pink)
@@ -51,7 +50,7 @@ def colorize(text: str, shine_pos: int) -> str:
 class RainbowEditor(CustomEditor):
     def __init__(self, tui, theme, keybindings) -> None:
         super().__init__(tui, theme, keybindings)
-        self._animation: Interval | None = None
+        self._animation = None
         self._frame = 0
 
     def _has_ultrathink(self) -> bool:
@@ -61,21 +60,21 @@ class RainbowEditor(CustomEditor):
         if self._animation is not None:
             return
 
-        # pi's setInterval: the ticks fire on the UI owner, where this editor
-        # renders (and where start/stop run, from handle_input).
-        async def tick() -> None:
+        # pi's setInterval: `tui.interval` runs the ticks under the UI state
+        # lock, like this editor's render and handle_input (start/stop).
+        def tick() -> None:
             self._frame += 1
             self._tui.request_render()
 
-        self._animation = Interval(ANIMATION_INTERVAL_MS, tick)
+        self._animation = self._tui.interval(ANIMATION_INTERVAL_MS, tick)
 
     def _stop_animation(self) -> None:
         if self._animation is not None:
             self._animation.cancel()
             self._animation = None
 
-    async def handle_input(self, data: str) -> None:
-        await super().handle_input(data)
+    def handle_input(self, data: str) -> None:
+        super().handle_input(data)
         if self._has_ultrathink():
             self._start_animation()
         else:

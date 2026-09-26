@@ -7,10 +7,10 @@ word segmentation through ``utils.get_word_segmenter()``; both produce
 
 Async differences from pi (JS single-threaded event loop → tonio):
 
-- the autocomplete debounce timer and the application of a provider's
-  response run on the TUI's owner task (``tui.input_owner``), the same task
-  that runs ``handle_input`` — editor state has exactly one writer, as on
-  pi's thread; the provider call itself runs off it, one at a time (pi
+- the autocomplete debounce fires on its timer's task, and a provider's
+  response is applied by the request task that fetched it, both under the
+  TUI's UI state lock, like ``handle_input``; the provider calls run one at
+  a time (pi
   chains promises via ``autocompleteRequestTask``; here a ``sync.Lock``);
 - the abort signal is a ``CancelToken`` (pi uses a DOM ``AbortController``).
 
@@ -19,14 +19,16 @@ purely synchronous editing (no provider set) works without one.
 """
 
 import copy
+import functools
 import math
 import re
 from dataclasses import replace
 
 import grapheme as grapheme_lib
+import tonio.colored as tonio
 from tonio.colored import sync
 
-from .._owner import TimerHandle
+from .._timers import Timeout
 from ..keybindings import get_keybindings
 from ..keys import decode_printable_key, matches_key
 from ..kill_ring import KillRing
@@ -303,7 +305,7 @@ class Editor:
         self._autocomplete_state: str | None = None  # "regular" | "force" | None
         self._autocomplete_prefix = ""
         self._autocomplete_abort: CancelToken | None = None
-        self._autocomplete_debounce_timer: TimerHandle | None = None
+        self._autocomplete_debounce_timer: Timeout | None = None
         self._autocomplete_request_lock = sync.Lock()  # pi: `autocompleteRequestTask` chain
         self._autocomplete_start_token = 0
         self._autocomplete_request_id = 0
@@ -575,7 +577,7 @@ class Editor:
 
         return result
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
         autocomplete_start_row = self._rendered_visible_line_count + 2
         if (
             self._autocomplete_state
@@ -585,7 +587,7 @@ class Editor:
             max_padding = max(0, (event.width - 1) // 2)
             padding_x = min(self._padding_x, max_padding)
             content_width = max(1, event.width - padding_x * 2)
-            result = await self._autocomplete_list.handle_mouse(
+            result = self._autocomplete_list.handle_mouse(
                 replace(
                     event,
                     x=event.x - padding_x,
@@ -642,7 +644,7 @@ class Editor:
             self._update_autocomplete()
         return TuiMouseEventResult(handled=True, focus=True)
 
-    async def handle_input(self, data: str) -> None:  # noqa: C901
+    def handle_input(self, data: str) -> None:  # noqa: C901
         kb = get_keybindings()
 
         # Handle character jump mode (awaiting next character to jump to)
@@ -682,7 +684,7 @@ class Editor:
                 remaining = self._paste_buffer[end_index + 6 :]
                 self._paste_buffer = ""
                 if remaining:
-                    await self.handle_input(remaining)
+                    self.handle_input(remaining)
                 return
             return
 
@@ -702,7 +704,7 @@ class Editor:
                 return
 
             if kb.matches(data, "tui.select.up") or kb.matches(data, "tui.select.down"):
-                await self._autocomplete_list.handle_input(data)
+                self._autocomplete_list.handle_input(data)
                 return
 
             if kb.matches(data, "tui.input.tab"):
@@ -2019,7 +2021,7 @@ class Editor:
         layout = SLASH_COMMAND_SELECT_LIST_LAYOUT if prefix.startswith("/") else None
         select_list = SelectList(items, self._autocomplete_max_visible, self._theme["selectList"], layout)
 
-        async def on_select(selected: dict) -> None:
+        def on_select(selected: dict) -> None:
             if self._autocomplete_provider is None:
                 return
             self._push_undo_snapshot()
@@ -2081,21 +2083,27 @@ class Editor:
         debounce_ms = self._get_autocomplete_debounce_ms(explicit_tab=explicit_tab, force=force)
         if debounce_ms > 0:
 
-            async def _fire() -> None:
+            def _fire() -> None:
+                # A fire that raced a cancel or a newer request is
+                # superseded: its token is stale, and the timer slot is not
+                # its own anymore.
+                if start_token != self._autocomplete_start_token:
+                    return
                 self._autocomplete_debounce_timer = None
                 self._start_autocomplete_request(start_token, force=force, explicit_tab=explicit_tab)
 
-            self._autocomplete_debounce_timer = self._tui.input_owner.after(debounce_ms, _fire)
+            self._autocomplete_debounce_timer = Timeout(debounce_ms, lambda: self._tui.apply(_fire))
             return
 
         self._start_autocomplete_request(start_token, force=force, explicit_tab=explicit_tab)
 
     def _start_autocomplete_request(self, start_token: int, *, force: bool, explicit_tab: bool) -> None:
-        # Runs on the UI owner (from `handle_input` or the debounce timer):
-        # the snapshot is taken here, the provider is queried off the owner,
-        # and the result is applied back on the owner. pi chains requests
-        # through `autocompleteRequestTask` so one runs at a time; the lock
-        # keeps that, and a request superseded while waiting is skipped.
+        # Under the UI state lock (from `handle_input` or the debounce
+        # timer): the snapshot is taken here, the provider is queried on a
+        # task of its own, which applies the result in one hold of the lock.
+        # pi chains requests through `autocompleteRequestTask` so one runs
+        # at a time; the request lock keeps that, and a request superseded
+        # while waiting is skipped.
         if start_token != self._autocomplete_start_token or self._autocomplete_provider is None:
             return
         provider = self._autocomplete_provider
@@ -2108,45 +2116,69 @@ class Editor:
         snapshot_col = self._state["cursorCol"]
         lines = list(self._state["lines"])
 
-        async def _request_task() -> None:
-            try:
-                async with self._autocomplete_request_lock:
-                    if controller.cancelled:
-                        return
-                    # Async-only, matching pi's `getSuggestions` (strictly
-                    # Promise-returning, in deliberate contrast to the Awaitable
-                    # union pi uses for `getArgumentCompletions`).
-                    suggestions = await provider.get_suggestions(
-                        lines, snapshot_line, snapshot_col, {"signal": controller, "force": force}
-                    )
+        tonio.spawn.without_tracking(
+            self._run_autocomplete_request(
+                provider,
+                controller,
+                request_id,
+                snapshot_text,
+                lines,
+                snapshot_line,
+                snapshot_col,
+                force=force,
+                explicit_tab=explicit_tab,
+            )
+        )
 
-                async def apply() -> None:
-                    self._apply_autocomplete_response(
-                        request_id,
-                        controller,
-                        snapshot_text,
-                        snapshot_line,
-                        snapshot_col,
-                        suggestions,
-                        force=force,
-                        explicit_tab=explicit_tab,
-                    )
-
-                await self._tui.input_owner.run(apply)
-            except BaseException as error:
-                # A scope child dying unretrieved is invisible (tonio can only
-                # report it as UNHANDLED); a cancelled request may surface its
-                # cancellation as an exception and is not an error.
-                if isinstance(error, GeneratorExit):
-                    raise
+    async def _run_autocomplete_request(
+        self,
+        provider,
+        controller: CancelToken,
+        request_id: int,
+        snapshot_text: str,
+        lines: list[str],
+        snapshot_line: int,
+        snapshot_col: int,
+        *,
+        force: bool,
+        explicit_tab: bool,
+    ) -> None:
+        """One autocomplete request, on its own task: query the provider
+        (one request at a time), then apply the result in one hold of the
+        UI state lock."""
+        try:
+            async with self._autocomplete_request_lock:
                 if controller.cancelled:
                     return
-                on_error = self._tui.input_owner.on_error
-                if on_error is None:
-                    raise
-                on_error(error)
+                # Async-only, matching pi's `getSuggestions` (strictly
+                # Promise-returning, in deliberate contrast to the Awaitable
+                # union pi uses for `getArgumentCompletions`).
+                suggestions = await provider.get_suggestions(
+                    lines, snapshot_line, snapshot_col, {"signal": controller, "force": force}
+                )
 
-        self._tui.input_owner.spawn(_request_task())
+            self._tui.apply(
+                functools.partial(
+                    self._apply_autocomplete_response,
+                    request_id,
+                    controller,
+                    snapshot_text,
+                    snapshot_line,
+                    snapshot_col,
+                    suggestions,
+                    force=force,
+                    explicit_tab=explicit_tab,
+                )
+            )
+        except BaseException as error:
+            # A scope child dying unretrieved is invisible (tonio can only
+            # report it as UNHANDLED); a cancelled request may surface its
+            # cancellation as an exception and is not an error.
+            if isinstance(error, GeneratorExit):
+                raise
+            if controller.cancelled:
+                return
+            self._tui.report_error(error)
 
     def _set_autocomplete_trigger_characters(self, trigger_characters: list[str]) -> None:
         nxt = [*DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS]

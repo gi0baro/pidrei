@@ -11,8 +11,6 @@ Start pidrei with this extension:
 
 import time
 
-import tonio.colored as tonio
-
 from pidrei.modes.interactive.components import BorderedLoader
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
 
@@ -66,16 +64,12 @@ async def extension(pi):
             return
 
         # Run extraction with loader UI
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             loader = BorderedLoader(tui, theme, f"Extracting questions using {model.id}...")
             loader.on_abort = lambda: done(None)
 
-            # Do the work
-            # The work below runs on its own task, while `done` is the
-            # component's (it closes the dialog on the UI owner): the result
-            # is handed to the owner, as internal background work does.
-            def finish(result) -> None:
-                tui.post_ui(lambda: done(result))
+            # Do the work, on its own coroutine: `done` takes the UI state
+            # lock itself, so it closes the dialog from there directly.
 
             async def extract():
                 try:
@@ -91,14 +85,14 @@ async def extension(pi):
                     )
 
                     if response.stop_reason == "aborted":
-                        finish(None)
+                        done(None)
                         return
 
-                    finish("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
+                    done("\n".join(c.text for c in response.content if getattr(c, "type", None) == "text"))
                 except Exception:
-                    finish(None)
+                    done(None)
 
-            tonio.spawn.without_tracking(extract())
+            tui.spawn(extract())
             return loader
 
         result = await ctx.ui.custom(factory)

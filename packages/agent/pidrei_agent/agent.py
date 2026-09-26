@@ -26,6 +26,7 @@ Runtime mapping notes:
 """
 
 import os
+import threading
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -457,8 +458,11 @@ class Agent:
             tools=initial.tools,
             messages=initial.messages,
         )
-        # Listener order matters: awaited in registration order.
-        self._listeners: list[Callable[[AgentEvent, CancelToken], Awaitable[None]]] = []
+        # Listener order matters: awaited in registration order. Copy-on-write
+        # tuple under the guard: (un)subscribed from any task, iterated by the
+        # dispatcher.
+        self._listeners_guard = threading.Lock()
+        self._listeners: tuple[Callable[[AgentEvent, CancelToken], Awaitable[None]], ...] = ()
         self._mailbox = _AgentMailbox(
             steering_mode if steering_mode is not None else "one-at-a-time",
             follow_up_mode if follow_up_mode is not None else "one-at-a-time",
@@ -497,13 +501,15 @@ class Agent:
         `agent_end` is the final emitted event for a run, but the agent does
         not become idle until all awaited listeners for that event have settled.
         """
-        self._listeners.append(listener)
+        with self._listeners_guard:
+            self._listeners = (*self._listeners, listener)
 
         def unsubscribe() -> None:
-            try:
-                self._listeners.remove(listener)
-            except ValueError:
-                pass
+            with self._listeners_guard:
+                listeners = list(self._listeners)
+                if listener in listeners:
+                    listeners.remove(listener)
+                    self._listeners = tuple(listeners)
 
         return unsubscribe
 
@@ -877,7 +883,7 @@ class Agent:
                 self._reduce(pending.event)
                 run = self._mailbox.current
                 cancel = run.cancel if run is not None else CancelToken()
-                for listener in list(self._listeners):
+                for listener in self._listeners:
                     await listener(pending.event, cancel)
             except BaseException as error:
                 pending.error = error

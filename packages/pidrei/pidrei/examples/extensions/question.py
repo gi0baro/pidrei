@@ -88,12 +88,12 @@ class QuestionComponent:
 
     # -- input ---------------------------------------------------------------
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         if self._edit_mode:
             if matches_key(data, Key.escape):
                 self._leave_edit_mode()
                 return
-            await self._editor.handle_input(data)
+            self._editor.handle_input(data)
             self._refresh()
             return
 
@@ -198,7 +198,7 @@ async def extension(pi):
 
         all_options = [*params["options"], {"label": "Type something.", "isOther": True}]
 
-        async def factory(tui, theme, _kb, done):
+        def factory(tui, theme, _kb, done):
             return QuestionComponent(tui, theme, question, all_options, done)
 
         result = await ctx.ui.custom(factory)

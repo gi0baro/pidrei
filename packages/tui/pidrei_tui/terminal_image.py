@@ -21,14 +21,29 @@ import random
 import re
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 
-# Default cell dimensions - updated by TUI when terminal responds to query
+# Default cell dimensions - updated by TUI when terminal responds to query.
+# Written by the input consumer (the cell-size reply) and read by image
+# rendering, both under the UI state lock; the dict is replaced whole.
 _cell_dimensions = {"widthPx": 9, "heightPx": 18}
 
-_cached_capabilities: dict | None = None
-_capability_overrides: dict = {}
+
+@dataclass(frozen=True, slots=True)
+class _CapabilityState:
+    """The overrides and the capabilities computed from them, replaced as one
+    (UI_ISLAND_DESIGN §7.2): a cache computed from old overrides can never be
+    stored next to new ones."""
+
+    overrides: dict
+    cached: dict | None
+
+
+_capability_state = _CapabilityState({}, None)
+# Serializes replacing `_capability_state`; never held while detecting.
+_capability_lock = threading.Lock()
 
 # Sentinel for "no override" (pi uses `undefined`, distinct from `images: null`).
 _UNSET = object()
@@ -144,38 +159,64 @@ def detect_capabilities(tmux_forwards_hyperlink=_probe_tmux_hyperlinks) -> dict:
 
 
 def get_capabilities() -> dict:
-    global _cached_capabilities
-    if _cached_capabilities is None:
-        hyperlinks = _capability_overrides.get("hyperlinks")
-        _cached_capabilities = {
-            **(detect_capabilities() if hyperlinks is None else detect_capabilities(lambda: hyperlinks)),
-            **_capability_overrides,
-        }
-    return _cached_capabilities
+    global _capability_state
+    state = _capability_state
+    if state.cached is not None:
+        return state.cached
+    hyperlinks = state.overrides.get("hyperlinks")
+    capabilities = {
+        **(detect_capabilities() if hyperlinks is None else detect_capabilities(lambda: hyperlinks)),
+        **state.overrides,
+    }
+    with _capability_lock:
+        # Stored only if the overrides did not change meanwhile; either way
+        # this caller gets what it computed.
+        if _capability_state is state:
+            _capability_state = _CapabilityState(state.overrides, capabilities)
+    return capabilities
 
 
 def reset_capabilities_cache() -> None:
-    global _cached_capabilities
-    _cached_capabilities = None
+    global _capability_state
+    with _capability_lock:
+        _capability_state = _CapabilityState(_capability_state.overrides, None)
 
 
 def set_capability_overrides(overrides: dict) -> None:
     """Override selected auto-detected capabilities."""
-    global _capability_overrides, _cached_capabilities
-    if (
-        _capability_overrides.get("images", _UNSET) == overrides.get("images", _UNSET)
-        and _capability_overrides.get("trueColor", _UNSET) == overrides.get("trueColor", _UNSET)
-        and _capability_overrides.get("hyperlinks", _UNSET) == overrides.get("hyperlinks", _UNSET)
-    ):
-        return
-    _capability_overrides = {**overrides}
-    _cached_capabilities = None
+    global _capability_state
+    with _capability_lock:
+        current = _capability_state.overrides
+        if (
+            current.get("images", _UNSET) == overrides.get("images", _UNSET)
+            and current.get("trueColor", _UNSET) == overrides.get("trueColor", _UNSET)
+            and current.get("hyperlinks", _UNSET) == overrides.get("hyperlinks", _UNSET)
+        ):
+            return
+        _capability_state = _CapabilityState({**overrides}, None)
+
+
+def get_capability_overrides() -> dict:
+    return _capability_state.overrides
 
 
 def set_capabilities(caps: dict) -> None:
     """Override the cached capabilities. Useful in tests to exercise both code paths."""
-    global _cached_capabilities
-    _cached_capabilities = caps
+    global _capability_state
+    with _capability_lock:
+        _capability_state = _CapabilityState(_capability_state.overrides, caps)
+
+
+def replace_capabilities(expected: dict, caps: dict) -> bool:
+    """Swap the cached capabilities for `caps` only while they are still
+    `expected` (pidrei-only: the alternate screen's iTerm2 swap and restore;
+    a change of overrides meanwhile wins)."""
+    global _capability_state
+    with _capability_lock:
+        if _capability_state.cached is not expected:
+            return False
+        _capability_state = _CapabilityState(_capability_state.overrides, caps)
+        return True
 
 
 KITTY_PREFIX = "\x1b_G"

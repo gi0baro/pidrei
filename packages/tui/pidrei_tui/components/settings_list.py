@@ -2,17 +2,15 @@
 
 Items are ``{"id", "label", "description"?, "currentValue", "values"?,
 "submenu"?}`` records (``submenu`` is a callable receiving the current value
-and an awaitable ``done(selected_value=None, options=None)`` callback and
+and a ``done(selected_value=None, options=None)`` callback and
 returning a component; ``options`` may carry ``{"navigateTo": item_id}`` to
 move the cursor onto another item and open its submenu once this one closes);
 ``theme`` is a ``{"label", "value", "description", "cursor",
 "hint"}`` record (``label``/``value`` take ``(text, selected)``); ``options``
 mirrors ``SettingsListOptions`` (``{"enableSearch": bool}``).
 
-``on_change``/``on_cancel`` must return an awaitable (async-only callback
-policy): pi types them ``=> void``, but the port made several consumers async
-(theme previews, settings persistence), and pi's bare call runs to completion
-before the next statement — awaiting inline is the matching order.
+``on_change``/``on_cancel`` and ``done`` are synchronous, as in pi: a
+consumer with slow work spawns it (see ``TuiBase.finish_before_next_input``).
 """
 
 import math
@@ -147,15 +145,15 @@ class SettingsList:
 
         return lines
 
-    async def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
+    def handle_mouse(self, event: TuiMouseEvent) -> TuiMouseEventResult | None:
         if self._submenu_component is not None:
             handle_mouse = getattr(self._submenu_component, "handle_mouse", None)
-            result = await handle_mouse(event) if handle_mouse is not None else None
+            result = handle_mouse(event) if handle_mouse is not None else None
             return replace(result, focus=True) if result is not None else None
 
         if self._search_enabled and self._search_input is not None:
             if event.y == 0:
-                result = await self._search_input.handle_mouse(event)
+                result = self._search_input.handle_mouse(event)
                 return replace(result, focus=True) if result is not None else None
             if event.y == 1:
                 return None
@@ -184,17 +182,17 @@ class SettingsList:
         if event.type == "click":
             self._selected_index = self._mouse_pressed_index if self._mouse_pressed_index is not None else item_index
             self._mouse_pressed_index = None
-            await self._activate_item()
+            self._activate_item()
             return TuiMouseEventResult(handled=True)
         return None
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         # If submenu is active, delegate all input to it
         # The submenu's onCancel (triggered by escape) will call done() which closes it
         if self._submenu_component is not None:
             handle_input = getattr(self._submenu_component, "handle_input", None)
             if handle_input is not None:
-                await handle_input(data)
+                handle_input(data)
             return
 
         # Main list input handling
@@ -211,11 +209,11 @@ class SettingsList:
         elif kb.matches(data, "tui.select.confirm") or (
             data == " " and (not self._search_enabled or len(self._search_input.get_value()) == 0)
         ):
-            await self._activate_item()
+            self._activate_item()
         elif kb.matches(data, "tui.select.cancel"):
-            await self._on_cancel()
+            self._on_cancel()
         elif self._search_enabled and self._search_input is not None:
-            await self._search_input.handle_input(data)
+            self._search_input.handle_input(data)
             self._apply_filter(self._search_input.get_value())
 
     def _get_display_items(self) -> list[dict]:
@@ -228,7 +226,7 @@ class SettingsList:
         )
         return start_index, min(start_index + self._max_visible, len(display_items))
 
-    async def _activate_item(self) -> None:
+    def _activate_item(self) -> None:
         items = self._get_display_items()
         item = items[self._selected_index] if 0 <= self._selected_index < len(items) else None
         if item is None:
@@ -238,13 +236,13 @@ class SettingsList:
             # Open submenu, passing current value so it can pre-select correctly
             self._submenu_item_index = self._selected_index
 
-            async def done(selected_value: str | None = None, options: dict | None = None) -> None:
+            def done(selected_value: str | None = None, options: dict | None = None) -> None:
                 if selected_value is not None:
                     item["currentValue"] = selected_value
-                    await self._on_change(item["id"], selected_value)
+                    self._on_change(item["id"], selected_value)
                 if options is not None and options.get("navigateTo"):
                     self._navigate_after_close = options["navigateTo"]
-                await self._close_submenu()
+                self._close_submenu()
 
             self._submenu_component = item["submenu"](item["currentValue"], done)
         elif item.get("values"):
@@ -257,9 +255,9 @@ class SettingsList:
             next_index = (current_index + 1) % len(values)
             new_value = values[next_index]
             item["currentValue"] = new_value
-            await self._on_change(item["id"], new_value)
+            self._on_change(item["id"], new_value)
 
-    async def _close_submenu(self) -> None:
+    def _close_submenu(self) -> None:
         self._submenu_component = None
         if self._navigate_after_close is not None:
             item_id = self._navigate_after_close
@@ -267,7 +265,7 @@ class SettingsList:
             self._submenu_item_index = None
             self.select_item(item_id)
             # Open the target item's submenu automatically
-            await self._activate_item()
+            self._activate_item()
         elif self._submenu_item_index is not None:
             # Restore selection to the item that opened the submenu
             self._selected_index = self._submenu_item_index

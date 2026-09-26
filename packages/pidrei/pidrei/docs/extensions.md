@@ -435,10 +435,23 @@ final message. Setup failures produce error events and error results.
 `ctx.ui` offers `notify(text, level)`, `set_status(...)`, `set_widget(...)`,
 `select(title, options)`, `confirm(title, message)`,
 `input(title, placeholder)`, `editor(title, prefill)` and `theme`.
-The `select`/`confirm`/`input`/`editor`/`custom` calls are awaitable and
-return the user's choice, or `None` if dismissed. `paste_to_editor`,
-`get_editor_text` and the theme accessors (`get_all_themes`, `get_theme`,
-`set_theme`) are awaitable too; the remaining setters are plain sync calls.
+
+- The dialogs (`select`/`confirm`/`input`/`editor`/`custom`) open when
+  called and return a handle: `await` it for the user's choice, or `None`
+  if dismissed. Dropping the handle is fine — the dialog stays open.
+- The setters and getters, `paste_to_editor` and `get_editor_text`
+  included, are plain synchronous calls: each change is applied whole
+  before the call returns, so your next line sees it.
+- The theme accessors (`get_all_themes`, `get_theme`, `set_theme`) are
+  awaitable: loading a theme reads files.
+- `ctx.ui.apply(fn)` runs the synchronous `fn` as one change, so several
+  updates show up in the same frame:
+
+  ```python
+  ctx.ui.apply(lambda: (ctx.ui.set_status("job", "done"), ctx.ui.set_widget("job", None)))
+  ```
+
+  Nothing can be awaited inside it: an `async def` is refused.
 
 To send raw escape sequences to the terminal (desktop notifications via OSC
 777/99, for instance), use `ctx.ui.write_terminal(sequence)`, not
@@ -446,13 +459,12 @@ To send raw escape sequences to the terminal (desktop notifications via OSC
 writer, and a direct write can land in the middle of a frame.
 `write_terminal` queues behind the pump; it does nothing without a UI.
 
-The TUI runs its components on a single task. Code it calls there — a
-custom component's `handle_input`, a custom editor from
-`set_editor_component` — must not await the `ctx.ui` calls that wait on the
-TUI (`select`/`confirm`/`input`/`editor`/`custom`, `paste_to_editor`,
-`get_editor_text`): they would wait for the very task running them. Start
-the work with `tonio.spawn.without_tracking(...)` instead. Event and command handlers run on their
-own tasks and can await them freely.
+Component code — a custom component's `handle_input`, a custom editor from
+`set_editor_component` — is synchronous, so it cannot await a dialog's
+answer. Calling the dialog opens it all the same (the next key already goes
+to it); to act on the answer, await the handle in work started with
+`tui.spawn(...)`. Event and command handlers run on their own coroutines and
+can await freely.
 
 In print and JSON modes `ctx.has_ui` is False and `ctx.ui` is a no-op object,
 so handlers stay safe to call unconditionally — but a handler that *waits* on
@@ -685,48 +697,61 @@ Components come from `pidrei_tui` — `Container`, `Text`, `Spacer`,
 interaction needs its own rendering and input; [tui.md](tui.md) covers
 components, focus, overlays, theming and performance.
 
-The factory passed to `ctx.ui.custom(factory, options)` must be an
-`async def` returning the component; it is awaited, and a plain function or a
-lambda is not accepted:
+Every component factory — `ctx.ui.custom`, `set_widget`, `set_footer`,
+`set_header`, `set_editor_component` — is a plain synchronous function. For
+`ctx.ui.custom(factory, options)`, the factory runs, and its component is
+shown, before the call returns; the handle it returns yields the result
+passed to `done`:
 
 ```python
-async def factory(tui, theme, keybindings, done):
+def factory(tui, theme, keybindings, done):
     return MyComponent(theme, done)
 
 
 result = await ctx.ui.custom(factory)
 ```
 
-Footer, header and editor factories (`set_footer`, `set_header`,
-`set_editor_component`) are the exception: they stay plain synchronous
-functions.
+Do any async preparation before calling `custom`, and start work the
+component needs from the factory with `tui.spawn(...)`. An `async def`
+factory is refused.
 
 ### Where extension code and component code run
 
 Extension handlers — commands, event handlers, shortcuts, tools — run on their
-own tasks. `ctx.ui` is how they reach the UI: its setters and dialogs hand the
-work over to the UI and return, and its awaitable methods (`select`,
-`confirm`, `input`, `editor`, `custom`, `get_editor_text`, `paste_to_editor`)
-wait for it.
+own coroutines and reach the UI through `ctx.ui`.
 
-Component code is on the other side. The factories given to `ctx.ui.custom`,
-`set_widget`, `set_footer`, `set_header` and `set_editor_component`, and
-everything the components they build do — `handle_input`, `render`, timers,
-and the callbacks they call — run on the UI task, exactly like Pidrei's own
-components. There:
+Component code is the rest: the factories, and everything the components
+they build do — `handle_input`, `render`, timers, and the callbacks they
+call. Pidrei's UI runs it under its state lock, exactly like Pidrei's own
+components, and hands it `tui` — a guarded handle, not the TUI itself:
 
-- Change component and TUI state directly. `done(result)` closes a
-  `ctx.ui.custom` component right away.
-- Do not call `ctx.ui`: it is the interface for extension handlers, and
-  awaiting one of its waiting methods from component code blocks the UI for
-  good.
-- Whatever you await holds up input until it finishes, as a synchronous call
-  does in pi. Start longer work with `tonio.spawn.without_tracking(...)` and
-  hand its result back with `tui.post_ui(fn)` — a `done(result)` from such
-  work included (see `examples/extensions/handoff.py`).
-- To give the terminal to another program, stop the TUI in place with
-  `await tui.stop(on_owner=True)` and restart it with `await tui.start()`
-  (see `examples/extensions/interactive_shell.py`).
+| `tui.` | |
+|--------|---|
+| `request_render(force=False)` | Ask for a frame |
+| `apply(fn)` | Run the synchronous `fn` as one change (same as `ctx.ui.apply`) |
+| `spawn(coro)` | Run `coro` in the background; an error it raises is reported like the UI's own |
+| `timeout(ms, fn)` / `interval(ms, fn)` | Call the synchronous `fn` once / repeatedly, as one change each time; returns a handle with `cancel()` |
+| `set_focus`, `show_overlay`, `hide_overlay` | Focus and overlays; the overlay handle is guarded too |
+| `finish_before_next_input(handle)` | From `handle_input` only: hold the next key until the spawned work finishes |
+| `await stop()` / `await start()` | Give the terminal away and take it back |
+| `terminal.rows` / `terminal.columns` | The terminal's size |
+
+The rules:
+
+- `handle_input`, `render` and every callback are synchronous. Change your
+  component's state directly there, and call `ctx.ui` freely.
+- Anything slow goes to `tui.spawn(...)`. When that work changes your
+  component's state, wrap the change in `tui.apply(...)` so a frame never
+  shows it half done. `done(result)` needs no wrapping: it is safe from
+  anywhere (see `examples/extensions/handoff.py`).
+- Use `tui.timeout`/`tui.interval` for timers: their callbacks already run
+  as one change.
+- When the next key must see the effect of slow work (pi does such work
+  synchronously), spawn it with `tonio.spawn(...)` and pass the handle to
+  `tui.finish_before_next_input(...)`.
+- To give the terminal to another program, spawn the handoff from the
+  factory: `await tui.stop()`, run the program, `await tui.start()`, then
+  `done(...)` (see `examples/extensions/interactive_shell.py`).
 
 Guard UI work with `ctx.has_ui`, and terminal-only behavior with
 `ctx.mode == "tui"`. Keep tool and event logic independent of rendering so it

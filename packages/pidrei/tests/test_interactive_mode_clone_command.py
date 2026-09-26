@@ -4,13 +4,15 @@ pi calls InteractiveMode.prototype.handleCloneCommand with a fake `this`;
 here the unbound method runs against a SimpleNamespace context.
 """
 
+import threading
 from functools import partial
 from types import SimpleNamespace
 
 import pytest
 
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei_tui._owner import OwnerTask
+
+from .flow_helpers import SpawnedFlows
 
 
 def _create_context(leaf_id, fork_calls):
@@ -31,19 +33,15 @@ def _create_context(leaf_id, fork_calls):
 
 def _wire_recorders(context):
     context.editor.set_text = context.editor.set_text_calls.append
-    # The owner-side part applies in place, the clone's remainder posts: both
-    # record into the same lists.
-    context.show_status = context._apply_show_status = context.show_status_calls.append
+    context.show_status = context.show_status_calls.append
     context.show_error = context.show_error_calls.append
     context._clone_session = partial(InteractiveMode._clone_session, context)
     context.ui = SimpleNamespace(
         request_render=lambda: context.request_render_calls.append(True),
-        input_owner=OwnerTask(),
+        state_lock=threading.RLock(),
     )
-    # Editor mutations route through the owner helpers; an unstarted owner
-    # exercises their direct-call fallback.
-    context._post_editor_mutation = partial(InteractiveMode._post_editor_mutation, context)
     context._set_editor_text = partial(InteractiveMode._set_editor_text, context)
+    context._spawn_flow = context.flows = SpawnedFlows()
     return context
 
 
@@ -52,7 +50,8 @@ async def test_clones_the_current_leaf_into_a_new_session():
     fork_calls: list = []
     context = _wire_recorders(_create_context("leaf-123", fork_calls))
 
-    await InteractiveMode.handle_clone_command(context)
+    InteractiveMode.handle_clone_command(context)
+    await context.flows.finish()
 
     assert fork_calls == [("leaf-123", "at")]
     assert context.editor.set_text_calls == [""]
@@ -66,7 +65,8 @@ async def test_shows_a_status_message_when_there_is_nothing_to_clone():
     fork_calls: list = []
     context = _wire_recorders(_create_context(None, fork_calls))
 
-    await InteractiveMode.handle_clone_command(context)
+    InteractiveMode.handle_clone_command(context)
+    await context.flows.finish()
 
     assert fork_calls == []
     assert context.show_status_calls == ["Nothing to clone yet"]

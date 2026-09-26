@@ -275,12 +275,16 @@ class ArminComponent:
     def _start_animation(self) -> None:
         fps = 60 if self._effect == "glitch" else 30
 
-        async def on_tick() -> None:
-            done = self._tick_effect()
-            self._grid_version += 1
-            self._ui.request_render()
-            if done:
-                self._stop_animation()
+        def on_tick() -> None:
+            # On the interval's task: the effect state is UI state.
+            with self._ui.state_lock:
+                if self._interval is None:
+                    return  # stopped after this tick was already due
+                done = self._tick_effect()
+                self._grid_version += 1
+                self._ui.request_render()
+                if done:
+                    self._stop_animation()
 
         self._interval = Interval(1000 / fps, on_tick)
 

@@ -98,21 +98,14 @@ class LoginDialogComponent(Container):
             event.set()
         self._on_complete(False, "Login cancelled")
 
-    # The show_* steps are driven by the login task, off the UI owner: each
-    # one's content change is posted to the owner (the dialog may be mounted
-    # and taking input), in call order. The setup content a dialog gets from
-    # its creator on the owner, before it is mounted, applies in place
-    # (``on_owner``).
+    # The show_* steps are driven by the login task while the dialog may be
+    # mounted and taking input: each content change applies under the UI
+    # state lock, in call order.
 
-    def _post_content(self, apply, on_owner: bool = False) -> None:
-        def with_render() -> None:
+    def _post_content(self, apply) -> None:
+        with self._tui.state_lock:
             apply()
             self._tui.request_render()
-
-        if on_owner:
-            with_render()
-        else:
-            self._tui.post_ui(with_render)
 
     def show_auth(self, url: str, instructions: str | None = None) -> None:
         """Called by on_auth callback - show URL and optional instructions."""
@@ -213,7 +206,7 @@ class LoginDialogComponent(Container):
         self._post_content(apply)
         return response
 
-    def show_details(self, lines: list, *, on_owner: bool = False) -> None:
+    def show_details(self, lines: list) -> None:
         """Show informational text before another login step."""
 
         def apply() -> None:
@@ -222,11 +215,9 @@ class LoginDialogComponent(Container):
             for line in lines:
                 self._content_container.add_child(Text(line, 1, 0))
 
-        self._post_content(apply, on_owner)
+        self._post_content(apply)
 
-    def show_info(
-        self, message: str, links: list | None = None, show_close_hint: bool = False, *, on_owner: bool = False
-    ) -> None:
+    def show_info(self, message: str, links: list | None = None, show_close_hint: bool = False) -> None:
         """Show provider-owned information and links without an auth flow.
 
         Links are ``{"url", "label"?}`` records.
@@ -244,7 +235,7 @@ class LoginDialogComponent(Container):
                 self._content_container.add_child(Spacer(1))
                 self._content_container.add_child(Text(f"({key_hint('tui.select.cancel', 'to close')})", 1, 0))
 
-        self._post_content(apply, on_owner)
+        self._post_content(apply)
 
     def show_waiting(self, message: str) -> None:
         """Show waiting message (for polling flows like GitHub Copilot)."""
@@ -260,7 +251,7 @@ class LoginDialogComponent(Container):
         """Called by on_progress callback."""
         self._post_content(lambda: self._content_container.add_child(Text(theme.fg("dim", message), 1, 0)))
 
-    async def handle_input(self, data: str) -> None:
+    def handle_input(self, data: str) -> None:
         kb = get_keybindings()
 
         if kb.matches(data, "tui.select.cancel"):
@@ -268,4 +259,4 @@ class LoginDialogComponent(Container):
             return
 
         # Pass to input
-        await self._input.handle_input(data)
+        self._input.handle_input(data)
