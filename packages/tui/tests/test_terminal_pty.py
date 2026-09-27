@@ -166,7 +166,7 @@ async def test_pty_pump_negotiation_and_input_end_to_end():
         assert await _receive_until(emulator, b"out") == b"out"
     finally:
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
 
     # stop() restored the tty state and disabled what it enabled.
@@ -234,7 +234,7 @@ async def test_pty_drain_input_returns_after_idle():
         assert await inputs.until(1) == ["x"]
     finally:
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
 
     emulator._fd.close()  # closes master
@@ -316,7 +316,7 @@ async def test_pty_drain_input_drops_items_queued_behind_the_one_being_handled()
     finally:
         release.set()
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
 
     emulator._fd.close()  # closes master
@@ -380,11 +380,52 @@ async def test_output_pump_keeps_fifo_order_and_write_waits_for_a_slow_reader():
             assert done.is_set(), "write() must complete once its bytes are on the wire"
     finally:
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         reader._fd.close()  # closes out_r
         for fd in (in_r, in_w, out_w):
             os.close(fd)
     set_kitty_protocol_active(False)
+
+
+@pytest.mark.tonio
+async def test_released_output_is_held_until_the_terminal_is_armed_again():
+    """Between `release()` and the next `arm()` a child may own the tty:
+    nothing reaches the fd and both fds have their blocking flag back. What
+    was held goes out first, in order, at the next `arm()` — or at
+    `close()`."""
+    in_r, in_w = os.pipe()
+    out_r, out_w = os.pipe()
+    os.set_blocking(out_r, False)
+    terminal = ProcessTerminal(input_fd=in_r, output_fd=out_w)
+    try:
+        terminal.arm()
+        assert not os.get_blocking(out_w)
+        assert not os.get_blocking(in_r)
+        terminal.write_sync("armed;")
+        await terminal.release()
+        assert os.get_blocking(out_w)
+        assert os.get_blocking(in_r)
+        assert os.read(out_r, 1024) == b"armed;"
+
+        terminal.write_sync("held-1;")
+        terminal.write_sync("held-2;")
+        with pytest.raises(BlockingIOError):
+            os.read(out_r, 1024)
+
+        terminal.arm()
+        terminal.write_sync("after;")
+        await terminal.flush()
+        assert os.read(out_r, 1024) == b"held-1;held-2;after;"
+
+        await terminal.release()
+        terminal.write_sync("at-close;")
+        await terminal.close()
+        assert os.read(out_r, 1024) == b"at-close;"
+        assert os.get_blocking(out_w)
+    finally:
+        await terminal.close()
+        for fd in (in_r, in_w, out_r, out_w):
+            os.close(fd)
 
 
 @pytest.mark.tonio
@@ -425,7 +466,7 @@ async def test_pty_input_survives_a_raising_input_handler():
         assert inputs == ["y"]
     finally:
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
     os.close(master)
     os.close(slave)
@@ -454,7 +495,7 @@ async def test_pty_terminal_stops_from_inside_its_own_input_handling():
         assert stopped.is_set(), "a stop from input handling must complete"
         assert errors == []
     finally:
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
     os.close(master)
     os.close(slave)
@@ -512,7 +553,7 @@ async def test_pty_items_queued_when_the_terminal_stops_are_dropped():
     finally:
         go.set()
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)
@@ -535,7 +576,7 @@ async def test_pty_a_lone_escape_is_flushed_by_the_reader_deadline():
         assert await inputs.until(2) == ["\x1b", "q"]
     finally:
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)
@@ -590,7 +631,7 @@ async def test_pty_keys_read_before_the_kitty_reply_parse_in_the_old_mode():
     finally:
         release.set()
         await terminal.stop()
-        terminal.close()
+        await terminal.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)
@@ -666,7 +707,7 @@ async def test_pty_a_query_from_a_key_completion_gets_its_reply():
         assert results[0] is not None, "the query timed out: its reply waited behind the completion"
     finally:
         await tui.stop()
-        tui.close()
+        await tui.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)
@@ -716,7 +757,7 @@ async def test_pty_a_colour_scheme_report_reaches_listeners_while_input_waits():
     finally:
         release.set()
         await tui.stop()
-        tui.close()
+        await tui.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)
@@ -768,7 +809,7 @@ async def test_pty_tui_reports_input_and_output_errors_to_its_handler():
         assert [type(error).__name__ for error in errors] == ["RuntimeError", "UnicodeEncodeError"]
     finally:
         await tui.stop()
-        tui.close()
+        await tui.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)
@@ -870,7 +911,7 @@ async def test_pty_tui_survives_an_input_storm_with_concurrent_mutations():
         assert frames_flowing.is_set(), "frames stopped flowing"
     finally:
         await tui.stop()
-        tui.close()
+        await tui.close()
         set_kitty_protocol_active(False)
     emulator._fd.close()  # closes master
     os.close(slave)

@@ -8,12 +8,13 @@ a handler runs inline during `emit` — a JS async function executes its body
 up to the first `await` synchronously, a spawned coroutine does not.
 """
 
-import sys
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import tonio.colored as tonio
+
+from .output_guard import write_stderr
 
 
 class EventBus:
@@ -28,7 +29,7 @@ class EventBus:
             try:
                 awaitable = handler(data)
             except Exception as error:
-                print(f"Event handler error ({channel}):", error, file=sys.stderr)
+                write_stderr(f"Event handler error ({channel}): {error}\n")
                 continue
             tonio.spawn.without_tracking(self._await_handler(channel, awaitable))
 
@@ -36,7 +37,7 @@ class EventBus:
         try:
             await awaitable
         except Exception as error:
-            print(f"Event handler error ({channel}):", error, file=sys.stderr)
+            write_stderr(f"Event handler error ({channel}): {error}\n")
 
     def on(self, channel: str, handler: Callable[[Any], Awaitable[Any]]) -> Callable[[], None]:
         with self._guard:

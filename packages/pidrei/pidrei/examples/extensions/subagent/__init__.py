@@ -55,7 +55,7 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 from pidrei_tui import Container, Markdown, Spacer, Text
 
-from .agents import discover_agents
+from .agents import discover_agents_blocking
 
 
 MAX_PARALLEL_TASKS = 8
@@ -356,8 +356,8 @@ async def run_single_agent(
     # nothing persisted, no extensions (a subagent cannot spawn subagents), no
     # themes or prompt templates, the agent's system prompt appended directly.
     agent_dir = get_agent_dir()
-    settings_manager = await SettingsManager.create(run_cwd, agent_dir)
-    model_runtime = await ModelRuntime.create()
+    settings_manager = await SettingsManager(run_cwd, agent_dir)
+    model_runtime = await ModelRuntime()
 
     resolved_model = None
     thinking_level = None
@@ -375,7 +375,7 @@ async def run_single_agent(
     if inherits_dispatch_config and dispatch_defaults.get("thinkingLevel"):
         thinking_level = dispatch_defaults["thinkingLevel"]
 
-    resource_loader = DefaultResourceLoader(
+    resource_loader = await DefaultResourceLoader(
         cwd=run_cwd,
         agent_dir=agent_dir,
         settings_manager=settings_manager,
@@ -506,7 +506,7 @@ async def _execute(_tool_call_id, params, cancel=None, on_update=None, ctx=None)
         "model": f"{model.provider}/{model.id}" if model is not None else None,
         "thinkingLevel": getattr(ctx, "thinking_level", None),
     }
-    discovery = await tonio.spawn_blocking(discover_agents, ctx.cwd, agent_scope)
+    discovery = await tonio.spawn_blocking(discover_agents_blocking, ctx.cwd, agent_scope)
     agents = discovery.agents
     confirm_project_agents = params.get("confirmProjectAgents", True)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from pidrei.utils.paths import (
-    canonicalize_path,
+    canonicalize_path_blocking,
     get_cwd_relative_path,
     is_local_path,
     normalize_path,
@@ -21,33 +21,33 @@ class TestCanonicalizePath:
     def test_returns_the_real_path_for_a_regular_file(self, tmp_path):
         file = tmp_path / "file.txt"
         file.write_text("hello")
-        assert canonicalize_path(str(file)) == str(file.resolve(strict=True))
+        assert canonicalize_path_blocking(str(file)) == str(file.resolve(strict=True))
 
     def test_resolves_symlinks_to_their_targets(self, tmp_path):
         target = tmp_path / "target.txt"
         link = tmp_path / "link.txt"
         target.write_text("hello")
         link.symlink_to(target)
-        assert canonicalize_path(str(link)) == str(target.resolve(strict=True))
+        assert canonicalize_path_blocking(str(link)) == str(target.resolve(strict=True))
 
     def test_resolves_directory_symlinks(self, tmp_path):
         target_dir = tmp_path / "target-dir"
         link_dir = tmp_path / "link-dir"
         target_dir.mkdir()
         link_dir.symlink_to(target_dir, target_is_directory=True)
-        assert canonicalize_path(str(link_dir)) == str(target_dir.resolve(strict=True))
+        assert canonicalize_path_blocking(str(link_dir)) == str(target_dir.resolve(strict=True))
 
     def test_falls_back_to_the_raw_path_when_the_target_does_not_exist(self, tmp_path):
         nonexistent = str(tmp_path / "no-such-file")
-        assert canonicalize_path(nonexistent) == nonexistent
+        assert canonicalize_path_blocking(nonexistent) == nonexistent
 
     def test_falls_back_to_the_raw_path_for_a_dangling_symlink(self, tmp_path):
         target = tmp_path / "target.txt"
         link = tmp_path / "link.txt"
         # Create a symlink whose target does not exist.
         link.symlink_to(target)
-        # Strict resolution would fail, so canonicalize_path returns the link path.
-        assert canonicalize_path(str(link)) == str(link)
+        # Strict resolution would fail, so canonicalize_path_blocking returns the link path.
+        assert canonicalize_path_blocking(str(link)) == str(link)
 
 
 class TestGetCwdRelativePath:

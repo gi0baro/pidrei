@@ -231,7 +231,7 @@ _STALL_LOG_ENV = "PIDREI_DISPATCH_STALL_LOG"
 _STALL_THRESHOLD_S = 0.050
 
 
-def _append_stall_log(path: str, text: str) -> None:
+def _append_stall_log_blocking(path: str, text: str) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(text)
 
@@ -280,7 +280,7 @@ class _DispatchStallMeter:
         lines = "".join(self._stalls)
         if self._dropped:
             lines += f"({self._dropped} further stalls not listed)\n"
-        await tonio.spawn_blocking(_append_stall_log, self._path, f"{lines}run summary — {summary}\n")
+        await tonio.spawn_blocking(_append_stall_log_blocking, self._path, f"{lines}run summary — {summary}\n")
 
 
 @dataclass(slots=True)

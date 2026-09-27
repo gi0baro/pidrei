@@ -163,7 +163,7 @@ class TestSessionIdExactLookup:
     @pytest.mark.tonio
     async def test_looks_up_exact_ids_without_building_full_session_listings(self, tmp_path):
         dirs = _Dirs(tmp_path)
-        unrelated = await SessionManager.create(dirs.project_dir, dirs.session_dir, {"id": "unrelated-id"})
+        unrelated = await SessionManager(dirs.project_dir, dirs.session_dir, options={"id": "unrelated-id"})
         await _persist_session(unrelated, "large transcript contents must not be loaded")
         list_calls: list = []
 
@@ -190,7 +190,7 @@ class TestSessionIdExactLookup:
     @pytest.mark.tonio
     async def test_reopens_an_exact_id_from_a_renamed_session_file(self, tmp_path):
         dirs = _Dirs(tmp_path)
-        original = await SessionManager.create(dirs.project_dir, dirs.session_dir, {"id": "renamed-id"})
+        original = await SessionManager(dirs.project_dir, dirs.session_dir, options={"id": "renamed-id"})
         await _persist_session(original, "persist me")
         renamed_path = os.path.join(dirs.session_dir, "imported-session.jsonl")
         os.rename(original.get_session_file(), renamed_path)
@@ -211,7 +211,7 @@ class TestSessionIdExactLookup:
         project_b = os.path.join(os.path.dirname(dirs.project_dir), "project-b")
         os.makedirs(project_a)
         os.makedirs(project_b)
-        foreign = await SessionManager.create(project_b, dirs.session_dir, {"id": "foreign-id"})
+        foreign = await SessionManager(project_b, dirs.session_dir, options={"id": "foreign-id"})
         await _persist_session(foreign, "foreign session")
 
         assert await SessionManager.find_by_id(project_a, "foreign-id", dirs.session_dir) is None

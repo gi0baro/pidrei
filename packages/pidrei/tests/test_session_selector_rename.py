@@ -8,7 +8,7 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionInfo
 from pidrei.modes.interactive.components import SessionSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei_tui import set_keybindings
 
 from .session_selector_helpers import InputCompletions, StateUpdates, lists_sessions
@@ -41,17 +41,17 @@ def _make_loader(sessions):
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
+async def _setup():
+    await init_theme("dark")
     # Ensure test isolation: keybindings are a global singleton
-    set_keybindings(KeybindingsManager())
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 class TestSessionSelectorRename:
     @pytest.mark.tonio
     async def test_shows_rename_hint_in_interactive_resume_picker_configuration(self):
         sessions = [make_session(id="a")]
-        keybindings = KeybindingsManager()
+        keybindings = KeybindingsManager.in_memory()
         # pidrei-only `state_lock`: pi's `flushPromises()` becomes waiting for the state.
         state_updates = StateUpdates()
         selector = SessionSelectorComponent(
@@ -74,7 +74,7 @@ class TestSessionSelectorRename:
     @pytest.mark.tonio
     async def test_does_not_show_rename_hint_in_resume_picker_configuration(self):
         sessions = [make_session(id="a")]
-        keybindings = KeybindingsManager()
+        keybindings = KeybindingsManager.in_memory()
         state_updates = StateUpdates()
         selector = SessionSelectorComponent(
             _make_loader(sessions),
@@ -103,7 +103,7 @@ class TestSessionSelectorRename:
             rename_calls.append((session_path, name))
             renamed.set()
 
-        keybindings = KeybindingsManager()
+        keybindings = KeybindingsManager.in_memory()
         state_updates = StateUpdates()
         selector = SessionSelectorComponent(
             _make_loader(sessions),

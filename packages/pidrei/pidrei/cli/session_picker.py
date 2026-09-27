@@ -15,7 +15,7 @@ from ..core.keybindings import KeybindingsManager
 from ..core.session_manager import SessionInfo, SessionListProgress
 from ..modes.interactive.components.session_selector import SessionSelectorComponent
 from ..utils.fd_io import hard_exit
-from .startup_ui import create_startup_tui, start_startup_tui
+from .startup_ui import close_startup_tui, create_startup_tui, start_startup_tui
 
 
 type SessionsLoader = Callable[[SessionListProgress | None, CancelToken | None], Awaitable[list[SessionInfo]]]
@@ -28,7 +28,7 @@ async def select_session(
 ) -> str | None:
     """Show TUI session selector; returns the selected session path or None if cancelled."""
     ui = await create_startup_tui(settings_manager)
-    keybindings = await KeybindingsManager.create()
+    keybindings = await KeybindingsManager()
     set_keybindings(keybindings)
 
     done = tonio.Event()
@@ -42,7 +42,7 @@ async def select_session(
         settled = True
         outcome["path"] = path
         await ui.stop()
-        ui.close()
+        await close_startup_tui(ui)
         done.set()
 
     def on_select(path: str) -> None:
@@ -54,6 +54,7 @@ async def select_session(
     def on_exit() -> None:
         async def stop_and_exit() -> None:
             await ui.stop()
+            await close_startup_tui(ui)
             hard_exit(0)
 
         tonio.spawn.without_tracking(stop_and_exit())

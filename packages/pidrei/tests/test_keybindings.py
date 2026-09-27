@@ -6,7 +6,11 @@ dropped and the `tui.editor.undo` expectation loses its native-Windows
 branch. The rest is pi's, including that `WT_SESSION` alone is not WSL.
 """
 
-from pidrei.core.keybindings import KEYBINDINGS, use_windows_keybindings
+import json
+
+import pytest
+
+from pidrei.core.keybindings import KEYBINDINGS, KeybindingsManager, use_windows_keybindings
 
 
 def test_uses_windows_keybindings_in_wsl_without_relying_on_windows_terminal_detection():
@@ -38,3 +42,13 @@ def test_applies_the_detected_defaults_consistently():
         "ctrl+down" if windows_keybindings else ["ctrl+shift+down", "ctrl+down"]
     )
     assert KEYBINDINGS["app.message.dequeue"]["defaultKeys"] == ("alt+q" if windows_keybindings else "alt+up")
+
+
+@pytest.mark.tonio
+async def test_awaiting_the_manager_reads_the_users_keybindings_over_the_defaults(tmp_path):
+    """pidrei-only: `__init__` yields the defaults with no I/O; awaiting the
+    manager reads `keybindings.json` on top of them."""
+    (tmp_path / "keybindings.json").write_text(json.dumps({"app.models.save": "ctrl+alt+x"}))
+
+    assert KeybindingsManager(str(tmp_path)).get_keys("app.models.save") != ["ctrl+alt+x"]
+    assert (await KeybindingsManager(str(tmp_path))).get_keys("app.models.save") == ["ctrl+alt+x"]

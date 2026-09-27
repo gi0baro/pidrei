@@ -23,9 +23,10 @@ Locking is two-level, and the split matters:
   (`get_session_name` -> `get_entries`), which `tonio.sync.Lock` cannot do —
   re-acquiring it parks the task on its own event forever.
 
-Construction (`__init__`, `_set_session_file`, `new_session`) runs pool-side
-inside the static factories' `spawn_blocking`, holds the only reference to the
-object, and therefore keeps plain synchronous I/O. The async discovery helpers
+Construction's I/O (`_start_blocking`, `_set_session_file_blocking`, `new_session`)
+runs pool-side in the one `spawn_blocking` of `await SessionManager(...)`,
+holds the only reference to the object, and therefore keeps plain synchronous
+I/O. The async discovery helpers
 (`list`, `list_all`) run their blocking scans via `tonio.spawn_blocking` with
 pi's 10-way concurrency bound.
 """
@@ -570,20 +571,14 @@ def _get_default_session_dir_path(cwd: str, agent_dir: str | None = None) -> str
     return os.path.join(resolved_agent_dir, "sessions", safe_path)
 
 
-def get_default_session_dir(cwd: str, agent_dir: str | None = None) -> str:
+def get_default_session_dir_blocking(cwd: str, agent_dir: str | None = None) -> str:
     session_dir = _get_default_session_dir_path(cwd, agent_dir)
     if not os.path.exists(session_dir):
         os.makedirs(session_dir, exist_ok=True)
     return session_dir
 
 
-def load_entries_from_file(file_path: str) -> list[dict[str, Any]]:
-    """Exported for testing. Returns decoded entries (header included)."""
-    entries = _load_wire_entries_from_file(file_path)
-    return [_decode_entry(entry) for entry in entries]
-
-
-def _write_session_bytes(path: str, mode: str, payload: str) -> None:
+def _write_session_bytes_blocking(path: str, mode: str, payload: str) -> None:
     """One open+write, run on the blocking pool.
 
     `mode` carries pi's exclusive-create semantics: `"x"` for the first flush
@@ -594,7 +589,7 @@ def _write_session_bytes(path: str, mode: str, payload: str) -> None:
         handle.write(payload)
 
 
-def _load_wire_entries_from_file(file_path: str) -> list[dict[str, Any]]:
+def _load_wire_entries_from_file_blocking(file_path: str) -> list[dict[str, Any]]:
     resolved_file_path = normalize_path(file_path)
     if not os.path.exists(resolved_file_path):
         return []
@@ -643,7 +638,7 @@ def _load_wire_entries_from_file(file_path: str) -> list[dict[str, Any]]:
 
 def _parse_session_header_candidate(line: str) -> Any:
     """Inspect a physical line while searching for the first parsed session entry.
-    Blank and malformed lines are skipped to match load_entries_from_file().
+    Blank and malformed lines are skipped to match _load_wire_entries_from_file_blocking().
     Returns _UNSET to keep scanning, None for a parsed non-header entry, or the header."""
     if not line.strip():
         return _UNSET
@@ -655,7 +650,7 @@ def _parse_session_header_candidate(line: str) -> Any:
     return entry
 
 
-def _read_session_header(file_path: str) -> dict[str, Any] | None:
+def _read_session_header_blocking(file_path: str) -> dict[str, Any] | None:
 
     with open(file_path, "rb") as handle:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -693,9 +688,9 @@ def _read_session_header(file_path: str) -> dict[str, Any] | None:
         raise SessionHeaderScanLimitError(file_path)
 
 
-def _read_session_header_for_discovery(file_path: str) -> dict[str, Any] | None:
+def _read_session_header_for_discovery_blocking(file_path: str) -> dict[str, Any] | None:
     try:
-        return _read_session_header(file_path)
+        return _read_session_header_blocking(file_path)
     except Exception:
         # Discovery is best-effort: unreadable or oversized files are not sessions,
         # and one corrupt file must not prevent other sessions from being found.
@@ -711,7 +706,7 @@ def _session_cwd_matches(cwd: str | None, resolved_cwd: str) -> bool:
     return cwd is not None and cwd != "" and resolve_path(cwd) == resolved_cwd
 
 
-def find_most_recent_session(session_dir: str, cwd: str | None = None) -> str | None:
+def find_most_recent_session_blocking(session_dir: str, cwd: str | None = None) -> str | None:
     """Exported for testing."""
     resolved_session_dir = normalize_path(session_dir)
     resolved_cwd = resolve_path(cwd) if cwd else None
@@ -728,7 +723,7 @@ def find_most_recent_session(session_dir: str, cwd: str | None = None) -> str | 
 
         # Newest first: only read headers until the first match.
         for path, _mtime in files:
-            header = _read_session_header_for_discovery(path)
+            header = _read_session_header_for_discovery_blocking(path)
             if header is not None and (
                 not resolved_cwd or _session_cwd_matches(_get_session_header_cwd(header), resolved_cwd)
             ):
@@ -769,7 +764,7 @@ def _get_message_activity_time(entry: dict[str, Any]) -> float | None:
     return None if math.isnan(parsed) else parsed
 
 
-def _build_session_info(
+def _build_session_info_blocking(
     file_path: str, cancel: CancelToken | None = None, stat_result: os.stat_result | None = None
 ) -> SessionInfo | None:
     """Blocking; run on the pool. A cancelled `cancel` stops the read at the next
@@ -912,7 +907,7 @@ def _build_session_infos_with_concurrency(
 ) -> Awaitable[list[SessionInfo | None]]:
     async def load(file: _SessionFileCandidate, index: int) -> SessionInfo | None:
         try:
-            info = await tonio.spawn_blocking(_build_session_info, file.path, cancel, file.stat_result)
+            info = await tonio.spawn_blocking(_build_session_info_blocking, file.path, cancel, file.stat_result)
         except Exception:
             info = None
         on_loaded(info, index)
@@ -977,28 +972,32 @@ class SessionManager:
 
     Use build_session_context() to get the resolved message list for the LLM,
     which handles compaction summaries and follows the path from root to leaf.
+
+    `await SessionManager(cwd, session_dir)` starts a new persisted session
+    (`session_dir` defaults to the cwd's directory under the agent dir);
+    `await SessionManager(cwd, session_dir, session_file=path)` opens a session
+    file (`cwd` defaults to the file header's, `session_dir` to the file's
+    directory). `options` applies to a new session. `__init__` does no I/O.
     """
 
     def __init__(
         self,
-        cwd: str,
-        session_dir: str,
-        session_file: str | None,
-        persist: bool,
-        new_session_options: dict[str, Any] | None = None,
-        preloaded_file_entries: list[dict[str, Any]] | None = None,
+        cwd: str | None = None,
+        session_dir: str | None = None,
         *,
-        _internal: bool = False,
+        session_file: str | None = None,
+        options: dict[str, Any] | None = None,
     ):
-        if not _internal:
-            raise Exception("Use SessionManager.create/open/continue_recent/in_memory/fork_from")
+        if cwd is None and session_file is None:
+            raise ValueError("a new session needs a cwd")
+        self._start_args = (cwd, session_dir, session_file, options)
         self._lock = threading.RLock()
         self._io_lock = tonio_sync.Lock()
         self._session_id: str = ""
         self._session_file: str | None = None
-        self._cwd = resolve_path(cwd)
-        self._session_dir = normalize_path(session_dir) if session_dir else ""
-        self._persist = persist
+        self._cwd = resolve_path(cwd) if cwd is not None else ""
+        self._session_dir = ""
+        self._persist = True
         self._flushed = False
         self._file_entries: list[dict[str, Any]] = []
         # Bumped on every change to `_file_entries`; lets per-frame readers
@@ -1009,30 +1008,59 @@ class SessionManager:
         self._label_timestamps_by_id: dict[str, str] = {}
         self._leaf_id: str | None = None
 
-        if persist and self._session_dir and not os.path.exists(self._session_dir):
+    def __await__(self):
+        return self._start().__await__()
+
+    async def _start(self) -> SessionManager:
+        await tonio.spawn_blocking(self._start_blocking)
+        return self
+
+    def _start_blocking(self) -> None:
+        """Construction's I/O, in one pool hop. Only this reference exists yet,
+        so it keeps plain synchronous I/O and needs no lock."""
+        cwd, session_dir, session_file, options = self._start_args
+        if session_file is None:
+            directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
+        else:
+            session_file = resolve_path(session_file)
+            preloaded_file_entries: list[dict[str, Any]] | None = None
+            if cwd is None and os.path.exists(session_file):
+                header: dict[str, Any] | None
+                try:
+                    header = _read_session_header_blocking(session_file)
+                except SessionHeaderScanLimitError:
+                    # The bounded scan is only a discovery optimization. A full load remains
+                    # authoritative for legacy files with very large headers or prefixes.
+                    preloaded_file_entries = _load_wire_entries_from_file_blocking(session_file)
+                    first_entry = preloaded_file_entries[0] if preloaded_file_entries else None
+                    header = first_entry if first_entry and first_entry.get("type") == "session" else None
+                if header is not None:
+                    cwd = _get_session_header_cwd(header)
+            if cwd is None:
+                cwd = os.getcwd()
+            self._cwd = resolve_path(cwd)
+            directory = normalize_path(session_dir) if session_dir else os.path.dirname(session_file)
+        self._session_dir = normalize_path(directory)
+
+        if self._session_dir and not os.path.exists(self._session_dir):
             os.makedirs(self._session_dir, exist_ok=True)
 
-        if session_file:
-            self._set_session_file(session_file, preloaded_file_entries)
-        elif preloaded_file_entries:
-            self._load_entries(preloaded_file_entries, new_session_options)
+        if session_file is None:
+            self.new_session(options)
         else:
-            self.new_session(new_session_options)
+            self._set_session_file_blocking(session_file, preloaded_file_entries)
 
     # -- session file handling -------------------------------------------------
 
-    def set_session_file(self, session_file: str) -> None:
-        """Switch to a different session file (used for resume and branching)."""
-        with self._lock:
-            self._set_session_file(session_file)
-
-    def _set_session_file(self, session_file: str, preloaded_file_entries: list[dict[str, Any]] | None = None) -> None:
+    def _set_session_file_blocking(
+        self, session_file: str, preloaded_file_entries: list[dict[str, Any]] | None = None
+    ) -> None:
         self._session_file = resolve_path(session_file)
         if os.path.exists(self._session_file):
             wire_entries = (
                 preloaded_file_entries
                 if preloaded_file_entries is not None
-                else _load_wire_entries_from_file(self._session_file)
+                else _load_wire_entries_from_file_blocking(self._session_file)
             )
 
             # If file was empty, initialize it with a valid session header. If it was
@@ -1043,18 +1071,19 @@ class SessionManager:
                     raise Exception(f"Session file is not a valid {APP_NAME} session: {explicit_path}")
                 self.new_session()
                 self._session_file = explicit_path
-                self._rewrite_file()
+                self._rewrite_file_blocking()
                 self._flushed = True
                 return
 
-            self._load_entries(wire_entries)
+            if self._load_entries(wire_entries):
+                self._rewrite_file_blocking()
             self._flushed = True
         else:
             explicit_path = self._session_file
             self.new_session()
             self._session_file = explicit_path  # preserve explicit path from --session flag
 
-    def _load_entries(self, entries: list[dict[str, Any]], options: dict[str, Any] | None = None) -> None:
+    def _load_entries(self, entries: list[dict[str, Any]], options: dict[str, Any] | None = None) -> bool:
         """Adopt entries held outside this manager (a file, or a store outside the filesystem).
 
         Wire-shaped entries are decoded on the way in; entries that already
@@ -1062,8 +1091,12 @@ class SessionManager:
         keep it (and are migrated against its version); without one, the
         header comes from `options` and the entries become its body,
         adopted as current-version.
+
+        No I/O: returns whether the entries were migrated, so a persisted
+        session's caller rewrites its file.
         """
         header = next((entry for entry in entries if entry.get("type") == "session"), None)
+        migrated = False
 
         if header is not None:
             self._session_id = header.get("id") if header.get("id") else _create_session_id()
@@ -1072,14 +1105,13 @@ class SessionManager:
                 entry if entry.get("type") == "session" else _decode_entry(dict(entry)) for entry in entries
             ]
             self._entries_revision += 1
-            if migrated:
-                self._rewrite_file()
         else:
             self.new_session(options)
             self._file_entries = [*self._file_entries, *(_decode_entry(dict(entry)) for entry in entries)]
             self._entries_revision += 1
 
         self._build_index()
+        return migrated
 
     def new_session(self, options: dict[str, Any] | None = None) -> str | None:
         with self._lock:
@@ -1129,11 +1161,11 @@ class SessionManager:
                     self._labels_by_id.pop(entry["targetId"], None)
                     self._label_timestamps_by_id.pop(entry["targetId"], None)
 
-    def _rewrite_file(self) -> None:
+    def _rewrite_file_blocking(self) -> None:
         """Synchronous whole-file rewrite, for construction paths only.
 
-        Its one caller, `_set_session_file`, runs pool-side inside the static
-        factories, so this blocks nothing. The runtime-side rewrite lives in
+        Its one caller, `_set_session_file_blocking`, runs in construction's
+        pool hop. The runtime-side rewrite lives in
         `_create_branched_session_locked`, which awaits its write.
         """
         if not self._persist or not self._session_file:
@@ -1191,7 +1223,7 @@ class SessionManager:
         if plan is None:
             return
         path, mode, payload = plan
-        await tonio.spawn_blocking(_write_session_bytes, path, mode, payload)
+        await tonio.spawn_blocking(_write_session_bytes_blocking, path, mode, payload)
         if mode == "x":
             # Only after the write lands, matching pi: `this.flushed = true`
             # follows the writeFileSync loop, so a failure leaves it false.
@@ -1672,83 +1704,27 @@ class SessionManager:
 
         # `_lock` released: the write is awaited outside it, and `_flushed` only
         # goes true once the bytes land.
-        await tonio.spawn_blocking(_write_session_bytes, new_session_file, "w", payload)
+        await tonio.spawn_blocking(_write_session_bytes_blocking, new_session_file, "w", payload)
         with self._lock:
             self._flushed = True
         return new_session_file
 
-    # -- constructors ------------------------------------------------------------
+    # -- construction operations -------------------------------------------------
 
-    # Each factory is a pure blocking construction — read the file, build the
-    # object — so it goes to the pool whole and its body stays sync. Sync defs
-    # returning the awaitable, not `async def ...: return await ...`.
-
-    @staticmethod
-    def create(
-        cwd: str, session_dir: str | None = None, options: dict[str, Any] | None = None
-    ) -> Awaitable[SessionManager]:
-        """Create a new session."""
-        return tonio.spawn_blocking(SessionManager._create_sync, cwd, session_dir, options)
+    # A new or opened session is `await SessionManager(...)`; these pick or
+    # write the session file first, then construct.
 
     @staticmethod
-    def open(path: str, session_dir: str | None = None, cwd_override: str | None = None) -> Awaitable[SessionManager]:
-        """Open a specific session file."""
-        return tonio.spawn_blocking(SessionManager._open_sync, path, session_dir, cwd_override)
-
-    @staticmethod
-    def continue_recent(cwd: str, session_dir: str | None = None) -> Awaitable[SessionManager]:
-        """Resume the most recent session for a directory."""
-        return tonio.spawn_blocking(SessionManager._continue_recent_sync, cwd, session_dir)
-
-    @staticmethod
-    def fork_from(
-        source_path: str,
-        target_cwd: str,
-        session_dir: str | None = None,
-        options: dict[str, Any] | None = None,
-    ) -> Awaitable[SessionManager]:
-        """Fork a session from another project directory into the current project."""
-        return tonio.spawn_blocking(SessionManager._fork_from_sync, source_path, target_cwd, session_dir, options)
-
-    @staticmethod
-    def _create_sync(cwd: str, session_dir: str | None = None, options: dict[str, Any] | None = None) -> SessionManager:
-        """Create a new session."""
-        directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
-        return SessionManager(cwd, directory, None, True, options, _internal=True)
-
-    @staticmethod
-    def _open_sync(path: str, session_dir: str | None = None, cwd_override: str | None = None) -> SessionManager:
-        """Open a specific session file."""
-        resolved_path = resolve_path(path)
-        header: dict[str, Any] | None = None
-        preloaded_file_entries: list[dict[str, Any]] | None = None
-        if cwd_override is None and os.path.exists(resolved_path):
-            try:
-                header = _read_session_header(resolved_path)
-            except SessionHeaderScanLimitError:
-                # The bounded scan is only a discovery optimization. A full load remains
-                # authoritative for legacy files with very large headers or prefixes.
-                preloaded_file_entries = _load_wire_entries_from_file(resolved_path)
-                first_entry = preloaded_file_entries[0] if preloaded_file_entries else None
-                header = first_entry if first_entry and first_entry.get("type") == "session" else None
-        cwd = cwd_override
-        if cwd is None and header is not None:
-            cwd = _get_session_header_cwd(header)
-        if cwd is None:
-            cwd = os.getcwd()
-        # If no session_dir provided, derive from file's parent directory
-        directory = normalize_path(session_dir) if session_dir else os.path.dirname(resolved_path)
-        return SessionManager(cwd, directory, resolved_path, True, None, preloaded_file_entries, _internal=True)
-
-    @staticmethod
-    def _continue_recent_sync(cwd: str, session_dir: str | None = None) -> SessionManager:
+    async def continue_recent(cwd: str, session_dir: str | None = None) -> SessionManager:
         """Continue the most recent session, or create new if none."""
-        directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
-        filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
-        most_recent = find_most_recent_session(directory, cwd if filter_cwd else None)
-        if most_recent:
-            return SessionManager(cwd, directory, most_recent, True, _internal=True)
-        return SessionManager(cwd, directory, None, True, _internal=True)
+
+        def find_blocking() -> tuple[str, str | None]:
+            directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
+            filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
+            return directory, find_most_recent_session_blocking(directory, cwd if filter_cwd else None)
+
+        directory, most_recent = await tonio.spawn_blocking(find_blocking)
+        return await SessionManager(cwd, directory, session_file=most_recent)
 
     @staticmethod
     def in_memory(
@@ -1757,12 +1733,16 @@ class SessionManager:
         entries: list[dict[str, Any]] | None = None,
     ) -> SessionManager:
         """Create an in-memory session (no file persistence), optionally from entries held outside the filesystem."""
-        return SessionManager(
-            cwd if cwd is not None else os.getcwd(), "", None, False, options, entries, _internal=True
-        )
+        manager = SessionManager(cwd if cwd is not None else os.getcwd())
+        manager._persist = False
+        if entries:
+            manager._load_entries(entries, options)
+        else:
+            manager.new_session(options)
+        return manager
 
     @staticmethod
-    def _fork_from_sync(
+    async def fork_from(
         source_path: str,
         target_cwd: str,
         session_dir: str | None = None,
@@ -1770,46 +1750,52 @@ class SessionManager:
     ) -> SessionManager:
         """Fork a session from another project directory into the current project.
         Creates a new session in the target cwd with the full history from the source."""
-        resolved_source_path = resolve_path(source_path)
-        resolved_target_cwd = resolve_path(target_cwd)
-        source_entries = _load_wire_entries_from_file(resolved_source_path)
-        if not source_entries:
-            raise Exception(f"Cannot fork: source session file is empty or invalid: {resolved_source_path}")
 
-        source_header = next((entry for entry in source_entries if entry.get("type") == "session"), None)
-        if source_header is None:
-            raise Exception(f"Cannot fork: source session has no header: {resolved_source_path}")
+        def fork_blocking() -> tuple[str, str, str]:
+            resolved_source_path = resolve_path(source_path)
+            resolved_target_cwd = resolve_path(target_cwd)
+            source_entries = _load_wire_entries_from_file_blocking(resolved_source_path)
+            if not source_entries:
+                raise Exception(f"Cannot fork: source session file is empty or invalid: {resolved_source_path}")
 
-        directory = normalize_path(session_dir) if session_dir else get_default_session_dir(resolved_target_cwd)
-        if not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
+            source_header = next((entry for entry in source_entries if entry.get("type") == "session"), None)
+            if source_header is None:
+                raise Exception(f"Cannot fork: source session has no header: {resolved_source_path}")
 
-        # Create new session file with new ID but forked content
-        session_id = (options or {}).get("id")
-        if session_id is not None:
-            assert_valid_session_id(session_id)
-        new_session_id = session_id if session_id is not None else _create_session_id()
-        timestamp = _iso_now()
-        file_timestamp = timestamp.replace(":", "-").replace(".", "-")
-        new_session_file = os.path.join(directory, f"{file_timestamp}_{new_session_id}.jsonl")
+            directory = (
+                normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(resolved_target_cwd)
+            )
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
 
-        # Write new header pointing to source as parent, with updated cwd
-        new_header = {
-            "type": "session",
-            "version": CURRENT_SESSION_VERSION,
-            "id": new_session_id,
-            "timestamp": timestamp,
-            "cwd": resolved_target_cwd,
-            "parentSession": resolved_source_path,
-        }
-        with open(new_session_file, "x", encoding="utf-8", newline="") as handle:
-            handle.write(_dump_json(new_header) + "\n")
-            # Copy all non-header entries from source
-            for entry in source_entries:
-                if entry.get("type") != "session":
-                    handle.write(_dump_json(entry) + "\n")
+            # Create new session file with new ID but forked content
+            session_id = (options or {}).get("id")
+            if session_id is not None:
+                assert_valid_session_id(session_id)
+            new_session_id = session_id if session_id is not None else _create_session_id()
+            timestamp = _iso_now()
+            file_timestamp = timestamp.replace(":", "-").replace(".", "-")
+            new_session_file = os.path.join(directory, f"{file_timestamp}_{new_session_id}.jsonl")
 
-        return SessionManager(resolved_target_cwd, directory, new_session_file, True, _internal=True)
+            # Write new header pointing to source as parent, with updated cwd
+            new_header = {
+                "type": "session",
+                "version": CURRENT_SESSION_VERSION,
+                "id": new_session_id,
+                "timestamp": timestamp,
+                "cwd": resolved_target_cwd,
+                "parentSession": resolved_source_path,
+            }
+            with open(new_session_file, "x", encoding="utf-8", newline="") as handle:
+                handle.write(_dump_json(new_header) + "\n")
+                # Copy all non-header entries from source
+                for entry in source_entries:
+                    if entry.get("type") != "session":
+                        handle.write(_dump_json(entry) + "\n")
+            return resolved_target_cwd, directory, new_session_file
+
+        resolved_target_cwd, directory, new_session_file = await tonio.spawn_blocking(fork_blocking)
+        return await SessionManager(resolved_target_cwd, directory, session_file=new_session_file)
 
     @staticmethod
     def find_by_id(cwd: str, session_id: str, session_dir: str | None = None) -> Awaitable[str | None]:
@@ -1819,11 +1805,11 @@ class SessionManager:
         pi's scan is synchronous; here it runs on the blocking pool, like the
         other static factories.
         """
-        return tonio.spawn_blocking(SessionManager._find_by_id_sync, cwd, session_id, session_dir)
+        return tonio.spawn_blocking(SessionManager._find_by_id_blocking, cwd, session_id, session_dir)
 
     @staticmethod
-    def _find_by_id_sync(cwd: str, session_id: str, session_dir: str | None = None) -> str | None:
-        directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
+    def _find_by_id_blocking(cwd: str, session_id: str, session_dir: str | None = None) -> str | None:
+        directory = normalize_path(session_dir) if session_dir else get_default_session_dir_blocking(cwd)
         filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
         resolved_cwd = resolve_path(cwd)
 
@@ -1832,7 +1818,7 @@ class SessionManager:
                 if not name.endswith(".jsonl"):
                     continue
                 path = os.path.join(directory, name)
-                header = _read_session_header_for_discovery(path)
+                header = _read_session_header_for_discovery_blocking(path)
                 if header is None or header.get("id") != session_id:
                     continue
                 if filter_cwd and not _session_cwd_matches(_get_session_header_cwd(header), resolved_cwd):
@@ -1851,7 +1837,11 @@ class SessionManager:
         cancel: CancelToken | None = None,
     ) -> list[SessionInfo]:
         """List all sessions for a directory."""
-        directory = normalize_path(session_dir) if session_dir else get_default_session_dir(cwd)
+        directory = (
+            normalize_path(session_dir)
+            if session_dir
+            else await tonio.spawn_blocking(get_default_session_dir_blocking, cwd)
+        )
         filter_cwd = session_dir is not None and directory != _get_default_session_dir_path(cwd)
         resolved_cwd = resolve_path(cwd)
 
@@ -1893,18 +1883,18 @@ class SessionManager:
 
             # One pool hop for the listing plus the per-entry isdir checks:
             # a directory scan is one blocking unit.
-            def _project_dirs() -> list[str]:
+            def project_dirs_blocking() -> list[str]:
                 return [
                     os.path.join(sessions_dir, name)
                     for name in os.listdir(sessions_dir)
                     if os.path.isdir(os.path.join(sessions_dir, name))
                 ]
 
-            dirs = await tonio.spawn_blocking(_project_dirs)
+            dirs = await tonio.spawn_blocking(project_dirs_blocking)
 
             # One pool hop per project directory: the listing plus the stat of each
             # session file are one blocking unit.
-            def list_candidates(directory: str) -> list[_SessionFileCandidate]:
+            def list_candidates_blocking(directory: str) -> list[_SessionFileCandidate]:
                 try:
                     names = os.listdir(directory)
                 except Exception:
@@ -1923,7 +1913,7 @@ class SessionManager:
                 return candidates
 
             def list_dir(directory: str, _index: int) -> Awaitable[list[_SessionFileCandidate]]:
-                return tonio.spawn_blocking(list_candidates, directory)
+                return tonio.spawn_blocking(list_candidates_blocking, directory)
 
             listings = await _map_with_concurrency(dirs, _MAX_CONCURRENT_SESSION_DISCOVERY_LOADS, list_dir, cancel)
             candidates = [candidate for listing in listings for candidate in listing]

@@ -9,6 +9,12 @@ here that chain is one writer task over an unbounded channel (see
 `_enqueue_write`): sets stay ordered, write errors are recorded (not
 raised) and surfaced via drain_errors(), and flush() awaits a ticket.
 
+Loads (`reload`, `set_project_trusted`) open with a flush, as pi's
+`await this.writeQueue`, but then read with awaits where pi reads
+synchronously — so a setter can publish meanwhile. A load publishes only a
+read no setter raced; otherwise it flushes again (the setter's write
+included) and rereads.
+
 Epoch discipline (PROPER_MT_DESIGN.md step 3): the published scope state
 (`_settings`, `_global_settings`, `_project_settings`) is immutable —
 setters deep-copy the scope, run pi's mutation lines on the private copy
@@ -24,18 +30,18 @@ import json
 import math
 import os
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 import tonio.colored as tonio
+from tonio.colored import fs, sync
 from tonio.colored.sync import channel
-from tonio.exceptions import RuntimeNotInitializedError
 
 from pidrei_ai.utils.retry import DEFAULT_MAX_AGENT_RETRY_DELAY_MS
 
 from ..config import CONFIG_DIR_NAME, get_agent_dir
-from ..utils.lockfile import acquire_lock_sync_with_retry
+from ..utils.lockfile import FileLock
 from ..utils.paths import normalize_path, resolve_path
 from ..utils.text import strip_bom
 from .http_config import DEFAULT_HTTP_IDLE_TIMEOUT_MS, parse_http_idle_timeout_ms
@@ -168,7 +174,7 @@ def _to_settings_error(scope: SettingsScope, error: Exception, path: str | None 
 
 
 class SettingsStorage(Protocol):
-    def with_lock(self, scope: SettingsScope, fn: Any) -> None: ...
+    async def with_lock_async(self, scope: SettingsScope, fn: Any) -> None: ...
 
 
 class FileSettingsStorage:
@@ -178,35 +184,30 @@ class FileSettingsStorage:
         self._global_settings_path = os.path.join(resolved_agent_dir, "settings.json")
         self._project_settings_path = os.path.join(resolved_cwd, CONFIG_DIR_NAME, "settings.json")
 
-    def with_lock(self, scope: SettingsScope, fn: Any) -> None:
-        path = self._global_settings_path if scope == "global" else self._project_settings_path
-        directory = os.path.dirname(path)
-
-        release = None
+    async def with_lock_async(self, scope: SettingsScope, fn: Any) -> None:
+        path = fs.Path(self._global_settings_path if scope == "global" else self._project_settings_path)
+        lock = FileLock(str(path))
         try:
             # Only create directory and lock if file exists or we need to write
-            file_exists = os.path.exists(path)
-            if file_exists:
-                release = acquire_lock_sync_with_retry(path)
             current = None
-            if file_exists:
-                with open(path, encoding="utf-8") as f:
-                    current = f.read()
+            if await path.exists():
+                await lock.acquire()
+                current = await path.read_text(encoding="utf-8")
             next_content = fn(current)
             if next_content is not None:
                 # Only create directory when we actually need to write
-                if not os.path.exists(directory):
-                    os.makedirs(directory, exist_ok=True)
-                if release is None:
-                    release = acquire_lock_sync_with_retry(path)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(next_content)
+                await path.parent.mkdir(parents=True, exist_ok=True)
+                if not lock.held:
+                    await lock.acquire()
+                await path.write_text(next_content, encoding="utf-8")
         finally:
-            if release is not None:
-                release()
+            await lock.release()
 
 
 class InMemorySettingsStorage:
+    """No I/O, so besides the storage interface it offers the sync `with_lock`
+    that in-memory managers write through inline."""
+
     def __init__(self):
         self._global: str | None = None
         self._project: str | None = None
@@ -222,112 +223,96 @@ class InMemorySettingsStorage:
                 else:
                     self._project = next_content
 
+    async def with_lock_async(self, scope: SettingsScope, fn: Any) -> None:
+        self.with_lock(scope, fn)
+
 
 class SettingsManager:
+    """`await SettingsManager(cwd, agent_dir)` loads the global and project
+    `settings.json`; `await SettingsManager(storage=...)` loads an arbitrary
+    backend. `__init__` does no I/O: until awaited, the settings are empty."""
+
     def __init__(
         self,
-        storage: SettingsStorage,
-        initial_global: Settings,
-        initial_project: Settings,
-        global_load_error: Exception | None = None,
-        project_load_error: Exception | None = None,
-        initial_errors: list[SettingsError] | None = None,
+        cwd: str | None = None,
+        agent_dir: str | None = None,
+        *,
         project_trusted: bool = True,
-        settings_paths: SettingsPaths | None = None,
+        storage: SettingsStorage | None = None,
     ):
+        settings_paths: SettingsPaths = {}
+        if storage is None:
+            if cwd is None:
+                raise ValueError("pass cwd for file-backed settings, or a storage backend")
+            resolved_cwd = resolve_path(cwd)
+            resolved_agent_dir = resolve_path(agent_dir if agent_dir is not None else get_agent_dir())
+            storage = FileSettingsStorage(resolved_cwd, resolved_agent_dir)
+            settings_paths = {
+                "global": os.path.join(resolved_agent_dir, "settings.json"),
+                "project": os.path.join(resolved_cwd, CONFIG_DIR_NAME, "settings.json"),
+            }
+        elif cwd is not None or agent_dir is not None:
+            raise ValueError("pass either cwd/agent_dir or a storage backend, not both")
         self._storage = storage
-        self._global_settings = initial_global
-        self._project_settings = initial_project
+        self._global_settings: Settings = {}
+        self._project_settings: Settings = {}
         self._project_trusted = project_trusted
         self._modified_fields: set[str] = set()
         self._modified_nested_fields: dict[str, set[str]] = {}
         self._modified_project_fields: set[str] = set()
         self._modified_project_nested_fields: dict[str, set[str]] = {}
-        self._global_settings_load_error = global_load_error
-        self._project_settings_load_error = project_load_error
+        self._global_settings_load_error: Exception | None = None
+        self._project_settings_load_error: Exception | None = None
         # Guards every writer-side section: scope-snapshot rebinds, the
         # modified-field sets, the error list, and the writer channel. Readers
-        # never take it — they pin the published snapshots instead.
+        # never take it — they pin the published snapshots instead. Only ever
+        # held by synchronous code: never across an await or I/O.
         self._write_lock = threading.RLock()
         # pi's `writeQueue` promise chain is one writer task over an unbounded
         # channel: writes run in enqueue order, a failed one never blocks the
         # next, and `flush()` is a ticket that the writer sets when it reaches
-        # it. Started lazily by the first write on a runtime; `None` until
-        # then. Guarded by `_write_lock`, which is never held across an await.
+        # it. Started lazily by the first write; `None` until then.
         self._writes: Any = None
-        self._errors: list[SettingsError] = list(initial_errors or [])
-        self._settings_paths: SettingsPaths = dict(settings_paths or {})
+        # Bumped (under `_write_lock`) by every setter publish; a load that
+        # sees it move while it read discards the read (see the module
+        # docstring).
+        self._mutations = 0
+        # One load at a time (`reload`, `set_project_trusted`).
+        self._load_lock = sync.Lock()
+        self._errors: list[SettingsError] = []
+        # File paths for reported storage errors; empty for other backends.
+        self._settings_paths: SettingsPaths = settings_paths
         self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
-    # -- constructors ---------------------------------------------------------
+    def __await__(self):
+        return self._start().__await__()
 
-    @staticmethod
-    def create(cwd: str, agent_dir: str | None = None, *, project_trusted: bool = True) -> Awaitable[SettingsManager]:
-        """Create a SettingsManager that loads from files.
-
-        Construction reads both settings files under a lock, so it is one
-        blocking unit handed to the pool — the same treatment the `SessionManager`
-        factories get. Sync def returning the awaitable, per the standing rule.
-        """
-        return tonio.spawn_blocking(SettingsManager.create_sync, cwd, agent_dir, project_trusted=project_trusted)
-
-    @staticmethod
-    def create_sync(cwd: str, agent_dir: str | None = None, *, project_trusted: bool = True) -> SettingsManager:
-        """Blocking construction. Only for callers already off the runtime —
-        CLI code before `tonio.run`, and pool bodies. Everything on the runtime
-        awaits `create()`."""
-        resolved_cwd = resolve_path(cwd)
-        resolved_agent_dir = resolve_path(agent_dir if agent_dir is not None else get_agent_dir())
-        storage = FileSettingsStorage(resolved_cwd, resolved_agent_dir)
-        return SettingsManager._from_storage_with_paths(
-            storage,
-            project_trusted=project_trusted,
-            settings_paths={
-                "global": os.path.join(resolved_agent_dir, "settings.json"),
-                "project": os.path.join(resolved_cwd, CONFIG_DIR_NAME, "settings.json"),
-            },
+    async def _start(self) -> SettingsManager:
+        global_settings, global_error = await SettingsManager._try_load_from_storage(self._storage, "global")
+        project_settings, project_error = await SettingsManager._try_load_from_storage(
+            self._storage, "project", self._project_trusted
         )
-
-    @staticmethod
-    def from_storage(storage: SettingsStorage, *, project_trusted: bool = True) -> SettingsManager:
-        """Create a SettingsManager from an arbitrary storage backend."""
-        return SettingsManager._from_storage_with_paths(storage, project_trusted=project_trusted)
-
-    @staticmethod
-    def _from_storage_with_paths(
-        storage: SettingsStorage, *, project_trusted: bool = True, settings_paths: SettingsPaths | None = None
-    ) -> SettingsManager:
-        """Create a manager while retaining optional file paths for reported storage errors."""
-        paths = settings_paths or {}
-        global_settings, global_error = SettingsManager._try_load_from_storage(storage, "global")
-        project_settings, project_error = SettingsManager._try_load_from_storage(storage, "project", project_trusted)
-        initial_errors: list[SettingsError] = []
-        if global_error is not None:
-            initial_errors.append(_to_settings_error("global", global_error, paths.get("global")))
-        if project_error is not None:
-            initial_errors.append(_to_settings_error("project", project_error, paths.get("project")))
-
-        return SettingsManager(
-            storage,
-            global_settings,
-            project_settings,
-            global_error,
-            project_error,
-            initial_errors,
-            project_trusted,
-            paths,
-        )
+        with self._write_lock:
+            self._publish_reload(global_settings, global_error, project_settings, project_error)
+        return self
 
     @staticmethod
     def in_memory(settings: Settings | None = None, *, project_trusted: bool = True) -> SettingsManager:
-        """Create an in-memory SettingsManager (no file I/O)."""
+        """Create an in-memory SettingsManager (no file I/O, so no await: the
+        seeded content is parsed back the way a load would)."""
         storage = InMemorySettingsStorage()
         initial_settings = SettingsManager._migrate_settings(copy.deepcopy(settings or {}))
-        storage.with_lock("global", lambda _current: json.dumps(initial_settings, indent=2))
-        return SettingsManager.from_storage(storage, project_trusted=project_trusted)
+        content = json.dumps(initial_settings, indent=2)
+        storage.with_lock("global", lambda _current: content)
+        manager = SettingsManager(storage=storage, project_trusted=project_trusted)
+        with manager._write_lock:
+            manager._publish_reload(SettingsManager._parse_settings(content), None, {}, None)
+        return manager
 
     @staticmethod
-    def _load_from_storage(storage: SettingsStorage, scope: SettingsScope, project_trusted: bool = True) -> Settings:
+    async def _load_from_storage(
+        storage: SettingsStorage, scope: SettingsScope, project_trusted: bool = True
+    ) -> Settings:
         if scope == "project" and not project_trusted:
             return {}
 
@@ -337,19 +322,22 @@ class SettingsManager:
             nonlocal content
             content = current
 
-        storage.with_lock(scope, read)
+        await storage.with_lock_async(scope, read)
+        return SettingsManager._parse_settings(content)
 
+    @staticmethod
+    def _parse_settings(content: str | None) -> Settings:
         if not content:
             return {}
         settings = json.loads(strip_bom(content))
         return SettingsManager._migrate_settings(settings)
 
     @staticmethod
-    def _try_load_from_storage(
+    async def _try_load_from_storage(
         storage: SettingsStorage, scope: SettingsScope, project_trusted: bool = True
     ) -> tuple[Settings, Exception | None]:
         try:
-            return SettingsManager._load_from_storage(storage, scope, project_trusted), None
+            return await SettingsManager._load_from_storage(storage, scope, project_trusted), None
         except Exception as error:
             return {}, error
 
@@ -412,27 +400,37 @@ class SettingsManager:
     def is_project_trusted(self) -> bool:
         return self._project_trusted
 
-    def set_project_trusted(self, trusted: bool) -> None:
-        with self._write_lock:
-            if self._project_trusted == trusted:
-                return
+    async def set_project_trusted(self, trusted: bool) -> None:
+        async with self._load_lock:
+            with self._write_lock:
+                if self._project_trusted == trusted:
+                    return
 
-            self._project_trusted = trusted
-            self._modified_project_fields.clear()
-            self._modified_project_nested_fields.clear()
+                self._project_trusted = trusted
+                self._modified_project_fields.clear()
+                self._modified_project_nested_fields.clear()
 
-            if not trusted:
-                self._project_settings = {}
-                self._project_settings_load_error = None
-                self._settings = deep_merge_settings(self._global_settings, self._project_settings)
-                return
+                if not trusted:
+                    self._project_settings = {}
+                    self._project_settings_load_error = None
+                    self._settings = deep_merge_settings(self._global_settings, self._project_settings)
+                    return
 
-            project_settings, project_error = SettingsManager._try_load_from_storage(self._storage, "project", trusted)
-            self._project_settings = project_settings
-            self._project_settings_load_error = project_error
-            if project_error is not None:
-                self._record_error("project", project_error)
-            self._settings = deep_merge_settings(self._global_settings, self._project_settings)
+            while True:
+                await self.flush()
+                mutations = self._mutations
+                project_settings, project_error = await SettingsManager._try_load_from_storage(
+                    self._storage, "project", trusted
+                )
+                with self._write_lock:
+                    if self._mutations != mutations:
+                        continue  # a setter raced the read
+                    self._project_settings = project_settings
+                    self._project_settings_load_error = project_error
+                    if project_error is not None:
+                        self._record_error("project", project_error)
+                    self._settings = deep_merge_settings(self._global_settings, self._project_settings)
+                    return
 
     async def reload(self) -> None:
         """pi: `async reload()` opens with `await this.writeQueue`.
@@ -440,36 +438,48 @@ class SettingsManager:
         Draining first matters: a queued write that lands after the re-read
         would be invisible to the reloaded state.
         """
-        await self.flush()
-        # Two file reads (and the lock retry ladder's `time.sleep`) — pool-side.
-        await tonio.spawn_blocking(self._reload_sync)
+        async with self._load_lock:
+            while True:
+                await self.flush()
+                mutations = self._mutations
+                global_settings, global_error = await SettingsManager._try_load_from_storage(self._storage, "global")
+                project_settings, project_error = await SettingsManager._try_load_from_storage(
+                    self._storage, "project", self._project_trusted
+                )
+                with self._write_lock:
+                    if self._mutations != mutations:
+                        continue  # a setter raced the read
+                    self._publish_reload(global_settings, global_error, project_settings, project_error)
+                    return
 
-    def _reload_sync(self) -> None:
-        with self._write_lock:
-            global_settings, global_error = SettingsManager._try_load_from_storage(self._storage, "global")
-            if global_error is None:
-                self._global_settings = global_settings
-                self._global_settings_load_error = None
-            else:
-                self._global_settings_load_error = global_error
-                self._record_error("global", global_error)
+    def _publish_reload(
+        self,
+        global_settings: Settings,
+        global_error: Exception | None,
+        project_settings: Settings,
+        project_error: Exception | None,
+    ) -> None:
+        """Callers hold `_write_lock`."""
+        if global_error is None:
+            self._global_settings = global_settings
+            self._global_settings_load_error = None
+        else:
+            self._global_settings_load_error = global_error
+            self._record_error("global", global_error)
 
-            self._modified_fields.clear()
-            self._modified_nested_fields.clear()
-            self._modified_project_fields.clear()
-            self._modified_project_nested_fields.clear()
+        self._modified_fields.clear()
+        self._modified_nested_fields.clear()
+        self._modified_project_fields.clear()
+        self._modified_project_nested_fields.clear()
 
-            project_settings, project_error = SettingsManager._try_load_from_storage(
-                self._storage, "project", self._project_trusted
-            )
-            if project_error is None:
-                self._project_settings = project_settings
-                self._project_settings_load_error = None
-            else:
-                self._project_settings_load_error = project_error
-                self._record_error("project", project_error)
+        if project_error is None:
+            self._project_settings = project_settings
+            self._project_settings_load_error = None
+        else:
+            self._project_settings_load_error = project_error
+            self._record_error("project", project_error)
 
-            self._settings = deep_merge_settings(self._global_settings, self._project_settings)
+        self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
     def apply_overrides(self, overrides: Settings) -> None:
         """Apply additional overrides on top of current settings."""
@@ -506,9 +516,10 @@ class SettingsManager:
             self._modified_project_fields.clear()
             self._modified_project_nested_fields.clear()
 
-    def _enqueue_write(self, scope: SettingsScope, task: Any) -> None:
+    def _enqueue_write(self, scope: SettingsScope, persist: Callable[[str | None], str]) -> None:
         """Append to the write chain and return, mirroring pi's
-        `writeQueue = writeQueue.then(task).catch(recordError)`.
+        `writeQueue = writeQueue.then(task).catch(recordError)`. `persist`
+        maps the scope's current file content to the new one.
 
         Stays sync so setters stay sync: pi's setters do not await either, and
         the TUI invokes them from synchronous key handling. Errors are recorded
@@ -518,20 +529,10 @@ class SettingsManager:
         In-memory storage runs inline: there is no filesystem to get off, and
         spawning would demand a live runtime for what is a dict assignment.
         """
-        if not isinstance(self._storage, FileSettingsStorage):
-            self._run_write(scope, task)
+        if isinstance(self._storage, InMemorySettingsStorage):
+            self._run_write(scope, persist)
             return
-
-        try:
-            writes = self._ensure_writer()
-        except RuntimeNotInitializedError:
-            # No runtime means no worker to block, so blocking here cannot
-            # violate the policy — the same boundary condition that puts
-            # import-time code outside it. Reached from sync CLI paths and
-            # from tests that drive the manager without `tonio.run`.
-            self._run_write(scope, task)
-            return
-        writes.send((scope, task))
+        self._ensure_writer().send((scope, persist, None))
 
     def _ensure_writer(self) -> Any:
         """Return the writer's channel, starting the writer task on first use."""
@@ -542,37 +543,41 @@ class SettingsManager:
                 self._writes = sender
             return self._writes
 
-    def _run_write(self, scope: SettingsScope, task: Any) -> None:
+    def _run_write(self, scope: SettingsScope, persist: Callable[[str | None], str]) -> None:
         try:
             if scope == "project":
                 self._assert_project_trusted_for_write()
-            task()
+            self._storage.with_lock(scope, persist)
             self._clear_modified_scope(scope)
         except Exception as error:
             self._record_error(scope, error)
 
     async def _write_loop(self, receiver: Any) -> None:
+        """Items are `(scope, persist, done)`: a write carries `persist`, a
+        `flush()` ticket carries `done` (set once everything before it is
+        done)."""
         while True:
-            item = await receiver.receive()
-            if isinstance(item, tonio.Event):
-                item.set()  # a `flush()` ticket: everything before it is done
-                continue
-            scope, task = item
-            try:
-                if scope == "project":
-                    self._assert_project_trusted_for_write()
-                await tonio.spawn_blocking(task)
-                self._clear_modified_scope(scope)
-            except Exception as error:
-                self._record_error(scope, error)
+            scope, persist, done = await receiver.receive()
+            if persist is not None:
+                try:
+                    if scope == "project":
+                        self._assert_project_trusted_for_write()
+                    await self._storage.with_lock_async(scope, persist)
+                    self._clear_modified_scope(scope)
+                except Exception as error:
+                    self._record_error(scope, error)
+            if done is not None:
+                done.set()
 
-    def _persist_scoped_settings(
-        self,
-        scope: SettingsScope,
+    @staticmethod
+    def _persist_fn(
         snapshot_settings: Settings,
         modified_fields: set[str],
         modified_nested_fields: dict[str, set[str]],
-    ) -> None:
+    ) -> Callable[[str | None], str]:
+        """The write for a scope: its file content, with the modified fields
+        taken from `snapshot_settings`."""
+
         def persist(current: str | None) -> str:
             current_file_settings: Settings = (
                 SettingsManager._migrate_settings(json.loads(strip_bom(current))) if current else {}
@@ -592,7 +597,7 @@ class SettingsManager:
 
             return json.dumps(merged_settings, indent=2)
 
-        self._storage.with_lock(scope, persist)
+        return persist
 
     def _save(self) -> None:
         """Publish the merged snapshot and enqueue persistence. Callers hold
@@ -609,16 +614,14 @@ class SettingsManager:
         modified_nested_fields = {key: set(value) for key, value in self._modified_nested_fields.items()}
 
         self._enqueue_write(
-            "global",
-            lambda: self._persist_scoped_settings(
-                "global", snapshot_global_settings, modified_fields, modified_nested_fields
-            ),
+            "global", SettingsManager._persist_fn(snapshot_global_settings, modified_fields, modified_nested_fields)
         )
 
     def _save_project_settings(self, settings: Settings) -> None:
         with self._write_lock:
             self._assert_project_trusted_for_write()
             self._project_settings = copy.deepcopy(settings)
+            self._mutations += 1
             self._settings = deep_merge_settings(self._global_settings, self._project_settings)
 
             if self._project_settings_load_error is not None:
@@ -630,9 +633,7 @@ class SettingsManager:
             modified_nested_fields = {key: set(value) for key, value in self._modified_project_nested_fields.items()}
             self._enqueue_write(
                 "project",
-                lambda: self._persist_scoped_settings(
-                    "project", snapshot_project_settings, modified_fields, modified_nested_fields
-                ),
+                SettingsManager._persist_fn(snapshot_project_settings, modified_fields, modified_nested_fields),
             )
 
     def _update_project_settings(self, field: str, update: Any) -> None:
@@ -652,6 +653,7 @@ class SettingsManager:
             settings = copy.deepcopy(self._global_settings)
             update(settings)
             self._global_settings = settings
+            self._mutations += 1
             self._save()
 
     def _set_global(self, field: str, value: Any) -> None:
@@ -676,7 +678,7 @@ class SettingsManager:
         if writes is None:
             return
         ticket = tonio.Event()
-        writes.send(ticket)
+        writes.send((None, None, ticket))
         await ticket.wait()
 
     def drain_errors(self) -> list[SettingsError]:

@@ -4,7 +4,7 @@ import os
 import re
 
 
-def is_wsl(env=None) -> bool:
+def is_wsl_blocking(env=None) -> bool:
     """Windows Subsystem for Linux, where Windows executables are reachable through interop.
 
     Blocking (reads `/proc/version`): async callers offload it.

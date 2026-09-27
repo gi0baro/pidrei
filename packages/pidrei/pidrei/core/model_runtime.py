@@ -147,8 +147,55 @@ class CredentialSynchronizationError(Exception):
             self.__cause__ = cause
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _RuntimeOptions:
+    """`ModelRuntime`'s constructor arguments, applied when it is awaited."""
+
+    credentials: CredentialStore | None
+    auth_path: str | None
+    models_path: object
+    models_store: ModelsStore | None
+    models_store_path: str | None
+    allow_model_network: bool
+    model_refresh_timeout_ms: float | None
+    catalog_base_url: str | None
+    cancel: CancelToken | None
+    refresh_on_create: bool
+
+
 class ModelRuntime:
+    """`await ModelRuntime(...)` loads the credentials, `models.json` and the
+    builtin providers, then (by default) refreshes the models. `__init__` only
+    stores the options; the runtime is usable once awaited."""
+
     def __init__(
+        self,
+        *,
+        credentials: CredentialStore | None = None,
+        auth_path: str | None = None,
+        models_path: object = ...,  # str path; None disables models.json entirely; default ~/.pidrei/agent/models.json
+        models_store: ModelsStore | None = None,
+        models_store_path: str | None = None,
+        allow_model_network: bool = False,
+        model_refresh_timeout_ms: float | None = None,
+        catalog_base_url: str | None = None,
+        cancel: CancelToken | None = None,
+        refresh_on_create: bool = True,
+    ):
+        self._options = _RuntimeOptions(
+            credentials=credentials,
+            auth_path=auth_path,
+            models_path=models_path,
+            models_store=models_store,
+            models_store_path=models_store_path,
+            allow_model_network=allow_model_network,
+            model_refresh_timeout_ms=model_refresh_timeout_ms,
+            catalog_base_url=catalog_base_url,
+            cancel=cancel,
+            refresh_on_create=refresh_on_create,
+        )
+
+    def _init_state(
         self,
         credentials: RuntimeCredentials,
         config: ModelConfig,
@@ -156,7 +203,7 @@ class ModelRuntime:
         models_store: ModelsStore,
         providers: list[Provider],
         model_network_enabled: bool,
-    ):
+    ) -> None:
         self._credentials = credentials
         self._config = config
         self._models_path = models_path
@@ -232,36 +279,28 @@ class ModelRuntime:
         self._models = create_models(credentials=credentials, models_store=models_store)
         self._rebuild_providers()
 
-    @staticmethod
-    async def create(
-        *,
-        credentials: CredentialStore | None = None,
-        auth_path: str | None = None,
-        models_path: object = ...,  # str path; None disables models.json entirely; default ~/.pidrei/agent/models.json
-        models_store: ModelsStore | None = None,
-        models_store_path: str | None = None,
-        allow_model_network: bool = False,
-        model_refresh_timeout_ms: float | None = None,
-        catalog_base_url: str | None = None,
-        cancel: CancelToken | None = None,
-        refresh_on_create: bool = True,
-    ) -> ModelRuntime:
+    def __await__(self):
+        return self._start().__await__()
+
+    async def _start(self) -> ModelRuntime:
+        options = self._options
         runtime_credentials = RuntimeCredentials(
-            credentials if credentials is not None else await AuthStorage.create(auth_path)
+            options.credentials if options.credentials is not None else await AuthStorage(options.auth_path)
         )
         resolved_models_path: str | None
-        if models_path is None:
+        if options.models_path is None:
             resolved_models_path = None
-        elif models_path is ...:
+        elif options.models_path is ...:
             resolved_models_path = os.path.join(get_agent_dir(), "models.json")
         else:
-            resolved_models_path = models_path
+            resolved_models_path = options.models_path
         config = await ModelConfig.load(resolved_models_path)
+        models_store = options.models_store
         if models_store is None:
             if resolved_models_path:
                 store_path = (
-                    models_store_path
-                    if models_store_path is not None
+                    options.models_store_path
+                    if options.models_store_path is not None
                     else os.path.join(os.path.dirname(resolved_models_path), "models-store.json")
                 )
                 models_store = FileModelsStore(store_path)
@@ -269,10 +308,10 @@ class ModelRuntime:
                 models_store = InMemoryCodingAgentModelsStore()
         builtin_model_data_generated_at = await get_builtin_model_data_generated_at()
         providers = [
-            with_remote_catalog(provider, catalog_base_url, builtin_model_data_generated_at)
+            with_remote_catalog(provider, options.catalog_base_url, builtin_model_data_generated_at)
             for provider in builtin_providers()
         ]
-        runtime = ModelRuntime(
+        self._init_state(
             runtime_credentials,
             config,
             resolved_models_path,
@@ -280,12 +319,13 @@ class ModelRuntime:
             providers,
             os.environ.get("PIDREI_OFFLINE") is None,
         )
-        runtime._rebuild_providers()
-        refresh_from_network = runtime._model_network_enabled and allow_model_network is True
-        controller = CancelToken() if refresh_from_network and model_refresh_timeout_ms is not None else None
+        self._rebuild_providers()
+        refresh_from_network = self._model_network_enabled and options.allow_model_network is True
+        timeout_ms = options.model_refresh_timeout_ms
+        controller = CancelToken() if refresh_from_network and timeout_ms is not None else None
         settled = tonio.Event()
         if controller is not None:
-            timeout_s = model_refresh_timeout_ms / 1000
+            timeout_s = timeout_ms / 1000
 
             async def watchdog() -> None:
                 await settled.wait(timeout_s)
@@ -293,14 +333,14 @@ class ModelRuntime:
                     controller.cancel()
 
             tonio.spawn.without_tracking(watchdog())
-        combined = combine_cancel_tokens(cancel, controller)
+        combined = combine_cancel_tokens(options.cancel, controller)
         try:
-            if refresh_on_create:
-                await runtime.refresh(ModelsRefreshOptions(allow_network=refresh_from_network, cancel=combined.token))
+            if options.refresh_on_create:
+                await self.refresh(ModelsRefreshOptions(allow_network=refresh_from_network, cancel=combined.token))
         finally:
             combined.cleanup()
             settled.set()
-        return runtime
+        return self
 
     # -- provider composition --------------------------------------------------
 

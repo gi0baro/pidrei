@@ -30,7 +30,7 @@ async def test_loads_frontmatter_and_settings_with_a_leading_bom(tmp_path):
         BOM + json.dumps({"defaultProvider": "project-provider"}), encoding="utf-8"
     )
 
-    settings = await SettingsManager.create(str(project_dir), str(agent_dir))
+    settings = await SettingsManager(str(project_dir), str(agent_dir))
     assert settings.get_default_model() == "global-model"
     assert settings.get_default_provider() == "project-provider"
 

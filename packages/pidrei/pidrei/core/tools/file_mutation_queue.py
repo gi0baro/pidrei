@@ -15,7 +15,7 @@ _queues: dict[str, tonio.Event] = {}
 _guard = threading.Lock()
 
 
-def _mutation_queue_key(file_path: str) -> str:
+def _mutation_queue_key_blocking(file_path: str) -> str:
     resolved = os.path.abspath(file_path)
     try:
         return os.path.realpath(resolved, strict=True)
@@ -26,15 +26,15 @@ def _mutation_queue_key(file_path: str) -> str:
 def resolve_mutation_queue_key(file_path: str):
     """Resolve the queue key off the runtime.
 
-    `_mutation_queue_key` calls `realpath`, which is filesystem I/O, and
+    `_mutation_queue_key_blocking` calls `realpath`, which is filesystem I/O, and
     `with_file_mutation_queue` cannot do it itself: registration has to stay
     synchronous (see below), so there is nowhere in it to await. Async callers
     resolve the key here first and hand it in.
     """
-    return tonio.spawn_blocking(_mutation_queue_key, file_path)
+    return tonio.spawn_blocking(_mutation_queue_key_blocking, file_path)
 
 
-def with_file_mutation_queue(file_path: str, fn, *, queue_key: str | None = None):
+def with_file_mutation_queue(file_path: str, fn, *, queue_key: str):
     """Serialize file mutation operations targeting the same file.
     Operations for different files still run in parallel.
 
@@ -44,11 +44,11 @@ def with_file_mutation_queue(file_path: str, fn, *, queue_key: str | None = None
     during argument evaluation, before the tasks are scheduled — so this must
     not become a coroutine.
 
-    `queue_key` is the pre-resolved key from `resolve_mutation_queue_key`.
-    Without it the key is resolved inline, which touches the filesystem and is
-    only acceptable off the runtime.
+    `queue_key` is `await resolve_mutation_queue_key(file_path)`: resolving it
+    is filesystem I/O, which registration cannot await. pi's signature has no
+    such argument.
     """
-    key = queue_key if queue_key is not None else _mutation_queue_key(file_path)
+    key = queue_key
     done = tonio.Event()
     with _guard:
         previous = _queues.get(key)

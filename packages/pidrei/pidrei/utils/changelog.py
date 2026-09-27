@@ -23,10 +23,11 @@ Three deliberate divergences, all following from whose changelog this reads:
 
 import posixpath
 import re
-import sys
 import urllib.parse
 
 from tonio.colored import fs
+
+from ..core.output_guard import write_stderr
 
 
 GITHUB_REPO = "gi0baro/pidrei"
@@ -169,7 +170,7 @@ async def parse_changelog(changelog_path: str) -> list:
 
         return entries
     except Exception as error:
-        print(f"Warning: Could not parse changelog: {error}", file=sys.stderr)
+        write_stderr(f"Warning: Could not parse changelog: {error}\n")
         return []
 
 

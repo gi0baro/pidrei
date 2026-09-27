@@ -458,6 +458,10 @@ To send raw escape sequences to the terminal (desktop notifications via OSC
 `sys.stdout`: while the TUI runs, its output pump is the terminal's only
 writer, and a direct write can land in the middle of a frame.
 `write_terminal` queues behind the pump; it does nothing without a UI.
+Other stdout/stderr output goes through `write_stdout`/`write_stderr` from
+`pidrei.core.output_guard`: they queue the text for pidrei's stdio writer
+instead of writing on the runtime (`print` and `sys.stdout` end up there too,
+but only as a stand-in for code that cannot be changed).
 
 Component code — a custom component's `handle_input`, a custom editor from
 `set_editor_component` — is synchronous, so it cannot await a dialog's

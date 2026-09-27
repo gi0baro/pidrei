@@ -18,7 +18,7 @@ def open_browser(target: str) -> None:
     """
     cmd = ["open", target] if sys.platform == "darwin" else ["xdg-open", target]
 
-    def launch() -> None:
+    def launch_blocking() -> None:
         try:
             subprocess.Popen(  # noqa: S603
                 cmd,
@@ -34,6 +34,6 @@ def open_browser(target: str) -> None:
     # fork/exec blocks it. Nothing awaits the launch and failures are already
     # swallowed, so hand it to the pool and return.
     try:
-        tonio.spawn.without_tracking(tonio.spawn_blocking(launch))
+        tonio.spawn.without_tracking(tonio.spawn_blocking(launch_blocking))
     except RuntimeNotInitializedError:
-        launch()  # no runtime, so no worker to protect
+        launch_blocking()  # no runtime, so no worker to protect

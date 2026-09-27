@@ -99,7 +99,7 @@ async def test_does_not_cache_direct_load_extensions_calls(fixture):
 @pytest.mark.tonio
 async def test_clears_the_cache_on_resource_loader_reload(fixture):
     fixture.write_counting_extension(os.path.join(fixture.agent_dir, "extensions", "counting.py"))
-    loader = DefaultResourceLoader(
+    loader = await DefaultResourceLoader(
         cwd=fixture.cwd,
         agent_dir=fixture.agent_dir,
         no_skills=True,

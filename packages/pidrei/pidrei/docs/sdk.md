@@ -116,7 +116,7 @@ from pidrei_ai.types import Context, SimpleStreamOptions, TextContent, UserMessa
 
 
 async def main():
-    runtime = await ModelRuntime.create()
+    runtime = await ModelRuntime()
     model = runtime.get_model("anthropic", "claude-sonnet-4-5")
     message = UserMessage(content=[TextContent(text="Hi")], timestamp=int(time.time() * 1000))
 

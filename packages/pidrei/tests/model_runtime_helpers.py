@@ -9,7 +9,7 @@ from pidrei_ai.types import Model, ModelCost
 async def create_model_registry(credentials, models_path: str) -> ModelRegistry:
     """Load optional models.json configuration without introducing file-backed
     catalog locks into unit tests."""
-    runtime = await ModelRuntime.create(
+    runtime = await ModelRuntime(
         credentials=credentials,
         models_path=models_path,
         models_store=InMemoryCodingAgentModelsStore(),
@@ -19,7 +19,7 @@ async def create_model_registry(credentials, models_path: str) -> ModelRegistry:
 
 
 async def create_in_memory_model_registry(credentials) -> ModelRegistry:
-    runtime = await ModelRuntime.create(credentials=credentials, models_path=None, allow_model_network=False)
+    runtime = await ModelRuntime(credentials=credentials, models_path=None, allow_model_network=False)
     return ModelRegistry(runtime)
 
 

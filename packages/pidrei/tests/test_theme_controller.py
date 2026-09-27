@@ -13,7 +13,7 @@ import threading
 import pytest
 
 from pidrei.core.settings_manager import SettingsManager
-from pidrei.modes.interactive.theme import init_theme_sync, theme
+from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.modes.interactive.theme.theme_controller import InteractiveThemeController
 
 
@@ -90,9 +90,10 @@ def _env(name: str, value: str):
 
 
 @pytest.fixture(autouse=True)
-def _reset_theme(request):
-    init_theme_sync("dark")
-    request.addfinalizer(lambda: init_theme_sync("dark"))
+async def _reset_theme():
+    await init_theme("dark")
+    yield
+    await init_theme("dark")
 
 
 def _create_controller(ui, get_settings_manager, initial_theme_setting=None):

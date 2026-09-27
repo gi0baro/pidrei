@@ -69,6 +69,12 @@ class VirtualTerminal:
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
         """No-op for virtual terminal - no stdin to drain."""
 
+    def arm(self) -> None:
+        """No-op: writes land in the screen emulator at once."""
+
+    async def release(self) -> None:
+        """No-op, as `arm`."""
+
     async def stop(self) -> None:
         # Disable bracketed paste mode
         self._feed("\x1b[?2004l")
@@ -174,10 +180,10 @@ class VirtualTerminal:
     def set_progress(self, active: bool) -> None:
         pass
 
-    # Test-specific methods not in the Terminal protocol
-
-    def close(self) -> None:
+    async def close(self) -> None:
         pass
+
+    # Test-specific methods not in the Terminal protocol
 
     async def send_input(self, data: str) -> None:
         """Simulate keyboard input: offered to ``on_reply`` first, as

@@ -1,13 +1,10 @@
 """Mirrors pi coding-agent test/print-mode.test.ts.
 
 pi mocks output via vi.spyOn(console.error) and fake runtime hosts; here
-the output-guard functions are swapped on the module and stderr is
-captured by hand (predates tonio 0.9.14; `monkeypatch`/`capsys` work now).
+the output-guard functions (stdout and stderr alike) are swapped on the module.
 """
 
 import contextlib
-import io
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -29,17 +26,6 @@ def _patched(module, **attrs):
     finally:
         for name, value in saved.items():
             setattr(module, name, value)
-
-
-@contextlib.contextmanager
-def _captured_stderr():
-    buffer = io.StringIO()
-    saved = sys.stderr
-    sys.stderr = buffer
-    try:
-        yield buffer
-    finally:
-        sys.stderr = saved
 
 
 class _FakeExtensionRunner:
@@ -114,10 +100,10 @@ class TestRunPrintMode:
         images = [ImageContent(mime_type="image/png", data="abc")]
         outputs = []
 
-        async def flush():
+        async def drain():
             pass
 
-        with _patched(print_mode, write_raw_stdout=outputs.append, flush_raw_stdout=flush):
+        with _patched(print_mode, write_raw_stdout=outputs.append, drain_output=drain):
             exit_code = await run_print_mode(
                 runtime_host, PrintModeOptions(mode="text", initial_message="Say done", initial_images=images)
             )
@@ -136,10 +122,10 @@ class TestRunPrintMode:
         session = runtime_host.session
         outputs = []
 
-        async def flush():
+        async def drain():
             pass
 
-        with _patched(print_mode, write_raw_stdout=outputs.append, flush_raw_stdout=flush):
+        with _patched(print_mode, write_raw_stdout=outputs.append, drain_output=drain):
             exit_code = await run_print_mode(runtime_host, PrintModeOptions(mode="json", messages=["hello"]))
 
         assert exit_code == 0
@@ -155,16 +141,14 @@ class TestRunPrintMode:
             create_assistant_message("", stop_reason="error", error_message="provider failure")
         )
         session = runtime_host.session
+        stderr = []
 
-        async def flush():
+        async def drain():
             pass
 
-        with (
-            _patched(print_mode, write_raw_stdout=lambda _text: None, flush_raw_stdout=flush),
-            _captured_stderr() as stderr,
-        ):
+        with _patched(print_mode, write_raw_stdout=lambda _text: None, write_stderr=stderr.append, drain_output=drain):
             exit_code = await run_print_mode(runtime_host, PrintModeOptions(mode="text"))
 
         assert exit_code == 1
-        assert "provider failure" in stderr.getvalue()
+        assert "provider failure" in "".join(stderr)
         assert session.extension_runner.emitted == [{"type": "session_shutdown", "reason": "quit"}]

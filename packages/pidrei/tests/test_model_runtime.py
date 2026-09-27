@@ -67,7 +67,7 @@ class TestModelRuntimeAuthOptions:
             return ApiKeyCredential(key="stored-key")
 
         await credentials.modify("anthropic", set_key)
-        runtime = await ModelRuntime.create(credentials=credentials, models_path=None)
+        runtime = await ModelRuntime(credentials=credentials, models_path=None)
 
         resolution = await runtime.get_auth("anthropic")
         assert resolution.auth.api_key == "stored-key"
@@ -94,7 +94,7 @@ class TestModelRuntimeAuthOptions:
             async def delete(self, provider_id, options=None):
                 await base.delete(provider_id, options)
 
-        runtime = await ModelRuntime.create(credentials=RecordingStore(), models_path=None)
+        runtime = await ModelRuntime(credentials=RecordingStore(), models_path=None)
 
         reads.clear()
         await runtime.get_available("anthropic")
@@ -111,7 +111,7 @@ class TestModelRuntimeAuthOptions:
 
     @pytest.mark.tonio
     async def test_projects_provider_owned_methods_names_and_status(self):
-        runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+        runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
         options = auth_options(runtime)
 
         by_provider = {(type_, provider.id): method for type_, provider, method in options}
@@ -125,7 +125,7 @@ class TestModelRuntimeAuthOptions:
         """Adapted: pi checks the anthropic builtin's stored OAuth; pidrei's
         anthropic OAuth method is Phase 5, so an extension OAuth provider
         exercises the same stored-OAuth checkAuth projection."""
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(
                 {"extension-oauth": OAuthCredential(access="access", refresh="refresh", expires=now_ms() + 60_000)}
             ),
@@ -161,7 +161,7 @@ class TestModelRuntimeAuthOptions:
     @pytest.mark.tonio
     async def test_distinguishes_subscription_oauth_from_generic_oauth_sign_in(self):
         """Adapted: pi also checks the radius builtin (not ported)."""
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(
                 {
                     "anthropic": OAuthCredential(
@@ -183,7 +183,7 @@ class TestModelRuntimeAuthOptions:
         credentials = AuthStorage.in_memory(
             {"extension-oauth": OAuthCredential(access="expired", refresh="refresh", expires=0)}
         )
-        runtime = await ModelRuntime.create(credentials=credentials, models_path=None)
+        runtime = await ModelRuntime(credentials=credentials, models_path=None)
         received: dict = {}
 
         async def login(_callbacks):
@@ -223,7 +223,7 @@ class TestModelRuntimeAuthOptions:
 
     @pytest.mark.tonio
     async def test_constructs_an_api_key_method_for_an_extension_api_key_provider(self):
-        runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+        runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
         runtime.register_provider(
             "extension-api-key",
             {
@@ -245,7 +245,7 @@ class TestModelRuntimeAuthOptions:
 
     @pytest.mark.tonio
     async def test_resolves_configured_auth_from_request_scoped_environment_overrides(self):
-        runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+        runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
         runtime.register_provider(
             "request-env-provider",
             {
@@ -268,7 +268,7 @@ class TestModelRuntimeAuthOptions:
 
     @pytest.mark.tonio
     async def test_lets_an_explicit_authorization_header_override_auth_header_case_insensitively(self):
-        runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+        runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
         captured = {}
 
         def stream_simple(_model, _context, options=None):
@@ -299,7 +299,7 @@ class TestModelRuntimeAuthOptions:
 
     @pytest.mark.tonio
     async def test_transforms_fully_assembled_headers_once_without_forwarding_the_transform(self):
-        runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+        runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
         captured = {}
         transforms = {"count": 0}
 
@@ -352,7 +352,7 @@ class TestModelRuntimeAuthOptions:
 
     @pytest.mark.tonio
     async def test_does_not_fabricate_an_api_key_method_for_an_extension_oauth_only_provider(self):
-        runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+        runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
 
         async def login(_callbacks):
             return {"access": "access", "refresh": "refresh", "expires": now_ms() + 60_000}
@@ -389,7 +389,7 @@ class TestModelRuntimeAuthOptions:
 class TestExtensionProviderModelLifecycle:
     @pytest.mark.tonio
     async def test_registers_native_pidrei_ai_providers_with_their_auth_implementation(self):
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(),
             models_store=InMemoryModelsStore(),
             models_path=None,
@@ -459,7 +459,7 @@ class TestExtensionProviderModelLifecycle:
             json.dumps({"providers": {"extension-native-deferred": {"baseUrl": "https://overlay.test/v1"}}}),
             encoding="utf-8",
         )
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(),
             models_store=InMemoryModelsStore(),
             models_path=str(models_path),
@@ -555,7 +555,7 @@ class TestExtensionProviderModelLifecycle:
             json.dumps({"providers": {"extension-native": {"modelOverrides": {"native": {"contextWindow": 4242}}}}}),
             encoding="utf-8",
         )
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(),
             models_store=InMemoryModelsStore(),
             models_path=str(models_path),
@@ -581,7 +581,7 @@ class TestExtensionProviderModelLifecycle:
     @pytest.mark.tonio
     async def test_publishes_refresh_models_results_without_forcing_models_store_persistence(self):
         models_store = InMemoryModelsStore()
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(),
             models_store=models_store,
             models_path=None,
@@ -612,7 +612,7 @@ class TestExtensionProviderModelLifecycle:
 
     @pytest.mark.tonio
     async def test_applies_legacy_oauth_modify_models_after_async_credential_initialization(self):
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(
                 {"extension-oauth": OAuthCredential(access="access", refresh="refresh", expires=now_ms() + 60_000)}
             ),
@@ -667,7 +667,7 @@ class TestExtensionProviderModelLifecycle:
         never sees this). Triggers now only *request* a refresh, and any run
         satisfies every request made before it started; this loop hammers
         both windows."""
-        runtime = await ModelRuntime.create(
+        runtime = await ModelRuntime(
             credentials=AuthStorage.in_memory(
                 {"extension-oauth": OAuthCredential(access="access", refresh="refresh", expires=now_ms() + 60_000)}
             ),

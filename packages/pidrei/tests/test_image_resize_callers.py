@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pidrei.cli.file_processor import process_file_arguments
+from pidrei.cli.file_processor import process_file_arguments_blocking
 from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.utils import image_process
 from pidrei_ai.types import (
@@ -72,7 +72,7 @@ def test_can_defer_resizing_file_attachments_until_prompt_dispatch(tmp_path, res
     image_path = tmp_path / "test.png"
     image_path.write_bytes(base64.b64decode(TINY_PNG_BASE64))
 
-    result = process_file_arguments([str(image_path)], auto_resize_images=False)
+    result = process_file_arguments_blocking([str(image_path)], auto_resize_images=False)
 
     assert len(result.images) == 1
     assert resize_calls == []

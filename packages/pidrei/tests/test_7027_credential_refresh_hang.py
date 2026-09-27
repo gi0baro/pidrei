@@ -111,7 +111,7 @@ async def test_does_not_hold_login_behind_an_older_stalled_network_catalog_refre
     network_release = tonio.Event()
     provider = StalledLoginProvider(network_started, network_release)
     credentials = AuthStorage.in_memory()
-    runtime = await ModelRuntime.create(credentials=credentials, models_path=None, allow_model_network=False)
+    runtime = await ModelRuntime(credentials=credentials, models_path=None, allow_model_network=False)
     runtime.register_native_provider(provider)
     # Drain the detached full refresh `register_native_provider` requested
     # before racing anything against it (pidrei-only; pi's `void refresh` is
@@ -235,7 +235,7 @@ async def test_a_credential_pass_overtaken_by_a_later_one_still_returns_with_its
     each must have its state live when it returns."""
     provider = StalledLoginProvider(tonio.Event(), tonio.Event())
     credentials = AuthStorage.in_memory()
-    runtime = await ModelRuntime.create(credentials=credentials, models_path=None, allow_model_network=False)
+    runtime = await ModelRuntime(credentials=credentials, models_path=None, allow_model_network=False)
     runtime.register_native_provider(provider)
     # Drain the detached refresh `register_native_provider` requested, so no
     # third pass can publish the credential behind the two under test.

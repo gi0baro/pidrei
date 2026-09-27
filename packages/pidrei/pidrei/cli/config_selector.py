@@ -9,11 +9,13 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen
+from pidrei_tui import TUI, ProcessTerminal, TuiMainScreen, prime_capabilities
 
-from ..modes.interactive.components.config_selector import ConfigSelectorComponent
+from ..core.output_guard import attach_terminal, detach_terminal
+from ..modes.interactive.components.config_selector import ConfigSelectorComponent, build_canonical_path_map_blocking
 from ..modes.interactive.theme import init_theme, stop_theme_watcher
 from ..utils.fd_io import hard_exit
+from ..utils.process import probe_tmux_hyperlinks
 
 
 async def select_config(
@@ -27,9 +29,16 @@ async def select_config(
 ) -> None:
     """Run the config TUI until the user closes it."""
     await init_theme(settings_manager.get_theme(), True)
+    # `ui.start()` and the render paths read the capabilities: settle them
+    # (under tmux, a subprocess probe) first.
+    await prime_capabilities(probe_tmux_hyperlinks)
+    canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map_blocking, resolved_paths)
 
-    ui: TUI = TuiMainScreen(ProcessTerminal(), settings_manager.get_show_hardware_cursor(), agent_dir)
+    terminal = ProcessTerminal()
+    ui: TUI = TuiMainScreen(terminal, settings_manager.get_show_hardware_cursor(), agent_dir)
     ui.set_clear_on_shrink(settings_manager.get_clear_on_shrink())
+    # The terminal is the tty's one writer until it is closed below.
+    await attach_terminal(terminal)
     closed = tonio.Event()
 
     # The component calls these from its input handling. pi stops the UI in
@@ -38,10 +47,14 @@ async def select_config(
     # terminal is restored.
     finishing = False
 
+    async def close_terminal() -> None:
+        detach_terminal()
+        await ui.close()
+
     async def stop_and_close() -> None:
         await ui.stop()
         stop_theme_watcher()
-        ui.close()
+        await close_terminal()
         closed.set()
 
     def finish() -> None:
@@ -54,6 +67,7 @@ async def select_config(
     async def stop_and_exit() -> None:
         await ui.stop()
         stop_theme_watcher()
+        await close_terminal()
         hard_exit(0)
 
     def exit_now() -> None:
@@ -70,6 +84,7 @@ async def select_config(
         ui.terminal.rows,
         write_scope,
         project_mode_available,
+        canonical_by_path=canonical_by_path,
     )
 
     ui.add_child(selector)

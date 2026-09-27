@@ -4,7 +4,6 @@ Executes extension handlers and owns the hook bus AgentSession emits into.
 """
 
 import copy
-import sys
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -17,6 +16,7 @@ from pidrei.core.diagnostics import ResourceDiagnostic
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_tui.tui import call_sync
 
+from ..output_guard import write_stderr
 from ..system_prompt import BuildSystemPromptOptions, build_system_prompt, normalize_build_system_prompt_options
 from .types import (
     BoundaryContextPreview,
@@ -768,7 +768,7 @@ class ExtensionRunner:
         def add_diagnostic(message: str, extension_path: str) -> None:
             self._shortcut_diagnostics.append(ResourceDiagnostic(type="warning", message=message, path=extension_path))
             if not self.has_ui():
-                print(message, file=sys.stderr)
+                write_stderr(f"{message}\n")
 
         for ext in self._extensions:
             for key, shortcut in ext.shortcuts.items():

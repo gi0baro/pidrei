@@ -7,14 +7,18 @@ is pi's primary path, and `pbpaste`/`pbcopy` stand in for it (pi already
 falls back to `pbcopy` for writes).
 
 Every candidate is a subprocess run through `run_clipboard_command`, which
-does not hold a blocking-pool thread; the OSC 52 write stays offloaded because
-it is a blocking write to the terminal.
+does not hold a blocking-pool thread. The OSC 52 sequence goes to the caller's
+`write_terminal` (the TUI terminal's `write_sync`): while the TUI runs its
+output pump is the terminal's only writer, so the sequence queues behind it
+instead of landing inside a frame (pi writes `process.stdout` from its one
+thread).
 """
 
 import base64
 import os
 import sys
 import uuid
+from collections.abc import Callable
 
 import tonio.colored as tonio
 from tonio.colored import fs
@@ -22,7 +26,7 @@ from tonio.colored import fs
 from ..config import TEMP_DIR
 from .clipboard_command import run_clipboard_command
 from .temp_file_writer import discard_temp_file
-from .wsl import is_wsl
+from .wsl import is_wsl_blocking
 
 
 _MAX_OSC52_ENCODED_LENGTH = 100_000
@@ -32,12 +36,11 @@ def _is_remote_session(env) -> bool:
     return bool(env.get("SSH_CONNECTION") or env.get("SSH_CLIENT") or env.get("MOSH_CONNECTION"))
 
 
-def _emit_osc52(text: str) -> bool:
+def _emit_osc52(text: str, write_terminal: Callable[[str], None]) -> bool:
     encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
     if len(encoded) > _MAX_OSC52_ENCODED_LENGTH:
         return False
-    sys.stdout.write(f"\x1b]52;c;{encoded}\x07")
-    sys.stdout.flush()
+    write_terminal(f"\x1b]52;c;{encoded}\x07")
     return True
 
 
@@ -60,7 +63,7 @@ async def read_clipboard_text() -> str | None:
     return None
 
 
-def _write_private_text(path: fs.Path, text: str) -> None:
+def _write_private_text_blocking(path: fs.Path, text: str) -> None:
     # Created 0600 (it holds the copied text), which `fs.Path.write_text` cannot do.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -86,7 +89,7 @@ async def _copy_via_windows_clipboard(text: str) -> bool:
 
 async def _copy_through_file(tmp_file: fs.Path, text: str) -> bool:
     try:
-        await tonio.spawn_blocking(_write_private_text, tmp_file, text)
+        await tonio.spawn_blocking(_write_private_text_blocking, tmp_file, text)
         result = await run_clipboard_command("wslpath", ["-w", str(tmp_file)], timeout_ms=1000)
         win_path = result.decode("utf-8", "replace").strip() if result is not None else ""
         if not win_path:
@@ -101,7 +104,7 @@ async def _copy_through_file(tmp_file: fs.Path, text: str) -> bool:
         return False
 
 
-async def copy_to_clipboard(text: str) -> None:
+async def copy_to_clipboard(text: str, write_terminal: Callable[[str], None]) -> None:
     p = sys.platform
     env = os.environ
     copied = False
@@ -121,12 +124,11 @@ async def copy_to_clipboard(text: str) -> None:
         if await run_clipboard_command(command, args, input=text, timeout_ms=5000) is not None:
             copied = True
             break
-    # The OSC 52 writes stay offloaded: each is a blocking write to the terminal.
     osc52_emitted = False
-    if not copied and p == "linux" and await tonio.spawn_blocking(is_wsl, env):
+    if not copied and p == "linux" and await tonio.spawn_blocking(is_wsl_blocking, env):
         # Windows Terminal supports OSC 52; prefer it over the slower PowerShell round trip.
         if env.get("WT_SESSION"):
-            osc52_emitted = await tonio.spawn_blocking(_emit_osc52, text)
+            osc52_emitted = _emit_osc52(text, write_terminal)
         copied = osc52_emitted or await _copy_via_windows_clipboard(text)
     # OSC 52 cannot be verified, so a desktop session with a display reports the failure
     # instead (#9618). Without a display the terminal is the only clipboard route (containers,
@@ -136,7 +138,7 @@ async def copy_to_clipboard(text: str) -> None:
     )
     oversized = False
     if not osc52_emitted and (_is_remote_session(env) or (not copied and headless)):
-        if await tonio.spawn_blocking(_emit_osc52, text):
+        if _emit_osc52(text, write_terminal):
             copied = True
         else:
             oversized = True

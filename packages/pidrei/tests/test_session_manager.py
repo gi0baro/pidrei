@@ -11,10 +11,10 @@ import pytest
 from pidrei.core.session_manager import (
     SessionContextModel,
     SessionManager,
+    _load_wire_entries_from_file_blocking,
     build_context_entries,
     build_session_context,
-    find_most_recent_session,
-    load_entries_from_file,
+    find_most_recent_session_blocking,
     migrate_session_entries,
 )
 from pidrei.core.tools import EditToolDetails
@@ -725,7 +725,7 @@ class TestCreateBranchedSession:
     @pytest.mark.tonio
     async def test_does_not_duplicate_entries_when_forking_from_first_user_message(self, tmp_path):
         temp_dir = str(tmp_path)
-        session = await SessionManager.create(temp_dir, temp_dir)
+        session = await SessionManager(temp_dir, temp_dir)
         id1 = await session.append_message(user_msg("first question"))
         await session.append_message(assistant_msg("first answer"))
         await session.append_message(user_msg("second question"))
@@ -758,7 +758,7 @@ class TestCreateBranchedSession:
     @pytest.mark.tonio
     async def test_preserves_tool_and_summary_usage_across_file_backed_reload(self, tmp_path):
         temp_dir = str(tmp_path)
-        session = await SessionManager.create(temp_dir, temp_dir)
+        session = await SessionManager(temp_dir, temp_dir)
         root_id = await session.append_message(user_msg("question"))
         await session.append_message(assistant_msg("answer"))
         usage = make_usage()
@@ -768,7 +768,7 @@ class TestCreateBranchedSession:
 
         file = session.get_session_file()
         assert file is not None
-        reopened = await SessionManager.open(file, temp_dir)
+        reopened = await SessionManager(session_dir=temp_dir, session_file=file)
         entries = reopened.get_entries()
         compaction_entry = next(e for e in entries if e["type"] == "compaction")
         assert compaction_entry["usage"] == usage
@@ -787,7 +787,7 @@ class TestCreateBranchedSession:
         # which only surfaced outside the in-memory sessions tests use. It
         # must land as pi's plain camelCase object and reload as a dict.
         temp_dir = str(tmp_path)
-        session = await SessionManager.create(temp_dir, temp_dir)
+        session = await SessionManager(temp_dir, temp_dir)
         await session.append_message(user_msg("edit this file"))
         await session.append_message(assistant_msg("editing"))
         # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — details
@@ -807,7 +807,7 @@ class TestCreateBranchedSession:
         )
         assert wire["details"] == {"diff": "- old\n+ new", "patch": "@@ -1 +1 @@", "firstChangedLine": 1}
 
-        reopened = await SessionManager.open(file, temp_dir)
+        reopened = await SessionManager(session_dir=temp_dir, session_file=file)
         tool_entry = next(
             e
             for e in reopened.get_entries()
@@ -831,7 +831,7 @@ class TestCreateBranchedSession:
             step_count: int
 
         temp_dir = str(tmp_path)
-        session = await SessionManager.create(temp_dir, temp_dir)
+        session = await SessionManager(temp_dir, temp_dir)
         await session.append_message(user_msg("go"))
         await session.append_message(assistant_msg("ok"))
         await session.append_custom_entry("preset-state", ExtensionState(plan_name="plan", step_count=2))
@@ -856,7 +856,7 @@ class TestCreateBranchedSession:
     @pytest.mark.tonio
     async def test_writes_file_immediately_when_forking_from_point_with_assistant(self, tmp_path):
         temp_dir = str(tmp_path)
-        session = await SessionManager.create(temp_dir, temp_dir)
+        session = await SessionManager(temp_dir, temp_dir)
         await session.append_message(user_msg("first question"))
         id2 = await session.append_message(assistant_msg("first answer"))
         await session.append_message(user_msg("second question"))
@@ -968,6 +968,28 @@ class TestMigration:
         assert entries[2]["id"] == "def67890"
         assert entries[2]["parentId"] == "abc12345"
 
+    @pytest.mark.tonio
+    async def test_opening_a_legacy_file_rewrites_it_migrated(self, tmp_path):
+        """pidrei-only: construction migrates in memory and rewrites the file
+        in its pool hop (the in-memory load reports the migration, the
+        construction path does the write)."""
+        session_file = tmp_path / "legacy.jsonl"
+        legacy = [
+            {"type": "session", "id": "sess-1", "timestamp": "2025-01-01T00:00:00Z", "cwd": str(tmp_path)},
+            {
+                "type": "message",
+                "timestamp": "2025-01-01T00:00:01Z",
+                "message": {"role": "user", "content": "hi", "timestamp": 1},
+            },
+        ]
+        session_file.write_text("".join(json.dumps(entry) + "\n" for entry in legacy))
+
+        await SessionManager(session_file=str(session_file))
+
+        rewritten = [json.loads(line) for line in session_file.read_text().splitlines()]
+        assert rewritten[0]["version"] == 3
+        assert isinstance(rewritten[1]["id"], str)
+
 
 class TestCustomSessionId:
     def test_uses_provided_id(self):
@@ -1020,7 +1042,7 @@ class TestCustomSessionId:
     @pytest.mark.tonio
     async def test_uses_provided_id_when_creating_persisted_session(self, tmp_path):
         temp_dir = str(tmp_path)
-        session = await SessionManager.create(temp_dir, temp_dir, {"id": "created-session-id"})
+        session = await SessionManager(temp_dir, temp_dir, options={"id": "created-session-id"})
 
         assert session.get_session_id() == "created-session-id"
         assert session.get_header()["id"] == "created-session-id"
@@ -1133,25 +1155,27 @@ def _write_session_header(file: str, cwd: str, session_id: str, prefix: str = ""
 
 
 class TestLoadEntriesFromFile:
+    # pi's `loadEntriesFromFile`; pidrei has no decoded variant, so these run
+    # against the raw loader the construction path uses.
     def test_returns_empty_for_non_existent_file(self, tmp_path):
-        assert load_entries_from_file(os.path.join(str(tmp_path), "nonexistent.jsonl")) == []
+        assert _load_wire_entries_from_file_blocking(os.path.join(str(tmp_path), "nonexistent.jsonl")) == []
 
     def test_returns_empty_for_empty_file(self, tmp_path):
         file = os.path.join(str(tmp_path), "empty.jsonl")
         open(file, "w").close()
-        assert load_entries_from_file(file) == []
+        assert _load_wire_entries_from_file_blocking(file) == []
 
     def test_returns_empty_for_file_without_valid_header(self, tmp_path):
         file = os.path.join(str(tmp_path), "no-header.jsonl")
         with open(file, "w") as handle:
             handle.write('{"type":"message","id":"1"}\n')
-        assert load_entries_from_file(file) == []
+        assert _load_wire_entries_from_file_blocking(file) == []
 
     def test_returns_empty_for_malformed_json(self, tmp_path):
         file = os.path.join(str(tmp_path), "malformed.jsonl")
         with open(file, "w") as handle:
             handle.write("not json\n")
-        assert load_entries_from_file(file) == []
+        assert _load_wire_entries_from_file_blocking(file) == []
 
     def test_loads_valid_session_file(self, tmp_path):
         file = os.path.join(str(tmp_path), "valid.jsonl")
@@ -1161,7 +1185,7 @@ class TestLoadEntriesFromFile:
                 '{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z",'
                 '"message":{"role":"user","content":"hi","timestamp":1}}\n'
             )
-        entries = load_entries_from_file(file)
+        entries = _load_wire_entries_from_file_blocking(file)
         assert len(entries) == 2
         assert entries[0]["type"] == "session"
         assert entries[1]["type"] == "message"
@@ -1176,7 +1200,7 @@ class TestLoadEntriesFromFile:
         with open(file, "w") as handle:
             handle.write(content)
 
-        assert len(load_entries_from_file(file)) == 2
+        assert len(_load_wire_entries_from_file_blocking(file)) == 2
         with open(file) as handle:
             assert handle.read() == f"{content}\n"
 
@@ -1186,7 +1210,7 @@ class TestLoadEntriesFromFile:
         with open(file, "w") as handle:
             handle.write(content)
 
-        assert len(load_entries_from_file(file)) == 1
+        assert len(_load_wire_entries_from_file_blocking(file)) == 1
         with open(file) as handle:
             assert handle.read() == f"{content}\n"
 
@@ -1196,7 +1220,7 @@ class TestLoadEntriesFromFile:
         with open(file, "w") as handle:
             handle.write(content)
 
-        assert load_entries_from_file(file) == []
+        assert _load_wire_entries_from_file_blocking(file) == []
         with open(file) as handle:
             assert handle.read() == content
 
@@ -1209,7 +1233,7 @@ class TestLoadEntriesFromFile:
                 '{"type":"message","id":"1","parentId":null,"timestamp":"2025-01-01T00:00:01Z",'
                 '"message":{"role":"user","content":"hi","timestamp":1}}\n'
             )
-        assert len(load_entries_from_file(file)) == 2
+        assert len(_load_wire_entries_from_file_blocking(file)) == 2
 
     @pytest.mark.parametrize(
         ("prefix", "session_id"),
@@ -1227,7 +1251,7 @@ class TestLoadEntriesFromFile:
         stored_cwd = os.path.join(temp_dir, "stored-project")
         _write_session_header(file, stored_cwd, session_id, prefix)
 
-        session_manager = await SessionManager.open(file, temp_dir)
+        session_manager = await SessionManager(session_dir=temp_dir, session_file=file)
         assert session_manager.get_session_id() == session_id
         assert session_manager.get_cwd() == stored_cwd
 
@@ -1245,7 +1269,7 @@ class TestLoadEntriesFromFile:
             file = os.path.join(temp_dir, f"{name}.jsonl")
             _write_session_header(file, stored_cwd, session_id, prefix)
             for cwd_override in (None, override_cwd):
-                session_manager = await SessionManager.open(file, temp_dir, cwd_override)
+                session_manager = await SessionManager(cwd_override, temp_dir, session_file=file)
                 assert session_manager.get_session_id() == session_id
                 assert session_manager.get_cwd() == (cwd_override if cwd_override is not None else stored_cwd)
 
@@ -1271,7 +1295,7 @@ class TestLoadEntriesFromFile:
                 '"message":{"role":"user","content":"hi","timestamp":1}}\n'
             )
 
-        session_manager = await SessionManager.open(file, temp_dir)
+        session_manager = await SessionManager(session_dir=temp_dir, session_file=file)
         assert session_manager.get_session_id() == "abc"
         assert len(session_manager.get_entries()) == 1
         assert session_manager.build_session_context().messages == [UserMessage(content="hi", timestamp=1)]
@@ -1286,24 +1310,24 @@ def _age(path, seconds: float = 60.0) -> None:
 
 class TestFindMostRecentSession:
     def test_returns_none_for_empty_directory(self, tmp_path):
-        assert find_most_recent_session(str(tmp_path)) is None
+        assert find_most_recent_session_blocking(str(tmp_path)) is None
 
     def test_returns_none_for_non_existent_directory(self, tmp_path):
-        assert find_most_recent_session(os.path.join(str(tmp_path), "nonexistent")) is None
+        assert find_most_recent_session_blocking(os.path.join(str(tmp_path), "nonexistent")) is None
 
     def test_ignores_non_jsonl_files(self, tmp_path):
         (tmp_path / "file.txt").write_text("hello")
         (tmp_path / "file.json").write_text("{}")
-        assert find_most_recent_session(str(tmp_path)) is None
+        assert find_most_recent_session_blocking(str(tmp_path)) is None
 
     def test_ignores_jsonl_without_valid_header(self, tmp_path):
         (tmp_path / "invalid.jsonl").write_text('{"type":"message"}\n')
-        assert find_most_recent_session(str(tmp_path)) is None
+        assert find_most_recent_session_blocking(str(tmp_path)) is None
 
     def test_returns_single_valid_session_file(self, tmp_path):
         file = tmp_path / "session.jsonl"
         file.write_text('{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
-        assert find_most_recent_session(str(tmp_path)) == str(file)
+        assert find_most_recent_session_blocking(str(tmp_path)) == str(file)
 
     def test_returns_most_recently_modified_session(self, tmp_path):
         file1 = tmp_path / "older.jsonl"
@@ -1313,7 +1337,7 @@ class TestFindMostRecentSession:
         file2.write_text('{"type":"session","id":"new","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
         _age(file1)
 
-        assert find_most_recent_session(str(tmp_path)) == str(file2)
+        assert find_most_recent_session_blocking(str(tmp_path)) == str(file2)
 
     def test_skips_invalid_files_and_returns_valid_one(self, tmp_path):
         invalid = tmp_path / "invalid.jsonl"
@@ -1323,14 +1347,14 @@ class TestFindMostRecentSession:
         valid.write_text('{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
         _age(invalid)
 
-        assert find_most_recent_session(str(tmp_path)) == str(valid)
+        assert find_most_recent_session_blocking(str(tmp_path)) == str(valid)
 
     def test_skips_oversized_corrupt_files_and_returns_valid_session(self, tmp_path):
         (tmp_path / "oversized.jsonl").write_text("x" * (HEADER_SCAN_LIMIT_BYTES + 1))
         valid = tmp_path / "valid.jsonl"
         valid.write_text('{"type":"session","id":"abc","timestamp":"2025-01-01T00:00:00Z","cwd":"/tmp"}\n')
 
-        assert find_most_recent_session(str(tmp_path)) == str(valid)
+        assert find_most_recent_session_blocking(str(tmp_path)) == str(valid)
 
     def test_filters_most_recent_session_by_cwd(self, tmp_path):
         project_a = os.path.join(str(tmp_path), "project-a")
@@ -1346,12 +1370,12 @@ class TestFindMostRecentSession:
         )
         _age(file_a)
 
-        assert find_most_recent_session(str(tmp_path), project_a) == str(file_a)
-        assert find_most_recent_session(str(tmp_path), project_b) == str(file_b)
+        assert find_most_recent_session_blocking(str(tmp_path), project_a) == str(file_a)
+        assert find_most_recent_session_blocking(str(tmp_path), project_b) == str(file_b)
 
 
 async def _create_persisted_session(cwd: str, session_dir: str, label: str) -> str:
-    session = await SessionManager.create(cwd, session_dir)
+    session = await SessionManager(cwd, session_dir)
     await session.append_message(user_msg(label))
     await session.append_message(assistant_msg(f"reply to {label}"))
     session_file = session.get_session_file()
@@ -1407,7 +1431,7 @@ class TestSetSessionFileCorrupted:
         empty_file = os.path.join(str(tmp_path), "empty.jsonl")
         open(empty_file, "w").close()
 
-        sm = await SessionManager.open(empty_file, str(tmp_path))
+        sm = await SessionManager(session_dir=str(tmp_path), session_file=empty_file)
 
         assert sm.get_session_id()
         assert sm.get_header() is not None
@@ -1431,7 +1455,7 @@ class TestSetSessionFileCorrupted:
             handle.write(original_content)
 
         with pytest.raises(Exception, match="Session file is not a valid pidrei session"):
-            await SessionManager.open(no_header_file, str(tmp_path))
+            await SessionManager(session_dir=str(tmp_path), session_file=no_header_file)
         with open(no_header_file, encoding="utf-8") as handle:
             assert handle.read() == original_content
 
@@ -1443,7 +1467,7 @@ class TestSetSessionFileCorrupted:
             handle.write(original_content)
 
         with pytest.raises(Exception, match="Session file is not a valid pidrei session"):
-            await SessionManager.open(non_session_file, str(tmp_path))
+            await SessionManager(session_dir=str(tmp_path), session_file=non_session_file)
         with open(non_session_file, encoding="utf-8") as handle:
             assert handle.read() == original_content
 
@@ -1452,7 +1476,7 @@ class TestSetSessionFileCorrupted:
         explicit_path = os.path.join(str(tmp_path), "my-session.jsonl")
         open(explicit_path, "w").close()
 
-        sm = await SessionManager.open(explicit_path, str(tmp_path))
+        sm = await SessionManager(session_dir=str(tmp_path), session_file=explicit_path)
         assert sm.get_session_file() == explicit_path
 
     @pytest.mark.tonio
@@ -1460,10 +1484,10 @@ class TestSetSessionFileCorrupted:
         empty_file = os.path.join(str(tmp_path), "empty.jsonl")
         open(empty_file, "w").close()
 
-        sm1 = await SessionManager.open(empty_file, str(tmp_path))
+        sm1 = await SessionManager(session_dir=str(tmp_path), session_file=empty_file)
         session_id = sm1.get_session_id()
 
-        sm2 = await SessionManager.open(empty_file, str(tmp_path))
+        sm2 = await SessionManager(session_dir=str(tmp_path), session_file=empty_file)
         assert sm2.get_session_id() == session_id
         assert sm2.get_header()["type"] == "session"
 

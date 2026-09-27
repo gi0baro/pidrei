@@ -21,7 +21,7 @@ from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
 from . import MODELS, gitlab_duo_provider
 
 
-def _read_auth() -> dict:
+def _read_auth_blocking() -> dict:
     with open(get_auth_path(), encoding="utf-8") as handle:
         return json.load(handle)
 
@@ -37,7 +37,7 @@ async def main() -> int:
         print("Available:", ", ".join(entry.id for entry in MODELS), file=sys.stderr)
         return 1
 
-    auth_data = await tonio.spawn_blocking(_read_auth)
+    auth_data = await tonio.spawn_blocking(_read_auth_blocking)
     gitlab_cred = auth_data.get("gitlab-duo")
     if not isinstance(gitlab_cred, dict) or not gitlab_cred.get("access"):
         print("No gitlab-duo credentials. Run /login gitlab-duo first.", file=sys.stderr)

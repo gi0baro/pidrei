@@ -13,13 +13,13 @@ a session per case.
 """
 
 import contextlib
-import io
 import json
 import os
 from dataclasses import dataclass
 
 import pytest
 
+from pidrei.cli import package_commands
 from pidrei.cli.package_commands import (
     SELF_UPDATE_HINT,
     handle_config_command,
@@ -74,15 +74,18 @@ class Captured:
 
 @contextlib.contextmanager
 def capture():
-    """Redirect inside the test body (predates tonio 0.9.14, which made
-    yield fixtures like `capsys` usable in tonio tests)."""
+    """What the command writes to stdout and stderr (its output-guard calls,
+    swapped on the module)."""
     result = Captured()
-    out, err = io.StringIO(), io.StringIO()
+    out: list[str] = []
+    err: list[str] = []
+    saved = package_commands.write_stdout, package_commands.write_stderr
+    package_commands.write_stdout, package_commands.write_stderr = out.append, err.append
     try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            yield result
+        yield result
     finally:
-        result.out, result.err = out.getvalue(), err.getvalue()
+        package_commands.write_stdout, package_commands.write_stderr = saved
+        result.out, result.err = "".join(out), "".join(err)
 
 
 def read_settings(agent_dir: str) -> dict:

@@ -145,8 +145,7 @@ async def test_rpc_user_bash_failure_handling(monkeypatch, extension, error, exe
             rpc_mode,
             take_over_stdout=lambda: None,
             write_raw_stdout=lines.append,
-            wait_for_raw_stdout_backpressure=noop_async,
-            flush_raw_stdout=noop_async,
+            drain_output=noop_async,
             _pump_stdin_commands=fake_pump,
         ):
             run = tonio.spawn(rpc_mode.run_rpc_mode(_runtime_host(harness.session)))

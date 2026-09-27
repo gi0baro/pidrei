@@ -37,12 +37,12 @@ from tonio.colored import fs
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.git import parse_git_url
-from ..utils.paths import canonicalize_path, is_local_path, resolve_path
+from ..utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
 from .exec import exec_command
-from .extensions.loader import is_extension_file, resolve_extension_entries
-from .pidrei_manifest import read_pidrei_manifest
+from .extensions.loader import is_extension_file, resolve_extension_entries_blocking
+from .pidrei_manifest import read_pidrei_manifest_blocking
 from .settings_manager import SettingsManager
-from .skills import IgnoreMatcher, add_ignore_rules
+from .skills import IgnoreMatcher, add_ignore_rules_blocking
 from .source_info import PathMetadata
 
 
@@ -130,10 +130,14 @@ def is_offline_mode_enabled() -> bool:
     return value == "1" or value.lower() in ("true", "yes")
 
 
-def get_extension_temp_folder(agent_dir: str) -> str:
+async def get_extension_temp_folder(agent_dir: str) -> str:
     temp_folder = os.path.join(agent_dir, "tmp", "extensions")
-    os.makedirs(temp_folder, mode=0o700, exist_ok=True)
-    os.chmod(temp_folder, 0o700)
+
+    def ensure_blocking() -> None:
+        os.makedirs(temp_folder, mode=0o700, exist_ok=True)
+        os.chmod(temp_folder, 0o700)
+
+    await tonio.spawn_blocking(ensure_blocking)
     return temp_folder
 
 
@@ -241,7 +245,7 @@ def _has_glob_pattern(value: str) -> bool:
     return "*" in value or "?" in value
 
 
-def _expand_package_glob(pattern: str, root: str) -> list[str]:
+def _expand_package_glob_blocking(pattern: str, root: str) -> list[str]:
     """Glob entries discover visible paths; exact entries can target dot paths or symlinked trees."""
     matches = []
     for match in glob.glob(pattern, root_dir=root, recursive=True):
@@ -332,7 +336,7 @@ def apply_patterns(all_paths: list[str], patterns: list[str], base_dir: str) -> 
     return set(result)
 
 
-def _stat_kind(full_path: str) -> tuple[bool, bool] | None:
+def _stat_kind_blocking(full_path: str) -> tuple[bool, bool] | None:
     try:
         is_dir = os.path.isdir(full_path)
         is_file = os.path.isfile(full_path)
@@ -343,7 +347,7 @@ def _stat_kind(full_path: str) -> tuple[bool, bool] | None:
     return is_dir, is_file
 
 
-def _collect_files(
+def _collect_files_blocking(
     dir: str,
     file_pattern: re.Pattern,
     skip_node_modules: bool = True,
@@ -356,7 +360,7 @@ def _collect_files(
 
     root = root_dir if root_dir is not None else dir
     ig = ignore_matcher if ignore_matcher is not None else IgnoreMatcher()
-    add_ignore_rules(ig, dir, root)
+    add_ignore_rules_blocking(ig, dir, root)
 
     try:
         entries = sorted(os.scandir(dir), key=lambda entry: entry.name)
@@ -370,7 +374,7 @@ def _collect_files(
             continue
 
         full_path = os.path.join(dir, entry.name)
-        kind = _stat_kind(full_path)
+        kind = _stat_kind_blocking(full_path)
         if kind is None:
             continue
         is_dir, is_file = kind
@@ -381,14 +385,14 @@ def _collect_files(
             continue
 
         if is_dir:
-            files.extend(_collect_files(full_path, file_pattern, skip_node_modules, ig, root))
+            files.extend(_collect_files_blocking(full_path, file_pattern, skip_node_modules, ig, root))
         elif is_file and file_pattern.search(entry.name):
             files.append(full_path)
 
     return files
 
 
-def _collect_skill_entries(
+def _collect_skill_entries_blocking(
     dir: str,
     mode: str,  # "pi" | "agents"
     ignore_matcher: IgnoreMatcher | None = None,
@@ -400,7 +404,7 @@ def _collect_skill_entries(
 
     root = root_dir if root_dir is not None else dir
     ig = ignore_matcher if ignore_matcher is not None else IgnoreMatcher()
-    add_ignore_rules(ig, dir, root)
+    add_ignore_rules_blocking(ig, dir, root)
 
     try:
         dir_entries = sorted(os.scandir(dir), key=lambda entry: entry.name)
@@ -412,7 +416,7 @@ def _collect_skill_entries(
             continue
 
         full_path = os.path.join(dir, entry.name)
-        kind = _stat_kind(full_path)
+        kind = _stat_kind_blocking(full_path)
         if kind is None:
             continue
         _is_dir, is_file = kind
@@ -429,7 +433,7 @@ def _collect_skill_entries(
             continue
 
         full_path = os.path.join(dir, entry.name)
-        kind = _stat_kind(full_path)
+        kind = _stat_kind_blocking(full_path)
         if kind is None:
             continue
         is_dir, is_file = kind
@@ -450,18 +454,18 @@ def _collect_skill_entries(
         if ig.ignores(f"{rel_path}/"):
             continue
 
-        entries.extend(_collect_skill_entries(full_path, mode, ig, root))
+        entries.extend(_collect_skill_entries_blocking(full_path, mode, ig, root))
 
     return entries
 
 
-def _collect_flat_entries(dir: str, suffix: str) -> list[str]:
+def _collect_flat_entries_blocking(dir: str, suffix: str) -> list[str]:
     entries: list[str] = []
     if not os.path.exists(dir):
         return entries
 
     ig = IgnoreMatcher()
-    add_ignore_rules(ig, dir, dir)
+    add_ignore_rules_blocking(ig, dir, dir)
 
     try:
         dir_entries = sorted(os.scandir(dir), key=lambda entry: entry.name)
@@ -475,7 +479,7 @@ def _collect_flat_entries(dir: str, suffix: str) -> list[str]:
             continue
 
         full_path = os.path.join(dir, entry.name)
-        kind = _stat_kind(full_path)
+        kind = _stat_kind_blocking(full_path)
         if kind is None:
             continue
         _is_dir, is_file = kind
@@ -490,7 +494,7 @@ def _collect_flat_entries(dir: str, suffix: str) -> list[str]:
     return entries
 
 
-def _collect_auto_extension_entries(dir: str) -> list[str]:
+def _collect_auto_extension_entries_blocking(dir: str) -> list[str]:
     """Auto-discovery of extension entry files (pi's collectAutoExtensionEntries)."""
     entries: list[str] = []
     if not os.path.exists(dir):
@@ -498,12 +502,12 @@ def _collect_auto_extension_entries(dir: str) -> list[str]:
 
     # A directory that declares its own entry points is one extension, not a
     # folder of them.
-    root_entries = resolve_extension_entries(dir)
+    root_entries = resolve_extension_entries_blocking(dir)
     if root_entries:
         return root_entries
 
     ig = IgnoreMatcher()
-    add_ignore_rules(ig, dir, dir)
+    add_ignore_rules_blocking(ig, dir, dir)
 
     try:
         dir_entries = sorted(os.scandir(dir), key=lambda entry: entry.name)
@@ -517,7 +521,7 @@ def _collect_auto_extension_entries(dir: str) -> list[str]:
             continue
 
         full_path = os.path.join(dir, entry.name)
-        kind = _stat_kind(full_path)
+        kind = _stat_kind_blocking(full_path)
         if kind is None:
             continue
         is_dir, is_file = kind
@@ -530,22 +534,22 @@ def _collect_auto_extension_entries(dir: str) -> list[str]:
         if is_file and is_extension_file(entry.name):
             entries.append(full_path)
         elif is_dir:
-            resolved_entries = resolve_extension_entries(full_path)
+            resolved_entries = resolve_extension_entries_blocking(full_path)
             if resolved_entries:
                 entries.extend(resolved_entries)
 
     return entries
 
 
-def _collect_resource_files(dir: str, resource_type: str) -> list[str]:
+def _collect_resource_files_blocking(dir: str, resource_type: str) -> list[str]:
     if resource_type == "skills":
-        return _collect_skill_entries(dir, "pi")
+        return _collect_skill_entries_blocking(dir, "pi")
     if resource_type == "extensions":
-        return _collect_auto_extension_entries(dir)
-    return _collect_files(dir, _FILE_PATTERNS[resource_type])
+        return _collect_auto_extension_entries_blocking(dir)
+    return _collect_files_blocking(dir, _FILE_PATTERNS[resource_type])
 
 
-def _find_git_repo_root(start_dir: str) -> str | None:
+def _find_git_repo_root_blocking(start_dir: str) -> str | None:
     dir = os.path.abspath(start_dir)
     while True:
         if os.path.exists(os.path.join(dir, ".git")):
@@ -556,10 +560,10 @@ def _find_git_repo_root(start_dir: str) -> str | None:
         dir = parent
 
 
-def collect_ancestor_agents_skill_dirs(start_dir: str) -> list[str]:
+def collect_ancestor_agents_skill_dirs_blocking(start_dir: str) -> list[str]:
     skill_dirs: list[str] = []
     resolved_start_dir = os.path.abspath(start_dir)
-    git_repo_root = _find_git_repo_root(resolved_start_dir)
+    git_repo_root = _find_git_repo_root_blocking(resolved_start_dir)
 
     dir = resolved_start_dir
     while True:
@@ -664,8 +668,8 @@ class DefaultPackageManager:
             raise Exception(f"Refusing to use path outside package install root: {resolved_path}")
         return resolved_path
 
-    def _get_temporary_dir(self, prefix: str, suffix: str | None = None) -> str:
-        root = self._resolve_managed_path(get_extension_temp_folder(self._agent_dir), prefix)
+    async def _get_temporary_dir(self, prefix: str, suffix: str | None = None) -> str:
+        root = self._resolve_managed_path(await get_extension_temp_folder(self._agent_dir), prefix)
         digest = hashlib.sha256(f"{prefix}-{suffix or ''}".encode()).hexdigest()[:8]
         return self._resolve_managed_path(root, digest, suffix or "")
 
@@ -677,24 +681,24 @@ class DefaultPackageManager:
             return os.path.join(self._cwd, CONFIG_DIR_NAME, "git")
         return os.path.join(self._agent_dir, "git")
 
-    def _get_git_install_path(self, source: GitSource, scope: str) -> str:
+    async def _get_git_install_path(self, source: GitSource, scope: str) -> str:
         if scope == "temporary":
-            return self._get_temporary_dir(f"git-{source.host}", source.path)
+            return await self._get_temporary_dir(f"git-{source.host}", source.path)
         install_root = self._get_git_install_root(scope)
         if not install_root:
             raise Exception("Missing git install root")
         return self._resolve_managed_path(install_root, source.host, source.path)
 
-    def get_installed_path(self, source: str, scope: str) -> str | None:
+    async def get_installed_path(self, source: str, scope: str) -> str | None:
         parsed = self.parse_source(source)
         if isinstance(parsed, GitSource):
-            return self._get_git_install_path(parsed, scope)
+            return await self._get_git_install_path(parsed, scope)
         return None
 
     # -- git ---------------------------------------------------------------------
 
     @staticmethod
-    def _ensure_git_ignore(git_root: str) -> None:
+    def _ensure_git_ignore_blocking(git_root: str) -> None:
         os.makedirs(git_root, exist_ok=True)
         ignore_path = os.path.join(git_root, ".gitignore")
         if not os.path.exists(ignore_path):
@@ -723,7 +727,7 @@ class DefaultPackageManager:
         return ["fetch", "origin", branch], "FETCH_HEAD"
 
     async def _install_git(self, source: GitSource, scope: str) -> None:
-        target_dir = self._get_git_install_path(source, scope)
+        target_dir = await self._get_git_install_path(source, scope)
         if await fs.Path(target_dir).exists():
             # Reconcile an existing checkout rather than re-cloning.
             if source.ref:
@@ -735,7 +739,7 @@ class DefaultPackageManager:
 
         git_root = self._get_git_install_root(scope)
         if git_root:
-            await tonio.spawn_blocking(self._ensure_git_ignore, git_root)
+            await tonio.spawn_blocking(self._ensure_git_ignore_blocking, git_root)
         await fs.Path(os.path.dirname(target_dir)).mkdir(parents=True, exist_ok=True)
 
         try:
@@ -744,11 +748,11 @@ class DefaultPackageManager:
                 await self._run_command("git", ["checkout", source.ref], cwd=target_dir)
         except Exception:
             await tonio.spawn_blocking(shutil.rmtree, target_dir, ignore_errors=True)
-            await tonio.spawn_blocking(self._prune_empty_git_parents, target_dir, git_root)
+            await tonio.spawn_blocking(self._prune_empty_git_parents_blocking, target_dir, git_root)
             raise
 
     async def _update_git(self, source: GitSource, scope: str) -> None:
-        target_dir = self._get_git_install_path(source, scope)
+        target_dir = await self._get_git_install_path(source, scope)
         if not await fs.Path(target_dir).exists():
             await self._install_git(source, scope)
             return
@@ -773,14 +777,16 @@ class DefaultPackageManager:
             await self._install_git(parsed, scope)
 
     async def _remove_git(self, source: GitSource, scope: str) -> None:
-        target_dir = self._get_git_install_path(source, scope)
+        target_dir = await self._get_git_install_path(source, scope)
         if not await fs.Path(target_dir).exists():
             return
         await tonio.spawn_blocking(shutil.rmtree, target_dir, ignore_errors=True)
-        await tonio.spawn_blocking(self._prune_empty_git_parents, target_dir, self._get_git_install_root(scope))
+        await tonio.spawn_blocking(
+            self._prune_empty_git_parents_blocking, target_dir, self._get_git_install_root(scope)
+        )
 
     @staticmethod
-    def _prune_empty_git_parents(target_dir: str, install_root: str | None) -> None:
+    def _prune_empty_git_parents_blocking(target_dir: str, install_root: str | None) -> None:
         if not install_root:
             return
         resolved_root = os.path.abspath(install_root)
@@ -882,14 +888,14 @@ class DefaultPackageManager:
             return []
 
         candidates: list[tuple[GitSource, str, str]] = []
-        for package in await tonio.spawn_blocking(self.list_configured_packages):
+        for package in await self.list_configured_packages():
             if package.scope == "temporary":
                 continue
             parsed = self.parse_source(package.source)
             # A pinned ref is a checkout target, not a moving branch.
             if not isinstance(parsed, GitSource) or parsed.pinned:
                 continue
-            installed_path = self._get_git_install_path(parsed, package.scope)
+            installed_path = await self._get_git_install_path(parsed, package.scope)
             if not await fs.Path(installed_path).exists():
                 continue
             candidates.append((parsed, package.scope, package.source))
@@ -899,7 +905,7 @@ class DefaultPackageManager:
 
         async def check_one(candidate: tuple[GitSource, str, str]) -> PackageUpdate | None:
             parsed, scope, source = candidate
-            installed_path = self._get_git_install_path(parsed, scope)
+            installed_path = await self._get_git_install_path(parsed, scope)
             if not await self._git_has_available_update(installed_path):
                 return None
             return PackageUpdate(
@@ -916,7 +922,7 @@ class DefaultPackageManager:
         """Update configured git packages. Sources with a pinned ref are
         checkout targets, so they are re-reconciled rather than skipped."""
         targets: list[tuple[GitSource, str, str]] = []
-        for package in await tonio.spawn_blocking(self.list_configured_packages):
+        for package in await self.list_configured_packages():
             if source is not None and self._source_match_key_for_input(
                 package.source
             ) != self._source_match_key_for_input(source):
@@ -1012,7 +1018,7 @@ class DefaultPackageManager:
         self._set_packages(next_packages, scope)
         return True
 
-    def list_configured_packages(self) -> list[ConfiguredPackage]:
+    async def list_configured_packages(self) -> list[ConfiguredPackage]:
         configured: list[ConfiguredPackage] = []
         for scope, settings in (
             ("user", self._settings_manager.get_global_settings()),
@@ -1020,17 +1026,17 @@ class DefaultPackageManager:
         ):
             for package in settings.get("packages") or []:
                 source = self._get_package_source_string(package)
-                installed = self.get_installed_path(source, scope)
+                installed = await self.get_installed_path(source, scope)
                 configured.append(
                     ConfiguredPackage(
                         source=source,
                         scope=scope,
-                        installed_path=installed if installed and os.path.exists(installed) else None,
+                        installed_path=installed if installed and await fs.Path(installed).exists() else None,
                     )
                 )
         return configured
 
-    def _collect_files_from_paths(self, paths: list[str], resource_type: str) -> list[str]:
+    def _collect_files_from_paths_blocking(self, paths: list[str], resource_type: str) -> list[str]:
         files: list[str] = []
         for path in paths:
             if not os.path.exists(path):
@@ -1039,7 +1045,7 @@ class DefaultPackageManager:
                 if os.path.isfile(path):
                     files.append(path)
                 elif os.path.isdir(path):
-                    files.extend(_collect_resource_files(path, resource_type))
+                    files.extend(_collect_resource_files_blocking(path, resource_type))
             except OSError:
                 pass
         return files
@@ -1056,7 +1062,7 @@ class DefaultPackageManager:
         if path not in target:
             target[path] = (metadata, enabled)
 
-    def _resolve_local_entries(
+    def _resolve_local_entries_blocking(
         self,
         entries: list[str],
         resource_type: str,
@@ -1070,7 +1076,7 @@ class DefaultPackageManager:
         # Collect all files from plain entries (non-pattern entries)
         plain, patterns = _split_patterns(entries)
         resolved_plain = [self._resolve_path_from_base(path, base_dir) for path in plain]
-        all_files = self._collect_files_from_paths(resolved_plain, resource_type)
+        all_files = self._collect_files_from_paths_blocking(resolved_plain, resource_type)
 
         # Determine which files are enabled based on patterns
         enabled_paths = apply_patterns(all_files, patterns, base_dir)
@@ -1078,7 +1084,7 @@ class DefaultPackageManager:
         for file in all_files:
             self._add_resource(target, file, metadata, file in enabled_paths)
 
-    def _add_auto_discovered_resources(
+    def _add_auto_discovered_resources_blocking(
         self,
         accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
         global_settings: dict,
@@ -1105,7 +1111,7 @@ class DefaultPackageManager:
         project_agents_skill_dirs = (
             [
                 dir
-                for dir in collect_ancestor_agents_skill_dirs(self._cwd)
+                for dir in collect_ancestor_agents_skill_dirs_blocking(self._cwd)
                 if os.path.abspath(dir) != os.path.abspath(user_agents_skills_dir)
             ]
             if project_trusted
@@ -1127,14 +1133,14 @@ class DefaultPackageManager:
         if project_trusted:
             add_resources(
                 "extensions",
-                _collect_auto_extension_entries(project_dirs["extensions"]),
+                _collect_auto_extension_entries_blocking(project_dirs["extensions"]),
                 project_metadata,
                 project_overrides["extensions"],
                 project_base_dir,
             )
             add_resources(
                 "skills",
-                _collect_skill_entries(project_dirs["skills"], "pi"),
+                _collect_skill_entries_blocking(project_dirs["skills"], "pi"),
                 project_metadata,
                 project_overrides["skills"],
                 project_base_dir,
@@ -1146,7 +1152,7 @@ class DefaultPackageManager:
             agents_metadata = PathMetadata(source="auto", scope="project", origin="top-level", base_dir=agents_base_dir)
             add_resources(
                 "skills",
-                _collect_skill_entries(agents_skills_dir, "agents"),
+                _collect_skill_entries_blocking(agents_skills_dir, "agents"),
                 agents_metadata,
                 project_overrides["skills"],
                 agents_base_dir,
@@ -1155,14 +1161,14 @@ class DefaultPackageManager:
         if project_trusted:
             add_resources(
                 "prompts",
-                _collect_flat_entries(project_dirs["prompts"], ".md"),
+                _collect_flat_entries_blocking(project_dirs["prompts"], ".md"),
                 project_metadata,
                 project_overrides["prompts"],
                 project_base_dir,
             )
             add_resources(
                 "themes",
-                _collect_flat_entries(project_dirs["themes"], ".json"),
+                _collect_flat_entries_blocking(project_dirs["themes"], ".json"),
                 project_metadata,
                 project_overrides["themes"],
                 project_base_dir,
@@ -1170,14 +1176,14 @@ class DefaultPackageManager:
 
         add_resources(
             "extensions",
-            _collect_auto_extension_entries(user_dirs["extensions"]),
+            _collect_auto_extension_entries_blocking(user_dirs["extensions"]),
             user_metadata,
             user_overrides["extensions"],
             global_base_dir,
         )
         add_resources(
             "skills",
-            _collect_skill_entries(user_dirs["skills"], "pi"),
+            _collect_skill_entries_blocking(user_dirs["skills"], "pi"),
             user_metadata,
             user_overrides["skills"],
             global_base_dir,
@@ -1190,7 +1196,7 @@ class DefaultPackageManager:
         )
         add_resources(
             "skills",
-            _collect_skill_entries(user_agents_skills_dir, "agents"),
+            _collect_skill_entries_blocking(user_agents_skills_dir, "agents"),
             user_agents_metadata,
             user_overrides["skills"],
             user_agents_base_dir,
@@ -1198,20 +1204,22 @@ class DefaultPackageManager:
 
         add_resources(
             "prompts",
-            _collect_flat_entries(user_dirs["prompts"], ".md"),
+            _collect_flat_entries_blocking(user_dirs["prompts"], ".md"),
             user_metadata,
             user_overrides["prompts"],
             global_base_dir,
         )
         add_resources(
             "themes",
-            _collect_flat_entries(user_dirs["themes"], ".json"),
+            _collect_flat_entries_blocking(user_dirs["themes"], ".json"),
             user_metadata,
             user_overrides["themes"],
             global_base_dir,
         )
 
-    def _to_resolved_paths(self, accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]]) -> ResolvedPaths:
+    def _to_resolved_paths_blocking(
+        self, accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]]
+    ) -> ResolvedPaths:
         def map_to_resolved(entries: dict[str, tuple[PathMetadata, bool]]) -> list[ResolvedResource]:
             resolved = [
                 ResolvedResource(path=path, enabled=enabled, metadata=metadata)
@@ -1222,7 +1230,7 @@ class DefaultPackageManager:
             seen: set[str] = set()
             deduped: list[ResolvedResource] = []
             for entry in resolved:
-                canonical_path = canonicalize_path(entry.path)
+                canonical_path = canonicalize_path_blocking(entry.path)
                 if canonical_path in seen:
                     continue
                 seen.add(canonical_path)
@@ -1241,21 +1249,23 @@ class DefaultPackageManager:
 
     # -- package resources -------------------------------------------------------
 
-    def _collect_files_from_manifest_entries(self, entries: list[str], root: str, resource_type: str) -> list[str]:
+    def _collect_files_from_manifest_entries_blocking(
+        self, entries: list[str], root: str, resource_type: str
+    ) -> list[str]:
         source_entries = [entry for entry in entries if not _is_override_pattern(entry)]
         resolved: list[str] = []
         for entry in source_entries:
             if not _has_glob_pattern(entry):
                 resolved.append(os.path.abspath(os.path.join(root, entry)))
                 continue
-            resolved.extend(_expand_package_glob(entry, root))
-        return self._collect_files_from_paths(resolved, resource_type)
+            resolved.extend(_expand_package_glob_blocking(entry, root))
+        return self._collect_files_from_paths_blocking(resolved, resource_type)
 
-    def _collect_manifest_files(self, package_root: str, resource_type: str) -> list[str]:
-        manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
+    def _collect_manifest_files_blocking(self, package_root: str, resource_type: str) -> list[str]:
+        manifest = read_pidrei_manifest_blocking(os.path.join(package_root, "pyproject.toml"))
         entries = (manifest or {}).get(resource_type)
         if entries:
-            all_files = self._collect_files_from_manifest_entries(entries, package_root, resource_type)
+            all_files = self._collect_files_from_manifest_entries_blocking(entries, package_root, resource_type)
             manifest_patterns = _get_override_patterns(entries)
             if manifest_patterns:
                 enabled = apply_patterns(all_files, manifest_patterns, package_root)
@@ -1265,9 +1275,9 @@ class DefaultPackageManager:
         convention_dir = os.path.join(package_root, resource_type)
         if not os.path.exists(convention_dir):
             return []
-        return _collect_resource_files(convention_dir, resource_type)
+        return _collect_resource_files_blocking(convention_dir, resource_type)
 
-    def _add_manifest_entries(
+    def _add_manifest_entries_blocking(
         self,
         entries: list[str] | None,
         root: str,
@@ -1277,30 +1287,30 @@ class DefaultPackageManager:
     ) -> None:
         if not entries:
             return
-        all_files = self._collect_files_from_manifest_entries(entries, root, resource_type)
+        all_files = self._collect_files_from_manifest_entries_blocking(entries, root, resource_type)
         enabled_paths = apply_patterns(all_files, _get_override_patterns(entries), root)
         for file in all_files:
             if file in enabled_paths:
                 self._add_resource(target, file, metadata, True)
 
-    def _collect_default_resources(
+    def _collect_default_resources_blocking(
         self,
         package_root: str,
         resource_type: str,
         target: dict[str, tuple[PathMetadata, bool]],
         metadata: PathMetadata,
     ) -> None:
-        manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
+        manifest = read_pidrei_manifest_blocking(os.path.join(package_root, "pyproject.toml"))
         entries = (manifest or {}).get(resource_type)
         if entries:
-            self._add_manifest_entries(entries, package_root, resource_type, target, metadata)
+            self._add_manifest_entries_blocking(entries, package_root, resource_type, target, metadata)
             return
         directory = os.path.join(package_root, resource_type)
         if os.path.exists(directory):
-            for file in _collect_resource_files(directory, resource_type):
+            for file in _collect_resource_files_blocking(directory, resource_type):
                 self._add_resource(target, file, metadata, True)
 
-    def _apply_package_filter(
+    def _apply_package_filter_blocking(
         self,
         package_root: str,
         user_patterns: list[str],
@@ -1308,7 +1318,7 @@ class DefaultPackageManager:
         target: dict[str, tuple[PathMetadata, bool]],
         metadata: PathMetadata,
     ) -> None:
-        all_files = self._collect_manifest_files(package_root, resource_type)
+        all_files = self._collect_manifest_files_blocking(package_root, resource_type)
         if not user_patterns:
             # An explicitly empty list disables every resource of this type.
             for file in all_files:
@@ -1319,7 +1329,7 @@ class DefaultPackageManager:
         for file in all_files:
             self._add_resource(target, file, metadata, file in enabled_by_user)
 
-    def _apply_package_delta_filter(
+    def _apply_package_delta_filter_blocking(
         self,
         package_root: str,
         user_patterns: list[str],
@@ -1329,11 +1339,11 @@ class DefaultPackageManager:
     ) -> None:
         if not user_patterns:
             return
-        all_files = self._collect_manifest_files(package_root, resource_type)
+        all_files = self._collect_manifest_files_blocking(package_root, resource_type)
         for file_path, enabled in apply_autoload_disabled_patterns(all_files, user_patterns, package_root).items():
             self._add_resource(target, file_path, metadata, enabled)
 
-    def _collect_package_resources(
+    def _collect_package_resources_blocking(
         self,
         package_root: str,
         accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
@@ -1345,20 +1355,22 @@ class DefaultPackageManager:
                 patterns = filter.get(resource_type)
                 target = accumulator[resource_type]
                 if filter.get("autoload") is False:
-                    self._apply_package_delta_filter(package_root, patterns or [], resource_type, target, metadata)
+                    self._apply_package_delta_filter_blocking(
+                        package_root, patterns or [], resource_type, target, metadata
+                    )
                 elif patterns is not None:
-                    self._apply_package_filter(package_root, patterns, resource_type, target, metadata)
+                    self._apply_package_filter_blocking(package_root, patterns, resource_type, target, metadata)
                 else:
-                    self._collect_default_resources(package_root, resource_type, target, metadata)
+                    self._collect_default_resources_blocking(package_root, resource_type, target, metadata)
             return True
 
-        manifest = read_pidrei_manifest(os.path.join(package_root, "pyproject.toml"))
+        manifest = read_pidrei_manifest_blocking(os.path.join(package_root, "pyproject.toml"))
         # `is not None`, not truthiness: a manifest whose resource fields are all
         # absent or malformed is still a manifest, and a package that declares one
         # never falls back to auto-discovery (pi's `{}` object is truthy).
         if manifest is not None:
             for resource_type in RESOURCE_TYPES:
-                self._add_manifest_entries(
+                self._add_manifest_entries_blocking(
                     manifest.get(resource_type), package_root, resource_type, accumulator[resource_type], metadata
                 )
             return True
@@ -1367,12 +1379,12 @@ class DefaultPackageManager:
         for resource_type in RESOURCE_TYPES:
             directory = os.path.join(package_root, resource_type)
             if os.path.exists(directory):
-                for file in _collect_resource_files(directory, resource_type):
+                for file in _collect_resource_files_blocking(directory, resource_type):
                     self._add_resource(accumulator[resource_type], file, metadata, True)
                 has_any_dir = True
         return has_any_dir
 
-    def _resolve_local_extension_source(
+    def _resolve_local_extension_source_blocking(
         self,
         source: LocalSource,
         accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
@@ -1390,7 +1402,7 @@ class DefaultPackageManager:
                 return
             if os.path.isdir(resolved):
                 metadata.base_dir = resolved
-                if not self._collect_package_resources(resolved, accumulator, filter, metadata):
+                if not self._collect_package_resources_blocking(resolved, accumulator, filter, metadata):
                     self._add_resource(accumulator["extensions"], resolved, metadata, True)
         except OSError:
             return
@@ -1447,7 +1459,7 @@ class DefaultPackageManager:
             if isinstance(parsed, LocalSource):
                 base_dir = self._get_base_dir_for_scope(resolved_scope)
                 await tonio.spawn_blocking(
-                    self._resolve_local_extension_source, parsed, accumulator, filter, metadata, base_dir
+                    self._resolve_local_extension_source_blocking, parsed, accumulator, filter, metadata, base_dir
                 )
                 continue
 
@@ -1465,14 +1477,16 @@ class DefaultPackageManager:
                 await self._install_parsed_source(parsed, scope)
                 return True
 
-            installed_path = self._get_git_install_path(parsed, resolved_scope)
+            installed_path = await self._get_git_install_path(parsed, resolved_scope)
             if not await fs.Path(installed_path).exists():
                 if not await install_missing():
                     continue
             elif resolved_scope == "temporary" and not parsed.pinned and not is_offline_mode_enabled():
                 await self._refresh_temporary_git_source(parsed, resolved_source)
             metadata.base_dir = installed_path
-            await tonio.spawn_blocking(self._collect_package_resources, installed_path, accumulator, filter, metadata)
+            await tonio.spawn_blocking(
+                self._collect_package_resources_blocking, installed_path, accumulator, filter, metadata
+            )
 
     async def resolve(self, on_missing=None) -> ResolvedPaths:
         accumulator = self._create_accumulator()
@@ -1490,10 +1504,10 @@ class DefaultPackageManager:
         # over the one accumulator, in a fixed order (local entries, then
         # auto-discovery, then canonicalization); one pool hop instead of ~10.
         return await tonio.spawn_blocking(
-            self._resolve_local_and_discovered, accumulator, global_settings, project_settings
+            self._resolve_local_and_discovered_blocking, accumulator, global_settings, project_settings
         )
 
-    def _resolve_local_and_discovered(
+    def _resolve_local_and_discovered_blocking(
         self,
         accumulator: dict[str, dict[str, tuple[PathMetadata, bool]]],
         global_settings: dict,
@@ -1506,14 +1520,14 @@ class DefaultPackageManager:
             target = accumulator[resource_type]
             global_entries = list(global_settings.get(resource_type) or [])
             project_entries = list(project_settings.get(resource_type) or [])
-            self._resolve_local_entries(
+            self._resolve_local_entries_blocking(
                 project_entries,
                 resource_type,
                 target,
                 PathMetadata(source="local", scope="project", origin="top-level"),
                 project_base_dir,
             )
-            self._resolve_local_entries(
+            self._resolve_local_entries_blocking(
                 global_entries,
                 resource_type,
                 target,
@@ -1521,10 +1535,10 @@ class DefaultPackageManager:
                 global_base_dir,
             )
 
-        self._add_auto_discovered_resources(
+        self._add_auto_discovered_resources_blocking(
             accumulator, global_settings, project_settings, global_base_dir, project_base_dir
         )
-        return self._to_resolved_paths(accumulator)
+        return self._to_resolved_paths_blocking(accumulator)
 
     async def resolve_extension_sources(
         self, sources: list[str], *, local: bool = False, temporary: bool = False
@@ -1535,4 +1549,4 @@ class DefaultPackageManager:
         accumulator = self._create_accumulator()
         scope = "temporary" if temporary else ("project" if local else "user")
         await self._resolve_package_sources([(source, scope) for source in sources], accumulator)
-        return await tonio.spawn_blocking(self._to_resolved_paths, accumulator)
+        return await tonio.spawn_blocking(self._to_resolved_paths_blocking, accumulator)

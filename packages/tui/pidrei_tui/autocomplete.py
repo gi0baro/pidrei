@@ -18,6 +18,7 @@ import re
 import subprocess
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from .fuzzy import fuzzy_filter
 from .utils import autocomplete_boundary_regex, autocomplete_separator_regex
@@ -289,7 +290,7 @@ class CombinedAutocompleteProvider:
             return None
 
         # Directory scan + per-entry stat: pool-side, never on a worker.
-        suggestions = await tonio.spawn_blocking(self._get_file_suggestions, path_match)
+        suggestions = await tonio.spawn_blocking(self._get_file_suggestions_blocking, path_match)
         if not suggestions:
             return None
 
@@ -426,7 +427,7 @@ class CombinedAutocompleteProvider:
             return os.path.expanduser("~")
         return path
 
-    def _resolve_scoped_fuzzy_query(self, raw_query: str) -> dict | None:
+    async def _resolve_scoped_fuzzy_query(self, raw_query: str) -> dict | None:
         normalized_query = _to_display_path(raw_query)
         slash_index = normalized_query.rfind("/")
         if slash_index == -1:
@@ -442,10 +443,8 @@ class CombinedAutocompleteProvider:
         else:
             base_dir = os.path.join(self._base_path, display_base)
 
-        try:
-            if not os.path.isdir(base_dir):
-                return None
-        except OSError:
+        # `is_dir` answers False on an OSError, as the sync check did.
+        if not await fs.Path(base_dir).is_dir():
             return None
 
         return {"baseDir": base_dir, "query": query, "displayBase": display_base}
@@ -457,7 +456,7 @@ class CombinedAutocompleteProvider:
         return f"{_to_display_path(display_base)}{normalized_relative_path}"
 
     # Get file/directory suggestions for a given path prefix
-    def _get_file_suggestions(self, prefix: str) -> list[dict]:
+    def _get_file_suggestions_blocking(self, prefix: str) -> list[dict]:
         try:
             parsed = _parse_path_prefix(prefix)
             raw_prefix = parsed["rawPrefix"]
@@ -614,7 +613,7 @@ class CombinedAutocompleteProvider:
             return []
 
         try:
-            scoped_query = self._resolve_scoped_fuzzy_query(query)
+            scoped_query = await self._resolve_scoped_fuzzy_query(query)
             fd_base_dir = scoped_query["baseDir"] if scoped_query else self._base_path
             fd_query = scoped_query["query"] if scoped_query else query
             base_dir_entries = await self._get_base_dir_suggestions(fd_base_dir, fd_query, signal)

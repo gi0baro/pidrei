@@ -21,7 +21,8 @@ async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writ
     await store.write("one", entry_one)
     operations = ObservedLock.install(store._storage)
     parked = park_on_file_lock_retry(monkeypatch)
-    release = lockfile.lock_sync(path, stale=30.0)
+    held = lockfile.FileLock(path, stale=30.0)
+    await held.try_acquire()
     controller = CancelToken()
     outcome: dict = {}
 
@@ -43,7 +44,7 @@ async def test_cancels_a_catalog_write_waiting_for_a_held_file_lock_without_writ
 
     await tonio.spawn(run_pending(), drive())
     assert isinstance(outcome["error"], AbortError)
-    release()
+    await held.release()
     # The cancelled write keeps running detached; once its critical section
     # ends it can no longer write.
     await operations.until(lambda lock: lock.released == 1)

@@ -1,12 +1,10 @@
 """Mirror of pi coding-agent test/model-resolver.test.ts (plus max-thinking.test.ts's
 CLI/settings assertions; its theme half is Phase 4)."""
 
-import io
-import sys
-
 import pytest
 
 from pidrei.cli.args import is_valid_thinking_level
+from pidrei.core import model_resolver
 from pidrei.core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,
     ModelScopeDiagnostic,
@@ -235,16 +233,16 @@ class TestResolveModelScopeWithDiagnostics:
     @pytest.mark.tonio
     async def test_resolve_model_scope_preserves_cli_warning_output(self):
         runtime = MockRuntime(ALL_MODELS)
-        captured = io.StringIO()
-        original_stderr = sys.stderr
-        sys.stderr = captured
+        captured: list[str] = []
+        original_write_stderr = model_resolver.write_stderr
+        model_resolver.write_stderr = captured.append
         try:
             scoped_models = await resolve_model_scope(["missing"], runtime)
         finally:
-            sys.stderr = original_stderr
+            model_resolver.write_stderr = original_write_stderr
 
         assert scoped_models == []
-        assert 'Warning: No models match pattern "missing"' in captured.getvalue()
+        assert 'Warning: No models match pattern "missing"' in "".join(captured)
 
     @pytest.mark.tonio
     async def test_resolves_bracketed_model_ids_as_exact_references_before_glob_matching(self):

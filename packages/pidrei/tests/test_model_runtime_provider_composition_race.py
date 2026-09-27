@@ -45,7 +45,7 @@ PROVIDER_CONFIG = {
 
 
 async def _make_runtime() -> ModelRuntime:
-    return await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None, allow_model_network=False)
+    return await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None, allow_model_network=False)
 
 
 class _DetachedRefreshes:

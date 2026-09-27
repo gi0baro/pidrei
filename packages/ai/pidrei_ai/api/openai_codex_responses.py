@@ -558,11 +558,7 @@ def stream(
                             continue
                         if aborted or (_is_codex_non_transport_error(error) and not connection_limit_before_start):
                             raise
-                        # Building the diagnostic renders a traceback, and
-                        # `traceback.format_exception` reads the source files to
-                        # do it — real filesystem I/O on an error path.
-                        diagnostic = await tonio.spawn_blocking(
-                            create_assistant_message_diagnostic,
+                        diagnostic = create_assistant_message_diagnostic(
                             "provider_transport_failure",
                             error,
                             {

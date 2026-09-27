@@ -11,8 +11,8 @@ from .extensions.types import LoadExtensionsResult, ProjectTrustContext
 from .trust_manager import (
     ProjectTrustOption,
     ProjectTrustStore,
-    get_project_trust_options,
-    has_trust_requiring_project_resources,
+    get_project_trust_options_blocking,
+    has_trust_requiring_project_resources_blocking,
 )
 
 
@@ -38,7 +38,8 @@ def format_project_trust_prompt(cwd: str) -> str:
 
 
 async def _select_project_trust_option(cwd: str, ctx: ProjectTrustContext) -> ProjectTrustOption | None:
-    options = get_project_trust_options(cwd, include_session_only=True)
+    # The options carry the canonical (realpath) cwd: pool-side.
+    options = await tonio.spawn_blocking(get_project_trust_options_blocking, cwd, include_session_only=True)
     selected = await ctx.ui.select(format_project_trust_prompt(cwd), [option.label for option in options])
     return next((option for option in options if option.label == selected), None)
 
@@ -52,7 +53,7 @@ async def resolve_project_trusted(options: ResolveProjectTrustedOptions) -> bool
     if options.trust_override is not None:
         return options.trust_override
     # Walks cwd's ancestors probing for project resources — one blocking unit.
-    if not await tonio.spawn_blocking(has_trust_requiring_project_resources, options.cwd):
+    if not await tonio.spawn_blocking(has_trust_requiring_project_resources_blocking, options.cwd):
         return True
 
     if options.extensions_result is not None:

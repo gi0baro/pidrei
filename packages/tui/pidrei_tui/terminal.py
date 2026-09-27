@@ -46,6 +46,14 @@ Port deviations (documented once here):
   render loop); the sync methods (`set_title`, `set_progress`, cursor and
   clear helpers, negotiation) only enqueue. pi writes `stdout` synchronously
   from its one thread, which gives it ordering and atomicity for free.
+- The output queue lives as long as the terminal (until `close()`, like the
+  input consumer); the pump and `O_NONBLOCK` only between `arm()` and
+  `release()` (pidrei-only). A TUI's session spans more than `start()` to
+  `stop()`: the alternate screen is entered before `start()` and left after
+  `stop()` (pi's order: the keyboard protocol push and pop happen inside
+  it), so the TUI arms first and releases last. Released, writes are held until the next `arm()`: nothing reaches
+  the tty while a child owns it (the external editor), and the flag is
+  back where the child expects it.
 - Env rename: PI_TUI_WRITE_LOG → PIDREI_TUI_WRITE_LOG.
 """
 
@@ -54,7 +62,6 @@ import contextlib
 import math
 import os
 import re
-import select
 import signal as signal_module
 import sys
 import termios
@@ -154,9 +161,19 @@ class Terminal(Protocol):
         handling, so input handling may call it."""
         ...
 
-    def close(self) -> None:
-        """Release what outlives stop/start (the input consumer); once, at
-        app shutdown."""
+    def arm(self) -> None:
+        """Take the terminal for output (pidrei-only): from here writes go
+        out, what was held while released first."""
+        ...
+
+    async def release(self) -> None:
+        """Hand the terminal back (pidrei-only) once queued output is out;
+        writes are held until the next `arm()`."""
+        ...
+
+    async def close(self) -> None:
+        """Release what outlives stop/start (the output queue, the input
+        consumer), putting out what is still held; once, at app shutdown."""
         ...
 
     async def drain_input(self, max_ms: float = 1000, idle_ms: float = 50) -> None:
@@ -214,7 +231,7 @@ class Terminal(Protocol):
         ...
 
 
-def _append_write_log(path: str, data: str) -> None:
+def _append_write_log_blocking(path: str, data: str) -> None:
     try:
         with open(path, "a", encoding="utf-8") as log:
             log.write(data)
@@ -222,7 +239,7 @@ def _append_write_log(path: str, data: str) -> None:
         pass  # Ignore logging errors, like pi
 
 
-def _resolve_write_log_path() -> str:
+def _resolve_write_log_path_blocking() -> str:
     env = os.environ.get(ENV_WRITE_LOG) or ""
     if not env:
         return ""
@@ -265,10 +282,15 @@ class ProcessTerminal:
         self._input_fd = input_fd
         self._output_fd = output_fd
         self._lock = threading.RLock()
-        # Output goes through one pump task (see `_output_pump`): writers
-        # enqueue complete sequences and the pump emits them in FIFO order.
-        self._out_tx = None
-        self._out_rx = None
+        # Output goes through one queue for the terminal's lifetime: writers
+        # enqueue complete sequences, and between `arm()` and `release()` a
+        # pump task emits them in FIFO order (see `_output_pump`). Released,
+        # the queue only holds them until the next `arm()` or `close()`.
+        # `_armed` is only touched by `arm()`/`release()`, which the TUI
+        # lifecycle (and `flush()`, `close()`) call in sequence.
+        self._out_tx, self._out_rx = tonio_channel.unbounded()
+        self._armed = False
+        self._closed = False
         self._out_sio = None
         self._out_pump = None
         self._saved_termios: list | None = None
@@ -301,7 +323,8 @@ class ProcessTerminal:
         self._stdin_buffer: StdinBuffer | None = None
         self._stdin_data_handler = None
         self._progress_interval: Interval | None = None
-        self._write_log_path = _resolve_write_log_path()
+        # Resolved by the output pump on its first start (`isdir` is I/O).
+        self._write_log_path: str | None = None
         self._scope = None
         self._sio = None
         self._last_read_time = 0.0
@@ -314,31 +337,78 @@ class ProcessTerminal:
     def modify_other_keys_active(self) -> bool:
         return self._modify_other_keys_active
 
+    @property
+    def output_fd(self) -> int:
+        return self._output_fd
+
+    def arm(self) -> None:
+        """Take the terminal: `O_NONBLOCK` on both fds (one open file
+        description on a tty) and the output pump, which first emits what was
+        held while released. A TUI arms before anything it writes on start
+        (the alternate-screen entry precedes `start()`), so its whole session
+        goes out through the pump."""
+        if self._armed or self._closed:
+            return
+        self._saved_output_blocking = os.get_blocking(self._output_fd)
+        os.set_blocking(self._output_fd, False)
+        if self._input_fd != self._output_fd:
+            self._saved_blocking = os.get_blocking(self._input_fd)
+            os.set_blocking(self._input_fd, False)
+        self._out_sio = tonio_io.register(self._output_fd)
+        self._out_pump = tonio.spawn(self._output_pump())
+        self._armed = True
+
+    async def release(self) -> None:
+        """Hand the terminal back once everything queued is on the wire: the
+        pump stops and both fds get their blocking flag back, so a child that
+        inherits the tty (the external editor) finds it the way it expects.
+        Writes from here on are held until the next `arm()`. A TUI releases
+        after the last thing it writes on stop (the alternate-screen exit
+        follows `stop()`)."""
+        if not self._armed:
+            return
+        self._armed = False
+        stopped = tonio.Event()
+        self._out_tx.send((None, stopped))
+        await stopped.wait(None)
+        await self._out_pump
+        self._out_pump = None
+        self._out_sio.close()
+        self._out_sio = None
+        os.set_blocking(self._output_fd, self._saved_output_blocking)
+        self._saved_output_blocking = None
+        if self._saved_blocking is not None:
+            os.set_blocking(self._input_fd, self._saved_blocking)
+            self._saved_blocking = None
+
+    async def flush(self) -> None:
+        """Wait until everything queued is on the wire. Released, that arms
+        the terminal for the moment it takes: only while the tty is ours
+        (before a hand-off, not during one)."""
+        if self._armed:
+            await self.write("")
+            return
+        self.arm()
+        await self.release()
+
     async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
         self._reply_handler = on_reply
         # Kept after `stop()`: the consumer may still be finishing an item.
         self._error_handler = on_error
         self._resize_handler = on_resize
 
+        # The input side runs inside an armed window (the reader needs the
+        # non-blocking fd); a caller that did not arm gets it here.
+        self.arm()
+
         # Save previous state and enable raw mode
         self._enter_raw_mode()
-
-        # Output pump first, so every sequence from here on is queued behind
-        # it in order. `stop()` closes its channel after the input side is
-        # torn down and joins it: the restore sequences must reach the fd
-        # before termios is reset.
-        self._saved_output_blocking = os.get_blocking(self._output_fd)
-        os.set_blocking(self._output_fd, False)
-        self._out_sio = tonio_io.register(self._output_fd)
-        self._out_tx, self._out_rx = tonio_channel.unbounded()
-        self._out_pump = tonio.spawn(self._output_pump())
 
         # Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
         self.write_sync("\x1b[?2004h")
 
         # Set up the resize watcher and the input reader; the reader plays the
         # role of node's process.stdin "data" listener.
-        os.set_blocking(self._input_fd, False)
         # One registration per fd: a pty test (and a caller passing the same
         # fd for both sides) shares the output pump's.
         self._sio = self._out_sio if self._input_fd == self._output_fd else tonio_io.register(self._input_fd)
@@ -365,9 +435,17 @@ class ProcessTerminal:
             self._input_handler = handler
             self._input_generation += 1
 
-    def close(self) -> None:
-        """Ends the input consumer after the item it is handling; once, at app
-        shutdown (it outlives stop/start)."""
+    async def close(self) -> None:
+        """Once, at app shutdown: puts out what the queue still holds (armed
+        just for that, then released), ends the output queue, and ends the
+        input consumer after the item it is handling (both outlive
+        stop/start). Writes after this are dropped."""
+        if self._closed:
+            return
+        self.arm()
+        await self.release()
+        self._closed = True
+        self._out_tx.close()
         tx, self._items_tx, self._items_rx = self._items_tx, None, None
         if tx is not None:
             tx.close()
@@ -704,27 +782,13 @@ class ProcessTerminal:
             if self._sio is not self._out_sio:
                 self._sio.close()
             self._sio = None
-        if self._saved_blocking is not None:
-            os.set_blocking(self._input_fd, self._saved_blocking)
-            self._saved_blocking = None
 
-        # Every restore sequence above is queued; wait for the pump to put
-        # them on the wire, then retire it. Later writes (none expected) take
-        # the direct path in `write_sync`.
-        if self._out_tx is not None:
+        # Every restore sequence above is queued; they must reach the fd
+        # before termios is reset. The pump and the blocking flags stay: the
+        # terminal is still armed until `release()`. (Never armed — a start
+        # that did not happen or failed — there is no wire to wait for.)
+        if self._armed:
             await self.write("")
-            self._out_tx.close()
-            self._out_tx = None
-        if self._out_pump is not None:
-            await self._out_pump
-            self._out_pump = None
-            self._out_rx = None
-        if self._out_sio is not None:
-            self._out_sio.close()
-            self._out_sio = None
-        if self._saved_output_blocking is not None:
-            os.set_blocking(self._output_fd, self._saved_output_blocking)
-            self._saved_output_blocking = None
 
         # Restore raw mode state
         self._restore_raw_mode()
@@ -734,14 +798,16 @@ class ProcessTerminal:
 
         The wait is what gives the render loop backpressure: a terminal that
         drains slowly (SSH) paces rendering instead of piling frames up in the
-        queue. Writers that need ordering but not completion use the sync
+        queue. Only the TUI writes this way, and only while it has the
+        terminal armed (released, "on the wire" would mean the next `arm()`).
+        Writers that need ordering but not completion use the sync
         `write_sync`.
         """
-        if self._out_tx is None:
-            self.write_sync(data)
-            return
         done = tonio.Event()
-        self._out_tx.send((data, done))
+        try:
+            self._out_tx.send((data, done))
+        except BrokenPipeError:
+            return  # closed: app shutdown is over
         await done.wait(None)
 
     @property
@@ -826,7 +892,6 @@ class ProcessTerminal:
 
     def _enter_raw_mode(self) -> None:
         fd = self._input_fd
-        self._saved_blocking = os.get_blocking(fd)
         try:
             self._saved_termios = termios.tcgetattr(fd)
         except termios.error:
@@ -852,36 +917,41 @@ class ProcessTerminal:
     def write_sync(self, data: str) -> None:
         """Queue ``data`` without waiting for it (sync; callable under `_lock`
         and from any task): ordered with every other write through the output
-        pump, so it never lands inside a frame.
-
-        Before `start()` / after `stop()` there is no pump and the fd is in
-        its original blocking mode, so the bytes go straight out.
+        pump, so it never lands inside a frame. Released, it is held until
+        the next `arm()`.
         """
-        tx = self._out_tx
-        if tx is not None:
-            tx.send((data, None))
-            return
-        _write_all(self._output_fd, data.encode("utf-8"))
+        with contextlib.suppress(BrokenPipeError):  # closed: app shutdown is over
+            self._out_tx.send((data, None))
 
     async def _output_pump(self) -> None:
-        """The only writer of the output fd while the terminal is started.
+        """The only writer of the output fd, between `arm()` and `release()`.
 
         Mirror of `_read_input` on the write side: sequences are taken off the
         queue in order and written with `arm_w` readiness, so a full tty
         buffer parks this task instead of blocking a worker thread, and no
         two writers can ever interleave. pi has no counterpart — one JS thread
         and a synchronous `stdout.write` give it both properties for free.
+
+        Items are `(data, done)`; `release()`'s is `(None, done)`, where the
+        pump sets `done` and ends, leaving what follows queued.
         """
         rx = self._out_rx
         sio = self._out_sio
         fd = self._output_fd
         log_path = self._write_log_path
+        if log_path is None:
+            # Once per terminal: arm/release cycles keep the one log file. The
+            # pump is the single consumer, so this needs no lock.
+            log_path = (
+                await tonio.spawn_blocking(_resolve_write_log_path_blocking) if os.environ.get(ENV_WRITE_LOG) else ""
+            )
+            self._write_log_path = log_path
         broken = False
         while True:
-            try:
-                data, done = await rx.receive()
-            except BrokenPipeError:
-                return  # sender closed by stop(): queue drained
+            data, done = await rx.receive()
+            if data is None:
+                done.set()
+                return
             try:
                 buffer = memoryview(data.encode("utf-8"))
                 while buffer and not broken:
@@ -906,7 +976,7 @@ class ProcessTerminal:
                         break
                     buffer = buffer[written:]
                 if log_path and data:
-                    await tonio.spawn_blocking(_append_write_log, log_path, data)
+                    await tonio.spawn_blocking(_append_write_log_blocking, log_path, data)
             except BaseException as error:
                 # The sole writer of the fd must survive a bad payload (e.g.
                 # an unencodable surrogate): a dead pump hangs every
@@ -921,19 +991,3 @@ class ProcessTerminal:
                         on_error(error)
             if done is not None:
                 done.set()
-
-
-def _write_all(fd: int, payload: bytes) -> None:
-    """Direct write for the windows with no pump (before start / after stop)."""
-    buffer = memoryview(payload)
-    while buffer:
-        try:
-            written = os.write(fd, buffer)
-        except BlockingIOError:
-            # Only if the fd was inherited non-blocking; wait for room rather
-            # than spin. Never reached while the pump is up.
-            select.select([], [fd], [])
-            continue
-        except InterruptedError:
-            continue
-        buffer = buffer[written:]

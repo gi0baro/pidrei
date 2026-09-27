@@ -2,7 +2,7 @@
 
 Both moved off the blocking pool under the stdio teardown policy (task #92):
 a pipe is driven by readiness with `O_NONBLOCK` restored by `FdReader.close`
-on the orderly path and by `snapshot_std_blocking`/`hard_exit` on the rest.
+on the orderly path and by `snapshot_stdio_flags`/`hard_exit` on the rest.
 These tests swap `sys.stdin` for a pipe-backed file by hand (no yield
 fixtures: tonio) and check both the answer and the descriptor hygiene.
 """

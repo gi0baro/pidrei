@@ -7,11 +7,11 @@ interactive branches route through the startup TUI helpers
 modes and headless runs resolve to "no answer" as pi does.
 """
 
-import sys
 from dataclasses import dataclass
 from typing import Any
 
 from ..core.extensions.types import ProjectTrustContext
+from ..core.output_guard import write_stderr
 from ..utils.colors import cyan, red, yellow
 from .startup_ui import show_startup_input, show_startup_selector
 
@@ -62,7 +62,7 @@ class _ProjectTrustUI:
     def notify(self, message: str, type: str = "info") -> None:
         if self._options.mode != "interactive":
             color = red if type == "error" else yellow if type == "warning" else cyan
-            print(color(message), file=sys.stderr)
+            write_stderr(color(message) + "\n")
 
 
 def create_project_trust_context(options: CreateProjectTrustContextOptions) -> ProjectTrustContext:

@@ -9,7 +9,7 @@ import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.settings_selector import SettingsSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -62,9 +62,9 @@ BASE_CONFIG = {
 
 
 @pytest.fixture(autouse=True)
-def _theme():
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager(None, None))
+async def _theme():
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 @pytest.mark.tonio

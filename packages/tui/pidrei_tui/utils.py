@@ -12,7 +12,9 @@ Port notes (pi runs on JS Intl/Unicode engines Python lacks in the stdlib):
   ``foo.bar``/``foo:bar`` stay single word-like segments) refined for Han
   runs with ``jieba`` dictionary segmentation (UAX #29 alone breaks every
   ideograph apart; ICU — and therefore pi — uses a frequency dictionary so
-  ``你好世界`` segments as ``你好|世界``). ``isWordLike`` is approximated as
+  ``你好世界`` segments as ``你好|世界``). jieba loads in the background on
+  the first Han run; until it has, Han runs keep the UAX #29 split, one
+  ideograph per word. ``isWordLike`` is approximated as
   "contains a letter or digit" (categories L*/N*).
 - ``get-east-asian-width`` → ``unicodedata.east_asian_width`` (W/F → 2,
   everything else → 1; ambiguous stays narrow like pi's default).
@@ -48,6 +50,7 @@ import unicodedata
 import warnings
 
 import grapheme as grapheme_lib
+import tonio.colored as tonio
 from uniseg.wordbreak import words as _uniseg_words
 
 
@@ -55,25 +58,47 @@ from uniseg.wordbreak import words as _uniseg_words
 # Word segmentation
 # =============================================================================
 
-_jieba_lock = threading.Lock()
+# jieba is heavy (its dictionary costs ~70MB and a third of a second of file
+# I/O to build), so it loads only once Han text is first segmented, in the
+# background; until then Han runs keep their UAX #29 split.
+_jieba_lock = threading.Lock()  # guards the start flag only; never held across the load
+_jieba_load_started = False
 _jieba_cut = None
 
 
-def _get_jieba_cut():
+def _initialize_jieba() -> None:
+    """Blocking: the import plus `initialize()` (dictionary/cache file I/O),
+    then publishes `jieba.cut`. Pool only."""
     global _jieba_cut
-    if _jieba_cut is None:
-        with _jieba_lock:
-            if _jieba_cut is None:
-                with warnings.catch_warnings():
-                    # jieba 0.42.1 still ships pre-3.12 invalid escape sequences.
-                    warnings.simplefilter("ignore", SyntaxWarning)
-                    # lazy: jieba is heavy and only needed for CJK segmentation
-                    import jieba
+    with warnings.catch_warnings():
+        # jieba 0.42.1 still ships pre-3.12 invalid escape sequences.
+        warnings.simplefilter("ignore", SyntaxWarning)
+        import jieba
 
-                jieba.setLogLevel(logging.ERROR)
-                jieba.initialize()
-                _jieba_cut = jieba.cut
-    return _jieba_cut
+    jieba.setLogLevel(logging.ERROR)
+    jieba.initialize()
+    _jieba_cut = jieba.cut
+
+
+async def _load_jieba() -> None:
+    try:
+        await tonio.spawn_blocking(_initialize_jieba)
+    except Exception:
+        pass  # one attempt: Han runs keep the UAX #29 split for the session
+
+
+def _get_jieba_cut():
+    """`jieba.cut` once loaded; before that, starts the load once and returns None."""
+    global _jieba_load_started
+    cut = _jieba_cut
+    if cut is not None:
+        return cut
+    with _jieba_lock:
+        if _jieba_load_started:
+            return None
+        _jieba_load_started = True
+    tonio.spawn.without_tracking(_load_jieba())
+    return None
 
 
 def _is_han(char: str) -> bool:
@@ -99,20 +124,21 @@ class _WordSegmenter:
     def segment(self, text: str) -> list[dict]:
         segments: list[dict] = []
         index = 0
-        han_run = ""
+        han_run: list[str] = []
 
         def flush_han_run() -> None:
             nonlocal han_run, index
             if not han_run:
                 return
-            for word in _get_jieba_cut()(han_run):
+            cut = _get_jieba_cut()
+            for word in cut("".join(han_run)) if cut is not None else han_run:
                 segments.append({"segment": word, "index": index, "isWordLike": True})
                 index += len(word)
-            han_run = ""
+            han_run = []
 
         for raw_segment in _uniseg_words(text):
             if all(_is_han(char) for char in raw_segment):
-                han_run += raw_segment
+                han_run.append(raw_segment)
                 continue
             flush_han_run()
             segments.append({"segment": raw_segment, "index": index, "isWordLike": _is_word_like(raw_segment)})

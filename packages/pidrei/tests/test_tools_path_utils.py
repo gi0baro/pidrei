@@ -2,7 +2,7 @@
 
 import os
 
-from pidrei.core.tools.path_utils import expand_path, resolve_read_path, resolve_to_cwd
+from pidrei.core.tools.path_utils import expand_path, resolve_read_path_blocking, resolve_to_cwd
 
 
 class TestExpandPath:
@@ -38,7 +38,7 @@ class TestResolveToCwd:
 class TestResolveReadPath:
     def test_resolves_existing_file_path(self, tmp_path):
         (tmp_path / "test-file.txt").write_text("content")
-        assert resolve_read_path("test-file.txt", str(tmp_path)) == str(tmp_path / "test-file.txt")
+        assert resolve_read_path_blocking("test-file.txt", str(tmp_path)) == str(tmp_path / "test-file.txt")
 
     def test_handles_nfc_vs_nfd_unicode_normalization(self, tmp_path):
         import re
@@ -50,7 +50,7 @@ class TestResolveReadPath:
 
         (tmp_path / nfd_file_name).write_text("content")
 
-        result = resolve_read_path(nfc_file_name, str(tmp_path))
+        result = resolve_read_path_blocking(nfc_file_name, str(tmp_path))
         assert str(tmp_path) in result
         assert re.search(r"file.+\.txt$", result)
 
@@ -62,7 +62,7 @@ class TestResolveReadPath:
 
         (tmp_path / curly_quote_name).write_text("content")
 
-        assert resolve_read_path(straight_quote_name, str(tmp_path)) == str(tmp_path / curly_quote_name)
+        assert resolve_read_path_blocking(straight_quote_name, str(tmp_path)) == str(tmp_path / curly_quote_name)
 
     def test_handles_combined_nfc_and_curly_quote(self, tmp_path):
         nfc_curly_name = "Capture d\u2019\u00e9cran.txt"
@@ -72,7 +72,7 @@ class TestResolveReadPath:
 
         (tmp_path / nfc_curly_name).write_text("content")
 
-        assert resolve_read_path(nfc_straight_name, str(tmp_path)) == str(tmp_path / nfc_curly_name)
+        assert resolve_read_path_blocking(nfc_straight_name, str(tmp_path)) == str(tmp_path / nfc_curly_name)
 
     def test_handles_macos_screenshot_am_pm_variant_with_narrow_no_break_space(self, tmp_path):
         macos_name = "Screenshot 2024-01-01 at 10.00.00 AM.png"
@@ -80,7 +80,7 @@ class TestResolveReadPath:
 
         (tmp_path / macos_name).write_text("content")
 
-        assert resolve_read_path(user_name, str(tmp_path)) == str(tmp_path / macos_name)
+        assert resolve_read_path_blocking(user_name, str(tmp_path)) == str(tmp_path / macos_name)
 
     def test_handles_macos_screenshot_lowercase_am_pm_variant(self, tmp_path):
         macos_name = "Screenshot 2024-01-01 at 10.00.00 am.png"
@@ -88,4 +88,4 @@ class TestResolveReadPath:
 
         (tmp_path / macos_name).write_text("content")
 
-        assert resolve_read_path(user_name, str(tmp_path)) == str(tmp_path / macos_name)
+        assert resolve_read_path_blocking(user_name, str(tmp_path)) == str(tmp_path / macos_name)

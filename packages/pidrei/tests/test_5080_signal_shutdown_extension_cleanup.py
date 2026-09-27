@@ -49,7 +49,8 @@ def _stubbed_exit():
 
 class _TtyBuffer(io.StringIO):
     """pi sets `process.stdout.isTTY`; `format_resume_command` gates on
-    `sys.stdout.isatty()`, so the capture has to claim to be one."""
+    `stdout_isatty()`, which asks `sys.stdout`, so the stand-in has to claim to
+    be one."""
 
     def isatty(self) -> bool:
         return True
@@ -57,15 +58,22 @@ class _TtyBuffer(io.StringIO):
 
 @contextlib.contextmanager
 def _captured_stdout():
+    """The resume hint is written with the output guard's `write_stdout`,
+    swapped on the module; `sys.stdout` only answers `isatty()`."""
     import sys
 
+    from pidrei.modes.interactive import interactive_mode
+
     original = sys.stdout
+    original_write_stdout = interactive_mode.write_stdout
     buffer = _TtyBuffer()
     sys.stdout = buffer
+    interactive_mode.write_stdout = buffer.write
     try:
         yield buffer
     finally:
         sys.stdout = original
+        interactive_mode.write_stdout = original_write_stdout
 
 
 def create_session_manager(session_file: str | None = None) -> SimpleNamespace:

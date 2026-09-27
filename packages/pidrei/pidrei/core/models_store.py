@@ -13,7 +13,7 @@ from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.models_store import ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions
 
 from ..config import get_agent_dir
-from ..utils.paths import get_file_revision, normalize_path
+from ..utils.paths import get_file_revision_blocking, normalize_path
 from ..utils.text import strip_bom
 from .model_wire import model_to_dict, parse_model_dict
 
@@ -119,7 +119,7 @@ class FileModelsStore(ModelsStore):
     async def _reload_from_storage(self, options: ModelsStoreOperationOptions | None = None) -> dict[str, Any]:
         async def under_lock(content: str | None) -> tuple[dict[str, Any], None]:
             data = self._parse(content)
-            revision = await tonio.spawn_blocking(get_file_revision, self._path)
+            revision = await tonio.spawn_blocking(get_file_revision_blocking, self._path)
             self._update_read_state(data, revision)
             return data, None
 
@@ -133,7 +133,7 @@ class FileModelsStore(ModelsStore):
         # Pin the snapshot before comparing (see the auth-storage note): any
         # interleaving with a reload costs one extra reload, never staleness.
         snapshot = state.snapshot
-        revision = await tonio.spawn_blocking(get_file_revision, self._path)
+        revision = await tonio.spawn_blocking(get_file_revision_blocking, self._path)
         if revision is not None and revision == snapshot.revision:
             return snapshot.data
 
@@ -145,7 +145,7 @@ class FileModelsStore(ModelsStore):
             if cancel is not None:
                 cancel.raise_if_cancelled()
             snapshot = state.snapshot
-            revision = await tonio.spawn_blocking(get_file_revision, self._path)
+            revision = await tonio.spawn_blocking(get_file_revision_blocking, self._path)
             if revision is not None and revision == snapshot.revision:
                 return snapshot.data
             return await self._reload_from_storage(options)

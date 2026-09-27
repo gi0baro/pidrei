@@ -38,7 +38,7 @@ async def test_preserves_file_changes_to_packages_array_when_changing_unrelated_
 
     settings_path.write_text(json.dumps({"theme": "dark", "packages": ["npm:pi-mcp-adapter"]}), encoding="utf-8")
 
-    manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+    manager = await SettingsManager(str(project_dir), str(agent_dir))
 
     assert manager.get_packages() == ["npm:pi-mcp-adapter"]
 
@@ -64,7 +64,7 @@ async def test_preserves_file_changes_to_extensions_array_when_changing_unrelate
 
     settings_path.write_text(json.dumps({"theme": "dark", "extensions": ["/old/extension.py"]}), encoding="utf-8")
 
-    manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+    manager = await SettingsManager(str(project_dir), str(agent_dir))
 
     current_settings = read_json(settings_path)
     current_settings["extensions"] = ["/new/extension.py"]
@@ -86,7 +86,7 @@ async def test_preserves_external_project_settings_changes_when_updating_unrelat
         json.dumps({"extensions": ["./old-extension.py"], "prompts": ["./old-prompt.md"]}), encoding="utf-8"
     )
 
-    manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+    manager = await SettingsManager(str(project_dir), str(agent_dir))
 
     current_project_settings = read_json(project_settings_path)
     current_project_settings["prompts"] = ["./new-prompt.md"]
@@ -106,7 +106,7 @@ async def test_lets_in_memory_project_changes_override_external_changes_for_the_
     project_settings_path = project_dir / ".pidrei" / "settings.json"
     project_settings_path.write_text(json.dumps({"extensions": ["./initial-extension.py"]}), encoding="utf-8")
 
-    manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+    manager = await SettingsManager(str(project_dir), str(agent_dir))
 
     current_project_settings = read_json(project_settings_path)
     current_project_settings["extensions"] = ["./external-extension.py"]

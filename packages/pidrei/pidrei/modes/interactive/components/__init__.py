@@ -17,7 +17,7 @@ from .custom_message import CustomMessageComponent
 from .daxnuts import DaxnutsComponent
 from .diff import render_diff
 from .dynamic_border import DynamicBorder
-from .earendil_announcement import EarendilAnnouncementComponent
+from .earendil_announcement import EarendilAnnouncementComponent, load_earendil_image_base64
 from .extension_editor import ExtensionEditorComponent
 from .extension_input import ExtensionInputComponent
 from .extension_selector import ExtensionSelectorComponent
@@ -98,6 +98,7 @@ __all__ = [
     "key_display_text",
     "key_hint",
     "key_text",
+    "load_earendil_image_base64",
     "raw_key_hint",
     "render_diff",
     "truncate_to_visual_lines",

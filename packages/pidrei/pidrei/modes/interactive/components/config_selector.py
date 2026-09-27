@@ -9,7 +9,7 @@ import os
 from pidrei_tui import Container, Input, Spacer, get_keybindings, matches_key, truncate_to_width, visible_width
 
 from ....config import CONFIG_DIR_NAME
-from ....utils.paths import canonicalize_path, is_local_path, resolve_path
+from ....utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, raw_key_hint
@@ -127,6 +127,21 @@ def build_groups(resolved, agent_dir: str) -> list:
     return groups
 
 
+def build_canonical_path_map_blocking(resolved_paths: dict) -> dict[str, str]:
+    """Canonical form of every resource path in `resolved_paths`, resolved once.
+
+    Blocking (one `realpath` per resource), so callers offload it; the
+    component only looks the paths up.
+    """
+    canonical: dict[str, str] = {}
+    for resolved in resolved_paths.values():
+        for resource_type in RESOURCE_TYPES:
+            for res in getattr(resolved, resource_type):
+                if res.path not in canonical:
+                    canonical[res.path] = canonicalize_path_blocking(res.path)
+    return canonical
+
+
 class ConfigSelectorHeader:
     def __init__(self, write_scope: str, project_mode_available: bool) -> None:
         self._write_scope = write_scope
@@ -168,12 +183,15 @@ class ResourceList:
         agent_dir: str,
         terminal_height: int | None = None,
         write_scope: str = "global",
+        *,
+        canonical_by_path: dict[str, str],
     ) -> None:
         self._groups_by_scope = groups_by_scope
         self._settings_manager = settings_manager
         self._cwd = cwd
         self._agent_dir = agent_dir
         self._write_scope = write_scope
+        self._canonical_by_path = canonical_by_path
         self._inherited_enabled_by_key = self._build_inherited_enabled_map(groups_by_scope["global"])
         self._search_input = Input()
         # 8 lines of chrome: top spacer + top border + spacer + header (2
@@ -752,7 +770,7 @@ class ResourceList:
         return entry[1:] if entry.startswith(("!", "+", "-")) else entry
 
     def _get_resource_item_key(self, item: dict) -> str:
-        return f"{item['resourceType']}:{canonicalize_path(item['path'])}"
+        return f"{item['resourceType']}:{self._canonical_by_path.get(item['path'], item['path'])}"
 
     def _get_item_scope(self, item: dict) -> str:
         return "project" if item["metadata"].scope == "project" else "user"
@@ -783,7 +801,10 @@ class ConfigSelectorComponent(Container):
         terminal_height: int | None = None,
         write_scope: str = "global",
         project_mode_available: bool = True,
+        *,
+        canonical_by_path: dict[str, str],
     ) -> None:
+        """`canonical_by_path` comes from `build_canonical_path_map_blocking(resolved_paths)`."""
         super().__init__()
 
         self._write_scope = write_scope
@@ -809,6 +830,7 @@ class ConfigSelectorComponent(Container):
             agent_dir,
             terminal_height,
             self._write_scope,
+            canonical_by_path=canonical_by_path,
         )
         self._resource_list.on_cancel = on_close
         self._resource_list.on_exit = on_exit

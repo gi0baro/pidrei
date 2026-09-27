@@ -18,7 +18,7 @@ def now_ms() -> int:
 
 
 async def create_runtime(credentials: AuthStorage) -> ModelRuntime:
-    return await ModelRuntime.create(
+    return await ModelRuntime(
         credentials=credentials,
         models_path=None,
         models_store=InMemoryModelsStore(),
@@ -95,17 +95,19 @@ async def test_refreshes_an_expired_oauth_token_before_printing_it():
 @pytest.mark.tonio
 async def test_reports_unknown_auth_options_like_package_commands():
     """pi drives `main()`; pidrei calls the extracted `_run_auth_command`."""
-    import contextlib
-    import io
-
+    from pidrei import main as main_module
     from pidrei.main import _run_auth_command
     from pidrei.utils.ansi import strip_ansi
 
-    buffer = io.StringIO()
-    with contextlib.redirect_stderr(buffer):
+    captured: list[str] = []
+    original_write_stderr = main_module.write_stderr
+    main_module.write_stderr = captured.append
+    try:
         exit_code = await _run_auth_command(["auth", "check", "--provider", "openai-codex", "--credentails"])
+    finally:
+        main_module.write_stderr = original_write_stderr
 
-    stderr = strip_ansi(buffer.getvalue())
+    stderr = strip_ansi("".join(captured))
     assert 'Unknown option --credentails for "auth check".' in stderr
     assert (
         'Use "pidrei --help" or "pidrei auth check --provider <provider> [--json] [--credentials] [--no-refresh]".'

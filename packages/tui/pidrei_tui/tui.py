@@ -1017,6 +1017,9 @@ class TuiBase(Container, ABC):
 
     async def start(self) -> None:
         self._stopped = False
+        # Armed before anything this session writes: the alternate-screen
+        # entry comes before `terminal.start()`.
+        self.terminal.arm()
         await self._before_terminal_start()
         on_input = self._handle_input
         if not isinstance(self.terminal, ProcessTerminal):
@@ -1061,10 +1064,10 @@ class TuiBase(Container, ABC):
         self._render_active = True
         self.request_render()
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """App shutdown, once: ends what outlives stop/start, the terminal's
-        input consumer."""
-        self.terminal.close()
+        output queue (putting out what it still holds) and input consumer."""
+        await self.terminal.close()
 
     def finish_before_next_input(self, task) -> None:
         """Hold the next input item until ``task`` (a ``tonio.spawn()``
@@ -1195,6 +1198,9 @@ class TuiBase(Container, ABC):
             await task
         async with self._render_lock:
             await self._after_terminal_stop(options)
+        # Released after the last thing this session writes: the
+        # alternate-screen exit comes after `terminal.stop()`.
+        await self.terminal.release()
 
     async def render_now(self, force: bool = False) -> None:
         """Render one frame on the caller, bypassing the render loop, and

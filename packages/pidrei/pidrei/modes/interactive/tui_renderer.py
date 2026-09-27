@@ -25,7 +25,7 @@ def create_interactive_tui(
 
         async def copy_selection(text: str) -> bool | str:
             try:
-                await copy_to_clipboard(text)
+                await copy_to_clipboard(text, terminal.write_sync)
                 return True
             except Exception as error:
                 return str(error)

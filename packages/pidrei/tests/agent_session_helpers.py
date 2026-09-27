@@ -150,13 +150,11 @@ async def create_agent_session(
     )
 
     if session_manager is None:
-        session_manager = (
-            SessionManager.in_memory() if in_memory_session else await SessionManager.create(temp_dir, temp_dir)
-        )
-    settings_manager = await SettingsManager.create(temp_dir, temp_dir)
+        session_manager = SessionManager.in_memory() if in_memory_session else await SessionManager(temp_dir, temp_dir)
+    settings_manager = await SettingsManager(temp_dir, temp_dir)
     if settings_overrides:
         settings_manager.apply_overrides(settings_overrides)
-    auth_storage = await AuthStorage.create(os.path.join(temp_dir, "auth.json"))
+    auth_storage = await AuthStorage(os.path.join(temp_dir, "auth.json"))
 
     from pidrei_ai.auth.types import ApiKeyCredential
 
@@ -167,7 +165,7 @@ async def create_agent_session(
         await auth_storage.modify(provider_auth, set_key)
     # In-memory catalog store (pi's `createInMemoryModelRegistry`, #7394's flaky
     # RPC-prompt fix): the file-backed store's disk lock is contention only here.
-    model_runtime = await ModelRuntime.create(
+    model_runtime = await ModelRuntime(
         credentials=auth_storage,
         models_path=os.path.join(temp_dir, "models.json"),
         models_store=InMemoryCodingAgentModelsStore(),

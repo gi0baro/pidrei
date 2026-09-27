@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR
+from ..core.output_guard import write_stdout
 from ..utils.colors import bold
 
 
@@ -276,7 +277,7 @@ def print_help(extension_flags: list[Any] | None = None) -> None:
     else:
         extension_flags_text = ""
 
-    print(f"""{bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+    write_stdout(f"""{bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
 {bold("Usage:")}
   {APP_NAME} [options] [--] [@files...] [messages...]
@@ -461,4 +462,5 @@ Extensions can register additional flags (e.g., --plan from plan-mode extension)
   grep   - Search file contents (read-only, off by default)
   find   - Find files by glob pattern (read-only, off by default)
   ls     - List directory contents (read-only, off by default)
+
 """)

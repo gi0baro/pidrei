@@ -3,9 +3,9 @@
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
-from pidrei.core.trust_manager import ProjectTrustStoreEntry, ProjectTrustUpdate
+from pidrei.core.trust_manager import ProjectTrustStoreEntry, ProjectTrustUpdate, get_project_trust_options_blocking
 from pidrei.modes.interactive.components import TrustSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -15,9 +15,9 @@ async def _ignore_selection(selection: dict) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+async def _setup():
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 class TestTrustSelectorComponent:
@@ -26,6 +26,7 @@ class TestTrustSelectorComponent:
         selector = TrustSelectorComponent(
             {
                 "cwd": "/project",
+                "trustOptions": get_project_trust_options_blocking("/project"),
                 "savedDecision": ProjectTrustStoreEntry(path="/project", decision=True),
                 "projectTrusted": True,
                 "onSelect": _ignore_selection,
@@ -54,6 +55,7 @@ class TestTrustSelectorComponent:
         selector = TrustSelectorComponent(
             {
                 "cwd": "/project",
+                "trustOptions": get_project_trust_options_blocking("/project"),
                 "savedDecision": None,
                 "projectTrusted": False,
                 "onSelect": on_select,
@@ -69,6 +71,7 @@ class TestTrustSelectorComponent:
         selector = TrustSelectorComponent(
             {
                 "cwd": "/parent/project/nested",
+                "trustOptions": get_project_trust_options_blocking("/parent/project/nested"),
                 "savedDecision": ProjectTrustStoreEntry(path="/parent", decision=True),
                 "projectTrusted": True,
                 "onSelect": _ignore_selection,
@@ -90,6 +93,7 @@ class TestTrustSelectorComponent:
         selector = TrustSelectorComponent(
             {
                 "cwd": "/parent/project",
+                "trustOptions": get_project_trust_options_blocking("/parent/project"),
                 "savedDecision": ProjectTrustStoreEntry(path="/parent", decision=True),
                 "projectTrusted": True,
                 "onSelect": on_select,

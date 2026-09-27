@@ -47,6 +47,12 @@ class TestTerminal:
     async def drain_input(self, max_ms=1000, idle_ms=50):
         pass
 
+    def arm(self):
+        pass
+
+    async def release(self):
+        pass
+
     async def write(self, data):
         self.writes.append(data)
         for text, written in self._expected_writes:
@@ -89,7 +95,7 @@ class TestTerminal:
     def set_progress(self, active):
         pass
 
-    def close(self):
+    async def close(self):
         pass
 
     async def send_input(self, data):

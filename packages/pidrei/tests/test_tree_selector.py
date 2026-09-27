@@ -8,17 +8,17 @@ import pytest
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionTreeNode
 from pidrei.modes.interactive.components import TreeSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import AssistantMessage, TextContent, ToolCall, Usage, UserMessage
 from pidrei_tui import set_keybindings, visible_width
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
+async def _setup():
+    await init_theme("dark")
     # Ensure test isolation: keybindings are a global singleton
-    set_keybindings(KeybindingsManager())
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 def _now_iso() -> str:

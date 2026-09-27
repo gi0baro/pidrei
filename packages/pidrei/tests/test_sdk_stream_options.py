@@ -79,7 +79,7 @@ async def _create_cache_warming_session(tmp_path, populate=None) -> _Fixture:
         return ApiKeyCredential(key="test-api-key")
 
     await auth_storage.modify(model.provider, set_key)
-    fixture.model_runtime = await ModelRuntime.create(
+    fixture.model_runtime = await ModelRuntime(
         credentials=auth_storage,
         models_path=os.path.join(agent_dir, "models.json"),
         allow_model_network=False,

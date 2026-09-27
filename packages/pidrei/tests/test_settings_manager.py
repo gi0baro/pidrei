@@ -40,7 +40,7 @@ class TestPreservesExternallyAddedSettings:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"theme": "dark", "defaultModel": "claude-sonnet"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         current_settings = read_json(settings_path)
         current_settings["enabledModels"] = ["claude-opus-4-5", "gpt-5.2-codex"]
@@ -61,7 +61,7 @@ class TestPreservesExternallyAddedSettings:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"defaultModel": "claude-sonnet"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         current_settings = read_json(settings_path)
         current_settings["shellPath"] = "/bin/zsh"
@@ -82,7 +82,7 @@ class TestPreservesExternallyAddedSettings:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"theme": "dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         current_settings = read_json(settings_path)
         current_settings["defaultThinkingLevel"] = "low"
@@ -101,7 +101,7 @@ class TestPackagesMigration:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"extensions": ["/local/ext.py", "./relative/ext.py"]})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_packages() == []
         assert manager.get_extension_paths() == ["/local/ext.py", "./relative/ext.py"]
@@ -119,7 +119,7 @@ class TestPackagesMigration:
             },
         )
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         packages = manager.get_packages()
         assert len(packages) == 2
@@ -138,7 +138,7 @@ class TestReload:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"theme": "dark", "extensions": ["/before.py"]})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         write_json(settings_path, {"theme": "light", "extensions": ["/after.py"], "defaultModel": "claude-sonnet"})
 
@@ -154,7 +154,7 @@ class TestReload:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"theme": "dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         settings_path.write_text("{ invalid json", encoding="utf-8")
         await manager.reload()
@@ -171,7 +171,7 @@ class TestThemeSetting:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"theme": "light/dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_theme() is None
         assert manager.get_theme_setting() == "light/dark"
@@ -192,7 +192,7 @@ class TestErrorTracking:
         global_settings_path.write_text("{ invalid global json", encoding="utf-8")
         project_settings_path.write_text("{ invalid project json", encoding="utf-8")
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         errors = manager.drain_errors()
 
         assert [(error.scope, error.path) for error in errors] == [
@@ -209,7 +209,7 @@ class TestProjectTrust:
         write_json(agent_dir / "settings.json", {"theme": "global"})
         write_json(project_dir / ".pidrei" / "settings.json", {"theme": "project"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir), project_trusted=False)
+        manager = await SettingsManager(str(project_dir), str(agent_dir), project_trusted=False)
 
         assert manager.is_project_trusted() is False
         assert manager.get_theme() == "global"
@@ -220,9 +220,9 @@ class TestProjectTrust:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"theme": "global"})
         write_json(project_dir / ".pidrei" / "settings.json", {"theme": "project"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir), project_trusted=False)
+        manager = await SettingsManager(str(project_dir), str(agent_dir), project_trusted=False)
 
-        manager.set_project_trusted(True)
+        await manager.set_project_trusted(True)
 
         assert manager.is_project_trusted() is True
         assert manager.get_theme() == "project"
@@ -232,7 +232,7 @@ class TestProjectTrust:
         agent_dir, project_dir = dirs
         project_settings_path = project_dir / ".pidrei" / "settings.json"
         write_json(project_settings_path, {"packages": ["npm:existing"]})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir), project_trusted=False)
+        manager = await SettingsManager(str(project_dir), str(agent_dir), project_trusted=False)
 
         with pytest.raises(Exception, match="Project is not trusted; refusing to write project settings"):
             manager.set_project_packages(["npm:new"])
@@ -247,7 +247,7 @@ class TestProjectTrust:
         write_json(agent_dir / "settings.json", {"defaultProjectTrust": "always"})
         write_json(project_dir / ".pidrei" / "settings.json", {"defaultProjectTrust": "never"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_default_project_trust() == "always"
 
@@ -256,7 +256,7 @@ class TestProjectTrust:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"defaultProjectTrust": "sometimes"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_default_project_trust() == "ask"
 
@@ -269,7 +269,7 @@ class TestProjectSettingsDirectoryCreation:
 
         (project_dir / ".pidrei").rmdir()
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert not (project_dir / ".pidrei").exists()
         assert manager.get_theme() == "dark"
@@ -281,7 +281,7 @@ class TestProjectSettingsDirectoryCreation:
 
         (project_dir / ".pidrei").rmdir()
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert not (project_dir / ".pidrei").exists()
 
@@ -327,7 +327,7 @@ class TestHttpIdleTimeoutMs:
     @pytest.mark.tonio
     async def test_defaults_to_5_minutes(self, dirs):
         agent_dir, project_dir = dirs
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_http_idle_timeout_ms() == DEFAULT_HTTP_IDLE_TIMEOUT_MS
 
     @pytest.mark.tonio
@@ -336,7 +336,7 @@ class TestHttpIdleTimeoutMs:
         write_json(agent_dir / "settings.json", {"httpIdleTimeoutMs": 300000})
         write_json(project_dir / ".pidrei" / "settings.json", {"httpIdleTimeoutMs": 0})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_http_idle_timeout_ms() == 0
 
@@ -344,7 +344,7 @@ class TestHttpIdleTimeoutMs:
     async def test_rejects_invalid_timeout_values(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"httpIdleTimeoutMs": -1})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         with pytest.raises(Exception, match="Invalid httpIdleTimeoutMs setting"):
             manager.get_http_idle_timeout_ms()
@@ -356,7 +356,7 @@ class TestCacheWarming:
         agent_dir, project_dir = dirs
 
         async def mode() -> str:
-            return (await SettingsManager.create(str(project_dir), str(agent_dir))).get_cache_warming_mode()
+            return (await SettingsManager(str(project_dir), str(agent_dir))).get_cache_warming_mode()
 
         assert await mode() == "streaming"
 
@@ -372,11 +372,11 @@ class TestCacheWarming:
     @pytest.mark.tonio
     async def test_persists_the_mode_globally(self, dirs):
         agent_dir, project_dir = dirs
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         manager.set_cache_warming_mode("off")
         await manager.flush()
 
-        assert (await SettingsManager.create(str(project_dir), str(agent_dir))).get_cache_warming_mode() == "off"
+        assert (await SettingsManager(str(project_dir), str(agent_dir))).get_cache_warming_mode() == "off"
         assert json.loads((agent_dir / "settings.json").read_text(encoding="utf-8")) == {"cacheWarming": "off"}
 
 
@@ -405,12 +405,12 @@ class TestDefaultTools:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"defaultTools": ["read", "bash"]})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_default_tools() == ["read", "bash"]
 
         write_json(project_dir / ".pidrei" / "settings.json", {"defaultTools": ["grep"]})
 
-        reloaded = await SettingsManager.create(str(project_dir), str(agent_dir))
+        reloaded = await SettingsManager(str(project_dir), str(agent_dir))
         assert reloaded.get_default_tools() == ["grep"]
 
     def test_preserves_an_empty_tool_list(self):
@@ -422,7 +422,7 @@ class TestFullscreenScrollbar:
     @pytest.mark.tonio
     async def test_validates_and_persists_fullscreen_settings(self, dirs):
         agent_dir, project_dir = dirs
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_fullscreen_exit_output() == "transcript"
         assert manager.get_fullscreen_scrollbar() == "auto"
         assert manager.get_fullscreen_copy_on_select() is True
@@ -437,7 +437,7 @@ class TestFullscreenScrollbar:
         assert saved_settings["fullscreenCopyOnSelect"] is False
 
         write_json(agent_dir / "settings.json", {"fullscreenExitOutput": "nothing", "fullscreenScrollbar": "sometimes"})
-        reloaded = await SettingsManager.create(str(project_dir), str(agent_dir))
+        reloaded = await SettingsManager(str(project_dir), str(agent_dir))
         assert reloaded.get_fullscreen_exit_output() == "transcript"
         assert reloaded.get_fullscreen_scrollbar() == "auto"
         assert reloaded.get_fullscreen_copy_on_select() is True
@@ -447,7 +447,7 @@ class TestTuiMode:
     @pytest.mark.tonio
     async def test_defaults_to_regular_and_persists_fullscreen_mode(self, dirs):
         agent_dir, project_dir = dirs
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_tui_mode() == "regular"
 
@@ -462,7 +462,7 @@ class TestTuiMode:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"tuiMode": "other"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_tui_mode() == "regular"
 
@@ -471,7 +471,7 @@ class TestOutputPad:
     @pytest.mark.tonio
     async def test_defaults_to_1_and_persists_binary_values(self, dirs):
         agent_dir, project_dir = dirs
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_output_pad() == 1
 
@@ -487,7 +487,7 @@ class TestOutputPad:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"outputPad": 2})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_output_pad() == 1
 
@@ -498,7 +498,7 @@ class TestShellCommandPrefix:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"shellCommandPrefix": "shopt -s expand_aliases"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_shell_command_prefix() == "shopt -s expand_aliases"
 
@@ -507,7 +507,7 @@ class TestShellCommandPrefix:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"theme": "dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_shell_command_prefix() is None
 
@@ -517,7 +517,7 @@ class TestShellCommandPrefix:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"shellCommandPrefix": "shopt -s expand_aliases"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         manager.set_theme("light")
         await manager.flush()
 
@@ -531,14 +531,14 @@ class TestGetSessionDir:
     async def test_returns_none_when_not_set(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"theme": "dark"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_session_dir() is None
 
     @pytest.mark.tonio
     async def test_returns_global_session_dir(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"sessionDir": "/tmp/sessions"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_session_dir() == "/tmp/sessions"
 
     @pytest.mark.tonio
@@ -546,14 +546,14 @@ class TestGetSessionDir:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"sessionDir": "/global/sessions"})
         write_json(project_dir / ".pidrei" / "settings.json", {"sessionDir": "./sessions"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_session_dir() == "./sessions"
 
     @pytest.mark.tonio
     async def test_expands_tilde_in_session_dir(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"sessionDir": "~/sessions"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_session_dir() == os.path.join(HOME, "sessions")
 
 
@@ -562,28 +562,28 @@ class TestGetShellPath:
     async def test_returns_none_when_not_set(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"theme": "dark"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_shell_path() is None
 
     @pytest.mark.tonio
     async def test_returns_an_absolute_shell_path_unchanged(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"shellPath": "/bin/zsh"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_shell_path() == "/bin/zsh"
 
     @pytest.mark.tonio
     async def test_expands_tilde_in_shell_path(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"shellPath": "~/.local/bin/agent-shell-sandbox"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_shell_path() == os.path.join(HOME, ".local/bin/agent-shell-sandbox")
 
     @pytest.mark.tonio
     async def test_expands_a_bare_tilde_in_shell_path(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"shellPath": "~"})
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         assert manager.get_shell_path() == HOME
 
 
@@ -600,7 +600,7 @@ class TestProviderAttributionMigration:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"enableInstallTelemetry": False, "theme": "dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_enable_provider_attribution() is False
 
@@ -610,7 +610,7 @@ class TestProviderAttributionMigration:
         settings_path = agent_dir / "settings.json"
         write_json(settings_path, {"enableInstallTelemetry": False, "theme": "dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
         manager.set_theme("light")
         await manager.flush()
 
@@ -626,7 +626,7 @@ class TestProviderAttributionMigration:
             {"enableInstallTelemetry": True, "enableProviderAttribution": False},
         )
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_enable_provider_attribution() is False
 
@@ -635,6 +635,6 @@ class TestProviderAttributionMigration:
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"theme": "dark"})
 
-        manager = await SettingsManager.create(str(project_dir), str(agent_dir))
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
 
         assert manager.get_enable_provider_attribution() is True

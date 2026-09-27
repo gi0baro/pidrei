@@ -15,6 +15,7 @@ from pidrei_ai.types import Model
 
 from ..cli.args import is_valid_thinking_level
 from .defaults import DEFAULT_THINKING_LEVEL
+from .output_guard import write_stderr, write_stdout
 
 
 # Default model IDs for each known provider
@@ -335,7 +336,7 @@ async def resolve_model_scope_with_diagnostics(
 
 
 def _warn(message: str) -> None:
-    print(f"\x1b[33mWarning: {message}\x1b[0m", file=sys.stderr)
+    write_stderr(f"\x1b[33mWarning: {message}\x1b[0m\n")
 
 
 async def resolve_model_scope(
@@ -541,7 +542,7 @@ async def find_initial_model(
     if cli_provider and cli_model:
         resolved = resolve_cli_model(cli_provider=cli_provider, cli_model=cli_model, model_runtime=model_runtime)
         if resolved.error:
-            print(f"\x1b[31m{resolved.error}\x1b[0m", file=sys.stderr)
+            write_stderr(f"\x1b[31m{resolved.error}\x1b[0m\n")
             sys.exit(1)
         if resolved.model is not None:
             return InitialModelResult(model=resolved.model, thinking_level=DEFAULT_THINKING_LEVEL)
@@ -594,7 +595,7 @@ async def restore_model_from_session(
 
     if restored_model is not None and has_configured_auth:
         if should_print_messages:
-            print(f"Restored model: {saved_provider}/{saved_model_id}")
+            write_stdout(f"Restored model: {saved_provider}/{saved_model_id}\n")
         return restored_model, None
 
     reason = "model no longer exists" if restored_model is None else "no auth configured"
@@ -604,7 +605,7 @@ async def restore_model_from_session(
 
     if current_model is not None:
         if should_print_messages:
-            print(f"Falling back to: {current_model.provider}/{current_model.id}")
+            write_stdout(f"Falling back to: {current_model.provider}/{current_model.id}\n")
         return current_model, (
             f"Could not restore model {saved_provider}/{saved_model_id} ({reason}). "
             f"Using {current_model.provider}/{current_model.id}."
@@ -626,7 +627,7 @@ async def restore_model_from_session(
             fallback_model = available_models[0]
 
         if should_print_messages:
-            print(f"Falling back to: {fallback_model.provider}/{fallback_model.id}")
+            write_stdout(f"Falling back to: {fallback_model.provider}/{fallback_model.id}\n")
 
         return fallback_model, (
             f"Could not restore model {saved_provider}/{saved_model_id} ({reason}). "

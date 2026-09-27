@@ -5,7 +5,6 @@ SYSTEM.md / APPEND_SYSTEM.md, with the project-trust bootstrap flow.
 """
 
 import os
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -16,7 +15,7 @@ from tonio.colored import fs
 from pidrei_ai.utils.tasks import gather
 
 from ..config import CONFIG_DIR_NAME
-from ..utils.paths import canonicalize_path, is_local_path, resolve_path
+from ..utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
 from ..utils.text import strip_bom
 from .diagnostics import ResourceCollision, ResourceDiagnostic
 from .event_bus import EventBus
@@ -27,7 +26,8 @@ from .extensions.loader import (
     load_extensions_cached,
 )
 from .extensions.types import Extension, ExtensionLoadError, ExtensionRuntime, LoadExtensionsResult
-from .footer_data_provider import _find_git_paths
+from .footer_data_provider import _find_git_paths_blocking
+from .output_guard import write_stderr
 from .package_manager import DefaultPackageManager, ResolvedResource
 from .prompt_templates import PromptTemplate, load_prompt_templates
 from .settings_manager import SettingsManager
@@ -55,16 +55,16 @@ class SourcedPath:
 
 
 def _warn(message: str) -> None:
-    print(f"\x1b[33mWarning: {message}\x1b[0m", file=sys.stderr)
+    write_stderr(f"\x1b[33mWarning: {message}\x1b[0m\n")
 
 
 def _resolve_prompt_input(input: str | None, description: str) -> Awaitable[str | None]:
     """The value is either a literal prompt or a path to read — deciding which
     means touching the filesystem, so the whole check goes to the pool."""
-    return tonio.spawn_blocking(_resolve_prompt_input_sync, input, description)
+    return tonio.spawn_blocking(_resolve_prompt_input_blocking, input, description)
 
 
-def _resolve_prompt_input_sync(input: str | None, description: str) -> str | None:
+def _resolve_prompt_input_blocking(input: str | None, description: str) -> str | None:
     if not input:
         return None
 
@@ -79,7 +79,7 @@ def _resolve_prompt_input_sync(input: str | None, description: str) -> str | Non
     return input
 
 
-def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
+def _load_context_file_from_dir_blocking(dir: str) -> AgentsFile | None:
     for filename in ("AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"):
         file_path = os.path.join(dir, filename)
         if os.path.exists(file_path):
@@ -93,7 +93,7 @@ def _load_context_file_from_dir(dir: str) -> AgentsFile | None:
     return None
 
 
-def _find_shadowed_context_file(cwd: str) -> str | None:
+def _find_shadowed_context_file_blocking(cwd: str) -> str | None:
     """The main repo's context file that a nested linked worktree's own copy
     shadows: both are the same tracked AGENTS.md/CLAUDE.md, so loading both
     loads it twice. Returns None when nothing is shadowed, leaving normal
@@ -103,11 +103,11 @@ def _find_shadowed_context_file(cwd: str) -> str | None:
     `.git` file's `gitdir:` target in realpath form while cwd may still be
     symlinked (macOS `/tmp` -> `/private/tmp`).
     """
-    git_paths = _find_git_paths(cwd)
+    git_paths = _find_git_paths_blocking(cwd)
     if git_paths is None:
         return None
-    common_git_dir = canonicalize_path(git_paths["commonGitDir"])
-    worktree_root = canonicalize_path(git_paths["repoDir"])
+    common_git_dir = canonicalize_path_blocking(git_paths["commonGitDir"])
+    worktree_root = canonicalize_path_blocking(git_paths["repoDir"])
     main_repo_root = os.path.dirname(common_git_dir)
     # False for an ordinary repo, where the two are the same dir, and for a sibling
     # worktree (`git worktree add ../feat`), whose main repo is not an ancestor.
@@ -117,9 +117,9 @@ def _find_shadowed_context_file(cwd: str) -> str | None:
     # itself checked out from the same repo. In a bare layout (`proj/.bare` +
     # `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
     # submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
-    if canonicalize_path(os.path.join(main_repo_root, ".git")) != common_git_dir:
+    if canonicalize_path_blocking(os.path.join(main_repo_root, ".git")) != common_git_dir:
         return None
-    worktree_context_file = _load_context_file_from_dir(worktree_root)
+    worktree_context_file = _load_context_file_from_dir_blocking(worktree_root)
     if worktree_context_file is None:
         return None
     return os.path.join(main_repo_root, os.path.basename(worktree_context_file.path))
@@ -128,31 +128,31 @@ def _find_shadowed_context_file(cwd: str) -> str | None:
 def load_project_context_files(*, cwd: str, agent_dir: str) -> Awaitable[list[AgentsFile]]:
     """Walking cwd's ancestors for AGENTS.md is one blocking unit, so it goes
     to the pool whole rather than as a probe-and-read per directory."""
-    return tonio.spawn_blocking(_load_project_context_files_sync, cwd=cwd, agent_dir=agent_dir)
+    return tonio.spawn_blocking(_load_project_context_files_blocking, cwd=cwd, agent_dir=agent_dir)
 
 
-def _load_project_context_files_sync(*, cwd: str, agent_dir: str) -> list[AgentsFile]:
+def _load_project_context_files_blocking(*, cwd: str, agent_dir: str) -> list[AgentsFile]:
     resolved_cwd = resolve_path(cwd)
     resolved_agent_dir = resolve_path(agent_dir)
 
     context_files: list[AgentsFile] = []
     seen_paths: set[str] = set()
 
-    global_context = _load_context_file_from_dir(resolved_agent_dir)
+    global_context = _load_context_file_from_dir_blocking(resolved_agent_dir)
     if global_context is not None:
         context_files.append(global_context)
         seen_paths.add(global_context.path)
 
     ancestor_context_files: list[AgentsFile] = []
 
-    shadowed_context_file = _find_shadowed_context_file(resolved_cwd)
+    shadowed_context_file = _find_shadowed_context_file_blocking(resolved_cwd)
     current_dir = resolved_cwd
     while True:
-        context_file = _load_context_file_from_dir(current_dir)
+        context_file = _load_context_file_from_dir_blocking(current_dir)
         is_shadowed = (
             shadowed_context_file is not None
             and context_file is not None
-            and canonicalize_path(context_file.path) == shadowed_context_file
+            and canonicalize_path_blocking(context_file.path) == shadowed_context_file
         )
         if context_file is not None and not is_shadowed and context_file.path not in seen_paths:
             ancestor_context_files.insert(0, context_file)
@@ -197,17 +197,11 @@ class DefaultResourceLoader:
     ):
         self._cwd = resolve_path(cwd)
         self._agent_dir = resolve_path(agent_dir)
-        self._settings_manager = (
-            settings_manager
-            if settings_manager is not None
-            # A constructor cannot await. Every production caller passes one in
-            # (`agent_session_services`, `package_commands`, `sdk`); this
-            # fallback exists for tests and direct SDK use.
-            else SettingsManager.create_sync(self._cwd, self._agent_dir)
-        )
-        self._package_manager = DefaultPackageManager(
-            cwd=self._cwd, agent_dir=self._agent_dir, settings_manager=self._settings_manager
-        )
+        # Both completed by `__await__` (`await DefaultResourceLoader(...)`):
+        # without a settings manager passed in, loading one awaits, and the
+        # package manager is built on it.
+        self._settings_manager = settings_manager
+        self._package_manager: DefaultPackageManager | None = None
         self._event_bus = event_bus if event_bus is not None else EventBus()
         self._extension_factories = extension_factories or []
         self._additional_extension_paths = additional_extension_paths or []
@@ -246,6 +240,18 @@ class DefaultResourceLoader:
         self._resource_metadata_by_path: dict[str, PathMetadata] = {}
         self._themes: list = []
         self._theme_diagnostics: list[ResourceDiagnostic] = []
+
+    def __await__(self):
+        return self._start().__await__()
+
+    async def _start(self) -> DefaultResourceLoader:
+        if self._settings_manager is None:
+            self._settings_manager = await SettingsManager(self._cwd, self._agent_dir)
+        if self._package_manager is None:
+            self._package_manager = DefaultPackageManager(
+                cwd=self._cwd, agent_dir=self._agent_dir, settings_manager=self._settings_manager
+            )
+        return self
 
     # -- getters ---------------------------------------------------------------
 
@@ -298,13 +304,13 @@ class DefaultResourceLoader:
             self._extension_prompt_source_infos[entry.path] = create_source_info(entry.path, entry.metadata)
 
         if normalized_skills:
-            self._last_skill_paths = self._merge_paths(
+            self._last_skill_paths = await self._merge_paths(
                 self._last_skill_paths, [entry.path for entry in normalized_skills]
             )
             await self._update_skills_from_paths(self._last_skill_paths, self._resource_metadata_by_path)
 
         if normalized_prompts:
-            self._last_prompt_paths = self._merge_paths(
+            self._last_prompt_paths = await self._merge_paths(
                 self._last_prompt_paths, [entry.path for entry in normalized_prompts]
             )
             await self._update_prompts_from_paths(self._last_prompt_paths, self._resource_metadata_by_path)
@@ -314,7 +320,7 @@ class DefaultResourceLoader:
     async def load_project_trust_extensions(self) -> LoadExtensionsResult:
         # Force untrusted project settings for the bootstrap pass. This keeps project-local
         # extensions/packages out while still loading user/global and temporary CLI extensions.
-        self._settings_manager.set_project_trusted(False)
+        await self._settings_manager.set_project_trusted(False)
         await self._settings_manager.reload()
         return await self._load_current_extension_set(include_inline_factories=True)
 
@@ -332,7 +338,7 @@ class DefaultResourceLoader:
         if resolve_project_trust is not None:
             pre_trust_extensions = await self.load_project_trust_extensions()
             project_trusted = await resolve_project_trust(pre_trust_extensions)
-            self._settings_manager.set_project_trusted(project_trusted)
+            await self._settings_manager.set_project_trusted(project_trusted)
 
         # reload() preserves SettingsManager.project_trusted and reloads settings for that trust state.
         await self._settings_manager.reload()
@@ -361,7 +367,9 @@ class DefaultResourceLoader:
         enabled_skill_resources = get_enabled_resources(resolved_paths.skills)
         enabled_prompts = get_enabled_paths(resolved_paths.prompts)
 
-        enabled_skills = [self._map_skill_path(resource, metadata_by_path) for resource in enabled_skill_resources]
+        enabled_skills = [
+            await self._map_skill_path(resource, metadata_by_path) for resource in enabled_skill_resources
+        ]
 
         for resource in [*cli_extension_paths.extensions, *cli_extension_paths.skills]:
             if resource.path not in metadata_by_path:
@@ -374,7 +382,7 @@ class DefaultResourceLoader:
         if self._no_extensions:
             extension_paths = cli_enabled_extensions
         else:
-            extension_paths = self._merge_paths(cli_enabled_extensions, enabled_extensions)
+            extension_paths = await self._merge_paths(cli_enabled_extensions, enabled_extensions)
 
         extensions_result = await self._load_final_extension_set(extension_paths, pre_trust_extensions)
         for path in self._additional_extension_paths:
@@ -387,19 +395,19 @@ class DefaultResourceLoader:
         self._extensions_result = (
             self._extensions_override(extensions_result) if self._extensions_override else extensions_result
         )
-        self._apply_extension_source_info(self._extensions_result.extensions, metadata_by_path)
+        await self._apply_extension_source_info(self._extensions_result.extensions, metadata_by_path)
 
         if self._no_skills:
-            skill_paths = self._merge_paths(cli_enabled_skills, self._additional_skill_paths)
+            skill_paths = await self._merge_paths(cli_enabled_skills, self._additional_skill_paths)
         else:
-            skill_paths = self._merge_paths([*cli_enabled_skills, *enabled_skills], self._additional_skill_paths)
+            skill_paths = await self._merge_paths([*cli_enabled_skills, *enabled_skills], self._additional_skill_paths)
 
         self._last_skill_paths = skill_paths
 
         if self._no_prompt_templates:
-            prompt_paths = self._merge_paths(cli_enabled_prompts, self._additional_prompt_template_paths)
+            prompt_paths = await self._merge_paths(cli_enabled_prompts, self._additional_prompt_template_paths)
         else:
-            prompt_paths = self._merge_paths(
+            prompt_paths = await self._merge_paths(
                 [*cli_enabled_prompts, *enabled_prompts], self._additional_prompt_template_paths
             )
         self._last_prompt_paths = prompt_paths
@@ -407,9 +415,9 @@ class DefaultResourceLoader:
         enabled_themes = get_enabled_paths(resolved_paths.themes)
         cli_enabled_themes = get_enabled_paths(cli_extension_paths.themes)
         if self._no_themes:
-            theme_paths = self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
+            theme_paths = await self._merge_paths(cli_enabled_themes, self._additional_theme_paths)
         else:
-            theme_paths = self._merge_paths([*cli_enabled_themes, *enabled_themes], self._additional_theme_paths)
+            theme_paths = await self._merge_paths([*cli_enabled_themes, *enabled_themes], self._additional_theme_paths)
 
         # Only extensions feed the stages below (skill/prompt source infos);
         # the stages themselves are independent and each writes its own
@@ -418,7 +426,7 @@ class DefaultResourceLoader:
         await gather(
             self._load_skills_stage(skill_paths, metadata_by_path),
             self._load_prompts_stage(prompt_paths, metadata_by_path),
-            tonio.spawn_blocking(self._update_themes_from_paths, theme_paths, metadata_by_path),
+            self._update_themes_from_paths(theme_paths, metadata_by_path),
             self._load_agents_files_stage(),
             self._load_system_prompt_stage(),
             self._load_append_system_prompt_stage(),
@@ -461,7 +469,7 @@ class DefaultResourceLoader:
         system_prompt_source = (
             self._system_prompt_source
             if self._system_prompt_source is not None
-            else await tonio.spawn_blocking(self._discover_system_prompt_file)
+            else await tonio.spawn_blocking(self._discover_system_prompt_file_blocking)
         )
         base_system_prompt = await _resolve_prompt_input(system_prompt_source, "system prompt")
         self._system_prompt = (
@@ -479,7 +487,7 @@ class DefaultResourceLoader:
         if self._append_system_prompt_source is not None:
             append_sources = self._append_system_prompt_source
         else:
-            discovered = await tonio.spawn_blocking(self._discover_append_system_prompt_file)
+            discovered = await tonio.spawn_blocking(self._discover_append_system_prompt_file_blocking)
             append_sources = [discovered] if discovered is not None else []
         base_append = [
             resolved
@@ -504,7 +512,7 @@ class DefaultResourceLoader:
         )
         enabled = [resource.path for resource in resolved_paths.extensions if resource.enabled]
         cli_enabled = [resource.path for resource in cli_extension_paths.extensions if resource.enabled]
-        extension_paths = cli_enabled if self._no_extensions else self._merge_paths(cli_enabled, enabled)
+        extension_paths = cli_enabled if self._no_extensions else await self._merge_paths(cli_enabled, enabled)
 
         extensions_result = await load_extensions_cached(extension_paths, self._cwd, self._event_bus)
         if not include_inline_factories:
@@ -617,13 +625,13 @@ class DefaultResourceLoader:
 
         return conflicts
 
-    def _apply_extension_source_info(
+    async def _apply_extension_source_info(
         self, extensions: list[Extension], metadata_by_path: dict[str, PathMetadata]
     ) -> None:
         for extension in extensions:
-            source_info = self._find_source_info_for_path(
+            source_info = await self._find_source_info_for_path(
                 extension.path, None, metadata_by_path
-            ) or self._get_default_source_info_for_path(extension.path)
+            ) or await self._get_default_source_info_for_path(extension.path)
             extension.source_info = source_info
             for command in extension.commands.values():
                 command.source_info = source_info
@@ -632,16 +640,18 @@ class DefaultResourceLoader:
 
     # -- helpers ----------------------------------------------------------------
 
-    def _map_skill_path(self, resource: ResolvedResource, metadata_by_path: dict[str, PathMetadata]) -> str:
+    async def _map_skill_path(self, resource: ResolvedResource, metadata_by_path: dict[str, PathMetadata]) -> str:
         if resource.metadata.source != "auto" and resource.metadata.origin != "package":
             return resource.path
-        try:
-            if not os.path.isdir(resource.path):
-                return resource.path
-        except OSError:
-            return resource.path
         skill_file = os.path.join(resource.path, "SKILL.md")
-        if os.path.exists(skill_file):
+
+        def is_skill_dir_blocking() -> bool:
+            try:
+                return os.path.isdir(resource.path) and os.path.exists(skill_file)
+            except OSError:
+                return False
+
+        if await tonio.spawn_blocking(is_skill_dir_blocking):
             if skill_file not in metadata_by_path:
                 metadata_by_path[skill_file] = resource.metadata
             return skill_file
@@ -673,11 +683,11 @@ class DefaultResourceLoader:
             replace(
                 skill,
                 source_info=(
-                    self._find_source_info_for_path(
+                    await self._find_source_info_for_path(
                         skill.file_path, self._extension_skill_source_infos, metadata_by_path
                     )
                     or skill.source_info
-                    or self._get_default_source_info_for_path(skill.file_path)
+                    or await self._get_default_source_info_for_path(skill.file_path)
                 ),
             )
             for skill in resolved_skills.skills
@@ -707,24 +717,35 @@ class DefaultResourceLoader:
             replace(
                 prompt,
                 source_info=(
-                    self._find_source_info_for_path(
+                    await self._find_source_info_for_path(
                         prompt.file_path, self._extension_prompt_source_infos, metadata_by_path
                     )
                     or prompt.source_info
-                    or self._get_default_source_info_for_path(prompt.file_path)
+                    or await self._get_default_source_info_for_path(prompt.file_path)
                 ),
             )
             for prompt in resolved_prompts.prompts
         ]
         self._prompt_diagnostics = resolved_prompts.diagnostics
 
-    def _update_themes_from_paths(
+    async def _update_themes_from_paths(
         self, theme_paths: list[str], metadata_by_path: dict[str, PathMetadata] | None = None
     ) -> None:
+        themes, diagnostics = await tonio.spawn_blocking(self._load_themes_from_paths_blocking, theme_paths)
+        for loaded_theme in themes:
+            source_path = loaded_theme.source_path
+            if source_path:
+                loaded_theme.source_info = await self._find_source_info_for_path(
+                    source_path, None, metadata_by_path
+                ) or await self._get_default_source_info_for_path(source_path)
+        self._themes = themes
+        self._theme_diagnostics = diagnostics
+
+    def _load_themes_from_paths_blocking(self, theme_paths: list[str]) -> tuple[list, list[ResourceDiagnostic]]:
         # lazy: core <-> modes import cycle (see modes/__init__.py)
         # This whole method runs pool-side, so it uses the blocking loader
         # directly rather than the awaitable one.
-        from ..modes.interactive.theme import _load_theme_from_path_sync as load_theme_from_path
+        from ..modes.interactive.theme import _load_theme_from_path_blocking as load_theme_from_path
 
         if self._no_themes and not theme_paths:
             themes: list = []
@@ -743,7 +764,7 @@ class DefaultResourceLoader:
                     )
                     continue
                 if os.path.isdir(resolved):
-                    self._load_themes_from_dir(resolved, themes, diagnostics, load_theme_from_path)
+                    self._load_themes_from_dir_blocking(resolved, themes, diagnostics, load_theme_from_path)
                 else:
                     self._load_theme_from_file(resolved, themes, diagnostics, load_theme_from_path)
 
@@ -751,16 +772,11 @@ class DefaultResourceLoader:
             themes = deduped_themes
             diagnostics = [*diagnostics, *dedupe_diagnostics]
 
-        for loaded_theme in themes:
-            source_path = loaded_theme.source_path
-            if source_path:
-                loaded_theme.source_info = self._find_source_info_for_path(
-                    source_path, None, metadata_by_path
-                ) or self._get_default_source_info_for_path(source_path)
-        self._themes = themes
-        self._theme_diagnostics = diagnostics
+        return themes, diagnostics
 
-    def _load_themes_from_dir(self, theme_dir: str, themes: list, diagnostics: list, load_theme_from_path) -> None:
+    def _load_themes_from_dir_blocking(
+        self, theme_dir: str, themes: list, diagnostics: list, load_theme_from_path
+    ) -> None:
         if not os.path.exists(theme_dir):
             return
 
@@ -801,7 +817,7 @@ class DefaultResourceLoader:
 
         return list(seen.values()), diagnostics
 
-    def _find_source_info_for_path(
+    async def _find_source_info_for_path(
         self,
         resource_path: str,
         extra_source_infos: dict[str, SourceInfo] | None = None,
@@ -811,7 +827,7 @@ class DefaultResourceLoader:
             return None
 
         if resource_path.startswith("<"):
-            return self._get_default_source_info_for_path(resource_path)
+            return await self._get_default_source_info_for_path(resource_path)
 
         normalized_resource_path = os.path.abspath(resource_path)
         if extra_source_infos:
@@ -836,7 +852,7 @@ class DefaultResourceLoader:
 
         return None
 
-    def _get_default_source_info_for_path(self, file_path: str) -> SourceInfo:
+    async def _get_default_source_info_for_path(self, file_path: str) -> SourceInfo:
         if file_path.startswith("<") and file_path.endswith(">"):
             return SourceInfo(
                 path=file_path,
@@ -864,16 +880,18 @@ class DefaultResourceLoader:
             source="local",
             scope="temporary",
             origin="top-level",
-            base_dir=normalized_path if os.path.isdir(normalized_path) else os.path.dirname(normalized_path),
+            base_dir=normalized_path if await fs.Path(normalized_path).is_dir() else os.path.dirname(normalized_path),
         )
 
-    def _merge_paths(self, primary: list[str], additional: list[str]) -> list[str]:
+    async def _merge_paths(self, primary: list[str], additional: list[str]) -> list[str]:
         merged: list[str] = []
         seen: set[str] = set()
 
-        for path in [*primary, *additional]:
-            resolved = self._resolve_resource_path(path)
-            canonical_path = canonicalize_path(resolved)
+        resolved_paths = [self._resolve_resource_path(path) for path in [*primary, *additional]]
+        canonical_paths = await tonio.spawn_blocking(
+            lambda: [canonicalize_path_blocking(path) for path in resolved_paths]
+        )
+        for resolved, canonical_path in zip(resolved_paths, canonical_paths, strict=True):
             if canonical_path in seen:
                 continue
             seen.add(canonical_path)
@@ -909,7 +927,7 @@ class DefaultResourceLoader:
 
         return LoadPromptsResult(prompts=list(seen.values()), diagnostics=diagnostics)
 
-    def _discover_system_prompt_file(self) -> str | None:
+    def _discover_system_prompt_file_blocking(self) -> str | None:
         project_path = os.path.join(self._cwd, CONFIG_DIR_NAME, "SYSTEM.md")
         if self._settings_manager.is_project_trusted() and os.path.exists(project_path):
             return project_path
@@ -920,7 +938,7 @@ class DefaultResourceLoader:
 
         return None
 
-    def _discover_append_system_prompt_file(self) -> str | None:
+    def _discover_append_system_prompt_file_blocking(self) -> str | None:
         project_path = os.path.join(self._cwd, CONFIG_DIR_NAME, "APPEND_SYSTEM.md")
         if self._settings_manager.is_project_trusted() and os.path.exists(project_path):
             return project_path

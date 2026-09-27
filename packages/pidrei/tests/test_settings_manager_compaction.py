@@ -38,10 +38,10 @@ INVALID_TOKEN_VALUES = [
 NON_FINITE_VALUES = [(math.nan, "NaN"), (math.inf, "Infinity"), (-math.inf, "-Infinity")]
 
 
-def _from_global(settings: dict) -> SettingsManager:
+async def _from_global(settings: dict) -> SettingsManager:
     storage = InMemorySettingsStorage()
     storage.with_lock("global", lambda _current: json.dumps(settings))
-    return SettingsManager.from_storage(storage)
+    return await SettingsManager(storage=storage)
 
 
 def test_uses_defaults_without_compaction_settings():
@@ -119,7 +119,7 @@ async def test_merges_project_model_overrides_per_field_before_resolving_fallbac
             {"compaction": {"reserveTokens": 1024, "modelOverrides": {MODEL_KEY: {"keepRecentTokens": 2000}}}}
         ),
     )
-    manager = SettingsManager.from_storage(storage)
+    manager = await SettingsManager(storage=storage)
     assert manager.get_compaction_settings(MODEL) == {
         "enabled": True,
         "reserve_tokens": 400000,
@@ -132,7 +132,7 @@ async def test_merges_project_model_overrides_per_field_before_resolving_fallbac
     }
     await manager.reload()
     assert manager.get_compaction_keep_recent_tokens(MODEL) == 2000
-    manager.set_project_trusted(False)
+    await manager.set_project_trusted(False)
     assert manager.get_compaction_keep_recent_tokens(MODEL) == 30000
 
 
@@ -145,7 +145,7 @@ async def test_keeps_enabled_global_and_preserves_overrides_when_saving_the_togg
             {"compaction": {"modelOverrides": {MODEL_KEY: {"enabled": False, "reserveTokens": 400000}}}}
         ),
     )
-    manager = SettingsManager.from_storage(storage)
+    manager = await SettingsManager(storage=storage)
     assert manager.get_compaction_settings(MODEL)["enabled"] is True
     manager.set_compaction_enabled(False)
     await manager.flush()
@@ -153,10 +153,11 @@ async def test_keeps_enabled_global_and_preserves_overrides_when_saving_the_togg
     assert manager.get_compaction_settings(MODEL) == {**DEFAULTS, "enabled": False, "reserve_tokens": 400000}
 
 
+@pytest.mark.tonio
 @pytest.mark.parametrize("field", ["reserveTokens", "keepRecentTokens"])
 @pytest.mark.parametrize(("value", "rendered"), INVALID_TOKEN_VALUES)
-def test_model_override_reports_invalid_token_values(field, value, rendered):
-    manager = _from_global({"compaction": {"modelOverrides": {MODEL_KEY: {field: value}}}})
+async def test_model_override_reports_invalid_token_values(field, value, rendered):
+    manager = await _from_global({"compaction": {"modelOverrides": {MODEL_KEY: {field: value}}}})
     with pytest.raises(
         Exception,
         match=re.escape(
@@ -180,10 +181,11 @@ def test_model_override_reports_non_finite_runtime_values(field, value, rendered
         manager.get_compaction_settings(MODEL)
 
 
+@pytest.mark.tonio
 @pytest.mark.parametrize("field", ["reserveTokens", "keepRecentTokens"])
 @pytest.mark.parametrize(("value", "rendered"), INVALID_TOKEN_VALUES)
-def test_ordinary_setting_reports_invalid_values_even_when_a_valid_model_override_exists(field, value, rendered):
-    manager = _from_global({"compaction": {field: value, "modelOverrides": {MODEL_KEY: {field: 4096}}}})
+async def test_ordinary_setting_reports_invalid_values_even_when_a_valid_model_override_exists(field, value, rendered):
+    manager = await _from_global({"compaction": {field: value, "modelOverrides": {MODEL_KEY: {field: 4096}}}})
     error = re.escape(f"Invalid compaction.{field} setting: {rendered}. Expected a non-negative safe integer.")
     with pytest.raises(Exception, match=error):
         manager.get_compaction_settings()
@@ -200,11 +202,12 @@ def test_ordinary_setting_reports_non_finite_runtime_values(field, value, render
         manager.get_compaction_settings()
 
 
+@pytest.mark.tonio
 @pytest.mark.parametrize(
     ("entry", "rendered"), [(None, "null"), (False, "false"), (42, "42"), ("invalid", "invalid"), ([], "")]
 )
-def test_reports_malformed_model_entries(entry, rendered):
-    manager = _from_global({"compaction": {"modelOverrides": {MODEL_KEY: entry}}})
+async def test_reports_malformed_model_entries(entry, rendered):
+    manager = await _from_global({"compaction": {"modelOverrides": {MODEL_KEY: entry}}})
     with pytest.raises(
         Exception,
         match=re.escape(f'Invalid compaction.modelOverrides["{MODEL_KEY}"] setting: {rendered}. Expected an object.'),

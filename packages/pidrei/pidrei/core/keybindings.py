@@ -237,23 +237,34 @@ async def _load_raw_config(path: str) -> dict | None:
 
 
 class KeybindingsManager(TuiKeybindingsManager):
-    def __init__(self, user_bindings: dict | None = None, config_path: str | None = None) -> None:
-        super().__init__(KEYBINDINGS, user_bindings or {})
-        self._config_path = config_path
+    """`await KeybindingsManager(agent_dir)` loads the user's `keybindings.json`.
+
+    `__init__` does no I/O and already yields a complete manager with the
+    default bindings; awaiting it reads the file on top. Interactive mode relies
+    on that: it hands the un-awaited instance out at construction and loads the
+    file into it later with `reload()`.
+    """
+
+    def __init__(self, agent_dir: str | None = None) -> None:
+        super().__init__(KEYBINDINGS, {})
+        self._config_path: str | None = os.path.join(
+            agent_dir if agent_dir is not None else get_agent_dir(), "keybindings.json"
+        )
+
+    def __await__(self):
+        return self._start().__await__()
+
+    async def _start(self) -> KeybindingsManager:
+        await self.reload()
+        return self
 
     @staticmethod
-    async def create(agent_dir: str | None = None) -> KeybindingsManager:
-        """Load the user's bindings, then construct.
-
-        The read is here rather than in `__init__` so the constructor stays
-        sync: a constructor cannot await, and nothing may block a runtime
-        worker.
-        """
-        if agent_dir is None:
-            agent_dir = get_agent_dir()
-        config_path = os.path.join(agent_dir, "keybindings.json")
-        user_bindings = await KeybindingsManager._load_from_file(config_path)
-        return KeybindingsManager(user_bindings, config_path)
+    def in_memory(user_bindings: dict | None = None) -> KeybindingsManager:
+        """The defaults plus `user_bindings`, with no file behind them (`reload()` is a no-op)."""
+        manager = KeybindingsManager()
+        manager._config_path = None
+        manager.set_user_bindings(user_bindings or {})
+        return manager
 
     async def reload(self) -> None:
         if not self._config_path:

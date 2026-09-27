@@ -6,7 +6,7 @@ from pidrei.core.agent_session import ParsedSkillBlock
 from pidrei.modes.interactive.components.branch_summary_message import BranchSummaryMessageComponent
 from pidrei.modes.interactive.components.compaction_summary_message import CompactionSummaryMessageComponent
 from pidrei.modes.interactive.components.skill_invocation_message import SkillInvocationMessageComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_agent.harness.messages import BranchSummaryMessage, CompactionSummaryMessage
 from pidrei_tui import TuiMouseEvent
@@ -16,8 +16,8 @@ WIDTH = 80
 
 
 @pytest.fixture(autouse=True)
-def _theme():
-    init_theme_sync("dark")
+async def _theme():
+    await init_theme("dark")
 
 
 def _render_text(component) -> str:

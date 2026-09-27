@@ -41,7 +41,7 @@ import tonio.colored as tonio
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.event_bus import EventBus
 from pidrei.core.exec import exec_command
-from pidrei.core.pidrei_manifest import read_pidrei_manifest
+from pidrei.core.pidrei_manifest import read_pidrei_manifest_blocking
 from pidrei.core.source_info import create_synthetic_source_info
 from pidrei.core.timings import time as record_time
 from pidrei.utils.paths import resolve_path
@@ -609,7 +609,7 @@ def is_extension_file(name: str) -> bool:
     return name.endswith(".py") and not name.startswith("_")
 
 
-def resolve_extension_entries(directory: str) -> list[str] | None:
+def resolve_extension_entries_blocking(directory: str) -> list[str] | None:
     """Entry points declared by a directory, or None when it declares none.
 
     1. pyproject.toml with a `[tool.pidrei] extensions` list -> those paths
@@ -617,7 +617,7 @@ def resolve_extension_entries(directory: str) -> list[str] | None:
     """
     pyproject_path = os.path.join(directory, "pyproject.toml")
     if os.path.exists(pyproject_path):
-        manifest = read_pidrei_manifest(pyproject_path)
+        manifest = read_pidrei_manifest_blocking(pyproject_path)
         declared = (manifest or {}).get("extensions")
         if declared:
             entries: list[str] = []
@@ -637,7 +637,7 @@ def resolve_extension_entries(directory: str) -> list[str] | None:
     return None
 
 
-def discover_extensions_in_dir(directory: str) -> list[str]:
+def discover_extensions_in_dir_blocking(directory: str) -> list[str]:
     """Discover extensions one level deep (pi's discoverExtensionsInDir).
 
     1. Direct files: `extensions/*.py`
@@ -660,7 +660,7 @@ def discover_extensions_in_dir(directory: str) -> list[str]:
                 continue
 
             if entry.is_dir():
-                entries = resolve_extension_entries(entry_path)
+                entries = resolve_extension_entries_blocking(entry_path)
                 if entries:
                     discovered.extend(entries)
     except OSError:
@@ -690,24 +690,24 @@ async def discover_and_load_extensions(
 
     # Discovery is a directory scan plus a manifest read per candidate — one
     # blocking unit, so it goes to the pool whole rather than a hop per probe.
-    def _discover() -> list[list[str]]:
+    def _discover_blocking() -> list[list[str]]:
         found: list[list[str]] = [
             # 1. Project-local extensions: cwd/<CONFIG_DIR_NAME>/extensions/
-            discover_extensions_in_dir(os.path.join(resolved_cwd, CONFIG_DIR_NAME, "extensions")),
+            discover_extensions_in_dir_blocking(os.path.join(resolved_cwd, CONFIG_DIR_NAME, "extensions")),
             # 2. Global extensions: agent_dir/extensions/
-            discover_extensions_in_dir(os.path.join(resolved_agent_dir, "extensions")),
+            discover_extensions_in_dir_blocking(os.path.join(resolved_agent_dir, "extensions")),
         ]
         # 3. Explicitly configured paths
         for path in configured_paths:
             resolved = resolve_path(path, resolved_cwd, normalize_unicode_spaces=True)
             if os.path.isdir(resolved):
-                entries = resolve_extension_entries(resolved)
-                found.append(entries if entries else discover_extensions_in_dir(resolved))
+                entries = resolve_extension_entries_blocking(resolved)
+                found.append(entries if entries else discover_extensions_in_dir_blocking(resolved))
                 continue
             found.append([resolved])
         return found
 
-    for group in await tonio.spawn_blocking(_discover):
+    for group in await tonio.spawn_blocking(_discover_blocking):
         add_paths(group)
 
     return await load_extensions(all_paths, resolved_cwd, event_bus)

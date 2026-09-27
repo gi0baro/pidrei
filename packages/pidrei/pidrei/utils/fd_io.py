@@ -20,7 +20,7 @@ restores it. `os.dup` would not help (dup shares the description) and reopening
 via `/proc/self/fd/N` is Linux-only.
 
 `close()` only covers the orderly path, though. The stdio teardown policy
-(task #92) covers the rest: `snapshot_std_blocking()` records the inherited
+(task #92) covers the rest: `snapshot_stdio_flags()` records the inherited
 blocking flags of fds 0-2 at process start and registers an `atexit` restore,
 and `hard_exit()` replaces `os._exit()` everywhere so even the paths that
 skip interpreter shutdown put the shell's descriptors back. That applies to
@@ -35,6 +35,7 @@ beyond stdio, where the snapshot does not reach.
 
 import atexit
 import os
+import select
 import stat
 from typing import Any, NoReturn
 
@@ -44,11 +45,11 @@ from tonio.colored import fs, io as tonio_io
 
 DEFAULT_READ_SIZE = 65536
 
-_std_blocking: dict[int, bool] = {}
+_stdio_flags: dict[int, bool] = {}
 _restore_registered = False
 
 
-def snapshot_std_blocking() -> None:
+def snapshot_stdio_flags() -> None:
     """Record the inherited blocking flags of stdio, before anything flips them.
 
     Call once at process entry, before any fd registration. Idempotent; a
@@ -57,17 +58,17 @@ def snapshot_std_blocking() -> None:
     global _restore_registered
     for fd in (0, 1, 2):
         try:
-            _std_blocking.setdefault(fd, os.get_blocking(fd))
+            _stdio_flags.setdefault(fd, os.get_blocking(fd))
         except OSError:
             continue
     if not _restore_registered:
-        atexit.register(restore_std_blocking)
+        atexit.register(restore_stdio_flags)
         _restore_registered = True
 
 
-def restore_std_blocking() -> None:
+def restore_stdio_flags() -> None:
     """Put fds 0-2 back to their inherited blocking state. Safe to call twice."""
-    for fd, blocking in _std_blocking.items():
+    for fd, blocking in _stdio_flags.items():
         try:
             os.set_blocking(fd, blocking)
         except OSError:
@@ -81,14 +82,37 @@ def hard_exit(status: int) -> NoReturn:
     here or it leaks `O_NONBLOCK` onto the parent shell's descriptors (the
     shell then sees EAGAIN on its own reads). Do not call `os._exit` directly.
     """
-    restore_std_blocking()
+    restore_stdio_flags()
     os._exit(status)
+
+
+def write_all_blocking(fd: int, data: bytes) -> None:
+    """Write every byte of `data` with blocking calls: for a pool thread, or for
+    code running with no runtime.
+
+    The descriptor may still be non-blocking: `O_NONBLOCK` lives on the open
+    file description, and whoever shares it (the TUI terminal, an `FdReader`
+    on the same tty) can set it at any time. EAGAIN then means "no room yet",
+    so wait until there is and retry.
+    """
+    buffer = memoryview(data)
+    while buffer:
+        try:
+            buffer = buffer[os.write(fd, buffer) :]
+        except BlockingIOError:
+            select.select([], [fd], [])
+        except InterruptedError:
+            pass
 
 
 def is_pollable(fd: int) -> bool:
     """Whether readiness notification applies to this descriptor at all."""
     mode = os.fstat(fd).st_mode
-    return stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or stat.S_ISCHR(mode)
+    if stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode):
+        return True
+    # Of the character devices, only terminals can be registered for readiness:
+    # epoll refuses /dev/null, /dev/zero and friends.
+    return stat.S_ISCHR(mode) and os.isatty(fd)
 
 
 class FdReader:
@@ -186,8 +210,7 @@ class FdWriter:
             while sent < len(data):
                 sent += await self._handle.write(data[sent:])
             return
-        while sent < len(data):
-            sent += await tonio.spawn_blocking(os.write, self._fd, data[sent:])
+        await tonio.spawn_blocking(write_all_blocking, self._fd, data)
 
     def close(self) -> None:
         if self._sio is not None:

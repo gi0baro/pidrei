@@ -28,7 +28,7 @@ from pidrei.modes.interactive.components.status_indicator import (
     WorkingStatusIndicator,
 )
 from pidrei.modes.interactive.interactive_mode import InteractiveMode, create_interactive_tui
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei_tui import Container, ScrollView, Text, get_keybindings, is_viewport_tui, set_keybindings
 
 from .ui_timer_helpers import manual_ui_timers
@@ -46,7 +46,7 @@ def _recording_clipboard(copied: list[str]):
     interactive mode's own copy paths.
     """
 
-    async def copy(text: str) -> None:
+    async def copy(text: str, _write_terminal) -> None:
         copied.append(text)
 
     originals = (interactive_mode.copy_to_clipboard, tui_renderer.copy_to_clipboard)
@@ -246,18 +246,18 @@ async def test_the_key_after_a_settings_tui_mode_change_goes_to_the_new_renderer
 
 
 class _GatedStopTerminal(RecordingTerminal):
-    """Its stop parks until `release`, once one is set: a window in which
+    """Its stop parks until `unblock`, once one is set: a window in which
     another task can change the UI while the renderer is stopping."""
 
     def __init__(self, columns: int, rows: int) -> None:
         super().__init__(columns, rows)
         self.stopping = tonio.Event()
-        self.release: tonio.Event | None = None
+        self.unblock: tonio.Event | None = None
 
     async def stop(self) -> None:
-        if self.release is not None:
+        if self.unblock is not None:
             self.stopping.set()
-            await self.release.wait(5)
+            await self.unblock.wait(5)
         await super().stop()
 
 
@@ -278,7 +278,7 @@ async def test_an_overlay_opened_while_the_switch_stops_the_renderer_keeps_the_p
     await terminal.wait_for_render()
 
     overlay = _InvalidationProbe(lambda: context.ui.mode)
-    terminal.release = tonio.Event()
+    terminal.unblock = tonio.Event()
     switched = tonio.Result()
 
     async def switch() -> None:
@@ -290,7 +290,7 @@ async def test_an_overlay_opened_while_the_switch_stops_the_renderer_keeps_the_p
         assert terminal.stopping.is_set()
         with renderer.state_lock:
             renderer.show_overlay(overlay)
-        terminal.release.set()
+        terminal.unblock.set()
 
     assert switched.fetch() is False
     assert context._renderer is renderer
@@ -489,7 +489,7 @@ def _clear_status_context(*, tui_mode: str, indicator, embedded: bool, default_e
 @pytest.mark.tonio
 @pytest.mark.parametrize("embed_working_status", [True, False])
 async def test_routes_every_status_through_the_editor_opt_in(embed_working_status):
-    init_theme_sync("dark")
+    await init_theme("dark")
     tui = SimpleNamespace(request_render=lambda force=False: None)
     editor = _StatusEditor(embed_working_status=embed_working_status)
     mode = _clear_status_context(
@@ -562,9 +562,9 @@ def test_uses_the_standalone_row_for_a_custom_editor_that_has_not_opted_in(tui_m
 
 @pytest.mark.tonio
 async def test_shows_the_configured_jump_to_bottom_shortcut_while_scrolled_up():
-    init_theme_sync("dark")
+    await init_theme("dark")
     previous_keybindings = get_keybindings()
-    set_keybindings(KeybindingsManager({"tui.altScreen.bottom": "ctrl+j"}))
+    set_keybindings(KeybindingsManager.in_memory({"tui.altScreen.bottom": "ctrl+j"}))
     terminal = RecordingTerminal(50, 4)
     ui = create_interactive_tui(
         tui_mode="fullscreen", show_hardware_cursor=False, log_directory="/tmp", terminal=terminal
@@ -589,7 +589,7 @@ async def test_debug_run_as_work_a_key_waits_for_completes(monkeypatch, tmp_path
     """pidrei-only regression (UI_ISLAND_DESIGN step 1): `/debug` is work the
     next key waits for. Its tree render used to wait on the UI owner, which
     that very input job was parked on, so input froze for good."""
-    init_theme_sync("dark")
+    await init_theme("dark")
     log_path = tmp_path / "debug.log"
     monkeypatch.setattr(interactive_mode, "get_debug_log_path", lambda: str(log_path))
     terminal = RecordingTerminal(40, 6)

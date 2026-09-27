@@ -280,7 +280,11 @@ class BedrockRuntimeClient:
         aws_request = AWSRequest(
             method=request.method, url=request.url, data=request.body, headers=dict(request.headers)
         )
-        SigV4Auth(credentials.get_frozen_credentials(), BEDROCK_SERVICE_NAME, self._region()).add_auth(aws_request)
+        # Refreshable credentials (SSO, assume-role, credential_process)
+        # refresh inside this call when near expiry: files, network, a
+        # subprocess. Pool-side.
+        frozen = await tonio.spawn_blocking(credentials.get_frozen_credentials)
+        SigV4Auth(frozen, BEDROCK_SERVICE_NAME, self._region()).add_auth(aws_request)
         for key, value in aws_request.headers.items():
             request.headers[key] = value
 

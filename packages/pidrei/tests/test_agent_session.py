@@ -650,7 +650,7 @@ async def _create_stats_session():
     await auth_storage.modify("anthropic", set_key)
     from pidrei.core.model_runtime import ModelRuntime
 
-    model_runtime = await ModelRuntime.create(credentials=auth_storage, models_path=None, allow_model_network=False)
+    model_runtime = await ModelRuntime(credentials=auth_storage, models_path=None, allow_model_network=False)
 
     async def stream_fn(*_args, **_kwargs):
         raise Exception("unused")

@@ -14,21 +14,22 @@ async def test_includes_the_settings_file_path_for_file_backed_storage(tmp_path)
     settings_path = agent_dir / "settings.json"
     settings_path.write_text("{", encoding="utf-8")
 
-    diagnostics = collect_settings_diagnostics(await SettingsManager.create(str(tmp_path), str(agent_dir)))
+    diagnostics = collect_settings_diagnostics(await SettingsManager(str(tmp_path), str(agent_dir)))
 
     assert len(diagnostics) == 1
     assert diagnostics[0].type == "warning"
     assert f"Invalid settings file {settings_path}:" in diagnostics[0].message
 
 
-def test_falls_back_to_the_settings_scope_for_storage_without_file_paths():
+@pytest.mark.tonio
+async def test_falls_back_to_the_settings_scope_for_storage_without_file_paths():
     class _Storage:
-        def with_lock(self, scope, fn):
+        async def with_lock_async(self, scope, fn):
             if scope == "global":
                 raise Exception("backend failed")
             fn(None)
 
-    diagnostics = collect_settings_diagnostics(SettingsManager.from_storage(_Storage()))
+    diagnostics = collect_settings_diagnostics(await SettingsManager(storage=_Storage()))
 
     assert diagnostics == [
         AgentSessionRuntimeDiagnostic(type="warning", message="Invalid global settings: backend failed")

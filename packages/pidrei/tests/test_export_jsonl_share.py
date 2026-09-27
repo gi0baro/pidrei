@@ -85,7 +85,7 @@ async def test_adds_presentation_data_without_changing_conversation_ids_or_links
         assert share_entry["timestamp"] == records[0]["timestamp"]
         assert share_entry["data"]["systemPrompt"] == harness.session.state.system_prompt
 
-        imported = await SessionManager.open(share_path)
+        imported = await SessionManager(session_file=share_path)
         assert imported.get_leaf_id() == share_entry["id"]
         assert [message.role for message in imported.build_session_context().messages] == [
             "user",

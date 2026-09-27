@@ -25,7 +25,7 @@ class ConflictBlock:
     end_line: int
 
 
-def _read_text(path: str) -> str:
+def _read_text_blocking(path: str) -> str:
     with open(path, encoding="utf-8") as handle:
         return handle.read()
 
@@ -41,7 +41,7 @@ async def find_conflicts(pi, cwd: str) -> list[ConflictBlock]:
         try:
             # pi streams the file with readline; reading it off the event loop
             # is the pidrei equivalent of not blocking on I/O.
-            content = await tonio.spawn_blocking(_read_text, os.path.join(cwd, file))
+            content = await tonio.spawn_blocking(_read_text_blocking, os.path.join(cwd, file))
             block_start: int | None = None
             separator_line: int | None = None
             for line_no, line in enumerate(content.splitlines(), start=1):

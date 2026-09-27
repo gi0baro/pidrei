@@ -269,7 +269,8 @@ async def connect(url: str, headers: dict[str, str], *, cancel: CancelToken | No
             handshake_headers[name] = value
 
     if secure:
-        context = ssl.create_default_context()
+        # Loads the system CA bundle from disk: pool-side.
+        context = await tonio.spawn_blocking(ssl.create_default_context)
         transport = await tls.open_tls_over_tcp_stream(host, port, ssl_context=context)
     else:
         transport = await open_tcp_stream(host, port)

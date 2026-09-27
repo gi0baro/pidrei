@@ -6,7 +6,7 @@ import pytest
 import tonio.colored as tonio
 from tonio.colored import time as tonio_time
 
-from pidrei.core.tools.file_mutation_queue import with_file_mutation_queue
+from pidrei.core.tools.file_mutation_queue import resolve_mutation_queue_key, with_file_mutation_queue
 from pidrei.core.tools.write import create_write_tool
 
 
@@ -25,9 +25,11 @@ class TestWithFileMutationQueue:
             order.append("second:start")
             order.append("second:end")
 
+        # pidrei: the key is resolved off the runtime first (`queue_key`).
+        key = await resolve_mutation_queue_key(path)
         await tonio.spawn(
-            with_file_mutation_queue(path, first_op),
-            with_file_mutation_queue(path, second_op),
+            with_file_mutation_queue(path, first_op, queue_key=key),
+            with_file_mutation_queue(path, second_op, queue_key=key),
         )
 
         assert order == ["first:start", "first:end", "second:start", "second:end"]
@@ -53,9 +55,12 @@ class TestWithFileMutationQueue:
             await a_started.wait(5)
             order.append("b:end")
 
+        path_a = str(tmp_path / "file-mutation-queue-a")
+        path_b = str(tmp_path / "file-mutation-queue-b")
+        key_a, key_b = await resolve_mutation_queue_key(path_a), await resolve_mutation_queue_key(path_b)
         await tonio.spawn(
-            with_file_mutation_queue(str(tmp_path / "file-mutation-queue-a"), op_a),
-            with_file_mutation_queue(str(tmp_path / "file-mutation-queue-b"), op_b),
+            with_file_mutation_queue(path_a, op_a, queue_key=key_a),
+            with_file_mutation_queue(path_b, op_b, queue_key=key_b),
         )
 
         assert order.index("a:start") < order.index("a:end")
@@ -81,9 +86,11 @@ class TestWithFileMutationQueue:
             order.append("alias:start")
             order.append("alias:end")
 
+        target_key = await resolve_mutation_queue_key(str(target_path))
+        alias_key = await resolve_mutation_queue_key(str(symlink_path))
         await tonio.spawn(
-            with_file_mutation_queue(str(target_path), through_target),
-            with_file_mutation_queue(str(symlink_path), through_alias),
+            with_file_mutation_queue(str(target_path), through_target, queue_key=target_key),
+            with_file_mutation_queue(str(symlink_path), through_alias, queue_key=alias_key),
         )
 
         assert order == ["target:start", "target:end", "alias:start", "alias:end"]

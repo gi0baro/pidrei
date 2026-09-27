@@ -1,6 +1,6 @@
 from .theme import (
     Theme,
-    _load_theme_from_path_sync,
+    _load_theme_from_path_blocking,
     detect_terminal_background_from_env,
     detect_terminal_background_theme,
     detect_terminal_theme_for_auto,
@@ -18,7 +18,6 @@ from .theme import (
     get_theme_for_rgb_color,
     highlight_code,
     init_theme,
-    init_theme_sync,
     is_light_theme,
     load_theme_from_path,
     on_theme_change,
@@ -39,7 +38,7 @@ from .theme_json import validate_theme_json
 __all__ = [
     "InteractiveThemeController",
     "Theme",
-    "_load_theme_from_path_sync",
+    "_load_theme_from_path_blocking",
     "detect_terminal_background_from_env",
     "detect_terminal_background_theme",
     "detect_terminal_theme_for_auto",
@@ -57,7 +56,6 @@ __all__ = [
     "get_theme_for_rgb_color",
     "highlight_code",
     "init_theme",
-    "init_theme_sync",
     "is_light_theme",
     "load_theme_from_path",
     "on_theme_change",

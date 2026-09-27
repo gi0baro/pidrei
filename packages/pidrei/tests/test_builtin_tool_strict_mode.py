@@ -74,7 +74,7 @@ async def test_allows_extensions_to_re_register_tools_without_strict_sampling(ac
 
         pi.on("session_start", on_session_start)
 
-    resource_loader = DefaultResourceLoader(
+    resource_loader = await DefaultResourceLoader(
         cwd=cwd,
         agent_dir=agent_dir,
         settings_manager=settings_manager,

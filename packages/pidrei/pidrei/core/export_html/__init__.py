@@ -114,25 +114,25 @@ async def _generate_theme_vars(theme_name: str | None = None) -> str:
     return "\n      ".join(lines)
 
 
-def _read_template_file(*parts: str) -> str:
+def _read_template_file_blocking(*parts: str) -> str:
     with open(os.path.join(get_export_template_dir(), *parts), encoding="utf-8") as f:
         return f.read()
 
 
-def _read_all_templates() -> dict[str, str]:
+def _read_all_templates_blocking() -> dict[str, str]:
     """All five template files in one pool hop, rather than five."""
     return {
-        "template": _read_template_file("template.html"),
-        "css": _read_template_file("template.css"),
-        "js": _read_template_file("template.js"),
-        "marked": _read_template_file("vendor", "marked.min.js"),
-        "hljs": _read_template_file("vendor", "highlight.min.js"),
+        "template": _read_template_file_blocking("template.html"),
+        "css": _read_template_file_blocking("template.css"),
+        "js": _read_template_file_blocking("template.js"),
+        "marked": _read_template_file_blocking("vendor", "marked.min.js"),
+        "hljs": _read_template_file_blocking("vendor", "highlight.min.js"),
     }
 
 
 async def _generate_html(session_data: dict, theme_name: str | None = None) -> str:
     """Core HTML generation logic shared by both export functions."""
-    templates = await tonio.spawn_blocking(_read_all_templates)
+    templates = await tonio.spawn_blocking(_read_all_templates_blocking)
     template = templates["template"]
     template_css = templates["css"]
     template_js = templates["js"]
@@ -298,7 +298,7 @@ async def export_from_file(input_path: str, options=None) -> str:
     if not await fs.Path(resolved_input_path).exists():
         raise Exception(f"File not found: {resolved_input_path}")
 
-    sm = await SessionManager.open(resolved_input_path)
+    sm = await SessionManager(session_file=resolved_input_path)
 
     session_data = {
         "header": sm.get_header(),

@@ -7,7 +7,7 @@ import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.custom_editor import CustomEditor
-from pidrei.modes.interactive.theme import get_editor_theme, init_theme_sync
+from pidrei.modes.interactive.theme import get_editor_theme, init_theme
 from pidrei_tui import set_keybindings
 from pidrei_tui.tui_main_screen import TuiMainScreen
 
@@ -17,14 +17,16 @@ from virtual_terminal import VirtualTerminal
 
 
 @pytest.fixture(autouse=True)
-def _restore_keybindings(request):
-    init_theme_sync("dark")
-    request.addfinalizer(lambda: set_keybindings(KeybindingsManager()))
+async def _restore_keybindings(request):
+    await init_theme("dark")
+    request.addfinalizer(lambda: set_keybindings(KeybindingsManager.in_memory()))
 
 
 @pytest.mark.tonio
 async def test_gives_an_explicit_history_binding_precedence_over_model_cycling():
-    keybindings = KeybindingsManager({"tui.editor.historyPrevious": "ctrl+p", "tui.editor.historyNext": "ctrl+n"})
+    keybindings = KeybindingsManager.in_memory(
+        {"tui.editor.historyPrevious": "ctrl+p", "tui.editor.historyNext": "ctrl+n"}
+    )
     set_keybindings(keybindings)
     editor = CustomEditor(TuiMainScreen(VirtualTerminal()), get_editor_theme(), keybindings)
     model_cycles = 0

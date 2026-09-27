@@ -2,8 +2,6 @@
 
 import os
 import re
-import subprocess
-import sys
 import urllib.parse
 from pathlib import Path
 
@@ -15,7 +13,7 @@ _FILE_URL_RE = re.compile(r"^file://")
 _PERCENT_ESCAPE_RE = re.compile("[0-9A-Fa-f]{2}")
 
 
-def get_file_revision(path: str) -> str | None:
+def get_file_revision_blocking(path: str) -> str | None:
     """stat-identity revision used to skip redundant locked reloads."""
     try:
         stats = os.stat(path)
@@ -24,7 +22,7 @@ def get_file_revision(path: str) -> str | None:
         return None
 
 
-def canonicalize_path(path: str) -> str:
+def canonicalize_path_blocking(path: str) -> str:
     """Resolve a path to its canonical (real) form, following symlinks.
 
     Falls back to the raw path if resolution fails (e.g. the target does
@@ -145,24 +143,3 @@ def format_path_relative_to_cwd_or_absolute(file_path: str, cwd: str) -> str:
     absolute_path = resolve_path(file_path, cwd)
     relative = get_cwd_relative_path(absolute_path, cwd)
     return relative if relative is not None else absolute_path
-
-
-def mark_path_ignored_by_cloud_sync(path: str) -> None:
-    if sys.platform == "darwin":
-        attrs = ["com.dropbox.ignored", "com.apple.fileprovider.ignore#P"]
-    elif sys.platform.startswith("linux"):
-        attrs = ["user.com.dropbox.ignored"]
-    else:
-        attrs = []
-
-    for attr in attrs:
-        if sys.platform == "darwin":
-            argv = ["xattr", "-w", attr, "1", path]
-        else:
-            argv = ["setfattr", "-n", attr, "-v", "1", path]
-        try:
-            subprocess.run(  # noqa: S603
-                argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-            )
-        except OSError:
-            pass

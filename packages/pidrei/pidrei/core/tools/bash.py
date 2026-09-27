@@ -21,7 +21,7 @@ from pidrei_ai.types import JsonSchemaConstrainedSampling, TextContent
 
 from ...utils.shell import (
     ShellConfig,
-    get_shell_config,
+    get_shell_config_blocking,
     get_shell_env,
     kill_process_tree,
     track_detached_child_pid,
@@ -219,7 +219,12 @@ def create_local_bash_operations(*, shell_path: str | None = None) -> LocalShell
     This is useful for extensions that intercept user_bash and still want the
     standard local shell behavior while wrapping or rewriting commands.
     """
-    return LocalShellOperations("bash", lambda: get_shell_config(shell_path))
+
+    def resolve_shell_config_blocking() -> ShellConfig:
+        return get_shell_config_blocking(shell_path)
+
+    # Resolved through `spawn_blocking` by `LocalShellOperations.exec`.
+    return LocalShellOperations("bash", resolve_shell_config_blocking)
 
 
 _SESSION_ENV_VARS = (

@@ -163,6 +163,52 @@ async def test_writer_fills_a_pipe_past_its_buffer_without_stalling_the_runtime(
 
 
 @pytest.mark.tonio
+async def test_pool_writer_waits_for_room_on_a_descriptor_someone_else_made_non_blocking():
+    """`readiness=False` leaves the flag alone, but whoever shares the open file
+    description (the TUI terminal, an `FdReader` on the same tty) can set it:
+    a full pipe then answers EAGAIN, and the write waits for room instead of
+    failing."""
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(write_fd, False)  # the other owner's flag
+    try:
+        filled = 0
+        try:
+            while True:
+                filled += os.write(write_fd, b"f" * 65536)
+        except BlockingIOError:
+            pass
+        writer = FdWriter(write_fd, readiness=False)
+        payload = b"p" * 100_000
+        done = tonio.Event()
+        failures: list[BaseException] = []
+
+        async def produce() -> None:
+            try:
+                await writer.write_all(payload)
+            except Exception as error:
+                failures.append(error)
+            finally:
+                done.set()
+
+        producing = tonio.spawn(produce())
+        await done.wait(0.2)
+        assert not done.is_set(), f"gave up on the full pipe: {failures}"
+        reader = FdReader(read_fd)
+        received = bytearray()
+        try:
+            while len(received) < filled + len(payload):
+                received.extend(await reader.read())
+        finally:
+            reader.close()
+        await producing
+        assert failures == []
+        assert bytes(received[filled:]) == payload
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
+
+
+@pytest.mark.tonio
 async def test_writer_handles_a_regular_file_and_restores_nothing():
     path = os.path.join(tempfile.mkdtemp(), "out")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
@@ -223,8 +269,8 @@ def _run_child(code: str, *, expect_blocking_after: bool) -> None:
 def test_hard_exit_restores_the_inherited_blocking_flag():
     _run_child(
         "import os\n"
-        "from pidrei.utils.fd_io import snapshot_std_blocking, hard_exit\n"
-        "snapshot_std_blocking()\n"
+        "from pidrei.utils.fd_io import snapshot_stdio_flags, hard_exit\n"
+        "snapshot_stdio_flags()\n"
         "os.set_blocking(0, False)\n"
         "hard_exit(0)\n",
         expect_blocking_after=True,

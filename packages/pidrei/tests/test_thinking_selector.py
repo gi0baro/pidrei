@@ -16,7 +16,7 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.thinking_selector import ThinkingSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -29,10 +29,10 @@ LEVELS = ["off", "low", "medium", "high"]
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
+async def _setup():
+    await init_theme("dark")
     # Keybindings are a global singleton; reset per test.
-    set_keybindings(KeybindingsManager())
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 def create_interactive_context():
@@ -94,7 +94,7 @@ async def test_keeps_the_current_thinking_level_marked_while_browsing():
 
 @pytest.mark.tonio
 async def test_uses_the_configured_save_binding():
-    set_keybindings(KeybindingsManager({"app.thinking.save": "ctrl+r"}))
+    set_keybindings(KeybindingsManager.in_memory({"app.thinking.save": "ctrl+r"}))
     save_default_calls = []
 
     def save_default(level: str) -> None:

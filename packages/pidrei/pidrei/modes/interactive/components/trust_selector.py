@@ -2,7 +2,6 @@
 
 from pidrei_tui import Container, Spacer, Text, get_keybindings
 
-from ....core.trust_manager import get_project_trust_options
 from ..theme import theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, raw_key_hint
@@ -18,7 +17,9 @@ def _format_decision(trust_path: str | None, decision) -> str:
 
 
 class TrustSelectorComponent(Container):
-    """Options: ``{"cwd", "savedDecision", "projectTrusted", "onSelect", "onCancel"}``.
+    """Options: ``{"cwd", "trustOptions", "savedDecision", "projectTrusted", "onSelect", "onCancel"}``.
+    ``trustOptions`` is `get_project_trust_options_blocking(cwd)`, resolved by
+    the caller off the runtime.
 
     ``onSelect`` receives a ``{"trusted", "updates"}`` record and must be
     coroutine-returning (it persists trust decisions — pi's sync ``onSelect``
@@ -30,7 +31,7 @@ class TrustSelectorComponent(Container):
         super().__init__()
 
         self._saved_decision = options["savedDecision"]
-        self._trust_options = get_project_trust_options(options["cwd"])
+        self._trust_options = options["trustOptions"]
         self._selected_index = max(
             0,
             next((i for i, option in enumerate(self._trust_options) if self._is_saved_option(option)), -1),

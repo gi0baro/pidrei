@@ -20,7 +20,7 @@ from pidrei_ai.auth.types import ApiKeyCredential, OAuthCredential
 
 
 async def create_runtime(credentials) -> ModelRuntime:
-    return await ModelRuntime.create(
+    return await ModelRuntime(
         credentials=credentials,
         models_path=None,
         models_store=InMemoryCodingAgentModelsStore(),

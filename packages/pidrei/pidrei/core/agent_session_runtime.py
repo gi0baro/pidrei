@@ -44,7 +44,7 @@ class SessionImportFileNotFoundError(Exception):
         self.file_path = file_path
 
 
-def _copy_file_exclusive(source: str, destination: str) -> None:
+def _copy_file_exclusive_blocking(source: str, destination: str) -> None:
     """`copyFileSync(..., COPYFILE_EXCL)`: fail instead of overwriting a file that appeared meanwhile."""
     with open(source, "rb") as src, open(destination, "xb") as dst:
         shutil.copyfileobj(src, dst)
@@ -208,8 +208,8 @@ class AgentSessionRuntime:
             return before_result
 
         previous_session_file = self.session.session_file
-        session_manager = await SessionManager.open(session_path, None, cwd_override)
-        assert_session_cwd_exists(session_manager, self.cwd)
+        session_manager = await SessionManager(cwd_override, session_file=session_path)
+        await assert_session_cwd_exists(session_manager, self.cwd)
         await self._teardown_current("resume", session_manager.get_session_file())
         await self._rebind(
             await self._create_runtime(
@@ -253,7 +253,7 @@ class AgentSessionRuntime:
         previous_session_file = self.session.session_file
         session_dir = self.session.session_manager.get_session_dir()
         session_manager = (
-            await SessionManager.create(self.cwd, session_dir)
+            await SessionManager(self.cwd, session_dir)
             if self.session.session_manager.is_persisted()
             else SessionManager.in_memory(self.cwd)
         )
@@ -318,7 +318,7 @@ class AgentSessionRuntime:
                 raise Exception("Persisted session is missing a session file")
             session_dir = self.session.session_manager.get_session_dir()
             if not target_leaf_id:
-                session_manager = await SessionManager.create(self.cwd, session_dir)
+                session_manager = await SessionManager(self.cwd, session_dir)
                 session_manager.new_session({"parentSession": current_session_file})
                 await self._teardown_current("fork", session_manager.get_session_file())
                 await self._rebind(
@@ -340,7 +340,7 @@ class AgentSessionRuntime:
                     "This session has not been saved yet. Wait for the first assistant response "
                     "before cloning or forking it."
                 )
-            session_manager = await SessionManager.open(current_session_file, session_dir)
+            session_manager = await SessionManager(session_dir=session_dir, session_file=current_session_file)
             forked_session_path = await session_manager.create_branched_session(target_leaf_id)
             if not forked_session_path:
                 raise Exception("Failed to create forked session")
@@ -413,10 +413,10 @@ class AgentSessionRuntime:
         if not source_already_stored:
             # `shutil.copyfile` has no `fs` equivalent, so it goes to the pool;
             # the exclusive create mirrors pi's COPYFILE_EXCL.
-            await tonio.spawn_blocking(_copy_file_exclusive, resolved_path, destination_path)
+            await tonio.spawn_blocking(_copy_file_exclusive_blocking, resolved_path, destination_path)
 
-        session_manager = await SessionManager.open(destination_path, session_dir, cwd_override)
-        assert_session_cwd_exists(session_manager, self.cwd)
+        session_manager = await SessionManager(cwd_override, session_dir, session_file=destination_path)
+        await assert_session_cwd_exists(session_manager, self.cwd)
         await self._teardown_current("resume", session_manager.get_session_file())
         await self._rebind(
             await self._create_runtime(
@@ -450,7 +450,7 @@ async def create_agent_session_runtime(
     """Create the initial runtime from a runtime factory and initial session
     target. The same factory is stored on the returned AgentSessionRuntime and
     reused for later /new, /resume, /fork, and import flows."""
-    assert_session_cwd_exists(session_manager, cwd)
+    await assert_session_cwd_exists(session_manager, cwd)
     result = await create_runtime(
         cwd=cwd,
         agent_dir=agent_dir,

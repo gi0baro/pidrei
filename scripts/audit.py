@@ -35,6 +35,20 @@ itself instead.
      JS-ism); a probe is how a union creeps back in during a port. Probes
      that *refuse* an awaitable (synchronous-only contracts) are allowed by
      enclosing function in ALLOWED_AWAITABLE_PROBES, each with a reason.
+  7. the blocking-I/O shape. Anything doing I/O the runtime has primitives
+     for (fs, net, subprocesses, pipes, fds) is `async def` or returns an
+     awaitable; the blocking calls themselves live only in functions named
+     `*_blocking`, which run on the pool and nowhere else:
+       - a stdlib blocking call (`open`, `os.stat`, `subprocess.run`,
+         `socket.socket`, `time.sleep`, pathlib I/O on a `Path(...)`, ...)
+         outside a `*_blocking` function or a lambda handed to
+         `spawn_blocking`;
+       - a call to a `*_blocking` function from anywhere else (pool-only code
+         run on the runtime);
+       - an `async def *_blocking`.
+     Calls resolve through each file's imports to qualified stdlib names, so
+     unrelated same-named methods never match. I/O hidden inside third-party
+     calls is out of its reach.
 
 Run via `make audit`. Exit code 1 on any finding.
 """
@@ -94,11 +108,6 @@ DROPPABLE_AWAITABLES = {
 # Each needs a reason; "it was ported that way" is not one. Entries that stop
 # matching pi are dead weight — prune them rather than leaving them to rot.
 JUSTIFIED_SYNC_PORTS = {
-    # pi's `execFile` variant. We run the subprocess synchronously on the
-    # debounce thread, which is not a runtime worker, so there is nothing to
-    # get off. Documented at both definitions.
-    "FooterDataProvider._refresh_git_branch_async",
-    "FooterDataProvider._resolve_git_branch_async",
     # Synchronous handlers (UI_ISLAND_DESIGN.md §3, §5): pi's part before its
     # first await runs in the caller (a keypress, a selector callback) under
     # the UI state lock, and the handler spawns the rest itself, as pi's
@@ -436,6 +445,269 @@ def _check_sync_ports_of_pi_async(findings: list[str], notes: list[str]) -> None
     findings.extend(drift)
 
 
+# Operations on an already-open descriptor (`os.read`/`os.write`, the flag
+# and tty calls) are not listed: that is readiness-driven I/O, non-blocking by
+# definition. What is listed reaches the filesystem by path, waits on a child,
+# or runs a process.
+_OS_BLOCKING = (
+    "stat", "lstat", "statvfs", "access", "listdir", "scandir", "walk", "fwalk",
+    "mkdir", "makedirs", "remove", "unlink", "rmdir", "removedirs", "rename", "renames", "replace",
+    "chmod", "chown", "lchown", "utime", "symlink", "readlink", "link", "truncate",
+    "open", "pread", "pwrite", "sendfile", "fsync", "fdatasync", "chdir",
+    "system", "popen", "wait", "waitpid", "wait3", "wait4", "mkfifo", "mknod",
+)  # fmt: skip
+_OS_PATH_BLOCKING = (
+    "exists", "lexists", "isdir", "isfile", "islink", "ismount",
+    "getsize", "getmtime", "getatime", "getctime", "realpath", "samefile",
+)  # fmt: skip
+
+# Qualified stdlib callables that block: I/O the runtime has primitives for,
+# and the sleep.
+_BLOCKING_CALLS = {
+    "open",
+    "input",
+    "io.open",
+    "time.sleep",
+    "glob.glob",
+    "glob.iglob",
+    "urllib.request.urlopen",
+    "ssl.create_default_context",
+    "sqlite3.connect",
+    "webbrowser.open",
+    "webbrowser.open_new",
+    "webbrowser.open_new_tab",
+    *(f"os.{name}" for name in _OS_BLOCKING),
+    *(f"os.path.{name}" for name in _OS_PATH_BLOCKING),
+    *(
+        f"subprocess.{name}"
+        for name in ("run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput")
+    ),
+    *(
+        f"shutil.{name}"
+        for name in (
+            "copy",
+            "copy2",
+            "copyfile",
+            "copyfileobj",
+            "copymode",
+            "copystat",
+            "copytree",
+            "rmtree",
+            "move",
+            "which",
+            "disk_usage",
+            "chown",
+            "make_archive",
+            "unpack_archive",
+        )
+    ),
+    *(
+        f"socket.{name}"
+        for name in (
+            "socket",
+            "create_connection",
+            "create_server",
+            "getaddrinfo",
+            "gethostbyname",
+            "gethostbyaddr",
+            "getfqdn",
+        )
+    ),
+    "select.select",
+    "pty.spawn",
+    *(
+        f"tempfile.{name}"
+        for name in (
+            "mkstemp",
+            "mkdtemp",
+            "NamedTemporaryFile",
+            "TemporaryFile",
+            "SpooledTemporaryFile",
+            "TemporaryDirectory",
+            "gettempdir",
+        )
+    ),
+}
+# pathlib methods that touch the filesystem, matched only on a receiver that
+# is syntactically a `pathlib.Path` (not `tonio.colored.fs.Path`, whose
+# methods are awaited pool calls).
+_PATHLIB_BLOCKING = {
+    "exists", "is_dir", "is_file", "is_symlink", "is_mount", "stat", "lstat", "owner", "group",
+    "read_text", "read_bytes", "write_text", "write_bytes", "iterdir", "glob", "rglob", "walk",
+    "mkdir", "rmdir", "unlink", "touch", "open", "rename", "replace", "resolve", "chmod",
+    "samefile", "readlink", "symlink_to", "hardlink_to",
+}  # fmt: skip
+_PATHLIB_TYPES = {"pathlib.Path", "pathlib.PosixPath", "pathlib.WindowsPath"}
+_POOL_ENTRY_POINTS = {"spawn_blocking", "map_blocking"}
+
+# Functions (`file:qualname`, relative to `packages/`) whose blocking calls
+# only ever run where there is no runtime yet. Each with a reason.
+ALLOWED_OFF_RUNTIME_BLOCKING = {
+    # The fallback when no stdio writer is running: the writer starts first
+    # thing in `_run_main`, so this path is the pre-runtime start-up.
+    "pidrei/pidrei/core/output_guard.py:_write",
+    # Both take the inline path only on `RuntimeNotInitializedError`: there
+    # is no runtime at all.
+    "pidrei/pidrei/utils/open_browser.py:open_browser",
+    "pidrei/pidrei/utils/temp_file_writer.py:TempFileWriter.__init__",
+}
+
+
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    """Local name -> qualified module path, from absolute imports anywhere in the file."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+                else:
+                    root = alias.name.split(".")[0]
+                    aliases[root] = root
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return aliases
+
+
+def _qualify(node: ast.AST, aliases: dict[str, str], shadowed: set[str]) -> str | None:
+    if isinstance(node, ast.Name):
+        if node.id in aliases:
+            return aliases[node.id]
+        if node.id in ("open", "input") and node.id not in shadowed:
+            return node.id
+        return None
+    if isinstance(node, ast.Attribute):
+        base = _qualify(node.value, aliases, shadowed)
+        return f"{base}.{node.attr}" if base else None
+    return None
+
+
+def _callee_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def _is_pool_entry(call: ast.AST) -> bool:
+    return isinstance(call, ast.Call) and _callee_name(call) in _POOL_ENTRY_POINTS
+
+
+def _enclosing(node: ast.AST, parents: dict[int, ast.AST]):
+    current = parents.get(id(node))
+    while current is not None:
+        yield current
+        current = parents.get(id(current))
+
+
+def _in_pool_context(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
+    """Inside a `*_blocking` function, or a lambda handed straight to the pool;
+    the nearest `async def` ends the search (a coroutine is runtime code)."""
+    for ancestor in _enclosing(node, parents):
+        if isinstance(ancestor, ast.AsyncFunctionDef):
+            return False
+        if isinstance(ancestor, ast.FunctionDef) and ancestor.name.endswith("_blocking"):
+            return True
+        if isinstance(ancestor, ast.Lambda):
+            call = parents.get(id(ancestor))
+            if _is_pool_entry(call) and call.args and call.args[0] is ancestor:
+                return True
+    return False
+
+
+def _function_label(node: ast.AST, parents: dict[int, ast.AST]) -> str:
+    names = [
+        ancestor.name
+        for ancestor in _enclosing(node, parents)
+        if isinstance(ancestor, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    ]
+    return ".".join(reversed(names)) or "<module>"
+
+
+def _is_path_expr(node: ast.AST, aliases: dict[str, str], shadowed: set[str], path_names: set[str]) -> bool:
+    if isinstance(node, ast.Call):
+        return _qualify(node.func, aliases, shadowed) in _PATHLIB_TYPES
+    if isinstance(node, ast.Name):
+        return node.id in path_names
+    if isinstance(node, ast.Attribute) and node.attr in ("parent", "parents"):
+        return _is_path_expr(node.value, aliases, shadowed, path_names)
+    if isinstance(node, ast.Subscript):
+        return _is_path_expr(node.value, aliases, shadowed, path_names)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _is_path_expr(node.left, aliases, shadowed, path_names)
+    return False
+
+
+def _check_blocking_io(path: pathlib.Path, findings: list[str]) -> None:
+    tree = ast.parse(path.read_text(), str(path))
+    rel = path.relative_to(ROOT)
+    aliases = _import_aliases(tree)
+    # Only module-level names shadow a builtin: a method called `open` is an
+    # attribute, and must not hide the file's real `open(...)` calls.
+    shadowed = {node.name for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)} | {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    parents: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+
+    # Names bound to a `pathlib.Path(...)`, per enclosing function.
+    path_names: dict[int, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _is_path_expr(node.value, aliases, shadowed, set()):
+            scope = next(
+                (a for a in _enclosing(node, parents) if isinstance(a, ast.FunctionDef | ast.AsyncFunctionDef)), tree
+            )
+            path_names.setdefault(id(scope), set()).update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.endswith("_blocking"):
+            findings.append(f"{rel}:{node.lineno}: `async def {node.name}`: `*_blocking` functions run on the pool")
+        if not isinstance(node, ast.Call):
+            continue
+        if not any(
+            isinstance(ancestor, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda)
+            for ancestor in _enclosing(node, parents)
+        ):
+            continue  # module or class body: import time, out of scope
+        label = _function_label(node, parents)
+        if f"{path.relative_to(ROOT / 'packages')}:{label}" in ALLOWED_OFF_RUNTIME_BLOCKING:
+            continue
+        callee = _callee_name(node)
+        qualified = _qualify(node.func, aliases, shadowed)
+        # The suffix is ours: stdlib names that merely end in it
+        # (`os.set_blocking`) are judged by the blocking-call list below.
+        is_stdlib = qualified is not None and qualified.split(".")[0] in sys.stdlib_module_names
+        if callee and callee.endswith("_blocking") and callee not in _POOL_ENTRY_POINTS and not is_stdlib:
+            if not _in_pool_context(node, parents):
+                findings.append(
+                    f"{rel}:{node.lineno}: `{callee}(...)` runs pool-only code on the runtime (in `{label}`)"
+                )
+            continue
+        blocking = None
+        if qualified in _BLOCKING_CALLS:
+            blocking = qualified
+        elif isinstance(node.func, ast.Attribute) and node.func.attr in _PATHLIB_BLOCKING:
+            scope = next(
+                (a for a in _enclosing(node, parents) if isinstance(a, ast.FunctionDef | ast.AsyncFunctionDef)), tree
+            )
+            if _is_path_expr(node.func.value, aliases, shadowed, path_names.get(id(scope), set())):
+                blocking = f"pathlib.Path.{node.func.attr}"
+        if blocking and not _in_pool_context(node, parents):
+            findings.append(
+                f"{rel}:{node.lineno}: blocking `{blocking}` outside a `*_blocking` function (in `{label}`)"
+            )
+
+
 def main() -> int:
     findings: list[str] = []
     notes: list[str] = []
@@ -443,6 +715,7 @@ def main() -> int:
     async_names, _sync_names = _collect_module_functions(paths)
     for path in paths:
         _check_file(path, findings, async_names)
+        _check_blocking_io(path, findings)
     _check_sync_ports_of_pi_async(findings, notes)
 
     for note in notes:

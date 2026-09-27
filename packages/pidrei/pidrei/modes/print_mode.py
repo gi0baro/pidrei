@@ -9,13 +9,12 @@ Used for:
 
 import json
 import signal
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.agent_session import ExtensionBindings
 from ..core.json_wire import to_wire
-from ..core.output_guard import flush_raw_stdout, wait_for_raw_stdout_backpressure, write_raw_stdout
+from ..core.output_guard import drain_output, write_raw_stdout, write_stderr
 from ..utils.fd_io import hard_exit
 from ..utils.shell import kill_tracked_detached_children
 from .json_event import to_json_event
@@ -120,7 +119,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
             await session.reload()
 
         def on_error(err) -> None:
-            print(f"Extension error ({err.extension_path}): {err.error}", file=sys.stderr)
+            write_stderr(f"Extension error ({err.extension_path}): {err.error}\n")
 
         await session.bind_extensions(
             ExtensionBindings(
@@ -147,7 +146,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
                 write_raw_stdout(json.dumps(to_wire(to_json_event(event)), ensure_ascii=False) + "\n")
 
         async def on_agent_event(*_args) -> None:
-            await wait_for_raw_stdout_backpressure()
+            await drain_output()
 
         unsubscribe = session.subscribe(on_event)
         unsubscribe_backpressure = session.agent.subscribe(on_agent_event) if mode == "json" else None
@@ -175,10 +174,7 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
 
             if last_message is not None and getattr(last_message, "role", None) == "assistant":
                 if last_message.stop_reason in ("error", "aborted"):
-                    print(
-                        last_message.error_message or f"Request {last_message.stop_reason}",
-                        file=sys.stderr,
-                    )
+                    write_stderr(f"{last_message.error_message or f'Request {last_message.stop_reason}'}\n")
                     exit_code = 1
                 else:
                     for content in last_message.content:
@@ -187,10 +183,10 @@ async def run_print_mode(runtime_host, options: PrintModeOptions) -> int:
 
         return exit_code
     except Exception as error:
-        print(str(error), file=sys.stderr)
+        write_stderr(f"{error}\n")
         return 1
     finally:
         for cleanup in signal_cleanup_handlers:
             cleanup()
         await dispose_runtime()
-        await flush_raw_stdout()
+        await drain_output()

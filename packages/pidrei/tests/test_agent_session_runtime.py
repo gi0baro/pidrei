@@ -55,7 +55,7 @@ async def _create_model_runtime(temp_dir: str, stream_simple=None) -> ModelRunti
         return ApiKeyCredential(key="test-key")
 
     await auth_storage.modify("anthropic", set_key)
-    model_runtime = await ModelRuntime.create(
+    model_runtime = await ModelRuntime(
         credentials=auth_storage,
         models_path=os.path.join(temp_dir, "models.json"),
         allow_model_network=False,
@@ -78,7 +78,7 @@ async def _create_runtime_host(temp_dir: str, extensions: list[Extension], strea
             model_runtime=model_runtime,
             settings_manager=await __import__(
                 "pidrei.core.settings_manager", fromlist=["SettingsManager"]
-            ).SettingsManager.create(cwd, agent_dir),
+            ).SettingsManager(cwd, agent_dir),
             resource_loader=create_test_resource_loader(extensions_result),
         )
         result = await create_agent_session_from_services(
@@ -103,7 +103,7 @@ async def _create_runtime_host(temp_dir: str, extensions: list[Extension], strea
         create_runtime,
         cwd=temp_dir,
         agent_dir=temp_dir,
-        session_manager=await SessionManager.create(temp_dir, temp_dir),
+        session_manager=await SessionManager(temp_dir, temp_dir),
     )
     await runtime_host.session.bind_extensions(
         __import__("pidrei.core.agent_session", fromlist=["ExtensionBindings"]).ExtensionBindings()
@@ -276,7 +276,7 @@ class TestRuntimeSessionLifecycleEvents:
         assert runtime_host.session.session_file == first_session_file
         # The outgoing session settled before replacement: the interrupted tool
         # call has a persisted tool result instead of dangling forever.
-        outgoing_manager = await SessionManager.open(outgoing_session.session_file)
+        outgoing_manager = await SessionManager(session_file=outgoing_session.session_file)
         outgoing_entries = [entry for entry in outgoing_manager.get_entries() if entry["type"] == "message"]
         assert [entry["message"].role for entry in outgoing_entries] == [
             "system",
@@ -451,7 +451,7 @@ class TestForkingSuite:
                 cwd=cwd,
                 agent_dir=agent_dir,
                 model_runtime=model_runtime,
-                settings_manager=await SettingsManager.create(cwd, agent_dir),
+                settings_manager=await SettingsManager(cwd, agent_dir),
                 resource_loader=create_test_resource_loader(extensions_result),
             )
             result = await create_agent_session_from_services(
@@ -645,12 +645,12 @@ async def test_session_info_modified_uses_last_message_timestamp(tmp_path):
     # SessionManager only persists once it has seen at least one assistant
     # message; add one so subsequent appends are persisted.
     first_time = now_ms()
-    mgr = await SessionManager.open(file_path)
+    mgr = await SessionManager(session_file=file_path)
     await mgr.append_message(assistant_msg("hi", api="openai-completions", provider="openai", timestamp=first_time))
 
     before_mtime = os.stat(file_path).st_mtime
 
-    mgr = await SessionManager.open(file_path)
+    mgr = await SessionManager(session_file=file_path)
     # A minute past the first message instead of a short real pause: the
     # later message's time can then equal neither the first one nor the
     # file's mtime, however slow the runner.

@@ -7,8 +7,10 @@ fake `this`; the Python function is called the same way on a stub object.
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import AssistantMessage, AssistantMessageDiagnostic, TextContent, Usage, UsageCost
 from pidrei_tui import Container
@@ -38,8 +40,9 @@ MESSAGE = AssistantMessage(
 )
 
 
-def test_shows_anthropic_thinking_drops_when_cache_miss_notices_are_enabled():
-    init_theme_sync("dark")
+@pytest.mark.tonio
+async def test_shows_anthropic_thinking_drops_when_cache_miss_notices_are_enabled():
+    await init_theme("dark")
     enabled = SimpleNamespace(
         _chat_container=Container(),
         settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
@@ -58,8 +61,9 @@ def test_shows_anthropic_thinking_drops_when_cache_miss_notices_are_enabled():
     assert len(disabled._chat_container.children) == 0
 
 
-def test_does_not_repeat_unchanged_anthropic_thinking_drops():
-    init_theme_sync("dark")
+@pytest.mark.tonio
+async def test_does_not_repeat_unchanged_anthropic_thinking_drops():
+    await init_theme("dark")
     context = SimpleNamespace(
         _chat_container=Container(),
         settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),
@@ -71,10 +75,11 @@ def test_does_not_repeat_unchanged_anthropic_thinking_drops():
     assert len(context._chat_container.children) == 0
 
 
-def test_ignores_the_current_message_when_it_is_already_persisted():
+@pytest.mark.tonio
+async def test_ignores_the_current_message_when_it_is_already_persisted():
     # pidrei-specific: the UI owner can handle message_end after the session persisted
     # the message, so the branch's last assistant entry may be the message itself.
-    init_theme_sync("dark")
+    await init_theme("dark")
     context = SimpleNamespace(
         _chat_container=Container(),
         settings_manager=SimpleNamespace(get_show_cache_miss_notices=lambda: True),

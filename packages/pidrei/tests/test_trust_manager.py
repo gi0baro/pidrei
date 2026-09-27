@@ -2,7 +2,7 @@
 
 import pytest
 
-from pidrei.core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
+from pidrei.core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources_blocking
 
 
 @pytest.mark.tonio
@@ -30,18 +30,18 @@ def test_detects_trust_requiring_project_resources(tmp_path, monkeypatch):
 
     (tmp_path / ".pidrei" / "agent").mkdir(parents=True)
     (tmp_path / ".agents" / "skills").mkdir(parents=True)
-    assert has_trust_requiring_project_resources(str(tmp_path)) is False
-    assert has_trust_requiring_project_resources(str(cwd)) is False
+    assert has_trust_requiring_project_resources_blocking(str(tmp_path)) is False
+    assert has_trust_requiring_project_resources_blocking(str(cwd)) is False
 
     (tmp_path / ".pidrei" / "settings.json").write_text("{}", encoding="utf-8")
-    assert has_trust_requiring_project_resources(str(tmp_path)) is True
+    assert has_trust_requiring_project_resources_blocking(str(tmp_path)) is True
     (tmp_path / ".pidrei" / "settings.json").unlink()
 
     (cwd / ".pidrei").mkdir()
     (cwd / ".pidrei" / "settings.json").write_text("{}", encoding="utf-8")
-    assert has_trust_requiring_project_resources(str(cwd)) is True
+    assert has_trust_requiring_project_resources_blocking(str(cwd)) is True
 
     (cwd / ".pidrei" / "settings.json").unlink()
     (cwd / ".pidrei").rmdir()
     (cwd / ".agents" / "skills").mkdir(parents=True)
-    assert has_trust_requiring_project_resources(str(cwd)) is True
+    assert has_trust_requiring_project_resources_blocking(str(cwd)) is True

@@ -28,7 +28,7 @@ from pidrei.modes.interactive.components.status_indicator import (
 )
 from pidrei.modes.interactive.extension_tui import ExtensionTui
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import get_editor_theme, init_theme, init_theme_sync, theme
+from pidrei.modes.interactive.theme import get_editor_theme, init_theme, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import TUI, CombinedAutocompleteProvider, Container, TuiMainScreen, visible_width
 
@@ -40,9 +40,9 @@ from virtual_terminal import VirtualTerminal
 
 
 @pytest.fixture(autouse=True)
-def _theme():
+async def _theme():
     # showStatus and showLoadedResources use the global theme instance
-    init_theme_sync("dark")
+    await init_theme("dark")
 
 
 class _BareInteractiveMode(InteractiveMode):
@@ -1023,9 +1023,9 @@ class TestWorkingStatusEmbedding:
 
     @pytest.mark.tonio
     async def test_keeps_the_top_border_unchanged_unless_the_editor_opts_in(self):
-        init_theme_sync("dark")
+        await init_theme("dark")
         tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
-        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager())
+        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager.in_memory())
         indicator = WorkingStatusIndicator(tui, "Working")
         editor.set_working_status_indicator(indicator)
 
@@ -1037,9 +1037,9 @@ class TestWorkingStatusEmbedding:
 
     @pytest.mark.tonio
     async def test_embeds_the_working_indicator_when_the_editor_opts_in(self):
-        init_theme_sync("dark")
+        await init_theme("dark")
         tui = SimpleNamespace(request_render=lambda: None, terminal=SimpleNamespace(rows=10))
-        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
+        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager.in_memory(), {"embedWorkingStatus": True})
         assert editor.embed_working_status is True
         editor.border_color = theme.get_thinking_border_color("high")
         with manual_ui_timers():
@@ -1054,11 +1054,11 @@ class TestWorkingStatusEmbedding:
 
     @pytest.mark.tonio
     async def test_embeds_compaction_summary_and_retry_labels_within_the_border_width(self):
-        init_theme_sync("dark")
+        await init_theme("dark")
         tui = SimpleNamespace(
             request_render=lambda: None, terminal=SimpleNamespace(rows=10), state_lock=threading.RLock()
         )
-        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager(), {"embedWorkingStatus": True})
+        editor = CustomEditor(tui, get_editor_theme(), KeybindingsManager.in_memory(), {"embedWorkingStatus": True})
         # Spinners and the retry countdown stay put until the test ticks them.
         with manual_ui_timers():
             retry = RetryStatusIndicator(tui, 1, 3, 3000)
@@ -1088,8 +1088,9 @@ class TestWorkingStatusEmbedding:
 
 
 class TestShowManagedToolStatus:
-    def test_renders_tool_updates_as_one_contiguous_group(self):
-        init_theme_sync("dark")
+    @pytest.mark.tonio
+    async def test_renders_tool_updates_as_one_contiguous_group(self):
+        await init_theme("dark")
         fake = SimpleNamespace(
             _chat_container=Container(),
             _managed_tool_status_started=False,

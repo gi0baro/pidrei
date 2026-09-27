@@ -18,7 +18,7 @@ from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive import interactive_mode
 from pidrei.modes.interactive.components.extension_selector import ExtensionSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, set_keybindings
 
@@ -214,8 +214,8 @@ async def test_an_aborted_dialog_is_hidden_before_the_next_one_opens(monkeypatch
     # The extension resumes as soon as dialog A settles and may open dialog B
     # right away: A's abort (from any task) hides A itself, so B is left
     # mounted and alive.
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
     monkeypatch.setattr(interactive_mode, "ExtensionSelectorComponent", _RecordingSelector)
     fake = _editor_slot_mode()
 
@@ -269,7 +269,7 @@ async def test_the_new_session_notice_lands_after_the_chat_reset():
         return {"cancelled": False}
 
     fake.runtime_host = SimpleNamespace(new_session=new_session)
-    init_theme_sync("dark")
+    await init_theme("dark")
     await InteractiveMode._new_session(fake)
 
     assert len(chat.children) == 2  # spacer + "New session started"
@@ -300,8 +300,8 @@ async def test_concurrent_bash_commands_keep_their_own_output():
     # pi keeps the running command's component in one field; two `!`
     # commands run concurrently here, and the second used to take the
     # first's output chunks.
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
     chat = Container()
     both_started = tonio.Event()
     started: list = []
@@ -466,7 +466,8 @@ class _HoldRecorder:
 async def test_a_session_swap_and_the_rebinds_first_block_are_one_hold():
     """UI_ISLAND_DESIGN §4.5c: pi's swap and the rebind's first synchronous
     block (runtime settings, the chat redraw, the subscription) never show
-    apart; the block's cwd I/O runs before the hold, for the new session."""
+    apart; the block's I/O (the cwd, the trust warning's check) runs before
+    the hold, for the new session."""
     lock = _HoldRecorder()
     steps: list = []
     old_session = SimpleNamespace(session_manager=SimpleNamespace(get_cwd=lambda: "/old"))
@@ -479,13 +480,18 @@ async def test_a_session_swap_and_the_rebinds_first_block_are_one_hold():
     async def bind_current_session_extensions() -> None:
         steps.append(("bind", lock.current))
 
+    async def needs_project_trust_warning(session) -> bool:
+        steps.append(("trust", session.session_manager.get_cwd(), lock.current))
+        return True
+
     fake = SimpleNamespace(
         session=old_session,
         ui=SimpleNamespace(state_lock=lock),
         _footer_data_provider=SimpleNamespace(resolve_cwd=resolve_cwd),
+        _needs_project_trust_warning=needs_project_trust_warning,
         _unsubscribe=lambda: steps.append(("unsubscribe", lock.current)),
         _apply_runtime_settings=lambda resolved: steps.append(("settings", resolved["cwd"], lock.current)) or False,
-        render_current_session_state=lambda: steps.append(("render", lock.current)),
+        render_current_session_state=lambda trust_warning: steps.append(("render", trust_warning, lock.current)),
         _subscribe_to_agent=lambda: steps.append(("subscribe", lock.current)),
         _bind_current_session_extensions=bind_current_session_extensions,
         _update_available_provider_count=_noop,
@@ -499,17 +505,18 @@ async def test_a_session_swap_and_the_rebinds_first_block_are_one_hold():
 
     await InteractiveMode._rebind_current_session(fake, {"renderBeforeBind": True}, new_session, swap)
 
-    hold = steps[1][-1]
+    hold = steps[2][-1]
     assert hold is not None
-    assert steps[:6] == [
+    assert steps[:7] == [
         ("resolve", "/new", None),
+        ("trust", "/new", None),
         ("swap", hold),
         ("unsubscribe", hold),
         ("settings", "/new", hold),
-        ("render", hold),
+        ("render", True, hold),
         ("subscribe", hold),
     ]
-    assert steps[6] == ("bind", None)
+    assert steps[7] == ("bind", None)
 
 
 def test_a_bash_command_submitted_while_another_starts_gets_the_busy_warning():

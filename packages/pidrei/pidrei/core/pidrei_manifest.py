@@ -15,13 +15,13 @@ from typing import Any
 from ..utils.text import strip_bom
 
 
-__all__ = ["MANIFEST_TABLE", "RESOURCE_FIELDS", "read_pidrei_manifest"]
+__all__ = ["MANIFEST_TABLE", "RESOURCE_FIELDS", "read_pidrei_manifest_blocking"]
 
 MANIFEST_TABLE = ("tool", "pidrei")
 RESOURCE_FIELDS = ("extensions", "skills", "prompts", "themes")
 
 
-def read_pidrei_manifest(pyproject_path: str) -> dict[str, Any] | None:
+def read_pidrei_manifest_blocking(pyproject_path: str) -> dict[str, Any] | None:
     """The `[tool.pidrei]` table (pi: the `pi` key in package.json)."""
     try:
         with open(pyproject_path, encoding="utf-8") as handle:

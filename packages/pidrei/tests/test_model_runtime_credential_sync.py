@@ -95,7 +95,7 @@ class ProviderDouble:
 
 
 async def runtime_with_provider(registered, credentials: AuthStorage | None = None) -> ModelRuntime:
-    runtime = await ModelRuntime.create(
+    runtime = await ModelRuntime(
         credentials=credentials if credentials is not None else AuthStorage.in_memory(),
         models_path=None,
         allow_model_network=False,
@@ -173,7 +173,7 @@ async def test_allows_different_providers_to_run_credential_flows_concurrently()
         await blocked.wait()
         return ApiKeyCredential(key="two")
 
-    runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+    runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
     runtime.register_native_provider(ProviderDouble("one", login=login_one))
     runtime.register_native_provider(ProviderDouble("two", login=login_two))
     await runtime.refresh(ModelsRefreshOptions(allow_network=False, providers=["one", "two"]))
@@ -196,7 +196,7 @@ async def test_allows_different_providers_to_run_credential_flows_concurrently()
 async def test_does_not_wait_for_unrelated_provider_availability_during_local_synchronization():
     state = {"stall": False}
     stall_release = tonio.Event()
-    runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+    runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
     runtime.register_native_provider(ProviderDouble("target"))
 
     async def stalled_check(_ctx, _credential, _cancel):
@@ -284,7 +284,7 @@ async def test_keeps_provider_scoped_refreshes_from_superseding_unrelated_provid
         started.set()
         await blocked.wait()
 
-    runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+    runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
     runtime.register_native_provider(ProviderDouble("one", refresh_models=refresh_one_models))
     runtime.register_native_provider(ProviderDouble("two"))
     # Each registration spawned a detached full-refresh drain; only an
@@ -337,7 +337,7 @@ async def test_waits_for_a_committed_credential_mutation_to_settle_before_report
         async def delete(self, _provider_id, options=None):
             state["stored"] = None
 
-    runtime = await ModelRuntime.create(credentials=DelayedCommitStore(), models_path=None)
+    runtime = await ModelRuntime(credentials=DelayedCommitStore(), models_path=None)
     runtime.register_native_provider(ProviderDouble("delayed-commit"))
     await runtime.refresh(ModelsRefreshOptions(allow_network=False, providers=["delayed-commit"]))
     controller = CancelToken()

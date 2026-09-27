@@ -109,7 +109,7 @@ class LoadPromptTemplatesResult:
     diagnostics: list[ResourceDiagnostic] = field(default_factory=list)
 
 
-def _load_template_from_file(
+def _load_template_from_file_blocking(
     file_path: str, source_info: SourceInfo
 ) -> tuple[PromptTemplate | None, list[ResourceDiagnostic]]:
     try:
@@ -151,7 +151,7 @@ def _load_template_from_file(
     return template, []
 
 
-def _load_templates_from_dir(dir: str, get_source_info) -> LoadPromptTemplatesResult:
+def _load_templates_from_dir_blocking(dir: str, get_source_info_blocking) -> LoadPromptTemplatesResult:
     """Scan a directory for .md files (non-recursive) and load them as prompt templates."""
     result = LoadPromptTemplatesResult()
 
@@ -173,7 +173,7 @@ def _load_templates_from_dir(dir: str, get_source_info) -> LoadPromptTemplatesRe
             continue  # Broken symlink, skip it
 
         if is_file and entry.name.endswith(".md"):
-            template, diagnostics = _load_template_from_file(full_path, get_source_info(full_path))
+            template, diagnostics = _load_template_from_file_blocking(full_path, get_source_info_blocking(full_path))
             if template is not None:
                 result.templates.append(template)
             result.diagnostics.extend(diagnostics)
@@ -206,7 +206,7 @@ def load_prompt_templates(
     the caller awaits it either way, and the extra coroutine frame buys nothing.
     """
     return tonio.spawn_blocking(
-        _load_prompt_templates_sync,
+        _load_prompt_templates_blocking,
         cwd=cwd,
         agent_dir=agent_dir,
         prompt_paths=prompt_paths,
@@ -214,7 +214,7 @@ def load_prompt_templates(
     )
 
 
-def _load_prompt_templates_sync(
+def _load_prompt_templates_blocking(
     *,
     cwd: str,
     agent_dir: str,
@@ -233,7 +233,7 @@ def _load_prompt_templates_sync(
     global_prompts_dir = os.path.join(resolved_agent_dir, "prompts")
     project_prompts_dir = os.path.join(resolved_cwd, CONFIG_DIR_NAME, "prompts")
 
-    def get_source_info(resolved_path: str) -> SourceInfo:
+    def get_source_info_blocking(resolved_path: str) -> SourceInfo:
         if _is_under_path(resolved_path, global_prompts_dir):
             return create_synthetic_source_info(
                 resolved_path, source="local", scope="user", base_dir=global_prompts_dir
@@ -249,8 +249,8 @@ def _load_prompt_templates_sync(
         )
 
     if include_defaults:
-        add_result(_load_templates_from_dir(global_prompts_dir, get_source_info))
-        add_result(_load_templates_from_dir(project_prompts_dir, get_source_info))
+        add_result(_load_templates_from_dir_blocking(global_prompts_dir, get_source_info_blocking))
+        add_result(_load_templates_from_dir_blocking(project_prompts_dir, get_source_info_blocking))
 
     # Load explicit prompt paths
     for raw_path in prompt_paths:
@@ -260,9 +260,11 @@ def _load_prompt_templates_sync(
 
         try:
             if os.path.isdir(resolved_path):
-                add_result(_load_templates_from_dir(resolved_path, get_source_info))
+                add_result(_load_templates_from_dir_blocking(resolved_path, get_source_info_blocking))
             elif os.path.isfile(resolved_path) and resolved_path.endswith(".md"):
-                template, diagnostics = _load_template_from_file(resolved_path, get_source_info(resolved_path))
+                template, diagnostics = _load_template_from_file_blocking(
+                    resolved_path, get_source_info_blocking(resolved_path)
+                )
                 if template is not None:
                     result.templates.append(template)
                 result.diagnostics.extend(diagnostics)

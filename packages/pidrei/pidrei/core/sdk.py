@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, replace
 from typing import Any
 
+import tonio.colored as tonio
+
 from pidrei_agent.agent import Agent, AgentInitialState
 from pidrei_ai.registry import clamp_thinking_level
 from pidrei_ai.types import Model, TextContent
@@ -27,7 +29,7 @@ from .model_resolver import find_initial_model
 from .model_runtime import ModelRuntime
 from .provider_attribution import merge_provider_attribution_headers
 from .resource_loader import DefaultResourceLoader
-from .session_manager import SessionManager, get_default_session_dir
+from .session_manager import SessionManager, get_default_session_dir_blocking
 from .settings_manager import SettingsManager
 from .timings import time
 from .tools import ALL_TOOL_NAMES  # noqa: F401  (re-export surface parity)
@@ -63,10 +65,10 @@ class CreateAgentSessionOptions:
     # Resource loader. When omitted, DefaultResourceLoader is used.
     resource_loader: Any = None
 
-    # Session manager. Default: SessionManager.create(cwd)
+    # Session manager. Default: SessionManager(cwd)
     session_manager: SessionManager | None = None
 
-    # Settings manager. Default: SettingsManager.create(cwd, agent_dir)
+    # Settings manager. Default: SettingsManager(cwd, agent_dir)
     settings_manager: SettingsManager | None = None
     # Session start event metadata for extension runtime startup.
     session_start_event: dict[str, Any] | None = None
@@ -149,21 +151,19 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     models_path = os.path.join(agent_dir, "models.json") if options.agent_dir is not None else ...
     model_runtime = options.model_runtime
     if model_runtime is None:
-        model_runtime = await ModelRuntime.create(auth_path=auth_path, models_path=models_path)
+        model_runtime = await ModelRuntime(auth_path=auth_path, models_path=models_path)
 
     settings_manager = (
-        options.settings_manager
-        if options.settings_manager is not None
-        else await SettingsManager.create(cwd, agent_dir)
+        options.settings_manager if options.settings_manager is not None else await SettingsManager(cwd, agent_dir)
     )
     session_manager = (
         options.session_manager
         if options.session_manager is not None
-        else await SessionManager.create(cwd, get_default_session_dir(cwd, agent_dir))
+        else await SessionManager(cwd, await tonio.spawn_blocking(get_default_session_dir_blocking, cwd, agent_dir))
     )
 
     if resource_loader is None:
-        resource_loader = DefaultResourceLoader(cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager)
+        resource_loader = await DefaultResourceLoader(cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager)
         await resource_loader.reload()
         time("resourceLoader.reload")
 

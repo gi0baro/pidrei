@@ -3,9 +3,8 @@
 List available models with optional fuzzy search.
 """
 
-import sys
-
 from ..core.auth_guidance import format_no_models_available_message
+from ..core.output_guard import write_stderr, write_stdout
 from ..utils.colors import yellow
 from ..utils.fuzzy import fuzzy_filter
 
@@ -27,12 +26,12 @@ async def list_models(model_runtime, search_pattern: str | None = None, cancel=N
 
     load_error = model_runtime.get_error()
     if load_error:
-        print(yellow(f"Warning: errors loading models.json:\n{load_error}"), file=sys.stderr)
+        write_stderr(yellow(f"Warning: errors loading models.json:\n{load_error}") + "\n")
 
     models = list(await model_runtime.get_available(None, AuthOperationOptions(cancel=cancel)))
 
     if not models:
-        print(format_no_models_available_message())
+        write_stdout(format_no_models_available_message() + "\n")
         return
 
     # Apply fuzzy filter if search pattern provided
@@ -41,7 +40,7 @@ async def list_models(model_runtime, search_pattern: str | None = None, cancel=N
         filtered_models = fuzzy_filter(models, search_pattern, lambda m: f"{m.provider} {m.id}")
 
     if not filtered_models:
-        print(f'No models matching "{search_pattern}"')
+        write_stdout(f'No models matching "{search_pattern}"\n')
         return
 
     # Sort by provider, then by model id
@@ -74,8 +73,8 @@ async def list_models(model_runtime, search_pattern: str | None = None, cancel=N
     columns = ["provider", "model", "context", "max_out", "thinking", "images"]
 
     # Print header
-    print("  ".join(headers[key].ljust(widths[key]) for key in columns))
+    write_stdout("  ".join(headers[key].ljust(widths[key]) for key in columns) + "\n")
 
     # Print rows
     for row in rows:
-        print("  ".join(row[key].ljust(widths[key]) for key in columns))
+        write_stdout("  ".join(row[key].ljust(widths[key]) for key in columns) + "\n")

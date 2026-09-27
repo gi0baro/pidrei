@@ -316,6 +316,15 @@ _BUILTIN_THEMES: dict | None = None
 
 
 def _get_builtin_themes() -> dict:
+    """The builtin themes from the cache `prime_theme_cache()` fills: no I/O."""
+    themes = _BUILTIN_THEMES
+    if themes is None:
+        raise RuntimeError("builtin themes not loaded: await prime_theme_cache() first")
+    return themes
+
+
+def _load_builtin_themes_blocking() -> dict:
+    """The builtin themes, reading them into the cache on first use."""
     global _BUILTIN_THEMES
     if _BUILTIN_THEMES is None:
         themes_dir = get_themes_dir()
@@ -333,9 +342,11 @@ async def prime_theme_cache() -> None:
     pi caches these too, so priming is not a divergence — it only moves the
     one-time read off whatever thread happens to ask first. `set_theme` for a
     builtin or a registered theme then does no I/O at all, which matters
-    because it is reached from a sync TUI callback.
+    because it is reached from a sync TUI callback. The async readers below
+    go through it too, so the first of them to run does the read pool-side.
     """
-    await tonio.spawn_blocking(_get_builtin_themes)
+    if _BUILTIN_THEMES is None:
+        await tonio.spawn_blocking(_load_builtin_themes_blocking)
 
 
 async def get_available_themes() -> list:
@@ -355,6 +366,7 @@ async def get_available_themes_with_paths() -> list:
         result.append(theme_info)
 
     # Built-in themes
+    await prime_theme_cache()
     for name in _get_builtin_themes():
         add_theme({"name": name, "path": os.path.join(themes_dir, f"{name}.json")})
 
@@ -368,7 +380,7 @@ async def get_available_themes_with_paths() -> list:
     return sorted(result, key=lambda info: (info["name"].lower(), info["name"]))
 
 
-def _scan_custom_theme_dir(custom_themes_dir: str) -> list[str]:
+def _scan_custom_theme_dir_blocking(custom_themes_dir: str) -> list[str]:
     """One pool hop for the exists+listdir pair."""
     if not os.path.exists(custom_themes_dir):
         return []
@@ -384,7 +396,7 @@ async def _get_custom_theme_infos() -> list:
     """
     custom_themes_dir = get_custom_themes_dir()
     result: list = []
-    entries = await tonio.spawn_blocking(_scan_custom_theme_dir, custom_themes_dir)
+    entries = await tonio.spawn_blocking(_scan_custom_theme_dir_blocking, custom_themes_dir)
     for file in entries:
         theme_path = os.path.join(custom_themes_dir, file)
         # Invalid themes are ignored here; the resource loader reports them
@@ -423,6 +435,7 @@ def _parse_theme_json_content(label: str, content: str) -> dict:
 
 
 async def _load_theme_json(name: str) -> dict:
+    await prime_theme_cache()
     builtin_themes = _get_builtin_themes()
     if name in builtin_themes:
         return builtin_themes[name]
@@ -453,7 +466,7 @@ def _create_theme(theme_json: dict, mode: str | None = None, source_path: str | 
     return Theme(fg_colors, bg_colors, color_mode, {"name": theme_json["name"], "sourcePath": source_path})
 
 
-def _load_theme_from_path_sync(theme_path: str, mode: str | None = None) -> Theme:
+def _load_theme_from_path_blocking(theme_path: str, mode: str | None = None) -> Theme:
     """Blocking read+parse. Only for callers already off the runtime.
 
     The theme watcher's reload calls this through `spawn_blocking`.
@@ -465,7 +478,7 @@ def _load_theme_from_path_sync(theme_path: str, mode: str | None = None) -> Them
 
 
 def load_theme_from_path(theme_path: str, mode: str | None = None) -> Awaitable[Theme]:
-    return tonio.spawn_blocking(_load_theme_from_path_sync, theme_path, mode)
+    return tonio.spawn_blocking(_load_theme_from_path_blocking, theme_path, mode)
 
 
 async def _load_theme(name: str, mode: str | None = None) -> Theme:
@@ -662,40 +675,6 @@ def set_registered_themes(themes: list) -> None:
         _registered_themes = registered
 
 
-def init_theme_sync(theme_name: str | None = None, enable_watcher: bool = False) -> None:
-    """Blocking theme init. Only for callers already off the runtime.
-
-    Test fixtures run outside `tonio.run`, which is outside the never-block
-    rule by construction; pytest also cannot drive an async autouse
-    fixture. Production code uses the async `init_theme`. The watcher needs
-    the runtime (timers and the pool), so it cannot be enabled from here.
-    """
-    global _current_theme_name
-    if enable_watcher:
-        raise ValueError("the theme watcher needs the runtime; use init_theme")
-    name = theme_name if theme_name is not None else get_default_theme()
-    try:
-        loaded, fallback = _load_theme_sync(name), None
-    except Exception as error:
-        loaded, fallback = _load_theme_sync("dark"), str(error)
-    with _theme_state_lock:
-        _current_theme_name = "dark" if fallback else name
-        _set_global_theme(loaded)
-
-
-def _load_theme_sync(name: str, mode: str | None = None) -> Theme:
-    registered_theme = _registered_themes.get(name)
-    if registered_theme is not None:
-        return registered_theme
-    builtin_themes = _get_builtin_themes()
-    if name in builtin_themes:
-        return _create_theme(builtin_themes[name], mode)
-    theme_path = os.path.join(get_custom_themes_dir(), f"{name}.json")
-    if not os.path.exists(theme_path):
-        raise ValueError(f"Theme not found: {name}")
-    return _load_theme_from_path_sync(theme_path, mode)
-
-
 async def init_theme(theme_name: str | None = None, enable_watcher: bool = False) -> None:
     global _current_theme_name
     name = theme_name if theme_name is not None else get_default_theme()
@@ -797,13 +776,13 @@ async def _start_theme_watcher() -> None:
     if not await tonio.spawn_blocking(os.path.exists, theme_file):
         return
 
-    def _reload_from_disk() -> Theme | None:
+    def _reload_from_disk_blocking() -> Theme | None:
         # Keep the last successfully loaded theme active if the file is
         # temporarily missing or in an invalid state while being edited.
         if not os.path.exists(theme_file):
             return None
         try:
-            return _load_theme_from_path_sync(theme_file)
+            return _load_theme_from_path_blocking(theme_file)
         except Exception:
             return None
 
@@ -819,7 +798,7 @@ async def _start_theme_watcher() -> None:
         tonio.spawn.without_tracking(apply_reloaded_theme())
 
     async def apply_reloaded_theme() -> None:
-        reloaded_theme = await tonio.spawn_blocking(_reload_from_disk)
+        reloaded_theme = await tonio.spawn_blocking(_reload_from_disk_blocking)
         if reloaded_theme is None:
             return
 

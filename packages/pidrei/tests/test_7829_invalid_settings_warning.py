@@ -17,14 +17,14 @@ import tonio.colored as tonio
 
 from pidrei.core.agent_session_services import AgentSessionRuntimeDiagnostic
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import Container
 
 
 @pytest.mark.tonio
 async def test_renders_startup_diagnostics_inside_the_transcript():
-    init_theme_sync("dark")
+    await init_theme("dark")
     previous_skip = os.environ.get("PIDREI_SKIP_VERSION_CHECK")
     os.environ["PIDREI_SKIP_VERSION_CHECK"] = "1"
 

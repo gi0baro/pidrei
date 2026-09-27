@@ -4,13 +4,15 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+import tonio.colored as tonio
+
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
 
 from ...utils.tools_manager import ensure_tool, missing_tool_message
 from ..extensions.types import ToolDefinition
 from .grep import _run_streaming_lines
-from .path_utils import path_exists, resolve_to_cwd
+from .path_utils import path_exists_blocking, resolve_to_cwd
 from .renderers.find import find_renderers
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .truncate import DEFAULT_MAX_BYTES, TruncationResult, format_size, truncate_head
@@ -41,6 +43,18 @@ DEFAULT_LIMIT = 1000
 class FindToolDetails:
     truncation: TruncationResult | None = None
     result_limit_reached: int | None = None
+
+
+def _is_inside_git_repo_blocking(path: str) -> bool:
+    """Whether `path` or an ancestor has a `.git` entry (blocking: pool-side)."""
+    current = path
+    while True:
+        if path_exists_blocking(os.path.join(current, ".git")):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
 
 
 def _throw_if_aborted(cancel: Any) -> None:
@@ -127,17 +141,7 @@ def create_find_tool_definition(cwd: str, *, operations: Any = None) -> ToolDefi
         # fd normally ignores .gitignore outside git repos, so keep --no-require-git
         # there. Inside repos, use fd's default git-aware behavior so parent
         # .gitignore rules stop at nested repo boundaries (pi#5960).
-        inside_git_repo = False
-        current = search_path
-        while True:
-            if path_exists(os.path.join(current, ".git")):
-                inside_git_repo = True
-                break
-            parent = os.path.dirname(current)
-            if parent == current:
-                break
-            current = parent
-        if not inside_git_repo:
+        if not await tonio.spawn_blocking(_is_inside_git_repo_blocking, search_path):
             args.append("--no-require-git")
         args.extend(["--max-results", str(effective_limit)])
 

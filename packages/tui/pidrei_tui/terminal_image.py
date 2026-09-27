@@ -19,7 +19,6 @@ import math
 import os
 import random
 import re
-import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,27 +57,35 @@ def set_cell_dimensions(dims: dict) -> None:
     _cell_dimensions = dims
 
 
-# Runs `tmux`, but only ever once: `get_capabilities()` caches, and
-# `startup_ui.create_startup_tui` primes that cache through `spawn_blocking`
-# before any render path asks. Keep it that way.
-def _probe_tmux_hyperlinks() -> bool:
-    """Check whether the attached tmux client forwards OSC 8 hyperlinks.
+# The tmux probe's answer, once per process. pi runs the probe (`tmux
+# display-message`) with `execSync` inside detection; here detection never
+# runs a subprocess: `prime_capabilities` awaits the caller's probe before any
+# render asks. The answer does not depend on the overrides, so changing them
+# (which drops the cached capabilities) never needs it again. Unprimed,
+# detection takes the probe's failure answer.
+_tmux_hyperlinks: bool | None = None
 
-    tmux only re-emits them when its `client_termfeatures` lists
-    `hyperlinks`, and strips them otherwise. On any error falls back False.
-    """
-    try:
-        result = subprocess.run(
-            ["tmux", "display-message", "-p", "#{client_termfeatures}"],  # noqa: S607 - PATH lookup like pi's execSync
-            capture_output=True,
-            encoding="utf-8",
-            timeout=0.25,
-            stdin=subprocess.DEVNULL,
-            check=True,
-        )
-        return "hyperlinks" in [feature.strip() for feature in result.stdout.split(",")]
-    except Exception:
-        return False
+
+def _tmux_forwards_hyperlinks() -> bool:
+    return _tmux_hyperlinks is True
+
+
+def _in_tmux() -> bool:
+    return bool(os.environ.get("TMUX")) or (os.environ.get("TERM") or "").lower().startswith("tmux")
+
+
+async def prime_capabilities(probe_tmux_hyperlinks) -> None:
+    """Settle what detection cannot read from the environment, before a render
+    asks: under tmux, `await probe_tmux_hyperlinks()` answers whether the
+    attached client forwards OSC 8 hyperlinks (False on any failure). Run once
+    per process, whatever the overrides say."""
+    global _tmux_hyperlinks, _capability_state
+    if _tmux_hyperlinks is not None or not _in_tmux():
+        return
+    _tmux_hyperlinks = await probe_tmux_hyperlinks()
+    with _capability_lock:
+        # Anything detected before the answer took the failure answer.
+        _capability_state = _CapabilityState(_capability_state.overrides, None)
 
 
 def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
@@ -137,7 +144,7 @@ def _parse_boolean_capability_override(value: str | None) -> bool | None:
     return True if value == "1" else False if value == "0" else None
 
 
-def detect_capabilities(tmux_forwards_hyperlink=_probe_tmux_hyperlinks) -> dict:
+def detect_capabilities(tmux_forwards_hyperlink=_tmux_forwards_hyperlinks) -> dict:
     hyperlinks = _parse_boolean_capability_override(os.environ.get("PIDREI_HYPERLINKS"))
     detected = _detect_capabilities_from_environment(
         tmux_forwards_hyperlink if hyperlinks is None else (lambda: hyperlinks)
@@ -177,9 +184,11 @@ def get_capabilities() -> dict:
 
 
 def reset_capabilities_cache() -> None:
-    global _capability_state
+    """Forget everything detected, the tmux probe's answer included."""
+    global _capability_state, _tmux_hyperlinks
     with _capability_lock:
         _capability_state = _CapabilityState(_capability_state.overrides, None)
+        _tmux_hyperlinks = None
 
 
 def set_capability_overrides(overrides: dict) -> None:

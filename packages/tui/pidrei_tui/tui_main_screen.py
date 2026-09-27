@@ -102,7 +102,7 @@ def _is_termux_session() -> bool:
     return bool(os.environ.get("TERMUX_VERSION"))
 
 
-def _append_debug_log(path: str, message: str) -> None:
+def _append_debug_log_blocking(path: str, message: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as log_file:
         log_file.write(message)
@@ -336,7 +336,7 @@ class TuiMainScreen(TuiBase):
                 f"[{timestamp}] fullRender: {reason} "
                 f"(prev={len(self._previous_lines)}, new={len(new_lines)}, height={height})\n"
             )
-            self._defer_frame_io(functools.partial(tonio.spawn_blocking, _append_debug_log, log_path, msg))
+            self._defer_frame_io(functools.partial(tonio.spawn_blocking, _append_debug_log_blocking, log_path, msg))
 
         # First render - just output everything without clearing (assumes clean screen)
         if not self._previous_lines and not width_changed and not height_changed:

@@ -7,7 +7,8 @@ styling is applied only when stdout is a TTY and NO_COLOR is unset
 """
 
 import os
-import sys
+
+from ..core.output_guard import stdout_isatty
 
 
 def _color_enabled() -> bool:
@@ -15,10 +16,7 @@ def _color_enabled() -> bool:
         return True
     if os.environ.get("NO_COLOR"):
         return False
-    try:
-        return sys.stdout.isatty()
-    except Exception:
-        return False
+    return stdout_isatty()
 
 
 def _style(text: str, open_code: str, close_code: str) -> str:

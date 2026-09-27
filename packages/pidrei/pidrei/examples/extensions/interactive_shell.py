@@ -20,9 +20,10 @@ Start pidrei with this extension:
 """
 
 import os
-import sys
 
 import tonio.colored as tonio
+
+from pidrei.core.output_guard import drain_output, write_stdout
 
 
 # Default interactive commands - editors, pagers, git ops, TUIs
@@ -123,11 +124,6 @@ def is_interactive_command(command: str) -> bool:
     return False
 
 
-def _clear_screen() -> None:
-    sys.stdout.write("\x1b[2J\x1b[H")
-    sys.stdout.flush()
-
-
 class _EmptyComponent:
     def render(self, _width: int) -> list[str]:
         return []
@@ -172,8 +168,9 @@ async def extension(pi):
 
             exit_code = None
             try:
-                # Clear screen (a blocking terminal write: off the runtime)
-                await tonio.spawn_blocking(_clear_screen)
+                # Clear screen, on the terminal before the command takes it over
+                write_stdout("\x1b[2J\x1b[H")
+                await drain_output()
 
                 # Run command with full terminal access. The process inherits
                 # stdio, and the runtime waits for it without blocking the loop —

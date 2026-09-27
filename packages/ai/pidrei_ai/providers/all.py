@@ -89,7 +89,7 @@ def get_builtin_model_data_generated_at() -> Awaitable[int | None]:
 
     A `Traversable` cannot be awaited, so the read is gated with
     `spawn_blocking` rather than routed through `fs`. Unlike the catalog
-    modules, which load at import, this runs on every `ModelRuntime.create()`.
+    modules, which load at import, this runs on every `await ModelRuntime()`.
 
     Sync, returning the awaitable: `async def ...: return await ...` would add
     a coroutine frame for nothing.

@@ -38,7 +38,8 @@ LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux", reason="asserts the Lin
 
 @contextlib.contextmanager
 def _clipboard(result=b"", **env: str):
-    """Swap the command runner, stub the env and capture stdout; yields (calls, stdout).
+    """Swap the command runner and stub the env; yields (calls, stdout), where
+    `stdout.write` is what the tests pass as the terminal writer.
 
     `result` is the runner's answer: bytes/None for every command, or a callable
     `(command, args) -> awaitable of bytes | None`.
@@ -57,10 +58,8 @@ def _clipboard(result=b"", **env: str):
     os.environ.update(env)
     original_run = clipboard.run_clipboard_command
     clipboard.run_clipboard_command = run
-    stdout = io.StringIO()
     try:
-        with contextlib.redirect_stdout(stdout):
-            yield calls, stdout
+        yield calls, io.StringIO()
     finally:
         clipboard.run_clipboard_command = original_run
         for name, value in previous_env.items():
@@ -132,7 +131,7 @@ async def test_falls_back_to_x11_tools_when_wl_paste_is_unavailable():
 @pytest.mark.tonio
 async def test_linux_writes_through_the_platform_tools():
     with _clipboard(DISPLAY=":0") as (calls, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert calls == [("xclip", ["-selection", "clipboard"], {"input": "hello", "timeout_ms": 5000})]
     assert _osc52_writes(stdout) == 0
@@ -150,7 +149,7 @@ async def test_waits_for_the_command_write_before_emitting_remote_osc52():
         return b""
 
     with _clipboard(result, DISPLAY=":0", SSH_CONNECTION="client server") as (calls, stdout):
-        copy = tonio.spawn(clipboard.copy_to_clipboard("hello"))
+        copy = tonio.spawn(clipboard.copy_to_clipboard("hello", stdout.write))
         await started.wait(5)
         assert started.is_set()
         assert _osc52_writes(stdout) == 0
@@ -168,7 +167,7 @@ async def test_tries_xclip_and_xsel_after_wl_copy_fails():
         return b"" if name == "xsel" else None
 
     with _clipboard(result, WAYLAND_DISPLAY="wayland-0", DISPLAY=":0") as (calls, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert _names(calls) == ["wl-copy", "xclip", "xsel"]
     assert _osc52_writes(stdout) == 0
@@ -182,7 +181,7 @@ async def test_local_linux_failure_does_not_report_an_unverified_osc52_write_as_
         _clipboard(None, DISPLAY=":0") as (calls, stdout),
         pytest.raises(Exception, match=r"^Clipboard unavailable: install `xclip` or `xsel`, or check X11 access$"),
     ):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert _names(calls) == ["xclip", "xsel"]
     assert _osc52_writes(stdout) == 0
@@ -193,7 +192,7 @@ async def test_local_linux_failure_does_not_report_an_unverified_osc52_write_as_
 async def test_display_less_linux_falls_back_to_osc52():
     # Regression test for #9688: containers without X11/Wayland access.
     with _clipboard(None) as (calls, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert calls == []
     assert _osc52_writes(stdout) == 1
@@ -212,7 +211,7 @@ async def test_wsl_without_a_display_writes_the_windows_clipboard_through_powers
         return b"\\\\wsl.localhost\\Ubuntu\\tmp\\clip.txt\n"
 
     with _clipboard(result, WSL_DISTRO_NAME="Ubuntu") as (calls, stdout):
-        await clipboard.copy_to_clipboard("héllo")
+        await clipboard.copy_to_clipboard("héllo", stdout.write)
 
     assert _names(calls) == ["wslpath", "powershell.exe"]
     assert written == ["héllo"]
@@ -227,7 +226,7 @@ async def test_wsl_without_a_display_writes_the_windows_clipboard_through_powers
 @pytest.mark.tonio
 async def test_wsl_falls_back_to_osc52_when_windows_interop_is_unavailable():
     with _clipboard(None, WSL_DISTRO_NAME="Ubuntu") as (calls, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert _names(calls) == ["wslpath"]
     assert _osc52_writes(stdout) == 1
@@ -237,7 +236,7 @@ async def test_wsl_falls_back_to_osc52_when_windows_interop_is_unavailable():
 @pytest.mark.tonio
 async def test_wsl_in_windows_terminal_prefers_osc52_over_powershell():
     with _clipboard(WSL_DISTRO_NAME="Ubuntu", WT_SESSION="session") as (calls, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert calls == []
     assert _osc52_writes(stdout) == 1
@@ -250,7 +249,7 @@ async def test_wsl_in_windows_terminal_emits_osc52_once_in_a_remote_session():
         calls,
         stdout,
     ):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert calls == []
     assert _osc52_writes(stdout) == 1
@@ -263,7 +262,7 @@ async def test_wsl_in_windows_terminal_uses_powershell_for_oversized_osc52_paylo
         return b"C:\\clip.txt" if name == "wslpath" else b""
 
     with _clipboard(result, WSL_DISTRO_NAME="Ubuntu", WT_SESSION="session") as (calls, stdout):
-        await clipboard.copy_to_clipboard("x" * 80_000)
+        await clipboard.copy_to_clipboard("x" * 80_000, stdout.write)
 
     assert _names(calls) == ["wslpath", "powershell.exe"]
     assert _osc52_writes(stdout) == 0
@@ -273,7 +272,7 @@ async def test_wsl_in_windows_terminal_uses_powershell_for_oversized_osc52_paylo
 @pytest.mark.tonio
 async def test_wsl_with_a_display_prefers_the_linux_clipboard_tools():
     with _clipboard(WSL_DISTRO_NAME="Ubuntu", WAYLAND_DISPLAY="wayland-0") as (calls, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert _names(calls) == ["wl-copy"]
     assert _osc52_writes(stdout) == 0
@@ -283,12 +282,12 @@ async def test_wsl_with_a_display_prefers_the_linux_clipboard_tools():
 @pytest.mark.tonio
 async def test_reports_the_wayland_clipboard_tool_instead_of_the_x11_fallback():
     with (
-        _clipboard(None, WAYLAND_DISPLAY="wayland-0", DISPLAY=":0") as (calls, _),
+        _clipboard(None, WAYLAND_DISPLAY="wayland-0", DISPLAY=":0") as (calls, stdout),
         pytest.raises(
             Exception, match=r"^Clipboard unavailable: install `wl-clipboard` \(`wl-copy`\) or check Wayland access$"
         ),
     ):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert _names(calls) == ["wl-copy", "xclip", "xsel"]
 
@@ -296,7 +295,7 @@ async def test_reports_the_wayland_clipboard_tool_instead_of_the_x11_fallback():
 @pytest.mark.tonio
 async def test_uses_osc52_when_command_writes_fail_in_a_remote_session():
     with _clipboard(None, SSH_CONNECTION="client server") as (_, stdout):
-        await clipboard.copy_to_clipboard("hello")
+        await clipboard.copy_to_clipboard("hello", stdout.write)
 
     assert _osc52_writes(stdout) == 1
 
@@ -307,6 +306,6 @@ async def test_does_not_emit_oversized_osc52_payloads():
         _clipboard(None, SSH_CONNECTION="client server") as (_, stdout),
         pytest.raises(Exception, match="^Clipboard unavailable: text exceeds the OSC 52 size limit$"),
     ):
-        await clipboard.copy_to_clipboard("x" * 80_000)
+        await clipboard.copy_to_clipboard("x" * 80_000, stdout.write)
 
     assert _osc52_writes(stdout) == 0

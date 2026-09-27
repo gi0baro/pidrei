@@ -20,7 +20,6 @@ import posixpath
 import re
 import signal
 import subprocess
-import sys
 import threading
 import time
 import traceback
@@ -51,6 +50,7 @@ from pidrei_tui import (
     hyperlink,
     is_viewport_tui,
     matches_key,
+    prime_capabilities,
     set_capability_overrides,
     set_keybindings,
     visible_width,
@@ -93,13 +93,25 @@ from ...core.model_resolver import (
     resolve_model_scope_from_models,
 )
 from ...core.model_runtime import CredentialSynchronizationError
+from ...core.output_guard import (
+    attach_terminal,
+    detach_terminal,
+    drain_output,
+    stdout_isatty,
+    write_stderr,
+    write_stdout,
+)
 from ...core.package_manager import DefaultPackageManager
 from ...core.session_cwd import MissingSessionCwdError, format_missing_session_cwd_prompt
 from ...core.session_manager import SessionManager, session_entry_to_context_messages
 from ...core.slash_commands import BUILTIN_SLASH_COMMANDS
 from ...core.tools.renderers import with_built_in_renderers
 from ...core.tools.truncate import TruncationResult
-from ...core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
+from ...core.trust_manager import (
+    ProjectTrustStore,
+    get_project_trust_options_blocking,
+    has_trust_requiring_project_resources_blocking,
+)
 from ...core.usage_totals import get_usage_cost_breakdown
 from ...utils.changelog import get_new_entries, normalize_changelog_links, parse_changelog
 from ...utils.clipboard import copy_to_clipboard, read_clipboard_text
@@ -108,7 +120,7 @@ from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
 from ...utils.git import parse_git_url
 from ...utils.paths import get_cwd_relative_path
-from ...utils.process import run_command
+from ...utils.process import probe_tmux_hyperlinks, run_command
 from ...utils.shell import kill_tracked_detached_children
 from ...utils.temp_file_writer import discard_temp_file
 from ...utils.tools_manager import ensure_tool
@@ -155,6 +167,7 @@ from .components import (
     key_display_text,
     key_hint,
     key_text,
+    load_earendil_image_base64,
     raw_key_hint,
 )
 from .extension_tui import ExtensionTui, guard_overlay_handle
@@ -322,14 +335,14 @@ def _quote_if_needed(value: str) -> str:
     return f"'{escaped}'"
 
 
-def format_resume_command(session_manager) -> str | None:
-    if not sys.stdout.isatty():
+async def format_resume_command(session_manager) -> str | None:
+    if not stdout_isatty():
         return None
     if not session_manager.is_persisted():
         return None
 
     session_file = session_manager.get_session_file()
-    if not session_file or not os.path.exists(session_file):
+    if not session_file or not await fs.Path(session_file).exists():
         return None
 
     args = [APP_NAME]
@@ -601,9 +614,10 @@ class InteractiveMode:
         self._status_container = Container()
         self._widget_container_above = Container()
         self._widget_container_below = Container()
-        # Defaults only — the user's keybindings.json is read in `init()`.
-        # A constructor cannot await, and nothing may block a runtime worker.
-        self._keybindings = KeybindingsManager(None, os.path.join(get_agent_dir(), "keybindings.json"))
+        # Not awaited: defaults only for now. The editors and `set_keybindings`
+        # need the object here; the user's keybindings.json is read into it in
+        # `init()` (`reload()`).
+        self._keybindings = KeybindingsManager()
         set_keybindings(self._keybindings)
         editor_padding_x = self.settings_manager.get_editor_padding_x()
         autocomplete_max_visible = self.settings_manager.get_autocomplete_max_visible()
@@ -1109,7 +1123,7 @@ class InteractiveMode:
                 if cycle_keys
                 else ""
             )
-            print(theme.fg("dim", f"Model scope: {model_list}{cycle_hint}"))
+            write_stdout(theme.fg("dim", f"Model scope: {model_list}{cycle_hint}") + "\n")
 
         # Keep one component tree and remount it when changing renderers.
         self._render_widgets()  # Initialize with default spacer
@@ -1144,6 +1158,14 @@ class InteractiveMode:
         # Accept text while startup completes, but only enable interrupt,
         # exit, and submission feedback.
         self._setup_startup_input_handlers()
+
+        # Render paths read the capabilities: settle them (under tmux, a
+        # subprocess probe) before the first frame.
+        await prime_capabilities(probe_tmux_hyperlinks)
+
+        # The terminal is the tty's one writer until `stop()` closes it:
+        # stdout/stderr writes go through its queue too.
+        await attach_terminal(self.ui.terminal)
 
         # Start the UI before initializing extensions so session_start
         # handlers can use interactive dialogs
@@ -1243,7 +1265,7 @@ class InteractiveMode:
         await self._rebind_current_session()
 
         # Render initial messages AFTER showing loaded resources
-        self._render_initial_messages()
+        self._render_initial_messages(await self._needs_project_trust_warning())
 
         # Set up theme file watcher. Every theme change (the file reload's
         # task, `set_theme`, an in-memory theme set through the extension
@@ -2031,7 +2053,7 @@ class InteractiveMode:
             if result.cancelled:
                 return {"cancelled": True}
 
-            self._rerender_initial_messages()
+            self._rerender_initial_messages(await self._needs_project_trust_warning())
             if result.editor_text:
                 self._fill_empty_editor(result.editor_text)
             self.show_status("Navigated to selected point")
@@ -2121,12 +2143,13 @@ class InteractiveMode:
         host hands over `new_session` and its `swap`: the swap and pi's first
         synchronous block (runtime settings, the chat redraw, the
         subscription) are one hold of the UI state lock, so a frame shows the
-        old session or the new one, never a mix (§4.5c). The block's cwd I/O
-        is prefetched for the new session before the hold (§4.5b)."""
+        old session or the new one, never a mix (§4.5c). The block's I/O (the
+        cwd, the trust warning's check) is prefetched for the new session
+        before the hold (§4.5b)."""
         options = options or {}
-        resolved_cwd = await self._footer_data_provider.resolve_cwd(
-            (new_session if new_session is not None else self.session).session_manager.get_cwd()
-        )
+        target = new_session if new_session is not None else self.session
+        resolved_cwd = await self._footer_data_provider.resolve_cwd(target.session_manager.get_cwd())
+        trust_warning = options.get("renderBeforeBind") and await self._needs_project_trust_warning(target)
         with self.ui.state_lock:
             if swap is not None:
                 swap()
@@ -2136,7 +2159,7 @@ class InteractiveMode:
             self._unsubscribe = None
             cwd_changed = self._apply_runtime_settings(resolved_cwd)
             if options.get("renderBeforeBind"):
-                self.render_current_session_state()
+                self.render_current_session_state(trust_warning)
                 self._subscribe_to_agent()
         if cwd_changed:
             await self._footer_data_provider.watch_cwd()
@@ -2160,7 +2183,7 @@ class InteractiveMode:
         await self.stop("transcript")
         hard_exit(1)
 
-    def render_current_session_state(self) -> None:
+    def render_current_session_state(self, trust_warning: bool) -> None:
         with self.ui.state_lock:
             self._loaded_resources_container.clear()
             self._chat_container.clear()
@@ -2170,7 +2193,7 @@ class InteractiveMode:
             self._streaming_component = None
             self._streaming_message = None
             self._pending_tools.clear()
-            self._render_initial_messages()
+            self._render_initial_messages(trust_warning)
 
     def _get_registered_tool_definition(self, tool_name: str):
         """Extension-registered definition, falling back to the built-in one.
@@ -3209,8 +3232,7 @@ class InteractiveMode:
             self._set_editor_text("")
             return
         if text == "/dementedelves":
-            self._handle_demented_elves()
-            self._set_editor_text("")
+            self._finish_before_next_input(self._then_clear_editor(self._handle_demented_elves()))
             return
         if text == "/resume":
             self._show_session_selector()
@@ -4005,11 +4027,14 @@ class InteractiveMode:
         self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(Text(text, 1, 0))
 
-    def _render_initial_messages(self) -> None:
+    def _render_initial_messages(self, trust_warning: bool) -> None:
+        """`trust_warning` is `_needs_project_trust_warning()`, awaited by the
+        caller before this hold."""
         with self.ui.state_lock:
             entries = self.session_manager.build_context_entries()
             self._render_session_entries(entries, {"updateFooter": True, "populateHistory": True})
-            self._render_project_trust_warning_if_needed()
+            if trust_warning:
+                self._render_project_trust_warning()
 
             # Show compaction info if session was compacted
             all_entries = self.session_manager.get_entries()
@@ -4018,19 +4043,26 @@ class InteractiveMode:
                 times = "1 time" if compaction_count == 1 else f"{compaction_count} times"
                 self.show_status(f"Session compacted {times}")
 
-    def _rerender_initial_messages(self) -> None:
+    def _rerender_initial_messages(self, trust_warning: bool) -> None:
         """Clear the chat and render the session again, in one hold: nothing
         lands between the clear and the render."""
         with self.ui.state_lock:
             self._chat_container.clear()
-            self._render_initial_messages()
+            self._render_initial_messages(trust_warning)
 
-    def _render_project_trust_warning_if_needed(self) -> None:
-        if self.settings_manager.is_project_trusted() or not has_trust_requiring_project_resources(
-            self.session_manager.get_cwd()
-        ):
-            return
+    async def _needs_project_trust_warning(self, session=None) -> bool:
+        """Whether `session` (the current one by default) gets the
+        project-trust warning. Its resource check is file I/O, so the render
+        paths take the answer from here, awaited before their hold of the UI
+        state lock."""
+        session = session if session is not None else self.session
+        if session.settings_manager.is_project_trusted():
+            return False
+        return await tonio.spawn_blocking(
+            has_trust_requiring_project_resources_blocking, session.session_manager.get_cwd()
+        )
 
+    def _render_project_trust_warning(self) -> None:
         if self._chat_container.children:
             self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(
@@ -4115,6 +4147,8 @@ class InteractiveMode:
                 if is_dead_terminal_error(error):
                     self._emergency_terminal_exit()
                 raise
+            # `hard_exit` skips everything still queued.
+            await drain_output()
             hard_exit(0)
 
         # Interactive quit (Ctrl+D, Ctrl+C, /quit, extension shutdown()).
@@ -4133,10 +4167,11 @@ class InteractiveMode:
             raise
         await self.runtime_host.dispose()
 
-        resume_command = format_resume_command(self.session_manager)
+        resume_command = await format_resume_command(self.session_manager)
         if resume_command:
-            sys.stdout.write(f"{dim('To resume this session:')} {resume_command}\n")
-            sys.stdout.flush()
+            write_stdout(f"{dim('To resume this session:')} {resume_command}\n")
+            # `hard_exit` skips everything still queued.
+            await drain_output()
 
         hard_exit(0)
 
@@ -4174,8 +4209,13 @@ class InteractiveMode:
             kill_tracked_detached_children()
         with contextlib.suppress(Exception):
             await self.ui.stop()
-        print(f"{APP_NAME} exiting due to uncaught exception:", file=sys.stderr)
-        traceback.print_exception(error, file=sys.stderr)
+        # The report goes straight to stderr, after what the terminal holds.
+        detach_terminal()
+        with contextlib.suppress(Exception):
+            await self.ui.close()
+        write_stderr(f"{APP_NAME} exiting due to uncaught exception:\n")
+        write_stderr("".join(traceback.format_exception(error)))
+        await drain_output()
         hard_exit(1)
 
     def _request_shutdown(self) -> None:
@@ -5126,7 +5166,9 @@ class InteractiveMode:
         cwd = self.session_manager.get_cwd()
         if self._auto_trust_on_reload_cwd != cwd:
             return False, None
-        if not self.settings_manager.is_project_trusted() or not has_trust_requiring_project_resources(cwd):
+        if not self.settings_manager.is_project_trusted():
+            return False, None
+        if not await tonio.spawn_blocking(has_trust_requiring_project_resources_blocking, cwd):
             return False, None
 
         trust_store = ProjectTrustStore(self.runtime_host.services.agent_dir)
@@ -5144,6 +5186,7 @@ class InteractiveMode:
         cwd = self.session_manager.get_cwd()
         trust_store = ProjectTrustStore(self.runtime_host.services.agent_dir)
         saved_decision = await trust_store.get_entry(cwd)
+        trust_options = await tonio.spawn_blocking(get_project_trust_options_blocking, cwd)
 
         def create(done):
             # From the selector's input handling: pi saves synchronously, so
@@ -5166,6 +5209,7 @@ class InteractiveMode:
             selector = TrustSelectorComponent(
                 {
                     "cwd": cwd,
+                    "trustOptions": trust_options,
                     "savedDecision": saved_decision,
                     "projectTrusted": self.settings_manager.is_project_trusted(),
                     "onSelect": on_select,
@@ -5510,6 +5554,7 @@ class InteractiveMode:
                 except Exception as error:
                     failure = error
 
+                trust_warning = failure is None and await self._needs_project_trust_warning()
                 with self.ui.state_lock:
                     try:
                         if failure is not None:
@@ -5523,7 +5568,7 @@ class InteractiveMode:
                             self.show_status("Navigation cancelled")
                         else:
                             # Update UI
-                            self._rerender_initial_messages()
+                            self._rerender_initial_messages(trust_warning)
                             if result.editor_text:
                                 self._fill_empty_editor(result.editor_text)
                             self.show_status("Navigated to selected point")
@@ -5544,7 +5589,7 @@ class InteractiveMode:
 
             async def copy(text) -> None:
                 try:
-                    await copy_to_clipboard(text)
+                    await copy_to_clipboard(text, self.ui.terminal.write_sync)
                     self.show_status("Copied selected message to clipboard")
                 except Exception as error:
                     self.show_error(str(error))
@@ -5593,7 +5638,7 @@ class InteractiveMode:
                 next_value = (next_name or "").strip()
                 if not next_value:
                     return
-                mgr = await SessionManager.open(session_file_path)
+                mgr = await SessionManager(session_file=session_file_path)
                 await mgr.append_session_info(next_value)
 
             selector = SessionSelectorComponent(
@@ -6608,7 +6653,7 @@ class InteractiveMode:
 
     async def _copy_last_message(self, text: str, options: dict) -> None:
         try:
-            await copy_to_clipboard(text)
+            await copy_to_clipboard(text, self.ui.terminal.write_sync)
             # pi narrows with `instanceof TuiAltScreen`; the reference proxy is
             # deliberately not isinstance-transparent, so ask the renderer.
             if options.get("flashConfirmation") and isinstance(self._renderer, TuiAltScreen):
@@ -6912,8 +6957,8 @@ class InteractiveMode:
     def _handle_armin_says_hi(self) -> None:
         self._append_to_chat(Spacer(1), ArminComponent(self.ui))
 
-    def _handle_demented_elves(self) -> None:
-        self._append_to_chat(Spacer(1), EarendilAnnouncementComponent())
+    async def _handle_demented_elves(self) -> None:
+        self._append_to_chat(Spacer(1), EarendilAnnouncementComponent(await load_earendil_image_base64()))
 
     def _handle_daxnuts(self) -> None:
         self._append_to_chat(Spacer(1), DaxnutsComponent(self.ui))
@@ -7048,7 +7093,10 @@ class InteractiveMode:
         if self._is_initialized:
             await self._stop_interactive_tui(fullscreen_exit_output)
             self._is_initialized = False
-        # The input consumer outlives renderer stops (suspend,
-        # switches); this is the app's shutdown, so it ends here, once.
-        self.ui.close()
+        # The terminal's queues outlive renderer stops (suspend, switches);
+        # this is the app's shutdown, so they end here, once, putting out what
+        # the terminal still holds. stdout/stderr writes go straight to the
+        # fds again from here.
+        detach_terminal()
+        await self.ui.close()
         self._unregister_signal_handlers()

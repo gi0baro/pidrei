@@ -167,41 +167,45 @@ def test_refuses_npm_sources_by_name(dirs):
 # -- install paths ----------------------------------------------------------------
 
 
-def test_rejects_paths_outside_the_git_install_roots(dirs):
+@pytest.mark.tonio
+async def test_rejects_paths_outside_the_git_install_roots(dirs):
     traversal = GitSource(repo="git@evil.example:../../victim/repo", host="evil.example", path="../../victim/repo")
 
     for scope in ("user", "project", "temporary"):
         with pytest.raises(Exception, match="outside package install root"):
-            dirs.manager._get_git_install_path(traversal, scope)
+            await dirs.manager._get_git_install_path(traversal, scope)
 
 
-def test_places_temporary_git_packages_under_the_agent_temp_folder(dirs):
+@pytest.mark.tonio
+async def test_places_temporary_git_packages_under_the_agent_temp_folder(dirs):
     source = dirs.manager.parse_source("git:github.com/user/repo")
 
-    install_path = dirs.manager._get_git_install_path(source, "temporary")
+    install_path = await dirs.manager._get_git_install_path(source, "temporary")
     temp_root = os.path.join(dirs.agent_dir, "tmp", "extensions")
 
     assert not os.path.relpath(install_path, temp_root).startswith("..")
     assert install_path.endswith(os.path.join("user", "repo"))
-    assert os.stat(get_extension_temp_folder(dirs.agent_dir)).st_mode & 0o777 == 0o700
+    assert os.stat(await get_extension_temp_folder(dirs.agent_dir)).st_mode & 0o777 == 0o700
 
 
-def test_user_and_project_scopes_get_separate_git_roots(dirs):
+@pytest.mark.tonio
+async def test_user_and_project_scopes_get_separate_git_roots(dirs):
     source = dirs.manager.parse_source("git:github.com/user/repo")
 
-    user_path = dirs.manager._get_git_install_path(source, "user")
-    project_path = dirs.manager._get_git_install_path(source, "project")
+    user_path = await dirs.manager._get_git_install_path(source, "user")
+    project_path = await dirs.manager._get_git_install_path(source, "project")
 
     assert user_path == os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
     assert project_path == os.path.join(dirs.root, ".pidrei", "git", "github.com", "user", "repo")
 
 
-def test_project_scope_requires_project_trust(dirs):
-    dirs.settings.set_project_trusted(False)
+@pytest.mark.tonio
+async def test_project_scope_requires_project_trust(dirs):
+    await dirs.settings.set_project_trusted(False)
     source = dirs.manager.parse_source("git:github.com/user/repo")
 
     with pytest.raises(Exception, match="Project is not trusted"):
-        dirs.manager._get_git_install_path(source, "project")
+        await dirs.manager._get_git_install_path(source, "project")
 
 
 # -- install / update -------------------------------------------------------------
@@ -416,13 +420,14 @@ def test_preserves_package_filters_when_replacing_a_package_source_ref(dirs):
     ]
 
 
-def test_lists_configured_packages_with_their_installed_paths(dirs):
+@pytest.mark.tonio
+async def test_lists_configured_packages_with_their_installed_paths(dirs):
     installed = os.path.join(dirs.agent_dir, "git", "github.com", "user", "repo")
     os.makedirs(installed)
     dirs.settings.set_packages(["git:github.com/user/repo"])
     dirs.settings.set_project_packages(["git:github.com/other/repo"])
 
-    configured = dirs.manager.list_configured_packages()
+    configured = await dirs.manager.list_configured_packages()
 
     assert [(package.source, package.scope) for package in configured] == [
         ("git:github.com/user/repo", "user"),

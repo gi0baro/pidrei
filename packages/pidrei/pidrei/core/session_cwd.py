@@ -1,8 +1,12 @@
-"""Mirror of pi coding-agent src/core/session-cwd.ts."""
+"""Mirror of pi coding-agent src/core/session-cwd.ts.
 
-import os
+The existence checks are async (pi's are `existsSync`): everything doing I/O is.
+"""
+
 from dataclasses import dataclass
 from typing import Any
+
+from tonio.colored import fs
 
 
 @dataclass(slots=True)
@@ -12,13 +16,13 @@ class SessionCwdIssue:
     session_file: str | None = None
 
 
-def get_missing_session_cwd_issue(session_manager: Any, fallback_cwd: str) -> SessionCwdIssue | None:
+async def get_missing_session_cwd_issue(session_manager: Any, fallback_cwd: str) -> SessionCwdIssue | None:
     session_file = session_manager.get_session_file()
     if not session_file:
         return None
 
     session_cwd = session_manager.get_cwd()
-    if not session_cwd or os.path.exists(session_cwd):
+    if not session_cwd or await fs.Path(session_cwd).exists():
         return None
 
     return SessionCwdIssue(session_file=session_file, session_cwd=session_cwd, fallback_cwd=fallback_cwd)
@@ -43,7 +47,7 @@ class MissingSessionCwdError(Exception):
         self.issue = issue
 
 
-def assert_session_cwd_exists(session_manager: Any, fallback_cwd: str) -> None:
-    issue = get_missing_session_cwd_issue(session_manager, fallback_cwd)
+async def assert_session_cwd_exists(session_manager: Any, fallback_cwd: str) -> None:
+    issue = await get_missing_session_cwd_issue(session_manager, fallback_cwd)
     if issue:
         raise MissingSessionCwdError(issue)

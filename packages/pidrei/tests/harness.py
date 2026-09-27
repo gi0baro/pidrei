@@ -91,7 +91,7 @@ async def create_harness(
 
         await auth_storage.modify(model.provider, set_key)
 
-    model_runtime = await ModelRuntime.create(credentials=auth_storage, models_path=None, allow_model_network=False)
+    model_runtime = await ModelRuntime(credentials=auth_storage, models_path=None, allow_model_network=False)
     if with_configured_auth:
         model_runtime.register_native_provider(faux.provider)
         # pi registers the faux provider before runtime creation, so the

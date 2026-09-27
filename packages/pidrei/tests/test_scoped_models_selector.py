@@ -4,7 +4,7 @@ import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.scoped_models_selector import ScopedModelsSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -18,9 +18,9 @@ DOWN = "\x1b[B"
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+async def _setup():
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 @pytest.fixture

@@ -30,7 +30,7 @@ FS_WATCH_RETRY_DELAY_MS = 5000
 _POLL_INTERVAL_MS = 200
 
 
-def _scan_path(path: str, is_dir: bool) -> dict:
+def _scan_path_blocking(path: str, is_dir: bool) -> dict:
     """Entry name → mtime snapshot; runs on the blocking pool."""
     if not is_dir:
         return {os.path.basename(path): os.stat(path).st_mtime_ns}
@@ -66,19 +66,19 @@ class FsWatcher:
         The baseline is taken before polling starts so that every change after
         the await returns is reported (node's fs.watch has the same contract).
         """
-        self._is_dir, self._snapshot = await tonio.spawn_blocking(self._baseline, self._path)
+        self._is_dir, self._snapshot = await tonio.spawn_blocking(self._baseline_blocking, self._path)
         self._interval = Interval(_POLL_INTERVAL_MS, self._tick)
         return self
 
     @staticmethod
-    def _baseline(path: str) -> tuple[bool, dict]:
+    def _baseline_blocking(path: str) -> tuple[bool, dict]:
         is_dir = os.path.isdir(path)
         if not is_dir and not os.path.exists(path):
             raise OSError(f"path does not exist: {path}")
-        return is_dir, _scan_path(path, is_dir)
+        return is_dir, _scan_path_blocking(path, is_dir)
 
-    def _scan(self) -> dict:
-        return _scan_path(self._path, self._is_dir)
+    def _scan_blocking(self) -> dict:
+        return _scan_path_blocking(self._path, self._is_dir)
 
     def _tick(self) -> None:
         if self._closed or self._scanning:
@@ -88,7 +88,7 @@ class FsWatcher:
 
     async def _scan_and_report(self) -> None:
         try:
-            current = await tonio.spawn_blocking(self._scan)
+            current = await tonio.spawn_blocking(self._scan_blocking)
         except OSError:
             # Watched directory disappeared or became unreadable — mirrors
             # the watcher "error" event path.
@@ -141,7 +141,7 @@ async def watch_with_error_handler(path: str, listener, on_error):
 _MISSING_STAT = {"mtimeMs": 0.0, "ctimeMs": 0.0, "size": 0}
 
 
-def _stat_record(path: str) -> dict:
+def _stat_record_blocking(path: str) -> dict:
     try:
         st = os.stat(path)
     except OSError:
@@ -164,7 +164,7 @@ class _FileStatPoller:
         return self._start().__await__()
 
     async def _start(self) -> _FileStatPoller:
-        self._previous = await tonio.spawn_blocking(_stat_record, self._path)
+        self._previous = await tonio.spawn_blocking(_stat_record_blocking, self._path)
         self._interval = Interval(self._interval_ms, self._tick)
         return self
 
@@ -176,7 +176,7 @@ class _FileStatPoller:
 
     async def _poll(self) -> None:
         try:
-            current = await tonio.spawn_blocking(_stat_record, self._path)
+            current = await tonio.spawn_blocking(_stat_record_blocking, self._path)
         finally:
             self._polling = False
         previous = self._previous

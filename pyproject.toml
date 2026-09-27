@@ -40,6 +40,8 @@ extend-select = [
     'Q',      # flake8-quotes
     'RUF100', # ruff (unused noqa)
     'S',      # flake8-bandit
+    'T20',    # flake8-print: stdio goes through core/output_guard
+    'TID251', # banned-api (below)
     'W',      # pycodestyle
 ]
 extend-ignore = [
@@ -57,6 +59,19 @@ extend-ignore = [
 ]
 mccabe = { max-complexity = 44 }
 
+# Writing through them is a synchronous write on the runtime: every stdio write
+# goes through `pidrei.core.output_guard` instead.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+'sys.stdout'.msg = 'use pidrei.core.output_guard (write_stdout/write_raw_stdout/stdout_isatty)'
+'sys.stderr'.msg = 'use pidrei.core.output_guard.write_stderr'
+'sys.__stdout__'.msg = 'use pidrei.core.output_guard'
+'sys.__stderr__'.msg = 'use pidrei.core.output_guard'
+'traceback.print_exc'.msg = 'format the traceback and use pidrei.core.output_guard.write_stderr'
+'traceback.print_exception'.msg = 'format the traceback and use pidrei.core.output_guard.write_stderr'
+'traceback.print_stack'.msg = 'format the stack and use pidrei.core.output_guard.write_stderr'
+'traceback.print_tb'.msg = 'format the traceback and use pidrei.core.output_guard.write_stderr'
+'traceback.print_last'.msg = 'format the traceback and use pidrei.core.output_guard.write_stderr'
+
 [tool.ruff.lint.isort]
 combine-as-imports = true
 lines-after-imports = 2
@@ -65,7 +80,10 @@ known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_client', 'pi
 [tool.ruff.lint.per-file-ignores]
 # S105/S106: the OAuth mirrors are full of token URLs and fixture tokens named
 # `*_token`, all of which trip ruff's hardcoded-password heuristic.
-'packages/*/tests/**' = ['ASYNC230', 'B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S105', 'S106', 'S108', 'S110']
+'packages/*/tests/**' = ['ASYNC230', 'B017', 'B018', 'E711', 'E712', 'F841', 'S103', 'S105', 'S106', 'S108', 'S110', 'T20', 'TID251']
+# Standalone scripts: run outside pidrei's runtime, stdio is theirs.
+'packages/*/scripts/**' = ['T20', 'TID251']
+'packages/pidrei/pidrei/examples/extensions/custom_provider_gitlab_duo/test.py' = ['T20', 'TID251']
 # S608 false positive: the --help template contains "update ... Update" lines
 # that pattern-match ruff's SQL heuristic inside a multiline f-string, where
 # no noqa comment can be placed outside the string.

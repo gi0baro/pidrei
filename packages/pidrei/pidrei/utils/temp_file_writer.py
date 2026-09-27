@@ -44,7 +44,7 @@ async def discard_temp_file(path: fs.Path) -> None:
         await path.unlink()
 
 
-def _open_binary(path: str):
+def _open_binary_blocking(path: str):
     return open(path, "wb")
 
 
@@ -64,7 +64,7 @@ class TempFileWriter:
         except RuntimeNotInitializedError:
             # No runtime, so no worker to protect — same boundary condition as
             # import-time code. Write straight through.
-            self._sync_handle = _open_binary(path)
+            self._sync_handle = _open_binary_blocking(path)
             self._finished.set()
 
     def write(self, data: bytes) -> None:
@@ -96,7 +96,7 @@ class TempFileWriter:
         try:
             # Eagerly, so the file exists as soon as the path is handed out —
             # `createWriteStream` creates it on construction.
-            handle = await tonio.spawn_blocking(_open_binary, self._path)
+            handle = await tonio.spawn_blocking(_open_binary_blocking, self._path)
             while True:
                 try:
                     chunk = await self._receiver.receive()

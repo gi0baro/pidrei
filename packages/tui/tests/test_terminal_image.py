@@ -10,6 +10,8 @@ import contextlib
 import os
 import re
 
+import pytest
+
 from pidrei_tui import terminal_image
 from pidrei_tui.components.image import Image
 from pidrei_tui.terminal_image import (
@@ -26,6 +28,7 @@ from pidrei_tui.terminal_image import (
     hyperlink,
     image_fallback,
     is_image_line,
+    prime_capabilities,
     register_kitty_image_metadata,
     render_image,
     reset_capabilities_cache,
@@ -717,3 +720,43 @@ def test_an_override_change_during_detection_leaves_no_stale_cache(monkeypatch):
     finally:
         terminal_image.set_capability_overrides({})
         terminal_image.reset_capabilities_cache()
+
+
+@pytest.mark.tonio
+async def test_priming_under_tmux_awaits_the_probe_once_and_replaces_earlier_detection():
+    """pidrei-only: detection never runs the tmux probe (pi's `execSync`);
+    `prime_capabilities` awaits the caller's, and what was detected before
+    the answer (the probe's failure answer) is dropped."""
+    probes: list[bool] = []
+
+    async def probe() -> bool:
+        probes.append(True)
+        return True
+
+    reset_capabilities_cache()
+    try:
+        with clean_env({"TMUX": "/tmp/tmux-1000/default,1234,0", "TERM_PROGRAM": "ghostty"}):
+            assert get_capabilities()["hyperlinks"] is False
+            await prime_capabilities(probe)
+            assert get_capabilities()["hyperlinks"] is True
+            await prime_capabilities(probe)
+        assert probes == [True]
+    finally:
+        reset_capabilities_cache()
+
+
+@pytest.mark.tonio
+async def test_priming_outside_tmux_never_probes():
+    probes: list[bool] = []
+
+    async def probe() -> bool:
+        probes.append(True)
+        return True
+
+    reset_capabilities_cache()
+    try:
+        with clean_env({"TERM_PROGRAM": "ghostty"}):
+            await prime_capabilities(probe)
+        assert probes == []
+    finally:
+        reset_capabilities_cache()

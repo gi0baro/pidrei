@@ -1,201 +1,208 @@
-"""Backpressure and delivery contract of `core/output_guard`.
+"""Delivery contract of `core/output_guard`: every stdio write.
 
-pi serializes raw writes on a promise chain, and pidrei now does the same with a
-colored writer task. These tests pin the contract, not the mechanism, so they
-survived the writer-thread era unchanged: callers must not resume until every
-queued chunk has reached the stream, whichever path delivered it. A test double
-without a real fd exercises the pool path; a real pipe exercises the `arm_w`
-readiness path.
+pi serializes raw writes on a promise chain, and pidrei does the same with one
+writer task for fds 1 and 2. The writer only ever writes those two fds, so each
+test points them at a pipe it owns (`dup2`, put back afterwards) and starts and
+stops the writer itself; the conftest guard fails loud if one is left running.
+The pipes are driven the way the writer drives them, which is part of what is
+pinned: readiness under the takeover, the pool with the flag left alone outside
+it, and the pool again for a stdout that shares its description with stdin.
 
-Each test does its own setup/teardown around `take_over_stdout` (predates
-tonio 0.9.14 yield-fixture support).
+Each test does its own setup/teardown (predates tonio 0.9.14 yield-fixture
+support).
 """
 
+import contextlib
 import os
 import sys
-import threading
 
 import pytest
 import tonio.colored as tonio
 
-from pidrei.core import output_guard
 from pidrei.core.output_guard import (
-    flush_raw_stdout,
+    drain_output,
     restore_stdout,
+    start_output_writer,
+    stop_output_writer,
     take_over_stdout,
-    wait_for_raw_stdout_backpressure,
     write_raw_stdout,
+    write_stderr,
+    write_stdout,
 )
 from pidrei.utils.fd_io import FdReader
 
 
-class _SignallingWaiters(list):
-    """Replaces `output_guard._drain_waiters`: `registered` is set when a wait
-    enrols for the drain (the writer reads the same module global)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.registered = tonio.Event()
-
-    def append(self, waiter) -> None:
-        super().append(waiter)
-        self.registered.set()
-
-
-class _RecordingStream:
-    """Stands in for the real stdout, optionally stalling the writer thread."""
-
-    def __init__(self, gate: threading.Event | None = None) -> None:
-        self.chunks: list[str] = []
-        self.flushes = 0
-        self._gate = gate
-        self._lock = threading.Lock()
-
-    def write(self, text: str) -> int:
-        if self._gate is not None:
-            self._gate.wait(5)
-        with self._lock:
-            self.chunks.append(text)
-        return len(text)
-
-    def flush(self) -> None:
-        with self._lock:
-            self.flushes += 1
-
-
-def _install(stream: _RecordingStream) -> object:
-    original = sys.stdout
-    sys.stdout = stream  # type: ignore[assignment]
-    take_over_stdout()
-    return original
-
-
-def _uninstall(original: object) -> None:
-    restore_stdout()
-    sys.stdout = original  # type: ignore[assignment]
-
-
-@pytest.mark.tonio
-async def test_backpressure_returns_immediately_when_nothing_is_queued():
-    stream = _RecordingStream()
-    original = _install(stream)
+@contextlib.contextmanager
+def _fds_onto(target_fd: int, *fds: int):
+    """Point `fds` at `target_fd`, putting the originals back afterwards."""
+    saved = {fd: os.dup(fd) for fd in fds}
     try:
-        _, completed = await tonio.time.timeout(wait_for_raw_stdout_backpressure(), 1.0)
-        assert completed
-        assert stream.chunks == []
+        for fd in fds:
+            os.dup2(target_fd, fd)
+        yield
     finally:
-        _uninstall(original)
+        for fd, copy in saved.items():
+            os.dup2(copy, fd)
+            os.close(copy)
 
 
-@pytest.mark.tonio
-async def test_backpressure_waits_until_every_queued_chunk_reached_the_stream():
-    gate = threading.Event()
-    stream = _RecordingStream(gate)
-    original = _install(stream)
-    saved_waiters = output_guard._drain_waiters
-    drain_waiters = output_guard._drain_waiters = _SignallingWaiters()
-    try:
-        for index in range(5):
-            write_raw_stdout(f"chunk-{index}\n")
-
-        # The writer thread is stalled inside write(). Instead of a quiet window
-        # (which an early resume slower than the window passes): the wait must
-        # register for the drain while the writes are queued, and what the stream
-        # held at the moment it resumed is recorded — a resume before the last
-        # chunk was written shows up as a shorter count.
-        written_at_resume: list[int] = []
-
-        async def wait_and_record() -> None:
-            await wait_for_raw_stdout_backpressure()
-            written_at_resume.append(len(stream.chunks))
-
-        waiting = tonio.spawn(wait_and_record())
-        await drain_waiters.registered.wait(5)
-        assert drain_waiters.registered.is_set(), "did not wait for the queued writes"
-        gate.set()
-        _, completed = await tonio.time.timeout(waiting, 5.0)
-        assert completed
-        assert written_at_resume == [5], "resumed while writes were still queued"
-        assert stream.chunks == [f"chunk-{index}\n" for index in range(5)]
-    finally:
-        gate.set()
-        _uninstall(original)
-        output_guard._drain_waiters = saved_waiters
-
-
-@pytest.mark.tonio
-async def test_concurrent_waiters_all_wake_on_the_same_drain():
-    gate = threading.Event()
-    stream = _RecordingStream(gate)
-    original = _install(stream)
-    try:
-        write_raw_stdout("payload\n")
-        waiters = tonio.spawn(
-            wait_for_raw_stdout_backpressure(),
-            wait_for_raw_stdout_backpressure(),
-            wait_for_raw_stdout_backpressure(),
-        )
-        gate.set()
-        _, completed = await tonio.time.timeout(waiters, 5.0)
-        assert completed, "a registered waiter was never woken"
-    finally:
-        gate.set()
-        _uninstall(original)
-
-
-@pytest.mark.tonio
-async def test_flush_drains_then_flushes_the_stream():
-    stream = _RecordingStream()
-    original = _install(stream)
-    try:
-        write_raw_stdout("first\n")
-        await flush_raw_stdout()
-        assert stream.chunks == ["first\n"]
-        assert stream.flushes >= 1
-    finally:
-        _uninstall(original)
-
-
-@pytest.mark.tonio
-async def test_readiness_path_delivers_through_a_real_pipe_in_order():
-    """Raw stdout pointing at an exclusive pipe takes the `arm_w` branch: no
-    dedicated thread, and the writes land on the pipe in order. The drain runs
-    concurrently as its own runtime task, so this would deadlock if the writer
-    held a worker instead of parking on readiness."""
+@contextlib.contextmanager
+def _pipe():
     read_fd, write_fd = os.pipe()
-    stream = os.fdopen(write_fd, "w", encoding="utf-8", closefd=False)
-    original = sys.stdout
-    sys.stdout = stream  # type: ignore[assignment]
-    take_over_stdout()
-    received = bytearray()
-
-    async def drain() -> None:
-        drain_reader = FdReader(read_fd)
-        try:
-            while chunk := await drain_reader.read():
-                received.extend(chunk)
-                if received.endswith(b"chunk-99\n"):
-                    return
-        finally:
-            drain_reader.close()
-
     try:
-        drain_join = tonio.spawn(drain())
-        for index in range(100):
-            write_raw_stdout(f"chunk-{index}\n")
-        await wait_for_raw_stdout_backpressure()
-        await drain_join
-        assert received.decode() == "".join(f"chunk-{index}\n" for index in range(100))
-        assert not any(t.name == "pidrei-raw-stdout" for t in threading.enumerate()), (
-            "the dedicated writer thread should no longer exist"
-        )
+        yield read_fd, write_fd
     finally:
-        restore_stdout()
-        sys.stdout = original  # type: ignore[assignment]
-        # Hand a write to the pool path so the writer task drops its FdWriter
-        # for the now-restored stdout before the pipe fds go away.
-        write_raw_stdout(" ")
-        await wait_for_raw_stdout_backpressure()
-        stream.close()
         os.close(read_fd)
         os.close(write_fd)
+
+
+async def _read_exactly(read_fd: int, size: int) -> bytes:
+    reader = FdReader(read_fd)
+    received = bytearray()
+    try:
+        while len(received) < size:
+            chunk = await reader.read()
+            if not chunk:
+                break
+            received.extend(chunk)
+    finally:
+        reader.close()
+    return bytes(received)
+
+
+def _read_available(read_fd: int) -> bytes:
+    """What is in the pipe right now; nothing there is `b""`, never a hang."""
+    os.set_blocking(read_fd, False)
+    try:
+        return os.read(read_fd, 1 << 20)
+    except BlockingIOError:
+        return b""
+    finally:
+        os.set_blocking(read_fd, True)
+
+
+# Far past any pipe buffer (64 KiB on Linux and macOS), so the writer has to
+# park until the test reads.
+_STALLING_CHUNKS = [f"chunk-{index:04d}-{'x' * 1000}\n" for index in range(300)]
+_STALLING_BYTES = "".join(_STALLING_CHUNKS).encode()
+
+
+@pytest.mark.tonio
+async def test_drain_waits_until_every_queued_write_is_on_the_fd():
+    with _pipe() as (read_fd, write_fd), _fds_onto(write_fd, 1):
+        take_over_stdout()
+        start_output_writer()
+        try:
+            for chunk in _STALLING_CHUNKS:
+                write_raw_stdout(chunk)
+            resumed = tonio.Event()
+
+            async def wait_for_drain() -> None:
+                await drain_output()
+                resumed.set()
+
+            waiting = tonio.spawn(wait_for_drain())
+            # The writer is parked on the full pipe until the reads below, which
+            # run either way: the writer cannot stop with the pipe full.
+            await resumed.wait(0.2)
+            resumed_early = resumed.is_set()
+            received = await _read_exactly(read_fd, len(_STALLING_BYTES))
+            await waiting
+            assert not resumed_early, "resumed with the pipe full"
+            assert received == _STALLING_BYTES
+        finally:
+            await stop_output_writer()
+            restore_stdout()
+
+
+@pytest.mark.tonio
+async def test_stdout_and_stderr_keep_one_order():
+    """`2>&1`: both fds on one pipe, the writes interleaved."""
+    expected = "".join(f"line-{index}\n" for index in range(50)).encode()
+    with _pipe() as (read_fd, write_fd), _fds_onto(write_fd, 1, 2):
+        start_output_writer()
+        try:
+            for index in range(50):
+                (write_stdout if index % 2 == 0 else write_stderr)(f"line-{index}\n")
+            await drain_output()
+        finally:
+            await stop_output_writer()
+        assert _read_available(read_fd) == expected
+
+
+@pytest.mark.tonio
+async def test_stop_delivers_what_is_still_queued():
+    with _pipe() as (read_fd, write_fd), _fds_onto(write_fd, 2):
+        start_output_writer()
+        for index in range(20):
+            write_stderr(f"late-{index}\n")
+        await stop_output_writer()
+        assert _read_available(read_fd) == "".join(f"late-{index}\n" for index in range(20)).encode()
+
+
+@pytest.mark.tonio
+async def test_without_the_writer_a_write_lands_before_it_returns():
+    with _pipe() as (read_fd, write_fd), _fds_onto(write_fd, 2):
+        write_stderr("in place\n")
+        assert _read_available(read_fd) == b"in place\n"
+
+
+@pytest.mark.tonio
+async def test_takeover_sends_stdout_writes_to_stderr_and_raw_writes_to_stdout():
+    with _pipe() as (out_read, out_write), _pipe() as (err_read, err_write), _fds_onto(out_write, 1):
+        with _fds_onto(err_write, 2):
+            take_over_stdout()
+            start_output_writer()
+            try:
+                write_raw_stdout("protocol\n")
+                write_stdout("stray\n")
+                sys.stdout.write("foreign\n")  # the takeover's stand-in
+                await drain_output()
+            finally:
+                await stop_output_writer()
+                restore_stdout()
+        assert _read_available(out_read) == b"protocol\n"
+        assert _read_available(err_read) == b"stray\nforeign\n"
+
+
+@pytest.mark.tonio
+async def test_takeover_drives_an_exclusive_stdout_by_readiness_until_the_writer_stops():
+    with _pipe() as (_read_fd, write_fd), _fds_onto(write_fd, 1):
+        take_over_stdout()
+        start_output_writer()
+        try:
+            write_raw_stdout("x\n")
+            await drain_output()
+            assert not os.get_blocking(write_fd), "the writer should hold O_NONBLOCK under the takeover"
+        finally:
+            await stop_output_writer()
+            restore_stdout()
+        assert os.get_blocking(write_fd), "stopping the writer should give the flag back"
+
+
+@pytest.mark.tonio
+async def test_outside_the_takeover_the_flag_is_left_alone():
+    """A child inheriting the terminal (the external editor) needs it blocking."""
+    with _pipe() as (_read_fd, write_fd), _fds_onto(write_fd, 1):
+        start_output_writer()
+        try:
+            write_stdout("x\n")
+            await drain_output()
+            assert os.get_blocking(write_fd)
+        finally:
+            await stop_output_writer()
+
+
+@pytest.mark.tonio
+async def test_under_the_takeover_a_stdout_shared_with_stdin_is_left_alone():
+    """stdin's readers own the flag on that description."""
+    with _pipe() as (_read_fd, write_fd), _fds_onto(write_fd, 0, 1):
+        take_over_stdout()
+        start_output_writer()
+        try:
+            write_raw_stdout("x\n")
+            await drain_output()
+            assert os.get_blocking(write_fd)
+        finally:
+            await stop_output_writer()
+            restore_stdout()

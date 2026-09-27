@@ -12,14 +12,14 @@ import pytest
 
 from pidrei.modes.interactive.components import ToolExecutionComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import Container
 
 
 @pytest.fixture(autouse=True)
-def _theme():
-    init_theme_sync("dark")
+async def _theme():
+    await init_theme("dark")
 
 
 def render_chat(container: Container) -> str:

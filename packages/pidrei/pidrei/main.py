@@ -42,7 +42,7 @@ from .cli.auth_command import (
     validate_auth_command_args,
 )
 from .cli.credential_print import resolve_credential_for_print
-from .cli.file_processor import process_file_arguments
+from .cli.file_processor import process_file_arguments_blocking
 from .cli.initial_message import InitialMessageResult, build_initial_message
 from .cli.list_models import list_models
 from .cli.package_commands import handle_config_command, handle_package_command
@@ -63,7 +63,14 @@ from .core.auth_storage import AuthStorage, ReadOnlyAuthStorage
 from .core.http_config import apply_http_proxy_settings
 from .core.model_resolver import resolve_cli_model, resolve_model_scope
 from .core.model_runtime import ModelRuntime
-from .core.output_guard import restore_stdout, take_over_stdout
+from .core.output_guard import (
+    drain_output,
+    restore_stdout,
+    stdout_isatty,
+    take_over_stdout,
+    write_stderr,
+    write_stdout,
+)
 from .core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
 from .core.sdk import CreateAgentSessionOptions
 from .core.session_cwd import (
@@ -75,7 +82,7 @@ from .core.session_manager import SessionManager, assert_valid_session_id
 from .core.settings_diagnostics import collect_settings_diagnostics, deduplicate_diagnostics
 from .core.settings_manager import SettingsManager
 from .core.timings import print_timings, reset_timings, time
-from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
+from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources_blocking
 from .extensions import builtin_extensions
 from .modes import run_print_mode, run_rpc_mode
 from .modes.interactive.theme import init_theme, set_theme_json_validator, stop_theme_watcher, validate_theme_json
@@ -111,7 +118,7 @@ async def _read_piped_stdin() -> str | None:
 
     A redirected file gets `fs.wrap_file`; a pipe is driven by readiness.
     Setting `O_NONBLOCK` on the shell's descriptor is safe now that the stdio
-    teardown policy (`snapshot_std_blocking` at entry + `hard_exit`
+    teardown policy (`snapshot_stdio_flags` at entry + `hard_exit`
     everywhere) restores it on every exit path we control (task #92).
     """
     if sys.stdin.isatty():
@@ -131,7 +138,7 @@ def _report_diagnostics(diagnostics: list[AgentSessionRuntimeDiagnostic]) -> Non
     for diagnostic in diagnostics:
         color = red if diagnostic.type == "error" else yellow if diagnostic.type == "warning" else dim
         prefix = "Error: " if diagnostic.type == "error" else "Warning: " if diagnostic.type == "warning" else ""
-        print(color(f"{prefix}{diagnostic.message}"), file=sys.stderr)
+        write_stderr(color(f"{prefix}{diagnostic.message}") + "\n")
 
 
 def _is_truthy_env_flag(value: str | None) -> bool:
@@ -172,7 +179,7 @@ async def _run_auth_command(args: list[str]) -> int | None:
         command = parse_auth_command(args)
     except Exception as error:
         message = str(error) if isinstance(error, AuthCommandError) else "Failed to parse auth command"
-        print(red(f"Error: {message}"), file=sys.stderr)
+        write_stderr(red(f"Error: {message}") + "\n")
         return 1
     if command is None:
         return None
@@ -180,25 +187,25 @@ async def _run_auth_command(args: list[str]) -> int | None:
     parsed = parse_args(command.args)
     if parsed.unknown_flags:
         option = next(iter(parsed.unknown_flags))
-        print(red(f'Unknown option --{option} for "{get_auth_command_name(command.kind)}".'), file=sys.stderr)
-        print(dim(f'Use "{APP_NAME} --help" or "{get_auth_command_usage(command.kind)}".'), file=sys.stderr)
+        write_stderr(red(f'Unknown option --{option} for "{get_auth_command_name(command.kind)}".') + "\n")
+        write_stderr(dim(f'Use "{APP_NAME} --help" or "{get_auth_command_usage(command.kind)}".') + "\n")
         return 1
     try:
         if parsed.diagnostics:
             raise AuthCommandError("\n".join(diagnostic["message"] for diagnostic in parsed.diagnostics))
         if command.kind != "check":
             cancel = _timeout_cancel(15_000)
-            model_runtime = await ModelRuntime.create(allow_model_network=False, cancel=cancel)
+            model_runtime = await ModelRuntime(allow_model_network=False, cancel=cancel)
             credential = await resolve_credential_for_print(
                 parsed, model_runtime, command.kind, command.min_expiry_ms, cancel
             )
-            sys.stdout.write(f"{credential}\n")
+            write_stdout(f"{credential}\n")
             return 0
 
         requested_provider, requested_model = validate_auth_command_args(parsed, command.kind)
         credential: str | None = None
         try:
-            credentials = ReadOnlyAuthStorage() if command.no_refresh else await AuthStorage.create()
+            credentials = ReadOnlyAuthStorage() if command.no_refresh else await AuthStorage()
             model_runtime = await create_auth_check_model_runtime(credentials)
             result = await check_provider_auth(parsed, model_runtime, refresh=not command.no_refresh)
             if command.credentials and result.status == "ready":
@@ -226,11 +233,11 @@ async def _run_auth_command(args: list[str]) -> int | None:
             output = json_module.dumps(payload, separators=(",", ":"))
         else:
             output = credential if credential else result.status
-        sys.stdout.write(f"{output}\n")
+        write_stdout(f"{output}\n")
         return 0 if result.status == "ready" else 1 if result.status == "not_ready" else 2
     except Exception as error:
         message = str(error) if isinstance(error, AuthCommandError) else "Failed to resolve credential"
-        print(red(f"Error: {message}"), file=sys.stderr)
+        write_stderr(red(f"Error: {message}") + "\n")
         return 2 if command.kind == "check" else 1
 
 
@@ -239,7 +246,9 @@ async def _prepare_initial_message(parsed: Args, stdin_content: str | None = Non
         return build_initial_message(parsed=parsed, stdin_content=stdin_content)
 
     # AgentSession resizes these after extension hooks select the request model.
-    processed = await tonio.spawn_blocking(lambda: process_file_arguments(parsed.file_args, auto_resize_images=False))
+    processed = await tonio.spawn_blocking(
+        lambda: process_file_arguments_blocking(parsed.file_args, auto_resize_images=False)
+    )
     return build_initial_message(
         parsed=parsed,
         file_text=processed.text,
@@ -293,7 +302,8 @@ async def _prompt_confirm(message: str) -> bool:
     in canonical mode delivers the whole line on Enter, so one chunk is
     normally one answer; the loop covers pipes and partial delivery.
     """
-    print(f"{message} [y/N] ", end="", flush=True)
+    write_stdout(f"{message} [y/N] ")
+    await drain_output()
     reader = FdReader(sys.stdin.fileno())
     buffer = b""
     try:
@@ -325,7 +335,7 @@ def _validate_fork_flags(parsed: Args) -> None:
     ]
 
     if conflicting_flags:
-        print(red(f"Error: --fork cannot be combined with {', '.join(conflicting_flags)}"), file=sys.stderr)
+        write_stderr(red(f"Error: --fork cannot be combined with {', '.join(conflicting_flags)}") + "\n")
         raise SystemExit(1)
 
 
@@ -344,21 +354,21 @@ def _validate_session_id_flags(parsed: Args) -> None:
     ]
 
     if conflicting_flags:
-        print(red(f"Error: --session-id cannot be combined with {', '.join(conflicting_flags)}"), file=sys.stderr)
+        write_stderr(red(f"Error: --session-id cannot be combined with {', '.join(conflicting_flags)}") + "\n")
         raise SystemExit(1)
 
     try:
         assert_valid_session_id(parsed.session_id)
     except Exception as error:
-        print(red(f"Error: {error}"), file=sys.stderr)
+        write_stderr(red(f"Error: {error}") + "\n")
         raise SystemExit(1) from None
 
 
 async def _open_session_or_exit(path: str, session_dir: str | None) -> SessionManager:
     try:
-        return await SessionManager.open(path, session_dir)
+        return await SessionManager(session_dir=session_dir, session_file=path)
     except Exception as error:
-        print(red(f"Error: {error}"), file=sys.stderr)
+        write_stderr(red(f"Error: {error}") + "\n")
         raise SystemExit(1) from None
 
 
@@ -368,7 +378,7 @@ async def _fork_session_or_exit(
     try:
         return await SessionManager.fork_from(source_path, cwd, session_dir, {"id": session_id})
     except Exception as error:
-        print(red(f"Error: {error}"), file=sys.stderr)
+        write_stderr(red(f"Error: {error}") + "\n")
         raise SystemExit(1) from None
 
 
@@ -382,7 +392,7 @@ async def _create_session_manager(
         if parsed.session_id:
             existing_target = await _find_local_session_by_exact_id(parsed.session_id, cwd, session_dir)
             if existing_target:
-                print(red(f"Session already exists with id '{parsed.session_id}'"), file=sys.stderr)
+                write_stderr(red(f"Session already exists with id '{parsed.session_id}'") + "\n")
                 raise SystemExit(1)
 
         resolved = await _resolve_session_path(parsed.fork, cwd, session_dir)
@@ -390,7 +400,7 @@ async def _create_session_manager(
         if resolved["type"] in ("path", "local", "global"):
             return await _fork_session_or_exit(resolved["path"], cwd, session_dir, parsed.session_id)
 
-        print(red(f"No session found matching '{resolved['arg']}'"), file=sys.stderr)
+        write_stderr(red(f"No session found matching '{resolved['arg']}'") + "\n")
         raise SystemExit(1)
 
     if parsed.session:
@@ -400,14 +410,14 @@ async def _create_session_manager(
             return await _open_session_or_exit(resolved["path"], session_dir)
 
         if resolved["type"] == "global":
-            print(yellow(f"Session found in different project: {resolved['cwd']}"))
+            write_stdout(yellow(f"Session found in different project: {resolved['cwd']}") + "\n")
             should_fork = await _prompt_confirm("Fork this session into current directory?")
             if not should_fork:
-                print(dim("Aborted."))
+                write_stdout(dim("Aborted.") + "\n")
                 raise SystemExit(0)
             return await _fork_session_or_exit(resolved["path"], cwd, session_dir)
 
-        print(red(f"No session found matching '{resolved['arg']}'"), file=sys.stderr)
+        write_stderr(red(f"No session found matching '{resolved['arg']}'") + "\n")
         raise SystemExit(1)
 
     if parsed.resume:
@@ -417,9 +427,9 @@ async def _create_session_manager(
             settings_manager,
         )
         if not selected_path:
-            print(dim("No session selected"))
+            write_stdout(dim("No session selected") + "\n")
             raise SystemExit(0)
-        return await SessionManager.open(selected_path, session_dir)
+        return await SessionManager(session_dir=session_dir, session_file=selected_path)
 
     if parsed.continue_:
         return await SessionManager.continue_recent(cwd, session_dir)
@@ -427,15 +437,15 @@ async def _create_session_manager(
     if parsed.session_id:
         existing_session = await _find_local_session_by_exact_id(parsed.session_id, cwd, session_dir)
         if existing_session:
-            return await SessionManager.open(existing_session["path"], session_dir)
-        print(
+            return await SessionManager(session_dir=session_dir, session_file=existing_session["path"])
+        write_stderr(
             yellow(
                 f"Warning: No project session found with id '{parsed.session_id}'; creating a new session with that id."
-            ),
-            file=sys.stderr,
+            )
+            + "\n"
         )
 
-    return await SessionManager.create(cwd, session_dir, {"id": parsed.session_id})
+    return await SessionManager(cwd, session_dir, options={"id": parsed.session_id})
 
 
 @dataclass(slots=True)
@@ -574,7 +584,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
 
     cwd = os.getcwd()
     agent_dir = get_agent_dir()
-    bootstrap_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    bootstrap_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=False)
     apply_http_proxy_settings(bootstrap_settings_manager.get_global_settings().get("httpProxy"))
 
     auth_exit_code = await _run_auth_command(args)
@@ -594,13 +604,13 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         for d in parsed.diagnostics:
             color = red if d["type"] == "error" else yellow
             label = "Error" if d["type"] == "error" else "Warning"
-            print(color(f"{label}: {d['message']}"), file=sys.stderr)
+            write_stderr(color(f"{label}: {d['message']}") + "\n")
         if any(d["type"] == "error" for d in parsed.diagnostics):
             raise SystemExit(1)
     time("parseArgs")
 
     if parsed.version:
-        print(VERSION)
+        write_stdout(f"{VERSION}\n")
         raise SystemExit(0)
 
     if parsed.export:
@@ -611,18 +621,18 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
             output_path = parsed.messages[0] if parsed.messages else None
             result = await export_from_file(parsed.export, output_path)
         except Exception as error:
-            print(red(f"Error: {error}"), file=sys.stderr)
+            write_stderr(red(f"Error: {error}") + "\n")
             raise SystemExit(1) from None
-        print(f"Exported to: {result}")
+        write_stdout(f"Exported to: {result}\n")
         raise SystemExit(0)
 
-    app_mode = _resolve_app_mode(parsed, sys.stdin.isatty(), sys.stdout.isatty())
+    app_mode = _resolve_app_mode(parsed, sys.stdin.isatty(), stdout_isatty())
     should_take_over_stdout = app_mode != "interactive" and not _is_plain_runtime_metadata_command(parsed)
     if should_take_over_stdout:
         take_over_stdout()
 
     if parsed.mode == "rpc" and parsed.file_args:
-        print(red("Error: @file arguments are not supported in RPC mode"), file=sys.stderr)
+        write_stderr(red("Error: @file arguments are not supported in RPC mode") + "\n")
         raise SystemExit(1)
 
     _validate_fork_flags(parsed)
@@ -632,13 +642,18 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     # ~/.pidrei/ cannot contain the pi-version-legacy state they clean up).
     time("runMigrations")
 
-    startup_settings_manager = await SettingsManager.create(cwd, agent_dir)
+    startup_settings_manager = await SettingsManager(cwd, agent_dir)
     startup_settings_diagnostics = collect_settings_diagnostics(startup_settings_manager)
 
     # Experimental first-time setup: theme choice (pi's analytics opt-in is not ported).
     # Runs before any runtime services are created so the chosen settings
     # apply everywhere.
-    if app_mode == "interactive" and not parsed.help and parsed.list_models is None and should_run_first_time_setup():
+    if (
+        app_mode == "interactive"
+        and not parsed.help
+        and parsed.list_models is None
+        and await should_run_first_time_setup()
+    ):
         await show_first_time_setup(startup_settings_manager)
         time("firstTimeSetup")
 
@@ -657,29 +672,31 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         or startup_settings_manager.get_session_dir()
     )
     session_manager = await _create_session_manager(parsed, cwd, session_dir, startup_settings_manager)
-    missing_session_cwd_issue = get_missing_session_cwd_issue(session_manager, cwd)
+    missing_session_cwd_issue = await get_missing_session_cwd_issue(session_manager, cwd)
     if missing_session_cwd_issue:
         if app_mode == "interactive":
             selected_cwd = await _prompt_for_missing_session_cwd(missing_session_cwd_issue, startup_settings_manager)
             if not selected_cwd:
                 raise SystemExit(0)
-            session_manager = await SessionManager.open(
-                missing_session_cwd_issue.session_file, session_dir, selected_cwd
+            session_manager = await SessionManager(
+                selected_cwd, session_dir, session_file=missing_session_cwd_issue.session_file
             )
         else:
-            print(red(str(MissingSessionCwdError(missing_session_cwd_issue))), file=sys.stderr)
+            write_stderr(red(str(MissingSessionCwdError(missing_session_cwd_issue))) + "\n")
             raise SystemExit(1)
     if parsed.name is not None:
         name = normalize_session_name(parsed.name)
         if name is None:
-            print(red("Error: --name requires a non-empty value"), file=sys.stderr)
+            write_stderr(red("Error: --name requires a non-empty value") + "\n")
             raise SystemExit(1)
         await session_manager.append_session_info(name)
     time("createSessionManager")
 
     trust_store = ProjectTrustStore(agent_dir)
     session_cwd = session_manager.get_cwd()
-    session_cwd_has_trust_resources = await tonio.spawn_blocking(has_trust_requiring_project_resources, session_cwd)
+    session_cwd_has_trust_resources = await tonio.spawn_blocking(
+        has_trust_requiring_project_resources_blocking, session_cwd
+    )
     auto_trust_on_reload_cwd = (
         session_cwd if parsed.project_trust_override is None and not session_cwd_has_trust_resources else None
     )
@@ -702,7 +719,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         is_initial_runtime = session_start_event is None
         project_trust_diagnostics: list[AgentSessionRuntimeDiagnostic] = []
         cached_project_trust = project_trust_by_cwd.get(cwd)
-        has_trust_requiring_resources = await tonio.spawn_blocking(has_trust_requiring_project_resources, cwd)
+        has_trust_requiring_resources = await tonio.spawn_blocking(has_trust_requiring_project_resources_blocking, cwd)
         should_resolve_project_trust = (
             parsed.project_trust_override is None and cached_project_trust is None and has_trust_requiring_resources
         )
@@ -714,7 +731,7 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
             project_trusted = parsed.project_trust_override
         else:
             project_trusted = not has_trust_requiring_resources or await trust_store.get(cwd) is True
-        runtime_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=project_trusted)
+        runtime_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=project_trusted)
 
         async def resolve_trust(extensions_result=None) -> bool:
             trusted = await resolve_project_trusted(
@@ -894,17 +911,17 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
         _report_diagnostics(startup_diagnostics)
     if has_runtime_errors:
         if any("Failed to load extension" in diagnostic.message for diagnostic in runtime.diagnostics):
-            print(yellow(EXTENSION_LOAD_FAILURE_HINT), file=sys.stderr)
+            write_stderr(yellow(EXTENSION_LOAD_FAILURE_HINT) + "\n")
         raise SystemExit(1)
     time("createAgentSession")
 
     if app_mode != "interactive" and session.model is None:
-        print(red(format_no_models_available_message()), file=sys.stderr)
+        write_stderr(red(format_no_models_available_message()) + "\n")
         raise SystemExit(1)
 
     startup_benchmark = _is_truthy_env_flag(os.environ.get("PIDREI_STARTUP_BENCHMARK"))
     if startup_benchmark and app_mode != "interactive":
-        print(red("Error: PIDREI_STARTUP_BENCHMARK only supports interactive mode"), file=sys.stderr)
+        write_stderr(red("Error: PIDREI_STARTUP_BENCHMARK only supports interactive mode") + "\n")
         raise SystemExit(1)
 
     # RPC refreshes catalogs here in the background; interactive mode starts

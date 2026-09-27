@@ -27,7 +27,7 @@ _UNSET = object()
 _GIT_SYMBOLIC_REF_ARGS = ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"]
 
 
-def _find_git_paths(cwd: str) -> dict | None:
+def _find_git_paths_blocking(cwd: str) -> dict | None:
     """Find git metadata paths by walking up from cwd.
 
     Handles both regular git repos (.git is a directory) and worktrees
@@ -66,12 +66,10 @@ def _find_git_paths(cwd: str) -> dict | None:
         directory = parent
 
 
-# Sync by design, but only safe because of priming: `prime()` resolves the
-# branch through `spawn_blocking` before the first render, so the render
-# path reads the cache; the refresh path calls it on the pool too. An
-# *unprimed* provider would still hit the lazy fallback in
-# `get_git_branch()` on a worker — prime it.
-def _resolve_branch_with_git_sync(repo_dir: str) -> str | None:
+# pi has a spawnSync variant for the first read and an execFile one for the
+# refresh; both run on the pool here (`prime()` and the debounced refresh),
+# so they are one function.
+def _resolve_branch_with_git_blocking(repo_dir: str) -> str | None:
     """Ask git for the current branch. None on detached HEAD or git failure."""
     try:
         result = subprocess.run(  # noqa: S603
@@ -89,9 +87,21 @@ def _resolve_branch_with_git_sync(repo_dir: str) -> str | None:
     return branch or None
 
 
-def _resolve_branch_with_git_async(repo_dir: str) -> str | None:
-    """The refresh-path variant (pi's execFile); runs on the blocking pool."""
-    return _resolve_branch_with_git_sync(repo_dir)
+def _resolve_git_branch_blocking(git_paths: dict | None) -> str | None:
+    """The branch named by HEAD: None outside a repo, "detached" on a detached HEAD."""
+    try:
+        if not git_paths:
+            return None
+        with open(git_paths["headPath"], encoding="utf-8") as f:
+            content = f.read().strip()
+        if content.startswith("ref: refs/heads/"):
+            branch = content[16:]
+            if branch == ".invalid":
+                return _resolve_branch_with_git_blocking(git_paths["repoDir"]) or "detached"
+            return branch
+        return "detached"
+    except OSError:
+        return None
 
 
 def _is_wsl_environment() -> bool:
@@ -141,7 +151,7 @@ class FooterDataProvider:
         # `resolve_cwd` request order (see there).
         self._cwd_request = 0
         self._cwd_applied_request = 0
-        # No I/O here: `_find_git_paths` reads git metadata and the watcher
+        # No I/O here: `_find_git_paths_blocking` reads git metadata and the watcher
         # touches the filesystem, and a constructor cannot await. `prime()`
         # does both from an async caller; until then `get_git_branch()` falls
         # back to resolving lazily, which is the pre-prime behaviour.
@@ -160,18 +170,19 @@ class FooterDataProvider:
         if self._primed:
             return
         self._primed = True
-        self._git_paths = await tonio.spawn_blocking(_find_git_paths, self._cwd)
-        branch = await tonio.spawn_blocking(self._resolve_git_branch_sync)
+        self._git_paths = await tonio.spawn_blocking(_find_git_paths_blocking, self._cwd)
+        branch = await tonio.spawn_blocking(_resolve_git_branch_blocking, self._git_paths)
         with self._lock:
             self._cached_branch = branch
         await self._setup_git_watcher()
 
     def get_git_branch(self) -> str | None:
-        """Current branch, None if not in repo, "detached" on detached HEAD."""
+        """Current branch, None if not in repo, "detached" on detached HEAD.
+
+        A cache read: None until `prime()` has resolved it."""
         with self._lock:
-            if self._cached_branch is _UNSET:
-                self._cached_branch = self._resolve_git_branch_sync()
-            return self._cached_branch
+            branch = self._cached_branch
+        return None if branch is _UNSET else branch
 
     def get_extension_statuses(self) -> dict:
         """Extension status texts set via ctx.ui.set_status().
@@ -233,8 +244,8 @@ class FooterDataProvider:
         with self._lock:
             self._cwd_request += 1
             request = self._cwd_request
-        git_paths = await tonio.spawn_blocking(_find_git_paths, cwd)
-        branch = await tonio.spawn_blocking(self._resolve_git_branch_async, git_paths)
+        git_paths = await tonio.spawn_blocking(_find_git_paths_blocking, cwd)
+        branch = await tonio.spawn_blocking(_resolve_git_branch_blocking, git_paths)
         return {"cwd": cwd, "request": request, "gitPaths": git_paths, "branch": branch}
 
     def apply_cwd(self, resolved: dict) -> bool:
@@ -304,7 +315,7 @@ class FooterDataProvider:
 
         notify = False
         try:
-            next_branch = await tonio.spawn_blocking(self._resolve_git_branch_async, git_paths)
+            next_branch = await tonio.spawn_blocking(_resolve_git_branch_blocking, git_paths)
             with self._lock:
                 if self._disposed:
                     return
@@ -322,36 +333,6 @@ class FooterDataProvider:
                 self._refresh_pending = False
             if pending:
                 self._schedule_refresh()
-
-    def _resolve_git_branch_sync(self) -> str | None:
-        try:
-            if not self._git_paths:
-                return None
-            with open(self._git_paths["headPath"], encoding="utf-8") as f:
-                content = f.read().strip()
-            if content.startswith("ref: refs/heads/"):
-                branch = content[16:]
-                if branch == ".invalid":
-                    return _resolve_branch_with_git_sync(self._git_paths["repoDir"]) or "detached"
-                return branch
-            return "detached"
-        except OSError:
-            return None
-
-    def _resolve_git_branch_async(self, git_paths: dict | None) -> str | None:
-        try:
-            if not git_paths:
-                return None
-            with open(git_paths["headPath"], encoding="utf-8") as f:
-                content = f.read().strip()
-            if content.startswith("ref: refs/heads/"):
-                branch = content[16:]
-                if branch == ".invalid":
-                    return _resolve_branch_with_git_async(git_paths["repoDir"]) or "detached"
-                return branch
-            return "detached"
-        except OSError:
-            return None
 
     def _clear_git_watchers(self) -> None:
         close_watcher(self._head_watcher)

@@ -1,9 +1,10 @@
 """Mirror of pi coding-agent src/core/timings.ts (PI_TIMING -> PIDREI_TIMING)."""
 
 import os
-import sys
 import time as time_module
 from typing import Any
+
+from .output_guard import write_stderr
 
 
 _ENABLED = os.environ.get("PIDREI_TIMING") == "1"
@@ -34,12 +35,12 @@ def _print_timing_group(title: str, timings: list[dict[str, Any]]) -> None:
     printable = [timing for timing in timings if timing["ms"] >= 0]
     if not printable:
         return
-    print(f"\n--- {title} ---", file=sys.stderr)
+    write_stderr(f"\n--- {title} ---\n")
     for timing in printable:
-        print(f"  {timing['label']}: {round(timing['ms'])}ms", file=sys.stderr)
+        write_stderr(f"  {timing['label']}: {round(timing['ms'])}ms\n")
     total = sum(timing["ms"] for timing in printable)
-    print(f"  TOTAL: {round(total)}ms", file=sys.stderr)
-    print("-" * (len(title) + 8) + "\n", file=sys.stderr)
+    write_stderr(f"  TOTAL: {round(total)}ms\n")
+    write_stderr("-" * (len(title) + 8) + "\n\n")
 
 
 def print_timings() -> None:

@@ -6,14 +6,14 @@ import pytest
 
 from pidrei.core.messages import CustomMessage
 from pidrei.modes.interactive.components.custom_message import CustomMessageComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import Text
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
+async def _setup():
+    await init_theme("dark")
 
 
 def test_provides_output_padding_to_custom_renderers_and_updates_it():

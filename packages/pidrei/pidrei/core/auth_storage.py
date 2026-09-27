@@ -33,7 +33,7 @@ from pidrei_ai.utils.cancel import AbortError, CancelToken
 from ..config import get_agent_dir
 from ..utils import lockfile
 from ..utils.abort import race_with_cancel
-from ..utils.paths import get_file_revision, normalize_path
+from ..utils.paths import get_file_revision_blocking, normalize_path
 from ..utils.text import strip_bom
 from .resolve_config_value import is_command_config_value, resolve_config_value
 
@@ -112,10 +112,10 @@ class _AuthFileReadState:
 _shared_auth_file_read_states: dict[str, _AuthFileReadState] = {}
 
 # Test seam (the counterpart of pi's utils/paths getFileRevision import).
-_get_file_revision = get_file_revision
+_get_file_revision_blocking = get_file_revision_blocking
 
 
-async def _acquire_lock_async(path: str, cancel: CancelToken | None = None) -> Callable[[], None]:
+async def _acquire_lock_async(path: str, cancel: CancelToken | None = None) -> lockfile.FileLock:
     """Async lock acquisition mirroring pi's manual retry loop: short
     randomized exponential backoff from 10ms capped at 1s, retried until the
     30s staleness window would have reclaimed the lock anyway, abortable
@@ -124,11 +124,12 @@ async def _acquire_lock_async(path: str, cancel: CancelToken | None = None) -> C
     max_delay_ms = 2_000
     deadline = clock.now_ms() + stale_ms
     retry = 0
+    lock = lockfile.FileLock(path, stale=stale_ms / 1000)
     while True:
         if cancel is not None:
             cancel.raise_if_cancelled()
         try:
-            release = await tonio.spawn_blocking(lockfile.lock_sync, path, stale=stale_ms / 1000)
+            await lock.try_acquire()
         except lockfile.LockedError:
             if cancel is not None:
                 cancel.raise_if_cancelled()
@@ -146,9 +147,9 @@ async def _acquire_lock_async(path: str, cancel: CancelToken | None = None) -> C
                 raise
             continue
         if cancel is not None and cancel.cancelled:
-            await tonio.spawn_blocking(release)
+            await lock.release()
             cancel.raise_if_cancelled()
-        return release
+        return lock
 
 
 class FileAuthStorageBackend:
@@ -163,52 +164,40 @@ class FileAuthStorageBackend:
         # genuinely concurrent processes ever hit the retry ladder.
         self._async_lock = sync.Lock()
 
-    def _ensure_parent_dir(self) -> None:
+    def _ensure_parent_dir_blocking(self) -> None:
         directory = os.path.dirname(self._auth_path)
         if not os.path.exists(directory):
             os.makedirs(directory, mode=0o700, exist_ok=True)
 
-    def _ensure_file_exists(self) -> None:
+    def _ensure_file_exists_blocking(self) -> None:
         if not os.path.exists(self._auth_path):
-            self._write("{}")
+            self._write_blocking("{}")
 
-    def _ensure_ready(self) -> None:
+    def _ensure_ready_blocking(self) -> None:
         """Both preparation steps as one unit, so the async path pays one hop."""
-        self._ensure_parent_dir()
-        self._ensure_file_exists()
+        self._ensure_parent_dir_blocking()
+        self._ensure_file_exists_blocking()
 
-    def _read(self) -> str | None:
+    def _read_blocking(self) -> str | None:
         if not os.path.exists(self._auth_path):
             return None
         with open(self._auth_path, encoding="utf-8") as f:
             return f.read()
 
-    def _write(self, content: str) -> None:
+    def _write_blocking(self, content: str) -> None:
         fd = os.open(self._auth_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, AUTH_FILE_MODE)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-
-    def with_lock(self, fn: Callable[[str | None], tuple[Any, str | None]]) -> Any:
-        self._ensure_parent_dir()
-        self._ensure_file_exists()
-
-        release = lockfile.acquire_lock_sync_with_retry(self._auth_path)
-        try:
-            result, next_content = fn(self._read())
-            if next_content is not None:
-                self._write(next_content)
-            return result
-        finally:
-            release()
 
     async def with_lock_async(
         self,
         fn: Callable[[str | None], Awaitable[tuple[Any, str | None]]],
         options: AuthOperationOptions | None = None,
     ) -> Any:
-        """The callback is async, so this cannot be offloaded as one unit the
-        way `with_lock` can — each filesystem step goes to the pool on its own,
-        including the lock release in the `finally`."""
+        """The callback is async, so this cannot be offloaded as one unit:
+        each filesystem step is awaited on its own, including the lock release
+        in the `finally`. (No sync `with_lock` here, unlike the in-memory
+        backend: taking the file lock awaits.)"""
         cancel = options.cancel if options is not None else None
         if cancel is not None:
             cancel.raise_if_cancelled()
@@ -218,21 +207,21 @@ class FileAuthStorageBackend:
             async with self._async_lock:
                 if cancel is not None:
                     cancel.raise_if_cancelled()
-                await tonio.spawn_blocking(self._ensure_ready)
+                await tonio.spawn_blocking(self._ensure_ready_blocking)
 
-                release = await _acquire_lock_async(self._auth_path, cancel)
+                lock = await _acquire_lock_async(self._auth_path, cancel)
                 try:
                     if cancel is not None:
                         cancel.raise_if_cancelled()
-                    current = await tonio.spawn_blocking(self._read)
+                    current = await tonio.spawn_blocking(self._read_blocking)
                     result, next_content = await fn(current)
                     if cancel is not None:
                         cancel.raise_if_cancelled()
                     if next_content is not None:
-                        await tonio.spawn_blocking(self._write, next_content)
+                        await tonio.spawn_blocking(self._write_blocking, next_content)
                     return result
                 finally:
-                    await tonio.spawn_blocking(release)
+                    await lock.release()
 
         return await race_with_cancel(_operation(), cancel)
 
@@ -247,7 +236,7 @@ class ReadOnlyAuthStorage(CredentialStore):
         self._auth_path = normalize_path(auth_path)
         self._data: dict[str, Credential] | None = None
 
-    def _load_sync(self) -> dict[str, Credential]:
+    def _load_blocking(self) -> dict[str, Credential]:
         if self._data is not None:
             return self._data
         try:
@@ -291,7 +280,7 @@ class ReadOnlyAuthStorage(CredentialStore):
     async def read(self, provider_id: str, options: AuthOperationOptions | None = None) -> Credential | None:
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
-        credential = (await tonio.spawn_blocking(self._load_sync)).get(provider_id)
+        credential = (await tonio.spawn_blocking(self._load_blocking)).get(provider_id)
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
         if credential is None:
@@ -310,7 +299,7 @@ class ReadOnlyAuthStorage(CredentialStore):
     async def list(self, options: AuthOperationOptions | None = None) -> list[CredentialInfo]:
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
-        data = await tonio.spawn_blocking(self._load_sync)
+        data = await tonio.spawn_blocking(self._load_blocking)
         if options is not None and options.cancel is not None:
             options.cancel.raise_if_cancelled()
         return [
@@ -370,42 +359,45 @@ def _serialize_data(data: dict[str, Credential]) -> str:
 
 
 class AuthStorage(CredentialStore):
-    """Credential storage backed by a JSON file."""
+    """Credential storage backed by a JSON file.
 
-    def __init__(self, storage: AuthStorageBackend, auth_path: str | None = None):
-        self._storage = storage
-        self._auth_path = auth_path
-        if auth_path is not None:
-            self._read_state = _shared_auth_file_read_states.setdefault(auth_path, _AuthFileReadState())
-        else:
+    `await AuthStorage(auth_path)` loads `auth.json` (default: the agent
+    dir's); `await AuthStorage(backend=...)` loads an arbitrary backend.
+    `__init__` does no I/O and loads nothing.
+    """
+
+    def __init__(self, auth_path: str | None = None, *, backend: AuthStorageBackend | None = None):
+        if backend is not None:
+            if auth_path is not None:
+                raise ValueError("pass either auth_path or backend, not both")
+            self._storage: AuthStorageBackend = backend
+            self._auth_path: str | None = None
             self._read_state = _AuthFileReadState()
-        # No load here: reading auth.json is I/O and a constructor cannot
-        # await. `create()` loads asynchronously (skipping the reload when the
-        # shared revision is current); `in_memory()` loads inline because its
-        # backend never touches a file.
+            return
+        self._auth_path = normalize_path(
+            auth_path if auth_path is not None else os.path.join(get_agent_dir(), "auth.json")
+        )
+        self._storage = FileAuthStorageBackend(self._auth_path)
+        self._read_state = _shared_auth_file_read_states.setdefault(self._auth_path, _AuthFileReadState())
 
-    @staticmethod
-    async def create(auth_path: str | None = None) -> AuthStorage:
-        if auth_path is None:
-            auth_path = os.path.join(get_agent_dir(), "auth.json")
-        normalized = normalize_path(auth_path)
-        storage = AuthStorage(FileAuthStorageBackend(normalized), auth_path=normalized)
-        revision = await tonio.spawn_blocking(_get_file_revision, normalized)
-        if revision is not None and revision == storage._read_state.snapshot.revision:
-            return storage
-        await storage.reload_async()
-        return storage
+    def __await__(self):
+        return self._start().__await__()
 
-    @staticmethod
-    def from_storage(storage: AuthStorageBackend) -> AuthStorage:
-        return AuthStorage(storage)
+    async def _start(self) -> AuthStorage:
+        if self._auth_path is not None:
+            # Another store on the same file may have loaded it already.
+            revision = await tonio.spawn_blocking(_get_file_revision_blocking, self._auth_path)
+            if revision is not None and revision == self._read_state.snapshot.revision:
+                return self
+        await self.reload_async()
+        return self
 
     @staticmethod
     def in_memory(data: dict[str, Credential] | None = None) -> AuthStorage:
         storage = InMemoryAuthStorageBackend()
         content = _serialize_data(data or {})
         storage.with_lock(lambda _current: (None, content))
-        store = AuthStorage.from_storage(storage)
+        store = AuthStorage(backend=storage)
         store.reload()
         return store
 
@@ -421,10 +413,13 @@ class AuthStorage(CredentialStore):
     def reload(self) -> None:
         """Reload credentials from storage.
 
-        Sync, so only safe for a backend that does no file I/O — i.e. the
-        in-memory one (which also means no file revision to capture).
-        File-backed stores use `reload_async`.
+        Sync, so only for a backend that does no file I/O — i.e. the in-memory
+        one (which also means no file revision to capture). File-backed stores
+        use `reload_async`; this refuses them rather than swallowing the error
+        below.
         """
+        if not isinstance(self._storage, InMemoryAuthStorageBackend):
+            raise TypeError("AuthStorage.reload() is for in-memory storage; file-backed stores use reload_async()")
         try:
             content = self._storage.with_lock(lambda current: (current, None))
             self._update_read_state(self._parse_storage_data(content))
@@ -435,7 +430,9 @@ class AuthStorage(CredentialStore):
         async def under_lock(content: str | None) -> tuple[dict[str, Credential], str | None]:
             current_data = self._parse_storage_data(content)
             revision = (
-                await tonio.spawn_blocking(_get_file_revision, self._auth_path) if self._auth_path is not None else None
+                await tonio.spawn_blocking(_get_file_revision_blocking, self._auth_path)
+                if self._auth_path is not None
+                else None
             )
             self._update_read_state(current_data, revision)
             return current_data, None
@@ -468,7 +465,7 @@ class AuthStorage(CredentialStore):
         # then degrades to a re-check under the guard, never to
         # stale-data-as-fresh.
         snapshot = state.snapshot
-        revision = await tonio.spawn_blocking(_get_file_revision, self._auth_path)
+        revision = await tonio.spawn_blocking(_get_file_revision_blocking, self._auth_path)
         if revision is not None and revision == snapshot.revision:
             return snapshot.data
 
@@ -561,7 +558,7 @@ class AuthStorage(CredentialStore):
             if next_credential is None:
                 latest[0] = current_data
                 revision_box[0] = (
-                    await tonio.spawn_blocking(_get_file_revision, self._auth_path)
+                    await tonio.spawn_blocking(_get_file_revision_blocking, self._auth_path)
                     if self._auth_path is not None
                     else None
                 )
@@ -595,17 +592,3 @@ class AuthStorage(CredentialStore):
         return [
             CredentialInfo(provider_id=provider_id, type=credential.type) for provider_id, credential in entries.items()
         ]
-
-
-def read_stored_credential(provider_id: str, auth_path: str | None = None) -> Credential | None:
-    """One-off synchronous read of a stored credential from an auth.json file,
-    without instantiating a store or resolving configured key values."""
-    if auth_path is None:
-        auth_path = os.path.join(get_agent_dir(), "auth.json")
-    try:
-        with open(normalize_path(auth_path), encoding="utf-8") as f:
-            data = json.loads(strip_bom(f.read()))
-        raw = data.get(provider_id)
-        return parse_credential(raw) if raw is not None else None
-    except Exception:
-        return None

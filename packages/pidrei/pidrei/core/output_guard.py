@@ -1,99 +1,245 @@
-"""Mirror of pi coding-agent src/core/output-guard.ts.
+"""Mirror of pi coding-agent src/core/output-guard.ts, and every stdio write.
 
 Protects protocol stdout (JSON/JSONL modes) from stray writes: after
 take_over_stdout(), anything using sys.stdout (print(), libraries) is
 rerouted to stderr, while write_raw_stdout() writes to the real stdout.
 
-pi serializes raw writes on an async promise chain with EAGAIN retries, and this
-is now the same shape: a single colored writer task drains a channel, writing
-each chunk with the primitive that matches where stdout points (`FdWriter`) —
-`arm_w` readiness for a pipe or socket, the blocking pool for a regular file or
-a stream a test substituted. Any write failure exits the process
-(pi: process.exit(1)). An earlier revision used a dedicated writer thread here;
-the readiness API made it unnecessary.
+Every write to fds 1 and 2 goes through here, not only the protocol stream:
+`write_stdout` (what `print()` was: stdout, or stderr under the takeover),
+`write_stderr` and `write_raw_stdout` send the text down one channel and
+return, and a single writer task consumes it — stdout and stderr keep one
+order, and a slow reader parks the writer instead of the caller. pi gets that
+from node's async stdio. `drain_output` is the wait pi's callers get from write
+callbacks: it sends a flush ticket and waits for the writer to reach it. The
+writer runs between `start_output_writer` and `stop_output_writer`
+(`pidrei.__main__` brackets the run with them); outside that window there is
+no runtime to protect, and writes go straight to the fd.
 
-The readiness branch requires setting `O_NONBLOCK` on stdout, which lives on the
-open file description. That is only safe when the description is exclusively
-ours, so it is declined whenever stdout appears to share its description with
-stdin or stderr (`fstat` device+inode equality): under `2>&1` both names are one
-pipe, and on a plain terminal fds 0/1/2 are one pty — making stderr non-blocking
-there would break every `print(file=sys.stderr)` in the process, including the
-takeover redirect itself. Declining is conservative: two separate opens of the
-same FIFO also match, and lose nothing but the readiness fast path.
+Each fd is written with `FdWriter`, in a mode fixed by its first write. Under
+the takeover that is `arm_w` readiness, holding `O_NONBLOCK` until the writer
+stops: print and RPC modes never hand the terminal to a child (the takeover
+starts before either runs and ends only as print mode exits). The exception is
+an fd that shares its open file description with stdin, which is where the
+flag lives: stdin's readers (`FdReader`, the TUI terminal) set and restore it
+on their own schedule, so that fd is written from the blocking pool instead.
+Outside the takeover every fd is written from the pool and the flag is left
+alone, so the terminal is blocking again whenever the TUI terminal (which holds
+the flag between its start and stop) lets go of it — which is what a child
+inheriting the terminal, such as the external editor, needs.
+
+A failed stdout write exits the process (pi: process.exit(1)); a failed stderr
+write is dropped.
+
+While a `ProcessTerminal` owns the tty (interactive mode, the startup
+dialogs: `attach_terminal` to `detach_terminal`), writes to the fds that share
+its output description go through the terminal's own queue instead: the tty
+then has one writer, so a stderr line never lands inside a frame, and it is
+held with the rest of the terminal's output while a child owns the tty.
+
+pidrei's own code writes through the functions here only (lint bans `print`
+and `sys.stdout`/`sys.stderr`). `install_stdio_streams` points `sys.stdout`/
+`sys.stderr` at stand-ins that do the same, for the code pidrei does not own:
+warnings, exception hooks, libraries, extensions.
 """
 
 import os
 import sys
-import threading
-import time
 from typing import Any
 
 import tonio.colored as tonio
 from tonio.colored.sync import channel
-from tonio.exceptions import RuntimeNotInitializedError
 
-from ..utils.fd_io import FdWriter, hard_exit, is_pollable
+from pidrei_tui.terminal import ProcessTerminal, Terminal
+
+from ..utils.fd_io import FdWriter, hard_exit, write_all_blocking
 
 
-RAW_STDOUT_RETRY_DELAY_S = 0.010
+STDOUT_FD = 1
+STDERR_FD = 2
 
 _takeover_state: dict[str, Any] | None = None
 
-_pending_lock = threading.Lock()
-_pending_count = 0
-# Runtime tasks waiting for the queue to drain. Registered under `_pending_lock`
-# so the writer task cannot cross zero between the check and the registration.
-_drain_waiters: list[tonio.Event] = []
+# The channel's sender and the writer task, while it runs. Only the process
+# entry (and tests) start and stop it.
+_sender: Any = None
+_writer: Any = None
 
-_sender, _receiver = channel.unbounded()
-# One writer task per process. The single-runtime assumption is project-wide:
-# the tonio pytest plugin builds one runtime per session, and `tonio.run` is
-# called once per process in production.
-_writer_started = False
-_fd_writer: FdWriter | None = None
-_fd_writer_fd: int | None = None
+# The attached terminal and the fds it takes, while attached.
+_terminal_route: tuple[ProcessTerminal, frozenset[int]] | None = None
 
 
-class _StderrRedirect:
-    """Replacement sys.stdout that forwards every write to stderr."""
+class _StdioStream:
+    """A text stream that writes through here: `sys.stdout`/`sys.stderr` for
+    code pidrei does not own, and stdout's stand-in under the takeover."""
+
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
 
     def write(self, text: str) -> int:
-        return sys.stderr.write(text)
+        _write(self._fd, text)
+        return len(text)
 
     def flush(self) -> None:
-        sys.stderr.flush()
+        pass  # writes are queued in order; `drain_output` waits for delivery
 
     def isatty(self) -> bool:
         try:
-            return sys.stderr.isatty()
-        except Exception:
+            return os.isatty(self._fd)
+        except OSError:
             return False
+
+    def fileno(self) -> int:
+        return self._fd
+
+    def writable(self) -> bool:
+        return True
 
     @property
     def encoding(self) -> str:
-        return getattr(sys.stderr, "encoding", "utf-8")
+        return "utf-8"
 
-    def fileno(self) -> int:
-        return sys.stderr.fileno()
+    @property
+    def errors(self) -> str:
+        return _errors(self._fd)
 
 
-def _get_raw_stream() -> Any:
+def install_stdio_streams() -> None:
+    """Process entry only: `sys.stdout`/`sys.stderr` write through here."""
+    sys.stdout = _StdioStream(STDOUT_FD)  # noqa: TID251
+    sys.stderr = _StdioStream(STDERR_FD)  # noqa: TID251
+
+
+def take_over_stdout() -> None:
+    global _takeover_state
     if _takeover_state is not None:
-        return _takeover_state["raw_stdout"]
-    return sys.stdout
+        return
+
+    _takeover_state = {"original_stdout": sys.stdout}  # noqa: TID251
+    sys.stdout = _StdioStream(STDERR_FD)  # noqa: TID251
 
 
-def _write_chunk_sync(text: str) -> None:
-    """Blocking write through the stream object; the pool-side fallback."""
-    while True:
+def restore_stdout() -> None:
+    global _takeover_state
+    if _takeover_state is None:
+        return
+
+    sys.stdout = _takeover_state["original_stdout"]  # noqa: TID251
+    _takeover_state = None
+
+
+def is_stdout_taken_over() -> bool:
+    return _takeover_state is not None
+
+
+def stdout_isatty() -> bool:
+    """Whether stdout is a terminal, as `sys.stdout` reports it (under the
+    takeover, its stand-in reports stderr's)."""
+    try:
+        return sys.stdout.isatty()  # noqa: TID251
+    except Exception:
+        return False
+
+
+def write_stdout(text: str) -> None:
+    """What `print()` was: stdout, or stderr under the takeover."""
+    _write(STDERR_FD if _takeover_state is not None else STDOUT_FD, text)
+
+
+def write_stderr(text: str) -> None:
+    _write(STDERR_FD, text)
+
+
+def write_raw_stdout(text: str) -> None:
+    """The real stdout, takeover or not: protocol output."""
+    _write(STDOUT_FD, text)
+
+
+async def drain_output() -> None:
+    """Wait until everything written so far is on its fd, the attached
+    terminal's queue included (which takes the tty for the moment it needs:
+    before a hand-off to a child, not during one)."""
+    sender = _sender
+    if sender is not None:
+        ticket = tonio.Event()
         try:
-            stream = _get_raw_stream()
-            stream.write(text)
-            stream.flush()
+            sender.send((STDOUT_FD, "", ticket))
+        except BrokenPipeError:
+            pass  # stopping: the writer delivers what it has before it ends
+        else:
+            await ticket.wait()
+    route = _terminal_route
+    if route is not None:
+        await route[0].flush()
+
+
+def start_output_writer() -> None:
+    """Start the writer; from here on writes are queued."""
+    global _sender, _writer
+    if _sender is not None:
+        return
+    _sender, receiver = channel.unbounded()
+    _writer = tonio.spawn(_writer_loop(receiver))
+
+
+async def stop_output_writer() -> None:
+    """Deliver everything queued, then stop the writer, restoring the flags it
+    set. Writes from here on go straight to the fd."""
+    global _sender, _writer
+    sender, writer = _sender, _writer
+    if sender is None:
+        return
+    _sender = _writer = None
+    sender.close()  # what is already queued is still delivered
+    await writer
+
+
+async def attach_terminal(terminal: Terminal) -> None:
+    """Route writes to the fds sharing `terminal`'s output description
+    through its queue, from before its first `arm()` until
+    `detach_terminal()`. Writes made earlier are delivered first. Only a
+    `ProcessTerminal` writes the process's own fds; any other terminal takes
+    nothing."""
+    global _terminal_route
+    if not isinstance(terminal, ProcessTerminal):
+        return
+    fds = frozenset(fd for fd in (STDOUT_FD, STDERR_FD) if _shares_description(fd, terminal.output_fd))
+    _terminal_route = (terminal, fds)
+    # What was queued before the switch goes out first; later writes wait in
+    # the terminal's queue behind it.
+    await drain_output()
+
+
+def detach_terminal() -> None:
+    """Stop routing to the attached terminal; right before closing it, which
+    puts out what its queue still holds."""
+    global _terminal_route
+    _terminal_route = None
+
+
+def _errors(fd: int) -> str:
+    # Python's own choice for its standard streams.
+    return "backslashreplace" if fd == STDERR_FD else "strict"
+
+
+def _write(fd: int, text: str) -> None:
+    if not text:
+        return
+    route = _terminal_route
+    if route is not None and fd in route[1]:
+        route[0].write_sync(text)
+        return
+    sender = _sender
+    if sender is not None:
+        try:
+            sender.send((fd, text, None))
             return
-        except BlockingIOError:
-            time.sleep(RAW_STDOUT_RETRY_DELAY_S)
-        except Exception:
+        except BrokenPipeError:
+            pass  # stopped meanwhile (see `stop_output_writer`)
+    # No writer: before or after the run, where there is no runtime to protect.
+    try:
+        write_all_blocking(fd, text.encode("utf-8", _errors(fd)))
+    except Exception:
+        if fd == STDOUT_FD:
             hard_exit(1)
 
 
@@ -106,140 +252,37 @@ def _shares_description(fd: int, other_fd: int) -> bool:
     return (ours.st_dev, ours.st_ino) == (theirs.st_dev, theirs.st_ino)
 
 
-def _readiness_fd(stream: Any) -> int | None:
-    """The fd to drive with `arm_w`, or None to stay on the pool."""
+def _close_writers(writers: dict[int, FdWriter]) -> None:
+    # Newest first: two fds on one description (`2>&1`) restore the flag in the
+    # reverse order they set it.
+    for writer in reversed(list(writers.values())):
+        writer.close()
+    writers.clear()
+
+
+async def _deliver(writers: dict[int, FdWriter], fd: int, text: str) -> None:
     try:
-        fd = stream.fileno()
+        writer = writers.get(fd)
+        if writer is None:
+            readiness = _takeover_state is not None and not _shares_description(fd, 0)
+            writer = writers[fd] = FdWriter(fd, readiness=readiness)
+        await writer.write_all(text.encode("utf-8", _errors(fd)))
     except Exception:
-        return None  # test double or pseudo-stream: no descriptor to drive
-    try:
-        if not is_pollable(fd):
-            return None
-    except OSError:
-        return None
-    if _shares_description(fd, 2) or _shares_description(fd, 0):
-        return None
-    return fd
-
-
-def _drop_fd_writer() -> None:
-    global _fd_writer, _fd_writer_fd
-    if _fd_writer is not None:
-        _fd_writer.close()  # restores the O_NONBLOCK it set
-        _fd_writer = None
-        _fd_writer_fd = None
-
-
-async def _deliver(text: str) -> None:
-    global _fd_writer, _fd_writer_fd
-    stream = _get_raw_stream()
-    fd = _readiness_fd(stream)
-    if fd is None:
-        _drop_fd_writer()
-        await tonio.spawn_blocking(_write_chunk_sync, text)
-        return
-
-    if fd != _fd_writer_fd:
-        _drop_fd_writer()
-        # Anything a pre-takeover print() left in the stream's buffer must land
-        # before the first fd-level write, or output inverts.
-        await tonio.spawn_blocking(stream.flush)
-        _fd_writer = FdWriter(fd)
-        _fd_writer_fd = fd
-
-    try:
-        data = text.encode(getattr(stream, "encoding", None) or "utf-8", getattr(stream, "errors", None) or "strict")
-        await _fd_writer.write_all(data)
-    except Exception:
-        hard_exit(1)
-
-
-async def _writer_loop() -> None:
-    global _pending_count
-    while True:
-        text = await _receiver.receive()
-        await _deliver(text)
-        drained: list[tonio.Event] = []
-        with _pending_lock:
-            _pending_count -= 1
-            if _pending_count == 0:
-                drained = _drain_waiters[:]
-                _drain_waiters.clear()
-        # Decide under the lock, wake outside it.
-        for waiter in drained:
-            waiter.set()
-
-
-def _ensure_writer_task() -> bool:
-    """Start the writer task once. False if there is no runtime to start it on."""
-    global _writer_started
-    if _writer_started:
-        return True
-    try:
-        tonio.spawn.without_tracking(_writer_loop())
-    except RuntimeNotInitializedError:
-        return False
-    _writer_started = True
-    return True
-
-
-def take_over_stdout() -> None:
-    global _takeover_state
-    if _takeover_state is not None:
-        return
-
-    _takeover_state = {
-        "raw_stdout": sys.stdout,
-        "original_stdout": sys.stdout,
-    }
-    sys.stdout = _StderrRedirect()  # type: ignore[assignment]
-
-
-def restore_stdout() -> None:
-    global _takeover_state
-    if _takeover_state is None:
-        return
-
-    sys.stdout = _takeover_state["original_stdout"]
-    _takeover_state = None
-
-
-def is_stdout_taken_over() -> bool:
-    return _takeover_state is not None
-
-
-def write_raw_stdout(text: str) -> None:
-    global _pending_count
-    if len(text) == 0:
-        return
-    if not _ensure_writer_task():
-        # No runtime, so no worker to protect — the boundary condition that
-        # exempts import-time code. Write through synchronously.
-        _write_chunk_sync(text)
-        return
-    with _pending_lock:
-        _pending_count += 1
-    _sender.send(text)
-
-
-async def wait_for_raw_stdout_backpressure() -> None:
-    waiter = tonio.Event()
-    with _pending_lock:
-        if _pending_count == 0:
-            return
-        _drain_waiters.append(waiter)
-    # A cancelled wait leaves its event registered; the writer sets it once more
-    # and drops it, which costs nothing.
-    await waiter.wait()
-
-
-async def flush_raw_stdout() -> None:
-    await wait_for_raw_stdout_backpressure()
-
-    def _flush() -> None:
-        try:
-            _get_raw_stream().flush()
-        except Exception:
+        if fd == STDOUT_FD:
             hard_exit(1)
 
-    await tonio.spawn_blocking(_flush)
+
+async def _writer_loop(receiver: Any) -> None:
+    writers: dict[int, FdWriter] = {}
+    try:
+        while True:
+            try:
+                fd, text, done = await receiver.receive()
+            except BrokenPipeError:
+                return  # closed by `stop_output_writer`, once drained
+            if text:
+                await _deliver(writers, fd, text)
+            if done is not None:
+                done.set()  # a `drain_output` ticket: everything before it is out
+    finally:
+        _close_writers(writers)

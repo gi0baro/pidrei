@@ -32,9 +32,9 @@ OPENAI_IDS = [model.id for model in MODELS["openai"]]
 def registry_env(tmp_path, request):
     request.addfinalizer(clear_api_key_cache)
     models_json_path = str(tmp_path / "models.json")
-    # `from_storage`, not `create`: the fixture is sync and cannot await, and
-    # tmp_path is fresh so there is no auth.json to load — same empty state.
-    auth_storage = AuthStorage.from_storage(FileAuthStorageBackend(str(tmp_path / "auth.json")))
+    # Not awaited: the fixture is sync, and tmp_path is fresh so there is no
+    # auth.json to load — same empty state.
+    auth_storage = AuthStorage(backend=FileAuthStorageBackend(str(tmp_path / "auth.json")))
     return tmp_path, models_json_path, auth_storage
 
 

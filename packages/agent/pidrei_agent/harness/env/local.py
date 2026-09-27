@@ -141,13 +141,13 @@ def _abort_result(cancel: CancelToken | None, path: str | None = None) -> Err[Fi
     return None
 
 
-def _path_exists(path: str) -> bool:
+def _path_exists_blocking(path: str) -> bool:
     return os.access(path, os.F_OK)
 
 
-def _find_bash_on_path() -> str | None:
+def _find_bash_on_path_blocking() -> str | None:
     found = shutil.which("bash")
-    if found and _path_exists(found):
+    if found and _path_exists_blocking(found):
         return found
     return None
 
@@ -160,12 +160,12 @@ class ShellConfig:
 
 async def _get_shell_config(custom_shell_path: str | None) -> Result[ShellConfig, ExecutionError]:
     if custom_shell_path:
-        if await tonio.spawn_blocking(_path_exists, custom_shell_path):
+        if await tonio.spawn_blocking(_path_exists_blocking, custom_shell_path):
             return ok(ShellConfig(custom_shell_path, ["-c"]))
         return err(ExecutionError("shell_unavailable", f"Custom shell path not found: {custom_shell_path}"))
-    if await tonio.spawn_blocking(_path_exists, "/bin/bash"):
+    if await tonio.spawn_blocking(_path_exists_blocking, "/bin/bash"):
         return ok(ShellConfig("/bin/bash", ["-c"]))
-    bash_on_path = await tonio.spawn_blocking(_find_bash_on_path)
+    bash_on_path = await tonio.spawn_blocking(_find_bash_on_path_blocking)
     if bash_on_path:
         return ok(ShellConfig(bash_on_path, ["-c"]))
     return ok(ShellConfig("sh", ["-c"]))
@@ -357,14 +357,14 @@ class LocalExecutionEnv:
         if (aborted := _abort_result(cancel, resolved)) is not None:
             return aborted
 
-        def read() -> str:
+        def read_blocking() -> str:
             # newline="" disables universal-newline translation: Node's
             # readFile preserves \r\n and the edit tool depends on it.
             with open(resolved, encoding="utf-8", errors="replace", newline="") as file:
                 return file.read()
 
         try:
-            return ok(await tonio.spawn_blocking(read))
+            return ok(await tonio.spawn_blocking(read_blocking))
         except Exception as error:
             return err(_to_file_error(error, resolved))
 
@@ -377,7 +377,7 @@ class LocalExecutionEnv:
         if max_lines is not None and max_lines <= 0:
             return ok([])
 
-        def read() -> Result[list[str], FileError]:
+        def read_blocking() -> Result[list[str], FileError]:
             lines: list[str] = []
             with open(resolved, encoding="utf-8", errors="replace") as file:
                 for line in file:
@@ -391,7 +391,7 @@ class LocalExecutionEnv:
             return ok(lines)
 
         try:
-            return await tonio.spawn_blocking(read)
+            return await tonio.spawn_blocking(read_blocking)
         except Exception as error:
             return err(_to_file_error(error, resolved))
 
@@ -400,12 +400,12 @@ class LocalExecutionEnv:
         if (aborted := _abort_result(cancel, resolved)) is not None:
             return aborted
 
-        def read() -> bytes:
+        def read_blocking() -> bytes:
             with open(resolved, "rb") as file:
                 return file.read()
 
         try:
-            return ok(await tonio.spawn_blocking(read))
+            return ok(await tonio.spawn_blocking(read_blocking))
         except Exception as error:
             return err(_to_file_error(error, resolved))
 
@@ -420,12 +420,12 @@ class LocalExecutionEnv:
             if (after_mkdir_abort := _abort_result(cancel, resolved)) is not None:
                 return after_mkdir_abort
 
-            def write() -> None:
+            def write_blocking() -> None:
                 data = content.encode("utf-8") if isinstance(content, str) else content
                 with open(resolved, "wb") as file:
                     file.write(data)
 
-            await tonio.spawn_blocking(write)
+            await tonio.spawn_blocking(write_blocking)
             return ok(None)
         except Exception as error:
             return err(_to_file_error(error, resolved))
@@ -441,12 +441,12 @@ class LocalExecutionEnv:
             if (after_mkdir_abort := _abort_result(cancel, resolved)) is not None:
                 return after_mkdir_abort
 
-            def append() -> None:
+            def append_blocking() -> None:
                 data = content.encode("utf-8") if isinstance(content, str) else content
                 with open(resolved, "ab") as file:
                     file.write(data)
 
-            await tonio.spawn_blocking(append)
+            await tonio.spawn_blocking(append_blocking)
             after_append_abort = _abort_result(cancel, resolved)
             return after_append_abort if after_append_abort is not None else ok(None)
         except Exception as error:
@@ -481,7 +481,7 @@ class LocalExecutionEnv:
 
         # One pool hop lists and stats the whole directory: a hop per entry
         # made a 500-entry listing cost 500 round-trips.
-        def list_and_stat() -> list[FileInfo]:
+        def list_and_stat_blocking() -> list[FileInfo]:
             infos: list[FileInfo] = []
             for entry in os.listdir(resolved):
                 entry_path = os.path.normpath(os.path.join(resolved, entry))
@@ -491,7 +491,7 @@ class LocalExecutionEnv:
             return infos
 
         try:
-            return ok(await tonio.spawn_blocking(list_and_stat))
+            return ok(await tonio.spawn_blocking(list_and_stat_blocking))
         except Exception as error:
             return err(_to_file_error(error, resolved))
 
@@ -535,7 +535,7 @@ class LocalExecutionEnv:
         if (aborted := _abort_result(cancel, resolved)) is not None:
             return aborted
 
-        def do_remove() -> None:
+        def do_remove_blocking() -> None:
             try:
                 mode = os.lstat(resolved).st_mode
             except FileNotFoundError:
@@ -551,7 +551,7 @@ class LocalExecutionEnv:
                 os.remove(resolved)
 
         try:
-            await tonio.spawn_blocking(do_remove)
+            await tonio.spawn_blocking(do_remove_blocking)
             return ok(None)
         except Exception as error:
             return err(_to_file_error(error, resolved))
@@ -572,12 +572,12 @@ class LocalExecutionEnv:
             return directory
         file_path = os.path.join(directory.value, f"{prefix}{uuid.uuid4()}{suffix}")
 
-        def create() -> None:
+        def create_blocking() -> None:
             with open(file_path, "wb"):
                 pass
 
         try:
-            await tonio.spawn_blocking(create)
+            await tonio.spawn_blocking(create_blocking)
             return ok(file_path)
         except Exception as error:
             return err(_to_file_error(error, file_path))
@@ -599,7 +599,7 @@ class LocalExecutionEnv:
         shell_config = await _get_shell_config(self._shell_path)
         if not shell_config.ok:
             return shell_config
-        if not await tonio.spawn_blocking(_path_exists, cwd):
+        if not await tonio.spawn_blocking(_path_exists_blocking, cwd):
             return err(
                 ExecutionError(
                     "spawn_error",

@@ -36,8 +36,8 @@ async def test_detects_missing_session_cwd_from_persisted_sessions(tmp_path):
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
 
-    session_manager = await SessionManager.open(session_file)
-    issue = get_missing_session_cwd_issue(session_manager, fallback_cwd)
+    session_manager = await SessionManager(session_file=session_file)
+    issue = await get_missing_session_cwd_issue(session_manager, fallback_cwd)
     assert issue == SessionCwdIssue(
         session_file=session_manager.get_session_file(),
         session_cwd=missing_cwd,
@@ -55,9 +55,9 @@ async def test_supports_overriding_effective_cwd_when_opening_session(tmp_path):
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
 
-    session_manager = await SessionManager.open(session_file, None, fallback_cwd)
+    session_manager = await SessionManager(fallback_cwd, session_file=session_file)
     assert session_manager.get_cwd() == fallback_cwd
-    assert get_missing_session_cwd_issue(session_manager, fallback_cwd) is None
+    assert await get_missing_session_cwd_issue(session_manager, fallback_cwd) is None
 
 
 @pytest.mark.tonio
@@ -70,7 +70,7 @@ async def test_throws_controlled_error_before_runtime_creation_when_stored_cwd_m
     session_file = os.path.join(session_dir, "session.jsonl")
     _write_session_file(session_file, missing_cwd)
 
-    session_manager = await SessionManager.open(session_file)
+    session_manager = await SessionManager(session_file=session_file)
     create_runtime_called = False
 
     async def create_runtime(**_kwargs):

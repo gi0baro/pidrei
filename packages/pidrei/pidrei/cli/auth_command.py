@@ -3,6 +3,7 @@
 import re
 
 from ..config import APP_NAME
+from ..core.output_guard import write_stdout
 
 
 type AuthCommandKind = str  # "check" | "api_key" | "bearer_token"
@@ -57,12 +58,13 @@ def is_auth_command_help(args: list[str]) -> bool:
 
 
 def print_auth_command_help() -> None:
-    print(f"""Usage:
+    write_stdout(f"""Usage:
   {APP_NAME} auth print-api-key [--provider <provider>] [--model <model>]
   {APP_NAME} auth print-bearer-token [--provider <provider>] [--model <model>] [--min-expiry <duration>]
   {APP_NAME} auth check [--provider <provider>] [--model <model>] [--json] [--credentials] [--no-refresh]
 
-Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.""")
+Auth commands require at least one of --provider or --model. Checks refresh expired OAuth credentials by default; --no-refresh prevents this. --credentials emits the credential, or includes it in JSON output.
+""")
 
 
 _MIN_EXPIRY_RE = re.compile(r"^(\d+)(ms|s|m|h)$", re.IGNORECASE)

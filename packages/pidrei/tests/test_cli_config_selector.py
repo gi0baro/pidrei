@@ -20,13 +20,13 @@ from virtual_terminal import VirtualTerminal
 
 
 class _GatedTerminal(VirtualTerminal):
-    """Its stop parks until `release`."""
+    """Its stop parks until `unblock`."""
 
     def __init__(self) -> None:
         super().__init__(40, 8)
         self.started = tonio.Event()
         self.stopping = tonio.Event()
-        self.release = tonio.Event()
+        self.unblock = tonio.Event()
 
     async def start(self, on_input, on_resize, on_reply=None, on_error=None) -> None:
         await super().start(on_input, on_resize, on_reply, on_error)
@@ -34,7 +34,7 @@ class _GatedTerminal(VirtualTerminal):
 
     async def stop(self) -> None:
         self.stopping.set()
-        await self.release.wait(5)
+        await self.unblock.wait(5)
         await super().stop()
 
 
@@ -56,7 +56,7 @@ class _ResourceList:
 class _ConfigSelector:
     """Stands in for `ConfigSelectorComponent`: "q" closes the selector."""
 
-    def __init__(self, _paths, _settings, _cwd, _agent_dir, finish, _exit_now, *_rest) -> None:
+    def __init__(self, _paths, _settings, _cwd, _agent_dir, finish, _exit_now, *_rest, **_kwargs) -> None:
         self._resource_list = _ResourceList(finish)
 
     def render(self, width):
@@ -103,6 +103,6 @@ async def test_select_config_returns_only_once_the_terminal_is_stopped(monkeypat
         # Bounded: `select_config` must still be waiting on the stop.
         await returned.wait(0.1)
         assert not returned.is_set(), "select_config returned before the terminal was restored"
-        terminal.release.set()
+        terminal.unblock.set()
         await returned.wait(5)
         assert returned.is_set()

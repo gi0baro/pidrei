@@ -4,12 +4,13 @@ import contextlib
 import os
 
 import tonio.colored as tonio
+from tonio.colored import fs
 
 from pidrei_tui import (
     TUI,
     ProcessTerminal,
     TuiMainScreen,
-    get_capabilities,
+    prime_capabilities,
     set_capability_overrides,
     set_keybindings,
 )
@@ -17,13 +18,14 @@ from pidrei_tui import (
 from ..config import APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, PACKAGE_NAME, get_agent_dir, get_settings_path
 from ..core.experimental import are_experimental_features_enabled
 from ..core.keybindings import KeybindingsManager
+from ..core.output_guard import attach_terminal, detach_terminal
 from ..core.package_manager import DefaultPackageManager
 from ..core.settings_manager import SettingsManager
 from ..modes.interactive.components.extension_input import ExtensionInputComponent
 from ..modes.interactive.components.extension_selector import ExtensionSelectorComponent
 from ..modes.interactive.components.first_time_setup import FirstTimeSetupComponent
 from ..modes.interactive.theme import (
-    _load_theme_from_path_sync,
+    _load_theme_from_path_blocking,
     detect_terminal_background_from_env,
     detect_terminal_theme_for_auto,
     init_theme,
@@ -33,6 +35,7 @@ from ..modes.interactive.theme import (
     set_registered_themes,
     set_theme,
 )
+from ..utils.process import probe_tmux_hyperlinks
 
 
 _OFFICIAL_PACKAGE_NAME = "pidrei"
@@ -48,7 +51,7 @@ def _is_official_distribution(package_name: str, app_name: str, config_dir_name:
     )
 
 
-def _load_themes(resources: list) -> list:
+def _load_themes_blocking(resources: list) -> list:
     themes: list = []
     seen: set = set()
     for resource in resources:
@@ -57,7 +60,7 @@ def _load_themes(resources: list) -> list:
         # Startup prompts should not fail because a theme is broken. The
         # normal resource loader reports theme diagnostics later in startup.
         with contextlib.suppress(Exception):
-            loaded_theme = _load_theme_from_path_sync(resource.path)
+            loaded_theme = _load_theme_from_path_blocking(resource.path)
             if loaded_theme.name:
                 if loaded_theme.name in seen:
                     continue
@@ -74,23 +77,33 @@ async def _load_startup_themes(settings_manager: SettingsManager) -> list:
         settings_manager=global_settings_manager,
     )
     resolved_paths = await package_manager.resolve()
-    return await tonio.spawn_blocking(_load_themes, resolved_paths.themes)
+    return await tonio.spawn_blocking(_load_themes_blocking, resolved_paths.themes)
 
 
 async def create_startup_tui(settings_manager: SettingsManager) -> TUI:
     set_capability_overrides(settings_manager.get_terminal_capability_overrides())
     # Warm the caches that sync render/callback paths read from, so neither
-    # the builtin-theme files nor the tmux capability probe is ever touched
-    # from a runtime worker later.
+    # the builtin-theme files nor the tmux capability probe is ever needed
+    # from them later.
     await prime_theme_cache()
-    await tonio.spawn_blocking(get_capabilities)
+    await prime_capabilities(probe_tmux_hyperlinks)
     set_registered_themes(await _load_startup_themes(settings_manager))
     terminal_theme = detect_terminal_background_from_env()["theme"]
     await init_theme(resolve_theme_setting(settings_manager.get_theme_setting(), terminal_theme) or terminal_theme)
-    set_keybindings(await KeybindingsManager.create())
-    ui: TUI = TuiMainScreen(ProcessTerminal(), settings_manager.get_show_hardware_cursor(), get_agent_dir())
+    set_keybindings(await KeybindingsManager())
+    terminal = ProcessTerminal()
+    ui: TUI = TuiMainScreen(terminal, settings_manager.get_show_hardware_cursor(), get_agent_dir())
     ui.set_clear_on_shrink(settings_manager.get_clear_on_shrink())
+    # The terminal is the tty's one writer until `close_startup_tui`.
+    await attach_terminal(terminal)
     return ui
+
+
+async def close_startup_tui(ui: TUI) -> None:
+    """Once the dialog's UI has stopped: end the terminal, putting out what it
+    still holds; stdout/stderr writes go straight to the fds again."""
+    detach_terminal()
+    await ui.close()
 
 
 async def start_startup_tui(ui: TUI, settings_manager: SettingsManager) -> None:
@@ -115,7 +128,7 @@ async def _clear_startup_tui(ui: TUI) -> None:
     await tonio.time.sleep(0.025)
 
 
-def should_run_first_time_setup(settings_path: str | None = None) -> bool:
+async def should_run_first_time_setup(settings_path: str | None = None) -> bool:
     """First-time setup runs when all of these hold:
 
     - this is the official pidrei distribution (not a fork/rebrand)
@@ -131,7 +144,7 @@ def should_run_first_time_setup(settings_path: str | None = None) -> bool:
         return False
     if os.environ.get(ENV_AGENT_DIR):
         return False
-    return not os.path.exists(settings_path)
+    return not await fs.Path(settings_path).exists()
 
 
 async def show_startup_selector(settings_manager: SettingsManager, title: str, options: list):
@@ -149,7 +162,7 @@ async def show_startup_selector(settings_manager: SettingsManager, title: str, o
         outcome["value"] = result
         await _clear_startup_tui(ui)
         await ui.stop()
-        ui.close()
+        await close_startup_tui(ui)
         done.set()
 
     def on_select(option: str) -> None:
@@ -189,7 +202,7 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
             await settings_manager.flush()
         await _clear_startup_tui(ui)
         await ui.stop()
-        ui.close()
+        await close_startup_tui(ui)
         done.set()
 
     await ui.start()
@@ -233,7 +246,7 @@ async def show_startup_input(settings_manager: SettingsManager, title: str, plac
         input_component.dispose()
         await _clear_startup_tui(ui)
         await ui.stop()
-        ui.close()
+        await close_startup_tui(ui)
         done.set()
 
     input_component = ExtensionInputComponent(

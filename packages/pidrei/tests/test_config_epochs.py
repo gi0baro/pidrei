@@ -60,7 +60,7 @@ async def test_auth_read_state_publishes_one_immutable_snapshot_per_reload(tmp_p
     reader can never combine the data of one reload with the revision of
     another, and a pinned snapshot's data never grows later entries."""
     path = str(tmp_path / "auth.json")
-    store = await AuthStorage.create(path)
+    store = await AuthStorage(path)
 
     async def put_first(_current):
         return ApiKeyCredential(key="key-1")
@@ -94,7 +94,7 @@ async def test_a_pinned_composition_epoch_survives_provider_registration():
     """Old shape: `_extension_providers` and `_composition_errors` were
     mutated in place, so `get_error`'s iteration could race a recompose on
     another thread and a pinned view changed mid-operation."""
-    runtime = await ModelRuntime.create(credentials=AuthStorage.in_memory(), models_path=None)
+    runtime = await ModelRuntime(credentials=AuthStorage.in_memory(), models_path=None)
     pinned = runtime._composition
     runtime.register_provider(
         "epoch-provider",

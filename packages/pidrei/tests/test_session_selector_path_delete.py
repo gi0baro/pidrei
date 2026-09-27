@@ -9,7 +9,7 @@ import tonio.colored as tonio
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionInfo
 from pidrei.modes.interactive.components import SessionSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -73,17 +73,17 @@ CTRL_BACKSPACE = "\x1b[127;5u"
 
 
 @pytest.fixture(autouse=True)
-def _setup():
+async def _setup():
     # session selector uses the global theme instance; keybindings are a
     # global singleton
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 def _make_selector(current_loader, all_loader, current_session_file_path=None, completions=None):
     """pi's `await flushPromises()` after an async step becomes `await
     state_updates.until(<the state that step produces>)`: see `StateUpdates`."""
-    keybindings = KeybindingsManager()
+    keybindings = KeybindingsManager.in_memory()
     state_updates = StateUpdates()
     selector = SessionSelectorComponent(
         current_loader,

@@ -117,17 +117,15 @@ async def create_agent_session_services(options: CreateAgentSessionServicesOptio
     agent_dir = resolve_path(options.agent_dir) if options.agent_dir is not None else get_agent_dir()
     model_runtime = options.model_runtime
     if model_runtime is None:
-        model_runtime = await ModelRuntime.create(
+        model_runtime = await ModelRuntime(
             auth_path=os.path.join(agent_dir, "auth.json"),
             models_path=os.path.join(agent_dir, "models.json"),
             cancel=options.model_runtime_cancel,
         )
     settings_manager = (
-        options.settings_manager
-        if options.settings_manager is not None
-        else await SettingsManager.create(cwd, agent_dir)
+        options.settings_manager if options.settings_manager is not None else await SettingsManager(cwd, agent_dir)
     )
-    resource_loader = DefaultResourceLoader(
+    resource_loader = await DefaultResourceLoader(
         **(options.resource_loader_options or {}),
         cwd=cwd,
         agent_dir=agent_dir,

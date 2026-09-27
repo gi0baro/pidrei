@@ -217,3 +217,25 @@ async def run_command(
     if check and returncode != 0:
         raise subprocess.CalledProcessError(returncode, command, output=out, stderr=err)
     return subprocess.CompletedProcess(command, returncode, out, err)
+
+
+async def probe_tmux_hyperlinks() -> bool:
+    """Whether the attached tmux client forwards OSC 8 hyperlinks: the probe
+    `pidrei_tui.prime_capabilities` awaits (pi-tui's `probeTmuxHyperlinks`).
+
+    tmux only re-emits them when its `client_termfeatures` lists
+    `hyperlinks`, and strips them otherwise. On any error falls back False.
+    """
+    try:
+        result = await run_command(
+            ["tmux", "display-message", "-p", "#{client_termfeatures}"],  # PATH lookup like pi's execSync
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=0.25,
+            check=True,
+        )
+    except Exception:
+        return False
+    features = result.stdout.decode("utf-8", "replace").split(",")
+    return "hyperlinks" in [feature.strip() for feature in features]

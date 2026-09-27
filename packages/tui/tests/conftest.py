@@ -2,7 +2,15 @@ import warnings
 
 import pytest
 
-from pidrei_tui import terminal_image
+from pidrei_tui import terminal_image, utils
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _jieba_loaded():
+    """Word segmentation loads jieba in the background on the first Han run;
+    tests see it loaded from the start, so a Han expectation never depends on
+    whether an earlier test happened to start the load."""
+    utils._initialize_jieba()
 
 
 @pytest.fixture(autouse=True)

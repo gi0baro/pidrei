@@ -28,12 +28,7 @@ from pidrei_tui.tui import call_sync
 from ...core.agent_session import ExtensionBindings, PromptOptions
 from ...core.bash_executor import BashResult
 from ...core.json_wire import to_wire
-from ...core.output_guard import (
-    flush_raw_stdout,
-    take_over_stdout,
-    wait_for_raw_stdout_backpressure,
-    write_raw_stdout,
-)
+from ...core.output_guard import drain_output, take_over_stdout, write_raw_stdout
 from ...core.session_manager import SessionManager
 from ...utils.fd_io import FdReader, hard_exit
 from ...utils.shell import kill_tracked_detached_children
@@ -420,7 +415,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 tonio.spawn.without_tracking(check_shutdown_requested())
 
         async def on_agent_event(*_args) -> None:
-            await wait_for_raw_stdout_backpressure()
+            await drain_output()
 
         unsubscribe = session.subscribe(on_event)
         unsubscribe_backpressure = session.agent.subscribe(on_agent_event)
@@ -785,7 +780,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             unsubscribe_backpressure()
         await runtime_host.dispose()
         if signal_name != "SIGTERM":
-            await flush_raw_stdout()
+            await drain_output()
         hard_exit(exit_code)
 
     async def check_shutdown_requested() -> None:
@@ -798,7 +793,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             parsed = json.loads(line)
         except Exception as parse_error:
             output(error(None, "parse", f"Failed to parse command: {parse_error}"))
-            await wait_for_raw_stdout_backpressure()
+            await drain_output()
             return
 
         # Handle extension UI responses
@@ -813,11 +808,11 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
             response = await handle_command(command)
             if response is not None:
                 output(response)
-                await wait_for_raw_stdout_backpressure()
+                await drain_output()
             await check_shutdown_requested()
         except Exception as command_error:
             output(error(command.get("id"), command.get("type"), str(command_error)))
-            await wait_for_raw_stdout_backpressure()
+            await drain_output()
 
     # Lines are handled fire-and-forget so a long prompt does not block
     # subsequent commands (pi: void handleInputLine(line)).

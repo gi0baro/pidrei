@@ -15,7 +15,7 @@ from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, Input, Spacer, Text, get_keybindings, truncate_to_width, visible_width
 from pidrei_tui._timers import Timeout
 
-from ....utils.paths import canonicalize_path as _canonicalize_path
+from ....utils.paths import canonicalize_path_blocking as _canonicalize_path_blocking
 from ....utils.process import run_command
 from ..theme import theme
 from .dynamic_border import DynamicBorder
@@ -55,12 +55,6 @@ def format_session_date(date: datetime) -> str:
     if diff_days < 365:
         return f"{diff_days // 30}mo"
     return f"{diff_days // 365}y"
-
-
-def _canonicalize(path: str | None) -> str | None:
-    if not path:
-        return path
-    return _canonicalize_path(path)
 
 
 class SessionSelectorHeader:
@@ -207,8 +201,9 @@ class SessionSelectorHeader:
         return [f"{left}{' ' * spacing}{right_text}", hint_line1, hint_line2]
 
 
-def build_canonical_path_map(sessions: list) -> dict[str, str]:
-    """Canonical form of every path a session tree needs, resolved once.
+def build_canonical_path_map_blocking(sessions: list, *paths: str | None) -> dict[str, str]:
+    """Canonical form of every path a session tree needs (plus `paths`),
+    resolved once.
 
     Blocking (one `realpath` per entry), so callers offload it. It is kept
     out of `build_session_tree` because that runs on every keystroke in the
@@ -216,30 +211,26 @@ def build_canonical_path_map(sessions: list) -> dict[str, str]:
     on a runtime worker.
     """
     canonical: dict[str, str] = {}
-    for session in sessions:
-        for path in (session.path, session.parent_session_path):
-            if path and path not in canonical:
-                canonical[path] = _canonicalize_path(path)
+    for path in (*(p for session in sessions for p in (session.path, session.parent_session_path)), *paths):
+        if path and path not in canonical:
+            canonical[path] = _canonicalize_path_blocking(path)
     return canonical
 
 
-def build_session_tree(sessions: list, canonical_by_path: dict[str, str] | None = None) -> list:
+def build_session_tree(sessions: list, canonical_by_path: dict[str, str]) -> list:
     """Build a tree from sessions based on parent_session_path.
 
     Returns root ``{"session", "children", "latestActivity"}`` nodes sorted
     by latest subtree activity (descending).
 
-    `canonical_by_path` comes from `build_canonical_path_map`. Without it the
-    paths are resolved inline, which touches the filesystem — only acceptable
-    off the runtime.
+    `canonical_by_path` comes from `build_canonical_path_map_blocking` over
+    the same sessions; a path it lacks is taken as-is (no filesystem access).
     """
-    lookup = canonical_by_path if canonical_by_path is not None else {}
 
     def canonical(path: str | None) -> str | None:
         if not path:
             return path
-        cached = lookup.get(path)
-        return cached if cached is not None else _canonicalize(path)
+        return canonical_by_path.get(path, path)
 
     by_path: dict = {}
 
@@ -338,7 +329,10 @@ class SessionList:
         self._keybindings = keybindings
         self._show_path = False
         self._confirming_delete_path: str | None = None
-        self._current_session_canonical_path = _canonicalize(current_session_file_path)
+        # Resolved with the session paths in `set_sessions`, off the runtime;
+        # there is no row to compare it with until then.
+        self._current_session_file_path = current_session_file_path
+        self._current_session_canonical_path: str | None = None
         self._max_visible = 10  # Max sessions visible (one line each)
         self._focused = False
 
@@ -403,8 +397,9 @@ class SessionList:
 
     async def _apply_sessions(self, seq: int, sessions: list, show_cwd: bool) -> None:
         # Resolve every session path once here, off the runtime, so the
-        # per-keystroke filter below never touches the filesystem.
-        canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map, sessions)
+        # per-keystroke filter below and the rows never touch the filesystem.
+        current_path = self._current_session_file_path
+        canonical_by_path = await tonio.spawn_blocking(build_canonical_path_map_blocking, sessions, current_path)
 
         # Input handling and rendering read this state under the UI state
         # lock; the sequence check there is what makes the latest call win.
@@ -415,6 +410,7 @@ class SessionList:
             self._all_sessions = sessions
             self._show_cwd = show_cwd
             self._canonical_by_path = canonical_by_path
+            self._current_session_canonical_path = canonical_by_path.get(current_path) if current_path else None
             self._filter_sessions(self._search_input.get_value())
             if not self._selection_touched:
                 self._selected_index = 0
@@ -466,7 +462,7 @@ class SessionList:
     def _is_current_session_path(self, path: str) -> bool:
         if not self._current_session_canonical_path:
             return False
-        return (_canonicalize(path) or path) == self._current_session_canonical_path
+        return self._canonical_by_path.get(path, path) == self._current_session_canonical_path
 
     def invalidate(self) -> None:
         pass

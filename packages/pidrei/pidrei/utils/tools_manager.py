@@ -30,7 +30,7 @@ _SYSTEM_BINARY_NAMES = {
 
 # Sync by design: `ensure_tool` hands this to `spawn_blocking`, so the PATH
 # walk never runs on a runtime worker.
-def get_tool_path(tool: str) -> str | None:
+def get_tool_path_blocking(tool: str) -> str | None:
     names = _SYSTEM_BINARY_NAMES.get(tool)
     if names is None:
         return None
@@ -67,4 +67,4 @@ def ensure_tool(tool: str, on_status=None) -> Awaitable[str | None]:
     download machinery unported there is nothing to report, so it is accepted
     for call-site parity and never invoked.
     """
-    return tonio.spawn_blocking(get_tool_path, tool)
+    return tonio.spawn_blocking(get_tool_path_blocking, tool)

@@ -59,7 +59,7 @@ class TestReload:
     @pytest.mark.tonio
     async def test_initializes_with_empty_results_before_reload(self, dirs):
         _tmp, agent_dir, cwd, _home = dirs
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
 
         assert loader.get_extensions().extensions == []
         assert loader.get_skills().skills == []
@@ -70,7 +70,7 @@ class TestReload:
         _tmp, agent_dir, cwd, home = dirs
         write(agent_dir / "skills" / "test-skill.md", skill_md("test-skill", "A test skill"))
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -83,7 +83,7 @@ class TestReload:
         write(skill_dir / "SKILL.md", skill_md("browser-tools", "Browser tools"))
         write(skill_dir / "EFFICIENCY.md", "No frontmatter here")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -96,7 +96,7 @@ class TestReload:
         _tmp, agent_dir, cwd, home = dirs
         write(agent_dir / "prompts" / "test-prompt.md", "---\ndescription: A test prompt\n---\nPrompt content.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -110,7 +110,7 @@ class TestReload:
         write(invalid_prompt_path, "---\ndescription: Broken: unquoted colon\n---\nDo something.\n")
         write(agent_dir / "prompts" / "valid.md", "Valid prompt content.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -135,7 +135,7 @@ class TestReload:
         write(user_skill_path, skill_md("collision-skill", "user"))
         write(project_skill_path, skill_md("collision-skill", "project"))
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -150,7 +150,9 @@ class TestReload:
         _tmp, agent_dir, cwd, home = dirs
         missing = str(cwd / "missing-extension.py")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), additional_extension_paths=[missing])
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd), agent_dir=str(agent_dir), additional_extension_paths=[missing]
+        )
         with fake_home(home):
             await loader.reload()
 
@@ -168,7 +170,7 @@ class TestReload:
         write(agent_dir / "prompts" / "skip.md", "Skip prompt")
         write(agent_dir / "skills" / "keep-skill" / "SKILL.md", skill_md("keep-skill", "Keep me"))
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
         with fake_home(home):
             await loader.reload()
 
@@ -181,7 +183,7 @@ class TestReload:
         _tmp, agent_dir, cwd, home = dirs
         write(cwd / "AGENTS.md", "# Project Guidelines\n\nBe helpful.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -198,7 +200,7 @@ class TestReload:
         write(nested_cwd / "AGENTS.md", "service instructions")
         write(nested_cwd / "AGENTS.override.md", "service override")
 
-        loader = DefaultResourceLoader(cwd=str(nested_cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(nested_cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -219,7 +221,7 @@ class TestReload:
         original_warn = resource_loader._warn
         resource_loader._warn = warnings.append
         try:
-            loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+            loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
             with fake_home(home):
                 await loader.reload()
         finally:
@@ -239,7 +241,7 @@ class TestReload:
         write(cwd / "AGENTS.md", "# Project Guidelines\n\nBe helpful.")
         write(cwd / "CLAUDE.md", "# Claude Guidelines\n\nBe helpful.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), no_context_files=True)
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), no_context_files=True)
         with fake_home(home):
             await loader.reload()
 
@@ -250,7 +252,7 @@ class TestReload:
         _tmp, agent_dir, cwd, home = dirs
         write(cwd / ".pidrei" / "SYSTEM.md", "You are a helpful assistant.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -265,9 +267,9 @@ class TestReload:
         write(cwd / "AGENTS.md", "Project instructions")
         write(cwd / ".pidrei" / "skills" / "project-skill" / "SKILL.md", skill_md("project-skill", "Project skill"))
         write(cwd / ".pidrei" / "prompts" / "project.md", "Project prompt")
-        settings_manager = await SettingsManager.create(str(cwd), str(agent_dir), project_trusted=False)
+        settings_manager = await SettingsManager(str(cwd), str(agent_dir), project_trusted=False)
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
         with fake_home(home):
             await loader.reload()
 
@@ -286,9 +288,9 @@ class TestReload:
         builtin = json.loads((Path(theme_module.__file__).parent / "dark.json").read_text())
         write(agent_dir / "themes" / "user-theme.json", json.dumps({**builtin, "name": "user-theme"}))
         write(cwd / ".pidrei" / "themes" / "project-theme.json", json.dumps({**builtin, "name": "project-theme"}))
-        settings_manager = await SettingsManager.create(str(cwd), str(agent_dir), project_trusted=False)
+        settings_manager = await SettingsManager(str(cwd), str(agent_dir), project_trusted=False)
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
         with fake_home(home):
             await loader.reload()
 
@@ -301,7 +303,7 @@ class TestReload:
         _tmp, agent_dir, cwd, home = dirs
         write(cwd / ".pidrei" / "APPEND_SYSTEM.md", "Additional instructions.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -313,7 +315,7 @@ class TestReload:
         write(cwd / ".pidrei" / "SYSTEM.md", "Project system prompt.")
         write(cwd / ".pidrei" / "skills" / "project-skill" / "SKILL.md", skill_md("project-skill", "Project skill"))
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
 
         async def trust(extensions_result):
             assert extensions_result.extensions == []
@@ -347,7 +349,7 @@ class TestExtendResources:
         prompt_path = extra_prompt_dir / "extra.md"
         write(prompt_path, "---\ndescription: Extra prompt\n---\nExtra prompt content")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -410,7 +412,7 @@ class TestExtendResources:
         )
 
         settings_manager = SettingsManager.in_memory({"packages": [str(package_root)]})
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), settings_manager=settings_manager)
         with fake_home(home):
             await loader.reload()
 
@@ -447,7 +449,7 @@ class TestExtendResources:
         skill_path = extra_skill_dir / "SKILL.md"
         write(skill_path, skill_md("file-url-skill", "File URL skill"))
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -479,7 +481,7 @@ class TestNoSkillsOption:
         _tmp, agent_dir, cwd, home = dirs
         write(agent_dir / "skills" / "test-skill.md", skill_md("test-skill", "A test skill"))
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), no_skills=True)
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), no_skills=True)
         with fake_home(home):
             await loader.reload()
 
@@ -491,7 +493,7 @@ class TestNoSkillsOption:
         custom_skill_dir = tmp / "custom-skills"
         write(custom_skill_dir / "custom.md", skill_md("custom", "Custom skill"))
 
-        loader = DefaultResourceLoader(
+        loader = await DefaultResourceLoader(
             cwd=str(cwd), agent_dir=str(agent_dir), no_skills=True, additional_skill_paths=[str(custom_skill_dir)]
         )
         with fake_home(home):
@@ -512,7 +514,7 @@ class TestOverrideFunctions:
             source_info=create_synthetic_source_info("/fake/path", source="custom"),
             disable_model_invocation=False,
         )
-        loader = DefaultResourceLoader(
+        loader = await DefaultResourceLoader(
             cwd=str(cwd),
             agent_dir=str(agent_dir),
             skills_override=lambda _base: LoadSkillsResult(skills=[injected_skill], diagnostics=[]),
@@ -527,7 +529,7 @@ class TestOverrideFunctions:
     @pytest.mark.tonio
     async def test_applies_system_prompt_override(self, dirs):
         _tmp, agent_dir, cwd, home = dirs
-        loader = DefaultResourceLoader(
+        loader = await DefaultResourceLoader(
             cwd=str(cwd), agent_dir=str(agent_dir), system_prompt_override=lambda _base: "Custom system prompt"
         )
         with fake_home(home):
@@ -545,7 +547,7 @@ class TestSystemPromptSources:
         system_prompt_path = cwd / ".pidrei" / "SYSTEM.md"
         write(system_prompt_path, "Project system prompt.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -559,7 +561,7 @@ class TestSystemPromptSources:
         system_prompt_path = agent_dir / "SYSTEM.md"
         write(system_prompt_path, "Global system prompt.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -570,7 +572,9 @@ class TestSystemPromptSources:
     @pytest.mark.tonio
     async def test_does_not_expose_literal_system_prompt_text_as_a_source(self, dirs):
         _tmp, agent_dir, cwd, home = dirs
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), system_prompt="Literal system prompt.")
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd), agent_dir=str(agent_dir), system_prompt="Literal system prompt."
+        )
         with fake_home(home):
             await loader.reload()
 
@@ -583,7 +587,9 @@ class TestSystemPromptSources:
         system_prompt_path = tmp / "custom-system.md"
         write(system_prompt_path, "Custom system prompt.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir), system_prompt=str(system_prompt_path))
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd), agent_dir=str(agent_dir), system_prompt=str(system_prompt_path)
+        )
         with fake_home(home):
             await loader.reload()
 
@@ -597,7 +603,7 @@ class TestSystemPromptSources:
         append_system_prompt_path = cwd / ".pidrei" / "APPEND_SYSTEM.md"
         write(append_system_prompt_path, "Project append prompt.")
 
-        loader = DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
+        loader = await DefaultResourceLoader(cwd=str(cwd), agent_dir=str(agent_dir))
         with fake_home(home):
             await loader.reload()
 
@@ -610,7 +616,7 @@ class TestSystemPromptSources:
         append_system_prompt_path = tmp / "custom-append.md"
         write(append_system_prompt_path, "Custom append prompt.")
 
-        loader = DefaultResourceLoader(
+        loader = await DefaultResourceLoader(
             cwd=str(cwd),
             agent_dir=str(agent_dir),
             append_system_prompt=[str(append_system_prompt_path), "Literal append prompt."],
@@ -674,7 +680,7 @@ class TestNestedWorktreeContextDedup:
     @pytest.mark.tonio
     async def test_only_skips_the_same_filename_not_a_differently_named_context_file(self, dirs):
         # The repo tracks CLAUDE.md; the worktree adds an AGENTS.md, which
-        # _load_context_file_from_dir prefers. The main repo's CLAUDE.md is
+        # _load_context_file_from_dir_blocking prefers. The main repo's CLAUDE.md is
         # nobody's duplicate, so dropping it would lose its content entirely.
         tmp, agent_dir, _cwd, _home = dirs
         _outer, main, worktree, worktree_src = self.setup_nested_worktree(tmp)

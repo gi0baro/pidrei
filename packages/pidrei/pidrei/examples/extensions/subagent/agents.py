@@ -48,7 +48,7 @@ def parse_tool_list(value) -> list[str] | None:
     return tools or None
 
 
-def load_agents_from_dir(dir: str, source: str) -> list[AgentConfig]:
+def load_agents_from_dir_blocking(dir: str, source: str) -> list[AgentConfig]:
     agents: list[AgentConfig] = []
 
     if not os.path.exists(dir):
@@ -94,7 +94,7 @@ def load_agents_from_dir(dir: str, source: str) -> list[AgentConfig]:
     return agents
 
 
-def find_nearest_project_agents_dir(cwd: str) -> str | None:
+def find_nearest_project_agents_dir_blocking(cwd: str) -> str | None:
     current_dir = cwd
     while True:
         candidate = os.path.join(current_dir, CONFIG_DIR_NAME, "agents")
@@ -107,13 +107,15 @@ def find_nearest_project_agents_dir(cwd: str) -> str | None:
         current_dir = parent_dir
 
 
-def discover_agents(cwd: str, scope: str) -> AgentDiscoveryResult:
+def discover_agents_blocking(cwd: str, scope: str) -> AgentDiscoveryResult:
     user_dir = os.path.join(get_agent_dir(), "agents")
-    project_agents_dir = find_nearest_project_agents_dir(cwd)
+    project_agents_dir = find_nearest_project_agents_dir_blocking(cwd)
 
-    user_agents = [] if scope == "project" else load_agents_from_dir(user_dir, "user")
+    user_agents = [] if scope == "project" else load_agents_from_dir_blocking(user_dir, "user")
     project_agents = (
-        [] if scope == "user" or project_agents_dir is None else load_agents_from_dir(project_agents_dir, "project")
+        []
+        if scope == "user" or project_agents_dir is None
+        else load_agents_from_dir_blocking(project_agents_dir, "project")
     )
 
     # Project agents override user agents with the same name under "both".

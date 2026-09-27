@@ -38,7 +38,7 @@ from pidrei_ai.types import ModelCostTier
 from .model_runtime_helpers import create_in_memory_model_registry
 
 
-DEFAULT_KEYBINDINGS = KeybindingsManager().get_effective_config()
+DEFAULT_KEYBINDINGS = KeybindingsManager.in_memory().get_effective_config()
 
 PROVIDER_MODEL_CONFIG = {
     "baseUrl": "https://provider.test/v1",
@@ -119,7 +119,7 @@ class _Fixture:
         self.session_manager = SessionManager.in_memory()
         # Constructor: cannot await. The temp root is fresh, so there is no
         # auth.json to load and the loaded state would be empty regardless.
-        self.auth_storage = AuthStorage.from_storage(FileAuthStorageBackend(os.path.join(self.root, "auth.json")))
+        self.auth_storage = AuthStorage(backend=FileAuthStorageBackend(os.path.join(self.root, "auth.json")))
         self.model_registry = None
 
     def write(self, name: str, content: str) -> str:

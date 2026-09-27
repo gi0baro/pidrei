@@ -3,12 +3,12 @@
 import os
 import re
 import shutil
-import sys
 import tempfile
 
 import tonio
 from tonio.colored import fs
 
+from ...core.output_guard import drain_output, write_stdout
 from ...utils.text import strip_bom
 
 
@@ -27,10 +27,9 @@ async def edit_in_external_editor(options: dict) -> dict:
         # directly.
         await fs.Path(file_path).write_text(options["content"], encoding="utf-8")
         editor, *editor_args = options["command"].split(" ")
-        sys.stdout.write(
-            f"Launching external editor: {options['command']}\npidrei will resume when the editor exits.\n"
-        )
-        sys.stdout.flush()
+        write_stdout(f"Launching external editor: {options['command']}\npidrei will resume when the editor exits.\n")
+        # On the terminal before the editor takes it over.
+        await drain_output()
 
         try:
             process = tonio.open_process([editor, *editor_args, file_path])

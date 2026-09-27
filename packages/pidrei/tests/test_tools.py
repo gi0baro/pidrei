@@ -45,7 +45,7 @@ from pidrei.core.tools.ls import create_ls_tool_definition
 from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.core.tools.renderers.bash import _format_shell_call
 from pidrei.core.tools.write import create_write_tool_definition
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -613,8 +613,8 @@ class TestBashTool:
     async def test_handles_process_spawn_errors(self, tmp_path):
         from pidrei.utils.shell import ShellConfig
 
-        original = bash_module.get_shell_config
-        bash_module.get_shell_config = lambda _custom=None: ShellConfig(  # noqa: S604
+        original = bash_module.get_shell_config_blocking
+        bash_module.get_shell_config_blocking = lambda _custom=None: ShellConfig(  # noqa: S604
             shell="/nonexistent-shell-path-xyz123", args=["-c"]
         )
         try:
@@ -622,7 +622,7 @@ class TestBashTool:
             with pytest.raises(Exception, match="No such file|ENOENT"):
                 await bash_with_bad_shell.execute("test-call-12", {"command": "echo test"})
         finally:
-            bash_module.get_shell_config = original
+            bash_module.get_shell_config_blocking = original
 
     @pytest.mark.tonio
     async def test_passes_shell_path_through_to_shell_resolution(self, tmp_path):
@@ -787,7 +787,8 @@ class TestBashTool:
         await aborter
         assert running.is_set()
 
-    def test_shell_tool_config_drives_the_shared_definition(self, tmp_path):
+    @pytest.mark.tonio
+    async def test_shell_tool_config_drives_the_shared_definition(self, tmp_path):
         """pi shares one implementation between `bash` and its Windows-only
         `powershell` tool; powershell is dropped surface (POSIX-only), so the
         seam is exercised with a config of its own instead."""
@@ -800,7 +801,7 @@ class TestBashTool:
             prompt_guidelines=("Prefer shellish.",),
             temp_file_prefix="pidrei-shellish",
         )
-        init_theme_sync("dark")
+        await init_theme("dark")
         definition = create_shell_tool_definition(str(tmp_path), config)
 
         assert definition.name == "shellish"

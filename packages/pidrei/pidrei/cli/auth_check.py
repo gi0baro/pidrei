@@ -57,7 +57,7 @@ async def get_provider_credential(
 
 
 async def create_auth_check_model_runtime(credentials) -> ModelRuntime:
-    return await ModelRuntime.create(
+    return await ModelRuntime(
         credentials=credentials,
         models_store=InMemoryCodingAgentModelsStore(),
         allow_model_network=False,

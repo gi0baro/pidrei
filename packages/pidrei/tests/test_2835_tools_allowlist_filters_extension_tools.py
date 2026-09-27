@@ -53,9 +53,9 @@ def dirs(request):
 
 
 async def create_session(dirs, allowed_tool_names=None):
-    settings_manager = await SettingsManager.create(dirs.root, dirs.agent_dir)
+    settings_manager = await SettingsManager(dirs.root, dirs.agent_dir)
     session_manager = SessionManager.in_memory(dirs.root)
-    resource_loader = DefaultResourceLoader(
+    resource_loader = await DefaultResourceLoader(
         cwd=dirs.root,
         agent_dir=dirs.agent_dir,
         settings_manager=settings_manager,

@@ -21,14 +21,14 @@ def _get_bash_shell_config(shell: str) -> ShellConfig:
     return ShellConfig(shell=shell, args=["-c"])
 
 
-# Sync by design: `BashTool.exec` calls `get_shell_config` through
+# Sync by design: `BashTool.exec` calls `get_shell_config_blocking` through
 # `spawn_blocking`, so the PATH walk never runs on a runtime worker. Any new
 # caller must do the same.
-def _find_executable_on_path(executable: str) -> str | None:
+def _find_executable_on_path_blocking(executable: str) -> str | None:
     return shutil.which(executable)
 
 
-def get_shell_config(custom_shell_path: str | None = None) -> ShellConfig:
+def get_shell_config_blocking(custom_shell_path: str | None = None) -> ShellConfig:
     """Resolve shell configuration: user shellPath, then /bin/bash, then bash
     on PATH, then sh."""
     if custom_shell_path:
@@ -39,7 +39,7 @@ def get_shell_config(custom_shell_path: str | None = None) -> ShellConfig:
     if os.path.exists("/bin/bash"):
         return _get_bash_shell_config("/bin/bash")
 
-    bash_on_path = _find_executable_on_path("bash")
+    bash_on_path = _find_executable_on_path_blocking("bash")
     if bash_on_path:
         return _get_bash_shell_config(bash_on_path)
 

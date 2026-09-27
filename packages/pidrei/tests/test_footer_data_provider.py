@@ -1,9 +1,9 @@
 """Mirror of pi coding-agent test/footer-data-provider.test.ts.
 
-pi mocks child_process (spawnSync for the sync path, execFile for the async
-refresh path); here the two module seams `_resolve_branch_with_git_sync` /
-`_resolve_branch_with_git_async` are patched and call-counted instead, and
-the fakes set Events the tests wait on. pi's fake-timer watcher-retry test
+pi mocks child_process (spawnSync for the first read, execFile for the
+refresh). Both run on the pool here, through one module seam,
+`_resolve_branch_with_git_blocking`, which is patched and call-counted
+instead; the refresh tests clear the count after `prime()`. pi's fake-timer watcher-retry test
 is mirrored by shortening FS_WATCH_RETRY_DELAY_MS and waiting in real time.
 
 The two debounce tests drive the reftable watcher's listener directly and
@@ -40,19 +40,13 @@ def _patch(request, module, name, value) -> None:
 
 @pytest.fixture
 def git_mock(request):
-    state = {"resolved_branch": "main", "sync_calls": [], "async_calls": [], "async_called": tonio.Event()}
+    state = {"resolved_branch": "main", "calls": []}
 
-    def fake_sync(repo_dir):
-        state["sync_calls"].append(repo_dir)
+    def fake_git(repo_dir):
+        state["calls"].append(repo_dir)
         return state["resolved_branch"] or None
 
-    def fake_async(repo_dir):
-        state["async_calls"].append(repo_dir)
-        state["async_called"].set()
-        return state["resolved_branch"] or None
-
-    _patch(request, fdp_module, "_resolve_branch_with_git_sync", fake_sync)
-    _patch(request, fdp_module, "_resolve_branch_with_git_async", fake_async)
+    _patch(request, fdp_module, "_resolve_branch_with_git_blocking", fake_git)
     return state
 
 
@@ -155,7 +149,7 @@ async def test_uses_head_directly_in_a_regular_repo_from_a_nested_directory(tmp_
     await provider.prime()
     try:
         assert provider.get_git_branch() == "main"
-        assert git_mock["sync_calls"] == []
+        assert git_mock["calls"] == []
     finally:
         provider.dispose()
 
@@ -168,7 +162,7 @@ async def test_resolves_the_branch_via_git_when_head_is_invalid_in_a_reftable_re
     await provider.prime()
     try:
         assert provider.get_git_branch() == "main"
-        assert git_mock["sync_calls"] == [str(repo_dir)]
+        assert git_mock["calls"] == [str(repo_dir)]
     finally:
         provider.dispose()
 
@@ -208,7 +202,7 @@ async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_bra
         await provider.prime()
         try:
             assert provider.get_git_branch() == "main"
-            git_mock["sync_calls"].clear()
+            git_mock["calls"].clear()
             notifications = []
             provider.on_branch_change(lambda: notifications.append(True))
 
@@ -219,8 +213,7 @@ async def test_does_not_notify_listeners_when_reftable_updates_keep_the_same_bra
             timers[0].fire()
             await _wait(refreshed)
 
-            assert len(git_mock["async_calls"]) == 1
-            assert git_mock["sync_calls"] == []
+            assert len(git_mock["calls"]) == 1
             assert provider.get_git_branch() == "main"
             assert notifications == []
         finally:
@@ -236,22 +229,22 @@ async def test_debounces_rapid_reftable_updates_into_a_single_async_refresh(tmp_
         await provider.prime()
         try:
             assert provider.get_git_branch() == "main"
-            git_mock["async_calls"].clear()
+            git_mock["calls"].clear()
 
             emit_reftable_change(provider)
             emit_reftable_change(provider)
             emit_reftable_change(provider)
             # 499 ms in: the single debounce timer is still pending.
             assert len(timers) == 1
-            assert git_mock["async_calls"] == []
+            assert git_mock["calls"] == []
             # 501 ms in: it fires once.
             refreshed = finishes(provider, "_refresh_git_branch_async")
             timers[0].fire()
             await _wait(refreshed)
-            assert len(git_mock["async_calls"]) == 1
+            assert len(git_mock["calls"]) == 1
             # A further window later nothing else was armed.
             assert len(timers) == 1
-            assert len(git_mock["async_calls"]) == 1
+            assert len(git_mock["calls"]) == 1
         finally:
             provider.dispose()
 
@@ -264,6 +257,7 @@ async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp
     await provider.prime()
     try:
         assert provider.get_git_branch() == "main"
+        git_mock["calls"].clear()
         git_mock["resolved_branch"] = "foo"
         notified = tonio.Event()
         provider.on_branch_change(notified.set)
@@ -271,7 +265,7 @@ async def test_updates_the_cached_branch_when_the_reftable_directory_changes(tmp
         (fixture["reftableDir"] / "tables.list").write_text("1\n")
         await _wait(notified)
 
-        assert len(git_mock["async_calls"]) == 1
+        assert len(git_mock["calls"]) == 1
         assert provider.get_git_branch() == "foo"
     finally:
         provider.dispose()
@@ -301,5 +295,21 @@ async def test_retries_git_watchers_after_an_async_fs_watch_error(tmp_path, git_
         await _wait(set_up)
         assert provider._head_watcher is not None
         assert provider._head_watcher is not original_watcher
+    finally:
+        provider.dispose()
+
+
+@pytest.mark.tonio
+async def test_reports_no_branch_until_primed_without_touching_the_repo(tmp_path, git_mock):
+    """pidrei-only: `get_git_branch()` runs from render, so it only reads the
+    cache; resolving the branch is `prime()`'s job, off the runtime."""
+    repo_dir = _create_plain_reftable_repo(tmp_path)
+
+    provider = FooterDataProvider(str(repo_dir))
+    try:
+        assert provider.get_git_branch() is None
+        assert git_mock["calls"] == []
+        await provider.prime()
+        assert provider.get_git_branch() == "main"
     finally:
         provider.dispose()

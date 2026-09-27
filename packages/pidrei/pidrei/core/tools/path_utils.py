@@ -26,7 +26,7 @@ def _try_curly_quote_variant(file_path: str) -> str:
     return file_path.replace("'", "\u2019")
 
 
-def path_exists(file_path: str) -> bool:
+def path_exists_blocking(file_path: str) -> bool:
     return os.path.exists(file_path)
 
 
@@ -39,30 +39,30 @@ def resolve_to_cwd(file_path: str, cwd: str) -> str:
     return resolve_path(file_path, cwd, normalize_unicode_spaces=True, strip_at_prefix=True)
 
 
-def resolve_read_path(file_path: str, cwd: str) -> str:
+def resolve_read_path_blocking(file_path: str, cwd: str) -> str:
     resolved = resolve_to_cwd(file_path, cwd)
 
-    if path_exists(resolved):
+    if path_exists_blocking(resolved):
         return resolved
 
     # Try macOS AM/PM variant (narrow no-break space before AM/PM)
     am_pm_variant = _try_macos_screenshot_path(resolved)
-    if am_pm_variant != resolved and path_exists(am_pm_variant):
+    if am_pm_variant != resolved and path_exists_blocking(am_pm_variant):
         return am_pm_variant
 
     # Try NFD variant (macOS stores filenames in NFD form)
     nfd_variant = _try_nfd_variant(resolved)
-    if nfd_variant != resolved and path_exists(nfd_variant):
+    if nfd_variant != resolved and path_exists_blocking(nfd_variant):
         return nfd_variant
 
     # Try curly quote variant (macOS uses U+2019 in screenshot names)
     curly_variant = _try_curly_quote_variant(resolved)
-    if curly_variant != resolved and path_exists(curly_variant):
+    if curly_variant != resolved and path_exists_blocking(curly_variant):
         return curly_variant
 
     # Try combined NFD + curly quote (for French macOS screenshots like "Capture d'écran")
     nfd_curly_variant = _try_curly_quote_variant(nfd_variant)
-    if nfd_curly_variant != resolved and path_exists(nfd_curly_variant):
+    if nfd_curly_variant != resolved and path_exists_blocking(nfd_curly_variant):
         return nfd_curly_variant
 
     return resolved

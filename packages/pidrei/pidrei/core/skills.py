@@ -11,7 +11,7 @@ import tonio.colored as tonio
 
 from ..config import CONFIG_DIR_NAME, get_agent_dir
 from ..utils.frontmatter import parse_frontmatter
-from ..utils.paths import canonicalize_path, resolve_path
+from ..utils.paths import canonicalize_path_blocking, resolve_path
 from .diagnostics import ResourceCollision, ResourceDiagnostic
 from .source_info import SourceInfo, create_synthetic_source_info
 
@@ -68,7 +68,7 @@ def prefix_ignore_pattern(line: str, prefix: str) -> str | None:
     return f"!{prefixed}" if negated else prefixed
 
 
-def add_ignore_rules(ig: IgnoreMatcher, dir: str, root_dir: str) -> None:
+def add_ignore_rules_blocking(ig: IgnoreMatcher, dir: str, root_dir: str) -> None:
     relative_dir = os.path.relpath(dir, root_dir)
     prefix = f"{relative_dir}/" if relative_dir != "." else ""
 
@@ -158,10 +158,10 @@ def load_skills_from_dir(*, dir: str, source: str) -> Awaitable[LoadSkillsResult
     goes to the pool whole; the helpers below stay sync because they only run
     there.
     """
-    return tonio.spawn_blocking(_load_skills_from_dir_internal, dir, source, True)
+    return tonio.spawn_blocking(_load_skills_from_dir_blocking, dir, source, True)
 
 
-def _stat_kind(full_path: str) -> tuple[bool, bool] | None:
+def _stat_kind_blocking(full_path: str) -> tuple[bool, bool] | None:
     """(is_directory, is_file) following symlinks; None for broken links."""
     try:
         stats = os.stat(full_path)
@@ -171,7 +171,7 @@ def _stat_kind(full_path: str) -> tuple[bool, bool] | None:
     return stat_module.S_ISDIR(stats.st_mode), stat_module.S_ISREG(stats.st_mode)
 
 
-def _load_skills_from_dir_internal(
+def _load_skills_from_dir_blocking(
     dir: str,
     source: str,
     include_root_files: bool,
@@ -186,7 +186,7 @@ def _load_skills_from_dir_internal(
 
     root = root_dir if root_dir is not None else dir
     ig = ignore_matcher if ignore_matcher is not None else IgnoreMatcher()
-    add_ignore_rules(ig, dir, root)
+    add_ignore_rules_blocking(ig, dir, root)
 
     try:
         entries = sorted(os.scandir(dir), key=lambda entry: entry.name)
@@ -196,7 +196,7 @@ def _load_skills_from_dir_internal(
                 continue
 
             full_path = os.path.join(dir, entry.name)
-            kind = _stat_kind(full_path)
+            kind = _stat_kind_blocking(full_path)
             if kind is None:
                 continue
             _is_directory, is_file = kind
@@ -205,7 +205,7 @@ def _load_skills_from_dir_internal(
             if not is_file or ig.ignores(rel_path):
                 continue
 
-            result_skill, file_diagnostics = _load_skill_from_file(full_path, source)
+            result_skill, file_diagnostics = _load_skill_from_file_blocking(full_path, source)
             if result_skill is not None:
                 skills.append(result_skill)
             diagnostics.extend(file_diagnostics)
@@ -220,7 +220,7 @@ def _load_skills_from_dir_internal(
                 continue
 
             full_path = os.path.join(dir, entry.name)
-            kind = _stat_kind(full_path)
+            kind = _stat_kind_blocking(full_path)
             if kind is None:
                 continue  # Broken symlink, skip it
             is_directory, is_file = kind
@@ -231,7 +231,7 @@ def _load_skills_from_dir_internal(
                 continue
 
             if is_directory:
-                sub_result = _load_skills_from_dir_internal(full_path, source, False, ig, root)
+                sub_result = _load_skills_from_dir_blocking(full_path, source, False, ig, root)
                 skills.extend(sub_result.skills)
                 diagnostics.extend(sub_result.diagnostics)
                 continue
@@ -239,7 +239,7 @@ def _load_skills_from_dir_internal(
             if not is_file or not include_root_files or not entry.name.endswith(".md"):
                 continue
 
-            result_skill, file_diagnostics = _load_skill_from_file(full_path, source)
+            result_skill, file_diagnostics = _load_skill_from_file_blocking(full_path, source)
             if result_skill is not None:
                 skills.append(result_skill)
             diagnostics.extend(file_diagnostics)
@@ -249,7 +249,7 @@ def _load_skills_from_dir_internal(
     return LoadSkillsResult(skills, diagnostics)
 
 
-def _load_skill_from_file(file_path: str, source: str) -> tuple[Skill | None, list[ResourceDiagnostic]]:
+def _load_skill_from_file_blocking(file_path: str, source: str) -> tuple[Skill | None, list[ResourceDiagnostic]]:
     diagnostics: list[ResourceDiagnostic] = []
     # A file only *declares* a skill when it is named SKILL.md. Root `.md` files are
     # discovered as candidates, so a README that neither parses nor describes a skill
@@ -376,7 +376,7 @@ def load_skills(
     belong to one blocking unit.
     """
     return tonio.spawn_blocking(
-        _load_skills_sync,
+        _load_skills_blocking,
         cwd=cwd,
         agent_dir=agent_dir,
         skill_paths=skill_paths,
@@ -384,7 +384,7 @@ def load_skills(
     )
 
 
-def _load_skills_sync(
+def _load_skills_blocking(
     *,
     cwd: str,
     agent_dir: str | None,
@@ -403,7 +403,7 @@ def _load_skills_sync(
         all_diagnostics.extend(result.diagnostics)
         for skill in result.skills:
             # Resolve symlinks to detect duplicate files
-            real_path = canonicalize_path(skill.file_path)
+            real_path = canonicalize_path_blocking(skill.file_path)
 
             # Skip silently if we've already loaded this exact file (via symlink)
             if real_path in real_path_set:
@@ -432,8 +432,8 @@ def _load_skills_sync(
     project_skills_dir = os.path.join(resolved_cwd, CONFIG_DIR_NAME, "skills")
 
     if include_defaults:
-        add_skills(_load_skills_from_dir_internal(user_skills_dir, "user", True))
-        add_skills(_load_skills_from_dir_internal(project_skills_dir, "project", True))
+        add_skills(_load_skills_from_dir_blocking(user_skills_dir, "user", True))
+        add_skills(_load_skills_from_dir_blocking(project_skills_dir, "project", True))
 
     def get_source(resolved_path: str) -> str:
         if not include_defaults:
@@ -454,9 +454,9 @@ def _load_skills_sync(
         try:
             source = get_source(resolved_path)
             if os.path.isdir(resolved_path):
-                add_skills(_load_skills_from_dir_internal(resolved_path, source, True))
+                add_skills(_load_skills_from_dir_blocking(resolved_path, source, True))
             elif os.path.isfile(resolved_path) and resolved_path.endswith(".md"):
-                skill, file_diagnostics = _load_skill_from_file(resolved_path, source)
+                skill, file_diagnostics = _load_skill_from_file_blocking(resolved_path, source)
                 if skill is not None:
                     add_skills(LoadSkillsResult(skills=[skill], diagnostics=file_diagnostics))
                 else:

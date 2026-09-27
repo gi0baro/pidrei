@@ -98,13 +98,13 @@ class LocalEditOperations:
     async def access(self, absolute_path: str) -> None:
         """Check the file is readable and writable (raise if not)."""
 
-        def check() -> None:
+        def check_blocking() -> None:
             with open(absolute_path, "rb"):
                 pass
             with open(absolute_path, "r+b"):
                 pass
 
-        await tonio.spawn_blocking(check)
+        await tonio.spawn_blocking(check_blocking)
 
 
 def _is_single_edit_input(value: Any) -> bool:

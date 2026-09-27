@@ -12,9 +12,10 @@ Start pidrei with this extension:
 """
 
 import os
-import sys
 
 import tonio.colored as tonio
+
+from pidrei.core.output_guard import write_stdout
 
 
 def _windows_toast_script(title: str, body: str) -> str:
@@ -39,8 +40,7 @@ def _write_escape(ctx, sequence: str) -> None:
         # `process.stdout.write` is safe on its one thread).
         ctx.ui.write_terminal(sequence)
         return
-    sys.stdout.write(sequence)
-    sys.stdout.flush()
+    write_stdout(sequence)
 
 
 def _notify_osc777(ctx, title: str, body: str) -> None:

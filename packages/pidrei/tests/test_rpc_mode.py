@@ -158,8 +158,7 @@ class _RpcHarness:
                 rpc_mode,
                 take_over_stdout=lambda: None,
                 write_raw_stdout=self._write,
-                wait_for_raw_stdout_backpressure=_noop_async,
-                flush_raw_stdout=_noop_async,
+                drain_output=_noop_async,
                 _pump_stdin_commands=fake_pump,
             )
         )
@@ -220,7 +219,7 @@ async def _create_runtime_host(
         return CreateAgentSessionRuntimeResult(session=session, services=services)
 
     initial_session_manager = (
-        await SessionManager.create(temp_dir, session_dir) if persisted else SessionManager.in_memory(temp_dir)
+        await SessionManager(temp_dir, session_dir) if persisted else SessionManager.in_memory(temp_dir)
     )
     result = await create_runtime(
         cwd=temp_dir, agent_dir=temp_dir, session_manager=initial_session_manager, session_start_event=None

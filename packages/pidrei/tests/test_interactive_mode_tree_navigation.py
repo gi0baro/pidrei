@@ -19,7 +19,7 @@ from pidrei.core.keybindings import KeybindingsManager
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei_tui import Container, set_keybindings
 
 from .coding_session_helpers import assistant_msg, user_msg
@@ -30,9 +30,9 @@ BUSY_MESSAGE = "Wait for the current compaction or tree navigation to finish bef
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
-    set_keybindings(KeybindingsManager())
+async def _setup():
+    await init_theme("dark")
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 class _Recorder:
@@ -47,6 +47,10 @@ class _Recorder:
         if self.effect is not None:
             return await self.effect(*args)
         return None
+
+
+async def _no_trust_warning() -> bool:
+    return False
 
 
 async def _create_tree_ui():
@@ -110,7 +114,8 @@ async def _create_tree_ui():
         _show_status_indicator=indicator_calls.append,
         _clear_status_indicator=clear_indicator_calls.append,
         _restore_queued_messages_to_editor=lambda: restore_calls.append(True),
-        _rerender_initial_messages=lambda: None,
+        _needs_project_trust_warning=_no_trust_warning,
+        _rerender_initial_messages=lambda _trust_warning: None,
         show_status=show_status,
         show_error=show_error,
         _flush_compaction_queue=flush_compaction_queue,

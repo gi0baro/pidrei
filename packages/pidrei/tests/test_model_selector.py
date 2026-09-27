@@ -11,7 +11,7 @@ import tonio.colored as tonio
 
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.model_selector import ModelSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.registry import ModelsRefreshResult
 from pidrei_tui import set_keybindings
@@ -21,10 +21,10 @@ from .render_request_helpers import RenderRequests
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
+async def _setup():
+    await init_theme("dark")
     # Keybindings are a global singleton; reset per test.
-    set_keybindings(KeybindingsManager())
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 def fake_tui():
@@ -80,7 +80,7 @@ async def test_keeps_the_current_model_marked_while_browsing():
 
 @pytest.mark.tonio
 async def test_uses_the_configured_save_binding():
-    set_keybindings(KeybindingsManager({"app.models.save": "ctrl+r"}))
+    set_keybindings(KeybindingsManager.in_memory({"app.models.save": "ctrl+r"}))
     harness = await create_harness()
     try:
         current_model = harness.get_model()

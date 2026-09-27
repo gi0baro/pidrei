@@ -9,7 +9,7 @@ import tonio.colored as tonio
 
 from pidrei.core.agent_session import CompactionEndEvent, PromptOptions
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_ai.types import Usage, UsageCost
 from pidrei_tui import Container
@@ -41,9 +41,10 @@ def _compaction_entry(entry_id: str, parent_id: str | None, summary: str, tokens
     }
 
 
-def test_uses_the_cache_miss_notice_setting_for_compaction_and_branch_summary_costs():
+@pytest.mark.tonio
+async def test_uses_the_cache_miss_notice_setting_for_compaction_and_branch_summary_costs():
     usage = _usage(0.125)
-    init_theme_sync("dark")
+    await init_theme("dark")
 
     enabled = SimpleNamespace(
         _chat_container=Container(),

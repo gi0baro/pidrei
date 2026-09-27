@@ -33,17 +33,17 @@ the output shapes — mirrors pi.
 """
 
 import os
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
 
 from ..config import APP_NAME, CONFIG_DIR_NAME, get_agent_dir, get_auth_path, get_models_path
+from ..core.output_guard import write_stderr, write_stdout
 from ..core.package_manager import DefaultPackageManager
 from ..core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
 from ..core.settings_manager import SettingsManager
-from ..core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources
+from ..core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources_blocking
 from ..utils.colors import bold, dim, green, red
 
 
@@ -88,7 +88,7 @@ def get_package_command_usage(command: str) -> str:
 
 
 def print_config_command_help() -> None:
-    print(f"""{bold("Usage:")}
+    write_stdout(f"""{bold("Usage:")}
   {CONFIG_COMMAND_USAGE}
 
 Open the resource configuration TUI to enable or disable package resources.
@@ -99,12 +99,13 @@ Options:
   -l, --local       Edit project overrides ({CONFIG_DIR_NAME}/settings.json)
   -a, --approve     Trust project-local files for this command with -l
   -na, --no-approve Ignore project-local files for this command with -l
+
 """)
 
 
 def print_package_command_help(command: str) -> None:
     if command == "install":
-        print(f"""{bold("Usage:")}
+        write_stdout(f"""{bold("Usage:")}
   {get_package_command_usage("install")}
 
 Install a package and add it to settings.
@@ -120,11 +121,12 @@ Examples:
   {APP_NAME} install https://github.com/user/repo
   {APP_NAME} install ssh://git@github.com/user/repo
   {APP_NAME} install ./local/path
+
 """)
         return
 
     if command == "remove":
-        print(f"""{bold("Usage:")}
+        write_stdout(f"""{bold("Usage:")}
   {get_package_command_usage("remove")}
 
 Remove a package and its source from settings.
@@ -138,11 +140,12 @@ Options:
 Examples:
   {APP_NAME} remove git:github.com/user/repo
   {APP_NAME} uninstall ./local/path
+
 """)
         return
 
     if command == "update":
-        print(f"""{bold("Usage:")}
+        write_stdout(f"""{bold("Usage:")}
   {get_package_command_usage("update")}
 
 Update installed packages or refresh model catalogs.
@@ -167,10 +170,11 @@ Updating {APP_NAME}:
   Re-run the install command with the new version.
   uv tool install -p 3.14t 'git+https://github.com/gi0baro/pidrei@<version>#subdirectory=packages/pidrei'
   brew upgrade pidrei
+
 """)
         return
 
-    print(f"""{bold("Usage:")}
+    write_stdout(f"""{bold("Usage:")}
   {get_package_command_usage("list")}
 
 List installed packages from user and project settings.
@@ -178,6 +182,7 @@ List installed packages from user and project settings.
 Options:
   -a, --approve      Trust project-local files for this command
   -na, --no-approve  Ignore project-local files for this command
+
 """)
 
 
@@ -317,21 +322,25 @@ async def create_command_settings_manager(
     use_saved_project_trust_only: bool = False,
     extension_factories: list[Any] | None = None,
 ) -> CommandSettings:
-    settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=False)
     warnings: list[str] = []
     trust_store = ProjectTrustStore(agent_dir)
 
     if use_saved_project_trust_only:
         saved = await trust_store.get(cwd) is True
-        settings_manager.set_project_trusted(project_trust_override if project_trust_override is not None else saved)
+        await settings_manager.set_project_trusted(
+            project_trust_override if project_trust_override is not None else saved
+        )
         return CommandSettings(settings_manager=settings_manager, project_trust_warnings=warnings)
 
     extensions_result = None
-    if project_trust_override is None and await tonio.spawn_blocking(has_trust_requiring_project_resources, cwd):
+    if project_trust_override is None and await tonio.spawn_blocking(
+        has_trust_requiring_project_resources_blocking, cwd
+    ):
         # lazy: core <-> modes import cycle (see modes/__init__.py)
         from ..core.resource_loader import DefaultResourceLoader
 
-        loader = DefaultResourceLoader(
+        loader = await DefaultResourceLoader(
             cwd=cwd,
             agent_dir=agent_dir,
             settings_manager=settings_manager,
@@ -361,18 +370,18 @@ async def create_command_settings_manager(
             on_extension_error=warnings.append,
         )
     )
-    settings_manager.set_project_trusted(project_trusted)
+    await settings_manager.set_project_trusted(project_trusted)
     return CommandSettings(settings_manager=settings_manager, project_trust_warnings=warnings)
 
 
 def _report_settings_errors(settings_manager: SettingsManager, context: str) -> None:
     for entry in settings_manager.drain_errors():
-        print(red(f"Warning: ({context}, {entry.scope} settings) {entry.error}"), file=sys.stderr)
+        write_stderr(red(f"Warning: ({context}, {entry.scope} settings) {entry.error}") + "\n")
 
 
 def _report_project_trust_warnings(warnings: list[str]) -> None:
     for warning in warnings:
-        print(red(f"Warning: {warning}"), file=sys.stderr)
+        write_stderr(red(f"Warning: {warning}") + "\n")
 
 
 async def _refresh_model_catalogs(agent_dir: str) -> None:
@@ -387,7 +396,7 @@ async def _refresh_model_catalogs(agent_dir: str) -> None:
         cancel.cancel(TimeoutError("The operation timed out."))
 
     tonio.spawn.without_tracking(_expire())
-    runtime = await ModelRuntime.create(
+    runtime = await ModelRuntime(
         auth_path=get_auth_path(),
         models_path=get_models_path(),
         allow_model_network=False,
@@ -400,22 +409,19 @@ async def _refresh_model_catalogs(agent_dir: str) -> None:
     if errors:
         details = "; ".join(f"{provider}: {error}" for provider, error in errors.items())
         raise Exception(f"Could not refresh model catalogs: {details}")
-    print(green("Model catalogs refreshed"))
+    write_stdout(green("Model catalogs refreshed") + "\n")
 
 
 def _print_usage_error(message: str, command: str) -> None:
-    print(red(message), file=sys.stderr)
-    print(dim(f"Usage: {get_package_command_usage(command)}"), file=sys.stderr)
+    write_stderr(red(message) + "\n")
+    write_stderr(dim(f"Usage: {get_package_command_usage(command)}") + "\n")
 
 
 def _validate(options: PackageCommandOptions) -> bool:
     """Report the first problem, in pi's precedence order. True if handled."""
     if options.invalid_option:
-        print(red(f'Unknown option {options.invalid_option} for "{options.command}".'), file=sys.stderr)
-        print(
-            dim(f'Use "{APP_NAME} --help" or "{get_package_command_usage(options.command)}".'),
-            file=sys.stderr,
-        )
+        write_stderr(red(f'Unknown option {options.invalid_option} for "{options.command}".') + "\n")
+        write_stderr(dim(f'Use "{APP_NAME} --help" or "{get_package_command_usage(options.command)}".') + "\n")
         return True
     if options.missing_option_value:
         _print_usage_error(f"Missing value for {options.missing_option_value}.", options.command)
@@ -433,26 +439,26 @@ def _validate(options: PackageCommandOptions) -> bool:
 
 
 async def _print_package_list(package_manager: DefaultPackageManager) -> None:
-    configured = await tonio.spawn_blocking(package_manager.list_configured_packages)
+    configured = await package_manager.list_configured_packages()
     if not configured:
-        print(dim("No packages installed."))
+        write_stdout(dim("No packages installed.") + "\n")
         return
 
     def emit(package) -> None:
-        print(f"  {package.source}")
+        write_stdout(f"  {package.source}\n")
         if package.installed_path:
-            print(dim(f"    {package.installed_path}"))
+            write_stdout(dim(f"    {package.installed_path}") + "\n")
 
     user_packages = [package for package in configured if package.scope == "user"]
     project_packages = [package for package in configured if package.scope == "project"]
     if user_packages:
-        print(bold("User packages:"))
+        write_stdout(bold("User packages:") + "\n")
         for package in user_packages:
             emit(package)
     if project_packages:
         if user_packages:
-            print()
-        print(bold("Project packages:"))
+            write_stdout("\n")
+        write_stdout(bold("Project packages:") + "\n")
         for package in project_packages:
             emit(package)
 
@@ -478,15 +484,15 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
         return 1
 
     if options.self_update_requested:
-        print(red(f"{APP_NAME} does not support self-update."), file=sys.stderr)
-        print(dim(SELF_UPDATE_HINT), file=sys.stderr)
+        write_stderr(red(f"{APP_NAME} does not support self-update.") + "\n")
+        write_stderr(dim(SELF_UPDATE_HINT) + "\n")
         return 1
 
     if options.command == "update" and options.update_target == "models":
         try:
             await _refresh_model_catalogs(get_agent_dir())
         except Exception as error:
-            print(red(f"Error: {error or 'Unknown model catalog refresh error'}"), file=sys.stderr)
+            write_stderr(red(f"Error: {error or 'Unknown model catalog refresh error'}") + "\n")
             return 1
         return 0
 
@@ -503,27 +509,27 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
     settings_manager = command_settings.settings_manager
     _report_project_trust_warnings(command_settings.project_trust_warnings)
     if writes_project_config and not settings_manager.is_project_trusted():
-        print(red("Project is not trusted. Use --approve to modify local package config."), file=sys.stderr)
+        write_stderr(red("Project is not trusted. Use --approve to modify local package config.") + "\n")
         return 1
     _report_settings_errors(settings_manager, "package command")
 
     package_manager = DefaultPackageManager(cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager)
     package_manager.set_progress_callback(
-        lambda event: print(dim(event.message)) if event.type == "start" and event.message else None
+        lambda event: write_stdout(dim(event.message) + "\n") if event.type == "start" and event.message else None
     )
 
     try:
         if options.command == "install":
             await package_manager.install_and_persist(options.source, local=options.local)
-            print(green(f"Installed {options.source}"))
+            write_stdout(green(f"Installed {options.source}") + "\n")
             await settings_manager.flush()
             return 0
 
         if options.command == "remove":
             if not await package_manager.remove_and_persist(options.source, local=options.local):
-                print(red(f"No matching package found for {options.source}"), file=sys.stderr)
+                write_stderr(red(f"No matching package found for {options.source}") + "\n")
                 return 1
-            print(green(f"Removed {options.source}"))
+            write_stdout(green(f"Removed {options.source}") + "\n")
             await settings_manager.flush()
             return 0
 
@@ -533,13 +539,13 @@ async def handle_package_command(args: list[str], *, extension_factories: list[A
 
         # update
         await package_manager.update(options.update_source)
-        print(green(f"Updated {options.update_source}" if options.update_source else "Updated packages"))
+        write_stdout(green(f"Updated {options.update_source}" if options.update_source else "Updated packages") + "\n")
         if options.update_target == "all":
             await _refresh_model_catalogs(agent_dir)
         await settings_manager.flush()
         return 0
     except Exception as error:
-        print(red(f"Error: {error or 'Unknown package command error'}"), file=sys.stderr)
+        write_stderr(red(f"Error: {error or 'Unknown package command error'}") + "\n")
         return 1
 
 
@@ -563,12 +569,12 @@ async def handle_config_command(args: list[str], *, extension_factories: list[An
         elif arg in ("-na", "--no-approve"):
             project_trust_override = False
         elif arg.startswith("-"):
-            print(red(f'Unknown option {arg} for "config".'), file=sys.stderr)
-            print(dim(f'Use "{APP_NAME} --help" or "{CONFIG_COMMAND_USAGE}".'), file=sys.stderr)
+            write_stderr(red(f'Unknown option {arg} for "config".') + "\n")
+            write_stderr(dim(f'Use "{APP_NAME} --help" or "{CONFIG_COMMAND_USAGE}".') + "\n")
             return 1
         else:
-            print(red(f"Unexpected argument {arg}."), file=sys.stderr)
-            print(dim(f"Usage: {CONFIG_COMMAND_USAGE}"), file=sys.stderr)
+            write_stderr(red(f"Unexpected argument {arg}.") + "\n")
+            write_stderr(dim(f"Usage: {CONFIG_COMMAND_USAGE}") + "\n")
             return 1
 
     cwd = os.getcwd()
@@ -582,11 +588,11 @@ async def handle_config_command(args: list[str], *, extension_factories: list[An
     settings_manager = command_settings.settings_manager
     _report_project_trust_warnings(command_settings.project_trust_warnings)
     if local and not settings_manager.is_project_trusted():
-        print(red("Project is not trusted. Use --approve to modify local resource config."), file=sys.stderr)
+        write_stderr(red("Project is not trusted. Use --approve to modify local resource config.") + "\n")
         return 1
     _report_settings_errors(settings_manager, "config command")
 
-    global_settings_manager = await SettingsManager.create(cwd, agent_dir, project_trusted=False)
+    global_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=False)
     global_paths = await DefaultPackageManager(
         cwd=cwd, agent_dir=agent_dir, settings_manager=global_settings_manager
     ).resolve()

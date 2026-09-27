@@ -10,9 +10,9 @@ from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import ImageContent, JsonSchemaConstrainedSampling, ModelImageResizeOptions, TextContent
 
 from ...utils.image_process import process_image
-from ...utils.mime import detect_supported_image_mime_type_from_file
+from ...utils.mime import detect_supported_image_mime_type_from_file_blocking
 from ..extensions.types import ToolDefinition
-from .path_utils import resolve_read_path
+from .path_utils import resolve_read_path_blocking
 from .renderers.read import read_renderers
 from .tool_definition_wrapper import WrappedDefinitionTool, wrap_tool_definition
 from .truncate import (
@@ -51,14 +51,14 @@ class LocalReadOperations:
         return await fs.Path(absolute_path).read_bytes()
 
     async def access(self, absolute_path: str) -> None:
-        def check() -> None:
+        def check_blocking() -> None:
             with open(absolute_path, "rb"):
                 pass
 
-        await tonio.spawn_blocking(check)
+        await tonio.spawn_blocking(check_blocking)
 
     async def detect_image_mime_type(self, absolute_path: str) -> str | None:
-        return await tonio.spawn_blocking(detect_supported_image_mime_type_from_file, absolute_path)
+        return await tonio.spawn_blocking(detect_supported_image_mime_type_from_file_blocking, absolute_path)
 
 
 def _get_non_vision_image_note(model: Any) -> str | None:
@@ -90,7 +90,7 @@ def create_read_tool_definition(
         _throw_if_aborted(cancel)
 
         absolute_path = await tonio.spawn_blocking(
-            resolve_read_path, path, (ctx.cwd if ctx is not None else None) or cwd
+            resolve_read_path_blocking, path, (ctx.cwd if ctx is not None else None) or cwd
         )
         _throw_if_aborted(cancel)
         # Check if file exists and is readable.

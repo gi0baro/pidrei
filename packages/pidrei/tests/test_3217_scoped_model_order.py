@@ -10,7 +10,7 @@ import pytest
 from pidrei.core.keybindings import KeybindingsManager
 from pidrei.modes.interactive.components.model_selector import ModelSelectorComponent
 from pidrei.modes.interactive.components.scoped_models_selector import ScopedModelsSelectorComponent
-from pidrei.modes.interactive.theme import init_theme_sync
+from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import set_keybindings
 
@@ -26,10 +26,10 @@ THREE_MODELS = [
 
 
 @pytest.fixture(autouse=True)
-def _setup():
-    init_theme_sync("dark")
+async def _setup():
+    await init_theme("dark")
     # Keybindings are a global singleton; reset per test.
-    set_keybindings(KeybindingsManager())
+    set_keybindings(KeybindingsManager.in_memory())
 
 
 @pytest.fixture

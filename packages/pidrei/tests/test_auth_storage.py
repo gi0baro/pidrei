@@ -60,7 +60,7 @@ async def test_reads_and_resolves_stored_api_key_credentials(tmp_path):
     auth_path = tmp_path / "auth.json"
     with env_var("TEST_AUTH_STORAGE_KEY", "environment-key"):
         write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "$TEST_AUTH_STORAGE_KEY"}})
-        storage = await AuthStorage.create(str(auth_path))
+        storage = await AuthStorage(str(auth_path))
         assert await storage.read("anthropic") == ApiKeyCredential(key="environment-key")
 
 
@@ -68,7 +68,7 @@ async def test_reads_and_resolves_stored_api_key_credentials(tmp_path):
 async def test_resolves_command_backed_api_key_credentials(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "!printf 'command-key'"}})
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
     assert await storage.read("anthropic") == ApiKeyCredential(key="command-key")
 
 
@@ -94,7 +94,7 @@ async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tm
             }
         },
     )
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
     resolved = await storage.read("anthropic")
     assert resolved.key == "scoped-value"
     assert resolved.env == {"SCOPED_KEY": "scoped-value", "REGION": "test-region"}
@@ -104,8 +104,8 @@ async def test_credential_scoped_env_takes_precedence_and_remains_inspectable(tm
 async def test_coalesces_file_reloads_across_concurrent_readers_and_storage_instances(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
-    first = await AuthStorage.create(str(auth_path))
-    second = await AuthStorage.create(str(auth_path))
+    first = await AuthStorage(str(auth_path))
+    second = await AuthStorage(str(auth_path))
 
     calls = {"count": 0}
     original_acquire = auth_storage_module._acquire_lock_async
@@ -149,12 +149,12 @@ async def test_a_reader_whose_stat_outlives_the_coalesced_reload_does_not_reload
     published snapshot instead of starting a second locked reload."""
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
-    first = await AuthStorage.create(str(auth_path))
-    second = await AuthStorage.create(str(auth_path))
+    first = await AuthStorage(str(auth_path))
+    second = await AuthStorage(str(auth_path))
 
     calls = {"count": 0}
     original_acquire = auth_storage_module._acquire_lock_async
-    original_revision = auth_storage_module._get_file_revision
+    original_revision = auth_storage_module._get_file_revision_blocking
     slow_stat_entered = threading.Event()
     slow_stat_release = threading.Event()
     stats = {"count": 0}
@@ -174,7 +174,7 @@ async def test_a_reader_whose_stat_outlives_the_coalesced_reload_does_not_reload
         return original_revision(path)
 
     auth_storage_module._acquire_lock_async = counting_acquire
-    auth_storage_module._get_file_revision = gated_revision
+    auth_storage_module._get_file_revision_blocking = gated_revision
     try:
         write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "new"}})
 
@@ -190,14 +190,14 @@ async def test_a_reader_whose_stat_outlives_the_coalesced_reload_does_not_reload
         assert calls["count"] == 1
     finally:
         slow_stat_release.set()
-        auth_storage_module._get_file_revision = original_revision
+        auth_storage_module._get_file_revision_blocking = original_revision
         auth_storage_module._acquire_lock_async = original_acquire
 
 
 @pytest.mark.tonio
 async def test_creates_new_auth_files_with_owner_only_permissions(tmp_path):
     auth_path = tmp_path / "auth.json"
-    await AuthStorage.create(str(auth_path))
+    await AuthStorage(str(auth_path))
 
     assert auth_path.stat().st_mode & 0o777 == 0o600
 
@@ -207,7 +207,7 @@ async def test_preserves_the_mode_of_an_existing_auth_file(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
     auth_path.chmod(0o660)
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
 
     async def update(_current):
         return ApiKeyCredential(key="new")
@@ -221,7 +221,7 @@ async def test_preserves_the_mode_of_an_existing_auth_file(tmp_path):
 async def test_modify_persists_a_credential_while_preserving_unrelated_external_edits(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
     write_auth_json(
         auth_path,
         {"anthropic": {"type": "api_key", "key": "old"}, "openai": {"type": "api_key", "key": "external"}},
@@ -242,7 +242,7 @@ async def test_modify_persists_a_credential_while_preserving_unrelated_external_
 async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
 
     async def keep(_current):
         return None
@@ -255,8 +255,8 @@ async def test_modify_with_none_leaves_the_current_credential_unchanged(tmp_path
 async def test_serializes_concurrent_modifications(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {})
-    first = await AuthStorage.create(str(auth_path))
-    second = await AuthStorage.create(str(auth_path))
+    first = await AuthStorage(str(auth_path))
+    second = await AuthStorage(str(auth_path))
 
     async def set_anthropic(_current):
         return ApiKeyCredential(key="anthropic-key")
@@ -279,7 +279,7 @@ async def test_delete_removes_one_credential_while_preserving_others(tmp_path):
         auth_path,
         {"anthropic": {"type": "api_key", "key": "anthropic-key"}, "openai": {"type": "api_key", "key": "openai-key"}},
     )
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
     write_auth_json(
         auth_path,
         {
@@ -316,7 +316,7 @@ async def test_in_memory_storage_implements_the_same_credential_store_behavior()
 async def test_does_not_write_after_lock_acquisition_failure_and_recovers_on_retry(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
 
     original_acquire = auth_storage_module._acquire_lock_async
     calls = {"count": 0}
@@ -366,7 +366,8 @@ async def test_pre_aborted_file_operations_do_not_create_the_backing_file_or_run
 async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mutation_later(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    release = lockfile.lock_sync(str(auth_path), stale=30.0)
+    held = lockfile.FileLock(str(auth_path), stale=30.0)
+    await held.try_acquire()
     backend = FileAuthStorageBackend(str(auth_path))
     operations = ObservedLock.install(backend)
     parked = park_on_file_lock_retry(monkeypatch)
@@ -395,7 +396,7 @@ async def test_aborts_while_waiting_for_a_held_file_lock_without_running_the_mut
     assert isinstance(outcome["error"], AbortError)
     assert calls["count"] == 0
 
-    release()
+    await held.release()
     # The cancelled operation keeps running detached; once its critical
     # section ends it can no longer run the mutation.
     await operations.until(lambda lock: lock.released == 1)
@@ -413,20 +414,24 @@ async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_befo
     released = {"count": 0}
     calls = {"count": 0}
 
-    def fake_lock_sync(_path, stale=None):
-        controller.cancel()
+    class _CancellingLock:
+        """Acquires, with the cancellation landing during the attempt."""
 
-        def release() -> None:
+        def __init__(self, _path, stale=None):
+            pass
+
+        async def try_acquire(self) -> None:
+            controller.cancel()
+
+        async def release(self) -> None:
             released["count"] += 1
-
-        return release
 
     async def update(_content):
         calls["count"] += 1
         return None, json.dumps({})
 
-    original_lock_sync = auth_storage_module.lockfile.lock_sync
-    auth_storage_module.lockfile.lock_sync = fake_lock_sync
+    original_file_lock = auth_storage_module.lockfile.FileLock
+    auth_storage_module.lockfile.FileLock = _CancellingLock
     try:
         with pytest.raises(AbortError):
             await backend.with_lock_async(update, AuthOperationOptions(cancel=controller))
@@ -434,7 +439,7 @@ async def test_releases_a_file_lock_acquired_concurrently_with_cancellation_befo
         # releases the file lock; wait for its critical section to end.
         await operations.until(lambda lock: lock.released == 1)
     finally:
-        auth_storage_module.lockfile.lock_sync = original_lock_sync
+        auth_storage_module.lockfile.FileLock = original_file_lock
     assert calls["count"] == 0
     assert released["count"] == 1
 
@@ -492,10 +497,11 @@ async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(
     the caller-visible semantics are asserted here."""
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "old"}})
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "new-value"}})
     parked = park_on_file_lock_retry(monkeypatch)
-    release = lockfile.lock_sync(str(auth_path), stale=30.0)
+    held = lockfile.FileLock(str(auth_path), stale=30.0)
+    await held.try_acquire()
     controller = CancelToken()
     outcome: dict = {}
 
@@ -513,7 +519,7 @@ async def test_cancels_a_signalled_credential_read_waiting_for_a_held_file_lock(
 
     await tonio.spawn(run_pending(), drive())
     assert isinstance(outcome["error"], AbortError)
-    release()
+    await held.release()
     # No settling pause: this read's reload queues on the backend's operation
     # lock behind the abandoned one.
     assert await storage.read("anthropic") == ApiKeyCredential(key="new-value")
@@ -647,15 +653,19 @@ async def test_retries_a_briefly_contended_file_lock(tmp_path):
     attempts = {"count": 0}
     released = {"count": 0}
 
-    def contended_lock_sync(_path, stale=None):
-        attempts["count"] += 1
-        if attempts["count"] == 1:
-            raise lockfile.LockedError("locked")
+    class _ContendedLock:
+        """Held by someone else on the first attempt only."""
 
-        def release() -> None:
+        def __init__(self, _path, stale=None):
+            pass
+
+        async def try_acquire(self) -> None:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise lockfile.LockedError("locked")
+
+        async def release(self) -> None:
             released["count"] += 1
-
-        return release
 
     update_calls = {"count": 0}
 
@@ -663,12 +673,12 @@ async def test_retries_a_briefly_contended_file_lock(tmp_path):
         update_calls["count"] += 1
         return None, None
 
-    original_lock_sync = auth_storage_module.lockfile.lock_sync
-    auth_storage_module.lockfile.lock_sync = contended_lock_sync
+    original_file_lock = auth_storage_module.lockfile.FileLock
+    auth_storage_module.lockfile.FileLock = _ContendedLock
     try:
         await backend.with_lock_async(update)
     finally:
-        auth_storage_module.lockfile.lock_sync = original_lock_sync
+        auth_storage_module.lockfile.FileLock = original_file_lock
 
     assert attempts["count"] == 2
     assert update_calls["count"] == 1
@@ -770,7 +780,7 @@ async def test_translates_a_credential_store_refresh_failure_and_allows_a_later_
 async def test_does_not_overwrite_malformed_auth_files(tmp_path):
     auth_path = tmp_path / "auth.json"
     write_auth_json(auth_path, {"anthropic": {"type": "api_key", "key": "stored"}})
-    storage = await AuthStorage.create(str(auth_path))
+    storage = await AuthStorage(str(auth_path))
     auth_path.write_text("{invalid-json", encoding="utf-8")
 
     async def set_openai(_current):

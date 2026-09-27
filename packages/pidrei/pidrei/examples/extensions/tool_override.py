@@ -52,7 +52,7 @@ def _is_blocked_path(path: str) -> bool:
     return any(pattern.search(path) for pattern in BLOCKED_PATTERNS)
 
 
-def _append_line(path: str, line: str) -> None:
+def _append_line_blocking(path: str, line: str) -> None:
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(line)
 
@@ -67,7 +67,7 @@ async def _log_access(path: str, allowed: bool, reason: str | None = None) -> No
         queue_key = await resolve_mutation_queue_key(LOG_FILE)
 
         async def append() -> None:
-            await tonio.spawn_blocking(_append_line, LOG_FILE, line)
+            await tonio.spawn_blocking(_append_line_blocking, LOG_FILE, line)
 
         await with_file_mutation_queue(LOG_FILE, append, queue_key=queue_key)
     except Exception:

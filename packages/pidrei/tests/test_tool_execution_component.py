@@ -15,7 +15,7 @@ from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
 from pidrei.core.tools.renderers import bash as bash_renderers, with_built_in_renderers
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.components import ToolExecutionComponent, tool_execution
-from pidrei.modes.interactive.theme import init_theme_sync, theme
+from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.utils.ansi import strip_ansi
 from pidrei_tui import Text, TuiMouseEvent, reset_capabilities_cache, set_capabilities
 
@@ -38,8 +38,8 @@ def create_fake_tui():
 
 
 @pytest.fixture(autouse=True)
-def _theme():
-    init_theme_sync("dark")
+async def _theme():
+    await init_theme("dark")
 
 
 CWD = os.getcwd()

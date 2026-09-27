@@ -18,6 +18,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
+from ...core.output_guard import write_stderr
 from .jsonl import JsonlLineDecoder, serialize_json_line
 
 
@@ -117,7 +118,7 @@ class RpcClient:
                         return
                     text = chunk.decode("utf-8", "replace")
                     self._stderr += text
-                    sys.stderr.write(text)
+                    write_stderr(text)
             except Exception:
                 pass
 
