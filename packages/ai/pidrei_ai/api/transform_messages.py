@@ -6,7 +6,6 @@ id normalization, skipping errored/aborted assistant turns, and synthesizing
 "No result provided" tool results for orphaned tool calls.
 """
 
-import time
 from collections.abc import Callable
 from dataclasses import replace
 
@@ -18,6 +17,7 @@ from pidrei_ai.types import (
     ToolCall,
     ToolResultMessage,
 )
+from pidrei_ai.utils import clock
 
 
 NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)"
@@ -168,7 +168,7 @@ def transform_messages(
                             tool_name=tool_call.name,
                             content=[TextContent(text="No result provided")],
                             is_error=True,
-                            timestamp=int(time.time() * 1000),
+                            timestamp=clock.now_ms(),
                         )
                     )
             pending_tool_calls = []

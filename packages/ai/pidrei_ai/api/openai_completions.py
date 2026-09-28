@@ -14,7 +14,6 @@ through the punkreq seam and parses the SSE chunk stream itself (data events,
 
 import json
 import re
-import time
 from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, fields
 from typing import Any, Protocol
@@ -71,7 +70,7 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
-from pidrei_ai.utils import http
+from pidrei_ai.utils import clock, http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
@@ -1223,7 +1222,7 @@ def stream(  # noqa: C901
         model=model.id,
         usage=UsageBuilder(),
         stop_reason="pending",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
     out_stream.partial = output
 

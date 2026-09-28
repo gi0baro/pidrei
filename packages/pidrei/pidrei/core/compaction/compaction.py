@@ -12,7 +12,6 @@ so `stream_fn` is required here (AgentSession always passes the agent's).
 """
 
 import math
-import time as time_module
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -29,6 +28,7 @@ from pidrei_ai.types import (
     UsageCost,
     UserMessage,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, retry_assistant_call
 from pidrei_ai.utils.tasks import gather
 from pidrei_ai.utils.text import content_text
@@ -567,7 +567,7 @@ def _build_summarization_context(prompt_text: str) -> TranscriptContext:
     return normalize_context(
         Context(
             system_prompt=SUMMARIZATION_SYSTEM_PROMPT,
-            messages=[UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))],
+            messages=[UserMessage(content=[TextContent(text=prompt_text)], timestamp=clock.now_ms())],
         )
     )
 

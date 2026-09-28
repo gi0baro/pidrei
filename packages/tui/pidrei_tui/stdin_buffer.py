@@ -34,7 +34,8 @@ Port deviations (pi is single-threaded JS):
 """
 
 import re
-import time
+
+from . import clock as _clock
 
 
 ESC = "\x1b"
@@ -226,6 +227,10 @@ def _extract_complete_sequences(buffer: str) -> tuple[list[str], str]:
     return sequences, ""
 
 
+def _read_clock() -> float:
+    return _clock.monotonic()
+
+
 class StdinBuffer:
     """Buffers stdin input and emits complete sequences via data listeners.
 
@@ -235,7 +240,7 @@ class StdinBuffer:
     flushed even if incomplete. ``escape_timeout`` is the maximum time to wait
     after a lone ESC before treating it as Escape (default 10); increase for
     high-latency Alt+key input (SSH). ``clock`` returns the current time in
-    seconds (default: ``time.monotonic``); ``deadline`` is on it.
+    seconds (default: ``pidrei_tui.clock.monotonic``); ``deadline`` is on it.
     """
 
     def __init__(
@@ -246,7 +251,9 @@ class StdinBuffer:
     ) -> None:
         self._timeout_ms = timeout if timeout is not None else DEFAULT_SEQUENCE_TIMEOUT_MS
         self._escape_timeout_ms = escape_timeout if escape_timeout is not None else DEFAULT_ESCAPE_TIMEOUT_MS
-        self._clock = clock if clock is not None else time.monotonic
+        # The default reads `pidrei_tui.clock.monotonic` on each call, so a
+        # swapped clock seam reaches buffers built before the swap.
+        self._clock = clock if clock is not None else _read_clock
         self._buffer = ""
         # pi's pending flush `setTimeout`, as the time it would fire.
         self._deadline: float | None = None

@@ -3,7 +3,6 @@
 import os
 import re
 import threading
-import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -11,6 +10,7 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import fs
 
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, Input, Spacer, Text, get_keybindings, truncate_to_width, visible_width
 from pidrei_tui._timers import Timeout
@@ -36,7 +36,7 @@ def _shorten_path(path: str) -> str:
 
 
 def format_session_date(date: datetime) -> str:
-    now = time.time()
+    now = clock.now_ms() / 1000
     diff_s = now - date.timestamp()
     diff_mins = int(diff_s // 60)
     diff_hours = int(diff_s // 3600)
@@ -116,12 +116,12 @@ class SessionSelectorHeader:
         self._status_hide_at = None
         if not msg or not auto_hide_ms:
             return
-        self._status_hide_at = time.monotonic() + auto_hide_ms / 1000
+        self._status_hide_at = clock.monotonic() + auto_hide_ms / 1000
 
         def hidden() -> None:
             # A fire ahead of the clock asks again for the remainder.
             hide_at = self._status_hide_at
-            remaining = hide_at - time.monotonic() if hide_at is not None else 0
+            remaining = hide_at - clock.monotonic() if hide_at is not None else 0
             if remaining > 0:
                 Timeout(remaining * 1000, hidden)
                 return
@@ -131,7 +131,7 @@ class SessionSelectorHeader:
 
     def _visible_status_message(self) -> dict | None:
         hide_at = self._status_hide_at
-        if hide_at is not None and time.monotonic() >= hide_at:
+        if hide_at is not None and clock.monotonic() >= hide_at:
             return None
         return self._status_message
 

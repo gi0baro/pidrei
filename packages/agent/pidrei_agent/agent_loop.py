@@ -16,7 +16,6 @@ Concurrency notes (vs pi's single JS thread):
   contract, enforced by construction).
 """
 
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -25,6 +24,7 @@ import tonio.colored as tonio
 from tonio.colored.sync import channel
 
 from pidrei_ai.types import AssistantMessage, Context, SystemMessage, TextContent, ToolResultMessage
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import EventStream
@@ -393,7 +393,7 @@ def _declare_tool_changes(context: AgentContext, pending_messages: list[AgentMes
         ]
     if unchanged:
         return pending_messages
-    update = _with_tool_changes(SystemMessage(content="", timestamp=int(time.time() * 1000)), changes)
+    update = _with_tool_changes(SystemMessage(content="", timestamp=clock.now_ms()), changes)
     index = next(
         (i for i, message in enumerate(pending_messages) if getattr(message, "role", None) != "system"),
         len(pending_messages),
@@ -854,7 +854,7 @@ def _create_tool_result_message(finalized: _FinalizedToolCallOutcome) -> ToolRes
         details=finalized.result.details,
         usage=finalized.result.usage,
         is_error=finalized.is_error,
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
 
 

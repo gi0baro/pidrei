@@ -11,12 +11,12 @@ pidrei (with the extension loaded) first.
 
 import json
 import sys
-import time
 
 import tonio.colored as tonio
 
 from pidrei.config import get_auth_path
 from pidrei_ai.types import Context, SimpleStreamOptions, UserMessage
+from pidrei_ai.utils import clock
 
 from . import MODELS, gitlab_duo_provider
 
@@ -44,9 +44,7 @@ async def main() -> int:
         return 1
 
     provider = gitlab_duo_provider()
-    context = Context(
-        messages=[UserMessage(content="Say hello in exactly 3 words.", timestamp=int(time.time() * 1000))]
-    )
+    context = Context(messages=[UserMessage(content="Say hello in exactly 3 words.", timestamp=clock.now_ms())])
 
     print(f"Model: {model.id}, API: {model.api}, Thinking: {use_thinking}")
 

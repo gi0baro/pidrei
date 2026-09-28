@@ -10,8 +10,9 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/message_renderer.py
 """
 
-import time
+from datetime import UTC, datetime
 
+from pidrei_ai.utils import clock
 from pidrei_tui import Box, Text
 
 
@@ -29,7 +30,7 @@ async def extension(pi):
 
         # Show timestamp when expanded
         if options.get("expanded") and details.get("timestamp"):
-            stamp = time.strftime("%H:%M:%S", time.localtime(details["timestamp"] / 1000))
+            stamp = datetime.fromtimestamp(details["timestamp"] / 1000, UTC).astimezone().strftime("%H:%M:%S")
             text += f"\n{theme.fg('dim', f'  at {stamp}')}"
 
         # Use a Box with customMessageBg for consistent styling; outputPad is
@@ -57,7 +58,7 @@ async def extension(pi):
                 "customType": "status-update",
                 "content": content,
                 "display": True,
-                "details": {"level": level, "timestamp": int(time.time() * 1000)},
+                "details": {"level": level, "timestamp": clock.now_ms()},
             }
         )
 

@@ -66,14 +66,13 @@ import signal as signal_module
 import sys
 import termios
 import threading
-import time as _time
 from typing import Any, Protocol
 
 import tonio.colored as tonio
 from tonio.colored import io as tonio_io, signals as tonio_signals
 from tonio.colored.sync import channel as tonio_channel
-from tonio.exceptions import CancelledError
 
+from . import clock
 from ._timers import Interval
 from .keys import set_kitty_protocol_active
 from .stdin_buffer import StdinBuffer
@@ -128,11 +127,6 @@ def normalize_apple_terminal_input(data: str, is_apple_terminal: bool, is_shift_
 # An input item: Kitty keyboard protocol confirmed. Applied by the consumer,
 # in order with the keys around it.
 _KITTY_PROTOCOL_ACTIVE = object()
-
-
-def _monotonic() -> float:
-    """The input deadlines' clock (read through the module's `_time`)."""
-    return _time.monotonic()
 
 
 def _is_native_modifier_pressed(key: str) -> bool:
@@ -245,7 +239,7 @@ def _resolve_write_log_path_blocking() -> str:
         return ""
     try:
         if os.path.isdir(env):
-            ts = _time.strftime("%Y-%m-%d_%H-%M-%S")
+            ts = clock.now_datetime().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
             return os.path.join(env, f"tui-{ts}-{os.getpid()}.log")
     except OSError:
         # Not an existing directory - use as-is (file path)
@@ -461,7 +455,7 @@ class ProcessTerminal:
         raw stdin to handle the case where the response arrives split across
         multiple events.
         """
-        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms(), clock=_monotonic)
+        self._stdin_buffer = StdinBuffer(escape_timeout=resolve_escape_timeout_ms())
 
         # Forward individual sequences to the input handler
         def on_data(sequence: str) -> None:
@@ -582,7 +576,7 @@ class ProcessTerminal:
     def _schedule_negotiation_buffer_flush(self) -> None:
         if not self._negotiation_buffer or self._negotiation_deadline is not None:
             return
-        self._negotiation_deadline = _monotonic() + KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS / 1000
+        self._negotiation_deadline = clock.monotonic() + KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS / 1000
 
     def _expire_input_deadlines(self) -> None:
         """pi's flush timers firing, from the reader: a split negotiation
@@ -591,7 +585,7 @@ class ProcessTerminal:
         sequence = None
         with self._protocol_lock:
             deadline = self._negotiation_deadline
-            if deadline is not None and _monotonic() >= deadline:
+            if deadline is not None and clock.monotonic() >= deadline:
                 sequence = self._take_negotiation_buffer()
         if sequence is not None:
             self._forward_input_sequence(sequence)
@@ -645,7 +639,7 @@ class ProcessTerminal:
             self._expire_input_deadlines()
             deadline = self._next_input_deadline()
             # More bytes, or the next parser deadline.
-            timeout = None if deadline is None else max(deadline - _monotonic(), _MIN_INPUT_WAIT_S)
+            timeout = None if deadline is None else max(deadline - clock.monotonic(), _MIN_INPUT_WAIT_S)
             if (waiter := sio.arm_r(timeout)) is not None:
                 await waiter
                 continue
@@ -663,7 +657,7 @@ class ProcessTerminal:
                 return
             if not chunk:
                 return
-            self._last_read_time = _time.monotonic()
+            self._last_read_time = clock.monotonic()
             data = decoder.decode(chunk)
             if data and (handler := self._stdin_data_handler) is not None:
                 handler(data)
@@ -685,12 +679,10 @@ class ProcessTerminal:
                 continue
             try:
                 await handler(item)
-            except BaseException as error:
+            except Exception as error:
                 # A handler exception must not end the consumer: input would
                 # be dead for good with no crash surfacing anywhere (the
                 # 0.84.2.5 freeze). Route it through the TUI's crash handler.
-                if isinstance(error, (CancelledError, GeneratorExit)):
-                    raise
                 on_error = self._error_handler
                 if on_error is None:
                     raise
@@ -727,13 +719,13 @@ class ProcessTerminal:
 
         # The running reader stamps _last_read_time on every read; pi
         # attaches a dedicated stdin listener for the same bookkeeping.
-        last_data_time = _time.monotonic()
-        end_time = _time.monotonic() + max_ms / 1000
+        last_data_time = clock.monotonic()
+        end_time = clock.monotonic() + max_ms / 1000
         idle_s = idle_ms / 1000
 
         try:
             while True:
-                now = _time.monotonic()
+                now = clock.monotonic()
                 time_left = end_time - now
                 if time_left <= 0:
                     break
@@ -977,13 +969,11 @@ class ProcessTerminal:
                     buffer = buffer[written:]
                 if log_path and data:
                     await tonio.spawn_blocking(_append_write_log_blocking, log_path, data)
-            except BaseException as error:
+            except Exception as error:
                 # The sole writer of the fd must survive a bad payload (e.g.
                 # an unencodable surrogate): a dead pump hangs every
                 # `terminal.write` waiter and freezes the whole UI. Report
                 # loud, keep draining, and still release this writer below.
-                if isinstance(error, GeneratorExit):
-                    raise
                 on_error = self._error_handler
                 if on_error is not None:
                     # Survives a handler that re-raises (none installed).

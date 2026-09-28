@@ -17,10 +17,9 @@ import base64
 import os
 import re
 import threading
-import time as time_module
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace as dataclass_replace
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 import tonio.colored as tonio
@@ -56,6 +55,7 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
@@ -105,16 +105,6 @@ from .system_prompt import (
 )
 from .tools import create_all_tool_definitions, create_local_bash_operations
 from .tools.tool_definition_wrapper import create_tool_definition_from_agent_tool
-
-
-def _now_ms() -> int:
-
-    return int(time_module.time() * 1000)
-
-
-def _iso_now() -> str:
-
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _iso_to_epoch_ms(timestamp: Any) -> float:
@@ -1092,7 +1082,7 @@ class AgentSession:
         content: list[TextContent | ImageContent] = [TextContent(text=text)]
         if images:
             content.extend(images)
-        message = UserMessage(content=content, timestamp=_now_ms())
+        message = UserMessage(content=content, timestamp=clock.now_ms())
         if behavior == "followUp":
             self._follow_up_messages.append(text)
             self.agent.follow_up(message)
@@ -1236,7 +1226,7 @@ class AgentSession:
         elif event.type == "agent_end":
             await runner.emit({"type": "agent_end", "messages": event.messages})
         elif event.type == "turn_start":
-            await runner.emit({"type": "turn_start", "turnIndex": self._turn_index, "timestamp": _now_ms()})
+            await runner.emit({"type": "turn_start", "turnIndex": self._turn_index, "timestamp": clock.now_ms()})
         elif event.type == "turn_end":
             # finish_turn already dispatched the boundary for turns the loop finished;
             # this covers turn_end events that did not pass through it.
@@ -1572,7 +1562,7 @@ class AgentSession:
         )
         if sections is None:
             return None
-        return SystemMessage(content="", sections=sections, timestamp=_now_ms())
+        return SystemMessage(content="", sections=sections, timestamp=clock.now_ms())
 
     def _install_agent_forced_prompt_projection(self) -> None:
         """Send a forced prompt as the provider's leading system prompt without recording it.
@@ -1600,7 +1590,7 @@ class AgentSession:
             head = SystemMessage(
                 content=forced,
                 tools_added=current.tools_added if current is not None else None,
-                timestamp=current.timestamp if current is not None else _now_ms(),
+                timestamp=current.timestamp if current is not None else clock.now_ms(),
             )
             return [head, *(message for message in transformed if getattr(message, "role", None) != "system")]
 
@@ -1904,7 +1894,7 @@ class AgentSession:
             messages = []
             user_content: list[TextContent | ImageContent] = [TextContent(text=user_text)]
             user_content.extend(normalized_images)
-            messages.append(UserMessage(content=user_content, timestamp=_now_ms()))
+            messages.append(UserMessage(content=user_content, timestamp=clock.now_ms()))
 
             # Inject any pending "nextTurn" messages as context alongside the user message
             messages.extend(self._pending_next_turn_messages)
@@ -1919,7 +1909,7 @@ class AgentSession:
                         content=content if content is not None else [],
                         display=msg.get("display") if isinstance(msg, dict) else msg.display,
                         details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
-                        timestamp=_now_ms(),
+                        timestamp=clock.now_ms(),
                     )
                 )
             update_message = self._prepare_prompt_and_tool_loadout(system_prompt_options)
@@ -2090,7 +2080,7 @@ class AgentSession:
             content=content if content is not None else [],
             display=display,
             details=details,
-            timestamp=_now_ms(),
+            timestamp=clock.now_ms(),
         )
         deliver_as = options.get("deliver_as", options.get("deliverAs"))
         trigger_turn = options.get("trigger_turn", options.get("triggerTurn"))
@@ -3623,7 +3613,7 @@ class AgentSession:
             cancelled=result.cancelled,
             truncated=result.truncated,
             full_output_path=result.full_output_path,
-            timestamp=_now_ms(),
+            timestamp=clock.now_ms(),
             exclude_from_context=options.get("exclude_from_context", options.get("excludeFromContext")),
         )
 

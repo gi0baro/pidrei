@@ -1,10 +1,10 @@
 """Port of pi's diagnostics helpers (packages/ai/src/utils/diagnostics.ts)."""
 
-import time
 import traceback
 from typing import Any
 
 from pidrei_ai.types import AssistantMessageDiagnostic, DiagnosticErrorInfo
+from pidrei_ai.utils import clock
 
 
 def format_thrown_value(value: Any) -> str:
@@ -35,7 +35,7 @@ def create_assistant_message_diagnostic(
 ) -> AssistantMessageDiagnostic:
     return AssistantMessageDiagnostic(
         type=type,
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
         error=extract_diagnostic_error(error),
         details=details,
     )

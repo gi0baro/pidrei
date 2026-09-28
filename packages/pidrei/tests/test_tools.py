@@ -765,6 +765,20 @@ class TestBashTool:
         assert "2998\n2999\n3000" in full_output
 
     @pytest.mark.tonio
+    async def test_keeps_output_the_readers_have_not_consumed_when_the_command_exits(self, monkeypatch):
+        """pidrei-only (the macOS CI flake): the post-exit grace window must
+        not close pipes that still hold output just because the readers were
+        not scheduled yet. A zero window is the extreme of that."""
+        monkeypatch.setattr(bash_module, "_EXIT_STDIO_GRACE_S", 0.0)
+
+        result = await execute_bash_with_operations("seq 3000", os.getcwd(), create_local_bash_operations())
+
+        assert result.exit_code == 0
+        assert result.truncated is True
+        with open(result.full_output_path, encoding="utf-8") as f:
+            assert f.read().splitlines() == [str(n) for n in range(1, 3001)]
+
+    @pytest.mark.tonio
     async def test_abort_kills_running_command(self, tmp_path):
         bash = create_bash_tool(str(tmp_path))
         cancel = CancelToken()

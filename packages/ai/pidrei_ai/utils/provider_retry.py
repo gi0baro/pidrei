@@ -14,14 +14,13 @@ the sleep directly).
 
 import math
 import random
-import time as _time
 from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
 from typing import Any
 
 from tonio.colored import time as tonio_time
-from tonio.exceptions import CancelledError
 
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
 
@@ -98,7 +97,7 @@ def _parse_http_date_delay_ms(value: str) -> float | None:
     except TypeError, ValueError:
         return None
 
-    return target.timestamp() * 1000 - _time.time() * 1000
+    return target.timestamp() * 1000 - clock.now_ms()
 
 
 def _get_retry_delay_ms(error: Any, retry_index: int, max_retry_delay_ms: float | None) -> float:
@@ -138,9 +137,7 @@ async def retry_provider_request[T](
     while True:
         try:
             return await request()
-        except CancelledError:
-            raise  # scope-owned request unwound by its owner; not ours to translate
-        except BaseException as error:
+        except Exception as error:
             if cancel is not None and cancel.cancelled:
                 raise _create_abort_error() from error
             if retries_remaining <= 0 or not _is_provider_error(error) or not _is_retryable_provider_error(error):

@@ -12,11 +12,12 @@ from pidrei.config import get_readme_path
 from pidrei.core.extensions.types import ToolDefinition
 from pidrei.core.tools.bash import BashExecResult, create_bash_tool_definition
 from pidrei.core.tools.read import create_read_tool, create_read_tool_definition
-from pidrei.core.tools.renderers import bash as bash_renderers, with_built_in_renderers
+from pidrei.core.tools.renderers import with_built_in_renderers
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.components import ToolExecutionComponent, tool_execution
 from pidrei.modes.interactive.theme import init_theme, theme
 from pidrei.utils.ansi import strip_ansi
+from pidrei_ai.utils import clock as clock_module
 from pidrei_tui import Text, TuiMouseEvent, reset_capabilities_cache, set_capabilities
 
 
@@ -245,10 +246,10 @@ class TestToolExecutionComponentParity:
         ],
     )
     async def test_bash_renderer_formats_durations_while_running_and_after_completion(self, monkeypatch, ms, formatted):
-        # pi drives `Date.now()` with vi.useFakeTimers; the renderer reads the clock
-        # through its module's `time`, which is swapped for a settable one here.
+        # pi drives `Date.now()` with vi.useFakeTimers; the renderer reads
+        # `clock.monotonic`, which is swapped for a settable one here.
         clock = {"now_s": 0.0}
-        monkeypatch.setattr(bash_renderers, "time", SimpleNamespace(time=lambda: clock["now_s"]))
+        monkeypatch.setattr(clock_module, "monotonic", lambda: clock["now_s"])
         component = ToolExecutionComponent(
             "bash",
             "tool-bash-duration",

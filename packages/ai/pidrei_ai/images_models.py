@@ -1,7 +1,6 @@
 """Port of pi's images-models.ts: the image-side counterpart of `registry.Models`."""
 
 import threading
-import time
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -12,6 +11,7 @@ from pidrei_ai.auth.credential_store import InMemoryCredentialStore
 from pidrei_ai.auth.resolve import AuthResolutionOverrides, ModelsError, resolve_provider_auth
 from pidrei_ai.auth.types import AuthResult, ProviderAuth
 from pidrei_ai.types import AssistantImages, ImagesContext, ImagesModel, ImagesOptions
+from pidrei_ai.utils import clock
 
 
 class ImagesProvider(Protocol):
@@ -171,7 +171,7 @@ class ImagesModels:
                 output=[],
                 stop_reason="error",
                 error_message=str(error),
-                timestamp=int(time.time() * 1000),
+                timestamp=clock.now_ms(),
             )
 
 
@@ -238,7 +238,7 @@ def create_images_provider(
                 fetched = await refresh_models()
                 with provider._guard:
                     provider._models = list(fetched)
-            except BaseException as error:
+            except Exception as error:
                 failure.store(error)
                 raise
             finally:

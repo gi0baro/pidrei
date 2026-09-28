@@ -89,12 +89,8 @@ def driven(coro: Coroutine[Any, Any, Any]) -> Deferred:
     async def _drive() -> None:
         try:
             result = await coro
-        except BaseException as error:
-            # BaseException: an unsettled Deferred wedges every awaiter, so
-            # even a non-Exception death (a pyo3 panic) must settle it.
+        except Exception as error:
             deferred.reject(error)
-            if isinstance(error, GeneratorExit):
-                raise
             return
         deferred.resolve(result)
 
@@ -109,9 +105,7 @@ async def all_settled(awaitables: list[Awaitable[Any]]) -> list[tuple[Any, BaseE
     for deferred in driven_all:
         try:
             value = await deferred
-        except BaseException as error:
-            if isinstance(error, GeneratorExit):
-                raise
+        except Exception as error:
             results.append((None, error))
             continue
         results.append((value, None))

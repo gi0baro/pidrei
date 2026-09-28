@@ -15,11 +15,11 @@ per event. A layer that returns a different stream (a provider that ignores
 """
 
 import inspect
-import time
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
 
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent, Model, Usage
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
@@ -33,7 +33,7 @@ def _create_setup_error_message(model: Model, error: Any) -> AssistantMessage:
         usage=Usage(),
         stop_reason="error",
         error_message=str(error),
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
 
 

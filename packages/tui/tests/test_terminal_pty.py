@@ -11,13 +11,12 @@ import os
 import pty
 import termios
 import threading
-import time
 
 import pytest
 import tonio.colored as tonio
 from tonio.colored.io import FdStream
 
-from pidrei_tui import terminal as terminal_module
+from pidrei_tui import clock as clock_module
 from pidrei_tui.components import Text
 from pidrei_tui.keys import matches_key, set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal
@@ -82,13 +81,13 @@ class _InputLog:
 
 
 class _ManualClock:
-    """Stands in for terminal.py's `_time`: `monotonic()` holds still until
-    `advance()`, and `read` is set on its first call."""
+    """Stands in for `clock.monotonic`: it holds still until `advance()`, and
+    `read` is set on its first call."""
 
     def __init__(self) -> None:
         # Starts at the real reading, so stamps taken before the swap
         # (`_last_read_time`) stay comparable.
-        self.now = time.monotonic()
+        self.now = clock_module.monotonic()
         self.read = tonio.Event()
 
     def monotonic(self) -> float:
@@ -109,12 +108,12 @@ _PAST_DRAIN_IDLE_S = 0.06
 @contextlib.contextmanager
 def _manual_terminal_clock():
     clock = _ManualClock()
-    original = terminal_module._time
-    terminal_module._time = clock
+    original = clock_module.monotonic
+    clock_module.monotonic = clock.monotonic
     try:
         yield clock
     finally:
-        terminal_module._time = original
+        clock_module.monotonic = original
 
 
 @pytest.mark.tonio

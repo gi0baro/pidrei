@@ -5,10 +5,12 @@ timeout watchdog, and a post-exit stdio grace window mirroring pi's
 waitForChildProcess semantics (earendil-works/pi#5303).
 """
 
+import fcntl
 import math
 import subprocess
+import sys
+import termios
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +20,7 @@ from tonio.colored import fs, time as tonio_time
 
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import JsonSchemaConstrainedSampling, TextContent
+from pidrei_ai.utils import clock
 
 from ...utils.shell import (
     ShellConfig,
@@ -82,6 +85,23 @@ class BashSpawnContext:
     command: str
     cwd: str
     env: dict[str, str]
+
+
+def _pipe_is_drained(stream) -> bool:
+    """Nothing left unread in the child's pipe (FIONREAD), or it is already closed.
+
+    Drop this (and its use below) once tonio exposes a readiness API over fds,
+    as it does for net: a reader could then wait for "readable, or the child
+    exited" itself. Asking the kernel is the only non-invasive readiness peek
+    today — arming an fd's read readiness from outside would steal the parked
+    reader's wakeup (one reader slot per fd).
+    """
+    if stream is None or (fd := stream.fileno()) < 0:
+        return True
+    try:
+        return int.from_bytes(fcntl.ioctl(fd, termios.FIONREAD, bytes(4)), sys.byteorder) == 0
+    except OSError:
+        return True
 
 
 class LocalShellOperations:
@@ -179,14 +199,16 @@ class LocalShellOperations:
                 untrack_detached_child_pid(pid)
 
         # Post-exit stdio grace: detached descendants can keep the inherited
-        # pipes open. Give the readers a grace window per burst of data
-        # (pi re-arms a 100 ms idle timer on each chunk), then force-close.
+        # pipes open. pi closes them after 100 ms with no data (its idle timer
+        # re-arms on each chunk). Idle is a whole window with no chunk AND
+        # nothing left unread in the pipes: a reader the scheduler has not run
+        # yet (or woke but did not run yet) still has the output in its pipe.
         while not readers_done.is_set():
             before = activity["count"]
             await readers_done.wait(_EXIT_STDIO_GRACE_S)
             if readers_done.is_set():
                 break
-            if activity["count"] == before:
+            if activity["count"] == before and all(map(_pipe_is_drained, (process.stdout, process.stderr))):
                 break
 
         for stream in (process.stdout, process.stderr):
@@ -195,6 +217,9 @@ class LocalShellOperations:
                     stream.close()
                 except Exception:
                     pass
+        # A reader that already pulled a chunk off the pipe still delivers it;
+        # the closed streams end its next receive.
+        await readers_done.wait()
 
         if cancel is not None and cancel.cancelled:
             raise Exception("aborted")
@@ -319,7 +344,7 @@ def create_shell_tool_definition(
             if on_update is None or not state["dirty"]:
                 return
             state["dirty"] = False
-            state["last_update_at"] = time.monotonic()
+            state["last_update_at"] = clock.monotonic()
             snapshot = output.snapshot(persist_if_truncated=True)
             on_update(
                 AgentToolResult(
@@ -339,7 +364,7 @@ def create_shell_tool_definition(
             if on_update is None:
                 return
             state["dirty"] = True
-            delay = BASH_UPDATE_THROTTLE_S - (time.monotonic() - state["last_update_at"])
+            delay = BASH_UPDATE_THROTTLE_S - (clock.monotonic() - state["last_update_at"])
             if delay <= 0:
                 clear_update_timer()
                 emit_output_update()

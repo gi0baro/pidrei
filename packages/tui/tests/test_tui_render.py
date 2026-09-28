@@ -1160,6 +1160,9 @@ async def test_a_forced_request_that_finds_one_pending_still_repaints_everything
     component.requests = [False, True]
     tui.request_render()
     await terminal.wait_for_render()
+    # That settle covered only this request; the component's in-render
+    # requests came later and get their own frame.
+    await terminal.settle()
 
     assert tui.full_redraws == full_redraws + 1
     await tui.stop()
@@ -1182,6 +1185,9 @@ async def test_requests_made_during_a_frame_queue_exactly_one_more_frame():
     component.requests = [False, False, False]
     tui.request_render()
     await terminal.wait_for_render()
+    # That settle covered only this request; the component's in-render
+    # requests came later and get their own frame.
+    await terminal.settle()
 
     assert component.render_count == renders + 2
     await tui.stop()

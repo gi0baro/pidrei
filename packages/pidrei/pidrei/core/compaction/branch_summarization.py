@@ -5,11 +5,11 @@ point in the session tree, this generates a summary of the branch being left
 so context isn't lost.
 """
 
-import time as time_module
 from dataclasses import dataclass
 from typing import Any
 
 from pidrei_ai.types import Context, Model, SimpleStreamOptions, TextContent, ToolCall, Usage, UserMessage
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import normalize_context
@@ -262,9 +262,7 @@ async def generate_branch_summary(
         instructions = BRANCH_SUMMARY_PROMPT
     prompt_text = f"<conversation>\n{conversation_text}\n</conversation>\n\n{instructions}"
 
-    summarization_messages = [
-        UserMessage(content=[TextContent(text=prompt_text)], timestamp=int(time_module.time() * 1000))
-    ]
+    summarization_messages = [UserMessage(content=[TextContent(text=prompt_text)], timestamp=clock.now_ms())]
 
     # Call LLM for summarization. Prefer the session stream function so request
     # behavior (timeouts, retries, attribution headers) stays consistent without

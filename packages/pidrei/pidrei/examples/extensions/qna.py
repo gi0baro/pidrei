@@ -9,10 +9,9 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/qna.py
 """
 
-import time
-
 from pidrei.modes.interactive.components import BorderedLoader
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
+from pidrei_ai.utils import clock
 
 
 SYSTEM_PROMPT = """You are a question extractor. Given text from a conversation, extract any questions that need answering and format them for the user to fill in.
@@ -75,7 +74,7 @@ async def extension(pi):
                 try:
                     user_message = UserMessage(
                         content=[TextContent(text=last_assistant_text)],
-                        timestamp=int(time.time() * 1000),
+                        timestamp=clock.now_ms(),
                     )
 
                     response = await ctx.model_registry.complete(

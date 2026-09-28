@@ -772,7 +772,7 @@ class ModelRuntime:
                     cancel.raise_if_cancelled()
                     started.set()
                     outcome.store(("value", await task()))
-            except BaseException as error:
+            except Exception as error:
                 outcome.store(("error", error))
             finally:
                 done.set()
@@ -813,7 +813,7 @@ class ModelRuntime:
                 raise refresh_error
             self._update_model_snapshot()
             await self._refresh_provider_availability(provider_id, cancel)
-        except BaseException as cause:
+        except Exception as cause:
             raise CredentialSynchronizationError(provider_id, operation, credential, cause=cause)
 
     async def set_runtime_api_key(

@@ -365,14 +365,12 @@ class UnixByteConnection:
                 if self._closed_value or self._closing:
                     raise Exception("Unix connection is closed")
                 await self._stream.send_all(data)
-            except BaseException as error:
-                # BaseException: the sole writer dying without settling this
-                # deferred (or draining the queue) wedges every sender.
+            except Exception as error:
+                # The sole writer must settle this deferred and keep draining:
+                # dying here would wedge every sender.
                 with self._pending_guard:
                     self._pending_bytes -= len(data)
-                deferred.reject(error if isinstance(error, Exception) else Exception(repr(error)))
-                if isinstance(error, GeneratorExit):
-                    raise
+                deferred.reject(error)
                 continue
             with self._pending_guard:
                 self._pending_bytes -= len(data)

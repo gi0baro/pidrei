@@ -27,12 +27,12 @@ import base64
 import math
 import os
 import re
-import time
 from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 
 import tonio.colored as tonio
 
+from . import clock
 from ._timers import Interval
 from .alt_screen_search import (
     AltScreenSearchComponent,
@@ -873,7 +873,7 @@ class TuiAltScreen(TuiBase):
         return dispatch_mouse_event(target.component, retarget_mouse_event(event, target))
 
     def _get_component_click_count(self, target: TuiMouseDispatchTarget, x: int, y: int) -> int:
-        now = time.monotonic()
+        now = clock.monotonic()
         previous = self._last_component_click
         if (
             previous is not None
@@ -1231,7 +1231,7 @@ class TuiAltScreen(TuiBase):
     def _get_click_count(self, point: dict, word: dict | None) -> int:
         """pi uses `Date.now()`; a monotonic clock is the right primitive for an
         interval and cannot be moved by a wall-clock adjustment."""
-        now = time.monotonic()
+        now = clock.monotonic()
         previous = self._last_click
         if (
             word

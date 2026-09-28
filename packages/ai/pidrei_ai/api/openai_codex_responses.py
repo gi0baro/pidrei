@@ -15,7 +15,6 @@ import json
 import math
 import re
 import threading
-import time
 from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, fields
 from email.utils import parsedate_to_datetime
@@ -473,7 +472,7 @@ def stream(
         model=model.id,
         usage=UsageBuilder(),
         stop_reason="pending",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
     out_stream.partial = output
 

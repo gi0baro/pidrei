@@ -101,7 +101,10 @@ async def runtime_with_provider(registered, credentials: AuthStorage | None = No
         allow_model_network=False,
     )
     runtime.register_native_provider(registered)
-    await runtime.refresh(ModelsRefreshOptions(allow_network=False, providers=[registered.id]))
+    # A full refresh: it satisfies the refresh `register_native_provider`
+    # requested (a provider-scoped one leaves it owed, and the detached drain
+    # could then run inside a test and trip its offline-refresh gate).
+    await runtime.refresh(ModelsRefreshOptions(allow_network=False))
     return runtime
 
 

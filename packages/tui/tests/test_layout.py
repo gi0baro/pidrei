@@ -6,6 +6,7 @@ from typing import ClassVar
 import pytest
 
 import pidrei_tui.components.scroll_view as scroll_view_module
+from pidrei_tui import clock as clock_module
 from pidrei_tui.components.h_stack import HStack
 from pidrei_tui.components.scroll_view import ScrollView
 from pidrei_tui.components.text import Text
@@ -230,8 +231,8 @@ def test_tracks_follow_end_state_and_returns_unused_scroll_delta():
 
 
 class _ManualClock:
-    """Stands in for scroll_view.py's `_time`: `monotonic()` holds still until
-    a fake timer's fire advances it."""
+    """Stands in for `clock.monotonic`: it holds still until a fake timer's
+    fire advances it."""
 
     def __init__(self) -> None:
         self.now = 1000.0
@@ -273,14 +274,15 @@ def fake_scrollbar_hide_timers():
     the timer is fired by hand, which moves the clock to its deadline, so the
     test depends on neither the wall clock nor the timer's task.
     """
-    original_timeout, original_time = scroll_view_module.Timeout, scroll_view_module._time
+    original_timeout, original_monotonic = scroll_view_module.Timeout, clock_module.monotonic
     scroll_view_module.Timeout = FakeTimeout
-    FakeTimeout.clock = scroll_view_module._time = _ManualClock()
+    FakeTimeout.clock = _ManualClock()
+    clock_module.monotonic = FakeTimeout.clock.monotonic
     FakeTimeout.instances = []
     try:
         yield FakeTimeout.instances
     finally:
-        scroll_view_module.Timeout, scroll_view_module._time = original_timeout, original_time
+        scroll_view_module.Timeout, clock_module.monotonic = original_timeout, original_monotonic
         FakeTimeout.clock = None
 
 

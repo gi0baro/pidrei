@@ -9,11 +9,11 @@ Start pidrei with this extension:
 """
 
 import json
-import time
 
 from pidrei.modes.interactive.components import DynamicBorder
 from pidrei.modes.interactive.theme import get_markdown_theme
 from pidrei_ai.types import Context, SimpleStreamOptions, TextContent, UserMessage
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.uuid import uuidv7
 from pidrei_tui import Container, Markdown, Text, matches_key
 
@@ -135,7 +135,7 @@ async def extension(pi):
         summary_messages = [
             UserMessage(
                 content=[TextContent(text=build_summary_prompt(conversation_text))],
-                timestamp=int(time.time() * 1000),
+                timestamp=clock.now_ms(),
             )
         ]
 

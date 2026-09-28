@@ -57,6 +57,7 @@ from pidrei_agent.harness.session.serde import (
     to_wire_value,
 )
 from pidrei_ai.types import TextContent
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_ai.utils.uuid import uuidv7
@@ -148,12 +149,6 @@ class SessionHeaderScanLimitError(Exception):
     def __init__(self, file_path: str):
         super().__init__(f"Session header exceeds {_MAX_SESSION_HEADER_SCAN_BYTES}-byte scan limit: {file_path}")
         self.name = "SessionHeaderScanLimitError"
-
-
-def _iso_now() -> str:
-    # Millisecond precision like JS Date.toISOString(): session file names derive
-    # from this ("<timestamp with [:.] -> ->_<id>.jsonl").
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _iso_to_epoch_ms(timestamp: Any) -> float:
@@ -1119,7 +1114,7 @@ class SessionManager:
             if session_id is not None:
                 assert_valid_session_id(session_id)
             self._session_id = session_id if session_id is not None else _create_session_id()
-            timestamp = _iso_now()
+            timestamp = clock.now_iso()
             header: dict[str, Any] = {
                 "type": "session",
                 "version": CURRENT_SESSION_VERSION,
@@ -1242,7 +1237,7 @@ class SessionManager:
             "type": entry_type,
             "id": _generate_id(self._by_id),
             "parentId": self._leaf_id,
-            "timestamp": _iso_now(),
+            "timestamp": clock.now_iso(),
         }
 
     # -- appends -----------------------------------------------------------------
@@ -1582,7 +1577,7 @@ class SessionManager:
                     "type": "branch_summary",
                     "id": _generate_id(self._by_id),
                     "parentId": branch_from_id,
-                    "timestamp": _iso_now(),
+                    "timestamp": clock.now_iso(),
                     "fromId": from_id,
                     "summary": summary,
                 }
@@ -1640,7 +1635,7 @@ class SessionManager:
                 path_parent_id = entry["id"]
 
             new_session_id = _create_session_id()
-            timestamp = _iso_now()
+            timestamp = clock.now_iso()
             file_timestamp = timestamp.replace(":", "-").replace(".", "-")
             new_session_file = os.path.join(self.get_session_dir(), f"{file_timestamp}_{new_session_id}.jsonl")
 
@@ -1773,7 +1768,7 @@ class SessionManager:
             if session_id is not None:
                 assert_valid_session_id(session_id)
             new_session_id = session_id if session_id is not None else _create_session_id()
-            timestamp = _iso_now()
+            timestamp = clock.now_iso()
             file_timestamp = timestamp.replace(":", "-").replace(".", "-")
             new_session_file = os.path.join(directory, f"{file_timestamp}_{new_session_id}.jsonl")
 

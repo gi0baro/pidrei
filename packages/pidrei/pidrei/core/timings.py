@@ -1,8 +1,9 @@
 """Mirror of pi coding-agent src/core/timings.ts (PI_TIMING -> PIDREI_TIMING)."""
 
 import os
-import time as time_module
 from typing import Any
+
+from pidrei_ai.utils import clock
 
 from .output_guard import write_stderr
 
@@ -15,13 +16,13 @@ _timing_namespaces: dict[str, dict[str, Any]] = {}
 def reset_timings(namespace: str = "main") -> None:
     if not _ENABLED:
         return
-    _timing_namespaces[namespace] = {"timings": [], "last_time": time_module.time() * 1000}
+    _timing_namespaces[namespace] = {"timings": [], "last_time": clock.monotonic() * 1000}
 
 
 def time(label: str, namespace: str = "main") -> None:
     if not _ENABLED:
         return
-    now = time_module.time() * 1000
+    now = clock.monotonic() * 1000
 
     if namespace not in _timing_namespaces:
         reset_timings(namespace)

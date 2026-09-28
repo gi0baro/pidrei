@@ -8,8 +8,7 @@ tool output does not load the execution path or its parameter schema.
 shape is unchanged.
 """
 
-import time
-
+from pidrei_ai.utils import clock
 from pidrei_tui import Container, Text, truncate_to_width
 from pidrei_tui._timers import Interval
 
@@ -141,7 +140,7 @@ def _rebuild_bash_result_render_component(
 
     if started_at is not None:
         label = "Elapsed" if options.get("isPartial") else "Took"
-        end_time = ended_at if ended_at is not None else time.time() * 1000
+        end_time = ended_at if ended_at is not None else clock.monotonic() * 1000
         component.add_child(Text("\n" + theme.fg("muted", f"{label} {_format_duration(end_time - started_at)}"), 0, 0))
 
 
@@ -149,7 +148,7 @@ def create_shell_renderers(prompt: str) -> ToolRenderers:
     def render_call(args, _theme, context):
         state = context["state"]
         if context["executionStarted"] and state.get("startedAt") is None:
-            state["startedAt"] = time.time() * 1000
+            state["startedAt"] = clock.monotonic() * 1000
             state["endedAt"] = None
         text = context["lastComponent"] if isinstance(context.get("lastComponent"), Text) else Text("", 0, 0)
         text.set_text(_format_shell_call(args, prompt))
@@ -166,7 +165,7 @@ def create_shell_renderers(prompt: str) -> ToolRenderers:
             state["interval"] = Interval(1000, tick)
         if not options.get("isPartial") or context["isError"]:
             if state.get("endedAt") is None:
-                state["endedAt"] = time.time() * 1000
+                state["endedAt"] = clock.monotonic() * 1000
             if state.get("interval"):
                 state["interval"].cancel()
                 state["interval"] = None

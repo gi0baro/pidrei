@@ -18,8 +18,8 @@ scrollbar hidden too early.
 """
 
 import math
-import time as _time
 
+from .. import clock
 from .._timers import Timeout
 from ..layout_node import LAYOUT_NODE
 from ..tui import Container
@@ -88,7 +88,7 @@ class ScrollView(Container):
         return (
             self.scrollbar == "auto"
             and self._content_height > self._current_viewport_height
-            and _time.monotonic() < self._scrollbar_visible_until
+            and clock.monotonic() < self._scrollbar_visible_until
         )
 
     def set_scrollbar(self, scrollbar: str) -> None:
@@ -114,13 +114,13 @@ class ScrollView(Container):
         if self._scrollbar_active:
             self._scrollbar_visible_until = math.inf
             return
-        self._scrollbar_visible_until = _time.monotonic() + self._scrollbar_hide_delay_ms / 1000
+        self._scrollbar_visible_until = clock.monotonic() + self._scrollbar_hide_delay_ms / 1000
 
         def hidden() -> None:
             # Past the deadline, the next frame draws no scrollbar. A fire
             # ahead of the clock asks again for the remainder (that timer,
             # too, only asks for a frame); later activity has its own timer.
-            remaining = self._scrollbar_visible_until - _time.monotonic()
+            remaining = self._scrollbar_visible_until - clock.monotonic()
             if 0 < remaining < math.inf:
                 Timeout(remaining * 1000, hidden)
                 return

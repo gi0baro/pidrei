@@ -5,7 +5,6 @@ nothing is stored. No silent env fallback after a failed refresh or for a
 credential type without a matching handler.
 """
 
-import time
 from dataclasses import dataclass
 
 import tonio.colored as tonio
@@ -57,10 +56,6 @@ class AuthResolutionOverrides:
     #: Require this much remaining OAuth-token validity; defaults to five minutes.
     min_oauth_validity_ms: int | None = None
     cancel: CancelToken | None = None
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
 
 
 class _OverlayEnvAuthContext:
@@ -156,7 +151,7 @@ async def _resolve_stored_oauth(
     minimum_validity_ms = max(DEFAULT_OAUTH_MINIMUM_VALIDITY_MS, min_oauth_validity_ms or 0)
 
     def expires_soon(current: OAuthCredential) -> bool:
-        return _now_ms() + minimum_validity_ms >= current.expires
+        return clock.now_ms() + minimum_validity_ms >= current.expires
 
     credential = stored
 

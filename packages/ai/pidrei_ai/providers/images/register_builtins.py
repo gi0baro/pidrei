@@ -5,10 +5,9 @@ loads lazily on first use, and a load failure becomes an error `AssistantImages`
 rather than an exception, mirroring `api/lazy.py` for the streaming side.
 """
 
-import time
-
 from pidrei_ai.images_api_registry import ImagesApiProvider, register_images_api_provider
 from pidrei_ai.types import AssistantImages, ImagesContext, ImagesModel, ImagesOptions
+from pidrei_ai.utils import clock
 
 
 def _create_lazy_load_error_images(model: ImagesModel, error: Exception) -> AssistantImages:
@@ -19,7 +18,7 @@ def _create_lazy_load_error_images(model: ImagesModel, error: Exception) -> Assi
         output=[],
         stop_reason="error",
         error_message=str(error),
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
 
 

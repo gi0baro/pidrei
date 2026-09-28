@@ -18,7 +18,6 @@ Two runtime-forced differences:
 
 import base64
 import re
-import time
 from dataclasses import dataclass, fields
 from typing import Any
 from urllib.parse import urlparse
@@ -86,6 +85,7 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.error_body import normalize_provider_error
@@ -168,7 +168,7 @@ def stream(
         model=model.id,
         usage=UsageBuilder(),
         stop_reason="pending",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
     out_stream.partial = output
 
@@ -456,7 +456,7 @@ def _append_bedrock_failure_diagnostic(
 
     append_assistant_message_diagnostic(
         output,
-        AssistantMessageDiagnostic(type="bedrock_response_failure", timestamp=int(time.time() * 1000), details=details),
+        AssistantMessageDiagnostic(type="bedrock_response_failure", timestamp=clock.now_ms(), details=details),
     )
 
 

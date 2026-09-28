@@ -14,10 +14,17 @@ from pidrei_ai.utils import clock, timers
 _PROCESS_SEAMS = (
     (timers, "set_timeout", timers.set_timeout),
     (clock, "now_ms", clock.now_ms),
+    (clock, "monotonic", clock.monotonic),
     (clock, "sleep_ms", clock.sleep_ms),
     (local, "SPILL_CHANNEL_SIZE", local.SPILL_CHANNEL_SIZE),
     (local, "EXIT_STDIO_GRACE_SECONDS", local.EXIT_STDIO_GRACE_SECONDS),
 )
+
+
+@pytest.fixture(autouse=True)
+def _tonio_runtime(tonio_runtime):
+    """Every test pulls in the runtime: `clock.monotonic` reads its clock, and
+    async fixtures then run for plain sync tests too."""
 
 
 @pytest.fixture(autouse=True)

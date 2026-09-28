@@ -1,6 +1,6 @@
 """Mirror of pi ai/test/uuid.test.ts, plus the pidrei-own thread-safety case.
 
-pi's fake timers become a patched `_now_ms` seam and `vi.stubGlobal("crypto")`
+pi's fake timers become a patched `clock.now_ms` seam and `vi.stubGlobal("crypto")`
 a patched `_random_bytes` seam; both are plain sync tests, so `monkeypatch`
 is fine here.
 """
@@ -11,7 +11,7 @@ import re
 import pytest
 import tonio.colored as tonio
 
-from pidrei_ai.utils import uuid as uuid_module
+from pidrei_ai.utils import clock as clock_module, uuid as uuid_module
 from pidrei_ai.utils.uuid import uuidv7
 
 
@@ -24,17 +24,17 @@ def parse_timestamp(uuid: str) -> int:
 
 
 def test_generates_ordered_uuidv7s_while_preserving_follower_timestamps(monkeypatch):
-    clock = [TIMESTAMP]
-    monkeypatch.setattr(uuid_module, "_now_ms", lambda: clock[0])
+    now = [TIMESTAMP]
+    monkeypatch.setattr(clock_module, "now_ms", lambda: now[0])
     # vitest isolates the module per file; here earlier tests already moved
     # the generator's clock floor past the pinned TIMESTAMP.
     monkeypatch.setattr(uuid_module, "_last_ordinary_timestamp", -1)
 
     first = uuidv7()
     second = uuidv7()
-    clock[0] = TIMESTAMP - 1
+    now[0] = TIMESTAMP - 1
     after_rollback = uuidv7()
-    clock[0] = TIMESTAMP + 1
+    now[0] = TIMESTAMP + 1
     after_advance = uuidv7()
     ordinary_ids = [first, second, after_rollback, after_advance]
     follower_timestamp = TIMESTAMP - 1_000

@@ -15,7 +15,6 @@ import json
 import random
 import secrets
 import threading
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -58,6 +57,7 @@ from pidrei_ai.types import (
     TranscriptContext,
     Usage,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.estimate import _tool_json_shape
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.text import get_system_message_text
@@ -100,7 +100,7 @@ class FauxModelDefinition:
 
 
 def _random_id(prefix: str) -> str:
-    return f"{prefix}:{int(time.time() * 1000)}:{secrets.token_hex(6)}"
+    return f"{prefix}:{clock.now_ms()}:{secrets.token_hex(6)}"
 
 
 def faux_text(text: str) -> TextContent:
@@ -140,7 +140,7 @@ def faux_assistant_message(
         deferred=deferred,
         error_message=error_message,
         response_id=response_id,
-        timestamp=timestamp if timestamp is not None else int(time.time() * 1000),
+        timestamp=timestamp if timestamp is not None else clock.now_ms(),
     )
 
 
@@ -227,9 +227,7 @@ def _split_string_by_token_size(text: str, min_token_size: int, max_token_size: 
 
 
 def _create_aborted_message(partial: AssistantMessageBuilder) -> AssistantMessageBuilder:
-    return replace(
-        partial, stop_reason="aborted", error_message="Request was aborted", timestamp=int(time.time() * 1000)
-    )
+    return replace(partial, stop_reason="aborted", error_message="Request was aborted", timestamp=clock.now_ms())
 
 
 async def _schedule_chunk(chunk: str, tokens_per_second: float | None) -> None:
@@ -451,7 +449,7 @@ class FauxCore:
             usage=Usage(),
             stop_reason="error",
             error_message=str(error) if str(error) else repr(error),
-            timestamp=int(time.time() * 1000),
+            timestamp=clock.now_ms(),
         )
 
     def _create_deferred_message(self, model: Model, handle: DeferredHandle) -> AssistantMessage:
@@ -463,7 +461,7 @@ class FauxCore:
             usage=Usage(),
             stop_reason="deferred",
             deferred=handle,
-            timestamp=int(time.time() * 1000),
+            timestamp=clock.now_ms(),
         )
 
     async def _resolve_response(

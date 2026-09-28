@@ -11,7 +11,7 @@ Then type these inside pidrei:
     time                    → current time (instant, no LLM)
 """
 
-from datetime import datetime
+from pidrei_ai.utils import clock
 
 
 async def extension(pi):
@@ -33,7 +33,7 @@ async def extension(pi):
             ctx.ui.notify("pong", "info")
             return {"action": "handled"}
         if event["text"].lower() == "time":
-            ctx.ui.notify(datetime.now().astimezone().strftime("%c"), "info")
+            ctx.ui.notify(clock.now_datetime().astimezone().strftime("%c"), "info")
             return {"action": "handled"}
 
         return {"action": "continue"}

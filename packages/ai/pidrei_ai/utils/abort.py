@@ -18,7 +18,6 @@ from collections.abc import Coroutine
 from typing import Any
 
 import tonio.colored as tonio
-from tonio.exceptions import CancelledError
 
 from pidrei_ai.utils.cancel import NEVER_CANCELLED, AbortError, CancelToken
 
@@ -64,14 +63,11 @@ async def run_cancellable[T](operation: Coroutine[Any, Any, T], cancel: CancelTo
                     return
                 claim["child"] = True
             outcome.store((False, await operation))
-        except CancelledError:
-            raise  # reported as the token's reason below
-        except GeneratorExit:
-            raise  # coroutine close protocol, not an operation failure
-        except BaseException as error:
+        except Exception as error:
             # Delivery is `raise payload` at the call site below: escaping
             # further would only double-report through tonio's
-            # unhandled-coroutine printer on stdout.
+            # unhandled-coroutine printer on stdout. A cancel is reported as
+            # the token's reason below.
             outcome.store((True, error))
         finally:
             settled.set()
@@ -128,7 +124,7 @@ async def race_with_cancel[T](operation: Coroutine[Any, Any, T], cancel: CancelT
     async def _run() -> None:
         try:
             value = await operation
-        except BaseException as error:
+        except Exception as error:
             _settle("error", error)
         else:
             _settle("value", value)

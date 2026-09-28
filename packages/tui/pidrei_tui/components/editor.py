@@ -2170,12 +2170,10 @@ class Editor:
                     explicit_tab=explicit_tab,
                 )
             )
-        except BaseException as error:
+        except Exception as error:
             # A scope child dying unretrieved is invisible (tonio can only
             # report it as UNHANDLED); a cancelled request may surface its
             # cancellation as an exception and is not an error.
-            if isinstance(error, GeneratorExit):
-                raise
             if controller.cancelled:
                 return
             self._tui.report_error(error)

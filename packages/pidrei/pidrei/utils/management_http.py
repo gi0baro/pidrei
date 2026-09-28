@@ -10,8 +10,9 @@ pi's `formatVersionCheckError` is not ported — its only caller is the npm
 self-update planner, which pidrei does not have.
 """
 
-import time
 from typing import Any
+
+from pidrei_ai.utils import clock
 
 
 __all__ = ["RETRYABLE_STATUS_CODES", "fetch_with_retry"]
@@ -45,14 +46,14 @@ async def fetch_with_retry(
     from pidrei_ai.utils.http import RequestTimeout, request_timeout, shared_client
 
     max_retries = max(0, int(max_retries))
-    deadline = None if timeout_ms is None or timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000
+    deadline = None if timeout_ms is None or timeout_ms <= 0 else clock.monotonic() + timeout_ms / 1000
     attempt_timeout_ms = None if attempt_timeout_ms is None or attempt_timeout_ms <= 0 else attempt_timeout_ms
 
     attempt = 0
     while True:
         remaining_ms: float | None = None
         if deadline is not None:
-            remaining_ms = (deadline - time.monotonic()) * 1000
+            remaining_ms = (deadline - clock.monotonic()) * 1000
             if remaining_ms <= 0:
                 raise RequestTimeout(f"Timed out after {timeout_ms:.0f}ms: {url}")
         if attempt_timeout_ms is not None:
@@ -61,7 +62,7 @@ async def fetch_with_retry(
         try:
             response = await shared_client().get(url, headers=headers, timeout=request_timeout(remaining_ms))
         except Exception:
-            if attempt >= max_retries or (deadline is not None and time.monotonic() >= deadline):
+            if attempt >= max_retries or (deadline is not None and clock.monotonic() >= deadline):
                 raise
         else:
             if not (retry_on_status and response.status_code in RETRYABLE_STATUS_CODES and attempt < max_retries):

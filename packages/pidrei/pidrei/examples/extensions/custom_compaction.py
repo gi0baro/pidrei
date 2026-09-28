@@ -13,11 +13,10 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/custom_compaction.py
 """
 
-import time
-
 from pidrei.core.compaction import CompactionResult, serialize_conversation
 from pidrei.core.messages import convert_to_llm
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.uuid import uuidv7
 
 
@@ -75,7 +74,7 @@ async def extension(pi):
             f"{SUMMARY_INSTRUCTIONS}\n\n"
             f"<conversation>\n{conversation_text}\n</conversation>"
         )
-        summary_messages = [UserMessage(content=[TextContent(text=prompt)], timestamp=int(time.time() * 1000))]
+        summary_messages = [UserMessage(content=[TextContent(text=prompt)], timestamp=clock.now_ms())]
 
         try:
             # Pass the cancel token to honor abort requests (e.g. the user

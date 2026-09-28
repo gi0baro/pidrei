@@ -71,6 +71,20 @@ mccabe = { max-complexity = 44 }
 'traceback.print_stack'.msg = 'format the stack and use pidrei.core.output_guard.write_stderr'
 'traceback.print_tb'.msg = 'format the traceback and use pidrei.core.output_guard.write_stderr'
 'traceback.print_last'.msg = 'format the traceback and use pidrei.core.output_guard.write_stderr'
+# Wall-clock reads go through one seam per package tree (tests fake it by
+# swapping `clock.now_ms`): `pidrei_ai.utils.clock`, and `pidrei_tui.clock`
+# for the TUI, which cannot depend on pidrei_ai.
+'time.monotonic'.msg = 'use clock.monotonic (the runtime clock): pidrei_ai.utils.clock or pidrei_tui.clock'
+'time.monotonic_ns'.msg = 'use clock.monotonic (the runtime clock): pidrei_ai.utils.clock or pidrei_tui.clock'
+'time.perf_counter'.msg = 'use clock.monotonic (the runtime clock): pidrei_ai.utils.clock or pidrei_tui.clock'
+'time.perf_counter_ns'.msg = 'use clock.monotonic (the runtime clock): pidrei_ai.utils.clock or pidrei_tui.clock'
+'time.time'.msg = 'use pidrei_ai.utils.clock.now_ms (pidrei_tui: pidrei_tui.clock)'
+'time.time_ns'.msg = 'use pidrei_ai.utils.clock.now_ms (pidrei_tui: pidrei_tui.clock)'
+'time.strftime'.msg = 'format clock.now_datetime(), or datetime.fromtimestamp(ts) for a stored time'
+'datetime.datetime.now'.msg = 'use pidrei_ai.utils.clock.now_datetime/now_iso (pidrei_tui: pidrei_tui.clock)'
+'datetime.datetime.utcnow'.msg = 'use pidrei_ai.utils.clock.now_datetime/now_iso (pidrei_tui: pidrei_tui.clock)'
+'datetime.datetime.today'.msg = 'use pidrei_ai.utils.clock.now_datetime (pidrei_tui: pidrei_tui.clock)'
+'datetime.date.today'.msg = 'use pidrei_ai.utils.clock.now_datetime (pidrei_tui: pidrei_tui.clock)'
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
@@ -84,6 +98,9 @@ known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_client', 'pi
 # Standalone scripts: run outside pidrei's runtime, stdio is theirs.
 'packages/*/scripts/**' = ['T20', 'TID251']
 'packages/pidrei/pidrei/examples/extensions/custom_provider_gitlab_duo/test.py' = ['T20', 'TID251']
+# The wall-clock seams themselves.
+'packages/ai/pidrei_ai/utils/clock.py' = ['TID251']
+'packages/tui/pidrei_tui/clock.py' = ['TID251']
 # S608 false positive: the --help template contains "update ... Update" lines
 # that pattern-match ruff's SQL heuristic inside a multiline f-string, where
 # no noqa comment can be placed outside the string.

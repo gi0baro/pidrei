@@ -1225,7 +1225,7 @@ class TuiBase(Container, ABC):
                 frame = self._compose_frame()
             if frame is not None:
                 self._write_frame(frame)
-        except BaseException:
+        except Exception:
             self._frame_parts = []  # a torn frame is never written
             await self._run_frame_io()  # the crash log lands before the error propagates
             raise
@@ -1293,11 +1293,9 @@ class TuiBase(Container, ABC):
                 continue  # the terminal is gone; the loop learns on its next _emit
             try:
                 await self._write_bounded(item)
-            except BaseException as error:
-                # BaseException: a dead writer wedges the next render job on
-                # its send; the stored error resurfaces there instead.
-                if isinstance(error, GeneratorExit):
-                    raise
+            except Exception as error:
+                # A dead writer would wedge the next render job on its send;
+                # the stored error resurfaces there instead.
                 self._frame_writer_error = error
 
     def request_render(self, force: bool = False) -> None:
@@ -1337,14 +1335,10 @@ class TuiBase(Container, ABC):
                     if force:
                         self._reset_for_full_redraw()
                     await self._render_frame()
-            except BaseException as error:
+            except Exception as error:
                 # pi crashes the process on a render throw. Here rendering
                 # stops and the error goes to the installed handler
-                # (interactive mode's crash handler). BaseException on
-                # purpose: a pyo3 PanicException is not an Exception, and
-                # missing it here is a silent render death.
-                if isinstance(error, GeneratorExit):
-                    raise
+                # (interactive mode's crash handler).
                 self._render_active = False
                 handler = self._render_error_handler
                 if handler is None:

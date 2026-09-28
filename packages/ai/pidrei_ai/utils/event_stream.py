@@ -20,7 +20,6 @@ from typing import Any
 import tonio.colored as tonio
 from tonio.colored import Event
 from tonio.colored.sync import channel
-from tonio.exceptions import CancelledError
 
 from pidrei_ai.builders import AssistantMessageBuilder, ToolCallBuilder
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent
@@ -113,14 +112,11 @@ class EventStream[T, R]:
             started = True
             try:
                 await producer
-            except CancelledError:
-                raise  # the owner terminates the stream via `_abort`
-            except GeneratorExit:
-                raise  # coroutine close protocol, not a producer failure
-            except BaseException as error:
+            except Exception as error:
                 # The stream owns delivery: `fail` settles `result()` with
                 # this error. Escaping further would only reach tonio's
-                # unhandled-coroutine printer on stdout.
+                # unhandled-coroutine printer on stdout. A cancel is the
+                # owner's to report: it terminates the stream via `_abort`.
                 self.fail(error)
             finally:
                 finished.set()

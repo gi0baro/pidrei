@@ -8,7 +8,6 @@ the request itself.
 
 import json
 import re
-import time
 from typing import Any
 
 from pidrei_ai.types import (
@@ -23,7 +22,7 @@ from pidrei_ai.types import (
     Usage,
     UsageCost,
 )
-from pidrei_ai.utils import http
+from pidrei_ai.utils import clock, http
 from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
@@ -85,7 +84,7 @@ async def generate_images(
         model=model.id,
         output=[],
         stop_reason="stop",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
 
     try:

@@ -27,7 +27,6 @@ Runtime mapping notes:
 
 import os
 import threading
-import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -47,6 +46,7 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import (
     create_initial_system_message,
@@ -396,7 +396,7 @@ async def _consume_mailbox(receiver: Any) -> None:
             return
         try:
             job.result = job.fn()
-        except BaseException as error:
+        except Exception as error:
             if job.done is None:
                 raise
             job.error = error
@@ -681,7 +681,7 @@ class Agent:
         content: list[TextContent | ImageContent] = [TextContent(text=input)]
         if images:
             content.extend(images)
-        return [UserMessage(content=content, timestamp=int(time.time() * 1000))]
+        return [UserMessage(content=content, timestamp=clock.now_ms())]
 
     async def _run_prompt_messages(self, messages: list[AgentMessage], options: _RunOptions | None = None) -> None:
         async def executor(cancel: CancelToken) -> None:
@@ -806,7 +806,7 @@ class Agent:
             finally:
                 run.events.send(None)
                 await dispatcher
-        except BaseException as error:
+        except Exception as error:
             # Re-raised at the awaiting entry point after `done` — this task
             # is detached, so nothing else would observe the failure.
             run.error = error
@@ -822,7 +822,7 @@ class Agent:
             usage=Usage(),
             stop_reason="aborted" if aborted else "error",
             error_message=str(error),
-            timestamp=int(time.time() * 1000),
+            timestamp=clock.now_ms(),
         )
         await self._process_events(MessageStartEvent(message=failure_message))
         await self._process_events(MessageEndEvent(message=failure_message))
@@ -878,19 +878,19 @@ class Agent:
                 if meter is not None:
                     await meter.flush()
                 return
-            started = time.monotonic() if meter is not None else 0.0
+            started = clock.monotonic() if meter is not None else 0.0
             try:
                 self._reduce(pending.event)
                 run = self._mailbox.current
                 cancel = run.cancel if run is not None else CancelToken()
                 for listener in self._listeners:
                     await listener(pending.event, cancel)
-            except BaseException as error:
+            except Exception as error:
                 pending.error = error
             finally:
                 pending.observed.set()
                 if meter is not None:
-                    meter.record(pending.event.type, time.monotonic() - started)
+                    meter.record(pending.event.type, clock.monotonic() - started)
 
     def _reduce(self, event: AgentEvent) -> None:
         if event.type == "message_start" or event.type == "message_update":

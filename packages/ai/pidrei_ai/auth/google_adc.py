@@ -25,7 +25,6 @@ import base64
 import json
 import os
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +32,7 @@ from tonio.colored import fs
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.types import ProviderEnv
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.provider_env import get_provider_env_value
 
 
@@ -104,7 +104,7 @@ def _sign_assertion(credentials: dict[str, Any], token_uri: str, scope: str) -> 
     if not isinstance(private_key, rsa.RSAPrivateKey):
         raise GoogleAdcError("Service account private key is not an RSA key")
 
-    issued_at = int(time.time())
+    issued_at = clock.now_ms() // 1000
     header = {"alg": "RS256", "typ": "JWT"}
     claims = {
         "iss": client_email,
@@ -139,7 +139,7 @@ def _read_token(payload: dict[str, Any] | None, source: str) -> tuple[str, float
         raise GoogleAdcError(f"Google token response from {source} carried no access_token")
     expires_in = payload.get("expires_in")
     lifetime = float(expires_in) if isinstance(expires_in, (int, float)) else float(_ASSERTION_LIFETIME_S)
-    return access_token, time.time() + lifetime
+    return access_token, clock.now_ms() / 1000 + lifetime
 
 
 async def _fetch_service_account_token(credentials: dict[str, Any], scope: str) -> tuple[str, float]:
@@ -244,7 +244,7 @@ async def _cached_token(env: ProviderEnv | None, scope: str) -> str | None:
         else:
             return None
 
-    now = time.time()
+    now = clock.now_ms() / 1000
     with _token_cache_guard:
         entry = _token_cache.get(cache_key)
     return entry[0] if entry is not None and entry[1] - _EXPIRY_MARGIN_S > now else None

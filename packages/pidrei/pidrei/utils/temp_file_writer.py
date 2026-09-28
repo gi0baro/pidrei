@@ -103,7 +103,7 @@ class TempFileWriter:
                 except BrokenPipeError:
                     break  # sender closed: everything buffered has been drained
                 await tonio.spawn_blocking(handle.write, chunk)
-        except BaseException as error:
+        except Exception as error:
             self._error = error
         finally:
             if handle is not None:

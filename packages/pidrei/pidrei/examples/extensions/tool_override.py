@@ -21,7 +21,6 @@ Start pidrei with this extension:
 
 import os
 import re
-from datetime import UTC, datetime
 
 import tonio.colored as tonio
 from tonio.colored import fs
@@ -32,6 +31,7 @@ from pidrei.core.tools import with_file_mutation_queue
 from pidrei.core.tools.file_mutation_queue import resolve_mutation_queue_key
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
+from pidrei_ai.utils import clock
 
 
 LOG_FILE = os.path.join(get_agent_dir(), "read-access.log")
@@ -58,7 +58,7 @@ def _append_line_blocking(path: str, line: str) -> None:
 
 
 async def _log_access(path: str, allowed: bool, reason: str | None = None) -> None:
-    timestamp = datetime.now(UTC).isoformat()
+    timestamp = clock.now_datetime().isoformat()
     status = "ALLOWED" if allowed else "BLOCKED"
     suffix = f" ({reason})" if reason else ""
     line = f"[{timestamp}] {status}: {path}{suffix}\n"

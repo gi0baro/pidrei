@@ -15,8 +15,10 @@ from typing import Any
 
 from tonio.colored import fs
 
+from pidrei_ai.utils import clock
+
 from ..utils.paths import resolve_path
-from .session_manager import CURRENT_SESSION_VERSION, SessionManager, _dump_json, _entry_to_wire, _iso_now
+from .session_manager import CURRENT_SESSION_VERSION, SessionManager, _dump_json, _entry_to_wire
 
 
 async def export_session_to_jsonl(
@@ -25,13 +27,13 @@ async def export_session_to_jsonl(
     create_trailing_entries: Callable[[str | None, str], Sequence[dict[str, Any]]] | None = None,
 ) -> str:
     """Write the current session branch and optional trailing export-only entries as JSONL."""
-    default_name = f"session-{_iso_now().replace(':', '-').replace('.', '-')}.jsonl"
+    default_name = f"session-{clock.now_iso().replace(':', '-').replace('.', '-')}.jsonl"
     file_path = resolve_path(output_path if output_path is not None else default_name, os.getcwd())
     directory = os.path.dirname(file_path)
     if directory and not await fs.Path(directory).exists():
         await fs.Path(directory).mkdir(parents=True, exist_ok=True)
 
-    timestamp = _iso_now()
+    timestamp = clock.now_iso()
     header = {
         "type": "session",
         "version": CURRENT_SESSION_VERSION,

@@ -9,6 +9,7 @@ import os
 import re
 from datetime import datetime
 
+from pidrei_ai.utils import clock
 from pidrei_tui import (
     Container,
     Input,
@@ -600,7 +601,9 @@ class TreeList:
                 flat_node["node"].label = label
                 if label:
                     flat_node["node"].label_timestamp = (
-                        label_timestamp if label_timestamp is not None else datetime.now().astimezone().isoformat()
+                        label_timestamp
+                        if label_timestamp is not None
+                        else clock.now_datetime().astimezone().isoformat()
                     )
                 else:
                     flat_node["node"].label_timestamp = None
@@ -809,7 +812,7 @@ class TreeList:
         date = datetime.fromisoformat(timestamp)
         if date.tzinfo is not None:
             date = date.astimezone()
-        now = datetime.now().astimezone()
+        now = clock.now_datetime().astimezone()
         time_text = f"{date.hour:02d}:{date.minute:02d}"
 
         if date.year == now.year and date.month == now.month and date.day == now.day:

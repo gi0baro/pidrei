@@ -282,7 +282,7 @@ async def connect(url: str, headers: dict[str, str], *, cancel: CancelToken | No
         # close goes to its own task.
         tonio.spawn.without_tracking(_close_transport(transport))
         raise
-    except BaseException:
+    except Exception:
         await _close_transport(transport)
         raise
 

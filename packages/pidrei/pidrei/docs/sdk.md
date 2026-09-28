@@ -62,6 +62,14 @@ in-process extensions (each factory an `async def` taking `pi`, like a module's
 `extension`); supply your own loader only if the host owns resource
 discovery entirely.
 
+Objects that load from disk are built by awaiting them:
+`await SettingsManager(cwd)`,
+`await DefaultResourceLoader(cwd=cwd, agent_dir=agent_dir)`,
+`await AuthStorage()`, `await ModelRuntime()`, and `await SessionManager(cwd)`
+for a new session or `await SessionManager(session_file=path)` to open one.
+`SettingsManager.in_memory()`, `AuthStorage.in_memory()` and
+`SessionManager.in_memory()` build file-less ones without awaiting.
+
 Read state through `session.messages`, `session.model`,
 `session.thinking_level`, `session.system_prompt` (the effective prompt,
 including changes not yet sent) and `session.get_active_tool_names()`.
@@ -108,17 +116,16 @@ one low-level run, but retries, compaction or queued messages may follow;
 ## Talking to a model
 
 ```python
-import time
-
 import tonio.colored as tonio
 from pidrei.core.model_runtime import ModelRuntime
 from pidrei_ai.types import Context, SimpleStreamOptions, TextContent, UserMessage
+from pidrei_ai.utils import clock
 
 
 async def main():
     runtime = await ModelRuntime()
     model = runtime.get_model("anthropic", "claude-sonnet-4-5")
-    message = UserMessage(content=[TextContent(text="Hi")], timestamp=int(time.time() * 1000))
+    message = UserMessage(content=[TextContent(text="Hi")], timestamp=clock.now_ms())
 
     stream = runtime.stream_simple(model, Context(messages=[message]), SimpleStreamOptions(reasoning="low"))
     async for event in stream:

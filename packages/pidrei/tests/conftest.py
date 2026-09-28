@@ -94,6 +94,7 @@ def _output_guard_guard():
 _TIMER_SEAMS = (
     (timers, "set_timeout", timers.set_timeout),
     (clock, "now_ms", clock.now_ms),
+    (clock, "monotonic", clock.monotonic),
 )
 
 

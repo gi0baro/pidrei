@@ -21,12 +21,10 @@ import re
 import signal
 import subprocess
 import threading
-import time
 import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as dataclass_replace
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import tonio.colored as tonio
@@ -35,6 +33,7 @@ from tonio.colored import fs, signals as tonio_signals
 from pidrei_agent.harness.session.serde import serialize_message
 from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import ModelsRefreshOptions
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
 from pidrei_tui import (
     CombinedAutocompleteProvider,
@@ -2986,7 +2985,7 @@ class InteractiveMode:
                 # nothing based on setting
                 action = self.settings_manager.get_double_escape_action()
                 if action != "none":
-                    now = time.time() * 1000
+                    now = clock.monotonic() * 1000
                     if now - self._last_escape_time < 500:
                         if action == "tree":
                             self._show_tree_selector()
@@ -3578,7 +3577,7 @@ class InteractiveMode:
                     create_compaction_summary_message(
                         event.result.summary,
                         event.result.tokens_before,
-                        datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+                        clock.now_iso(),
                     )
                 )
                 if event.result.usage:
@@ -4104,7 +4103,7 @@ class InteractiveMode:
 
     def _handle_ctrl_c(self) -> None:
         # The clear action.
-        now = time.time() * 1000
+        now = clock.monotonic() * 1000
         if now - self._last_sigint_time < 500:
             self._spawn_flow(self.shutdown())
         else:
@@ -6927,7 +6926,7 @@ class InteractiveMode:
 
         debug_log_path = get_debug_log_path()
         debug_lines = [
-            f"Debug output at {datetime.now(UTC).isoformat(timespec='milliseconds').replace('+00:00', 'Z')}",
+            f"Debug output at {clock.now_iso()}",
             f"Terminal: {width}x{height}",
             f"Total lines: {len(all_lines)}",
             "",

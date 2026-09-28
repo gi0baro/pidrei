@@ -14,12 +14,11 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/handoff.py
 """
 
-import time
-
 from pidrei.core.compaction.utils import serialize_conversation
 from pidrei.core.messages import convert_to_llm, create_compaction_summary_message
 from pidrei.modes.interactive.components import BorderedLoader
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.uuid import uuidv7
 
 
@@ -125,7 +124,7 @@ async def extension(pi):
                                 )
                             )
                         ],
-                        timestamp=int(time.time() * 1000),
+                        timestamp=clock.now_ms(),
                     )
 
                     response = await ctx.model_registry.complete(

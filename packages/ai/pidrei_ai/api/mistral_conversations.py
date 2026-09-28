@@ -18,7 +18,6 @@ be cut off; see that helper's docstring).
 """
 
 import json
-import time
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -58,7 +57,7 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
-from pidrei_ai.utils import http
+from pidrei_ai.utils import clock, http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -349,7 +348,7 @@ def create_output(model: Model) -> AssistantMessageBuilder:
         model=model.id,
         usage=UsageBuilder(),
         stop_reason="pending",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
 
 

@@ -72,7 +72,7 @@ class _ModelCatalogRefreshCoordinator:
                 model_runtime.refresh(ModelsRefreshOptions(cancel=active.controller)),
                 active.controller,
             )
-        except BaseException as error:
+        except Exception as error:
             active.error = error
         finally:
             with self._guard:

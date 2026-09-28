@@ -20,13 +20,12 @@ import functools
 import os
 import secrets
 import tempfile
-import time as _time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 import tonio.colored as tonio
 from tonio.colored import fs
 
+from . import clock
 from .terminal_image import delete_kitty_image, is_image_line
 from .tui import TuiBase
 from .utils import visible_width
@@ -331,7 +330,7 @@ class TuiMainScreen(TuiBase):
             if redraw_log_directory is None:
                 return
             log_path = os.path.join(redraw_log_directory, "pidrei-tui-debug.log")
-            timestamp = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            timestamp = clock.now_iso()
             msg = (
                 f"[{timestamp}] fullRender: {reason} "
                 f"(prev={len(self._previous_lines)}, new={len(new_lines)}, height={height})\n"
@@ -507,7 +506,7 @@ class TuiMainScreen(TuiBase):
                     fs.Path(self._log_directory) if self._log_directory is not None else _DEFAULT_LOG_DIRECTORY
                 )
                 crash_log_path = log_directory / "pidrei-tui-crash.log"
-                timestamp = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                timestamp = clock.now_iso()
                 crash_data = "\n".join(
                     [
                         f"Crash at {timestamp}",
@@ -558,7 +557,7 @@ class TuiMainScreen(TuiBase):
 
         if os.environ.get("PIDREI_TUI_DEBUG") == "1":
             debug_dir = fs.Path("/tmp/tui")  # noqa: S108
-            debug_path = debug_dir / f"render-{_time.time_ns() // 1_000_000}-{secrets.token_hex(6)}.log"
+            debug_path = debug_dir / f"render-{clock.now_ms()}-{secrets.token_hex(6)}.log"
             debug_data = "\n".join(
                 [
                     f"firstChanged: {first_changed}",

@@ -24,10 +24,10 @@ import colorsys
 import functools
 import math
 import subprocess
-import time
 
 import tonio.colored as tonio
 
+from pidrei_ai.utils import clock
 from pidrei_tui import Input, matches_key, truncate_to_width, visible_width
 
 
@@ -470,7 +470,7 @@ class AnimationDemoComponent(BaseOverlay):
         self._frame = 0
         self._interval = None
         self._fps = 0
-        self._last_fps_update = time.monotonic()
+        self._last_fps_update = clock.monotonic()
         self._frames_since_last_fps = 0
         self._start_animation()
 
@@ -481,7 +481,7 @@ class AnimationDemoComponent(BaseOverlay):
             self._frames_since_last_fps += 1
 
             # Update FPS counter every second
-            now = time.monotonic()
+            now = clock.monotonic()
             if now - self._last_fps_update >= 1.0:
                 self._fps = self._frames_since_last_fps
                 self._frames_since_last_fps = 0
@@ -896,7 +896,7 @@ class StreamingInputController(BaseOverlay):
         # Start simulated streaming
         def on_tick() -> None:
             self._line_count += 1
-            timestamp = time.strftime("%H:%M:%S")
+            timestamp = clock.now_datetime().astimezone().strftime("%H:%M:%S")
             self._stream_lines.append(f"[{timestamp}] Streaming line {self._line_count}...")
             if len(self._stream_lines) > 8:
                 self._stream_lines.pop(0)

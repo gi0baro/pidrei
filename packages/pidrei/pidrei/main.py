@@ -17,6 +17,7 @@ Port notes (Phase 3):
 
 import os
 import sys
+import traceback
 import warnings
 from dataclasses import dataclass, field
 from typing import Any
@@ -561,18 +562,22 @@ async def main(args: list[str], *, extension_factories: list[Any] | None = None)
     """Run the CLI. Returns the process exit code.
 
     pi calls process.exit() throughout main; the port raises SystemExit in
-    the same places and converts it to a return value here so the exception
-    never crosses the tonio runtime boundary."""
+    the same places and converts it to a return value here. Any other
+    failure is reported here and exits 1: nothing crosses the tonio runtime
+    boundary. `except*` covers a plain exception and one raised inside a
+    group (from spawned children) alike."""
+    exit_code: int | None = None
     try:
         await _main(args, extension_factories=extension_factories)
-        return 0
-    except SystemExit as exc:
-        return exc.code if isinstance(exc.code, int) else 0
-    except BaseExceptionGroup as group:
-        system_exit = next((exc for exc in group.exceptions if isinstance(exc, SystemExit)), None)
-        if system_exit is not None:
-            return system_exit.code if isinstance(system_exit.code, int) else 0
-        raise
+    except* SystemExit as group:
+        code = group.exceptions[0].code
+        exit_code = code if isinstance(code, int) else 0
+    except* Exception as group:
+        for error in group.exceptions:
+            write_stderr("".join(traceback.format_exception(error)))
+        if exit_code is None:
+            exit_code = 1  # a deliberate exit's code wins
+    return 0 if exit_code is None else exit_code
 
 
 async def _main(args: list[str], *, extension_factories: list[Any] | None = None) -> None:

@@ -11,7 +11,6 @@ client via `AnthropicOptions.client` exactly like pi's suites do.
 
 import json
 import re
-import time
 from collections.abc import AsyncGenerator, AsyncIterable
 from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, Protocol
@@ -59,7 +58,7 @@ from pidrei_ai.types import (
     ToolResultMessage,
     TranscriptContext,
 )
-from pidrei_ai.utils import http
+from pidrei_ai.utils import clock, http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
@@ -531,7 +530,7 @@ def _append_input_transformations_diagnostic(output: AssistantMessageBuilder, tr
         output,
         AssistantMessageDiagnostic(
             type="anthropic_input_transformations",
-            timestamp=int(time.time() * 1000),
+            timestamp=clock.now_ms(),
             details={
                 "transformations": [
                     {
@@ -596,7 +595,7 @@ def stream(
         provider_thinking_level=provider_thinking_level,
         usage=UsageBuilder(),
         stop_reason="pending",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
     out_stream.partial = output
 

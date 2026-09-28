@@ -6,7 +6,6 @@ client (pidrei-ai's HTTP seam).
 """
 
 import json
-import time
 import urllib.parse
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -16,6 +15,7 @@ from pidrei_ai.api.lazy import call_stream_into
 from pidrei_ai.models_store import ModelsStoreEntry
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
 from pidrei_ai.types import Model
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.http import abandon_response
 
@@ -55,10 +55,6 @@ async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> Cata
         headers={name.lower(): value for name, value in response.headers.items()},
         body=body.decode("utf-8", "replace") if isinstance(body, bytes) else body,
     )
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
 
 
 def _merge_models(baseline: list[Model], dynamic: list[Model]) -> list[Model]:
@@ -157,7 +153,7 @@ class RemoteCatalogProvider:
             and stored is not None
             and stored.checked_at is not None
             and stored.last_modified is not None
-            and _now_ms() - stored.checked_at < REMOTE_CATALOG_REFRESH_INTERVAL_MS
+            and clock.now_ms() - stored.checked_at < REMOTE_CATALOG_REFRESH_INTERVAL_MS
         ):
             return
 
@@ -173,7 +169,7 @@ class RemoteCatalogProvider:
         response = await self._fetch(url, headers, context.cancel)
         if context.cancel.cancelled:
             return
-        checked_at = _now_ms()
+        checked_at = clock.now_ms()
         stored_models = list(stored.models) if stored is not None else []
         # Unchanged: dynamic_models already holds the stored overlay, so only
         # the freshness window moves.

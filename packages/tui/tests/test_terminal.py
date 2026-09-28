@@ -5,16 +5,15 @@ and reaches into the terminal's privates; here the same seams are instance
 attributes (`write_sync`, `_enqueue_input`, `_stdin_data_handler`).
 pi drives the split-response timers with mocked clocks; here both (the
 StdinBuffer sequence flush and the negotiation flush) are deadlines the
-input reader expires, on the clock terminal.py reads through its `_time`
-alias: `_ManualTimers.tick` advances that clock and expires them, as pi's
-mocked timers fire.
+input reader expires, on `pidrei_tui.clock.monotonic`: `_ManualTimers.tick`
+advances that clock and expires them, as pi's mocked timers fire.
 """
 
 import os
 
 import pytest
 
-from pidrei_tui import terminal as terminal_module
+from pidrei_tui import clock as clock_module
 from pidrei_tui.keys import set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal, normalize_apple_terminal_input, resolve_escape_timeout_ms
 
@@ -69,8 +68,8 @@ def test_leaves_non_return_input_unchanged():
 
 
 class _ManualTimers:
-    """Stands in for terminal.py's `_time` while installed: `monotonic()`
-    holds still until `tick`, which then expires the reader's deadlines."""
+    """Stands in for `clock.monotonic` while installed: it holds still until
+    `tick`, which then expires the reader's deadlines."""
 
     def __init__(self, terminal):
         self._terminal = terminal
@@ -95,8 +94,8 @@ class _NegotiationHarness:
         # What the reader would queue for the input consumer.
         self.terminal._enqueue_input = self._on_input
         self.timers = _ManualTimers(self.terminal)
-        self._time = terminal_module._time
-        terminal_module._time = self.timers
+        self._monotonic = clock_module.monotonic
+        clock_module.monotonic = self.timers.monotonic
         self.terminal._query_and_enable_kitty_protocol()
 
     def _on_input(self, data):
@@ -116,7 +115,7 @@ class _NegotiationHarness:
         try:
             await self.terminal.stop()
         finally:
-            terminal_module._time = self._time
+            clock_module.monotonic = self._monotonic
             set_kitty_protocol_active(False)
 
 

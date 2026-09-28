@@ -14,7 +14,8 @@ caller-supplied timestamp, which is why pi's algorithm is carried here.
 
 import os
 import threading
-import time
+
+from pidrei_ai.utils import clock
 
 
 MAX_UUID_V7_TIMESTAMP = 0xFFFFFFFFFFFF
@@ -25,11 +26,6 @@ _last_ordinary_timestamp = -1
 _sequence: int | None = None
 
 
-def _now_ms() -> int:
-    """`Date.now()`; a module seam so tests can pin the clock."""
-    return time.time_ns() // 1_000_000
-
-
 def _random_bytes(count: int) -> bytes:
     """`crypto.getRandomValues`; a module seam so tests can stub randomness."""
     return os.urandom(count)
@@ -38,7 +34,7 @@ def _random_bytes(count: int) -> bytes:
 def uuidv7(timestamp_ms: int | None = None) -> str:
     """Generate a time-ordered UUIDv7. A supplied timestamp is preserved for follower ids."""
     global _last_ordinary_timestamp, _sequence
-    requested = timestamp_ms if timestamp_ms is not None else _now_ms()
+    requested = timestamp_ms if timestamp_ms is not None else clock.now_ms()
     # `Number.isInteger`: integral floats pass, everything else (NaN, ±inf,
     # fractions, bools) is rejected. pi throws RangeError.
     if isinstance(requested, bool) or not (

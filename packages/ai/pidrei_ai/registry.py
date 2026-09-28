@@ -7,7 +7,6 @@ delegates each request to the provider that owns the model.
 
 import copy
 import threading
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from types import EllipsisType
@@ -50,15 +49,12 @@ from pidrei_ai.types import (
     StreamOptions,
     TranscriptContext,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
 from pidrei_ai.utils.transcript import normalize_context
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
 
 
 @dataclass(slots=True)
@@ -177,7 +173,7 @@ class Provider:
 
         await context.publish(
             ModelsPublication(
-                persist=ModelsStoreEntry(models=list(refreshed), checked_at=_now_ms()),
+                persist=ModelsStoreEntry(models=list(refreshed), checked_at=clock.now_ms()),
                 update=_apply_refreshed,
             )
         )
@@ -555,13 +551,13 @@ class Models:
             oauth = provider.auth.oauth
             if oauth is None:
                 return None
-            if _now_ms() < stored.expires:
+            if clock.now_ms() < stored.expires:
                 return stored
             if cancel.cancelled:
                 return None
 
             async def _refresh(current: Credential | None) -> Credential | None:
-                if current is None or current.type != "oauth" or _now_ms() < current.expires:
+                if current is None or current.type != "oauth" or clock.now_ms() < current.expires:
                     return None
                 return await oauth.refresh(current, cancel)
 
@@ -725,7 +721,7 @@ class Models:
                         await self._credentials.modify(provider_id, _persist, AuthOperationOptions(cancel=cancel)),
                     )
                 )
-            except BaseException as error:
+            except Exception as error:
                 mutation_box.store(("error", error))
             finally:
                 mutation_done.set()

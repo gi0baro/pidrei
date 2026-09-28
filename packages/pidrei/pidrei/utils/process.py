@@ -138,7 +138,7 @@ async def run_command(
         """Owns `wait()` for the child's whole life, including past our return."""
         try:
             result.store(("code", await process.wait()))
-        except BaseException as error:  # surface it, don't leave the slot empty
+        except Exception as error:  # surface it, don't leave the slot empty
             result.store(("error", error))
         finally:
             exited.set()

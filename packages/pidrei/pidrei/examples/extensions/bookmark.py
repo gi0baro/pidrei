@@ -9,12 +9,12 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/bookmark.py
 """
 
-import time
+from pidrei_ai.utils import clock
 
 
 async def extension(pi):
     async def bookmark(args, ctx):
-        label = args.strip() or f"bookmark-{int(time.time() * 1000)}"
+        label = args.strip() or f"bookmark-{clock.now_ms()}"
 
         # Find the last assistant message entry
         for entry in reversed(ctx.session_manager.get_entries()):

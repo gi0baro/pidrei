@@ -10,11 +10,12 @@ the directory vanished meanwhile) and so goes to the pool as `os.utime`.
 """
 
 import os
-import time
 from typing import Self
 
 import tonio.colored as tonio
 from tonio.colored import fs
+
+from pidrei_ai.utils import clock
 
 
 STALE_SECONDS = 10.0
@@ -60,7 +61,7 @@ class FileLock:
                 mtime = (await self._dir.stat()).st_mtime
             except OSError:
                 mtime = None
-            if mtime is None or time.time() - mtime <= self._stale:
+            if mtime is None or clock.now_ms() / 1000 - mtime <= self._stale:
                 raise LockedError(str(self._dir)) from None
             # Stale lock left behind by a dead process: steal it.
             try:

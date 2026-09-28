@@ -494,7 +494,7 @@ class AuthStorage(CredentialStore):
                                 await self._reload_from_storage_async(AuthOperationOptions(cancel=reload.controller)),
                             )
                         )
-                    except BaseException as error:
+                    except Exception as error:
                         reload.box.store(("error", error))
                     finally:
                         with state.guard:

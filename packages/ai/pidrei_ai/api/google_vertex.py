@@ -14,7 +14,6 @@ this adapter has no Gemma branch in its thinking-level mapping, and no
 import itertools
 import json
 import re
-import time
 from dataclasses import dataclass, fields
 from typing import Any
 from urllib.parse import urlparse
@@ -66,6 +65,7 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
+from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -132,7 +132,7 @@ def stream(
         model=model.id,
         usage=UsageBuilder(),
         stop_reason="pending",
-        timestamp=int(time.time() * 1000),
+        timestamp=clock.now_ms(),
     )
     out_stream.partial = output
 
@@ -245,7 +245,7 @@ def stream(
                                 b.type == "toolCall" and b.id == provided_id for b in output.content
                             )
                             tool_call_id = (
-                                f"{function_call.get('name')}_{int(time.time() * 1000)}_{next(_tool_call_counter)}"
+                                f"{function_call.get('name')}_{clock.now_ms()}_{next(_tool_call_counter)}"
                                 if needs_new_id
                                 else provided_id
                             )
