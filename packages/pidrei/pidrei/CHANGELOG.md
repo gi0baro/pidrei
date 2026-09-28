@@ -6,7 +6,7 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
-## [0.87.1.0] - 2026-09-25
+## [0.87.1.0] - 2026-09-28
 
 Tracks [Pi 0.87.1](https://github.com/earendil-works/pi/releases/tag/v0.87.1).
 
@@ -80,6 +80,12 @@ Tracks [Pi 0.87.1](https://github.com/earendil-works/pi/releases/tag/v0.87.1).
 - The experimental first-time setup only asks for a theme; the analytics
   opt-in question is gone (pidrei sends no telemetry).
 - Model catalog regenerated from models.dev.
+- Refactored the interactive UI and the extension UI API: `ctx.ui` setters,
+  getters and component factories are synchronous, dialogs return an
+  awaitable handle. See the extensions and TUI docs.
+- SDK: `SettingsManager`, `AuthStorage`, `ModelRuntime`, `SessionManager` and
+  `KeybindingsManager` are built with `await Cls(...)`; the `create()` /
+  `open()` / `from_storage()` factories are gone (`in_memory()` stays).
 
 ### Removed
 
@@ -131,6 +137,8 @@ Tracks [Pi 0.87.1](https://github.com/earendil-works/pi/releases/tag/v0.87.1).
 - Autocomplete ranks skills by bare name and handles CJK punctuation around
   file paths; LaTeX rendering handles legacy font switches, `cases` and nested
   display scripts.
+- Bash tool output is no longer lost or cut short when the command exits
+  while its output is still being read.
 
 ## [0.85.1.5] - 2026-09-25
 
