@@ -183,6 +183,28 @@ custom and extension-registered models; unknown ids are ignored.
 }
 ```
 
+## Classifier models
+
+Classifier models do not chat. They answer typed questions about JSON state:
+pick one of several choices, answer yes or no, or give a score, each with
+probabilities. pidrei includes TypeSafe's Jev model from these providers:
+
+| Provider | Model IDs | Authentication |
+|---|---|---|
+| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` |
+| `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or `/login` |
+| `cloudflare-workers-ai` | `typesafe/jev` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
+| `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
+| `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
+
+Classifier and image-generation models do not appear in `/model`. From the
+SDK, list them with `model_runtime.get_available_of_type("classifier")` and
+call `model_runtime.classify(model, ClassifierContext(state=..., questions=...))`.
+When the service reports token counts, as all System One services do,
+`result.usage` carries them with their cost at the model's catalog price;
+models without one, such as TypeSafe's direct `jev-latest`, report tokens at
+no cost.
+
 ## Validating
 
 A malformed `models.json` does not stop pidrei — it reports the failing path at

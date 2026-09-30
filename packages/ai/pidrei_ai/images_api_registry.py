@@ -4,12 +4,12 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from pidrei_ai.types import ImagesApi, ImagesContext, ImagesModel, ImagesOptions
+from pidrei_ai.types import ImageApi, ImageModel, ImagesContext, ImagesOptions
 
 
 @dataclass(slots=True)
 class ImagesApiProvider:
-    api: ImagesApi
+    api: ImageApi
     generate_images: Any
 
 
@@ -25,8 +25,8 @@ _registry: dict[str, _Registered] = {}
 _registry_guard = threading.Lock()
 
 
-def _wrap_generate_images(api: ImagesApi, generate_images):
-    async def wrapped(model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None):
+def _wrap_generate_images(api: ImageApi, generate_images):
+    async def wrapped(model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None):
         if model.api != api:
             raise ValueError(f"Mismatched api: {model.api} expected {api}")
         return await generate_images(model, context, options)
@@ -45,7 +45,7 @@ def register_images_api_provider(provider: ImagesApiProvider, source_id: str | N
         _registry[provider.api] = entry
 
 
-def get_images_api_provider(api: ImagesApi) -> ImagesApiProvider | None:
+def get_images_api_provider(api: ImageApi) -> ImagesApiProvider | None:
     with _registry_guard:
         entry = _registry.get(api)
     return entry.provider if entry is not None else None

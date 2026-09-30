@@ -14,20 +14,26 @@ from typing import Any
 from pidrei_ai.api.lazy import call_stream_into
 from pidrei_ai.models_store import ModelsStoreEntry
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
-from pidrei_ai.types import Model
+from pidrei_ai.types import AnyModel, Model, ModelType
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.http import abandon_response
+from pidrei_ai.utils.model_operations import get_model_type, is_model_type
 
 from ..config import VERSION
 from ..utils.management_http import fetch_with_retry
 from ..utils.user_agent import get_pidrei_user_agent
-from .model_wire import parse_model_dict
+from .model_wire import parse_any_model_dict
 
 
 DEFAULT_CATALOG_BASE_URL = "https://pi.dev"
 REMOTE_CATALOG_ATTEMPT_TIMEOUT_MS = 4_000
 REMOTE_CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000
+# Model types this client can consume. Sent as `?types=` so the catalog server
+# returns the full-type shard instead of the chat-only one served to clients
+# that predate model types. A server that ignores the parameter still returns
+# the chat-only shard, which this client handles unchanged.
+REMOTE_CATALOG_MODEL_TYPES: tuple[ModelType, ...] = ("chat", "image", "classifier")
 
 
 @dataclass(slots=True)
@@ -57,10 +63,17 @@ async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> Cata
     )
 
 
-def _merge_models(baseline: list[Model], dynamic: list[Model]) -> list[Model]:
+def _merge_models(baseline: list[AnyModel], dynamic: list[AnyModel]) -> list[AnyModel]:
     merged = list(baseline)
     for model in dynamic:
-        index = next((i for i, entry in enumerate(merged) if entry.id == model.id), -1)
+        index = next(
+            (
+                i
+                for i, entry in enumerate(merged)
+                if get_model_type(entry) == get_model_type(model) and entry.id == model.id
+            ),
+            -1,
+        )
         if index >= 0:
             merged[index] = model
         else:
@@ -68,7 +81,7 @@ def _merge_models(baseline: list[Model], dynamic: list[Model]) -> list[Model]:
     return merged
 
 
-def _parse_catalog(provider_id: str, value: Any) -> list[Model]:
+def _parse_catalog(provider_id: str, value: Any) -> list[AnyModel]:
     if isinstance(value, list):
         entries = value
     elif isinstance(value, dict) and isinstance(value.get("models"), list):
@@ -77,14 +90,16 @@ def _parse_catalog(provider_id: str, value: Any) -> list[Model]:
         entries = list(value.values())
     else:
         raise Exception(f'Invalid model catalog for provider "{provider_id}"')  # noqa: TRY004
-    return [
-        parse_model_dict({**entry, "provider": provider_id})
+    # Entries of model types this client does not know are ignored.
+    models = (
+        parse_any_model_dict({**entry, "provider": provider_id})
         for entry in entries
         if isinstance(entry, dict) and "id" in entry
-    ]
+    )
+    return [model for model in models if model is not None]
 
 
-def _remote_models(entry: ModelsStoreEntry | None, local_generated_at: int | None) -> list[Model]:
+def _remote_models(entry: ModelsStoreEntry | None, local_generated_at: int | None) -> list[AnyModel]:
     if entry is None:
         return []
     if local_generated_at is not None and (entry.last_modified is None or entry.last_modified <= local_generated_at):
@@ -109,21 +124,32 @@ class RemoteCatalogProvider:
         self._catalog_base_url = catalog_base_url
         self._local_generated_at = local_generated_at
         self._fetch = fetch
-        self._dynamic_models: list[Model] = []
+        self._dynamic_models: list[AnyModel] = []
 
         self.id = provider.id
         self.name = provider.name
         self.base_url = provider.base_url
         self.headers = provider.headers
         self.auth = provider.auth
+        # pi spreads the wrapped provider, so its optional members pass through.
         self.filter_models = provider.filter_models
+        self.filter_all_models = provider.filter_all_models
+        self.generate_images = provider.generate_images
+        self.classify = provider.classify
 
     @property
     def has_dynamic_models(self) -> bool:
         return True
 
     def get_models(self) -> list[Model]:
-        return _merge_models(self._provider.get_models(), self._dynamic_models)
+        return _merge_models(
+            self._provider.get_models(), [model for model in self._dynamic_models if is_model_type(model, "chat")]
+        )
+
+    def get_all_models(self) -> list[AnyModel]:
+        get_all_models = self._provider.get_all_models
+        baseline = get_all_models() if get_all_models is not None else self._provider.get_models()
+        return _merge_models(baseline, self._dynamic_models)
 
     def stream(self, model: Model, context: Any, options: Any = None, *, into: Any = None) -> Any:
         if into is None:
@@ -163,6 +189,7 @@ class RemoteCatalogProvider:
         url = urllib.parse.urljoin(
             self._catalog_base_url, f"/api/models/providers/{urllib.parse.quote(self._provider.id, safe='')}"
         )
+        url = f"{url}?{urllib.parse.urlencode({'types': ','.join(REMOTE_CATALOG_MODEL_TYPES)})}"
         headers = {"accept": "application/json", "User-Agent": get_pidrei_user_agent(VERSION)}
         if validator is not None:
             headers["if-none-match"] = validator

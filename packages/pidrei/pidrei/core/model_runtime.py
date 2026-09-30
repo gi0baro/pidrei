@@ -37,9 +37,34 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.models_store import ModelsStore
 from pidrei_ai.providers.all import builtin_providers, get_builtin_model_data_generated_at
 from pidrei_ai.registry import ModelsRefreshOptions, ModelsRefreshResult, Provider, create_models
-from pidrei_ai.types import Context, DeferredHandle, Model, SimpleStreamOptions, StreamOptions, TranscriptContext
+from pidrei_ai.types import (
+    AnyModel,
+    AssistantImages,
+    ClassifierContext,
+    ClassifierModel,
+    ClassifierOptions,
+    ClassifierResult,
+    Context,
+    DeferredHandle,
+    ImageModel,
+    ImagesContext,
+    ImagesOptions,
+    Model,
+    ModelType,
+    ProviderRequestOptions,
+    SimpleStreamOptions,
+    StreamOptions,
+    TranscriptContext,
+)
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.model_operations import (
+    assert_chat_model,
+    assert_classifier_model,
+    assert_image_model,
+    classifier_error_result,
+    image_error_result,
+)
 from pidrei_ai.utils.transcript import normalize_context
 
 from ..config import get_agent_dir
@@ -86,6 +111,11 @@ class _CompositionEpoch:
     extension_providers: dict[str, ProviderConfigInput]
     native_extension_providers: dict[str, Provider]
     composition_errors: dict[str, str]
+
+
+def _cancelled(options: ProviderRequestOptions | None) -> bool:
+    """pi: `options?.signal?.aborted`."""
+    return options is not None and options.cancel is not None and options.cancel.cancelled
 
 
 def _unwrap_spawn_error(error: Exception) -> Exception:
@@ -610,6 +640,25 @@ class ModelRuntime:
     def get_model(self, provider_id: str, model_id: str) -> Model | None:
         return self._models.get_model(provider_id, model_id)
 
+    def get_models_of_type(self, type: ModelType, provider_id: str | None = None) -> list[AnyModel]:
+        return self._models.get_models_of_type(type, provider_id)
+
+    def get_model_of_type(self, type: ModelType, provider_id: str, model_id: str) -> AnyModel | None:
+        return self._models.get_model_of_type(type, provider_id, model_id)
+
+    def get_all_models(self, provider_id: str | None = None) -> list[AnyModel]:
+        return self._models.get_all_models(provider_id)
+
+    async def get_available_of_type(
+        self, type: ModelType, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[AnyModel]:
+        return await self._models.get_available_of_type(type, provider_id, options)
+
+    async def get_all_available(
+        self, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[AnyModel]:
+        return await self._models.get_all_available(provider_id, options)
+
     async def check_auth(self, provider_id: str, options: AuthOperationOptions | None = None) -> AuthCheck | None:
         return await self._models.check_auth(provider_id, options)
 
@@ -694,7 +743,7 @@ class ModelRuntime:
 
     async def get_auth(
         self,
-        provider_or_model: str | Model,
+        provider_or_model: str | AnyModel,
         overrides: ModelRuntimeAuthOverrides | None = None,
     ) -> AuthResult | None:
         overrides = overrides if overrides is not None else ModelRuntimeAuthOverrides()
@@ -716,7 +765,7 @@ class ModelRuntime:
     async def _get_model_auth(
         self,
         provider: Provider,
-        model: Model,
+        model: AnyModel,
         overrides: ModelRuntimeAuthOverrides,
     ) -> AuthResult | None:
         """`get_auth`'s Model path against a pinned provider and one pinned
@@ -866,11 +915,12 @@ class ModelRuntime:
 
     # -- streaming -------------------------------------------------------------
 
-    async def _prepare_request(
+    async def _prepare_request[TModel: Model | ImageModel | ClassifierModel, TOptions: ProviderRequestOptions](
         self,
-        model: Model,
-        options: StreamOptions | None,
-    ) -> tuple[Provider, Model, StreamOptions]:
+        model: TModel,
+        options: TOptions | None,
+        default_options: Callable[[], TOptions] = StreamOptions,
+    ) -> tuple[Provider, TModel, TOptions]:
         provider = self._models.get_provider(model.provider)
         if provider is None:
             raise ModelsError("provider", f"Unknown provider: {model.provider}")
@@ -888,7 +938,7 @@ class ModelRuntime:
         if resolution is None:
             raise ModelsError("auth", f"Provider is not configured: {model.provider}")
 
-        provider_options = options if options is not None else StreamOptions()
+        provider_options = options if options is not None else default_options()
         transform_headers = provider_options.transform_headers
         headers = merge_headers(resolution.auth.headers, provider_options.headers)
         if transform_headers is not None:
@@ -912,6 +962,7 @@ class ModelRuntime:
         transcript = normalize_context(context)
 
         async def setup(stream):
+            assert_chat_model(model)
             provider, request_model, request_options = await self._prepare_request(model, options)
             return call_stream_into(provider.stream, request_model, transcript, request_options, into=stream)
 
@@ -926,6 +977,7 @@ class ModelRuntime:
         transcript = normalize_context(context)
 
         async def setup(stream):
+            assert_chat_model(model)
             provider, request_model, request_options = await self._prepare_request(model, options)
             return call_stream_into(provider.stream_simple, request_model, transcript, request_options, into=stream)
 
@@ -936,6 +988,7 @@ class ModelRuntime:
 
     def stream_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
         async def setup(_stream):
+            assert_chat_model(model)
             provider, request_model, request_options = await self._prepare_request(model, options)
             if not getattr(provider, "supports_fetch_deferred", False):
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
@@ -947,10 +1000,40 @@ class ModelRuntime:
         return await self.stream_deferred(model, handle, options).result()
 
     async def cancel_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None) -> None:
+        assert_chat_model(model)
         provider, request_model, request_options = await self._prepare_request(model, options)
         if not getattr(provider, "supports_cancel_deferred", False):
             raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
         await provider.cancel_deferred(request_model, handle, request_options)
+
+    # -- one-shot operations ---------------------------------------------------
+
+    async def generate_images(
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> AssistantImages:
+        """Image generation with runtime-resolved auth (stored credentials,
+        OAuth, runtime API keys, models.json headers). Never raises."""
+        try:
+            assert_image_model(model)
+            provider, request_model, request_options = await self._prepare_request(model, options, ImagesOptions)
+            if provider.generate_images is None:
+                raise ModelsError("provider", f"Provider {model.provider} does not support image generation")
+            return await provider.generate_images(request_model, context, request_options)
+        except Exception as error:
+            return image_error_result(model, error, _cancelled(options))
+
+    async def classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> ClassifierResult:
+        """Classification with runtime-resolved auth. Never raises."""
+        try:
+            assert_classifier_model(model)
+            provider, request_model, request_options = await self._prepare_request(model, options, ClassifierOptions)
+            if provider.classify is None:
+                raise ModelsError("provider", f"Provider {model.provider} does not support classification")
+            return await provider.classify(request_model, context, request_options)
+        except Exception as error:
+            return classifier_error_result(model, error, _cancelled(options))
 
     # -- lifecycle -------------------------------------------------------------
 

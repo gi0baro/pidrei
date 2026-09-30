@@ -32,6 +32,7 @@ from pidrei_ai.utils.transcript import get_current_system_prompt, get_current_to
 from .agent_session_helpers import create_agent_session, create_assistant_message
 from .coding_session_helpers import now_ms
 from .harness import create_harness
+from .model_runtime_helpers import UnusedStreams
 
 
 def _is_summarization_request(context) -> bool:
@@ -136,7 +137,7 @@ class TestCompaction:
                 name="Faux bearer provider",
                 auth=ProviderAuth(api_key=ApiKeyAuth(name="Faux bearer token", resolve=resolve)),
                 models=[session.model],
-                api={},
+                api=UnusedStreams(),
             )
         )
 

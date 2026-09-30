@@ -6,11 +6,11 @@ rather than an exception, mirroring `api/lazy.py` for the streaming side.
 """
 
 from pidrei_ai.images_api_registry import ImagesApiProvider, register_images_api_provider
-from pidrei_ai.types import AssistantImages, ImagesContext, ImagesModel, ImagesOptions
+from pidrei_ai.types import AssistantImages, ImageModel, ImagesContext, ImagesOptions
 from pidrei_ai.utils import clock
 
 
-def _create_lazy_load_error_images(model: ImagesModel, error: Exception) -> AssistantImages:
+def _create_lazy_load_error_images(model: ImageModel, error: Exception) -> AssistantImages:
     return AssistantImages(
         api=model.api,
         provider=model.provider,
@@ -23,7 +23,7 @@ def _create_lazy_load_error_images(model: ImagesModel, error: Exception) -> Assi
 
 
 async def generate_images_openrouter(
-    model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None
+    model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
 ) -> AssistantImages:
     try:
         # lazy: api adapters load on demand (see api/*_lazy.py)

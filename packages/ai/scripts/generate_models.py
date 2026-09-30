@@ -1,9 +1,11 @@
 """Model catalog generator — Python port of pi's scripts/generate-models.ts.
 
-Fetches https://models.dev/api.json (plus the NVIDIA NIM, OpenRouter and Vercel
-AI Gateway live catalogs) and emits pi-shaped catalog JSON (camelCase keys,
-grouped `{api: {modelId: Model}}`, sorted) into
-`pidrei_ai/providers/data/<provider>.json`.
+Fetches https://models.dev/api.json (plus the models.dev decision listing and
+the NVIDIA NIM, OpenRouter and Vercel AI Gateway live catalogs) and emits
+pi-shaped catalog JSON (camelCase keys, grouped `{api: {"type:id": model}}`,
+sorted) of chat, image and classifier models into
+`pidrei_ai/providers/data/<provider>.json`. `build_openrouter_catalog` is pi's
+scripts/openrouter-catalog.ts.
 
 Key *order* inside each model object mirrors pi's object literals so the vendored
 data stays diffable against pi's generated catalog; the metadata passes append
@@ -55,6 +57,7 @@ COPILOT_STATIC_HEADERS = {
 
 # pi: src/api/cloudflare.ts
 CLOUDFLARE_WORKERS_AI_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1"
+CLOUDFLARE_WORKERS_AI_REST_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai"
 CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL = (
     "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat"
 )
@@ -102,6 +105,9 @@ TOGETHER_TOGGLE_REASONING_LEVEL_MAP: dict[str, str | None] = {"minimal": None, "
 
 AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1"
 AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh"
+# TypeSafe-compatible System One endpoint for evaluation models.
+# https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe
+AI_GATEWAY_TYPESAFE_BASE_URL = "https://ai-gateway.vercel.sh/typesafe/v1"
 VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com"
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_HEADERS = {"NVCF-POLL-SECONDS": "3600"}
@@ -1025,7 +1031,9 @@ def apply_image_input_metadata(model: dict[str, Any]) -> None:
     if provider == "anthropic":
         provider_limits = {
             "maxRequestBytes": 32 * 1024 * 1024,
-            "images": {"maxPerRequest": 100 if model["contextWindow"] == 200000 else 600},
+            "images": {
+                "maxPerRequest": 100 if model.get("type") != "image" and model.get("contextWindow") == 200000 else 600
+            },
         }
     elif provider == "amazon-bedrock":
         provider_limits = {"images": {"maxPerMessage": 20}}
@@ -1183,27 +1191,58 @@ async def fetch_nvidia_nim_model_ids(client: Client) -> dict[str, str]:
     return model_ids
 
 
-async def fetch_openrouter_models(client: Client) -> list[dict[str, Any]]:
-    print("Fetching models from OpenRouter API...")
-    data = await _fetch_json(client, "https://openrouter.ai/api/v1/models", "OpenRouter API")
-    models: list[dict[str, Any]] = []
-    for model in data["data"]:
+# --- OpenRouter catalog (pi: scripts/openrouter-catalog.ts) --------------------
+
+_OPENROUTER_MODALITIES = ("text", "image")
+
+
+def _openrouter_modalities(values: list[str] | None) -> list[str]:
+    seen: list[str] = []
+    for value in values or []:
+        if value in _OPENROUTER_MODALITIES and value not in seen:
+            seen.append(value)
+    return seen
+
+
+def _openrouter_cost(model: dict[str, Any]) -> dict[str, Any]:
+    # Convert pricing from $/token to $/million tokens
+    pricing = model.get("pricing") or {}
+    return {
+        "input": round_cost(float(pricing.get("prompt") or "0") * 1_000_000),
+        "output": round_cost(float(pricing.get("completion") or "0") * 1_000_000),
+        "cacheRead": round_cost(float(pricing.get("input_cache_read") or "0") * 1_000_000),
+        "cacheWrite": round_cost(float(pricing.get("input_cache_write") or "0") * 1_000_000),
+    }
+
+
+def build_openrouter_catalog(
+    listed: list[dict[str, Any]],
+    image_listed: list[dict[str, Any]],
+    decision_listed: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build the OpenRouter catalog (`{chat, images, classifiers}`) from the
+    default listing and the `output_modalities=image` and
+    `output_modalities=decisions` listings. The default listing omits
+    image-only and decision models, so those come from the other listings. An
+    upstream model may appear in several results; it then gets separate entries
+    per operation."""
+    chat: list[dict[str, Any]] = []
+    for model in listed:
         supported = model.get("supported_parameters") or []
         # Only include models that support tools
         if "tools" not in supported:
             continue
-
-        architecture = model.get("architecture") or {}
+        # Parse input modalities
         model_input = ["text"]
-        if "image" in (architecture.get("modality") or ""):
+        if "image" in ((model.get("architecture") or {}).get("modality") or ""):
             model_input.append("image")
 
-        pricing = model.get("pricing") or {}
         top_provider = model.get("top_provider") or {}
         thinking_level_map = get_openrouter_thinking_level_map(model.get("reasoning"))
         use_anthropic_messages = model["id"].startswith("anthropic/") and not model["id"].endswith(":batch")
-        models.append(
+        chat.append(
             {
+                "type": "chat",
                 "id": model["id"],
                 "name": model["name"],
                 "api": "anthropic-messages" if use_anthropic_messages else "openai-completions",
@@ -1212,19 +1251,83 @@ async def fetch_openrouter_models(client: Client) -> list[dict[str, Any]]:
                 "reasoning": "reasoning" in supported,
                 **({"thinkingLevelMap": thinking_level_map} if thinking_level_map else {}),
                 "input": model_input,
-                # models.dev prices per token; pi's catalog is per million tokens.
-                "cost": {
-                    "input": round_cost(float(pricing.get("prompt") or "0") * 1_000_000),
-                    "output": round_cost(float(pricing.get("completion") or "0") * 1_000_000),
-                    "cacheRead": round_cost(float(pricing.get("input_cache_read") or "0") * 1_000_000),
-                    "cacheWrite": round_cost(float(pricing.get("input_cache_write") or "0") * 1_000_000),
-                },
+                "cost": _openrouter_cost(model),
                 "contextWindow": top_provider.get("context_length") or model.get("context_length") or 4096,
                 "maxTokens": top_provider.get("max_completion_tokens") or 4096,
             }
         )
-    print(f"Fetched {len(models)} tool-capable models from OpenRouter")
-    return models
+
+    images: list[dict[str, Any]] = []
+    for model in image_listed:
+        if any(entry["id"] == model["id"] for entry in images):
+            continue
+        architecture = model.get("architecture") or {}
+        output = _openrouter_modalities(architecture.get("output_modalities"))
+        if "image" not in output:
+            continue
+        model_input = _openrouter_modalities(architecture.get("input_modalities"))
+        images.append(
+            {
+                "type": "image",
+                "id": model["id"],
+                "name": model["name"],
+                "api": "openrouter-images",
+                "provider": "openrouter",
+                "baseUrl": "https://openrouter.ai/api/v1",
+                "input": model_input or ["text"],
+                "output": output,
+                "cost": _openrouter_cost(model),
+            }
+        )
+
+    # Decision models such as TypeSafe's Jev are served through OpenRouter's
+    # TypeSafe-compatible System One endpoint.
+    classifiers: list[dict[str, Any]] = []
+    for model in decision_listed:
+        if any(entry["id"] == model["id"] for entry in classifiers):
+            continue
+        architecture = model.get("architecture") or {}
+        if "decisions" not in (architecture.get("output_modalities") or []):
+            continue
+        model_input = _openrouter_modalities(architecture.get("input_modalities"))
+        top_provider = model.get("top_provider") or {}
+        classifiers.append(
+            {
+                "type": "classifier",
+                "id": model["id"],
+                "name": model["name"],
+                "api": "typesafe-system-one",
+                "provider": "openrouter",
+                "baseUrl": "https://openrouter.ai/api/v1",
+                "input": model_input or ["text"],
+                "cost": _openrouter_cost(model),
+                "contextWindow": top_provider.get("context_length") or model.get("context_length") or 4096,
+            }
+        )
+
+    return {"chat": chat, "images": images, "classifiers": classifiers}
+
+
+async def _fetch_openrouter_list(client: Client, query: str) -> list[dict[str, Any]]:
+    data = await _fetch_json(client, f"https://openrouter.ai/api/v1/models{query}", "OpenRouter API")
+    return data.get("data") or []
+
+
+async def fetch_openrouter_models(client: Client) -> dict[str, list[dict[str, Any]]]:
+    print("Fetching models from OpenRouter API...")
+    listed, image_listed, decision_listed = await tonio.spawn(
+        _fetch_openrouter_list(client, ""),
+        _fetch_openrouter_list(client, "?output_modalities=image"),
+        _fetch_openrouter_list(client, "?output_modalities=decisions"),
+    )
+    catalog = build_openrouter_catalog(listed, image_listed, decision_listed)
+    print(
+        f"Fetched {len(catalog['chat'])} tool-capable, {len(catalog['images'])} image, "
+        f"and {len(catalog['classifiers'])} classifier models from OpenRouter"
+    )
+    if not catalog["images"]:
+        raise RuntimeError("OpenRouter API returned no usable image models")
+    return catalog
 
 
 def _to_number(value: Any) -> float:
@@ -1238,12 +1341,36 @@ def _to_number(value: Any) -> float:
         return 0.0
 
 
-async def fetch_ai_gateway_models(client: Client) -> list[dict[str, Any]]:
+async def fetch_ai_gateway_models(client: Client) -> dict[str, list[dict[str, Any]]]:
     print("Fetching models from Vercel AI Gateway API...")
     data = await _fetch_json(client, f"{AI_GATEWAY_MODELS_URL}/models", "Vercel AI Gateway API")
     models: list[dict[str, Any]] = []
+    classifiers: list[dict[str, Any]] = []
     items = data.get("data") if isinstance(data.get("data"), list) else []
     for model in items:
+        # Evaluation models such as TypeSafe's Jev are served through the
+        # TypeSafe-compatible System One endpoint.
+        if model.get("type") == "evaluation":
+            pricing = model.get("pricing") or {}
+            classifiers.append(
+                {
+                    "type": "classifier",
+                    "id": model["id"],
+                    "name": model.get("name") or model["id"],
+                    "api": "typesafe-system-one",
+                    "provider": "vercel-ai-gateway",
+                    "baseUrl": AI_GATEWAY_TYPESAFE_BASE_URL,
+                    "input": ["text"],
+                    "cost": {
+                        "input": round_cost(_to_number(pricing.get("input")) * 1_000_000),
+                        "output": round_cost(_to_number(pricing.get("output")) * 1_000_000),
+                        "cacheRead": 0,
+                        "cacheWrite": 0,
+                    },
+                    "contextWindow": model.get("context_window") or 4096,
+                }
+            )
+            continue
         tags = model.get("tags") if isinstance(model.get("tags"), list) else []
         # Only include models that support tools
         if "tool-use" not in tags:
@@ -1274,8 +1401,79 @@ async def fetch_ai_gateway_models(client: Client) -> list[dict[str, Any]]:
                 "maxTokens": model.get("max_tokens") or 4096,
             }
         )
-    print(f"Fetched {len(models)} tool-capable models from Vercel AI Gateway")
-    return models
+    print(f"Fetched {len(models)} tool-capable and {len(classifiers)} classifier models from Vercel AI Gateway")
+    return {"chat": models, "classifiers": classifiers}
+
+
+async def load_models_dev_classifier_models(client: Client) -> list[dict[str, Any]]:
+    print("Fetching classifier models from models.dev API...")
+    data = await _fetch_json(client, "https://models.dev/models.json?type=decision", "models.dev classifier API")
+    metadata = data.get("typesafe/jev-latest")
+    if not metadata or metadata.get("type") != "decision":
+        raise RuntimeError("models.dev did not return decision model typesafe/jev-latest")
+    return [
+        {
+            "type": "classifier",
+            "id": "jev-latest",
+            "name": metadata["name"],
+            "api": "typesafe-system-one",
+            "provider": "typesafe",
+            "baseUrl": "https://api.typesafe.ai/v1/",
+            "input": ["text", "image"]
+            if "image" in ((metadata.get("modalities") or {}).get("input") or [])
+            else ["text"],
+            # The canonical models.dev entry has no direct-provider pricing. System One reports token usage,
+            # so classify() results carry token counts but price them at zero.
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": (metadata.get("limit") or {}).get("context") or 64000,
+        }
+    ]
+
+
+# OpenCode Zen serves Jev through its TypeSafe-compatible System One endpoint.
+# Neither its /zen/v1/models listing nor models.dev carries metadata for it.
+# https://opencode.ai/docs/zen
+OPENCODE_CLASSIFIER_MODELS: list[dict[str, Any]] = [
+    {
+        "type": "classifier",
+        "id": "jev-1.13",
+        "name": "Jev 1.13",
+        "api": "typesafe-system-one",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/zen/v1",
+        "input": ["text"],
+        "cost": {"input": 0.042, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 32000,
+    },
+    {
+        "type": "classifier",
+        "id": "jev-1.13-free",
+        "name": "Jev 1.13 Free",
+        "api": "typesafe-system-one",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/zen/v1",
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 32000,
+    },
+]
+
+# Workers AI has no unauthenticated catalog and models.dev does not list its
+# System One models yet. Cloudflare publishes pricing only in the dashboard.
+# https://developers.cloudflare.com/ai/models/typesafe/jev/
+CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: list[dict[str, Any]] = [
+    {
+        "type": "classifier",
+        "id": "typesafe/jev",
+        "name": "Jev",
+        "api": "cloudflare-workers-ai-system-one",
+        "provider": "cloudflare-workers-ai",
+        "baseUrl": CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 32000,
+    },
+]
 
 
 # --- models.dev catalog -------------------------------------------------------
@@ -2824,14 +3022,15 @@ async def main() -> None:
         catalog = await _fetch_json(client, "https://models.dev/api.json", "models.dev API")
         nvidia_nim_model_ids = await fetch_nvidia_nim_model_ids(client) if _models_of(catalog, "nvidia") else {}
         models_dev_models = load_models_dev_data(catalog, reasoning_options, nvidia_nim_model_ids)
-        openrouter_models = await fetch_openrouter_models(client)
-        ai_gateway_models = await fetch_ai_gateway_models(client)
+        models_dev_classifier_models = await load_models_dev_classifier_models(client)
+        openrouter_catalog = await fetch_openrouter_models(client)
+        ai_gateway_catalog = await fetch_ai_gateway_models(client)
 
-    # models.dev has priority over the live gateway catalogs (the dedupe below keeps
-    # the first entry for a given provider/id pair).
+    # Chat models: models.dev has priority over the live gateway catalogs (the
+    # dedupe below keeps the first entry for a given provider/id pair).
     all_models = [
         model
-        for model in (*models_dev_models, *openrouter_models, *ai_gateway_models)
+        for model in (*models_dev_models, *openrouter_catalog["chat"], *ai_gateway_catalog["chat"])
         if not (model["provider"] == "xai" and model["id"] in XAI_BUILTIN_EXCLUDED_MODEL_IDS)
         and not (model["provider"] in ("opencode", "opencode-go") and model["id"] == "gpt-5.3-codex-spark")
     ]
@@ -3016,27 +3215,52 @@ async def main() -> None:
 
     apply_model_metadata(all_models, reasoning_options)
 
-    # Group by provider, dedupe by model id (first wins), sort, group by api.
-    providers: dict[str, dict[str, dict[str, Any]]] = {}
+    # Keep chat, image and classifier catalogs separate so one upstream ID can
+    # expose several operations with different API implementations. Dedupe by
+    # model id within each type (first wins: models.dev has priority).
+    providers: dict[str, dict[str, dict[str, dict[str, Any]]]] = {}
+
+    def _provider_catalog(provider_id: str) -> dict[str, dict[str, dict[str, Any]]]:
+        return providers.setdefault(provider_id, {"chat": {}, "image": {}, "classifier": {}})
+
     for model in all_models:
-        providers.setdefault(model["provider"], {}).setdefault(model["id"], model)
+        _provider_catalog(model["provider"])["chat"].setdefault(model["id"], {**model, "type": "chat"})
+    for model in openrouter_catalog["images"]:
+        apply_image_input_metadata(model)
+        _provider_catalog(model["provider"])["image"].setdefault(model["id"], model)
+    classifier_models = [
+        *models_dev_classifier_models,
+        *openrouter_catalog["classifiers"],
+        *ai_gateway_catalog["classifiers"],
+        *_clone(OPENCODE_CLASSIFIER_MODELS),
+        *_clone(CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS),
+    ]
+    for model in classifier_models:
+        _provider_catalog(model["provider"])["classifier"].setdefault(model["id"], model)
 
     # Serialize into memory first, so a failed integrity check leaves the committed
-    # catalog untouched (pi stages into a temp dir and swaps; same guarantee).
+    # catalog untouched (pi stages into a temp dir and swaps; same guarantee). The
+    # data is grouped by API and keyed by `type:id`.
     file_contents: dict[str, str] = {}
     structure: ModelDataStructure = {}
     for provider_id in sorted(providers):
+        provider_models = [
+            model
+            for model_type in ("chat", "image", "classifier")
+            for _model_id, model in sorted(providers[provider_id][model_type].items())
+        ]
         by_api: dict[str, dict[str, Any]] = {}
-        provider_models = providers[provider_id]
         structure[provider_id] = {}
-        for api in sorted({model["api"] for model in provider_models.values()}):
-            by_api[api] = {
-                model_id: provider_models[model_id]
-                for model_id in sorted(provider_models)
-                if provider_models[model_id]["api"] == api
-            }
-            for model_id in by_api[api]:
-                structure[provider_id][model_id] = api
+        for api in sorted({model["api"] for model in provider_models}):
+            by_api[api] = {}
+            for model in provider_models:
+                if model["api"] != api:
+                    continue
+                identity = f"{model['type']}:{model['id']}"
+                if identity in by_api[api]:
+                    raise RuntimeError(f"{provider_id}/{identity} has duplicate {api} catalog entries")
+                by_api[api][identity] = model
+                structure[provider_id][identity] = api
         file_contents[f"{provider_id}.json"] = json.dumps(by_api, indent=2) + "\n"
 
     manifest = create_model_data_manifest(
@@ -3060,7 +3284,7 @@ async def main() -> None:
         for path in staging_dir.glob("*.json"):
             (DATA_DIR / path.name).write_text(path.read_text())
         for filename in sorted(file_contents):
-            print(f"Wrote {len(providers[filename.removesuffix('.json')])} models to {DATA_DIR / filename}")
+            print(f"Wrote {len(structure[filename.removesuffix('.json')])} models to {DATA_DIR / filename}")
     validate_generated_model_data(DATA_DIR)
 
     reasoning_count = sum(1 for model in all_models if model["reasoning"])
@@ -3068,7 +3292,11 @@ async def main() -> None:
     print(f"  Total tool-capable models: {len(all_models)}")
     print(f"  Reasoning-capable models: {reasoning_count}")
     for provider_id in sorted(providers):
-        print(f"  {provider_id}: {len(providers[provider_id])} models")
+        models = providers[provider_id]
+        print(
+            f"  {provider_id}: {len(models['chat'])} chat models, {len(models['image'])} image models, "
+            f"{len(models['classifier'])} classifier models"
+        )
 
 
 if __name__ == "__main__":

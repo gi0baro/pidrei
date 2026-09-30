@@ -15,7 +15,7 @@ from pidrei_ai.models_store import ModelsStore, ModelsStoreEntry, ModelsStoreOpe
 from ..config import get_agent_dir
 from ..utils.paths import get_file_revision_blocking, normalize_path
 from ..utils.text import strip_bom
-from .model_wire import model_to_dict, parse_model_dict
+from .model_wire import model_to_dict, parse_any_model_dict
 
 
 def _auth_options(options: ModelsStoreOperationOptions | None) -> AuthOperationOptions | None:
@@ -88,8 +88,12 @@ def _entry_to_dict(entry: ModelsStoreEntry) -> dict[str, Any]:
 
 
 def _entry_from_dict(raw: dict[str, Any]) -> ModelsStoreEntry:
+    # pi keeps stored entries raw and `Models` drops the model types this
+    # version does not know when it restores them; a typed parse cannot hold
+    # such an entry, so it is dropped here, with the same observable result.
+    models = (parse_any_model_dict(model) for model in raw.get("models", []))
     return ModelsStoreEntry(
-        models=[parse_model_dict(model) for model in raw.get("models", [])],
+        models=[model for model in models if model is not None],
         last_modified=raw.get("lastModified"),
         checked_at=raw.get("checkedAt"),
         etag=raw.get("etag"),

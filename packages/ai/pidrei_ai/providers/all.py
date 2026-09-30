@@ -12,8 +12,7 @@ from importlib import resources
 
 import tonio.colored as tonio
 
-from pidrei_ai.images_models import ImagesModels, create_images_models
-from pidrei_ai.models_generated import MODELS
+from pidrei_ai.models_generated import CLASSIFIER_MODELS, IMAGE_MODELS, MODELS
 from pidrei_ai.providers.amazon_bedrock import amazon_bedrock_provider
 from pidrei_ai.providers.ant_ling import ant_ling_provider
 from pidrei_ai.providers.anthropic import anthropic_provider
@@ -42,11 +41,11 @@ from pidrei_ai.providers.openai_codex import openai_codex_provider
 from pidrei_ai.providers.opencode import opencode_provider
 from pidrei_ai.providers.opencode_go import opencode_go_provider
 from pidrei_ai.providers.openrouter import openrouter_provider
-from pidrei_ai.providers.openrouter_images import openrouter_images_provider
 from pidrei_ai.providers.qwen_token_plan import qwen_token_plan_provider
 from pidrei_ai.providers.qwen_token_plan_cn import qwen_token_plan_cn_provider
 from pidrei_ai.providers.qwen_token_plan_individual import qwen_token_plan_individual_provider
 from pidrei_ai.providers.together import together_provider
+from pidrei_ai.providers.typesafe import typesafe_provider
 from pidrei_ai.providers.vercel_ai_gateway import vercel_ai_gateway_provider
 from pidrei_ai.providers.xai import xai_provider
 from pidrei_ai.providers.xiaomi import xiaomi_provider
@@ -56,19 +55,49 @@ from pidrei_ai.providers.xiaomi_token_plan_sgp import xiaomi_token_plan_sgp_prov
 from pidrei_ai.providers.zai import zai_provider
 from pidrei_ai.providers.zai_coding_cn import zai_coding_cn_provider
 from pidrei_ai.registry import Models, Provider, create_models
-from pidrei_ai.types import Model
+from pidrei_ai.types import AnyModel, ClassifierModel, ImageModel, Model
 
 
-def get_builtin_model(provider: str, model_id: str) -> Model | None:
-    """Read of the generated built-in catalog."""
-    for model in MODELS.get(provider, []):
+def _find[TModel: Model | ImageModel | ClassifierModel](models: list[TModel], model_id: str) -> TModel | None:
+    for model in models:
         if model.id == model_id:
             return model
     return None
 
 
+def get_builtin_model(provider: str, model_id: str) -> Model | None:
+    """Read of one generated built-in chat model."""
+    return _find(MODELS.get(provider, []), model_id)
+
+
+def get_builtin_image_model(provider: str, model_id: str) -> ImageModel | None:
+    """Read of one generated built-in image model."""
+    return _find(IMAGE_MODELS.get(provider, []), model_id)
+
+
+def get_builtin_classifier_model(provider: str, model_id: str) -> ClassifierModel | None:
+    """Read of one generated built-in classifier model."""
+    return _find(CLASSIFIER_MODELS.get(provider, []), model_id)
+
+
 def get_builtin_models(provider: str) -> list[Model]:
     return list(MODELS.get(provider, []))
+
+
+def get_builtin_image_models(provider: str) -> list[ImageModel]:
+    return list(IMAGE_MODELS.get(provider, []))
+
+
+def get_builtin_classifier_models(provider: str) -> list[ClassifierModel]:
+    return list(CLASSIFIER_MODELS.get(provider, []))
+
+
+def get_all_builtin_models(provider: str) -> list[AnyModel]:
+    return [
+        *get_builtin_models(provider),
+        *get_builtin_image_models(provider),
+        *get_builtin_classifier_models(provider),
+    ]
 
 
 def get_builtin_providers() -> list[str]:
@@ -136,6 +165,7 @@ def builtin_providers() -> list[Provider]:
         qwen_token_plan_cn_provider(),
         qwen_token_plan_individual_provider(),
         together_provider(),
+        typesafe_provider(),
         vercel_ai_gateway_provider(),
         xai_provider(),
         xiaomi_provider(),
@@ -145,19 +175,6 @@ def builtin_providers() -> list[Provider]:
         zai_provider(),
         zai_coding_cn_provider(),
     ]
-
-
-def builtin_images_providers() -> list:
-    """All built-in image-generation providers, freshly constructed."""
-    return [openrouter_images_provider()]
-
-
-def builtin_images_models(**options) -> ImagesModels:
-    """An `ImagesModels` collection with every built-in image provider registered."""
-    models = create_images_models(**options)
-    for provider in builtin_images_providers():
-        models.set_provider(provider)
-    return models
 
 
 def builtin_models(**options) -> Models:

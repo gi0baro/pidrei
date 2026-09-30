@@ -4,13 +4,14 @@ import copy
 from dataclasses import dataclass
 from typing import Protocol
 
-from pidrei_ai.types import Model
+from pidrei_ai.types import AnyModel
 from pidrei_ai.utils.cancel import CancelToken
 
 
 @dataclass(slots=True)
 class ModelsStoreEntry:
-    models: list[Model]
+    # Persisted models of every type.
+    models: list[AnyModel]
     # Unix timestamp from the remote catalog's Last-Modified header.
     last_modified: int | None = None
     # Unix timestamp of the last completed remote check.

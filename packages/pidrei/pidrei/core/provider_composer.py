@@ -3,7 +3,10 @@
 Extension provider configs (`ProviderConfigInput`) are camelCase dicts, like
 pi's registerProvider objects: key presence carries the defined-vs-undefined
 merge semantics. The extension OAuth hook is the `ExtensionOAuthConfig`
-dataclass.
+dataclass. A config's `models` entries are chat, image, or classifier model
+definitions by their `type` (omitted means "chat"); `images` and
+`classifiers` map an api to its implementation (an object with
+`generate_images` / `classify`), like `create_provider`'s.
 
 pi's global compat API registry (`getApiProvider`) is unported; the fallback
 dispatch maps known api names onto pidrei-ai adapter modules directly.
@@ -38,7 +41,26 @@ from pidrei_ai.auth.types import (
     ProviderAuth,
 )
 from pidrei_ai.registry import ModelsPublication, Provider, RefreshModelsContext
-from pidrei_ai.types import Model, ModelCost, TranscriptContext
+from pidrei_ai.types import (
+    AnyModel,
+    AssistantImages,
+    ClassifierContext,
+    ClassifierModel,
+    ClassifierOptions,
+    ClassifierResult,
+    ImageModel,
+    ImagesContext,
+    ImagesOptions,
+    Model,
+    ModelCost,
+    TranscriptContext,
+)
+from pidrei_ai.utils.model_operations import (
+    classifier_error_result,
+    get_model_type,
+    image_error_result,
+    is_model_type,
+)
 from pidrei_ai.utils.tasks import gather
 
 from .model_config import ModelConfig
@@ -105,6 +127,14 @@ class CompatibilityRequestConfig:
 
 
 clear_api_key_cache = clear_config_value_cache
+
+
+def _get_all_provider_models(provider: Provider | None) -> list[AnyModel]:
+    """pi: `provider.getAllModels?.() ?? provider.getModels()`, `[]` without a provider."""
+    if provider is None:
+        return []
+    get_all_models = provider.get_all_models
+    return get_all_models() if get_all_models is not None else provider.get_models()
 
 
 def _nn(*values: Any) -> Any:
@@ -229,9 +259,9 @@ def _model_from_json(
 
 def apply_models_json(
     provider_id: str,
-    base_models: list[Model],
+    base_models: list[AnyModel],
     config: dict[str, Any] | None,
-) -> list[Model]:
+) -> list[AnyModel]:
     if not config:
         return list(base_models)
     has_overrides = bool(config.get("modelOverrides"))
@@ -254,10 +284,14 @@ def apply_models_json(
             base_url=_nn(config.get("baseUrl"), model.base_url),
             compat=merge_compat(model.api, model.compat, config.get("compat")),
         )
+        if is_model_type(model, "chat")
+        else replace(model, base_url=_nn(config.get("baseUrl"), model.base_url))
         for model in base_models
     ]
     for definition in config.get("models") or []:
-        existing_index = next((i for i, model in enumerate(models) if model.id == definition["id"]), -1)
+        existing_index = next(
+            (i for i, model in enumerate(models) if is_model_type(model, "chat") and model.id == definition["id"]), -1
+        )
         defaults = _find_model_defaults(models, definition["id"], _nn(definition.get("api"), config.get("api")))
         model = _model_from_json(provider_id, definition, config, defaults)
         if existing_index >= 0:
@@ -267,59 +301,122 @@ def apply_models_json(
     return models
 
 
-def _find_model_defaults(models: list[Model], model_id: str, api: str | None = None) -> Model | None:
-    """The catalog model a custom definition inherits from: same id, else same
-    api, else the first completions model, else the first model."""
+def _find_model_defaults(models: list[AnyModel], model_id: str, api: str | None = None) -> Model | None:
+    """The catalog chat model a custom definition inherits from: same id, else
+    same api, else the first completions model, else the first model."""
+    chat_models = [model for model in models if is_model_type(model, "chat")]
     return (
-        next((model for model in models if model.id == model_id), None)
-        or (next((model for model in models if model.api == api), None) if api else None)
-        or next((model for model in models if model.api == "openai-completions"), None)
-        or (models[0] if models else None)
+        next((model for model in chat_models if model.id == model_id), None)
+        or (next((model for model in chat_models if model.api == api), None) if api else None)
+        or next((model for model in chat_models if model.api == "openai-completions"), None)
+        or (chat_models[0] if chat_models else None)
+    )
+
+
+def _find_extension_model_defaults(models: list[AnyModel], definition: dict[str, Any]) -> AnyModel | None:
+    model_type = _nn(definition.get("type"), "chat")
+    candidates = [model for model in models if is_model_type(model, model_type)]
+    return (
+        next((model for model in candidates if model.id == definition["id"]), None)
+        or (
+            next((model for model in candidates if model.api == definition["api"]), None)
+            if definition.get("api")
+            else None
+        )
+        or (
+            next((model for model in candidates if model.api == "openai-completions"), None)
+            if model_type == "chat"
+            else None
+        )
+        or (candidates[0] if candidates else None)
+    )
+
+
+def _extension_model_from_definition(
+    provider_id: str,
+    models: list[AnyModel],
+    config: ProviderConfigInput,
+    definition: dict[str, Any],
+) -> AnyModel:
+    model_type = _nn(definition.get("type"), "chat")
+    defaults = _find_extension_model_defaults(models, definition)
+    api = _nn(
+        definition.get("api"),
+        config.get("api") if model_type == "chat" else None,
+        defaults.api if defaults else None,
+    )
+    if not api:
+        level = " or provider level" if model_type == "chat" else ""
+        raise Exception(
+            f'Provider {provider_id}, model {definition["id"]}: no "api" specified. Set it at model level{level}.'
+        )
+    base_url = _nn(definition.get("baseUrl"), config.get("baseUrl"), defaults.base_url if defaults else None)
+    if not base_url:
+        raise Exception(f'Provider {provider_id}: "baseUrl" is required when defining custom models.')
+    name = _nn(definition.get("name"), definition["id"])
+    model_input = list(_nn(definition.get("input"), ["text"]))
+    input_limits = parse_input_limits(definition["inputLimits"]) if definition.get("inputLimits") else None
+    cost = _model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0)
+    if definition.get("type") == "image":
+        return ImageModel(
+            id=definition["id"],
+            name=name,
+            api=api,
+            provider=provider_id,
+            base_url=base_url,
+            input=model_input,
+            output=list(_nn(definition.get("output"), ["image"])),
+            cost=cost,
+            input_limits=input_limits,
+            headers=None,
+        )
+    if definition.get("type") == "classifier":
+        return ClassifierModel(
+            id=definition["id"],
+            name=name,
+            api=api,
+            provider=provider_id,
+            base_url=base_url,
+            input=model_input,
+            cost=cost,
+            context_window=_nn(definition.get("contextWindow"), 128000),
+            input_limits=input_limits,
+            headers=None,
+        )
+    return Model(
+        id=definition["id"],
+        name=name,
+        api=api,
+        provider=provider_id,
+        base_url=base_url,
+        reasoning=_nn(definition.get("reasoning"), False),
+        thinking_level_map=definition.get("thinkingLevelMap"),
+        input=model_input,
+        input_limits=input_limits,
+        cost=cost,
+        prompt_cache=definition.get("promptCache"),
+        context_window=_nn(definition.get("contextWindow"), 128000),
+        max_tokens=_nn(definition.get("maxTokens"), 16384),
+        headers=None,
+        compat=_model_compat(api, definition.get("compat")),
+        type=definition.get("type"),
     )
 
 
 def apply_extension(
     provider_id: str,
-    models: list[Model],
+    models: list[AnyModel],
     config: ProviderConfigInput | None,
-) -> list[Model]:
+) -> list[AnyModel]:
     if not config:
         return list(models)
     if not config.get("models"):
         if config.get("baseUrl"):
             return [replace(model, base_url=config["baseUrl"]) for model in models]
         return list(models)
-    result: list[Model] = []
-    for definition in config["models"]:
-        defaults = _find_model_defaults(models, definition["id"], _nn(definition.get("api"), config.get("api")))
-        api = _nn(definition.get("api"), config.get("api"), defaults.api if defaults else None)
-        if not api:
-            raise Exception(
-                f'Provider {provider_id}, model {definition["id"]}: no "api" specified. Set at provider or model level.'
-            )
-        base_url = _nn(definition.get("baseUrl"), config.get("baseUrl"), defaults.base_url if defaults else None)
-        if not base_url:
-            raise Exception(f'Provider {provider_id}: "baseUrl" is required when defining custom models.')
-        result.append(
-            Model(
-                id=definition["id"],
-                name=_nn(definition.get("name"), definition["id"]),
-                api=api,
-                provider=provider_id,
-                base_url=base_url,
-                reasoning=_nn(definition.get("reasoning"), False),
-                thinking_level_map=definition.get("thinkingLevelMap"),
-                input=list(_nn(definition.get("input"), ["text"])),
-                input_limits=(parse_input_limits(definition["inputLimits"]) if definition.get("inputLimits") else None),
-                cost=_model_cost(definition["cost"]) if definition.get("cost") else ModelCost(0, 0, 0, 0),
-                prompt_cache=definition.get("promptCache"),
-                context_window=_nn(definition.get("contextWindow"), 128000),
-                max_tokens=_nn(definition.get("maxTokens"), 16384),
-                headers=None,
-                compat=_model_compat(api, definition.get("compat")),
-            )
-        )
-    return result
+    return [
+        _extension_model_from_definition(provider_id, models, config, definition) for definition in config["models"]
+    ]
 
 
 def adapt_oauth(config: ExtensionOAuthConfig) -> OAuthAuth:
@@ -510,20 +607,31 @@ def compose_oauth_auth(
 
 
 def _raw_model_headers(
-    model: Model,
+    model: AnyModel,
     config: dict[str, Any] | None,
     extension: ProviderConfigInput | None,
 ) -> dict[str, str] | None:
-    definition = next(
-        (entry for entry in (config.get("models") if config else None) or [] if entry["id"] == model.id), None
+    # models.json definitions and overrides are chat-only. Extension definitions
+    # are matched by operation and id so colliding models cannot share headers.
+    is_chat = is_model_type(model, "chat")
+    chat_definition = (
+        next((entry for entry in (config.get("models") if config else None) or [] if entry["id"] == model.id), None)
+        if is_chat
+        else None
     )
+    model_type = get_model_type(model)
     extension_model = next(
-        (entry for entry in (extension.get("models") if extension else None) or [] if entry["id"] == model.id), None
+        (
+            entry
+            for entry in (extension.get("models") if extension else None) or []
+            if _nn(entry.get("type"), "chat") == model_type and entry["id"] == model.id
+        ),
+        None,
     )
     override = (config.get("modelOverrides") if config else None) or {}
     headers = {
-        **((override.get(model.id) or {}).get("headers") or {}),
-        **((definition or {}).get("headers") or {}),
+        **(((override.get(model.id) or {}).get("headers") or {}) if is_chat else {}),
+        **((chat_definition or {}).get("headers") or {}),
         **((extension_model or {}).get("headers") or {}),
     }
     return headers if headers else None
@@ -538,9 +646,7 @@ def validate_extension_provider(
     if extension.get("streamSimple") and not extension.get("api"):
         raise Exception(f'Provider {provider_id}: "api" is required when registering streamSimple.')
     apply_extension(
-        provider_id,
-        apply_models_json(provider_id, base.get_models() if base is not None else [], models_config),
-        extension,
+        provider_id, apply_models_json(provider_id, _get_all_provider_models(base), models_config), extension
     )
 
 
@@ -579,26 +685,50 @@ class ComposedProvider:
         self.headers = base.headers if base is not None else None
         self.auth = auth
         self.filter_models = base.filter_models if base is not None else None
+        self.filter_all_models = base.filter_all_models if base is not None else None
+        self._extension_images = (extension.get("images") if extension else None) or {}
+        self._extension_classifiers = (extension.get("classifiers") if extension else None) or {}
+        self._base_generate_images = base.generate_images if base is not None else None
+        self._base_classify = base.classify if base is not None else None
+        self.generate_images = (
+            self._generate_images if self._base_generate_images is not None or self._extension_images else None
+        )
+        self.classify = self._classify if self._base_classify is not None or self._extension_classifiers else None
 
     def _current_extension(self) -> ProviderConfigInput | None:
         if self._extension and self._refreshed_extension_models is not None:
             return {**self._extension, "models": self._refreshed_extension_models}
         return self._extension
 
+    def get_all_models(self) -> list[AnyModel]:
+        return self._all_models()
+
     def get_models(self) -> list[Model]:
+        return [model for model in self._all_models() if is_model_type(model, "chat")]
+
+    def _all_models(self) -> list[AnyModel]:
         # models.json modelOverrides are the topmost user-config layer: they apply once,
         # after custom-model upserts, extension model replacement, and legacy OAuth projection.
         models = apply_extension(
             self.id,
-            apply_models_json(self.id, self._base.get_models() if self._base is not None else [], self._config),
+            apply_models_json(self.id, _get_all_provider_models(self._base), self._config),
             self._current_extension(),
         )
         extension_oauth = self._extension.get("oauth") if self._extension else None
         if self._extension_oauth_credential is not None and extension_oauth and extension_oauth.modify_models:
-            models = extension_oauth.modify_models(models, self._extension_oauth_credential)
+            # The extension hook is chat-only; other model types pass through untouched.
+            models = [
+                *extension_oauth.modify_models(
+                    [model for model in models if is_model_type(model, "chat")], self._extension_oauth_credential
+                ),
+                *(model for model in models if not is_model_type(model, "chat")),
+            ]
         overrides = (self._config.get("modelOverrides") if self._config else None) or {}
         return [
-            apply_model_override(model, overrides[model.id]) if model.id in overrides else model for model in models
+            apply_model_override(model, overrides[model.id])
+            if model.id in overrides and is_model_type(model, "chat")
+            else model
+            for model in models
         ]
 
     @property
@@ -626,7 +756,7 @@ class ComposedProvider:
                 # Validate before publishing the new synchronous list.
                 apply_extension(
                     self.id,
-                    apply_models_json(self.id, self._base.get_models() if self._base is not None else [], self._config),
+                    apply_models_json(self.id, _get_all_provider_models(self._base), self._config),
                     {**(self._extension or {}), "models": refreshed},
                 )
                 self._refreshed_extension_models = refreshed
@@ -678,6 +808,31 @@ class ComposedProvider:
     async def cancel_deferred(self, model: Model, handle: Any, options: Any = None) -> None:
         await self._base.cancel_deferred(model, handle, options)
 
+    # One-shot operations: an extension implementation for `model.api` wins,
+    # else the base provider's, else an error result.
+
+    async def _generate_images(
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> AssistantImages:
+        implementation = self._extension_images.get(model.api)
+        if implementation is not None:
+            return await implementation.generate_images(model, context, options)
+        if self._base_generate_images is not None:
+            return await self._base_generate_images(model, context, options)
+        return image_error_result(model, Exception(f'Provider {self.id} has no image implementation for "{model.api}"'))
+
+    async def _classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> ClassifierResult:
+        implementation = self._extension_classifiers.get(model.api)
+        if implementation is not None:
+            return await implementation.classify(model, context, options)
+        if self._base_classify is not None:
+            return await self._base_classify(model, context, options)
+        return classifier_error_result(
+            model, Exception(f'Provider {self.id} has no classifier implementation for "{model.api}"')
+        )
+
 
 def compose_model_provider(
     provider_id: str,
@@ -699,12 +854,12 @@ def compose_model_provider(
         auth=ProviderAuth(api_key=api_key, oauth=oauth),
     )
     # Validate eagerly so registration/reload reports structural errors immediately.
-    provider.get_models()
+    provider.get_all_models()
     return provider
 
 
 async def resolve_configured_model_headers(
-    model: Model,
+    model: AnyModel,
     config: dict[str, Any] | None,
     extension: ProviderConfigInput | None,
     env: dict[str, str] | None = None,
@@ -715,7 +870,7 @@ async def resolve_configured_model_headers(
 
 
 async def resolve_compatibility_request_config(
-    model: Model,
+    model: AnyModel,
     config: dict[str, Any] | None,
     extension: ProviderConfigInput | None,
 ) -> CompatibilityRequestConfig:

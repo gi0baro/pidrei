@@ -54,3 +54,15 @@ def make_model(
         max_tokens=max_tokens,
         **overrides,
     )
+
+
+class UnusedStreams:
+    """pi's `api: { stream: () => { throw ... }, streamSimple: ... }`: a chat
+    implementation for providers a test never streams through (a provider
+    needs at least one operation implementation)."""
+
+    def stream(self, *_args, **_kwargs):
+        raise RuntimeError("not used")
+
+    def stream_simple(self, *_args, **_kwargs):
+        raise RuntimeError("not used")

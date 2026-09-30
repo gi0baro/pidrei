@@ -18,7 +18,7 @@ from .defaults import DEFAULT_THINKING_LEVEL
 from .output_guard import write_stderr, write_stdout
 
 
-# Default model IDs for each known provider
+# Default chat model IDs for providers with built-in chat models.
 DEFAULT_MODEL_PER_PROVIDER: dict[str, str] = {
     "amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
     "ant-ling": "Ring-2.6-1T",

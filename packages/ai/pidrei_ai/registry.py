@@ -1,13 +1,23 @@
 """Port of pi's models registry (packages/ai/src/models.ts).
 
 `Models` is the runtime collection of providers plus auth application and
-stream convenience; providers own stream behavior, `Models` resolves auth and
-delegates each request to the provider that owns the model.
+request convenience; providers own request behavior (streaming, image
+generation, classification), `Models` resolves auth and delegates each request
+to the provider that owns the model.
+
+Read accessors come in three flavors: the unqualified ones (`get_models`,
+`get_model`, `get_available`) return chat models, the `*_of_type` accessors
+return one model type, and `get_all_models`/`get_all_available` return every
+type.
+
+pi's optional provider members (`getAllModels?`, `filterAllModels?`,
+`generateImages?`, `classify?`) are attributes here that are None when
+absent, the way `filter_models` already is.
 """
 
 import copy
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from types import EllipsisType
 from typing import Any
@@ -36,13 +46,23 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.builders import UsageBuilder, UsageCostBuilder
 from pidrei_ai.models_store import InMemoryModelsStore, ModelsStore, ModelsStoreEntry, ModelsStoreOperationOptions
 from pidrei_ai.types import (
+    AnyModel,
+    AssistantImages,
     AssistantMessage,
+    ClassifierContext,
+    ClassifierModel,
+    ClassifierOptions,
+    ClassifierResult,
     Context,
     DeferredCancelOptions,
     DeferredFetchOptions,
     DeferredHandle,
+    ImageModel,
+    ImagesContext,
+    ImagesOptions,
     Model,
     ModelThinkingLevel,
+    ModelType,
     ProviderHeaders,
     ProviderRequestOptions,
     SimpleStreamOptions,
@@ -54,7 +74,35 @@ from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.model_operations import (
+    assert_chat_model,
+    assert_classifier_model,
+    assert_image_model,
+    classifier_error_result,
+    get_model_type,
+    image_error_result,
+    is_model_type,
+)
 from pidrei_ai.utils.transcript import normalize_context
+
+
+_KNOWN_MODEL_TYPES: frozenset[ModelType] = frozenset(("chat", "image", "classifier"))
+
+
+def _has_known_model_type(model: AnyModel) -> bool:
+    """Models from stores and remote sources may have types that only newer versions know."""
+    return get_model_type(model) in _KNOWN_MODEL_TYPES
+
+
+def _with_known_model_types(entry: ModelsStoreEntry) -> ModelsStoreEntry:
+    """Drops stored models whose type this version does not know."""
+    return replace(entry, models=[model for model in entry.models if _has_known_model_type(model)])
+
+
+def _provider_all_models(provider: Any) -> list[AnyModel]:
+    """pi: `provider.getAllModels?.() ?? provider.getModels()`."""
+    get_all_models = provider.get_all_models
+    return get_all_models() if get_all_models is not None else provider.get_models()
 
 
 @dataclass(slots=True)
@@ -101,7 +149,8 @@ class ModelsRefreshResult:
 
 class Provider:
     """The concrete runtime unit built by `create_provider`: owns id/name/base
-    metadata, auth methods, model listing, and stream behavior.
+    metadata, auth methods, model listing, and the operations its models
+    support (streaming, image generation, classification).
     """
 
     def __init__(
@@ -112,35 +161,54 @@ class Provider:
         base_url: str | None = None,
         headers: ProviderHeaders | None = None,
         auth: ProviderAuth,
-        models: list[Model],
-        fetch_models: Callable[[RefreshModelsContext], Awaitable[list[Model]]] | None = None,
+        models: list[AnyModel],
+        fetch_models: Callable[[RefreshModelsContext], Awaitable[list[AnyModel]]] | None = None,
         filter_models: Callable[[list[Model], Credential | None], list[Model]] | None = None,
-        api: Any,
+        filter_all_models: Callable[[list[AnyModel], Credential | None], list[AnyModel]] | None = None,
+        api: Any = None,
+        images: Mapping[str, Any] | None = None,
+        classifiers: Mapping[str, Any] | None = None,
     ):
+        single = getattr(api, "stream", None)
+        self._single = api if callable(single) else None
+        self._by_api: dict[str, Any] | None = None if self._single is not None or api is None else dict(api)
+        self._images = {key: value for key, value in (images or {}).items() if value is not None}
+        self._classifiers = {key: value for key, value in (classifiers or {}).items() if value is not None}
+        if not self._stream_entries() and not self._images and not self._classifiers:
+            raise Exception(f'Provider {id}: at least one of "api", "images", or "classifiers" is required.')
+
         self.id = id
         self.name = name if name is not None else id
         self.base_url = base_url
         self.headers = headers
         self.auth = auth
         self.filter_models = filter_models
+        self.filter_all_models = filter_all_models
+        # Present when the provider supports dedicated image models / structured
+        # classifier models. Never raise.
+        self.generate_images = self._generate_images if self._images else None
+        self.classify = self._classify if self._classifiers else None
         self._baseline_models = models
-        self._dynamic_models: list[Model] = []
+        self._dynamic_models: list[AnyModel] = []
         self._fetch_models = fetch_models
-
-        single = getattr(api, "stream", None)
-        self._single = api if callable(single) else None
-        self._by_api: dict[str, Any] | None = None if self._single is not None else dict(api)
 
     @property
     def has_dynamic_models(self) -> bool:
         return self._fetch_models is not None
 
+    def get_all_models(self) -> list[AnyModel]:
+        return self._current_models()
+
     def get_models(self) -> list[Model]:
-        """Baseline catalog with the dynamic overlay merged in by model id."""
+        """The chat models of the catalog (read independently of `get_all_models`)."""
+        return [model for model in self._current_models() if is_model_type(model, "chat")]
+
+    def _current_models(self) -> list[AnyModel]:
+        """Baseline catalog with the dynamic overlay merged in by model type and id."""
         merged = list(self._baseline_models)
         for model in self._dynamic_models:
             for index, entry in enumerate(merged):
-                if entry.id == model.id:
+                if get_model_type(entry) == get_model_type(model) and entry.id == model.id:
                     merged[index] = model
                     break
             else:
@@ -157,16 +225,17 @@ class Provider:
         if context.stored is not None:
             restored = [model for model in context.stored.models if model.provider == self.id]
 
-            def _apply_restored(restored: list[Model] = restored) -> None:
+            def _apply_restored(restored: list[AnyModel] = restored) -> None:
                 self._dynamic_models = restored
 
             if not await context.publish(ModelsPublication(update=_apply_restored)):
                 return
         if not context.allow_network or context.cancel.cancelled:
             return
-        refreshed = await self._fetch_models(context)
+        fetched = await self._fetch_models(context)
         if context.cancel.cancelled:
             return
+        refreshed = [model for model in fetched if _has_known_model_type(model)]
 
         def _apply_refreshed() -> None:
             self._dynamic_models = list(refreshed)
@@ -266,6 +335,32 @@ class Provider:
             raise ModelsError("provider", f'Provider {self.id} cannot cancel deferred responses for "{model.api}"')
         await cancel(model, handle, options)
 
+    # -- one-shot operations ---------------------------------------------------
+    # Dispatch on `model.api` like the stream map; a model whose api has no
+    # entry yields an error result.
+
+    async def _generate_images(
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> AssistantImages:
+        implementation = self._images.get(model.api)
+        if implementation is None:
+            return image_error_result(
+                model,
+                ModelsError("provider", f'Provider {self.id} has no image generation implementation for "{model.api}"'),
+            )
+        return await implementation.generate_images(model, context, options)
+
+    async def _classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> ClassifierResult:
+        implementation = self._classifiers.get(model.api)
+        if implementation is None:
+            return classifier_error_result(
+                model,
+                ModelsError("provider", f'Provider {self.id} has no classifier implementation for "{model.api}"'),
+            )
+        return await implementation.classify(model, context, options)
+
 
 def create_provider(
     *,
@@ -274,15 +369,25 @@ def create_provider(
     base_url: str | None = None,
     headers: ProviderHeaders | None = None,
     auth: ProviderAuth,
-    models: list[Model],
-    fetch_models: Callable[[RefreshModelsContext], Awaitable[list[Model]]] | None = None,
+    models: list[AnyModel],
+    fetch_models: Callable[[RefreshModelsContext], Awaitable[list[AnyModel]]] | None = None,
     filter_models: Callable[[list[Model], Credential | None], list[Model]] | None = None,
-    api: Any,
+    filter_all_models: Callable[[list[AnyModel], Credential | None], list[AnyModel]] | None = None,
+    api: Any = None,
+    images: Mapping[str, Any] | None = None,
+    classifiers: Mapping[str, Any] | None = None,
 ) -> Provider:
     """Build a provider from parts. Built-in provider factories and models.json
-    custom providers both go through this. A single `api` streams all models;
-    an `api` dict dispatches on `model.api`, and a model whose api has no entry
-    produces a stream error.
+    custom providers both go through this. A single `api` streams all chat
+    models; an `api` dict dispatches on `model.api`, and a model whose api has
+    no entry produces a stream error. The `images`/`classifiers` maps dispatch
+    on `model.api` the same way. At least one concrete implementation across
+    `api`/`images`/`classifiers` is required; empty maps are rejected.
+
+    `models` and `fetch_models` carry models of every type; models without
+    `type` are chat models, and fetched models of unknown types are dropped.
+    `filter_models` is credential-specific chat availability, and
+    `filter_all_models` the same across every model type.
     """
     return Provider(
         id=id,
@@ -293,7 +398,10 @@ def create_provider(
         models=models,
         fetch_models=fetch_models,
         filter_models=filter_models,
+        filter_all_models=filter_all_models,
         api=api,
+        images=images,
+        classifiers=classifiers,
     )
 
 
@@ -370,7 +478,7 @@ class Models:
         return self._providers.get(id)
 
     def get_models(self, provider: str | None = None) -> list[Model]:
-        """Sync read of last-known models. Best-effort: a provider whose
+        """Sync read of last-known chat models. Best-effort: a provider whose
         `get_models()` raises yields no models."""
         if provider is not None:
             entry = self.get_provider(provider)
@@ -390,7 +498,39 @@ class Models:
         return models
 
     def get_model(self, provider: str, id: str) -> Model | None:
+        """Sync runtime chat model lookup against last-known lists."""
         for model in self.get_models(provider):
+            if model.id == id:
+                return model
+        return None
+
+    def get_all_models(self, provider: str | None = None) -> list[AnyModel]:
+        """Sync read of last-known models of every type from one provider or
+        all providers. Best-effort, like `get_models()`."""
+        if provider is not None:
+            entry = self.get_provider(provider)
+            if entry is None:
+                return []
+            try:
+                return _provider_all_models(entry)
+            except Exception:
+                return []
+
+        models: list[AnyModel] = []
+        for entry in self.get_providers():
+            try:
+                models.extend(_provider_all_models(entry))
+            except Exception:
+                pass  # Best-effort: ill-behaved providers yield no models.
+        return models
+
+    def get_models_of_type(self, type: ModelType, provider: str | None = None) -> list[AnyModel]:
+        """Sync read of last-known models of one type from one provider or all providers."""
+        return [model for model in self.get_all_models(provider) if is_model_type(model, type)]
+
+    def get_model_of_type(self, type: ModelType, provider: str, id: str) -> AnyModel | None:
+        """Sync runtime lookup of a model of one type against last-known lists."""
+        for model in self.get_models_of_type(type, provider):
             if model.id == id:
                 return model
         return None
@@ -462,7 +602,7 @@ class Models:
         await provider.refresh_models(
             RefreshModelsContext(
                 credential=credential,
-                stored=copy.deepcopy(stored) if stored is not None else None,
+                stored=_with_known_model_types(copy.deepcopy(stored)) if stored is not None else None,
                 publish=publish,
                 allow_network=allow_network,
                 force=force if allow_network else None,
@@ -617,41 +757,74 @@ class Models:
 
         return await race_with_cancel(_check(), cancel)
 
+    async def _get_authenticated_providers(
+        self, provider_id: str | None, cancel: CancelToken
+    ) -> list[tuple[Provider, Credential | None]]:
+        cancel.raise_if_cancelled()
+        providers = (
+            [entry for entry in [self.get_provider(provider_id)] if entry is not None]
+            if provider_id
+            else self.get_providers()
+        )
+
+        async def check_one(provider: Provider) -> tuple[Provider, Credential | None, AuthCheck | None]:
+            credential = await self._read_credential(provider.id, cancel)
+            return provider, credential, await self._check_provider_auth(provider, credential, cancel)
+
+        if not providers:
+            return []
+        checks = await tonio.map(check_one, providers)
+        return [(provider, credential) for provider, credential, auth in checks if auth is not None]
+
     async def get_available(
         self, provider_id: str | None = None, options: AuthOperationOptions | None = None
     ) -> list[Model]:
-        """Return models whose providers have complete auth configuration."""
+        """Return chat models whose providers have complete auth configuration."""
         cancel = operation_cancel(options.cancel if options is not None else None)
 
         async def _available() -> list[Model]:
-            cancel.raise_if_cancelled()
-            providers = (
-                [entry for entry in [self.get_provider(provider_id)] if entry is not None]
-                if provider_id
-                else self.get_providers()
-            )
-
-            async def check_one(provider: Provider) -> tuple[Provider, Credential | None, AuthCheck | None]:
-                credential = await self._read_credential(provider.id, cancel)
-                return provider, credential, await self._check_provider_auth(provider, credential, cancel)
-
-            if not providers:
-                return []
-            checks = await tonio.map(check_one, providers)
-
             available: list[Model] = []
-            for provider, credential, auth in checks:
-                if auth is None:
-                    continue
+            for provider, credential in await self._get_authenticated_providers(provider_id, cancel):
                 models = provider.get_models()
                 available.extend(provider.filter_models(models, credential) if provider.filter_models else models)
             return available
 
         return await race_with_cancel(_available(), cancel)
 
+    async def get_available_of_type(
+        self, type: ModelType, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[AnyModel]:
+        """Return models of one type whose providers have complete auth configuration."""
+        return [model for model in await self.get_all_available(provider_id, options) if is_model_type(model, type)]
+
+    async def get_all_available(
+        self, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[AnyModel]:
+        """Return models of every type whose providers have complete auth configuration."""
+        cancel = operation_cancel(options.cancel if options is not None else None)
+
+        async def _available() -> list[AnyModel]:
+            available: list[AnyModel] = []
+            for provider, credential in await self._get_authenticated_providers(provider_id, cancel):
+                models = _provider_all_models(provider)
+                if provider.filter_all_models is not None:
+                    available.extend(provider.filter_all_models(models, credential))
+                elif provider.filter_models is None:
+                    available.extend(models)
+                else:
+                    available_chat_ids = {
+                        model.id for model in provider.filter_models(provider.get_models(), credential)
+                    }
+                    available.extend(
+                        model for model in models if not is_model_type(model, "chat") or model.id in available_chat_ids
+                    )
+            return available
+
+        return await race_with_cancel(_available(), cancel)
+
     async def get_auth(
         self,
-        provider_or_model: str | Model,
+        provider_or_model: str | AnyModel,
         overrides: AuthResolutionOverrides | None = None,
     ) -> AuthResult | None:
         """Resolve provider-scoped auth by provider id, or provider auth plus
@@ -665,7 +838,7 @@ class Models:
     async def get_auth_for_provider(
         self,
         provider: Provider,
-        provider_or_model: str | Model,
+        provider_or_model: str | AnyModel,
         overrides: AuthResolutionOverrides | None = None,
     ) -> AuthResult | None:
         """pidrei-only epoch variant of `get_auth`: resolve auth against an
@@ -752,18 +925,22 @@ class Models:
 
     # -- streaming -------------------------------------------------------------
 
-    def _require_provider(self, model: Model) -> Provider:
+    def _require_provider(self, model: AnyModel) -> Provider:
         provider = self.get_provider(model.provider)
         if provider is None:
             raise ModelsError("provider", f"Unknown provider: {model.provider}")
         return provider
 
-    async def _apply_auth(
+    def _require_chat_provider(self, model: Model) -> Provider:
+        assert_chat_model(model)
+        return self._require_provider(model)
+
+    async def _apply_auth[TModel: Model | ImageModel | ClassifierModel, TOptions: ProviderRequestOptions](
         self,
         provider: Provider,
-        model: Model,
-        options: StreamOptions | None,
-    ) -> tuple[Model, StreamOptions]:
+        model: TModel,
+        options: TOptions,
+    ) -> tuple[TModel, TOptions]:
         # Epoch discipline: auth resolves against the provider the caller
         # pinned for this request, never a fresh (possibly newer) lookup.
         resolution = await self.get_auth_for_provider(
@@ -806,7 +983,7 @@ class Models:
         transcript = normalize_context(context)
 
         async def _setup(stream: AssistantMessageEventStream):
-            provider = self._require_provider(model)
+            provider = self._require_chat_provider(model)
             request_model, request_options = await self._apply_auth(
                 provider, model, options if options is not None else StreamOptions()
             )
@@ -826,7 +1003,7 @@ class Models:
         transcript = normalize_context(context)
 
         async def _setup(stream: AssistantMessageEventStream):
-            provider = self._require_provider(model)
+            provider = self._require_chat_provider(model)
             request_model, request_options = await self._apply_auth(
                 provider, model, options if options is not None else SimpleStreamOptions()
             )
@@ -844,7 +1021,7 @@ class Models:
         options: DeferredFetchOptions | None = None,
     ) -> AssistantMessageEventStream:
         async def _setup(_stream: AssistantMessageEventStream):
-            provider = self._require_provider(model)
+            provider = self._require_chat_provider(model)
             if not provider.supports_fetch_deferred:
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
             request_model, request_options = await self._apply_auth(
@@ -868,13 +1045,54 @@ class Models:
         handle: DeferredHandle,
         options: DeferredCancelOptions | None = None,
     ) -> None:
-        provider = self._require_provider(model)
+        provider = self._require_chat_provider(model)
         if not provider.supports_cancel_deferred:
             raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
         request_model, request_options = await self._apply_auth(
             provider, model, options if options is not None else ProviderRequestOptions()
         )
         await provider.cancel_deferred(request_model, handle, request_options)
+
+    # -- one-shot operations ---------------------------------------------------
+
+    async def generate_images(
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> AssistantImages:
+        """Generate images through the owning provider with auth resolved like
+        `stream()`. Never raises: unknown providers, unconfigured auth, and
+        providers without `generate_images` return an error `AssistantImages`."""
+        try:
+            assert_image_model(model)
+            provider = self._require_provider(model)
+            if provider.generate_images is None:
+                raise ModelsError("provider", f"Provider {model.provider} does not support image generation")
+            request_model, request_options = await self._apply_auth(
+                provider, model, options if options is not None else ImagesOptions()
+            )
+            return await provider.generate_images(request_model, context, request_options)
+        except Exception as error:
+            return image_error_result(model, error, _cancelled(options))
+
+    async def classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> ClassifierResult:
+        """Classify structured state through the owning provider. Never raises."""
+        try:
+            assert_classifier_model(model)
+            provider = self._require_provider(model)
+            if provider.classify is None:
+                raise ModelsError("provider", f"Provider {model.provider} does not support classification")
+            request_model, request_options = await self._apply_auth(
+                provider, model, options if options is not None else ClassifierOptions()
+            )
+            return await provider.classify(request_model, context, request_options)
+        except Exception as error:
+            return classifier_error_result(model, error, _cancelled(options))
+
+
+def _cancelled(options: ProviderRequestOptions | None) -> bool:
+    """pi: `options?.signal?.aborted`."""
+    return options is not None and options.cancel is not None and options.cancel.cancelled
 
 
 def create_models(
@@ -889,12 +1107,13 @@ def create_models(
 # -- model helpers -------------------------------------------------------------
 
 
-def has_api(model: Model, api: str) -> bool:
-    """Runtime narrowing check for dynamically looked-up models."""
-    return model.api == api
+def has_api(model: AnyModel, api: str) -> bool:
+    """Runtime narrowing check for dynamically looked-up models. Non-chat
+    models never match, even when their api id equals `api`."""
+    return is_model_type(model, "chat") and model.api == api
 
 
-def calculate_cost(model: Model, usage: UsageBuilder) -> UsageCostBuilder:
+def calculate_cost(model: AnyModel, usage: UsageBuilder) -> UsageCostBuilder:
     """Compute request cost into `usage.cost` (mutates and returns it).
 
     Producer-side only: `usage` is a builder — the frozen `Usage` on a
@@ -964,8 +1183,8 @@ def clamp_thinking_level(model: Model, level: ModelThinkingLevel) -> ModelThinki
     return available_levels[0] if available_levels else "off"
 
 
-def models_are_equal(a: Model | None, b: Model | None) -> bool:
-    """Check if two models are equal by comparing both their id and provider."""
+def models_are_equal(a: AnyModel | None, b: AnyModel | None) -> bool:
+    """Check if two models are equal by comparing their type, id, and provider."""
     if a is None or b is None:
         return False
-    return a.id == b.id and a.provider == b.provider
+    return get_model_type(a) == get_model_type(b) and a.id == b.id and a.provider == b.provider

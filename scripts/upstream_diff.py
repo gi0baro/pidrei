@@ -594,6 +594,13 @@ DROPPED_PREFIXES += (
         "packages/coding-agent/test/rpc-example.ts",
         "interactive RpcClient example script; the RPC surface stays unpublished (PORT_0.87.1.md decision 3)",
     ),
+    (
+        "packages/ai/src/image-models.ts",
+        (
+            "deprecated static image-catalog reads, kept upstream for npm consumers: image_models.py deleted "
+            "(PORT_0.99.1.md decision 9); get_builtin_image_model(s) in providers/all.py replace them"
+        ),
+    ),
 )
 
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
