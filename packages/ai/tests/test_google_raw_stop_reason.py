@@ -7,10 +7,10 @@ import pytest
 
 from pidrei_ai.api import google_generative_ai, google_vertex
 from pidrei_ai.providers.all import get_builtin_model
-from pidrei_ai.types import Context, StreamOptions, UserMessage
+from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
 from pidrei_ai.utils.user_agent import get_user_agent
 
-from .test_google_stream import ADAPTER_IDS, ADAPTERS, _chunk, _part, _run
+from .test_google_stream import ADAPTER_IDS, ADAPTERS, _chunk, _model, _part, _run
 
 
 _FUNCTION_CALL_PART = {"functionCall": {"id": "call-1", "name": "echo", "args": {"value": "truncated"}}}
@@ -64,6 +64,39 @@ async def test_maps_stop_with_a_tool_call_to_tool_use(adapter):
     assert message.stop_reason == "toolUse"
     assert message.raw_stop_reason == "STOP"
     assert any(block.type == "toolCall" for block in message.content)
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize("adapter", ADAPTERS, ids=ADAPTER_IDS)
+async def test_forwards_each_sdk_chunk_in_order_before_normalizing_it(adapter):
+    stream_chunks = [
+        {"responseId": "resp_google", "candidates": [{"content": {"parts": [{"text": "hello"}]}}]},
+        {
+            "candidates": [{"finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 1, "totalTokenCount": 3},
+        },
+    ]
+    received: list = []
+    event_models: list = []
+
+    async def on_provider_stream_event(chunk, event_model) -> None:
+        received.append(chunk)
+        event_models.append(event_model)
+
+    _events, result = await _run(
+        adapter,
+        stream_chunks,
+        options=StreamOptions(api_key="test-api-key", on_provider_stream_event=on_provider_stream_event),
+    )
+
+    assert received == stream_chunks
+    assert received[0] is stream_chunks[0]
+    assert received[1] is stream_chunks[1]
+    model = _model(adapter)
+    assert event_models == [model, model]
+    assert result.stop_reason == "stop"
+    assert result.response_id == "resp_google"
+    assert result.content == [TextContent(text="hello")]
 
 
 @contextlib.contextmanager

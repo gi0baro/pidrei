@@ -225,6 +225,7 @@ def stream(
                 output,
                 out_stream,
                 model,
+                on_provider_stream_event=opts.on_provider_stream_event,
                 grammar_tool_input_properties=grammar_tool_input_properties,
             )
 
@@ -414,8 +415,8 @@ def build_params(
             off_value = mapping.get("off")
             params["reasoning"] = {"effort": off_value if off_value is not None else "none"}
 
-    # Last so custom keys override the named request fields.
-    if options.sampling_params:
-        params.update(options.sampling_params)
+    # Last so custom keys override the named request fields. Per-request keys override model defaults.
+    params.update(model.sampling_params or {})
+    params.update(options.sampling_params or {})
 
     return params

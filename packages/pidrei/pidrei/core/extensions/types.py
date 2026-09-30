@@ -295,9 +295,16 @@ class ExtensionLoadError:
 
 
 @dataclass(slots=True)
+class ExtensionLoadWarning:
+    path: str
+    warning: str
+
+
+@dataclass(slots=True)
 class LoadExtensionsResult:
     """pi's LoadExtensionsResult."""
 
     extensions: list[Extension] = field(default_factory=list)
     errors: list[ExtensionLoadError] = field(default_factory=list)
+    warnings: list[ExtensionLoadWarning] = field(default_factory=list)
     runtime: ExtensionRuntime = field(default_factory=ExtensionRuntime)

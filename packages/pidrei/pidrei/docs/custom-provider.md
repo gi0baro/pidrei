@@ -151,9 +151,11 @@ messages mid-conversation. A stream must:
    terminal `done` or `error` event; cancellation becomes an aborted result.
    Error and aborted messages need an `error_message`.
 4. Call `options.on_payload` before sending (using any replacement payload it
-   returns) and `options.on_response` before consuming the response body, and
-   pass through `options.cancel` and `options.env`. Extensions' request hooks
-   depend on these.
+   returns) and `options.on_response` before consuming the response body,
+   await `options.on_provider_stream_event(provider_event, model)` (when set)
+   for each parsed provider event before normalizing it, and pass through
+   `options.cancel` and `options.env`. Extensions' request hooks and stream
+   observers depend on these.
 
 ## Context overflow
 

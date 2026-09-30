@@ -99,6 +99,7 @@ from .utils import (
     visible_width,
     wrap_text_with_ansi,
 )
+from .wheel_scroll import WheelScrollLines
 
 
 __all__ = [
@@ -137,6 +138,7 @@ __all__ = [
     "TuiMouseEvent",
     "TuiMouseEventResult",
     "VStack",
+    "WheelScrollLines",
     "allocate_image_id",
     "calculate_image_rows",
     "composite_tui_line",

@@ -128,7 +128,10 @@ class ToolExecutionComponent(Container):
         }
 
     def _create_call_fallback(self):
-        return Text(theme.fg("toolTitle", theme.bold(self._tool_name)), 0, 0)
+        # lazy: core <-> modes import cycle (see modes/__init__.py)
+        from ....core.tools.render_utils import format_tool_call_with_args
+
+        return Text(format_tool_call_with_args(self._tool_name, self._args, theme, self._expanded), 0, 0)
 
     def _create_result_fallback(self):
         output = self._get_text_output()

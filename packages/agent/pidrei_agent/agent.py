@@ -424,6 +424,7 @@ class Agent:
         get_api_key: Callable[[str], Awaitable[str | None]] | None = None,
         on_payload: Any = None,
         on_response: Any = None,
+        on_provider_stream_event: Any = None,
         before_tool_call: Callable[
             [BeforeToolCallContext, CancelToken | None],
             Awaitable[BeforeToolCallResult | None],
@@ -474,6 +475,7 @@ class Agent:
         self.get_api_key = get_api_key
         self.on_payload = on_payload
         self.on_response = on_response
+        self.on_provider_stream_event = on_provider_stream_event
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
         self.finish_turn = finish_turn
@@ -743,6 +745,7 @@ class Agent:
             session_id=self.session_id,
             on_payload=self.on_payload,
             on_response=self.on_response,
+            on_provider_stream_event=self.on_provider_stream_event,
             transport=self.transport,
             thinking_budgets=self.thinking_budgets,
             max_retry_delay_ms=self.max_retry_delay_ms,

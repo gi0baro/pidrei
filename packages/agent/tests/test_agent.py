@@ -1174,6 +1174,24 @@ async def test_previews_the_next_selected_queued_messages_without_consuming_them
 
 
 @pytest.mark.tonio
+async def test_forwards_provider_stream_event_observers_through_agent_options():
+    provider_events: list = []
+
+    async def on_provider_stream_event(data, _model) -> None:
+        provider_events.append(data)
+
+    async def stream_fn(model, _context, options):
+        await options.on_provider_stream_event({"request_cost": 0.01}, model)
+        return done_stream(create_assistant_message("ok"))
+
+    agent = Agent(on_provider_stream_event=on_provider_stream_event, stream_fn=stream_fn)
+
+    await agent.prompt("hello")
+
+    assert provider_events == [{"request_cost": 0.01}]
+
+
+@pytest.mark.tonio
 async def test_forwards_session_id_to_stream_function_options():
     received_session_id = None
 

@@ -6,7 +6,7 @@ Port of pi tui ``components/box.ts``.
 from dataclasses import replace
 
 from ..tui import TuiMouseDispatchResult, TuiMouseEvent, dispatch_mouse_event
-from ..utils import apply_background_to_line, visible_width
+from ..utils import visible_width
 
 
 __all__ = ["Box"]
@@ -98,14 +98,15 @@ class Box:
         content_width = max(1, width - self._padding_x * 2)
         left_pad = " " * self._padding_x
 
-        # Render all children
+        # Render all children. Keep the child lines unpadded: children usually return the same string
+        # objects every frame, so the cache check below is a cheap identity comparison per line.
+        # Padding here would create new strings that must be compared character by character.
         child_lines: list[str] = []
         mouse_children: list[tuple] = []
         for child in self.children:
             lines = child.render(content_width)
             mouse_children.append((child, len(lines)))
-            for line in lines:
-                child_lines.append(left_pad + line)
+            child_lines.extend(lines)
         self._mouse_layout = {"width": content_width, "children": mouse_children}
 
         if not child_lines:
@@ -127,7 +128,7 @@ class Box:
 
         # Content
         for line in child_lines:
-            result.append(self._apply_bg(line, width))
+            result.append(self._apply_bg(left_pad + line, width))
 
         # Bottom padding
         for _ in range(self._padding_y):
@@ -142,7 +143,5 @@ class Box:
         vis_len = visible_width(line)
         pad_needed = max(0, width - vis_len)
         padded = line + " " * pad_needed
-
-        if self._bg_fn is not None:
-            return apply_background_to_line(padded, width, self._bg_fn)
-        return padded
+        # Already padded to width, so apply the background directly instead of measuring the line again.
+        return self._bg_fn(padded) if self._bg_fn is not None else padded

@@ -1,5 +1,6 @@
 """Shared helpers for session/agent-session test mirrors (pi test/utilities.ts)."""
 
+import json
 import time
 from typing import Any
 
@@ -26,6 +27,14 @@ def assistant_msg(text: str, **overrides: Any) -> AssistantMessage:
     }
     defaults.update(overrides)
     return AssistantMessage(**defaults)
+
+
+def read_session_file_roles(file: str) -> list[str]:
+    """One label per record of a session JSONL file: the message role for message
+    entries, otherwise the entry type (e.g. "session", "model_change")."""
+    with open(file, encoding="utf-8") as handle:
+        records = [json.loads(line) for line in handle.read().strip().split("\n")]
+    return [(record.get("message") or {}).get("role") or record["type"] for record in records]
 
 
 def tool_result_msg(text: str, *, usage: Usage | None = None, tool_call_id: str = "call-1") -> ToolResultMessage:

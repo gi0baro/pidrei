@@ -30,7 +30,7 @@ from .model_runtime import ModelRuntime
 from .provider_attribution import merge_provider_attribution_headers
 from .resource_loader import DefaultResourceLoader
 from .session_manager import SessionManager, get_default_session_dir_blocking
-from .settings_manager import SettingsManager
+from .settings_manager import DEFAULT_TOOL_NAMES, SettingsManager
 from .timings import time
 from .tools import ALL_TOOL_NAMES  # noqa: F401  (re-export surface parity)
 
@@ -222,7 +222,6 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     # Clamp to model capabilities
     thinking_level = "off" if model is None else clamp_thinking_level(model, thinking_level)
 
-    default_active_tool_names = ["read", "bash", "edit", "write"]
     configured_default_tool_names = settings_manager.get_default_tools()
     allowed_tool_names = options.tools if options.tools is not None else ([] if options.no_tools == "all" else None)
     excluded_tool_names = options.exclude_tools
@@ -236,9 +235,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
                 []
                 if options.no_tools
                 else (
-                    configured_default_tool_names
-                    if configured_default_tool_names is not None
-                    else default_active_tool_names
+                    configured_default_tool_names if configured_default_tool_names is not None else DEFAULT_TOOL_NAMES
                 )
             )
         )
@@ -350,6 +347,20 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             }
         )
 
+    async def on_provider_stream_event(data: Any, model: Any) -> None:
+        runner = extension_runner_ref.current
+        if runner is None or not runner.has_handlers("provider_stream_event"):
+            return
+        await runner.emit(
+            {
+                "data": data,
+                "type": "provider_stream_event",
+                "provider": model.provider,
+                "api": model.api,
+                "model": model.id,
+            }
+        )
+
     async def transform_context(messages: list[Any], _cancel: Any = None) -> list[Any]:
         runner = extension_runner_ref.current
         if runner is None:
@@ -368,6 +379,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         stream_fn=stream_fn,
         on_payload=on_payload,
         on_response=on_response,
+        on_provider_stream_event=on_provider_stream_event,
         session_id=session_manager.get_session_id(),
         transform_context=transform_context,
         steering_mode=settings_manager.get_steering_mode(),

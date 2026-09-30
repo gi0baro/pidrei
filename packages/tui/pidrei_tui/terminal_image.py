@@ -470,11 +470,22 @@ def crop_kitty_image_line(line: str, hidden_rows: int, visible_rows: int) -> str
     return f"{line[: match.start()]}\x1b_G{','.join(controls)};{line[match.end() :]}"
 
 
+def _choose_less_distorted_cell_count(upper_count: int, ideal_count: float) -> int:
+    if upper_count <= 1:
+        return upper_count
+
+    lower_count = upper_count - 1
+    upper_distortion = max(upper_count / ideal_count, ideal_count / upper_count)
+    lower_distortion = max(lower_count / ideal_count, ideal_count / lower_count)
+    return lower_count if lower_distortion < upper_distortion else upper_count
+
+
 def calculate_image_cell_size(
     image_dimensions: dict,
     max_width_cells: int,
     max_height_cells: int | None = None,
     cell_dimensions: dict | None = None,
+    optimize_aspect_ratio: bool = False,
 ) -> dict:
     if cell_dimensions is None:
         cell_dimensions = {"widthPx": 9, "heightPx": 18}
@@ -489,13 +500,23 @@ def calculate_image_cell_size(
 
     scaled_width_px = image_width * scale
     scaled_height_px = image_height * scale
-    columns = math.ceil(scaled_width_px / cell_dimensions["widthPx"])
-    rows = math.ceil(scaled_height_px / cell_dimensions["heightPx"])
+    columns = max(1, min(max_width, math.ceil(scaled_width_px / cell_dimensions["widthPx"])))
+    height_rows = scaled_height_px / cell_dimensions["heightPx"]
+    rows = max(1, math.ceil(height_rows))
+    if max_height is not None:
+        rows = min(max_height, rows)
 
-    return {
-        "columns": max(1, min(max_width, columns)),
-        "rows": max(1, rows if max_height is None else min(max_height, rows)),
-    }
+    if not optimize_aspect_ratio:
+        return {"columns": columns, "rows": rows}
+
+    if width_scale <= height_scale:
+        ideal_rows = (columns * cell_dimensions["widthPx"] * image_height) / (image_width * cell_dimensions["heightPx"])
+        rows = _choose_less_distorted_cell_count(rows, ideal_rows)
+    else:
+        ideal_columns = (rows * cell_dimensions["heightPx"] * image_width) / (image_height * cell_dimensions["widthPx"])
+        columns = _choose_less_distorted_cell_count(columns, ideal_columns)
+
+    return {"columns": columns, "rows": rows}
 
 
 def calculate_image_rows(
@@ -626,7 +647,10 @@ def render_image(
         return None
 
     max_width = max_width_cells if max_width_cells is not None else 80
-    size = calculate_image_cell_size(image_dimensions, max_width, max_height_cells, get_cell_dimensions())
+    # Reduce Kitty's cell-aligned distortion without shrinking iTerm2 reservations.
+    size = calculate_image_cell_size(
+        image_dimensions, max_width, max_height_cells, get_cell_dimensions(), caps["images"] == "kitty"
+    )
 
     if caps["images"] == "kitty":
         if image_id is not None:

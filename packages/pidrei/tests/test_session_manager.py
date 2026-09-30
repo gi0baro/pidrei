@@ -21,7 +21,7 @@ from pidrei.core.tools import EditToolDetails
 from pidrei_ai.types import UserMessage
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 
-from .coding_session_helpers import assistant_msg, make_usage, tool_result_msg, user_msg
+from .coding_session_helpers import assistant_msg, make_usage, read_session_file_roles, tool_result_msg, user_msg
 
 
 UUID_V7_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
@@ -723,37 +723,30 @@ class TestCreateBranchedSession:
         assert [e["id"] for e in entries] == [id1, id2, id4, id5]
 
     @pytest.mark.tonio
-    async def test_does_not_duplicate_entries_when_forking_from_first_user_message(self, tmp_path):
+    async def test_does_not_duplicate_entries_when_forking_from_before_the_first_user_message(self, tmp_path):
         temp_dir = str(tmp_path)
+        # Create a persisted session with a couple of turns
         session = await SessionManager(temp_dir, temp_dir)
-        id1 = await session.append_message(user_msg("first question"))
+        model_change_id = await session.append_model_change("anthropic", "claude-sonnet-4-5")
+        await session.append_message(user_msg("first question"))
         await session.append_message(assistant_msg("first answer"))
-        await session.append_message(user_msg("second question"))
-        await session.append_message(assistant_msg("second answer"))
 
-        # Fork from the very first user message (no assistant in the branched path)
-        new_file = await session.create_branched_session(id1)
+        # Fork from a setup entry (no user or assistant message in the branched path)
+        new_file = await session.create_branched_session(model_change_id)
         assert new_file is not None
 
-        # The branched path has no assistant, so the file should not exist yet
-        # (deferred to persist on first assistant, matching new_session() contract)
+        # Nothing to save yet, so the file is created later by the first user message
         assert not os.path.exists(new_file)
 
-        # Simulate extension adding entry before assistant
-        await session.append_custom_entry("preset-state", {"name": "plan"})
+        await session.append_message(user_msg("new question"))
+        assert os.path.exists(new_file)
 
-        # Now the assistant responds
+        # Simulate extension adding entry before assistant (like preset on turn_start)
+        await session.append_custom_entry("preset-state", {"name": "plan"})
         await session.append_message(assistant_msg("new answer"))
 
-        # File should now exist with exactly one header and no duplicate IDs
-        assert os.path.exists(new_file)
-        with open(new_file, encoding="utf-8") as handle:
-            records = [json.loads(line) for line in handle.read().strip().split("\n") if line]
-
-        assert len([r for r in records if r["type"] == "session"]) == 1
-
-        entry_ids = [r["id"] for r in records if r["type"] != "session" and isinstance(r.get("id"), str)]
-        assert len(set(entry_ids)) == len(entry_ids)
+        # Exactly one header and each entry written once
+        assert read_session_file_roles(new_file) == ["session", "model_change", "user", "custom", "assistant"]
 
     @pytest.mark.tonio
     async def test_preserves_tool_and_summary_usage_across_file_backed_reload(self, tmp_path):
@@ -854,22 +847,17 @@ class TestCreateBranchedSession:
         assert custom_message["details"] == {"planName": "plan", "stepCount": 3}
 
     @pytest.mark.tonio
-    async def test_writes_file_immediately_when_forking_from_point_with_assistant(self, tmp_path):
+    async def test_writes_file_immediately_when_forking_at_a_user_message(self, tmp_path):
         temp_dir = str(tmp_path)
         session = await SessionManager(temp_dir, temp_dir)
-        await session.append_message(user_msg("first question"))
-        id2 = await session.append_message(assistant_msg("first answer"))
-        await session.append_message(user_msg("second question"))
-        await session.append_message(assistant_msg("second answer"))
+        id1 = await session.append_message(user_msg("first question"))
+        await session.append_message(assistant_msg("first answer"))
 
-        new_file = await session.create_branched_session(id2)
-        assert new_file is not None
-
-        # Path includes an assistant, so file should be written immediately
+        new_file = await session.create_branched_session(id1)
         assert os.path.exists(new_file)
-        with open(new_file, encoding="utf-8") as handle:
-            records = [json.loads(line) for line in handle.read().strip().split("\n") if line]
-        assert len([r for r in records if r["type"] == "session"]) == 1
+
+        await session.append_message(assistant_msg("new answer"))
+        assert read_session_file_roles(new_file) == ["session", "user", "assistant"]
 
 
 class TestSaveCustomEntry:
@@ -1490,6 +1478,37 @@ class TestSetSessionFileCorrupted:
         sm2 = await SessionManager(session_dir=str(tmp_path), session_file=empty_file)
         assert sm2.get_session_id() == session_id
         assert sm2.get_header()["type"] == "session"
+
+
+class TestSessionFileCreation:
+    @pytest.mark.tonio
+    async def test_does_not_create_a_file_for_a_session_with_only_setup_entries(self, tmp_path):
+        session = await SessionManager(str(tmp_path), str(tmp_path))
+        await session.append_model_change("anthropic", "claude-sonnet-4-5")
+        await session.append_thinking_level_change("off")
+
+        assert not os.path.exists(session.get_session_file())
+
+    # #10000: the first prompt must survive a first turn that never produces an assistant message
+    @pytest.mark.tonio
+    async def test_creates_the_file_when_the_first_user_message_is_appended(self, tmp_path):
+        session = await SessionManager(str(tmp_path), str(tmp_path))
+        await session.append_model_change("anthropic", "claude-sonnet-4-5")
+        await session.append_message(user_msg("first question"))
+
+        file = session.get_session_file()
+        assert read_session_file_roles(file) == ["session", "model_change", "user"]
+        reopened = await SessionManager(session_dir=str(tmp_path), session_file=file)
+        assert len(reopened.build_session_context().messages) == 1
+
+    @pytest.mark.tonio
+    async def test_appends_later_entries_to_the_file_without_rewriting_earlier_ones(self, tmp_path):
+        session = await SessionManager(str(tmp_path), str(tmp_path))
+        await session.append_message(user_msg("first question"))
+        await session.append_custom_entry("preset-state", {"name": "plan"})
+        await session.append_message(assistant_msg("first answer"))
+
+        assert read_session_file_roles(session.get_session_file()) == ["session", "user", "custom", "assistant"]
 
 
 class TestLabels:

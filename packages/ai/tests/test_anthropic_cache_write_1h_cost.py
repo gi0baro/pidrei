@@ -71,6 +71,46 @@ async def test_prices_the_1h_portion_at_2x_input_and_the_rest_at_the_5m_rate():
     assert result.usage.cost.cache_write == pytest.approx(7.75, abs=1e-10)
 
 
+# Regression for #9210: Vercel AI Gateway sends cache usage in message_delta, not message_start.
+@pytest.mark.tonio
+async def test_prices_1h_cache_writes_reported_only_in_message_delta():
+    model = get_builtin_model("vercel-ai-gateway", "anthropic/claude-haiku-4.5")
+    body = sse_body(
+        [
+            (
+                "message_start",
+                json.dumps(
+                    {
+                        "type": "message_start",
+                        "message": {"id": "msg_test", "usage": {"input_tokens": 0, "output_tokens": 0}},
+                    }
+                ),
+            ),
+            (
+                "message_delta",
+                json.dumps(
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": "end_turn"},
+                        "usage": {
+                            "input_tokens": 3,
+                            "output_tokens": 4,
+                            "cache_creation_input_tokens": 6535,
+                            "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 6535},
+                        },
+                    }
+                ),
+            ),
+            ("message_stop", json.dumps({"type": "message_stop"})),
+        ]
+    )
+    result = await stream_anthropic(model, make_context(), AnthropicOptions(client=FakeClient(body))).result()
+
+    assert result.usage.cache_write == 6535
+    assert result.usage.cache_write_1h == 6535
+    assert result.usage.cost.cache_write == pytest.approx((6535 * model.cost.input * 2) / 1_000_000, abs=1e-10)
+
+
 @pytest.mark.tonio
 async def test_falls_back_to_the_5m_rate_when_no_breakdown_is_reported():
     model = get_builtin_model("anthropic", "claude-opus-4-8")

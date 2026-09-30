@@ -654,6 +654,7 @@ class ProviderResponse:
 # coroutines hide — decided 2026-07-28: callback contracts are async-only).
 type OnPayload = Callable[[Any, Model], Awaitable[Any]]
 type OnResponse = Callable[[ProviderResponse, Model], Awaitable[Any]]
+type OnProviderStreamEvent = Callable[[Any, Model], Awaitable[Any]]
 
 
 @dataclass(slots=True)
@@ -683,6 +684,12 @@ class ProviderRequestOptions:
 
 @dataclass(slots=True)
 class StreamOptions(ProviderRequestOptions):
+    # Optional observer for each parsed provider stream event before normalization.
+    # Adapter support is explicit; unsupported adapters do not invoke it. The data
+    # is passed by reference and is adapter-owned, read-only: it is awaited inline
+    # on the adapter's coroutine before the adapter reads it, so nothing reads it
+    # concurrently, but a mutating observer corrupts the adapter's view.
+    on_provider_stream_event: OnProviderStreamEvent | None = None
     temperature: float | None = None
     # Arbitrary sampling parameters merged into the request body as-is, after the
     # named request fields, so keys here override them. Lets custom

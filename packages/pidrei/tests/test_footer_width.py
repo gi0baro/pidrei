@@ -49,14 +49,14 @@ def create_session(
     if tool_usage is not None:
         entries.append({"type": "message", "message": SimpleNamespace(role="toolResult", usage=tool_usage)})
 
+    model = SimpleNamespace(id=model_id, provider=provider, context_window=200_000, reasoning=reasoning)
     return SimpleNamespace(
-        state=SimpleNamespace(
-            model=SimpleNamespace(id=model_id, provider=provider, context_window=200_000, reasoning=reasoning),
-            thinking_level=thinking_level,
-        ),
+        state=SimpleNamespace(model=model, thinking_level=thinking_level),
+        model=model,
         session_manager=SimpleNamespace(
             get_entries=lambda: entries,
             get_entries_revision=lambda: len(entries),
+            get_leaf_id=lambda: None,
             get_session_name=lambda: session_name,
             get_cwd=lambda: "/tmp/project",
         ),
@@ -127,6 +127,17 @@ class TestFooterComponentWidthHandling:
 
         stats_line = strip_ansi(footer.render(120)[1])
         assert "$1.250" in stats_line
+
+    def test_updates_cached_usage_totals_after_an_entry_is_appended(self):
+        usage = _usage(input=10, output=1, total=0.5)
+        session = create_session(session_name="", usage=usage)
+        footer = FooterComponent(session, create_footer_data(1))
+        assert "$0.500" in strip_ansi(footer.render(120)[1])
+
+        session.session_manager.get_entries().append(
+            {"type": "message", "message": SimpleNamespace(role="assistant", usage=usage)}
+        )
+        assert "$1.000" in strip_ansi(footer.render(120)[1])
 
     def test_shows_the_latest_cache_hit_rate_when_cache_usage_is_present(self):
         session = create_session(

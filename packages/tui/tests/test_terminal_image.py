@@ -601,6 +601,122 @@ def test_places_image_sequence_on_first_line_with_empty_padding_rows():
         set_cell_dimensions({"widthPx": 9, "heightPx": 18})
 
 
+# image cell sizing — #8938: reduce Kitty placement distortion without
+# shrinking iTerm2 reservations.
+
+
+@contextlib.contextmanager
+def _image_caps(images: str, cell_dimensions: dict):
+    set_capabilities({"images": images, "trueColor": True, "hyperlinks": True})
+    set_cell_dimensions(cell_dimensions)
+    try:
+        yield
+    finally:
+        reset_capabilities_cache()
+        set_cell_dimensions({"widthPx": 9, "heightPx": 18})
+
+
+def _sized_image(max_width_cells: int, image_id: int | None, dimensions: dict) -> Image:
+    options: dict = {"maxWidthCells": max_width_cells}
+    if image_id is not None:
+        options["imageId"] = image_id
+    return Image("AAAA", "image/png", {"fallbackColor": lambda value: value}, options, dimensions)
+
+
+def test_reserves_at_least_one_kitty_row_for_thin_images():
+    with _image_caps("kitty", {"widthPx": 9, "heightPx": 18}):
+        result = render_image("AAAA", {"widthPx": 1200, "heightPx": 12}, max_width_cells=60)
+        assert result
+        assert result["rows"] == 1
+        assert ",c=60,r=1;" in result["sequence"]
+
+
+def test_keeps_kitty_placement_reserved_lines_and_cropping_metadata_consistent_across_width_changes():
+    with _image_caps("kitty", {"widthPx": 9, "heightPx": 18}):
+        image = _sized_image(60, 8938, {"widthPx": 615, "heightPx": 86})
+        lines = image.render(62)
+        assert len(lines) == 4
+        assert lines[1:] == ["", "", ""]
+        assert ",c=60,r=4,i=8938;" in lines[0]
+        assert get_kitty_image_metadata(lines[0]) == {
+            "imageId": 8938,
+            "columns": 60,
+            "rows": 4,
+            "widthPx": 615,
+            "heightPx": 86,
+        }
+        cropped = crop_kitty_image_line(lines[0], 1, 2)
+        assert get_kitty_image_placement(cropped)["sequence"] == "\x1b_Ga=p,q=2,C=1,c=60,i=8938,y=21,h=44,r=2\x1b\\"
+
+        narrower_lines = image.render(32)
+        assert len(narrower_lines) == 2
+        assert ",c=30,r=2,i=8938;" in narrower_lines[0]
+        assert get_kitty_image_metadata(narrower_lines[0])["rows"] == 2
+
+
+def test_keeps_the_ceiling_placement_when_rounding_down_would_increase_distortion():
+    with _image_caps("kitty", {"widthPx": 15, "heightPx": 28}):
+        result = render_image("AAAA", {"widthPx": 615, "heightPx": 86}, max_width_cells=60)
+        assert result
+        assert result["rows"] == 5
+        assert ",c=60,r=5;" in result["sequence"]
+
+
+def test_keeps_height_limited_kitty_columns_reservations_and_crop_metadata_consistent():
+    with _image_caps("kitty", {"widthPx": 14, "heightPx": 28}):
+        image = _sized_image(30, 8938, {"widthPx": 400, "heightPx": 900})
+        lines = image.render(32)
+        assert len(lines) == 15
+        assert ",c=13,r=15,i=8938;" in lines[0]
+        assert get_kitty_image_metadata(lines[0]) == {
+            "imageId": 8938,
+            "columns": 13,
+            "rows": 15,
+            "widthPx": 400,
+            "heightPx": 900,
+        }
+        assert (
+            get_kitty_image_placement(crop_kitty_image_line(lines[0], 1, 2))["sequence"]
+            == "\x1b_Ga=p,q=2,C=1,c=13,i=8938,y=60,h=120,r=2\x1b\\"
+        )
+        narrower_lines = image.render(22)
+        assert len(narrower_lines) == 10
+        assert ",c=9,r=10,i=8938;" in narrower_lines[0]
+
+
+def test_chooses_thin_kitty_widths_by_proportions_while_keeping_at_least_one_column():
+    with _image_caps("kitty", {"widthPx": 1, "heightPx": 1}):
+        for width_px, columns in [(1, 1), (140, 1), (149, 2)]:
+            result = render_image(
+                "AAAA", {"widthPx": width_px, "heightPx": 1000}, max_width_cells=30, max_height_cells=10
+            )
+            assert result
+            assert result["columns"] == columns
+            assert result["rows"] == 10
+            assert f",c={columns},r=10;" in result["sequence"]
+
+
+def test_keeps_iterm2_ceiling_width_when_height_limited():
+    with _image_caps("iterm2", {"widthPx": 14, "heightPx": 28}):
+        result = render_image("AAAA", {"widthPx": 400, "heightPx": 900}, max_width_cells=30, max_height_cells=15)
+        assert result
+        assert result["columns"] == 14
+        assert result["rows"] == 15
+        assert result["sequence"] == "\x1b]1337;File=inline=1;size=3;width=14;height=auto:AAAA\x07"
+
+
+def test_keeps_iterm2_ceiling_based_reserved_lines_and_cursor_offset():
+    with _image_caps("iterm2", {"widthPx": 9, "heightPx": 18}):
+        image = _sized_image(60, None, {"widthPx": 615, "heightPx": 86})
+        assert image.render(62) == [
+            "",
+            "",
+            "",
+            "",
+            "\x1b[4A\x1b]1337;File=inline=1;size=3;width=60;height=auto:AAAA\x07",
+        ]
+
+
 # hyperlink
 
 

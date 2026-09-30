@@ -532,6 +532,32 @@ async def test_jumps_to_a_scrollbar_track_position_and_continues_dragging_from_t
     await tui.stop()
 
 
+# #9758: wheel line counts can change at runtime; Alt keeps its multiplier.
+@pytest.mark.tonio
+async def test_applies_runtime_wheel_line_count_updates():
+    terminal = VirtualTerminal(20, 4)
+    tui = TuiAltScreen(terminal, wheel_scroll_lines=3)
+    deltas: list = []
+
+    def on_mouse(event):
+        if event.type != "wheel":
+            return None
+        deltas.append(event.wheel_delta)
+        return TuiMouseEventResult(handled=True)
+
+    tui.add_child(MouseRegion(Text("wheel target", 0, 0), on_mouse))
+    await tui.start()
+    try:
+        await terminal.wait_for_render()
+        await terminal.send_input("\x1b[<64;1;1M")
+        tui.set_wheel_scroll_lines(2)
+        await terminal.send_input("\x1b[<65;1;1M")
+        await terminal.send_input("\x1b[<72;1;1M")
+        assert deltas == [-3, 2, -10]
+    finally:
+        await tui.stop()
+
+
 @pytest.mark.tonio
 async def test_chains_unused_wheel_delta_to_an_outer_scroll_view():
     terminal = VirtualTerminal(20, 4)

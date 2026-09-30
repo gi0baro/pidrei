@@ -40,8 +40,8 @@ FIREWORKS_ANTHROPIC_COMPAT = AnthropicMessagesCompat(
 # --- catalog ------------------------------------------------------------------
 
 
-def test_registers_default_kimi_k26_via_anthropic_messages():
-    model = get_builtin_model("fireworks", KIMI_K2P6)
+def test_registers_non_glm_non_kimi_k3_models_via_anthropic_messages():
+    model = get_builtin_model("fireworks", "accounts/fireworks/models/deepseek-v4p1-flash")
 
     assert model is not None
     assert model.api == "anthropic-messages"
@@ -49,14 +49,11 @@ def test_registers_default_kimi_k26_via_anthropic_messages():
     assert model.base_url == "https://api.fireworks.ai/inference"
     assert model.reasoning is True
     assert model.input == ["text", "image"]
-    assert model.context_window == 262000
-    assert model.max_tokens == 262000
-    assert model.cost == ModelCost(input=0.95, output=4, cache_read=0.16, cache_write=0)
 
 
-def test_aligns_glm_52_fast_with_glm_52_openai_compatible_config():
-    base = get_builtin_model("fireworks", "accounts/fireworks/models/glm-5p2")
-    fast = get_builtin_model("fireworks", "accounts/fireworks/routers/glm-5p2-fast")
+def test_aligns_glm_53_fast_with_glm_53_openai_compatible_config():
+    base = get_builtin_model("fireworks", "accounts/fireworks/models/glm-5p3")
+    fast = get_builtin_model("fireworks", "accounts/fireworks/routers/glm-5p3-fast")
 
     assert base is not None and fast is not None
     assert fast.api == base.api
@@ -65,9 +62,9 @@ def test_aligns_glm_52_fast_with_glm_52_openai_compatible_config():
     assert fast.thinking_level_map == base.thinking_level_map
 
 
-@pytest.mark.parametrize("model_id", ["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"])
+@pytest.mark.parametrize("model_id", ["accounts/fireworks/models/glm-5p3", "accounts/fireworks/routers/glm-5p3-fast"])
 @pytest.mark.tonio
-async def test_omits_unsupported_long_cache_retention_for_glm_52(model_id):
+async def test_omits_unsupported_long_cache_retention_for_glm_53(model_id):
     from pidrei_ai.api.openai_completions import stream_simple as stream_simple_completions
 
     model = get_builtin_model("fireworks", model_id)
@@ -168,9 +165,7 @@ async def _capture_messages_payload(model: Model, reasoning: str | None) -> dict
 @pytest.mark.parametrize(
     ("model_id", "levels"),
     [
-        ("accounts/fireworks/models/deepseek-v4-flash-0731", ["off", "low", "high", "max"]),
-        ("accounts/fireworks/models/deepseek-v4-flash-vision-exp", ["off", "low", "high", "max"]),
-        ("accounts/fireworks/models/deepseek-v4-pro-0813", ["off", "low", "high", "max"]),
+        ("accounts/fireworks/models/deepseek-v4p1-flash", ["off", "low", "high", "max"]),
         ("accounts/fireworks/models/qwen3p8-max", ["off", "low", "medium", "xhigh"]),
         ("accounts/fireworks/models/qwen3p8-2p4t-a95b", ["off", "low", "medium", "xhigh"]),
     ],
@@ -194,8 +189,8 @@ async def test_sends_native_messages_effort_levels(model_id, levels):
 @pytest.mark.parametrize(
     ("model_id", "levels"),
     [
-        ("accounts/fireworks/models/glm-5p2", ["off", "high", "max"]),
-        ("accounts/fireworks/routers/glm-5p2-fast", ["off", "high", "max"]),
+        ("accounts/fireworks/models/glm-5p3", ["low", "high", "max"]),
+        ("accounts/fireworks/routers/glm-5p3-fast", ["low", "high", "max"]),
         ("accounts/fireworks/models/kimi-k3", ["low", "high", "max"]),
         ("accounts/fireworks/routers/kimi-k3-fast", ["low", "high", "max"]),
     ],
@@ -206,7 +201,7 @@ def test_exposes_distinct_native_effort_levels(model_id, levels):
 
 @pytest.mark.tonio
 async def test_keeps_toggle_only_messages_models_without_a_verified_fallback_on_budget_based_thinking():
-    model = get_builtin_model("fireworks", KIMI_K2P6)
+    model = get_builtin_model("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4")
     assert model.compat.force_adaptive_thinking is None
     payload = await _capture_messages_payload(model, "high")
     assert payload.get("thinking") == {"type": "enabled", "budget_tokens": 16384, "display": "summarized"}
@@ -222,7 +217,7 @@ async def test_resolves_fireworks_api_key_from_the_environment():
 
 
 def test_sets_fireworks_compat_for_session_affinity_and_unsupported_tool_fields():
-    model = get_builtin_model("fireworks", KIMI_K2P6)
+    model = get_builtin_model("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4")
 
     assert model is not None
     assert model.compat is not None

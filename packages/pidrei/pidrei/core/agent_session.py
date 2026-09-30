@@ -94,7 +94,7 @@ from .model_runtime import ModelRuntimeAuthOverrides
 from .prompt_templates import expand_prompt_template
 from .session_manager import SessionManager, get_latest_compaction_entry
 from .settings_manager import CacheWarmingMode
-from .source_info import create_synthetic_source_info
+from .source_info import BUILTIN_PATH_PREFIX, create_synthetic_source_info, is_synthetic_path
 from .system_prompt import (
     BuildSystemPromptOptions,
     NormalizedBuildSystemPromptOptions,
@@ -317,6 +317,10 @@ class ExtensionBindings:
     on_error: Callable[[Any], None] | None = None
 
 
+type QueuedInputDisposition = Literal["handled", "queued"]
+type PromptDisposition = Literal["handled", "queued", "started"]
+
+
 @dataclass(slots=True, kw_only=True)
 class PromptOptions:
     """Options for AgentSession.prompt()."""
@@ -330,8 +334,9 @@ class PromptOptions:
     streaming_behavior: str | None = None
     # Source of input for extension input event handlers.
     source: str = "interactive"
-    # Internal hook used by RPC mode to observe prompt preflight acceptance.
-    preflight_result: Callable[[bool], None] | None = None
+    # Internal hook used by RPC mode to observe how an accepted prompt was
+    # dispatched. Not called if the prompt is rejected.
+    preflight_result: Callable[[PromptDisposition], None] | None = None
 
 
 @dataclass(slots=True)
@@ -1784,148 +1789,139 @@ class AgentSession:
         options = options if options is not None else PromptOptions()
         expand_prompt_templates = options.expand_prompt_templates
         preflight_result = options.preflight_result
-        messages: list[Any] | None = None
-
-        try:
-            # Handle extension commands first (execute immediately, even during
-            # streaming). Extension commands manage their own LLM interaction.
-            if expand_prompt_templates and text.startswith("/"):
-                handled = await self._try_execute_extension_command(text)
-                if handled:
-                    if preflight_result:
-                        preflight_result(True)
-                    return
-
-            if self._compaction_cancel is not None:
-                raise Exception(
-                    "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry."
-                )
-
-            # Emit input event for extension interception (before skill/template expansion)
-            processed_input = await self._run_input_handlers(
-                text,
-                options.images,
-                options.source,
-                options.streaming_behavior if self.is_streaming else None,
-            )
-            if processed_input is None:
+        # Handle extension commands first (execute immediately, even during
+        # streaming). Extension commands manage their own LLM interaction.
+        if expand_prompt_templates and text.startswith("/"):
+            handled = await self._try_execute_extension_command(text)
+            if handled:
+                # Extension command executed, no prompt to send
                 if preflight_result:
-                    preflight_result(True)
-                return
-            current_text, current_images = processed_input
-
-            # Expand skill commands (/skill:name args) and prompt templates (/template args)
-            expanded_text = current_text
-            if expand_prompt_templates:
-                expanded_text = await self._expand_skill_command(expanded_text)
-                expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
-
-            # If streaming, queue via steer() or follow_up() based on option. The decision
-            # and the post are one critical section (see `_close_run_input`); a run that
-            # is closing is waited out, then this input queues or takes the idle path.
-            while True:
-                with self._state_guard:
-                    closed = self._run_input_closed
-                    streaming = self._is_agent_run_active and closed is None
-                    if streaming and options.streaming_behavior:
-                        self._post_queued_input(options.streaming_behavior, expanded_text, current_images)
-                if closed is None:
-                    break
-                await closed.wait()
-            if streaming:
-                if not options.streaming_behavior:
-                    raise Exception(
-                        "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') "
-                        "to queue the message."
-                    )
-                # After the post, as in `_queue_user_input`.
-                self._emit_queue_update()
-                if preflight_result:
-                    preflight_result(True)
+                    preflight_result("handled")
                 return
 
-            # Flush any pending bash and custom messages before the new prompt
-            await self._flush_pending_bash_messages()
-            await self._flush_pending_custom_messages()
-
-            # Validate model
-            if self.model is None:
-                raise Exception(format_no_model_selected_message())
-
-            has_configured_auth = (
-                self._model_runtime.has_configured_auth(self.model.provider)
-                or (await self._model_runtime.check_auth(self.model.provider)) is not None
+        if self._compaction_cancel is not None:
+            raise Exception(
+                "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry."
             )
-            if not has_configured_auth:
-                if self._model_runtime.is_using_oauth(self.model.provider):
-                    raise Exception(
-                        f'Authentication failed for "{self.model.provider}". '
-                        "Credentials may have expired or network is unavailable. "
-                        f"Run '/login {self.model.provider}' to re-authenticate."
-                    )
-                raise Exception(format_no_api_key_found_message(self.model.provider))
 
-            # Check if we need to compact before sending (catches aborted responses).
-            # The user's new prompt is sent below, so do not call agent.continue_() here.
-            last_assistant = self._find_last_assistant_message()
-            if last_assistant is not None:
-                await self._check_compaction(last_assistant, False)
-
-            # Emit before_agent_start before normalizing images so extension-driven model
-            # selection determines the resize profile used for the request and history.
-            base_options = self._base_system_prompt_options  # one read: rebound from other tasks
-            selected_tools_before = list(base_options.selected_tools or [])
-            result = await self._extension_runner.emit_before_agent_start(
-                expanded_text,
-                current_images,
-                base_options,
-            )
-            system_prompt_options = result["systemPromptOptions"]
-            # Handlers may edit event["systemPromptOptions"].selected_tools or call set_active_tools(),
-            # which updates the live loadout instead. An explicit edit wins; otherwise the live
-            # loadout is authoritative, so a set_active_tools() call is not undone here.
-            if system_prompt_options.selected_tools == selected_tools_before:
-                system_prompt_options.selected_tools = self.get_active_tool_names()
-
-            normalized_images, image_hints = await self._normalize_prompt_images(current_images)
-            user_text = f"{expanded_text}\n\n{chr(10).join(image_hints)}" if image_hints else expanded_text
-
-            # Build messages only after hooks and image normalization have completed.
-            messages = []
-            user_content: list[TextContent | ImageContent] = [TextContent(text=user_text)]
-            user_content.extend(normalized_images)
-            messages.append(UserMessage(content=user_content, timestamp=clock.now_ms()))
-
-            # Inject any pending "nextTurn" messages as context alongside the user message
-            messages.extend(self._pending_next_turn_messages)
-            self._pending_next_turn_messages = []
-
-            for msg in result["messages"]:
-                content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
-                messages.append(
-                    CustomMessage(
-                        custom_type=msg.get("customType") if isinstance(msg, dict) else msg.custom_type,
-                        # Untyped extensions can pass null content; normalize at ingestion.
-                        content=content if content is not None else [],
-                        display=msg.get("display") if isinstance(msg, dict) else msg.display,
-                        details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
-                        timestamp=clock.now_ms(),
-                    )
-                )
-            update_message = self._prepare_prompt_and_tool_loadout(system_prompt_options)
-            self._run_system_prompt_options = system_prompt_options
-            if update_message is not None:
-                messages.insert(0, update_message)
-        except Exception:
+        # Emit input event for extension interception (before skill/template expansion)
+        processed_input = await self._run_input_handlers(
+            text,
+            options.images,
+            options.source,
+            options.streaming_behavior if self.is_streaming else None,
+        )
+        if processed_input is None:
             if preflight_result:
-                preflight_result(False)
-            raise
+                preflight_result("handled")
+            return
+        current_text, current_images = processed_input
 
-        if messages is None:
+        # Expand skill commands (/skill:name args) and prompt templates (/template args)
+        expanded_text = current_text
+        if expand_prompt_templates:
+            expanded_text = await self._expand_skill_command(expanded_text)
+            expanded_text = expand_prompt_template(expanded_text, list(self.prompt_templates))
+
+        # If streaming, queue via steer() or follow_up() based on option. The decision
+        # and the post are one critical section (see `_close_run_input`); a run that
+        # is closing is waited out, then this input queues or takes the idle path.
+        while True:
+            with self._state_guard:
+                closed = self._run_input_closed
+                streaming = self._is_agent_run_active and closed is None
+                if streaming and options.streaming_behavior:
+                    self._post_queued_input(options.streaming_behavior, expanded_text, current_images)
+            if closed is None:
+                break
+            await closed.wait()
+        if streaming:
+            if not options.streaming_behavior:
+                raise Exception(
+                    "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') "
+                    "to queue the message."
+                )
+            # After the post, as in `_queue_user_input`.
+            self._emit_queue_update()
+            if preflight_result:
+                preflight_result("queued")
             return
 
+        # Flush any pending bash and custom messages before the new prompt
+        await self._flush_pending_bash_messages()
+        await self._flush_pending_custom_messages()
+
+        # Validate model
+        if self.model is None:
+            raise Exception(format_no_model_selected_message())
+
+        has_configured_auth = (
+            self._model_runtime.has_configured_auth(self.model.provider)
+            or (await self._model_runtime.check_auth(self.model.provider)) is not None
+        )
+        if not has_configured_auth:
+            if self._model_runtime.is_using_oauth(self.model.provider):
+                raise Exception(
+                    f'Authentication failed for "{self.model.provider}". '
+                    "Credentials may have expired or network is unavailable. "
+                    f"Run '/login {self.model.provider}' to re-authenticate."
+                )
+            raise Exception(format_no_api_key_found_message(self.model.provider))
+
+        # Check if we need to compact before sending (catches aborted responses).
+        # The user's new prompt is sent below, so do not call agent.continue_() here.
+        last_assistant = self._find_last_assistant_message()
+        if last_assistant is not None:
+            await self._check_compaction(last_assistant, False)
+
+        # Emit before_agent_start before normalizing images so extension-driven model
+        # selection determines the resize profile used for the request and history.
+        base_options = self._base_system_prompt_options  # one read: rebound from other tasks
+        selected_tools_before = list(base_options.selected_tools or [])
+        result = await self._extension_runner.emit_before_agent_start(
+            expanded_text,
+            current_images,
+            base_options,
+        )
+        system_prompt_options = result["systemPromptOptions"]
+        # Handlers may edit event["systemPromptOptions"].selected_tools or call set_active_tools(),
+        # which updates the live loadout instead. An explicit edit wins; otherwise the live
+        # loadout is authoritative, so a set_active_tools() call is not undone here.
+        if system_prompt_options.selected_tools == selected_tools_before:
+            system_prompt_options.selected_tools = self.get_active_tool_names()
+
+        normalized_images, image_hints = await self._normalize_prompt_images(current_images)
+        user_text = f"{expanded_text}\n\n{chr(10).join(image_hints)}" if image_hints else expanded_text
+
+        # Build messages only after hooks and image normalization have completed.
+        messages: list[Any] = []
+        user_content: list[TextContent | ImageContent] = [TextContent(text=user_text)]
+        user_content.extend(normalized_images)
+        messages.append(UserMessage(content=user_content, timestamp=clock.now_ms()))
+
+        # Inject any pending "nextTurn" messages as context alongside the user message
+        messages.extend(self._pending_next_turn_messages)
+        self._pending_next_turn_messages = []
+
+        for msg in result["messages"]:
+            content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+            messages.append(
+                CustomMessage(
+                    custom_type=msg.get("customType") if isinstance(msg, dict) else msg.custom_type,
+                    # Untyped extensions can pass null content; normalize at ingestion.
+                    content=content if content is not None else [],
+                    display=msg.get("display") if isinstance(msg, dict) else msg.display,
+                    details=msg.get("details") if isinstance(msg, dict) else getattr(msg, "details", None),
+                    timestamp=clock.now_ms(),
+                )
+            )
+        update_message = self._prepare_prompt_and_tool_loadout(system_prompt_options)
+        self._run_system_prompt_options = system_prompt_options
+        if update_message is not None:
+            messages.insert(0, update_message)
+
         if preflight_result:
-            preflight_result(True)
+            preflight_result("started")
         await self._run_agent_prompt(messages)
 
     async def _try_execute_extension_command(self, text: str) -> bool:
@@ -1987,13 +1983,15 @@ class AgentSession:
             )
             return text  # Return original on error
 
-    async def _queue_user_input(self, text: str, images: list[ImageContent] | None, behavior: str, source: str) -> None:
+    async def _queue_user_input(
+        self, text: str, images: list[ImageContent] | None, behavior: str, source: str
+    ) -> QueuedInputDisposition:
         if text.startswith("/"):
             self._throw_if_extension_command(text)
 
         processed_input = await self._run_input_handlers(text, images, source, behavior if self.is_streaming else None)
         if processed_input is None:
-            return
+            return "handled"
         processed_text, processed_images = processed_input
 
         expanded_text = await self._expand_skill_command(processed_text)
@@ -2006,10 +2004,11 @@ class AgentSession:
         # run in between): a listener woken by the update then observes the queue —
         # mailbox FIFO puts any `has_queued_messages()` behind the post.
         self._emit_queue_update()
+        return "queued"
 
     def steer(
         self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive"
-    ) -> Awaitable[None]:
+    ) -> Awaitable[QueuedInputDisposition]:
         """Queue a steering message while the agent is running. Delivered after the
         current assistant turn finishes executing its tool calls, before the next
         LLM call. Runs input handlers, expands skill commands and prompt
@@ -2019,7 +2018,7 @@ class AgentSession:
 
     def follow_up(
         self, text: str, images: list[ImageContent] | None = None, *, source: str = "interactive"
-    ) -> Awaitable[None]:
+    ) -> Awaitable[QueuedInputDisposition]:
         """Queue a follow-up message to be processed after the agent finishes.
         Delivered only when agent has no more tool calls or steering messages.
         Runs input handlers, expands skill commands and prompt templates. Errors
@@ -3068,7 +3067,7 @@ class AgentSession:
         for entry in entries:
             extension_path = entry["extension_path"]
             source = self._get_extension_source_label(extension_path)
-            base_dir = None if extension_path.startswith("<") else os.path.dirname(extension_path)
+            base_dir = None if is_synthetic_path(extension_path) else os.path.dirname(extension_path)
             results.append(
                 {
                     "path": entry["path"],
@@ -3083,7 +3082,7 @@ class AgentSession:
         return results
 
     def _get_extension_source_label(self, extension_path: str) -> str:
-        if extension_path.startswith("<"):
+        if is_synthetic_path(extension_path):
             return "extension:" + extension_path.replace("<", "").replace(">", "")
         base = os.path.basename(extension_path)
         name = re.sub(r"\.(py|ts|js)$", "", base)
@@ -3305,7 +3304,7 @@ class AgentSession:
         definition_registry: dict[str, _ToolDefinitionEntry] = {
             name: _ToolDefinitionEntry(
                 definition=definition,
-                source_info=create_synthetic_source_info(f"<builtin:{name}>", source="builtin"),
+                source_info=create_synthetic_source_info(f"{BUILTIN_PATH_PREFIX}{name}", source="builtin"),
             )
             for name, definition in self._base_tool_definitions.items()
             if is_allowed_tool(name)
@@ -3331,7 +3330,9 @@ class AgentSession:
             [
                 RegisteredTool(
                     definition=definition,
-                    source_info=create_synthetic_source_info(f"<builtin:{definition.name}>", source="builtin"),
+                    source_info=create_synthetic_source_info(
+                        f"{BUILTIN_PATH_PREFIX}{definition.name}", source="builtin"
+                    ),
                 )
                 for definition in self._base_tool_definitions.values()
                 if is_allowed_tool(definition.name)

@@ -103,7 +103,11 @@ pidrei --tools read,grep,find,ls -p "Review this project"
 | `-nt`, `--no-tools` | Start with every tool disabled |
 
 `read`, `bash`, `edit`, and `write` are enabled by default; the `defaultTools`
-setting changes that.
+setting changes that. `--tools` replaces the whole selection, so name every
+tool you want; `defaultTools` also accepts `+name` and `-name` to change the
+defaults instead (for example `["-bash", "+grep"]`). A project list with only
+`+name` and `-name` entries changes the user's selection; a list with a plain
+name replaces it.
 
 | Built-in | Purpose |
 |----------|---------|

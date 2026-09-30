@@ -547,6 +547,54 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/crash-log.test.ts",
     )
 )
+#: Codemode, MCP and tool-search port later, together, as one unit
+#: (PORT_0.99.1.md decisions 1-2). core/mcp-servers.ts is not listed: its
+#: `McpServerRegistry` ports now with the tool-orchestration core.
+_DEFERRED_CODEMODE_REASON = "deferred, ports with codemode (PORT_0.99.1.md decisions 1-2)"
+DROPPED_PREFIXES += tuple(
+    (path, _DEFERRED_CODEMODE_REASON)
+    for path in (
+        "packages/codemode/",
+        "packages/mcp/",
+        "packages/agent/examples/mcp-codemode/",
+        "packages/coding-agent/src/extensions/codemode/",
+        "packages/coding-agent/src/extensions/mcp/",
+        "packages/coding-agent/src/extensions/tool-search/",
+        "packages/coding-agent/docs/mcp.md",
+        "packages/coding-agent/test/codemode-renderer.test.ts",
+        "packages/coding-agent/test/mcp-command.test.ts",
+        "packages/coding-agent/test/mcp-extension.test.ts",
+        "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
+        "packages/coding-agent/test/tool-search.test.ts",
+        # U5 mirrors its core (non-codemode) cases into
+        # test_agent_session_tool_orchestration.py; the entry then moves to TEST_HOMES.
+        "packages/coding-agent/test/suite/agent-session-codemode.test.ts",
+        "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
+        "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
+        "packages/coding-agent/test/suite/mcp-oauth-server.ts",
+    )
+)
+#: 0.99.1 drops (PORT_0.99.1.md decision 9).
+_LLAMA_CLASSIFY_REASON = (
+    "llama.cpp classifier API not ported: its only consumer is the unported llama extension "
+    "(PORT_0.99.1.md decision 9; types.py keeps the api literal and ClassifierOptions.temperature)"
+)
+DROPPED_PREFIXES += (
+    # llama-cpp-classify.ts and its .lazy.ts shim
+    ("packages/ai/src/api/llama-cpp-classify", _LLAMA_CLASSIFY_REASON),
+    ("packages/ai/test/llama-cpp-classify.test.ts", _LLAMA_CLASSIFY_REASON),
+    (
+        "packages/coding-agent/test/model-catalog-protocol.test.ts",
+        (
+            "catalog publish protocol not ported (PORT_0.99.1.md decision 9); the client half "
+            "(?types=, merge by type+id, unknown types ignored) is covered by test_remote_catalog_provider.py"
+        ),
+    ),
+    (
+        "packages/coding-agent/test/rpc-example.ts",
+        "interactive RpcClient example script; the RPC surface stays unpublished (PORT_0.87.1.md decision 3)",
+    ),
+)
 
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
 #: providers, so pidrei drops them; offline mirrors exist where noted in
@@ -557,6 +605,7 @@ LIVE_API_AI_TESTS = (
     "cross-provider-handoff",
     "empty",
     "image-tool-result",
+    "images",
     "openai-completions-thinking-as-text",
     "stream",
     "tokens",
@@ -620,7 +669,19 @@ RENAMES = {
     # 0.84.3 additions. pi split its user-agent helper out under a pi-prefixed
     # name; pidrei's has always been utils/user_agent.py.
     "packages/ai/src/utils/pi-user-agent.ts": "packages/ai/pidrei_ai/utils/user_agent.py",
+    # 0.99.1 additions. model-catalog.ts's flatten*ModelCatalog helpers are the
+    # catalog loader pidrei always had; the per-provider *.models.ts stubs map
+    # through GENERATED_CATALOG_STUB_RE below.
+    "packages/ai/src/model-catalog.ts": "packages/ai/pidrei_ai/models_generated.py",
+    # Consolidated into generate_models.py like openrouter-reasoning-options.ts.
+    "packages/ai/scripts/openrouter-catalog.ts": "packages/ai/scripts/generate_models.py",
 }
+
+#: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
+#: `flatten*ModelCatalog` call per model type over `data/<id>.json`). pidrei
+#: loads every vendored JSON in models_generated.py; there is no per-provider
+#: module.
+GENERATED_CATALOG_STUB_RE = re.compile(r"packages/ai/src/providers/[^/]+\.models\.ts")
 
 #: pi file → diverged regions inside its pidrei mirror, as (recipe id, note)
 #: pairs. The file still ports through the normal mapping, but a hunk landing
@@ -925,6 +986,9 @@ TEST_HOMES = {
     "packages/ai/test/supports-xhigh.test.ts": "covered by packages/ai/tests/test_registry.py + test_models_generated.py (get_supported_thinking_levels)",
     "packages/ai/test/models-runtime.test.ts": "covered by packages/ai/tests/test_registry.py (models.ts ported as registry.py)",
     "packages/ai/test/provider-error-body-regression.test.ts": "PARITY GAP: per-adapter 403-body passthrough (4 cases) unmirrored — needs punkreq fault injection per adapter",
+    "packages/ai/test/provider-error-body-passthrough.test.ts": (
+        "PARITY GAP: openrouter-images 403-body passthrough (1 case) unmirrored, like provider-error-body-regression"
+    ),
     "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/constrained-sampling.test.ts": (
@@ -973,7 +1037,10 @@ TEST_HOMES = {
     ),
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
-    "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": "PARITY GAP: rpc prompt/response semantics suite unmirrored",
+    "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": (
+        "PARITY GAP: rpc prompt/response semantics suite unmirrored (incl. the 0.99.1 data.disposition cases; "
+        "steer/follow_up 'queued' is covered in test_agent_session.py)"
+    ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": "PARITY GAP: model-runtime auth options unmirrored",
     "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": "PARITY GAP: modifyModels compat unmirrored",
@@ -1061,7 +1128,8 @@ TEST_HOMES = {
         "'Image omitted' resize fallbacks are a PARITY GAP"
     ),
     "packages/coding-agent/test/sdk-stream-options.test.ts": (
-        "partial mirror: test_sdk_stream_options.py holds the 0.87.1 cache-warming scheduling cases; "
+        "partial mirror: test_sdk_stream_options.py holds the 0.87.1 cache-warming scheduling cases "
+        "and the 0.99.1 provider_stream_event case; "
         "sdk.py stream_fn option forwarding (timeout/websocket/provider-retry/transform_headers) is a PARITY GAP"
     ),
     "packages/coding-agent/test/suite/agent-session-queue.test.ts": (
@@ -1112,6 +1180,7 @@ NOISE_BASENAMES = {
     "test.sh",
     "mini-test.sh",
     "pi-test.sh",
+    "pi-test.ps1",
     ".npmignore",
     ".gitignore",
     ".gitattributes",
@@ -1166,6 +1235,8 @@ def map_path(pi_path: str) -> tuple[str, str] | None:
     """Return (kind, pidrei_path) for a portable pi file, else None."""
     if pi_path in RENAMES:
         return "src", RENAMES[pi_path]
+    if GENERATED_CATALOG_STUB_RE.fullmatch(pi_path):
+        return "src", "packages/ai/pidrei_ai/models_generated.py"
     for prefix, target, kind in PREFIX_MAP:
         if not pi_path.startswith(prefix):
             continue
@@ -1195,6 +1266,9 @@ def map_path(pi_path: str) -> tuple[str, str] | None:
             # package/subpackage facade convention (may be a deliberately-empty
             # facade on the pidrei side: pidrei_agent, pidrei — judge per delta)
             parts[-1] = "__init__.py"
+        elif parts[-1].endswith(".lazy.ts"):
+            # deferred-import shims: pidrei names them <module>_lazy.py
+            parts[-1] = parts[-1][: -len(".lazy.ts")] + "_lazy.py"
         elif parts[-1].endswith(".ts"):
             parts[-1] = parts[-1][: -len(".ts")] + ".py"
         return kind, target + "/".join(parts)

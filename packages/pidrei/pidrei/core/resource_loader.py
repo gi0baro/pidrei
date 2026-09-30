@@ -571,6 +571,7 @@ class DefaultResourceLoader:
         extensions_result = LoadExtensionsResult(
             extensions=ordered,
             errors=[*pre_trust_extensions.errors, *remaining.errors],
+            warnings=[*pre_trust_extensions.warnings, *remaining.warnings],
             runtime=pre_trust_extensions.runtime,
         )
         self._add_extension_conflict_diagnostics(extensions_result)

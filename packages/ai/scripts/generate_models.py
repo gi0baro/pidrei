@@ -236,6 +236,7 @@ OPENAI_TOOL_SEARCH_MODEL_IDS = {
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6-luna",
+    "gpt-6.1-sol",
 }
 OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
 OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS
@@ -246,6 +247,7 @@ OPENAI_CODEX_ADDITIONAL_TOOLS_MODEL_IDS = {
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6-luna",
+    "gpt-6.1-sol",
 }
 OPENAI_LONG_CONTEXT_INPUT_THRESHOLD = 272000
 OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
@@ -257,6 +259,7 @@ OPENAI_SHORT_CONTEXT_CAPPED_MODEL_IDS = {
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6-luna",
+    "gpt-6.1-sol",
 }
 # Keep the generated default no less restrictive than coding-agent's historical
 # image preprocessing. Provider limits can narrow this profile, but unknown
@@ -279,6 +282,7 @@ OPENAI_LONG_CONTEXT_PRICING_MODEL_IDS = {
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6-luna",
+    "gpt-6.1-sol",
 }
 OPENAI_RESPONSES_NONE_REASONING_MODELS = {
     "gpt-5.1",
@@ -372,6 +376,7 @@ OPENAI_STANDARD_COSTS: dict[str, dict[str, Any]] = {
     "gpt-6-astra": {"input": 10, "output": 50, "cacheRead": 1, "cacheWrite": 12.5},
     "gpt-6-luna": {"input": 0.1, "output": 0.5, "cacheRead": 0.01, "cacheWrite": 0.125},
     "gpt-6-sol": {"input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5},
+    "gpt-6.1-sol": {"input": 2, "output": 10, "cacheRead": 0.1, "cacheWrite": 2.5},
 }
 
 
@@ -450,6 +455,7 @@ VERIFIED_ANTHROPIC_MID_CONVO_EFFORT_PROVIDERS = {"anthropic", "openrouter"}
 # while accepting them on Fable 5.1, so gate that model there.
 MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = {"openrouter:anthropic/claude-opus-5"}
 _MID_CONVO_EFFORT_OPUS_RE = re.compile(r"^claude-opus-(?:5|5[.-]5)(?:-\d{8})?$")
+_MID_CONVO_SONNET_5_5_RE = re.compile(r"^claude-sonnet-5[.-]5(?:-\d{8})?$")
 _MID_CONVO_EFFORT_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$")
 _MID_CONVO_SYSTEM_OPUS_RE = re.compile(r"^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$")
 _MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$")
@@ -457,11 +463,19 @@ _MID_CONVO_SYSTEM_FABLE_RE = re.compile(r"^claude-(?:fable|mythos)-5(?:[.-]1)?(?
 
 def supports_anthropic_mid_convo_effort(model_id: str) -> bool:
     model_id = re.sub(r"^~?anthropic/", "", model_id.lower())
-    return bool(_MID_CONVO_EFFORT_OPUS_RE.match(model_id) or _MID_CONVO_EFFORT_FABLE_RE.match(model_id))
+    return bool(
+        _MID_CONVO_EFFORT_OPUS_RE.match(model_id)
+        or _MID_CONVO_SONNET_5_5_RE.match(model_id)
+        or _MID_CONVO_EFFORT_FABLE_RE.match(model_id)
+    )
 
 
 def supports_anthropic_mid_convo_system_messages(model_id: str) -> bool:
-    return bool(_MID_CONVO_SYSTEM_OPUS_RE.match(model_id) or _MID_CONVO_SYSTEM_FABLE_RE.match(model_id))
+    return bool(
+        _MID_CONVO_SYSTEM_OPUS_RE.match(model_id)
+        or _MID_CONVO_SONNET_5_5_RE.match(model_id)
+        or _MID_CONVO_SYSTEM_FABLE_RE.match(model_id)
+    )
 
 
 def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
@@ -488,7 +502,19 @@ def is_anthropic_adaptive_thinking_model(model_id: str) -> bool:
 
 def is_anthropic_temperature_unsupported_model(model_id: str) -> bool:
     lowered = model_id.lower()
-    return any(marker in lowered for marker in ("opus-4-7", "opus-4.7", "opus-4-8", "opus-4.8", "opus-5", "opus.5"))
+    return any(
+        marker in lowered
+        for marker in (
+            "opus-4-7",
+            "opus-4.7",
+            "opus-4-8",
+            "opus-4.8",
+            "opus-5",
+            "opus.5",
+            "sonnet-5-5",
+            "sonnet-5.5",
+        )
+    )
 
 
 def supports_openai_xhigh(model_id: str) -> bool:
@@ -734,7 +760,7 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
     provider = model["provider"]
     if model["api"] in ("openai-responses", "azure-openai-responses") and model_id.startswith("gpt-5"):
         merge_thinking_level_map(model, {"off": None})
-    if model_id in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna") and model["api"] in (
+    if model_id in ("gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol") and model["api"] in (
         "openai-responses",
         "azure-openai-responses",
         "openai-codex-responses",
@@ -742,7 +768,8 @@ def apply_thinking_level_metadata(model: dict[str, Any], reasoning_options: dict
         merge_thinking_level_map(
             model,
             {
-                "off": None if model_id == "gpt-6-astra" else "none",
+                # GPT-6 Astra and GPT-6.1 Sol reject reasoning.effort "none".
+                "off": None if model_id in ("gpt-6-astra", "gpt-6.1-sol") else "none",
                 "minimal": None,
                 "low": "low",
                 "medium": "medium",
@@ -1039,6 +1066,9 @@ def get_anthropic_messages_compat(provider: str, model_id: str) -> dict[str, Any
     if f"{provider}:{model_id}" in EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS:
         compat["supportsEagerToolInputStreaming"] = False
     if provider == "xiaomi" or provider.startswith("xiaomi-token-plan-"):
+        compat["allowEmptySignature"] = True
+    # OpenCode Qwen 3.8 Flash emits and accepts thinking blocks with empty signatures.
+    if provider in ("opencode", "opencode-go") and model_id == "qwen3.8-flash":
         compat["allowEmptySignature"] = True
     return compat or None
 
@@ -1636,6 +1666,9 @@ def _load_gateway_providers(
         cache_read = cost.get("cache_read")
         if cache_read is None:
             cache_read = round_cost(cost["input"] * 0.1) if cost.get("input") else 0
+        # Models with effort values use `reasoning_effort` with these levels.
+        # Reasoning models without them (Magistral) use `prompt_mode`.
+        thinking_level_map = get_effort_thinking_level_map(source.get("reasoning_options") or [])
         models.append(
             {
                 "id": model_id,
@@ -1644,6 +1677,7 @@ def _load_gateway_providers(
                 "provider": "mistral",
                 "baseUrl": "https://api.mistral.ai",
                 "reasoning": source.get("reasoning") is True,
+                **({"thinkingLevelMap": thinking_level_map} if thinking_level_map is not None else {}),
                 "input": _input(source),
                 "cost": {
                     "input": cost.get("input") or 0,
@@ -1655,7 +1689,6 @@ def _load_gateway_providers(
                 "maxTokens": _max_tokens(source),
             }
         )
-        record("mistral", model_id, source)
 
     # Hugging Face
     for model_id, source in _models_of(catalog, "huggingface").items():
@@ -2331,6 +2364,18 @@ def load_models_dev_data(
 
 MISSING_OPENAI_MODELS: list[dict[str, Any]] = [
     {
+        "id": "gpt-6.1-sol",
+        "name": "GPT-6.1 Sol",
+        "api": "openai-responses",
+        "baseUrl": "https://api.openai.com/v1",
+        "provider": "openai",
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
+        "contextWindow": OPENAI_LONG_CONTEXT_INPUT_THRESHOLD,
+        "maxTokens": 128000,
+    },
+    {
         "id": "gpt-6-astra",
         "name": "GPT-6 Astra",
         "api": "openai-responses",
@@ -2539,6 +2584,13 @@ def _codex_model(
 
 CODEX_MODELS: list[dict[str, Any]] = [
     _codex_model(
+        "gpt-6.1-sol",
+        "GPT-6.1 Sol",
+        with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6.1-sol"]),
+        context_window=CODEX_CONTEXT,
+        model_input=["text", "image"],
+    ),
+    _codex_model(
         "gpt-6-astra",
         "GPT-6 Astra",
         with_openai_long_context_pricing(OPENAI_STANDARD_COSTS["gpt-6-astra"]),
@@ -2624,11 +2676,8 @@ def apply_overrides(models: list[dict[str, Any]]) -> None:
         ):
             candidate["contextWindow"] = 1000000
 
-        # models.dev may list Opus 5.5 before its effort metadata is complete.
-        # pidrei-only: the Copilot entry gets the same map. models.dev started
-        # listing it (so pi's stopgap entry is skipped) without off/minimal: None,
-        # which would offer "off" on an always-on-effort model.
-        if (provider == "anthropic" and model_id == "claude-opus-5-5") or (
+        # models.dev may list Opus 5.5 and Sonnet 5.5 before their effort metadata is complete.
+        if (provider == "anthropic" and model_id in ("claude-opus-5-5", "claude-sonnet-5-5")) or (
             provider == "github-copilot" and model_id == "claude-opus-5.5"
         ):
             merge_thinking_level_map(
@@ -2814,6 +2863,33 @@ async def main() -> None:
             }
         )
 
+    # Add Claude Sonnet 5.5 until models.dev includes it.
+    # https://platform.claude.com/docs/en/models/sonnet-5-5/overview
+    if not any(m["provider"] == "anthropic" and m["id"] == "claude-sonnet-5-5" for m in all_models):
+        all_models.append(
+            {
+                "id": "claude-sonnet-5-5",
+                "name": "Claude Sonnet 5.5",
+                "api": "anthropic-messages",
+                "provider": "anthropic",
+                "baseUrl": "https://api.anthropic.com",
+                "reasoning": True,
+                "thinkingLevelMap": {
+                    "off": None,
+                    "minimal": None,
+                    "low": "low",
+                    "medium": "medium",
+                    "high": "high",
+                    "xhigh": "xhigh",
+                    "max": "max",
+                },
+                "input": ["text", "image"],
+                "cost": {"input": 2, "output": 10, "cacheRead": 0.2, "cacheWrite": 2.5},
+                "contextWindow": 1000000,
+                "maxTokens": 128000,
+            }
+        )
+
     # The authenticated Copilot catalog advertised these models on 2026-09-22,
     # but models.dev did not include them yet.
     missing_copilot_models = [
@@ -2889,6 +2965,7 @@ async def main() -> None:
                 "provider": "mistral",
                 "baseUrl": "https://api.mistral.ai",
                 "reasoning": True,
+                "thinkingLevelMap": get_effort_thinking_level_map([{"type": "effort", "values": ["none", "high"]}]),
                 "input": ["text", "image"],
                 "cost": {"input": 1.5, "output": 7.5, "cacheRead": 0, "cacheWrite": 0},
                 "contextWindow": 262144,  # 256k tokens

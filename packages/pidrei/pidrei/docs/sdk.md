@@ -94,7 +94,9 @@ subscriptions must be re-bound afterwards.
 A prompt sent while the session is streaming must say whether it steers the
 current run or follows it —
 `PromptOptions(streaming_behavior="steer" | "followUp")` — or it is rejected.
-`steer()` and `follow_up()` do the same directly. `abort()` stops the active
+`steer()` and `follow_up()` do the same directly and return `"queued"` if the
+input was queued (including after an extension transformed it), or `"handled"`
+if an extension consumed it. `abort()` stops the active
 operation and waits for idle; `wait_for_idle()` waits without aborting.
 
 `session.subscribe(listener)` takes a plain (non-async) callable and returns

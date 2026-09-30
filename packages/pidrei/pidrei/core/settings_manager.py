@@ -32,7 +32,7 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import tonio.colored as tonio
 from tonio.colored import fs, sync
@@ -45,6 +45,10 @@ from ..utils.lockfile import FileLock
 from ..utils.paths import normalize_path, resolve_path
 from ..utils.text import strip_bom
 from .http_config import DEFAULT_HTTP_IDLE_TIMEOUT_MS, parse_http_idle_timeout_ms
+
+
+if TYPE_CHECKING:
+    from pidrei_tui import WheelScrollLines
 
 
 type Settings = dict[str, Any]
@@ -144,9 +148,46 @@ def _deep_merge_objects(base: dict, overrides: dict) -> dict:
     return result
 
 
+# Tools enabled at startup when `defaultTools` does not change them.
+DEFAULT_TOOL_NAMES: tuple[str, ...] = ("read", "bash", "edit", "write")
+
+
+def _is_tool_modifier(entry: Any) -> bool:
+    return isinstance(entry, str) and entry.startswith(("+", "-"))
+
+
+def _merge_default_tools(base: Any, overrides: Any) -> Any:
+    """Merge `defaultTools` of two settings layers. A list with plain tool names replaces the
+    inherited one; a list of only `+name`/`-name` entries is appended, so it modifies the
+    inherited selection."""
+    # Settings files are not validated; a malformed value replaces instead of raising here.
+    if not isinstance(base, list) or not isinstance(overrides, list) or not all(map(_is_tool_modifier, overrides)):
+        return overrides
+    return [*base, *overrides]
+
+
+def _resolve_default_tools(entries: list[str]) -> list[str]:
+    """Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name`
+    adds and `-name` removes a tool, in list order."""
+    plain = [entry for entry in entries if not _is_tool_modifier(entry)]
+    tools = plain if plain or not entries else list(DEFAULT_TOOL_NAMES)
+    for entry in entries:
+        if not _is_tool_modifier(entry):
+            continue
+        name = entry[1:]
+        if entry.startswith("+") and name and name not in tools:
+            tools.append(name)
+        elif entry.startswith("-") and name in tools:
+            tools.remove(name)
+    return tools
+
+
 def deep_merge_settings(base: Settings, overrides: Settings) -> Settings:
     """Deep merge settings: project/overrides take precedence, nested objects merge recursively."""
-    return _deep_merge_objects(base, overrides)
+    merged = _deep_merge_objects(base, overrides)
+    if "defaultTools" in overrides:
+        merged["defaultTools"] = _merge_default_tools(base.get("defaultTools"), overrides["defaultTools"])
+    return merged
 
 
 def _parse_timeout_setting(value: Any, setting_name: str) -> int | None:
@@ -1077,6 +1118,18 @@ class SettingsManager:
     def set_fullscreen_copy_on_select(self, enabled: bool) -> None:
         self._set_global("fullscreenCopyOnSelect", enabled)
 
+    def get_fullscreen_wheel_scroll_lines(self) -> WheelScrollLines:
+        lines = self._settings.get("fullscreenWheelScrollLines")
+        # pi: `typeof lines === "number"` — a JSON bool is not a number there.
+        if isinstance(lines, int | float) and not isinstance(lines, bool) and math.isfinite(lines):
+            return max(1, min(100, math.floor(lines)))
+        return "auto"
+
+    def set_fullscreen_wheel_scroll_lines(self, lines: WheelScrollLines) -> None:
+        self._set_global(
+            "fullscreenWheelScrollLines", lines if lines == "auto" else max(1, min(100, math.floor(lines)))
+        )
+
     def get_image_auto_resize(self) -> bool:
         auto_resize = (self._settings.get("images") or {}).get("autoResize")
         return auto_resize if auto_resize is not None else True
@@ -1095,12 +1148,17 @@ class SettingsManager:
         return self._settings.get("enabledModels")
 
     def get_default_tools(self) -> list[str] | None:
-        """Initial built-in tool selection (settings key `defaultTools`).
+        """The resolved `defaultTools` selection, or None when no settings layer sets it.
 
-        pi: `tools ? [...tools] : undefined` — an empty array is truthy in JS,
-        so `[]` survives as an (empty) explicit selection."""
-        tools = self._settings.get("defaultTools")
-        return None if tools is None else list(tools)
+        pi returns undefined only for an absent key; a JSON `null` (like any
+        non-list) resolves as an empty list."""
+        settings = self._settings
+        if "defaultTools" not in settings:
+            return None
+        tools = settings["defaultTools"]
+        return _resolve_default_tools(
+            [tool for tool in tools if isinstance(tool, str)] if isinstance(tools, list) else []
+        )
 
     def set_enabled_models(self, patterns: list[str] | None) -> None:
         self._set_global("enabledModels", patterns)

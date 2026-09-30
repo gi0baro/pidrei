@@ -442,6 +442,37 @@ def response_model_events(model_id: str, content_block: dict) -> list[tuple[str,
 
 
 @pytest.mark.tonio
+async def test_forwards_parsed_provider_stream_events_in_order():
+    model = haiku()
+    provider_events: list = []
+    event_models: list = []
+
+    async def on_provider_stream_event(event, event_model) -> None:
+        provider_events.append(event)
+        event_models.append(event_model)
+
+    result = await stream_anthropic(
+        model,
+        normalize_context(Context(messages=[UserMessage(content="Hello", timestamp=1)])),
+        AnthropicOptions(
+            client=FakeClient(sse_body(minimal_anthropic_events())),
+            on_provider_stream_event=on_provider_stream_event,
+        ),
+    ).result()
+
+    assert result.stop_reason == "stop"
+    assert [event["type"] for event in provider_events] == [
+        "message_start",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    assert event_models == [model, model, model, model, model, model]
+
+
+@pytest.mark.tonio
 async def test_keeps_signed_thinking_replayable_when_a_proxy_relabels_the_model():
     # Regression test for earendil-works/pi#9188.
     model = get_builtin_model("anthropic", "claude-opus-5")

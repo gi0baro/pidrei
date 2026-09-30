@@ -44,6 +44,16 @@ def _emit_osc52(text: str, write_terminal: Callable[[str], None]) -> bool:
     return True
 
 
+async def read_clipboard_file_paths() -> list[str] | None:
+    """Read file paths, such as Finder file copies, from the native clipboard.
+
+    pi reads them through its native darwin helper, which pidrei does not port
+    (see the module docstring), so there are never any: the paste handler
+    falls through to image and text.
+    """
+    return None
+
+
 async def read_clipboard_text() -> str | None:
     """Read plain text from the system clipboard."""
     commands: list[tuple[str, list[str]]] = []

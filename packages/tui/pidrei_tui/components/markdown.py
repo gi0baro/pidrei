@@ -69,6 +69,8 @@ class Markdown:
         # so it never outgrows the current text. `set_text` keeps it;
         # `invalidate` (theme change) drops it.
         self._block_cache: dict[tuple[str, int, str | None], list[str]] = {}
+        # Parsed tokens depend only on the source, so they survive theme and width invalidation.
+        self._cached_tokens: tuple[str, list] | None = None
 
     def set_text(self, text: str) -> None:
         if text == self._text:
@@ -102,8 +104,13 @@ class Markdown:
         normalized_text = text.replace("\t", "   ")
 
         # Parse markdown to marked-shaped tokens
-        tokens = lex(normalized_text)
-        trim_partial_closing_fences(tokens)
+        cached_tokens = self._cached_tokens
+        if cached_tokens is not None and cached_tokens[0] == normalized_text:
+            tokens = cached_tokens[1]
+        else:
+            tokens = lex(normalized_text)
+            trim_partial_closing_fences(tokens)
+            self._cached_tokens = (normalized_text, tokens)
 
         # Convert tokens to styled, wrapped, padded terminal lines — block by
         # block, so an unchanged block costs one dict lookup.

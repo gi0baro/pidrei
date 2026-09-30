@@ -615,6 +615,24 @@ class SettingsSelectorComponent(Container):
                 "values": ["true", "false"],
             },
             {
+                "id": "fullscreen-wheel-scroll-lines",
+                "label": "Fullscreen wheel scrolling",
+                "description": (
+                    "Lines per mouse-wheel event in fullscreen mode; "
+                    "'auto' speeds up fast wheel spins where the terminal does not"
+                ),
+                "currentValue": str(config["fullscreenWheelScrollLines"]),
+                "values": [
+                    "auto",
+                    *(
+                        str(lines)
+                        for lines in sorted(
+                            {1, 2, 3, 5, 10, config["fullscreenWheelScrollLines"]} - {"auto"},
+                        )
+                    ),
+                ],
+            },
+            {
                 "id": "theme",
                 "label": "Theme",
                 "description": "Color theme for the interface",
@@ -826,6 +844,8 @@ class SettingsSelectorComponent(Container):
                 callbacks["onFullscreenScrollbarChange"](new_value)
             elif item_id == "fullscreen-copy-on-select":
                 callbacks["onFullscreenCopyOnSelectChange"](new_value == "true")
+            elif item_id == "fullscreen-wheel-scroll-lines":
+                callbacks["onFullscreenWheelScrollLinesChange"](new_value if new_value == "auto" else int(new_value))
             elif item_id == "theme":
                 callbacks["onThemeChange"](new_value)
 

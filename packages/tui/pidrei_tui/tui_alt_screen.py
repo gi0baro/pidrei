@@ -83,6 +83,7 @@ from .utils import (
     truncate_to_width,
     visible_width,
 )
+from .wheel_scroll import WheelScrollAccelerator, WheelScrollLines
 
 
 ENTER_ALT_SCREEN = "\x1b[?1049h"
@@ -149,7 +150,9 @@ class TuiAltScreen(TuiBase):
     """Alternate-screen TUI with a scrollable, application-owned viewport.
 
     Options (keyword arguments, pi's ``TuiAltScreenOptions``):
-    ``wheel_scroll_lines`` — logical lines moved per mouse-wheel event;
+    ``wheel_scroll_lines`` — logical lines moved per mouse-wheel event
+    (default 1); ``"auto"`` accelerates fast wheel spins on terminals that
+    send one event per notch, and Alt+wheel moves five times as far;
     ``mouse`` — capture mouse events for viewport scrolling and
     application-owned text selection; ``open_url`` — callback for an OSC 8
     hyperlink activated with a primary-button click; ``copy_selection`` —
@@ -172,7 +175,7 @@ class TuiAltScreen(TuiBase):
         show_hardware_cursor: bool | None = None,
         log_directory: str | None = None,
         *,
-        wheel_scroll_lines: int | None = None,
+        wheel_scroll_lines: WheelScrollLines | None = None,
         mouse: bool | None = None,
         search_match_style=None,
         search_current_match_style=None,
@@ -227,7 +230,8 @@ class TuiAltScreen(TuiBase):
         # {"timestamp", "count", "component", "x", "y"}
         self._last_component_click: dict | None = None
         self._active_search: dict | None = None
-        self._wheel_scroll_lines = max(1, math.floor(wheel_scroll_lines if wheel_scroll_lines is not None else 1))
+        # Guarded by `state_lock`: advanced on the input path, retargeted by `set_wheel_scroll_lines`.
+        self._wheel_scroll = WheelScrollAccelerator(wheel_scroll_lines if wheel_scroll_lines is not None else 1)
         self._mouse_enabled = mouse if mouse is not None else True
         self._search_match_style = search_match_style or (lambda text: f"\x1b[4m{text}\x1b[24m")
         self._search_current_match_style = search_current_match_style or (lambda text: f"\x1b[1;7m{text}\x1b[22;27m")
@@ -239,6 +243,10 @@ class TuiAltScreen(TuiBase):
         self._copy_on_select = copy_on_select if copy_on_select is not None else True
         self._copy_selection = copy_selection
         self.add_input_listener(self._handle_viewport_input)
+
+    def set_wheel_scroll_lines(self, lines: WheelScrollLines) -> None:
+        with self.state_lock:
+            self._wheel_scroll.set_lines(lines)
 
     def get_copy_on_select(self) -> bool:
         return self._copy_on_select
@@ -700,12 +708,17 @@ class TuiAltScreen(TuiBase):
 
         wheel_event = self._parse_wheel_event(data)
         if wheel_event:
+            lines = self._wheel_scroll.next(wheel_event["direction"], clock.monotonic() * 1000)
+            # SGR mouse button codes use bit 3 (value 8) for the Alt modifier.
+            wheel_delta = wheel_event["direction"] * (
+                lines * ALT_WHEEL_SCROLL_MULTIPLIER if wheel_event["button"] & 8 else lines
+            )
             event = self._create_mouse_event(
                 "wheel",
                 wheel_event["button"],
                 wheel_event["x"],
                 wheel_event["y"],
-                wheel_delta=wheel_event["direction"] * self._get_wheel_scroll_lines(wheel_event["button"]),
+                wheel_delta=wheel_delta,
             )
             hit, result = self._dispatch_mouse_to_overlay(event)
             if result is None and not hit:
@@ -716,7 +729,7 @@ class TuiAltScreen(TuiBase):
                 return True
             if self._should_defer_viewport_input_to_overlay():
                 return False
-            self._route_wheel(wheel_event)
+            self._route_wheel(wheel_event, wheel_delta)
             return True
         mouse_event = self._parse_sgr_mouse_event(data)
         if mouse_event:
@@ -996,12 +1009,8 @@ class TuiAltScreen(TuiBase):
             }
         return None
 
-    def _get_wheel_scroll_lines(self, button: int) -> int:
-        # SGR mouse button codes use bit 3 (value 8) for the Alt modifier.
-        return self._wheel_scroll_lines * ALT_WHEEL_SCROLL_MULTIPLIER if button & 8 else self._wheel_scroll_lines
-
-    def _route_wheel(self, event: dict) -> None:
-        remaining = event["direction"] * self._get_wheel_scroll_lines(event["button"])
+    def _route_wheel(self, event: dict, delta: int) -> None:
+        remaining = delta
         seen: list = []
         scroll_views = (
             get_scroll_views_at(self._current_layout, event["x"], event["y"])

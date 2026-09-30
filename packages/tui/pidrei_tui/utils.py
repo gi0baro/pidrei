@@ -362,8 +362,12 @@ def _grapheme_width(segment: str) -> int:
     possible-emoji check to avoid running the emoji-sequence test
     unnecessarily.
     """
-    if segment == "\t":
-        return 3
+    if len(segment) == 1:
+        code = ord(segment)
+        if 0x20 <= code <= 0x7E:
+            return 1
+        if code == 0x09:
+            return 3
 
     # Some marks occupy cells even without a base character.
     if _is_terminal_spacing_mark(segment):
@@ -419,9 +423,11 @@ def visible_width(s: str) -> int:
     if len(s) == 0:
         return 0
 
-    # Fast path: pure ASCII printable
-    if _is_printable_ascii(s):
-        return len(s)
+    # Fast path: printable ASCII, tabs, and ANSI escape sequences. Styled lines take this path, so
+    # re-rendering after a theme change does not run grapheme segmentation on every line.
+    ascii_width = _ascii_visible_width(s)
+    if ascii_width != -1:
+        return ascii_width
 
     # Check cache
     cached = _width_cache.get(s)
@@ -432,19 +438,23 @@ def visible_width(s: str) -> int:
     clean = s
     if "\t" in clean:
         clean = clean.replace("\t", "   ")
-    if "\x1b" in clean:
+    escape_index = clean.find("\x1b")
+    if escape_index != -1:
         # Strip supported ANSI/OSC/APC escape sequences in one pass.
         # This covers CSI styling/cursor codes, OSC hyperlinks and prompt markers,
         # and APC sequences like CURSOR_MARKER.
         stripped: list[str] = []
-        i = 0
-        while i < len(clean):
-            ansi = extract_ansi_code(clean, i)
-            if ansi:
-                i += ansi["length"]
-                continue
-            stripped.append(clean[i])
-            i += 1
+        copy_from = 0
+        while escape_index != -1:
+            length = _ansi_code_length(clean, escape_index)
+            if length > 0:
+                stripped.append(clean[copy_from:escape_index])
+                escape_index += length
+                copy_from = escape_index
+            else:
+                escape_index += 1
+            escape_index = clean.find("\x1b", escape_index)
+        stripped.append(clean[copy_from:])
         clean = "".join(stripped)
 
     # Calculate width
@@ -583,8 +593,35 @@ def extract_ansi_code(s: str, pos: int) -> dict | None:
 
     Returns ``{"code": str, "length": int}`` or None.
     """
+    length = _ansi_code_length(s, pos)
+    return {"code": s[pos : pos + length], "length": length} if length > 0 else None
+
+
+# Any complete sequence `_ansi_code_length` accepts, for whole-string stripping.
+_ANSI_SEQUENCE_RE = re.compile(f"{_ANSI_CSI_RE.pattern}|{_ANSI_OSC_RE.pattern}|{_ANSI_APC_RE.pattern}")
+_PRINTABLE_ASCII_OR_TAB_RE = re.compile(r"[\x20-\x7e\t]*\Z")
+
+
+def _ascii_visible_width(s: str) -> int:
+    """Width of a string made of printable ASCII, tabs, and ANSI escape sequences, or -1 if it
+    contains anything else. Matches `visible_width` for those strings.
+
+    pi scans character by character to avoid allocating; per-character loops are the slow
+    path in Python, so the same check is one regex strip plus one match.
+    """
+    if not s.isascii():
+        return -1
+    if "\x1b" in s:
+        s = _ANSI_SEQUENCE_RE.sub("", s)
+    if _PRINTABLE_ASCII_OR_TAB_RE.match(s) is None:
+        return -1
+    return len(s) + 2 * s.count("\t")
+
+
+def _ansi_code_length(s: str, pos: int) -> int:
+    """Length of the ANSI/OSC/APC escape sequence starting at `pos`, or 0 if there is none."""
     if pos >= len(s) or s[pos] != "\x1b":
-        return None
+        return 0
 
     nxt = s[pos + 1 : pos + 2]
     if nxt == "[":
@@ -594,12 +631,10 @@ def extract_ansi_code(s: str, pos: int) -> dict | None:
     elif nxt == "_":
         pattern = _ANSI_APC_RE
     else:
-        return None
+        return 0
 
     match = pattern.match(s, pos)
-    if not match:
-        return None
-    return {"code": match.group(0), "length": match.end() - pos}
+    return match.end() - pos if match else 0
 
 
 # Sentinel: the code is not an OSC 8 hyperlink sequence at all
@@ -844,14 +879,15 @@ class AnsiCodeTracker:
 
 
 def _update_tracker_from_text(text: str, tracker: AnsiCodeTracker) -> None:
-    i = 0
-    while i < len(text):
-        ansi_result = extract_ansi_code(text, i)
-        if ansi_result:
-            tracker.process(ansi_result["code"])
-            i += ansi_result["length"]
+    i = text.find("\x1b")
+    while i != -1:
+        length = _ansi_code_length(text, i)
+        if length > 0:
+            tracker.process(text[i : i + length])
+            i += length
         else:
             i += 1
+        i = text.find("\x1b", i)
 
 
 def get_active_background_ansi(text: str) -> str:
@@ -890,13 +926,19 @@ def _split_into_tokens_with_ansi(text: str) -> list[str]:
             i += ansi_result["length"]
             continue
 
-        end = i
-        while end < len(text) and not extract_ansi_code(text, end):
-            end += 1
+        # Visible text runs up to the next escape sequence.
+        end = text.find("\x1b", i + 1)
+        while end != -1 and _ansi_code_length(text, end) == 0:
+            end = text.find("\x1b", end + 1)
+        if end == -1:
+            end = len(text)
 
-        for segment in grapheme_lib.graphemes(text[i:end]):
+        chunk = text[i:end]
+        # Printable ASCII characters are single graphemes, so skip the segmenter for them.
+        ascii_chunk = _is_printable_ascii(chunk)
+        for segment in chunk if ascii_chunk else grapheme_lib.graphemes(chunk):
             segment_is_space = segment == " "
-            if not segment_is_space and cjk_break_regex.search(segment):
+            if not ascii_chunk and not segment_is_space and cjk_break_regex.search(segment):
                 flush_current()
                 token = pending_ansi + segment
                 pending_ansi = ""

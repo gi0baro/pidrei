@@ -161,22 +161,20 @@ async def _read_clipboard_image_via_xclip() -> dict | object | None:
         "xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"], timeout_ms=_DEFAULT_LIST_TIMEOUT_MS
     )
 
-    candidate_types: list = []
-    if targets is not None:
-        candidate_types = [t.strip() for t in re.split(r"\r?\n", targets.decode("utf-8", "replace")) if t.strip()]
+    if targets is None:
+        return _FAILED
 
+    candidate_types = [t.strip() for t in re.split(r"\r?\n", targets.decode("utf-8", "replace")) if t.strip()]
     preferred = _select_preferred_image_mime_type(candidate_types)
-    if targets is not None and not preferred:
+    if not preferred:
         return None
-    # dict.fromkeys: ordered de-duplication (pi's `new Set`).
-    try_types = dict.fromkeys([preferred, *SUPPORTED_IMAGE_MIME_TYPES] if preferred else SUPPORTED_IMAGE_MIME_TYPES)
 
-    for mime_type in try_types:
-        data = await run_clipboard_command("xclip", ["-selection", "clipboard", "-t", mime_type, "-o"])
-        if data is not None and len(data) > 0:
-            return {"bytes": data, "mimeType": _base_mime_type(mime_type)}
-
-    return _FAILED
+    data = await run_clipboard_command("xclip", ["-selection", "clipboard", "-t", preferred, "-o"])
+    if data is None:
+        return _FAILED
+    if len(data) == 0:
+        return None
+    return {"bytes": data, "mimeType": _base_mime_type(preferred)}
 
 
 async def _read_clipboard_image_via_pngpaste() -> dict | None:

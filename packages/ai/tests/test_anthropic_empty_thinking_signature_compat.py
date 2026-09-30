@@ -98,12 +98,10 @@ def test_allows_empty_thinking_signatures_for_every_vercel_ai_gateway_model():
 @pytest.mark.parametrize(
     "model_id",
     [
-        "accounts/fireworks/models/deepseek-v4-flash-0731",
-        "accounts/fireworks/models/deepseek-v4-flash-vision-exp",
-        "accounts/fireworks/models/deepseek-v4-pro-0813",
+        "accounts/fireworks/models/deepseek-v4p1-flash",
         "accounts/fireworks/models/qwen3p8-max",
         "accounts/fireworks/models/qwen3p8-2p4t-a95b",
-        "accounts/fireworks/models/kimi-k2p6",
+        "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
     ],
 )
 async def test_preserves_unsigned_thinking_for_fireworks(model_id):
@@ -120,9 +118,9 @@ async def test_preserves_unsigned_thinking_for_fireworks(model_id):
 # Regression for #9323: opting into unsigned replay must not change cross-model conversion.
 @pytest.mark.tonio
 async def test_still_converts_cross_model_fireworks_thinking_to_text():
-    model = get_builtin_model("fireworks", "accounts/fireworks/models/deepseek-v4-flash-0731")
+    model = get_builtin_model("fireworks", "accounts/fireworks/models/deepseek-v4p1-flash")
     payload = await capture_payload(
         model,
-        context=make_context("", "internal reasoning", "fireworks", "accounts/fireworks/models/kimi-k2p6"),
+        context=make_context("", "internal reasoning", "fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"),
     )
     assert assistant_content(payload) == [{"type": "text", "text": "internal reasoning"}]

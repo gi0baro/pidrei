@@ -2175,7 +2175,7 @@ async def test_undoes_autocomplete(monkeypatch):
 
 @pytest.mark.tonio
 async def test_triggers_and_debounces_symbol_completion_after_cjk_punctuation(monkeypatch):
-    for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】"]:
+    for before in ["查看，", "　", *"，．：；！？（）［］｛｝“”‘’…—。、「」『』《》【】", "(", "see (", "`", "["]:
         for trigger in ["@", "#", "$", "-"]:
             editor = Editor(create_test_tui(), default_editor_theme)
             timers = ManualTimers(monkeypatch)
@@ -2231,6 +2231,7 @@ async def test_does_not_auto_trigger_after_cjk_letters_or_for_unprefixed_paths(m
         "Ａ@src",
         "文档@备份",
         "prefix#123",
+        "foo(@src",
         "问题#123",
         "查看，/path/",
         "查看，./文档/",

@@ -364,14 +364,23 @@ def text_of(message) -> str | None:
 
 
 @pytest.mark.tonio
-async def test_streams_sse_responses_into_event_stream():
+async def test_streams_sse_responses_and_forwards_raw_provider_events():
     token = mock_token()
     client = sse_client()
+    model = make_model()
+    provider_events: list = []
+    provider_event_models: list = []
+
+    async def on_provider_stream_event(event, event_model) -> None:
+        provider_events.append(event)
+        provider_event_models.append(event_model)
 
     result_stream = stream_codex(
-        make_model(),
+        model,
         hello_context(),
-        OpenAICodexResponsesOptions(api_key=token, transport="sse", client=client),
+        OpenAICodexResponsesOptions(
+            api_key=token, transport="sse", client=client, on_provider_stream_event=on_provider_stream_event
+        ),
     )
     saw_text_delta = False
     saw_done = False
@@ -384,6 +393,14 @@ async def test_streams_sse_responses_into_event_stream():
 
     assert saw_text_delta
     assert saw_done
+    assert [event.get("type") for event in provider_events] == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_item.done",
+        "response.completed",
+    ]
+    assert provider_event_models == [model, model, model, model, model]
 
     request = client.requests[0]
     assert request.url == "https://chatgpt.com/backend-api/codex/responses"
@@ -859,25 +876,48 @@ async def test_uses_exponential_backoff_across_repeated_sse_retries():
 
 
 @pytest.mark.tonio
-async def test_forwards_auto_transport_from_simple_options_and_uses_cached_websocket_context():
+async def test_forwards_auto_transport_and_raw_provider_events_from_stream_simple():
     from pidrei_ai.types import SimpleStreamOptions
 
-    connect, sockets = responding_websocket(lambda _socket, _body: [*HELLO_EVENTS, completion_event(end_turn=False)])
+    model = make_model()
+    provider_events: list = []
+    provider_event_models: list = []
+
+    async def on_provider_stream_event(event, event_model) -> None:
+        provider_events.append(event)
+        provider_event_models.append(event_model)
+
+    connect, sockets = responding_websocket(
+        lambda _socket, _body: [*HELLO_EVENTS, {**completion_event(end_turn=False), "type": "response.done"}]
+    )
     with stub_websocket(connect) as calls:
         result = await stream_simple_codex(
-            make_model(),
+            model,
             normalize_context(
                 Context(
                     system_prompt="You are a helpful assistant.",
                     messages=[UserMessage(content="Say hello", timestamp=1)],
                 )
             ),
-            SimpleStreamOptions(api_key=mock_token(), session_id="session-auto", transport="auto"),
+            SimpleStreamOptions(
+                api_key=mock_token(),
+                session_id="session-auto",
+                transport="auto",
+                on_provider_stream_event=on_provider_stream_event,
+            ),
         ).result()
 
     assert result.end_turn is False
     assert len(sockets) == 1
     assert len(sockets[0].sent) == 1
+    assert [event.get("type") for event in provider_events] == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_item.done",
+        "response.done",
+    ]
+    assert provider_event_models == [model, model, model, model, model]
     assert calls[0]["url"] == "wss://chatgpt.com/backend-api/codex/responses"
     assert calls[0]["headers"]["session-id"] == "session-auto"
     assert "session_id" not in calls[0]["headers"]

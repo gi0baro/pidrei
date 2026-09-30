@@ -24,15 +24,9 @@ def build_base_options(
     api_key: str | None = None,
 ) -> StreamOptions:
     requested_max = options.max_tokens if options is not None and options.max_tokens is not None else model.max_tokens
-    options_sampling_params = options.sampling_params if options else None
-    sampling_params = (
-        {**(model.sampling_params or {}), **(options_sampling_params or {})}
-        if model.sampling_params or options_sampling_params
-        else None
-    )
     return StreamOptions(
         temperature=options.temperature if options else None,
-        sampling_params=sampling_params,
+        sampling_params=options.sampling_params if options else None,
         max_tokens=clamp_max_tokens_to_context(model, context, requested_max),
         cancel=options.cancel if options else None,
         # pi: `apiKey: apiKey || options?.apiKey` — deliberately falsy `||`.
@@ -43,6 +37,7 @@ def build_base_options(
         headers=options.headers if options else None,
         on_payload=options.on_payload if options else None,
         on_response=options.on_response if options else None,
+        on_provider_stream_event=options.on_provider_stream_event if options else None,
         timeout_ms=options.timeout_ms if options else None,
         websocket_connect_timeout_ms=options.websocket_connect_timeout_ms if options else None,
         max_retries=options.max_retries if options else None,

@@ -1177,9 +1177,9 @@ def build_params(  # noqa: C901 (mirrors pi's compat ladder)
         if gateway_options:
             params["providerOptions"] = {"gateway": gateway_options}
 
-    # Last so custom keys override the named request fields.
-    if options.sampling_params:
-        params.update(options.sampling_params)
+    # Last so custom keys override the named request fields. Per-request keys override model defaults.
+    params.update(model.sampling_params or {})
+    params.update(options.sampling_params or {})
 
     return params
 
@@ -1392,6 +1392,7 @@ def stream(  # noqa: C901
                 return block
 
             async for chunk in _iterate_chunks(response, opts.cancel):
+                await maybe_call(opts.on_provider_stream_event, chunk, model)
                 if not isinstance(chunk, dict):
                     continue
 

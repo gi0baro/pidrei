@@ -350,6 +350,38 @@ async def test_resolve_skips_installing_missing_sources_when_offline(dirs):
     assert result.extensions == []
 
 
+# https://github.com/earendil-works/pi/issues/9982
+@pytest.mark.tonio
+async def test_loads_a_new_checkout_when_a_pinned_temporary_git_source_changes_ref(dirs):
+    old_parsed = dirs.manager.parse_source("git:github.com/example/repo@aaaaaaa")
+    new_source = "git:github.com/example/repo@bbbbbbb"
+    new_parsed = dirs.manager.parse_source(new_source)
+    assert isinstance(old_parsed, GitSource)
+    assert isinstance(new_parsed, GitSource)
+
+    old_path = await dirs.manager._get_git_install_path(old_parsed, "temporary")
+    os.makedirs(os.path.join(old_path, "extensions"))
+    with open(os.path.join(old_path, "extensions", "old.py"), "w") as handle:
+        handle.write("async def extension(pi):\n    pass\n")
+
+    installs: list = []
+
+    async def install_parsed_source(parsed, scope) -> None:
+        installs.append((parsed, scope))
+        new_path = await dirs.manager._get_git_install_path(new_parsed, "temporary")
+        os.makedirs(os.path.join(new_path, "extensions"))
+        with open(os.path.join(new_path, "extensions", "new.py"), "w") as handle:
+            handle.write("async def extension(pi):\n    pass\n")
+
+    dirs.manager._install_parsed_source = install_parsed_source
+
+    result = await dirs.manager.resolve_extension_sources([new_source], temporary=True)
+
+    assert len(installs) == 1
+    assert any(r.path.endswith(os.path.join("extensions", "new.py")) and r.enabled for r in result.extensions)
+    assert not any(r.path.endswith(os.path.join("extensions", "old.py")) for r in result.extensions)
+
+
 # -- settings source normalization -------------------------------------------------
 
 

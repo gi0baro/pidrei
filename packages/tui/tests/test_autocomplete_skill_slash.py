@@ -12,6 +12,7 @@ COMMANDS = [
     {"name": "skill:deep-research", "description": "Multi-agent deep research"},
     {"name": "skill:research-idea", "description": "Refine a raw idea into a falsifiable seed"},
     {"name": "skill:to-sidecar", "description": "Route work to a sidecar"},
+    {"name": "skill:brainstorm", "description": "Generate ideas"},
     {"name": "model", "description": "Select the active model"},
 ]
 
@@ -28,7 +29,7 @@ async def suggestions_for(prefix: str) -> list[str]:
 async def test_ranks_skill_research_idea_first_for_query_idea():
     items = await suggestions_for("idea")
     assert items[0] == "skill:research-idea"
-    assert "skill:deep-research" not in items
+    assert items.index("skill:deep-research") > items.index("skill:research-idea")
 
 
 @pytest.mark.tonio
@@ -41,3 +42,18 @@ async def test_keeps_ordinary_slash_commands_matching():
 async def test_keeps_explicit_skill_queries_working():
     items = await suggestions_for("skill:side")
     assert "skill:to-sidecar" in items
+
+
+# Regression test for #9944.
+@pytest.mark.tonio
+async def test_lists_skills_while_typing_the_skill_prefix():
+    items = await suggestions_for("skill")
+    assert [item for item in items if item.startswith("skill:")] == [
+        command["name"] for command in COMMANDS if command["name"].startswith("skill:")
+    ]
+
+
+@pytest.mark.tonio
+async def test_keeps_fuzzy_skill_prefix_shorthand_working():
+    items = await suggestions_for("skbra")
+    assert "skill:brainstorm" in items

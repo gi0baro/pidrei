@@ -336,10 +336,7 @@ class AgentSessionRuntime:
                 return {"cancelled": False, "selectedText": selected_text}
 
             if not await fs.Path(current_session_file).exists():
-                raise Exception(
-                    "This session has not been saved yet. Wait for the first assistant response "
-                    "before cloning or forking it."
-                )
+                raise Exception("This session has not been saved yet. Send a message before cloning or forking it.")
             session_manager = await SessionManager(session_dir=session_dir, session_file=current_session_file)
             forked_session_path = await session_manager.create_branched_session(target_leaf_id)
             if not forked_session_path:

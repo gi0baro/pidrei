@@ -256,6 +256,7 @@ user sends a prompt
 | `before_provider_headers` | Before each request | Request headers |
 | `before_provider_request` | Before each request | The payload |
 | `after_provider_response` | After each response arrives | — (inspect status/headers) |
+| `provider_stream_event` | Each parsed provider stream event, before pidrei normalizes it (`provider`, `api`, `model`, `data`) | — (notification-only, not persisted) |
 | `cache_warming_decision` | Before each prompt-cache refresh, with pidrei's decision (`warmCost`, `missCost`, `continuationProbability`, `action`) | Return `{"action": "warm"}` or `{"action": "stop"}`; the last handler that returns an action wins; `"stop"` ends warming until the next real request |
 | `message_start` / `message_update` / `message_end` | Assistant message stream | `message_end` may rewrite |
 | `tool_call` | Before a tool runs | Block it, or rewrite arguments |
@@ -269,6 +270,14 @@ value replace the corresponding field — the table's "can change" column says
 which; a return value on a notification-only event has no effect. Ordering
 follows extension load order. `tool_result` handlers compose, each seeing the
 previous handler's changes.
+
+`provider_stream_event`'s `event["data"]` is the earliest structured value
+pidrei has (a parsed SSE payload or stream chunk), not the raw HTTP bytes. It
+is the adapter's own object: treat it as read-only, because mutating it
+changes what the adapter normalizes. Handlers are awaited in stream order, so
+a slow handler delays the stream; handler errors are reported without
+changing the provider response. `examples/extensions/debug_provider.py` is an
+opt-in viewer that groups the raw events by assistant message.
 
 Tool calls from one assistant message can run in parallel, so a `tool_call` or
 `tool_result` handler must not assume a sibling call or its result exists yet.

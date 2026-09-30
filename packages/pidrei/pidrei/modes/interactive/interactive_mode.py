@@ -22,6 +22,7 @@ import signal
 import subprocess
 import threading
 import traceback
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as dataclass_replace
@@ -113,7 +114,7 @@ from ...core.trust_manager import (
 )
 from ...core.usage_totals import get_usage_cost_breakdown
 from ...utils.changelog import get_new_entries, normalize_changelog_links, parse_changelog
-from ...utils.clipboard import copy_to_clipboard, read_clipboard_text
+from ...utils.clipboard import copy_to_clipboard, read_clipboard_file_paths, read_clipboard_text
 from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboard_image
 from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
@@ -591,6 +592,7 @@ class InteractiveMode:
             log_directory=get_agent_dir(),
             terminal=options.get("terminal"),
             fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
+            fullscreen_wheel_scroll_lines=self.settings_manager.get_fullscreen_wheel_scroll_lines(),
         )
         self._main_screen_render_state = None
         self._fullscreen_layout_root = None
@@ -1055,6 +1057,7 @@ class InteractiveMode:
                     log_directory=get_agent_dir(),
                     terminal=previous_ui.terminal,
                     fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
+                    fullscreen_wheel_scroll_lines=self.settings_manager.get_fullscreen_wheel_scroll_lines(),
                 )
                 next_ui.set_clear_on_shrink(previous_ui.get_clear_on_shrink())
                 next_ui.set_render_error_handler(self._uncaught_crash)
@@ -1199,7 +1202,7 @@ class InteractiveMode:
                     raw_key_hint("!!", "to run bash (no context)"),
                     key_hint("app.message.followUp", "to queue follow-up"),
                     key_hint("app.message.dequeue", "to edit all queued messages"),
-                    key_hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
+                    key_hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
                     raw_key_hint("drop files", "to attach"),
                 ]
             )
@@ -1939,34 +1942,6 @@ class InteractiveMode:
                     extension_compact_list = format_compact_list(self._get_compact_extension_labels(extensions))
                     add_loaded_section("Extensions", extension_compact_list, ext_list, "mdHeading")
 
-                # Show loaded themes (excluding built-in)
-                custom_themes = [t for t in themes_result["themes"] if t.source_path]
-                if custom_themes:
-                    groups = self._build_scope_groups(
-                        [
-                            {"path": loaded_theme.source_path, "sourceInfo": loaded_theme.source_info}
-                            for loaded_theme in custom_themes
-                        ]
-                    )
-                    theme_list = self._format_scope_groups(
-                        groups,
-                        {
-                            "formatPath": lambda item: self._format_display_path(item["path"]),
-                            "formatPackagePath": lambda item, source: self._get_short_path(
-                                item["path"], item.get("sourceInfo")
-                            ),
-                        },
-                    )
-                    theme_compact_list = format_compact_list(
-                        [
-                            loaded_theme.name
-                            if loaded_theme.name is not None
-                            else self._get_compact_path_label(loaded_theme.source_path, loaded_theme.source_info)
-                            for loaded_theme in custom_themes
-                        ]
-                    )
-                    add_loaded_section("Themes", theme_compact_list, theme_list)
-
             if show_diagnostics:
                 skill_diagnostics = skills_result.diagnostics
                 if skill_diagnostics:
@@ -1985,9 +1960,11 @@ class InteractiveMode:
                     self._loaded_resources_container.add_child(Spacer(1))
 
                 extension_diagnostics: list = []
-                extension_errors = self.session.resource_loader.get_extensions().errors
-                for error in extension_errors:
+                extensions_result = self.session.resource_loader.get_extensions()
+                for error in extensions_result.errors:
                     extension_diagnostics.append({"type": "error", "message": error.error, "path": error.path})
+                for warning in extensions_result.warnings:
+                    extension_diagnostics.append({"type": "warning", "message": warning.warning, "path": warning.path})
 
                 runner = self.session.extension_runner
                 get_command_diagnostics = getattr(runner, "get_command_diagnostics", None)
@@ -2114,6 +2091,9 @@ class InteractiveMode:
             # pi configures the undici HTTP dispatcher here; pidrei's HTTP
             # transport is punkreq's concern (see core/http_config.py).
             self._apply_fullscreen_scrollbar_setting()
+            if isinstance(self._renderer, TuiAltScreen):
+                self._renderer.set_copy_on_select(self.settings_manager.get_fullscreen_copy_on_select())
+                self._renderer.set_wheel_scroll_lines(self.settings_manager.get_fullscreen_wheel_scroll_lines())
             self._footer.set_session(self.session)
             self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
             cwd_changed = self._footer_data_provider.apply_cwd(resolved_cwd)
@@ -3063,6 +3043,36 @@ class InteractiveMode:
 
     async def _handle_clipboard_paste(self) -> None:
         try:
+            file_paths = await read_clipboard_file_paths()
+            if file_paths:
+                if any(unicodedata.category(char) == "Cc" for file_path in file_paths for char in file_path):
+                    raise Exception("Clipboard file path contains control characters")
+                paths = (
+                    " ".join(_quote_if_needed(file_path) for file_path in file_paths)
+                    if self._is_bash_mode
+                    else "\n".join(file_paths)
+                )
+                # The cursor read and the insert are one hold, so a key typed
+                # meanwhile cannot move the cursor between them.
+                with self.ui.state_lock:
+                    # pi: `this.editor.getCursor?.()` — custom editors may not have one.
+                    get_cursor = getattr(self.editor, "get_cursor", None)
+                    cursor = get_cursor() if get_cursor is not None else None
+                    character_before_cursor = character_after_cursor = ""
+                    if cursor is not None:
+                        lines = self.editor.get_text().split("\n")
+                        current_line = lines[cursor["line"]] if cursor["line"] < len(lines) else ""
+                        col = cursor["col"]
+                        character_before_cursor = current_line[col - 1] if 0 < col <= len(current_line) else ""
+                        character_after_cursor = current_line[col] if col < len(current_line) else ""
+                    leading_space = " " if character_before_cursor and not character_before_cursor.isspace() else ""
+                    trailing_space = " " if character_after_cursor and not character_after_cursor.isspace() else ""
+                    insert = getattr(self.editor, "insert_text_at_cursor", None)
+                    if insert is not None:
+                        insert(f"{leading_space}{paths}{trailing_space}")
+                self.ui.request_render()
+                return
+
             image = await read_clipboard_image()
             if image:
                 ext = extension_for_image_mime_type(image["mimeType"]) or "png"
@@ -3078,9 +3088,8 @@ class InteractiveMode:
             if text:
                 self._insert_into_editor(text)
                 self.ui.request_render()
-        except Exception:
-            # Silently ignore clipboard errors (permissions etc.)
-            pass
+        except Exception as error:
+            self.show_error(f"Failed to paste from clipboard: {error}")
 
     # pi's `this.editor.setText(...)` and friends: like pi's, they request no
     # render of their own (their callers do, or a render follows anyway).
@@ -4890,6 +4899,11 @@ class InteractiveMode:
                 if isinstance(self._renderer, TuiAltScreen):
                     self._renderer.set_copy_on_select(enabled)
 
+            def on_fullscreen_wheel_scroll_lines_change(lines) -> None:
+                self.settings_manager.set_fullscreen_wheel_scroll_lines(lines)
+                if isinstance(self._renderer, TuiAltScreen):
+                    self._renderer.set_wheel_scroll_lines(lines)
+
             def on_cancel() -> None:
                 done()
                 self.ui.request_render()
@@ -4934,6 +4948,7 @@ class InteractiveMode:
                     "fullscreenExitOutput": self.settings_manager.get_fullscreen_exit_output(),
                     "fullscreenScrollbar": self.settings_manager.get_fullscreen_scrollbar(),
                     "fullscreenCopyOnSelect": self.settings_manager.get_fullscreen_copy_on_select(),
+                    "fullscreenWheelScrollLines": self.settings_manager.get_fullscreen_wheel_scroll_lines(),
                     "warnings": self.settings_manager.get_warnings(),
                 },
                 {
@@ -4982,6 +4997,7 @@ class InteractiveMode:
                     ),
                     "onFullscreenScrollbarChange": on_fullscreen_scrollbar_change,
                     "onFullscreenCopyOnSelectChange": on_fullscreen_copy_on_select_change,
+                    "onFullscreenWheelScrollLinesChange": on_fullscreen_wheel_scroll_lines_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
                     "onCancel": on_cancel,
                 },
@@ -6876,7 +6892,7 @@ class InteractiveMode:
 | `{copy_message}` | Copy selection or last assistant message |
 | `{follow_up}` | Queue follow-up message |
 | `{dequeue}` | Restore queued messages |
-| `{paste_image}` | Paste image or text from clipboard |
+| `{paste_image}` | Paste files on macOS, images, or text from clipboard |
 | `/` | Slash commands |
 | `!` | Run bash command |
 | `!!` | Run bash command (excluded from context) |

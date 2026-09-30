@@ -206,7 +206,7 @@ def test_enables_mid_conversation_system_messages_only_for_verified_models():
         ("openrouter", "openai/gpt-5.6-terra"),
     ]
     unsupported = [
-        ("fireworks", "accounts/fireworks/models/kimi-k2p6"),
+        ("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"),
         ("openai", "gpt-4.1"),
         ("openai", "gpt-5.2"),
         ("anthropic", "claude-sonnet-4-5"),

@@ -668,9 +668,9 @@ class DefaultPackageManager:
             raise Exception(f"Refusing to use path outside package install root: {resolved_path}")
         return resolved_path
 
-    async def _get_temporary_dir(self, prefix: str, suffix: str | None = None) -> str:
+    async def _get_temporary_dir(self, prefix: str, suffix: str | None = None, ref: str | None = None) -> str:
         root = self._resolve_managed_path(await get_extension_temp_folder(self._agent_dir), prefix)
-        digest = hashlib.sha256(f"{prefix}-{suffix or ''}".encode()).hexdigest()[:8]
+        digest = hashlib.sha256(f"{prefix}-{suffix or ''}{f'@{ref}' if ref else ''}".encode()).hexdigest()[:8]
         return self._resolve_managed_path(root, digest, suffix or "")
 
     def _get_git_install_root(self, scope: str) -> str | None:
@@ -683,7 +683,8 @@ class DefaultPackageManager:
 
     async def _get_git_install_path(self, source: GitSource, scope: str) -> str:
         if scope == "temporary":
-            return await self._get_temporary_dir(f"git-{source.host}", source.path)
+            # Include the ref in the hash so each pinned ref gets its own checkout.
+            return await self._get_temporary_dir(f"git-{source.host}", source.path, source.ref)
         install_root = self._get_git_install_root(scope)
         if not install_root:
             raise Exception("Missing git install root")

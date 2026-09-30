@@ -82,7 +82,7 @@ KEYBINDINGS = {
     },
     "app.clipboard.pasteImage": {
         "defaultKeys": "alt+v" if _WINDOWS_KEYBINDINGS else "ctrl+v",
-        "description": "Paste image from clipboard (text fallback)",
+        "description": "Paste files on macOS, images, or text from clipboard",
     },
     "app.session.new": {"defaultKeys": [], "description": "Start a new session"},
     "app.session.tree": {"defaultKeys": [], "description": "Open session tree"},

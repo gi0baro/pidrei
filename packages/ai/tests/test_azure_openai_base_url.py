@@ -8,6 +8,7 @@ pi's verbatim.
 """
 
 import contextlib
+import json
 import os
 from dataclasses import replace
 
@@ -31,6 +32,8 @@ CONTEXT = normalize_context(Context(messages=[UserMessage(content="hello", times
 
 constructor_calls: list[dict] = []
 last_params: list[dict] = []
+# pi: azureMock.streamEvents — when set, `create` streams them instead of throwing.
+stream_events: list[list[dict]] = []
 
 
 class _RecordingAzureOpenAI:
@@ -39,10 +42,22 @@ class _RecordingAzureOpenAI:
         self.responses = _RecordingResponses()
 
 
+class _StreamResponse:
+    def __init__(self, events: list[dict]):
+        self.status = 200
+        self.headers: dict[str, str] = {}
+        self._body = "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
+
+    async def aiter_bytes(self):
+        yield self._body
+
+
 class _RecordingResponses:
     async def create(self, params, *, timeout_ms=None, cancel=None):
         last_params.append(params)
-        raise RuntimeError("mock create")
+        if not stream_events:
+            raise RuntimeError("mock create")
+        return _StreamResponse(stream_events[0])
 
 
 @contextlib.contextmanager
@@ -67,6 +82,7 @@ _MANAGED_ENV = (
 def _isolate(request):
     constructor_calls.clear()
     last_params.clear()
+    stream_events.clear()
     saved = {name: os.environ.get(name) for name in _MANAGED_ENV}
     for name in _MANAGED_ENV:
         os.environ.pop(name, None)
@@ -225,6 +241,47 @@ async def test_builds_correct_default_url_from_azure_openai_resource_name():
 
     assert len(constructor_calls) == 1
     assert constructor_calls[0]["baseURL"] == "https://my-resource.openai.azure.com/openai/v1"
+
+
+# --- provider stream events --------------------------------------------------
+
+
+@pytest.mark.tonio
+async def test_forwards_parsed_events_in_order_before_normalizing_the_response():
+    # pi also asserts identity with the mocked SDK's event objects; here the
+    # events are parsed from the SSE body, so equality is the observable.
+    events = [
+        {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_azure"}},
+        {
+            "type": "response.completed",
+            "sequence_number": 1,
+            "response": {"id": "resp_azure", "status": "completed"},
+        },
+    ]
+    stream_events.append(events)
+    model = model_fixture()
+    received: list = []
+    event_models: list = []
+
+    async def on_provider_stream_event(event, event_model) -> None:
+        received.append(event)
+        event_models.append(event_model)
+
+    with _stubbed_client():
+        result = await stream_azure(
+            model,
+            CONTEXT,
+            AzureOpenAIResponsesOptions(
+                api_key="test-api-key",
+                azure_base_url="https://my-resource.openai.azure.com",
+                on_provider_stream_event=on_provider_stream_event,
+            ),
+        ).result()
+
+    assert received == events
+    assert event_models == [model, model]
+    assert result.stop_reason == "stop"
+    assert result.response_id == "resp_azure"
 
 
 async def capture_client_headers(headers: dict | None = None) -> dict:

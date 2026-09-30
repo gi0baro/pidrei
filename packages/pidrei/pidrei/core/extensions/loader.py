@@ -42,7 +42,7 @@ from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.event_bus import EventBus
 from pidrei.core.exec import exec_command
 from pidrei.core.pidrei_manifest import read_pidrei_manifest_blocking
-from pidrei.core.source_info import create_synthetic_source_info
+from pidrei.core.source_info import create_synthetic_source_info, get_synthetic_path_source, is_synthetic_path
 from pidrei.core.timings import time as record_time
 from pidrei.utils.paths import resolve_path
 
@@ -487,11 +487,9 @@ def _load_extension_module(resolved_path: str, cache_token: ExtensionCacheToken 
 
 
 def _create_extension(extension_path: str, resolved_path: str) -> Extension:
-    if extension_path.startswith("<") and extension_path.endswith(">"):
-        source = extension_path[1:-1].split(":")[0] or "temporary"
-    else:
-        source = "local"
-    base_dir = None if extension_path.startswith("<") else os.path.dirname(resolved_path)
+    synthetic_source = get_synthetic_path_source(extension_path)
+    source = synthetic_source if synthetic_source is not None else "local"
+    base_dir = None if is_synthetic_path(extension_path) else os.path.dirname(resolved_path)
 
     return Extension(
         path=extension_path,

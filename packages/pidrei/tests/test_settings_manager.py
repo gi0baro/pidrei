@@ -417,6 +417,38 @@ class TestDefaultTools:
         assert SettingsManager.in_memory({"defaultTools": []}).get_default_tools() == []
         assert SettingsManager.in_memory().get_default_tools() is None
 
+    def test_applies_plus_name_and_minus_name_to_the_default_selection(self):
+        assert SettingsManager.in_memory({"defaultTools": ["+codemode", "-write"]}).get_default_tools() == [
+            "read",
+            "bash",
+            "edit",
+            "codemode",
+        ]
+        assert SettingsManager.in_memory({"defaultTools": ["read", "+grep", "+read"]}).get_default_tools() == [
+            "read",
+            "grep",
+        ]
+
+    @pytest.mark.tonio
+    async def test_layers_project_modifiers_on_top_of_the_global_selection(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"defaultTools": ["read", "bash", "+codemode"]})
+        write_json(project_dir / ".pidrei" / "settings.json", {"defaultTools": ["-codemode", "+tool_search"]})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_default_tools() == ["read", "bash", "tool_search"]
+
+        manager.apply_overrides({"defaultTools": ["+codemode"]})
+        assert manager.get_default_tools() == ["read", "bash", "tool_search", "codemode"]
+
+    @pytest.mark.tonio
+    async def test_applies_project_modifiers_to_the_built_in_defaults_without_a_global_setting(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(project_dir / ".pidrei" / "settings.json", {"defaultTools": ["+codemode"]})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_default_tools() == ["read", "bash", "edit", "write", "codemode"]
+
 
 class TestFullscreenScrollbar:
     @pytest.mark.tonio
@@ -441,6 +473,22 @@ class TestFullscreenScrollbar:
         assert reloaded.get_fullscreen_exit_output() == "transcript"
         assert reloaded.get_fullscreen_scrollbar() == "auto"
         assert reloaded.get_fullscreen_copy_on_select() is True
+
+    # #9758: wheel scrolling defaults to auto, persists line counts, and ignores invalid values.
+    @pytest.mark.tonio
+    async def test_persists_fullscreen_wheel_scroll_lines(self, dirs):
+        agent_dir, project_dir = dirs
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_fullscreen_wheel_scroll_lines() == "auto"
+
+        manager.set_fullscreen_wheel_scroll_lines(3)
+        await manager.flush()
+        assert read_json(agent_dir / "settings.json")["fullscreenWheelScrollLines"] == 3
+
+        for value, expected in [(7.9, 7), (0, 1), (1000, 100), ("fast", "auto"), (None, "auto")]:
+            write_json(agent_dir / "settings.json", {"fullscreenWheelScrollLines": value})
+            reloaded = await SettingsManager(str(project_dir), str(agent_dir))
+            assert reloaded.get_fullscreen_wheel_scroll_lines() == expected
 
 
 class TestTuiMode:

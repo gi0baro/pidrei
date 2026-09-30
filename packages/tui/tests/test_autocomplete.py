@@ -139,6 +139,22 @@ async def test_recognizes_at_after_cjk_punctuation_without_consuming_the_precedi
 
 @requires_fd
 @pytest.mark.tonio
+async def test_recognizes_at_after_opening_wrappers_like_parentheses_and_backticks(fd_dirs):
+    _setup_folder(fd_dirs["base"], files={"README.md": "readme"})
+    provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
+    for before in ["(", "see (", "[", "`", "<", "{"]:
+        line = f"{before}@REA"
+        result = await get_suggestions(provider, [line], 0, len(line))
+        assert result, line
+        assert result["prefix"] == "@REA"
+        applied = provider.apply_completion([line], 0, len(line), result["items"][0], result["prefix"])
+        assert applied["lines"][0] == f"{before}@README.md "
+    embedded = "foo(@REA"
+    assert await get_suggestions(provider, [embedded], 0, len(embedded)) is None
+
+
+@requires_fd
+@pytest.mark.tonio
 async def test_preserves_cjk_characters_and_embedded_at_in_attachment_paths(fd_dirs):
     _setup_folder(fd_dirs["base"], files={"文档/说明.md": "text", "文档@备份/说明.md": "backup"})
     provider = CombinedAutocompleteProvider([], fd_dirs["base"], _require_fd_path())
@@ -559,6 +575,50 @@ async def test_handles_an_empty_prefix_after_whitespace_or_cjk_punctuation_consi
             assert result["prefix"] == ""
             assert [item["value"] for item in result["items"]] == ["说明.md"]
     assert await get_suggestions(provider, [""], 0, 0) is None
+
+
+@pytest.mark.tonio
+async def test_completes_paths_after_opening_wrappers_like_parens_brackets_braces_angles_and_backticks(tmp_path):
+    _setup_folder(str(tmp_path), files={"src/main.ts": "x"})
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
+    for wrapper in ["(", "[", "{", "<", "`", "((", "(`"]:
+        for prefix in ["src/ma", "./src/ma"]:
+            before = f"see {wrapper}"
+            line = f"{before}{prefix}"
+            result = await get_suggestions(provider, [line], 0, len(line), True)
+            assert result, line
+            assert result["prefix"] == prefix
+            value = prefix.replace("src/ma", "src/main.ts")
+            assert [item["value"] for item in result["items"]] == [value]
+            applied = provider.apply_completion([line], 0, len(line), result["items"][0], result["prefix"])
+            assert applied["lines"][0] == f"{before}{value}"
+
+
+@pytest.mark.tonio
+async def test_completes_quoted_paths_after_opening_wrappers(tmp_path):
+    _setup_folder(str(tmp_path), files={"my dir/main.ts": "x"})
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
+    line = 'see ("my dir/ma'
+    result = await get_suggestions(provider, [line], 0, len(line), True)
+    assert result
+    assert result["prefix"] == '"my dir/ma'
+    assert [item["value"] for item in result["items"]] == ['"my dir/main.ts"']
+
+
+@pytest.mark.tonio
+async def test_keeps_wrappers_that_are_closed_inside_the_path(tmp_path):
+    _setup_folder(str(tmp_path), files={"[slug]/page.tsx": "x", "(group)/layout.tsx": "x"})
+    provider = CombinedAutocompleteProvider([], str(tmp_path))
+    for prefix, value in [
+        ("[slug]/pa", "[slug]/page.tsx"),
+        ("(group)/la", "(group)/layout.tsx"),
+        ("./[slug]/pa", "./[slug]/page.tsx"),
+    ]:
+        line = f"see {prefix}"
+        result = await get_suggestions(provider, [line], 0, len(line), True)
+        assert result, line
+        assert result["prefix"] == prefix
+        assert [item["value"] for item in result["items"]] == [value]
 
 
 @pytest.mark.tonio

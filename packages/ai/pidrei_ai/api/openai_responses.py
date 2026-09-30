@@ -365,9 +365,9 @@ def build_params(
         if model.provider == "xai":
             params["include"] = ["reasoning.encrypted_content"]
 
-    # Last so custom keys override the named request fields.
-    if options.sampling_params:
-        params.update(options.sampling_params)
+    # Last so custom keys override the named request fields. Per-request keys override model defaults.
+    params.update(model.sampling_params or {})
+    params.update(options.sampling_params or {})
 
     return params
 
@@ -375,7 +375,7 @@ def build_params(
 def _get_service_tier_cost_multiplier(model: Model, service_tier: str | None) -> float:
     if service_tier == "flex":
         return 0.5
-    if service_tier == "priority":
+    if service_tier in ("priority", "fast"):
         return 2.5 if model.id == "gpt-5.5" else 2
     return 1
 
@@ -456,6 +456,7 @@ def stream(
                 output,
                 out_stream,
                 model,
+                on_provider_stream_event=opts.on_provider_stream_event,
                 service_tier=opts.service_tier,
                 grammar_tool_input_properties=grammar_tool_input_properties,
                 apply_service_tier_pricing=lambda usage, tier: _apply_service_tier_pricing(usage, tier, model),

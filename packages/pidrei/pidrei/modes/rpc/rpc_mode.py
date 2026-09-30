@@ -25,7 +25,7 @@ import tonio.colored as tonio
 from pidrei_ai.types import ImageContent
 from pidrei_tui.tui import call_sync
 
-from ...core.agent_session import ExtensionBindings, PromptOptions
+from ...core.agent_session import ExtensionBindings, PromptDisposition, PromptOptions
 from ...core.bash_executor import BashResult
 from ...core.json_wire import to_wire
 from ...core.output_guard import drain_output, take_over_stdout, write_raw_stdout
@@ -457,11 +457,10 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 # immediately handled prompts also count as success.
                 preflight_succeeded = False
 
-                def preflight_result(did_succeed: bool) -> None:
+                def preflight_result(disposition: PromptDisposition) -> None:
                     nonlocal preflight_succeeded
-                    if did_succeed:
-                        preflight_succeeded = True
-                        output(success(id, "prompt"))
+                    preflight_succeeded = True
+                    output(success(id, "prompt", {"disposition": disposition}))
 
                 async def run_prompt() -> None:
                     try:
@@ -482,12 +481,16 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
                 return None
 
             case "steer":
-                await session.steer(command.get("message"), _parse_images(command.get("images")), source="rpc")
-                return success(id, "steer")
+                disposition = await session.steer(
+                    command.get("message"), _parse_images(command.get("images")), source="rpc"
+                )
+                return success(id, "steer", {"disposition": disposition})
 
             case "follow_up":
-                await session.follow_up(command.get("message"), _parse_images(command.get("images")), source="rpc")
-                return success(id, "follow_up")
+                disposition = await session.follow_up(
+                    command.get("message"), _parse_images(command.get("images")), source="rpc"
+                )
+                return success(id, "follow_up", {"disposition": disposition})
 
             case "abort":
                 await session.abort()

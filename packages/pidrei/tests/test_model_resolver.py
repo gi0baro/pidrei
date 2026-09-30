@@ -486,7 +486,7 @@ class TestCustomModelFallbackWithThinkingSuffix:
 class TestDefaultModelSelection:
     def test_openai_defaults_track_current_models(self):
         assert DEFAULT_MODEL_PER_PROVIDER["openai"] == "gpt-5.5"
-        assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-5.5"
+        assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-6.1-sol"
 
     def test_zai_minimax_cerebras_and_ant_ling_defaults_track_current_models(self):
         assert DEFAULT_MODEL_PER_PROVIDER["zai"] == "glm-5.3"

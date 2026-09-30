@@ -13,7 +13,10 @@ A config's optional ``streamSimple`` handler
 contract as the built-in providers: it must invoke ``options.on_payload`` before
 sending the provider request and use any replacement payload it returns, and it
 must invoke ``options.on_response`` after receiving the response and before
-consuming its body. ``api`` is required alongside it.
+consuming its body. It may await ``options.on_provider_stream_event(data,
+model)`` with parsed stream events before normalization; the data is
+adapter-owned and must be treated as read-only. ``api`` is required alongside
+it.
 """
 
 from dataclasses import dataclass, replace

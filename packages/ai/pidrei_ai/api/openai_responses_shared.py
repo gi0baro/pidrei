@@ -31,6 +31,7 @@ from pidrei_ai.registry import calculate_cost
 from pidrei_ai.types import (
     AssistantMessage,
     Model,
+    OnProviderStreamEvent,
     StopReason,
     SystemMessage,
     TextDeltaEvent,
@@ -45,6 +46,7 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
+from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.json_parse import parse_streaming_json
@@ -414,6 +416,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
     stream: AssistantMessageEventStream,
     model: Model,
     *,
+    on_provider_stream_event: OnProviderStreamEvent | None = None,
     service_tier: str | None = None,
     grammar_tool_input_properties: dict[str, str] | None = None,
     resolve_service_tier=None,
@@ -422,6 +425,9 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
     grammar_tool_input_properties = grammar_tool_input_properties or {}
     saw_terminal_response_event = False
     output_slots: dict[int, _Slot] = {}
+    # Every tool-call slot in content order, including ones a later slot displaced from
+    # `output_slots` (a server that omits output_index); pi keeps this scratch on the block.
+    tool_call_slots: list[_Slot] = []
     reasoning_blocks_by_id: dict[str, ThinkingContentBuilder] = {}
 
     def get_slot(output_index: int, kind: str) -> _Slot | None:
@@ -482,6 +488,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 partial_json=item.get("arguments") or "",
             )
             output_slots[output_index] = slot
+            tool_call_slots.append(slot)
             stream.push(ToolCallStartEvent(content_index=slot.content_index, partial=output))
             return slot
         if item_type == "custom_tool_call":
@@ -501,6 +508,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
                 json_buffer=GrammarToolInputJsonBuffer(),
             )
             output_slots[output_index] = slot
+            tool_call_slots.append(slot)
             stream.push(ToolCallStartEvent(content_index=slot.content_index, partial=output))
             return slot
         return None
@@ -566,6 +574,7 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
             output.stop_reason = "toolUse"
 
     async for event in events:
+        await maybe_call(on_provider_stream_event, event, model)
         event_type = event.get("type")
         if event_type == "response.created":
             output.response_id = (event.get("response") or {}).get("id")
@@ -694,3 +703,13 @@ async def process_responses_stream(  # noqa: C901 (mirrors pi's event ladder)
 
     if not saw_terminal_response_event:
         raise RuntimeError("OpenAI Responses stream ended before a terminal response event")
+    # The agent runs every tool call in the final message. Refuse to hand over calls whose
+    # output_item.done never arrived: their arguments may be cut off or mixed up, e.g. when a
+    # non-compliant server omits output_index. Finished calls have their scratch buffers removed.
+    if output.stop_reason == "toolUse":
+        for slot in tool_call_slots:
+            if slot.partial_json is not None or slot.custom_property is not None:
+                raise RuntimeError(
+                    "OpenAI Responses stream completed with an unfinished tool call: "
+                    f"{slot.block.name} ({slot.block.id})"
+                )

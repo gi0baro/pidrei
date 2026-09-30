@@ -654,6 +654,7 @@ def stream(
             blocks = output.content
 
             async for event in _iterate_anthropic_events(response, opts.cancel):
+                await maybe_call(opts.on_provider_stream_event, event, model)
                 event_type = event.get("type")
                 if event_type == "message_start":
                     message = event.get("message") or {}
@@ -794,6 +795,13 @@ def stream(
                             output.usage.cache_read = usage["cache_read_input_tokens"]
                         if usage.get("cache_creation_input_tokens") is not None:
                             output.usage.cache_write = usage["cache_creation_input_tokens"]
+                        # Vercel AI Gateway includes the TTL breakdown in deltas too.
+                        cache_creation = usage.get("cache_creation")
+                        if (
+                            isinstance(cache_creation, dict)
+                            and cache_creation.get("ephemeral_1h_input_tokens") is not None
+                        ):
+                            output.usage.cache_write_1h = cache_creation["ephemeral_1h_input_tokens"]
                         # Reasoning tokens ride on output_tokens_details.thinking_tokens
                         # in the final message_delta usage (a subset of output_tokens).
                         details = usage.get("output_tokens_details") or {}

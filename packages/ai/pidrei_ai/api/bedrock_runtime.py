@@ -413,7 +413,14 @@ def _decode_event(event: Any) -> dict[str, Any] | None:
 
     parsed = json.loads(payload.decode("utf-8")) if payload else {}
     if event_type in _STREAM_EXCEPTION_EVENTS:
-        raise BedrockRuntimeServiceException(_STREAM_EXCEPTION_EVENTS[event_type], parsed.get("message") or event_type)
+        # The SDK yields modelled stream exceptions as union members of the
+        # stream (`{internalServerException: ...}`); the consumer raises them.
+        # The value is the exception itself, so its code survives the raise.
+        return {
+            event_type: BedrockRuntimeServiceException(
+                _STREAM_EXCEPTION_EVENTS[event_type], parsed.get("message") or event_type
+            )
+        }
     return {event_type: parsed}
 
 
