@@ -11,7 +11,9 @@ layout parity: `theme.py` accepts documents as-is unless
 the first theme loads, as pi does.
 """
 
-# ColorValue: hex "#ff0000", var ref "primary", empty "", or 256-color index.
+# ColorValue: hex, OKLCH, OKHSL, var ref "primary", empty "", or 256-color
+# index. `appearance` (optional, "dark" | "light") is the background the theme
+# is designed for, detected from the theme colors when omitted.
 
 _REQUIRED_COLORS = [
     # Core UI (10 colors)
@@ -107,6 +109,10 @@ def _collect_theme_errors(json_value) -> tuple[set, list]:
     schema_ref = json_value.get("$schema")
     if schema_ref is not None and not isinstance(schema_ref, str):
         other_errors.append("  - /$schema: Expected string")
+
+    appearance = json_value.get("appearance")
+    if appearance is not None and appearance not in ("dark", "light"):
+        other_errors.append('  - /appearance: Expected "dark" or "light"')
 
     vars_value = json_value.get("vars")
     if vars_value is not None:

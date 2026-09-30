@@ -8,12 +8,13 @@ theme finishes setup.
 from pidrei_tui import Container, Spacer, Text, get_keybindings
 
 from ....config import APP_NAME
-from ..theme import theme
+from ..theme import SYSTEM_THEME_NAME, theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint, raw_key_hint
 
 
 THEME_OPTIONS = [
+    {"value": SYSTEM_THEME_NAME, "label": "System (matches your terminal colors)"},
     {"value": "dark", "label": "Dark"},
     {"value": "light", "label": "Light"},
 ]
@@ -24,18 +25,21 @@ SETUP_LOGO_LINES = ["██████", "██  ██", "████  █�
 class FirstTimeSetupComponent(Container):
     """First-time setup dialog: theme choice.
 
-    Options: ``{"detectedTheme", "onThemePreview", "onSubmit", "onCancel"}``;
-    submit receives a ``{"theme"}`` record.
+    Options: ``{"onThemePreview", "onSubmit", "onCancel"}``; submit receives
+    a ``{"theme"}`` record.
     """
 
     def __init__(self, options: dict) -> None:
         super().__init__()
         self._options = options
-        self._theme_index = max(
-            0,
-            next((i for i, option in enumerate(THEME_OPTIONS) if option["value"] == options["detectedTheme"]), -1),
-        )
+        self._theme_index = 0
         self._update()
+
+    def invalidate(self) -> None:
+        """Rebuild on theme changes, e.g. when the system theme receives the
+        terminal's colors."""
+        self._update()
+        super().invalidate()
 
     # Rebuild the whole dialog on every change so theme previews recolor all
     # text.
@@ -49,7 +53,6 @@ class FirstTimeSetupComponent(Container):
         self.add_child(Spacer(1))
 
         self.add_child(Text(theme.fg("text", "Pick a theme."), 1, 0))
-        self.add_child(Text(theme.fg("muted", f"Detected system appearance: {self._options['detectedTheme']}"), 1, 0))
         self.add_child(Spacer(1))
         self._add_option_list([option["label"] for option in THEME_OPTIONS], self._theme_index)
 

@@ -43,14 +43,14 @@ async def test_set_theme_swaps_inside_the_registered_change_callback(change_call
 
 
 @pytest.mark.tonio
-async def test_a_failed_theme_falls_back_to_dark_inside_the_callback_without_a_refresh(change_callback):
-    # pi's fallback swaps to dark without notifying: `apply` says so.
+async def test_a_failed_theme_falls_back_to_the_system_theme_inside_the_callback_without_a_refresh(change_callback):
+    # pi's fallback swaps to the system theme without notifying: `apply` says so.
     await init_theme("light")
 
     result = await theme_module.set_theme("no-such-theme")
 
     assert result["success"] is False
-    assert change_callback == [("before", "light"), ("apply", False), ("after", "dark")]
+    assert change_callback == [("before", "light"), ("apply", False), ("after", "system")]
 
 
 @pytest.mark.tonio

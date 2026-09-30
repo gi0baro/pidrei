@@ -460,6 +460,11 @@ def test_trusts_explicit_truecolor_hints_through_tmux():
         assert caps["images"] is None
 
 
+def test_detects_truecolor_from_direct_color_term_values():
+    with clean_env({"TERM": "xterm-direct"}):
+        assert detect_capabilities(lambda: False)["trueColor"] is True
+
+
 # Kitty image cursor movement
 
 

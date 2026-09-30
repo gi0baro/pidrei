@@ -62,19 +62,20 @@ class TestFirstTimeSetupComponent:
     @pytest.mark.tonio
     async def test_confirming_the_theme_finishes_setup_without_an_analytics_step(self):
         submitted: list[dict] = []
-
-        def on_theme_preview(_theme_name: str) -> None:
-            return None
+        previews: list[str] = []
 
         component = FirstTimeSetupComponent(
             {
-                "detectedTheme": "light",
-                "onThemePreview": on_theme_preview,
+                "onThemePreview": previews.append,
                 "onSubmit": submitted.append,
                 "onCancel": lambda: None,
             }
         )
 
+        # The system theme is preselected; dark and light follow it.
+        component.handle_input("j")
+        component.handle_input("j")
         component.handle_input("\n")
 
+        assert previews == ["dark", "light"]
         assert submitted == [{"theme": "light"}]

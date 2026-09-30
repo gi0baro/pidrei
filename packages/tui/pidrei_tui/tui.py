@@ -73,17 +73,23 @@ Port deviations (documented once here):
   render/writer lifecycle). ``stop()`` closes the request channel, waits for
   the render loop to finish its frame, and drains the writer — no task
   abort involved.
-- ``query_terminal_background_color``/``query_terminal_color_scheme`` are
-  async methods; their pending-state transitions take a sync lock because
-  the terminal's input reader and the querying task may run on different
-  tonio workers.
+- ``query_terminal_colors`` does not resolve with the colors: every report
+  (the query completing, a timeout's partial result, a late reply) is a
+  message on the terminal-event loop, whose one consumer hands it to the
+  ``on_terminal_colors`` listeners in arrival order (pi's promise resolve and
+  ``onLateReply`` callback, which apply the colors from three places at once).
+  The call registers the query and returns an event the loop sets once the
+  listeners handled the query's first report; the burst write and the
+  timeout run on their own coroutine. Pending-query transitions and report
+  sends take a sync lock because the terminal's input reader and that
+  coroutine may run on different tonio workers.
 - Input (UI_ISLAND_DESIGN §4.2): the terminal hands terminal replies to
   ``_consume_terminal_reply`` from its reader, ahead of the input order, so
   a query is answered even while input handling waits on the work that
-  asked; colour-scheme reports go to their own loop (a theme load stays off
-  the key path). Every other item reaches ``_handle_input`` from the
-  terminal's one input consumer (or, for a terminal without one, from its
-  caller), one at a time.
+  asked; colour reports and colour-scheme reports go to their own loop (a
+  theme load stays off the key path). Every other item reaches
+  ``_handle_input`` from the terminal's one input consumer (or, for a
+  terminal without one, from its caller), one at a time.
 - ``CURSOR_MARKER`` is an APC sequence pi brands "pi:c" — renamed to
   "pidrei:c" (pi naming itself).
 - Env renames: PI_TUI_DEBUG_REDRAW → PIDREI_TUI_DEBUG_REDRAW, PI_TUI_DEBUG →
@@ -107,11 +113,7 @@ from tonio.colored.sync import channel
 
 from .keys import is_key_release, matches_key
 from .terminal import ProcessTerminal
-from .terminal_colors import (
-    is_osc11_background_color_response,
-    parse_osc11_background_color,
-    parse_terminal_color_scheme_report,
-)
+from .terminal_colors import parse_osc_color_response, parse_terminal_color_scheme_report
 from .terminal_image import get_capabilities, is_image_line, set_cell_dimensions
 from .utils import extract_segments, normalize_terminal_output, slice_by_column, slice_with_width, visible_width
 
@@ -196,6 +198,13 @@ def dispatch_mouse_event(component, event: TuiMouseEvent) -> TuiMouseDispatchRes
     if result is None:
         return None
     if isinstance(result, TuiMouseDispatchResult):
+        # The component forwarded the event to a child it hosts. Like a
+        # delegating container, it routes keys to that child itself, so it
+        # keeps keyboard focus. Focusing the child directly would leave focus
+        # on a detached component once the host removes it, e.g. a closed
+        # settings submenu.
+        if result.focus and getattr(component, "handle_input", None) is not None:
+            return replace(result, focus_target=component)
         return result
     if not result.handled and not result.capture and not result.focus:
         return None
@@ -315,13 +324,46 @@ class OverlayHandle:
         self.get_bounds = get_bounds
 
 
-class _PendingOsc11Query:
-    __slots__ = ("event", "result", "settled")
+_TERMINAL_PALETTE_SIZE = 16
+# OSC 10 and 11 plus OSC 4 for every palette color.
+_TERMINAL_COLOR_REPLY_COUNT = 2 + _TERMINAL_PALETTE_SIZE
+# Default colors, palette colors 0-15, and a trailing primary device
+# attributes (DA1) request. Every terminal answers DA1 and terminals answer in
+# order, so the DA1 reply marks the end of the color replies, including for
+# terminals that ignore the color queries.
+_TERMINAL_COLOR_QUERY = (
+    "\x1b]10;?\x07\x1b]11;?\x07"
+    + "".join(f"\x1b]4;{index};?\x07" for index in range(_TERMINAL_PALETTE_SIZE))
+    + "\x1b[c"
+)
+_DEVICE_ATTRIBUTES_RESPONSE_RE = re.compile(r"^\x1b\[\?[\d;]*c$")
+
+
+class _PendingTerminalColorQuery:
+    """pi's PendingTerminalColorQuery; its ``deliver`` callback becomes the
+    two flags. Fields change under the TUI's ``_query_lock``."""
+
+    __slots__ = ("applied", "background", "complete", "foreground", "palette", "replied", "settled", "timed_out")
 
     def __init__(self) -> None:
-        self.settled = False
-        self.result = None
-        self.event = tonio.Event()
+        self.foreground = None
+        self.background = None
+        self.palette: list = [None] * _TERMINAL_PALETTE_SIZE
+        # Targets that already replied, so duplicates do not count twice.
+        self.replied: set = set()
+        # Completed (on the DA1 reply or once every color replied): later
+        # replies are ignored.
+        self.complete = False
+        # The timeout sent the first report; completing sends a late one.
+        self.timed_out = False
+        # Set when the first report is sent: the awaiter's timeout wait.
+        self.settled = tonio.Event()
+        # Set once the listeners handled the first report.
+        self.applied = tonio.Event()
+
+    def result(self) -> dict:
+        palette = list(self.palette) if all(color is not None for color in self.palette) else None
+        return {"foreground": self.foreground, "background": self.background, "palette": palette}
 
 
 class Container:
@@ -558,13 +600,17 @@ class TuiBase(Container, ABC):
         self._full_redraw_count = 0
         self._stopped = False
         self._query_lock = threading.Lock()
-        self._pending_osc11_replies = 0
-        self._pending_osc11_queries: list[_PendingOsc11Query] = []
+        # Color queries waiting for their DA1 reply, oldest first. Terminals
+        # answer in order, so color replies belong to the oldest one. Queries
+        # stay here after a timeout to collect late replies.
+        self._pending_terminal_color_queries: list[_PendingTerminalColorQuery] = []
         self._color_scheme_listeners: tuple = ()  # under `_listeners_guard`
+        self._terminal_colors_listeners: tuple = ()  # under `_listeners_guard`
         self._color_scheme_notifications_enabled = False
-        # Terminal events (colour-scheme reports) from the input reader to
-        # their own loop, off the key path (UI_ISLAND_DESIGN §4.2): the
-        # sender while the TUI is started, and the loop's task.
+        # Terminal events (colour and colour-scheme reports) from the input
+        # reader and the colour queries to their own loop, off the key path
+        # (UI_ISLAND_DESIGN §4.2): the sender while the TUI is started
+        # (swapped under `_query_lock`), and the loop's task.
         self._terminal_events = None
         self._terminal_event_task = None
 
@@ -1033,7 +1079,9 @@ class TuiBase(Container, ABC):
                 except Exception as error:
                     self.report_error(error)
 
-        self._terminal_events, events = channel.unbounded()
+        sender, events = channel.unbounded()
+        with self._query_lock:
+            self._terminal_events = sender
         self._terminal_event_task = tonio.spawn(self._run_terminal_events(events))
         # Requests are dropped (`_render_active`) until the end of start.
         self._render_request = _RenderRequest()
@@ -1053,8 +1101,8 @@ class TuiBase(Container, ABC):
         except BaseException:
             # A failed start leaves no terminal events or rendering running:
             # the loops end on their closed channels.
-            self._terminal_events = self._terminal_event_task = None
-            events.close()
+            self._close_terminal_events()
+            self._terminal_event_task = None
             self._render_requests = self._render_loop_task = None
             requests.close()
             raise
@@ -1125,6 +1173,20 @@ class TuiBase(Container, ABC):
         with self._listeners_guard:
             self._input_listeners = _without(self._input_listeners, listener)
 
+    def on_terminal_colors(self, listener):
+        """Register an async ``listener(colors)`` for the TerminalColors
+        reports of `query_terminal_colors`, in arrival order. Returns the
+        unsubscribe function."""
+        with self._listeners_guard:
+            if listener not in self._terminal_colors_listeners:
+                self._terminal_colors_listeners = (*self._terminal_colors_listeners, listener)
+
+        def unsubscribe() -> None:
+            with self._listeners_guard:
+                self._terminal_colors_listeners = _without(self._terminal_colors_listeners, listener)
+
+        return unsubscribe
+
     def on_terminal_color_scheme_change(self, listener):
         with self._listeners_guard:
             if listener not in self._color_scheme_listeners:
@@ -1188,11 +1250,9 @@ class TuiBase(Container, ABC):
             await self._before_terminal_stop(options)
         self.terminal.show_cursor()
         await self.terminal.stop()
-        # The reader is gone: no more terminal events. A listener being
-        # notified finishes first.
-        events, self._terminal_events = self._terminal_events, None
-        if events is not None:
-            events.close()
+        # The reader is gone: no more terminal events. The loop hands out
+        # what is queued, and a listener being notified finishes first.
+        self._close_terminal_events()
         if self._terminal_event_task is not None:
             task, self._terminal_event_task = self._terminal_event_task, None
             await task
@@ -1367,28 +1427,55 @@ class TuiBase(Container, ABC):
         """The terminal's ``on_reply``: runs in its input reader, ahead of the
         input order (pi checks these first in `handleInput`). A query's
         answer settles the query even while input handling waits on the
-        work that asked; a colour-scheme report goes to the terminal-event
-        loop, since reacting to it can mean loading a theme."""
-        if self._consume_osc11_background_response(data):
+        work that asked; colour and colour-scheme reports go to the
+        terminal-event loop, since reacting to them can mean loading a
+        theme."""
+        if self._consume_terminal_color_response(data):
             return True
         scheme = parse_terminal_color_scheme_report(data)
         if not scheme:
             return False
-        events = self._terminal_events
-        if events is not None:
-            events.send(scheme)
+        with self._query_lock:
+            events = self._terminal_events
+            if events is not None:
+                events.send(("scheme", scheme, None))
         return True
 
     async def _run_terminal_events(self, receiver) -> None:
         while True:
             try:
-                scheme = await receiver.receive()
+                kind, payload, applied = await receiver.receive()
             except BrokenPipeError:
                 return  # `stop()`
             try:
-                await self._notify_terminal_color_scheme(scheme)
+                if kind == "colors":
+                    await self._notify_terminal_colors(payload)
+                else:
+                    await self._notify_terminal_color_scheme(payload)
             except Exception as error:
                 self.report_error(error)
+            if applied is not None:
+                applied.set()
+
+    def _close_terminal_events(self) -> None:
+        """End the terminal-event loop: it hands out what is queued, then
+        stops. A report sent later only settles its query's `applied`."""
+        with self._query_lock:
+            events, self._terminal_events = self._terminal_events, None
+        if events is not None:
+            events.close()
+
+    def _send_terminal_colors(self, query: _PendingTerminalColorQuery, first: bool) -> None:
+        """Send one report of ``query`` to the loop. Under `_query_lock`, so
+        reports go out in the order the query transitions happened."""
+        applied = query.applied if first else None
+        events = self._terminal_events
+        if events is None:
+            # Stopped: nothing handles the report, but waiters must not hang.
+            if applied is not None:
+                applied.set()
+            return
+        events.send(("colors", query.result(), applied))
 
     def _route_input(self, data: str) -> None:
         """The input item's synchronous handling, under the UI state lock."""
@@ -1453,21 +1540,47 @@ class TuiBase(Container, ABC):
             handle(data)
             self.request_render()
 
-    def _consume_osc11_background_response(self, data: str) -> bool:
-        if not is_osc11_background_color_response(data):
+    def _consume_terminal_color_response(self, data: str) -> bool:
+        is_device_attributes = _DEVICE_ATTRIBUTES_RESPONSE_RE.match(data) is not None
+        response = None if is_device_attributes else parse_osc_color_response(data)
+        if not is_device_attributes and response is None:
             return False
-
-        rgb = parse_osc11_background_color(data)
         with self._query_lock:
-            if self._pending_osc11_replies <= 0:
+            if not self._pending_terminal_color_queries:
                 return False
-            self._pending_osc11_replies -= 1
-            query = self._pending_osc11_queries.pop(0) if self._pending_osc11_queries else None
-            if query is not None and not query.settled:
-                query.settled = True
-                query.result = rgb
-                query.event.set()
+            query = self._pending_terminal_color_queries[0]
+            if is_device_attributes:
+                self._pending_terminal_color_queries.pop(0)
+                self._complete_terminal_color_query(query)
+                return True
+
+            target = response["target"]
+            key = str(target)
+            if query.complete or key in query.replied:
+                return True
+            query.replied.add(key)
+            if target == "foreground":
+                query.foreground = response["rgb"]
+            elif target == "background":
+                query.background = response["rgb"]
+            elif target < _TERMINAL_PALETTE_SIZE:
+                query.palette[target] = response["rgb"]
+            if len(query.replied) == _TERMINAL_COLOR_REPLY_COUNT:
+                self._complete_terminal_color_query(query)
         return True
+
+    def _complete_terminal_color_query(self, query: _PendingTerminalColorQuery) -> None:
+        """Under `_query_lock`: the first report, or a late one after the
+        timeout; once only."""
+        if query.complete:
+            return
+        query.complete = True
+        self._send_terminal_colors(query, first=not query.timed_out)
+        query.settled.set()
+
+    async def _notify_terminal_colors(self, colors: dict) -> None:
+        for listener in self._terminal_colors_listeners:
+            await listener(colors)
 
     async def _notify_terminal_color_scheme(self, scheme: str) -> None:
         for listener in self._color_scheme_listeners:
@@ -1731,50 +1844,49 @@ class TuiBase(Container, ABC):
     # Terminal queries
     # ------------------------------------------------------------------
 
-    async def query_terminal_background_color(self, *, timeout_ms: float):
-        """Query the terminal's default background color with OSC 11 (``ESC ] 11 ; ? BEL``).
+    def query_terminal_colors(self, *, timeout_ms: float) -> tonio.Event:
+        """Query the terminal's theme colors: the default foreground (OSC 10),
+        the default background (OSC 11), and ANSI colors 0-15 (OSC 4),
+        followed by a DA1 request that marks the end of the replies.
 
-        Returns the parsed RGB record, or None if it times out or fails to
-        parse.
+        The query reports a TerminalColors record to the `on_terminal_colors`
+        listeners when the DA1 reply or all color replies arrive, or when the
+        timeout (for terminals that do not answer DA1 either) expires; colors
+        the terminal did not report are None, and the palette is only set when
+        all 16 arrived. Replies completing the query after the timeout, e.g.
+        over slow links, are reported once more. A query whose write fails
+        reports no colors.
+
+        Returns an event set once the listeners handled the first report.
         """
-        query = _PendingOsc11Query()
+        query = _PendingTerminalColorQuery()
         with self._query_lock:
-            self._pending_osc11_queries.append(query)
-            self._pending_osc11_replies += 1
-        await self.terminal.write("\x1b]11;?\x07")
+            self._pending_terminal_color_queries.append(query)
+        tonio.spawn.without_tracking(self._run_terminal_color_query(query, timeout_ms))
+        return query.applied
 
-        await query.event.wait(timeout_ms / 1000)
-        with self._query_lock:
-            if not query.settled:
-                # Timed out; a late reply is still consumed silently
-                # (pi keeps the pending-reply bookkeeping in place too).
-                query.settled = True
-                return None
-            return query.result
-
-    async def query_terminal_color_scheme(self, *, timeout_ms: float):
-        """Query the terminal's color-scheme preference with DSR (``CSI ? 996 n``).
-
-        Terminals that support the color palette notification protocol reply
-        with ``CSI ? 997 ; 1 n`` for dark or ``CSI ? 997 ; 2 n`` for light.
-        """
-        result: dict[str, Any] = {"scheme": None}
-        event = tonio.Event()
-
-        async def settle(scheme) -> None:
-            with self._query_lock:
-                if event.is_set():
-                    return
-                result["scheme"] = scheme
-                event.set()
-
-        unsubscribe = self.on_terminal_color_scheme_change(settle)
+    async def _run_terminal_color_query(self, query: _PendingTerminalColorQuery, timeout_ms: float) -> None:
+        """The burst write, then the timeout; the reader completes the query."""
         try:
-            await self.terminal.write("\x1b[?996n")
-            await event.wait(timeout_ms / 1000)
-            return result["scheme"]
-        finally:
-            unsubscribe()
+            await self.terminal.write(_TERMINAL_COLOR_QUERY)
+        except Exception:
+            # pi treats a failed query like a terminal that does not report
+            # colors: one empty report.
+            with self._query_lock:
+                if query in self._pending_terminal_color_queries:
+                    self._pending_terminal_color_queries.remove(query)
+                query.foreground = query.background = None
+                query.palette = [None] * _TERMINAL_PALETTE_SIZE
+                self._complete_terminal_color_query(query)
+            return
+        await query.settled.wait(timeout_ms / 1000)
+        with self._query_lock:
+            if query.complete or query.timed_out:
+                return
+            # Report the replies so far, and keep collecting late replies.
+            query.timed_out = True
+            self._send_terminal_colors(query, first=True)
+            query.settled.set()
 
 
 # pi's `TUI` is a structural interface both renderers implement; annotations

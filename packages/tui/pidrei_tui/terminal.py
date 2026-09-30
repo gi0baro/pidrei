@@ -311,6 +311,9 @@ class ProcessTerminal:
         self._kitty_protocol_active = False
         self._modify_other_keys_active = False
         self._keyboard_protocol_pushed = False
+        # DA1 replies owed to keyboard protocol queries. Later DA1 replies
+        # answer other queries and are forwarded.
+        self._pending_keyboard_protocol_device_attributes = 0
         self._negotiation_buffer = ""
         # pi's negotiation flush `setTimeout`, as the time it would fire.
         self._negotiation_deadline: float | None = None
@@ -464,12 +467,14 @@ class ProcessTerminal:
             deferred: list[str] = []
             with self._protocol_lock:
                 kitty_was_active = self._kitty_protocol_active
-                negotiation_sequence = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
-                if negotiation_sequence == "pending":
+                negotiation = self._read_keyboard_protocol_negotiation_sequence(sequence, deferred)
+                if negotiation == "pending":
                     self._schedule_negotiation_buffer_flush()
                     consumed = True  # Wait briefly for the rest of a split Kitty response.
                 else:
-                    consumed = self._handle_keyboard_protocol_negotiation_sequence(negotiation_sequence)
+                    consumed = negotiation is not None and self._handle_keyboard_protocol_negotiation_sequence(
+                        negotiation[0]
+                    )
                 kitty_activated = self._kitty_protocol_active and not kitty_was_active
 
             for buffered in deferred:
@@ -478,7 +483,7 @@ class ProcessTerminal:
                 # After the deferred sequence, which arrived before the reply.
                 self._enqueue_input(_KITTY_PROTOCOL_ACTIVE)
             if not consumed:
-                self._forward_input_sequence(sequence)
+                self._forward_input_sequence(negotiation[1] if negotiation is not None else sequence)
 
         self._stdin_buffer.on_data(on_data)
 
@@ -506,16 +511,20 @@ class ProcessTerminal:
         - 4 = report alternate keys (shifted key, base layout key)
         """
         self._setup_stdin_buffer()
-        self._keyboard_protocol_pushed = True
-        self._clear_negotiation_buffer()
+        with self._protocol_lock:
+            self._keyboard_protocol_pushed = True
+            self._pending_keyboard_protocol_device_attributes += 1
+            self._clear_negotiation_buffer()
         self.write_sync(KITTY_KEYBOARD_PROTOCOL_QUERY)
 
     def _handle_keyboard_protocol_negotiation_sequence(
-        self, negotiation_sequence: KeyboardProtocolNegotiationSequence | None
+        self, negotiation_sequence: KeyboardProtocolNegotiationSequence
     ) -> bool:
-        if not negotiation_sequence:
-            return False
         self._clear_negotiation_buffer()
+        if negotiation_sequence["type"] == "device-attributes":
+            if self._pending_keyboard_protocol_device_attributes == 0:
+                return False
+            self._pending_keyboard_protocol_device_attributes -= 1
         if negotiation_sequence["type"] == "kitty-flags":
             if negotiation_sequence["flags"] != 0:
                 self._disable_modify_other_keys()
@@ -531,8 +540,11 @@ class ProcessTerminal:
 
     def _read_keyboard_protocol_negotiation_sequence(
         self, sequence: str, deferred: list[str]
-    ) -> KeyboardProtocolNegotiationSequence | str | None:
-        """A buffered sequence that turns out not to be a negotiation response
+    ) -> tuple[KeyboardProtocolNegotiationSequence, str] | str | None:
+        """The parsed negotiation reply with its full (possibly reassembled)
+        sequence, "pending", or None.
+
+        A buffered sequence that turns out not to be a negotiation response
         is appended to `deferred` for the caller to forward once
         `_protocol_lock` is released."""
         if self._negotiation_buffer:
@@ -540,7 +552,7 @@ class ProcessTerminal:
             negotiation_sequence = parse_keyboard_protocol_negotiation_sequence(buffered_sequence)
             if negotiation_sequence:
                 self._clear_negotiation_buffer()
-                return negotiation_sequence
+                return negotiation_sequence, buffered_sequence
             if _is_keyboard_protocol_negotiation_sequence_prefix(buffered_sequence):
                 self._set_negotiation_buffer(buffered_sequence)
                 return "pending"
@@ -550,7 +562,7 @@ class ProcessTerminal:
 
         negotiation_sequence = parse_keyboard_protocol_negotiation_sequence(sequence)
         if negotiation_sequence:
-            return negotiation_sequence
+            return negotiation_sequence, sequence
         if _is_keyboard_protocol_negotiation_sequence_prefix(sequence):
             self._set_negotiation_buffer(sequence)
             return "pending"

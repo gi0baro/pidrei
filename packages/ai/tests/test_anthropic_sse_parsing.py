@@ -594,7 +594,7 @@ async def test_omits_the_interleaved_thinking_beta_when_thinking_is_disabled():
     client = FakeClient(sse_body(minimal_anthropic_events()))
 
     await stream_anthropic(
-        get_builtin_model("openrouter", "anthropic/claude-3-haiku"),
+        get_builtin_model("openrouter", "anthropic/claude-haiku-4.5"),
         user_context("Hello"),
         AnthropicOptions(client=client, thinking_enabled=False),
     ).result()

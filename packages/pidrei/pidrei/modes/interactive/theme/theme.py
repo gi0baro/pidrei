@@ -11,22 +11,44 @@ Deviations:
   the 100 ms debounced reload is a ``_timers.Timeout`` whose file read runs
   on the pool, on its own task. The module lock guards the theme globals
   against `set_theme` callers on other tasks.
+- The terminal's reported colors (``_terminal_colors``, its pending flag and
+  ``_terminal_color_scheme``) are copy-on-write globals under the same lock;
+  their writer is the theme controller's terminal-colors listener, run by the
+  TUI's one terminal-event consumer.
 - Syntax highlighting is pygments (utils/syntax_highlight), keyed by the same
   scope names pi feeds cli-highlight.
+
+ThemeStyle is an option dict: TextAttributes keys plus ``fg`` (a ThemeColor
+token or a Color) and ``bg`` (a ThemeBg token or a Color). Tokens are only
+accepted in their own slot, because "" (terminal default) means the default
+foreground or background depending on the slot; use ``theme.colors[token]``
+to use a token's color in the other slot.
 """
 
 import contextlib
 import json
-import math
 import os
 import re
 import threading
+import types
 from collections.abc import Awaitable, Callable
 
 import tonio.colored as tonio
 from tonio.colored import fs
 
-from pidrei_tui import get_capabilities
+from pidrei_tui import (
+    IndexedColor,
+    background_ansi,
+    color_to_hex,
+    color_to_oklch,
+    foreground_ansi,
+    get_terminal_color_mode,
+    indexed_color,
+    mix_colors,
+    parse_color,
+    rgb_color,
+    style_text_with_ansi,
+)
 from pidrei_tui._timers import Timeout
 
 from ....config import get_custom_themes_dir, get_themes_dir
@@ -34,6 +56,7 @@ from ....utils import colors as chalk
 from ....utils.fs_watch import close_watcher, watch_with_error_handler
 from ....utils.syntax_highlight import highlight, supports_language
 from ....utils.text import strip_bom
+from .system_theme import SYSTEM_THEME_NAME, generate_system_theme_colors, terminal_appearance
 
 
 # ============================================================================
@@ -41,7 +64,8 @@ from ....utils.text import strip_bom
 # ============================================================================
 
 # The schema that validates the theme document shape lives in `theme_json.py`
-# (ColorValue: hex "#ff0000", var ref "primary", empty "", or 256-color index).
+# (ColorValue: hex, OKLCH, OKHSL, var ref "primary", empty "", or 256-color
+# index).
 
 # pi: `let themeJsonValidator: ThemeJsonValidator | undefined`, set once at
 # startup. Read under `_theme_state_lock` like the other theme globals.
@@ -60,14 +84,16 @@ def set_theme_json_validator(validator) -> None:
         _theme_json_validator = validator
 
 
-THEME_BG_KEYS = (
-    "selectedBg",
-    "searchMatchBg",
-    "userMessageBg",
-    "customMessageBg",
-    "toolPendingBg",
-    "toolSuccessBg",
-    "toolErrorBg",
+_BACKGROUND_TOKENS = frozenset(
+    (
+        "selectedBg",
+        "searchMatchBg",
+        "userMessageBg",
+        "customMessageBg",
+        "toolPendingBg",
+        "toolSuccessBg",
+        "toolErrorBg",
+    )
 )
 
 
@@ -75,106 +101,12 @@ THEME_BG_KEYS = (
 # Color Utilities
 # ============================================================================
 
-
-def _hex_to_rgb(hex_color: str) -> dict:
-    cleaned = hex_color.replace("#", "")
-    if len(cleaned) != 6:
-        raise ValueError(f"Invalid hex color: {hex_color}")
-    try:
-        r = int(cleaned[0:2], 16)
-        g = int(cleaned[2:4], 16)
-        b = int(cleaned[4:6], 16)
-    except ValueError:
-        raise ValueError(f"Invalid hex color: {hex_color}") from None
-    return {"r": r, "g": g, "b": b}
-
-
-# The 6x6x6 color cube channel values (indices 0-5)
-_CUBE_VALUES = [0, 95, 135, 175, 215, 255]
-
-# Grayscale ramp values (indices 232-255, 24 grays from 8 to 238)
-_GRAY_VALUES = [8 + i * 10 for i in range(24)]
-
-
-def _find_closest_index(values: list, target: int) -> int:
-    min_dist = math.inf
-    min_idx = 0
-    for i, value in enumerate(values):
-        dist = abs(target - value)
-        if dist < min_dist:
-            min_dist = dist
-            min_idx = i
-    return min_idx
-
-
-def _color_distance(r1, g1, b1, r2, g2, b2) -> float:
-    # Weighted Euclidean distance (human eye is more sensitive to green)
-    dr = r1 - r2
-    dg = g1 - g2
-    db = b1 - b2
-    return dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114
-
-
-def _rgb_to_256(r: int, g: int, b: int) -> int:
-    # Find closest color in the 6x6x6 cube
-    r_idx = _find_closest_index(_CUBE_VALUES, r)
-    g_idx = _find_closest_index(_CUBE_VALUES, g)
-    b_idx = _find_closest_index(_CUBE_VALUES, b)
-    cube_r = _CUBE_VALUES[r_idx]
-    cube_g = _CUBE_VALUES[g_idx]
-    cube_b = _CUBE_VALUES[b_idx]
-    cube_index = 16 + 36 * r_idx + 6 * g_idx + b_idx
-    cube_dist = _color_distance(r, g, b, cube_r, cube_g, cube_b)
-
-    # Find closest grayscale
-    gray = round(0.299 * r + 0.587 * g + 0.114 * b)
-    gray_idx = _find_closest_index(_GRAY_VALUES, gray)
-    gray_value = _GRAY_VALUES[gray_idx]
-    gray_index = 232 + gray_idx
-    gray_dist = _color_distance(r, g, b, gray_value, gray_value, gray_value)
-
-    # Only consider grayscale if color is nearly neutral (spread < 10)
-    # AND grayscale is actually closer
-    spread = max(r, g, b) - min(r, g, b)
-    if spread < 10 and gray_dist < cube_dist:
-        return gray_index
-
-    return cube_index
-
-
-def _hex_to_256(hex_color: str) -> int:
-    rgb = _hex_to_rgb(hex_color)
-    return _rgb_to_256(rgb["r"], rgb["g"], rgb["b"])
-
-
-def _fg_ansi(color, mode: str) -> str:
-    if color == "":
-        return "\x1b[39m"
-    if isinstance(color, int):
-        return f"\x1b[38;5;{color}m"
-    if color.startswith("#"):
-        if mode == "truecolor":
-            rgb = _hex_to_rgb(color)
-            return f"\x1b[38;2;{rgb['r']};{rgb['g']};{rgb['b']}m"
-        return f"\x1b[38;5;{_hex_to_256(color)}m"
-    raise ValueError(f"Invalid color value: {color}")
-
-
-def _bg_ansi(color, mode: str) -> str:
-    if color == "":
-        return "\x1b[49m"
-    if isinstance(color, int):
-        return f"\x1b[48;5;{color}m"
-    if color.startswith("#"):
-        if mode == "truecolor":
-            rgb = _hex_to_rgb(color)
-            return f"\x1b[48;2;{rgb['r']};{rgb['g']};{rgb['b']}m"
-        return f"\x1b[48;5;{_hex_to_256(color)}m"
-    raise ValueError(f"Invalid color value: {color}")
+_OK_COLOR_RE = re.compile(r"^ok(lch|hsl)\(", re.IGNORECASE)
+_OKHSL_RE = re.compile(r"^okhsl\(", re.IGNORECASE)
 
 
 def _resolve_var_refs(value, vars_map: dict, visited: set | None = None):
-    if isinstance(value, int) or value == "" or value.startswith("#"):
+    if isinstance(value, int) or value == "" or value.startswith("#") or _OK_COLOR_RE.match(value):
         return value
     visited = visited if visited is not None else set()
     if value in visited:
@@ -217,48 +149,222 @@ def _with_theme_color_fallbacks(colors: dict) -> dict:
 
 
 # ============================================================================
+# Appearance & Terminal Default Colors
+# ============================================================================
+
+# ThemeAppearance, the background a theme is designed for, is a
+# TerminalTheme: "dark" | "light".
+
+# The terminal's reported colors (a TerminalColors record). Replaced (never
+# mutated) on update, so themes can cache resolved colors by identity. Under
+# `_theme_state_lock`, with the two below.
+_terminal_colors: dict = {}
+# While the terminal color query is in flight, the system theme renders in grayscale.
+_terminal_colors_pending = False
+# The terminal's last light/dark report (mode 2031). Only used while it has
+# not reported a background.
+_terminal_color_scheme: str | None = None
+
+
+def set_terminal_colors(colors: dict) -> None:
+    """Record the terminal's reported colors. Themes use the default colors
+    for tokens set to "" (terminal default); the system theme is generated
+    from all of them. Ends the pending state."""
+    global _terminal_colors, _terminal_colors_pending
+    with _theme_state_lock:
+        _terminal_colors = {**colors}
+        _terminal_colors_pending = False
+
+
+def set_terminal_color_scheme(scheme: str | None) -> None:
+    """Record the terminal's light/dark report, the fallback for terminals
+    that do not report their background."""
+    global _terminal_color_scheme
+    with _theme_state_lock:
+        _terminal_color_scheme = scheme
+
+
+def mark_terminal_colors_pending() -> None:
+    """Render the system theme in grayscale until `set_terminal_colors()`
+    reports the terminal's colors."""
+    global _terminal_colors_pending
+    with _theme_state_lock:
+        _terminal_colors_pending = True
+
+
+# Assumed terminal default colors when the terminal does not report them.
+_GUESSED_DEFAULT_COLORS = {
+    "dark": {"foreground": parse_color("#e5e5e7"), "background": parse_color("#000000")},
+    "light": {"foreground": parse_color("#000000"), "background": parse_color("#ffffff")},
+}
+
+
+def _average_lightness(colors: list) -> float | None:
+    # Palette colors 0-15 follow the user's terminal palette, so they say
+    # nothing about the theme.
+    fixed = [color for color in colors if not isinstance(color, IndexedColor) or color.index >= 16]
+    if not fixed:
+        return None
+    return sum(color_to_oklch(color)["l"] for color in fixed) / len(fixed)
+
+
+def _detect_appearance(foregrounds: list, backgrounds: list) -> str | None:
+    """Detect the background a theme is designed for from the lightness of its own colors."""
+    fg = _average_lightness(foregrounds)
+    bg = _average_lightness(backgrounds)
+    if fg is not None and bg is not None:
+        return "dark" if bg < fg else "light"
+    if bg is not None:
+        return "dark" if bg < 0.5 else "light"
+    if fg is not None:
+        return "dark" if fg > 0.5 else "light"
+    return None
+
+
+# ============================================================================
 # Theme Class
 # ============================================================================
 
 
 class Theme:
     def __init__(self, fg_colors: dict, bg_colors: dict, mode: str, options: dict | None = None):
+        """``options``: optional ``name``, ``sourcePath``, ``sourceInfo``,
+        ``appearance`` and ``dim`` (foreground tokens to render faint, SGR 2)."""
         options = options or {}
         self.name = options.get("name")
         self.source_path = options.get("sourcePath")
         self.source_info = options.get("sourceInfo")
         self._mode = mode
+        self._dim_tokens = frozenset(options.get("dim") or ())
+        # Precomputed escape sequences keep fg()/bg() on the render hot path
+        # to a lookup and concat.
+        self._fg_ansi: dict[str, str] = {}
+        self._bg_ansi: dict[str, str] = {}
+        # Tokens set to "" have no color of their own; `colors` fills them
+        # from the terminal defaults.
+        self._concrete_colors: dict = {}
+        self._default_foreground_tokens: list[str] = []
+        self._default_background_tokens: list[str] = []
+        # (terminal colors, resolved colors), swapped whole: see `colors`.
+        self._resolved_colors: tuple | None = None
         thinking_max = fg_colors.get("thinkingMax")
         if thinking_max is None:
             thinking_max = fg_colors["thinkingXhigh"]
         search_match_text = fg_colors.get("searchMatchText")
         if search_match_text is None:
             search_match_text = fg_colors["text"]
+        scrollbar_track = fg_colors.get("scrollbarTrack")
+        scrollbar_thumb = fg_colors.get("scrollbarThumb")
         foregrounds = {
             **fg_colors,
-            "scrollbarTrack": fg_colors.get("scrollbarTrack") or fg_colors["muted"],
-            "scrollbarThumb": fg_colors.get("scrollbarThumb") or fg_colors["text"],
+            "scrollbarTrack": scrollbar_track if scrollbar_track is not None else fg_colors["muted"],
+            "scrollbarThumb": scrollbar_thumb if scrollbar_thumb is not None else fg_colors["text"],
             "thinkingMax": thinking_max,
             "searchMatchText": search_match_text,
         }
-        self._fg_colors = {key: _fg_ansi(value, mode) for key, value in foregrounds.items()}
+        search_match_bg = bg_colors.get("searchMatchBg")
         backgrounds = {
             **bg_colors,
-            "searchMatchBg": bg_colors.get("searchMatchBg") or bg_colors["selectedBg"],
+            "searchMatchBg": search_match_bg if search_match_bg is not None else bg_colors["selectedBg"],
         }
-        self._bg_colors = {key: _bg_ansi(value, mode) for key, value in backgrounds.items()}
+        concrete_foregrounds: list = []
+        concrete_backgrounds: list = []
+
+        def add_token(token: str, value, is_background: bool) -> str:
+            """Returns the escape sequence for the token's own slot."""
+            if value == "":
+                (self._default_background_tokens if is_background else self._default_foreground_tokens).append(token)
+                return "\x1b[49m" if is_background else "\x1b[39m"
+            color = parse_color(value)
+            self._concrete_colors[token] = color
+            (concrete_backgrounds if is_background else concrete_foregrounds).append(color)
+            return background_ansi(color, mode) if is_background else foreground_ansi(color, mode)
+
+        for token, value in foregrounds.items():
+            self._fg_ansi[token] = add_token(token, value, False)
+        for token, value in backgrounds.items():
+            self._bg_ansi[token] = add_token(token, value, True)
+        appearance = options.get("appearance")
+        self._own_appearance = (
+            appearance if appearance is not None else _detect_appearance(concrete_foregrounds, concrete_backgrounds)
+        )
+
+    @property
+    def appearance(self) -> str:
+        """The background the theme is designed for: declared in the theme
+        JSON, detected from its colors, or, for themes without usable colors,
+        the terminal's appearance."""
+        return self._own_appearance if self._own_appearance is not None else get_terminal_theme()
+
+    @property
+    def colors(self):
+        """Concrete colors for all tokens (a read-only mapping). Tokens set to
+        "" (terminal default) use the terminal's reported default colors, or a
+        guess based on `appearance` when the terminal did not report them.
+        Faint tokens are approximated by mixing their color toward the
+        background."""
+        terminal = _terminal_colors
+        resolved = self._resolved_colors
+        if resolved is not None and resolved[0] is terminal:
+            return resolved[1]
+        guess = _GUESSED_DEFAULT_COLORS[self.appearance]
+
+        def to_color(rgb: dict | None, fallback):
+            return rgb_color(rgb["r"], rgb["g"], rgb["b"]) if rgb else fallback
+
+        foreground = to_color(terminal.get("foreground"), guess["foreground"])
+        background = to_color(terminal.get("background"), guess["background"])
+        colors = {**self._concrete_colors}
+        for token in self._default_foreground_tokens:
+            colors[token] = foreground
+        for token in self._default_background_tokens:
+            colors[token] = background
+        for token in self._dim_tokens:
+            color = colors.get(token)
+            if color is not None:
+                colors[token] = mix_colors(color, background, 0.4)
+        frozen = types.MappingProxyType(colors)
+        # Render and export paths read this in parallel: one assignment
+        # publishes the pair, so no reader sees colors for another report.
+        self._resolved_colors = (terminal, frozen)
+        return frozen
+
+    def style(self, text: str, options: dict) -> str:
+        fg = options.get("fg")
+        bg = options.get("bg")
+        if isinstance(fg, str) and fg in self._dim_tokens:
+            options = {**options, "dim": True}
+        return style_text_with_ansi(
+            text,
+            None
+            if fg is None
+            else self._token_ansi(self._fg_ansi, fg)
+            if isinstance(fg, str)
+            else foreground_ansi(fg, self._mode),
+            None
+            if bg is None
+            else self._token_ansi(self._bg_ansi, bg)
+            if isinstance(bg, str)
+            else background_ansi(bg, self._mode),
+            options,
+        )
 
     def fg(self, color: str, text: str) -> str:
-        ansi = self._fg_colors.get(color)
-        if not ansi:
-            raise ValueError(f"Unknown theme color: {color}")
-        return f"{ansi}{text}\x1b[39m"  # Reset only foreground color
+        ansi = self._token_ansi(self._fg_ansi, color)
+        if color in self._dim_tokens:
+            return f"{ansi}\x1b[2m{text}\x1b[22;39m"
+        return f"{ansi}{text}\x1b[39m"
 
     def bg(self, color: str, text: str) -> str:
-        ansi = self._bg_colors.get(color)
-        if not ansi:
-            raise ValueError(f"Unknown theme background color: {color}")
-        return f"{ansi}{text}\x1b[49m"  # Reset only background color
+        ansi = self._token_ansi(self._bg_ansi, color)
+        return f"{ansi}{text}\x1b[49m"
+
+    @staticmethod
+    def _token_ansi(ansi: dict[str, str], token: str) -> str:
+        value = ansi.get(token)
+        if value is None:
+            raise ValueError(f"Unknown theme color: {token}")
+        return value
 
     def bold(self, text: str) -> str:
         return chalk.bold(text)
@@ -276,16 +382,13 @@ class Theme:
         return chalk.strikethrough(text)
 
     def get_fg_ansi(self, color: str) -> str:
-        ansi = self._fg_colors.get(color)
-        if not ansi:
-            raise ValueError(f"Unknown theme color: {color}")
-        return ansi
+        """Opening escape sequence for a foreground token. Faint tokens
+        include SGR 2, which ``\\x1b[22m`` closes."""
+        ansi = self._token_ansi(self._fg_ansi, color)
+        return f"{ansi}\x1b[2m" if color in self._dim_tokens else ansi
 
     def get_bg_ansi(self, color: str) -> str:
-        ansi = self._bg_colors.get(color)
-        if not ansi:
-            raise ValueError(f"Unknown theme background color: {color}")
-        return ansi
+        return self._token_ansi(self._bg_ansi, color)
 
     def get_color_mode(self) -> str:
         return self._mode
@@ -365,7 +468,8 @@ async def get_available_themes_with_paths() -> list:
         seen.add(theme_info["name"])
         result.append(theme_info)
 
-    # Built-in themes
+    # Built-in themes. The system theme is generated, so it has no file.
+    add_theme({"name": SYSTEM_THEME_NAME, "path": None})
     await prime_theme_cache()
     for name in _get_builtin_themes():
         add_theme({"name": name, "path": os.path.join(themes_dir, f"{name}.json")})
@@ -377,7 +481,8 @@ async def get_available_themes_with_paths() -> list:
     for name, registered in _registered_themes.items():
         add_theme({"name": name, "path": registered.source_path})
 
-    return sorted(result, key=lambda info: (info["name"].lower(), info["name"]))
+    # The system theme comes first: it is the default and adapts to every terminal.
+    return sorted(result, key=lambda info: (info["name"] != SYSTEM_THEME_NAME, info["name"].lower(), info["name"]))
 
 
 def _scan_custom_theme_dir_blocking(custom_themes_dir: str) -> list[str]:
@@ -453,17 +558,46 @@ async def _load_theme_json(name: str) -> dict:
     return _parse_theme_json_content(name, content)
 
 
-def _create_theme(theme_json: dict, mode: str | None = None, source_path: str | None = None) -> Theme:
-    color_mode = mode or ("truecolor" if get_capabilities()["trueColor"] else "256color")
-    resolved_colors = _resolve_theme_colors(_with_theme_color_fallbacks(theme_json["colors"]), theme_json.get("vars"))
+def _split_theme_colors(colors: dict) -> tuple[dict, dict]:
     fg_colors: dict = {}
     bg_colors: dict = {}
-    for key, value in resolved_colors.items():
-        if key in THEME_BG_KEYS:
+    for key, value in colors.items():
+        if key in _BACKGROUND_TOKENS:
             bg_colors[key] = value
         else:
             fg_colors[key] = value
-    return Theme(fg_colors, bg_colors, color_mode, {"name": theme_json["name"], "sourcePath": source_path})
+    return fg_colors, bg_colors
+
+
+def _create_theme(theme_json: dict, mode: str | None = None, source_path: str | None = None) -> Theme:
+    color_mode = mode or get_terminal_color_mode()
+    resolved_colors = _resolve_theme_colors(_with_theme_color_fallbacks(theme_json["colors"]), theme_json.get("vars"))
+    fg_colors, bg_colors = _split_theme_colors(resolved_colors)
+    return Theme(
+        fg_colors,
+        bg_colors,
+        color_mode,
+        {"name": theme_json["name"], "sourcePath": source_path, "appearance": theme_json.get("appearance")},
+    )
+
+
+def _create_system_theme(mode: str | None = None) -> Theme:
+    """Generate the system theme from the terminal's reported colors
+    (grayscale while they are pending)."""
+    with _theme_state_lock:
+        terminal = _terminal_colors
+        pending = _terminal_colors_pending
+        scheme = _terminal_color_scheme
+    generated = generate_system_theme_colors(
+        {**terminal, "saturation": 0 if pending else 1, "appearanceHint": detect_terminal_theme(terminal, scheme)}
+    )
+    fg_colors, bg_colors = _split_theme_colors(generated["colors"])
+    return Theme(
+        fg_colors,
+        bg_colors,
+        mode or get_terminal_color_mode(),
+        {"name": SYSTEM_THEME_NAME, "appearance": generated["appearance"], "dim": generated["dim"]},
+    )
 
 
 def _load_theme_from_path_blocking(theme_path: str, mode: str | None = None) -> Theme:
@@ -482,6 +616,9 @@ def load_theme_from_path(theme_path: str, mode: str | None = None) -> Awaitable[
 
 
 async def _load_theme(name: str, mode: str | None = None) -> Theme:
+    # The system theme name is reserved: it takes precedence over custom themes of the same name.
+    if name == SYSTEM_THEME_NAME:
+        return _create_system_theme(mode)
     registered_theme = _registered_themes.get(name)
     if registered_theme is not None:
         return registered_theme
@@ -520,111 +657,50 @@ def resolve_theme_setting(theme_setting: str | None, terminal_theme: str) -> str
     return theme_setting
 
 
-_INT_PREFIX_RE = re.compile(r"^[+-]?\d+")
+_COLORFGBG_INDEX_RE = re.compile(r"^\d{1,2}$")
 
 
-def _get_colorfgbg_background_index(colorfgbg: str) -> int | None:
-    parts = colorfgbg.split(";")
-    for part in reversed(parts):
-        # JS parseInt: leading integer prefix, NaN otherwise
-        match = _INT_PREFIX_RE.match(part.strip())
-        if match is None:
-            continue
-        bg = int(match.group(0))
-        if 0 <= bg <= 255:
-            return bg
-    return None
-
-
-def _get_rgb_color_luminance(rgb: dict) -> float:
-    def to_linear(channel: float) -> float:
-        value = channel / 255
-        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
-
-    return 0.2126 * to_linear(rgb["r"]) + 0.7152 * to_linear(rgb["g"]) + 0.0722 * to_linear(rgb["b"])
-
-
-def _get_ansi_color_luminance(index: int) -> float:
-    return _get_rgb_color_luminance(_hex_to_rgb(_ansi_256_to_hex(index)))
-
-
-def get_theme_for_rgb_color(rgb: dict) -> str:
-    return "light" if _get_rgb_color_luminance(rgb) >= 0.5 else "dark"
-
-
-def detect_terminal_background_from_env(options: dict | None = None) -> dict:
-    """Detect the terminal theme from environment hints.
-
-    Returns ``{"theme", "source", "detail", "confidence"}``.
-    """
-    options = options or {}
-    env = options.get("env")
+def detect_color_fg_bg_theme(env=None) -> str | None:
+    """Dark or light from the `COLORFGBG` environment variable some terminals
+    set, or None without a usable background index. The value is ``fg;bg`` or
+    ``fg;xpm;bg`` (rxvt), where a field is an ANSI color index or ``default``
+    when the color is not in the palette. The index refers to the terminal's
+    own palette, whose colors are unknown here, so it is classified by index
+    like Vim does: 0-6 and 8 (bright black, e.g. Solarized Dark's background)
+    are dark, 7 and 9-15 are light."""
     if env is None:
         env = os.environ
-    colorfgbg = env.get("COLORFGBG") or ""
-    bg = _get_colorfgbg_background_index(colorfgbg)
-    if bg is not None:
-        return {
-            "theme": "light" if _get_ansi_color_luminance(bg) >= 0.5 else "dark",
-            "source": "COLORFGBG",
-            "detail": f"background color index {bg}",
-            "confidence": "high",
-        }
-
-    return {
-        "theme": "dark",
-        "source": "fallback",
-        "detail": "no terminal background hint found",
-        "confidence": "low",
-    }
+    colorfgbg = env.get("COLORFGBG")
+    bg = colorfgbg.split(";")[-1].strip() if colorfgbg is not None else None
+    if not bg or not _COLORFGBG_INDEX_RE.match(bg):
+        return None
+    index = int(bg)
+    if index > 15:
+        return None
+    return "dark" if index <= 6 or index == 8 else "light"
 
 
-async def detect_terminal_background_theme(options: dict) -> dict:
-    """Detect via an OSC 11 query (``options["ui"]``), falling back to env."""
-    try:
-        rgb = await options["ui"].query_terminal_background_color(timeout_ms=options["timeoutMs"])
-        if rgb:
-            return {
-                "theme": get_theme_for_rgb_color(rgb),
-                "source": "terminal background",
-                "detail": f"OSC 11 background rgb({rgb['r']}, {rgb['g']}, {rgb['b']})",
-                "confidence": "high",
-            }
-    except Exception:
-        # Fall back to environment-based detection when the terminal query fails.
-        pass
-
-    return detect_terminal_background_from_env({"env": options.get("env")})
+def detect_terminal_theme(colors: dict | None = None, reported_scheme: str | None = None, env=None) -> str:
+    """Whether the terminal is dark or light. The background it renders
+    decides, classified the same way the system theme does. Without a
+    reported background: the terminal's light/dark report, then COLORFGBG,
+    then dark."""
+    colors = colors or {}
+    background = colors.get("background")
+    if background:
+        return terminal_appearance(background, colors.get("foreground"))
+    if reported_scheme is not None:
+        return reported_scheme
+    return detect_color_fg_bg_theme(env) or "dark"
 
 
-async def detect_terminal_theme_for_auto(options: dict) -> str:
-    # Both probes are started before either is awaited, so an unsupported
-    # color-scheme DSR costs its timeout only once instead of serializing ahead
-    # of the OSC 11 fallback.
-    color_scheme_task = None
-    query_color_scheme = getattr(options["ui"], "query_terminal_color_scheme", None)
-    if query_color_scheme is not None:
-        try:
-            color_scheme_task = tonio.spawn(query_color_scheme(timeout_ms=options["timeoutMs"]))
-        except Exception:
-            # Fall back to OSC 11 / COLORFGBG detection when starting the
-            # color-scheme query fails.
-            color_scheme_task = None
-    background_task = tonio.spawn(detect_terminal_background_theme(options))
-
-    if color_scheme_task is not None:
-        try:
-            color_scheme = await color_scheme_task
-            if color_scheme:
-                return color_scheme
-        except Exception:
-            # Fall back to the concurrently queried OSC 11 / COLORFGBG detection.
-            pass
-    return (await background_task)["theme"]
-
-
-def get_default_theme() -> str:
-    return detect_terminal_background_from_env()["theme"]
+def get_terminal_theme() -> str:
+    """Whether the terminal is dark or light, from everything it reported so
+    far. See `detect_terminal_theme()`."""
+    with _theme_state_lock:
+        terminal = _terminal_colors
+        scheme = _terminal_color_scheme
+    return detect_terminal_theme(terminal, scheme)
 
 
 # ============================================================================
@@ -677,10 +753,10 @@ def set_registered_themes(themes: list) -> None:
 
 async def init_theme(theme_name: str | None = None, enable_watcher: bool = False) -> None:
     global _current_theme_name
-    name = theme_name if theme_name is not None else get_default_theme()
+    name = theme_name if theme_name is not None else SYSTEM_THEME_NAME
     loaded, fallback = await _load_theme_or_fallback(name)
     with _theme_state_lock:
-        _current_theme_name = "dark" if fallback else name
+        _current_theme_name = SYSTEM_THEME_NAME if fallback else name
         _set_global_theme(loaded)
     # No watcher for the fallback theme.
     if enable_watcher and not fallback:
@@ -688,16 +764,16 @@ async def init_theme(theme_name: str | None = None, enable_watcher: bool = False
 
 
 async def _load_theme_or_fallback(name: str) -> tuple[Theme, str | None]:
-    """Load `name`, or the dark theme if it is invalid.
+    """Load `name`, or the system theme if it is invalid.
 
-    Both reads happen here, deliberately outside `_theme_state_lock`: the lock
+    Both loads happen here, deliberately outside `_theme_state_lock`: the lock
     guards in-memory theme state only and must never be held across an await.
     Returns the theme plus the error that forced a fallback (None on success).
     """
     try:
         return await _load_theme(name), None
     except Exception as error:
-        return await _load_theme("dark"), str(error)
+        return await _load_theme(SYSTEM_THEME_NAME), str(error)
 
 
 def _change_theme(apply: Callable[[], bool]) -> None:
@@ -721,7 +797,7 @@ async def set_theme(name: str, enable_watcher: bool = False) -> dict:
     def apply() -> bool:
         global _current_theme_name
         with _theme_state_lock:
-            _current_theme_name = "dark" if error else name
+            _current_theme_name = SYSTEM_THEME_NAME if error else name
             _set_global_theme(loaded)
         # pi notifies only a successful change (its fallback swaps silently).
         return not error
@@ -765,7 +841,7 @@ async def _start_theme_watcher() -> None:
         watched_theme_name = _current_theme_name
 
     # Only watch if it's a custom theme (not built-in)
-    if not watched_theme_name or watched_theme_name in ("dark", "light"):
+    if not watched_theme_name or watched_theme_name in ("dark", "light", SYSTEM_THEME_NAME):
         return
 
     custom_themes_dir = get_custom_themes_dir()
@@ -860,83 +936,20 @@ def stop_theme_watcher() -> None:
 # HTML Export Helpers
 # ============================================================================
 
-# Basic colors (0-15) - approximate common terminal values
-_BASIC_COLORS = [
-    "#000000",
-    "#800000",
-    "#008000",
-    "#808000",
-    "#000080",
-    "#800080",
-    "#008080",
-    "#c0c0c0",
-    "#808080",
-    "#ff0000",
-    "#00ff00",
-    "#ffff00",
-    "#0000ff",
-    "#ff00ff",
-    "#00ffff",
-    "#ffffff",
-]
-
-
-def _ansi_256_to_hex(index: int) -> str:
-    """Convert a 256-color index to hex string.
-
-    Indices 0-15: basic colors (approximate)
-    Indices 16-231: 6x6x6 color cube
-    Indices 232-255: grayscale ramp
-    """
-    if index < 16:
-        return _BASIC_COLORS[index]
-
-    # Color cube (16-231): 6x6x6 = 216 colors
-    if index < 232:
-        cube_index = index - 16
-        r = cube_index // 36
-        g = (cube_index % 36) // 6
-        b = cube_index % 6
-
-        def to_hex(n: int) -> str:
-            return format(0 if n == 0 else 55 + n * 40, "02x")
-
-        return f"#{to_hex(r)}{to_hex(g)}{to_hex(b)}"
-
-    # Grayscale (232-255): 24 shades
-    gray_hex = format(8 + (index - 232) * 10, "02x")
-    return f"#{gray_hex}{gray_hex}{gray_hex}"
-
 
 async def get_resolved_theme_colors(theme_name: str | None = None) -> dict:
     """Get resolved theme colors as CSS-compatible hex strings.
 
     Used by HTML export to generate CSS custom properties.
     """
-    name = theme_name or _current_theme_name or get_default_theme()
-    is_light = name == "light"
-    theme_json = await _load_theme_json(name)
-    resolved = _resolve_theme_colors(_with_theme_color_fallbacks(theme_json["colors"]), theme_json.get("vars"))
-
-    # Default text color for empty values (terminal uses default fg color)
-    default_text = "#000000" if is_light else "#e5e5e7"
-
-    css_colors: dict = {}
-    for key, value in resolved.items():
-        if isinstance(value, int):
-            css_colors[key] = _ansi_256_to_hex(value)
-        elif value == "":
-            # Empty means default terminal color - use sensible fallback for HTML
-            css_colors[key] = default_text
-        else:
-            css_colors[key] = value
-    return css_colors
+    loaded = await _load_theme(theme_name or _current_theme_name or SYSTEM_THEME_NAME)
+    return {token: color_to_hex(color) for token, color in loaded.colors.items()}
 
 
-def is_light_theme(theme_name: str | None = None) -> bool:
-    """Check if a theme is a "light" theme (for CSS that needs variants)."""
-    # Currently just check the name - could be extended to analyze colors
-    return theme_name == "light"
+async def is_light_theme(theme_name: str | None = None) -> bool:
+    """Check if a theme is a "light" theme (for CSS that needs light/dark variants)."""
+    loaded = await _load_theme(theme_name or _current_theme_name or SYSTEM_THEME_NAME)
+    return loaded.appearance == "light"
 
 
 async def get_theme_export_colors(theme_name: str | None = None) -> dict:
@@ -944,7 +957,9 @@ async def get_theme_export_colors(theme_name: str | None = None) -> dict:
 
     Returns None for each color that isn't explicitly set.
     """
-    name = theme_name or _current_theme_name or get_default_theme()
+    name = theme_name or _current_theme_name or SYSTEM_THEME_NAME
+    if name == SYSTEM_THEME_NAME:
+        return {}
     try:
         theme_json = await _load_theme_json(name)
         export_section = theme_json.get("export")
@@ -953,14 +968,18 @@ async def get_theme_export_colors(theme_name: str | None = None) -> dict:
 
         vars_map = theme_json.get("vars") or {}
 
+        # Export colors end up in CSS, which understands hex and oklch()
+        # values directly but not okhsl().
         def resolve(value):
             if value is None:
                 return None
             resolved = _resolve_var_refs(value, vars_map)
             if isinstance(resolved, int):
-                return _ansi_256_to_hex(resolved)
+                return color_to_hex(indexed_color(resolved))
             if resolved == "":
                 return None
+            if _OKHSL_RE.match(resolved):
+                return color_to_hex(parse_color(resolved))
             return resolved
 
         return {

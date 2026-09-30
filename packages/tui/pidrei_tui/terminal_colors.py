@@ -1,13 +1,21 @@
 """Mirror of pi tui src/terminal-colors.ts.
 
 RgbColor is a camelCase-free record ``{"r": int, "g": int, "b": int}``;
-TerminalColorScheme is the literal string "dark" | "light".
+TerminalColorScheme is the literal string "dark" | "light". TerminalColors,
+the colors a terminal reports for its current theme, is a record with the
+optional keys ``foreground`` (OSC 10), ``background`` (OSC 11) and
+``palette`` (ANSI colors 0-15 from OSC 4, only set when the terminal
+reported all 16).
 """
 
 import re
 
 
-_OSC11_BACKGROUND_COLOR_RESPONSE_RE = re.compile(r"^\x1b\]11;([^\x07\x1b]*)(?:\x07|\x1b\\)$", re.IGNORECASE)
+# What an OSC color reply reports: "foreground" (OSC 10), "background"
+# (OSC 11), or a palette index (OSC 4).
+type OscColorTarget = str | int
+
+_OSC_COLOR_RESPONSE_RE = re.compile(r"^\x1b\](?:(1[01])|4;(\d{1,3}));([^\x07\x1b]*)(?:\x07|\x1b\\)$", re.IGNORECASE)
 _COLOR_SCHEME_REPORT_RE = re.compile(r"^(?:\x1b\[\?997;(1|2)n)+$")
 _HEX_CHANNEL_RE = re.compile(r"^[0-9a-f]+$", re.IGNORECASE)
 _HEX6_RE = re.compile(r"^[0-9a-f]{6}$", re.IGNORECASE)
@@ -33,16 +41,22 @@ def _parse_osc_hex_channel(channel: str) -> int | None:
     return round((int(channel, 16) / maximum) * 255)
 
 
-def is_osc11_background_color_response(data: str) -> bool:
-    return _OSC11_BACKGROUND_COLOR_RESPONSE_RE.match(data) is not None
+def parse_osc_color_response(data: str) -> dict | None:
+    """Parse an OSC 10, 11, or 4 color reply into ``{"target", "rgb"}``.
 
-
-def parse_osc11_background_color(data: str) -> dict | None:
-    match = _OSC11_BACKGROUND_COLOR_RESPONSE_RE.match(data)
+    Returns None when ``data`` is not such a reply; ``rgb`` is None when it
+    is a reply with an unparseable color.
+    """
+    match = _OSC_COLOR_RESPONSE_RE.match(data)
     if not match:
         return None
+    slot = match.group(1)
+    target: OscColorTarget = "foreground" if slot == "10" else "background" if slot == "11" else int(match.group(2), 10)
+    return {"target": target, "rgb": _parse_osc_color_value(match.group(3))}
 
-    value = match.group(1).strip()
+
+def _parse_osc_color_value(raw_value: str) -> dict | None:
+    value = raw_value.strip()
     if value.startswith("#"):
         hex_value = value[1:]
         if _HEX6_RE.match(hex_value):

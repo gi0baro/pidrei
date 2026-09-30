@@ -9,7 +9,7 @@ from pidrei_tui import Container, SettingsList, Spacer, Text, get_capabilities
 
 from ....core.http_config import HTTP_IDLE_TIMEOUT_CHOICES, format_http_idle_timeout_ms
 from ....core.settings_manager import CACHE_WARMING_MODES
-from ..theme import get_settings_list_theme, parse_auto_theme_setting, theme
+from ..theme import SYSTEM_THEME_NAME, get_settings_list_theme, parse_auto_theme_setting, theme
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_display_text
 from .settings_submenu import SelectSubmenu, SteppedSubmenu
@@ -97,20 +97,33 @@ def _model_item_label(model) -> str:
 
 
 def _theme_items(available_themes: list, current_theme: str) -> list:
-    return [{"value": name, "label": f"{'✓ ' if name == current_theme else '  '}{name}"} for name in available_themes]
+    return [
+        {
+            "value": name,
+            "label": f"{'✓ ' if name == current_theme else '  '}{name}",
+            **({"description": "Theme created from your terminal's colors"} if name == SYSTEM_THEME_NAME else {}),
+        }
+        for name in available_themes
+    ]
 
 
 AUTOMATIC_THEME_VALUE = "/"
 
 
 def _single_mode_theme_items(available_themes: list, current_theme: str) -> list:
+    """The system theme comes first, then automatic mode, then the remaining themes."""
+    items = _theme_items(available_themes, current_theme)
+    system = [item for item in items if item["value"] == SYSTEM_THEME_NAME][:1]
+    if system:
+        items.remove(system[0])
     return [
+        *system,
         {
             "value": AUTOMATIC_THEME_VALUE,
-            "label": "  Automatic",
+            "label": "  automatic",
             "description": "Use separate themes for light and dark terminal appearance",
         },
-        *_theme_items(available_themes, current_theme),
+        *items,
     ]
 
 
@@ -128,7 +141,7 @@ def _default_automatic_themes(current_theme_setting: str, available_themes: list
         return auto_theme
 
     current_fixed_theme = None if "/" in current_theme_setting else current_theme_setting
-    theme_name = _preferred_theme(available_themes, current_fixed_theme, "dark")
+    theme_name = _preferred_theme(available_themes, current_fixed_theme, SYSTEM_THEME_NAME)
     return {"lightTheme": theme_name, "darkTheme": theme_name}
 
 
@@ -157,7 +170,7 @@ class ThemeSubmenu(Container):
         self._single_theme = _preferred_theme(
             available_themes,
             fixed_theme if fixed_theme is not None else (self._get_active_automatic_theme() if auto_theme else None),
-            "dark",
+            SYSTEM_THEME_NAME,
         )
 
         if self._mode == "automatic":
@@ -199,7 +212,7 @@ class ThemeSubmenu(Container):
 
         menu = SelectSubmenu(
             "Theme",
-            "Select a theme, or choose Automatic to follow terminal appearance.",
+            "Select a theme, or choose automatic to follow terminal appearance.",
             _single_mode_theme_items(self._available_themes, self._single_theme),
             self._single_theme,
             on_select,

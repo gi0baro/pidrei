@@ -58,6 +58,22 @@ class InputOverlay(Container):
         self.input.handle_input(data)
 
 
+class SubmenuHost(Container):
+    """A settings submenu that routes keys to its nested list, like the coding agent's theme submenu."""
+
+    def __init__(self, done) -> None:
+        super().__init__()
+        self.list = SelectList(
+            [{"value": "first", "label": "First"}, {"value": "second", "label": "Second"}], 5, SELECT_THEME
+        )
+        self.list.on_select = lambda item: done(item["value"])
+        self.list.on_cancel = lambda: done()
+        self.add_child(self.list)
+
+    def handle_input(self, data: str) -> None:
+        self.list.handle_input(data)
+
+
 @pytest.mark.tonio
 async def test_positions_a_single_line_input_cursor_on_press():
     input_component = Input()
@@ -229,6 +245,51 @@ async def test_keeps_a_delegating_overlay_focused_when_its_nested_input_is_click
 
     assert overlay.input.get_value() == "hi!"
     assert tui.get_focused_component() is overlay
+    await tui.stop()
+
+
+@pytest.mark.tonio
+async def test_keeps_a_settings_list_focused_when_a_click_in_its_submenu_closes_the_submenu():
+    terminal = VirtualTerminal(30, 6)
+    tui = TuiAltScreen(terminal)
+    changes: list[dict] = []
+    settings_list = SettingsList(
+        [
+            {
+                "id": "theme",
+                "label": "Theme",
+                "currentValue": "first",
+                "submenu": lambda _value, done: SubmenuHost(done),
+            },
+            {"id": "other", "label": "Other", "currentValue": "off", "values": ["off", "on"]},
+        ],
+        5,
+        SETTINGS_THEME,
+        lambda item_id, value: changes.append({"id": item_id, "value": value}),
+        lambda: None,
+    )
+    tui.add_child(settings_list)
+    tui.set_focus(settings_list)
+    await tui.start()
+    await terminal.wait_for_render()
+
+    since = terminal.frames
+    await terminal.send_input("\r")
+    await terminal.wait_for_render(since)
+    # Press and release on the submenu's second row selects it and closes the submenu.
+    since = terminal.frames
+    await terminal.send_input("\x1b[<0;3;2M")
+    await terminal.send_input("\x1b[<0;3;2m")
+    await terminal.wait_for_render(since)
+    assert changes == [{"id": "theme", "value": "second"}]
+    assert tui.get_focused_component() is settings_list
+
+    # Keys reach the visible list again instead of the closed submenu.
+    since = terminal.frames
+    await terminal.send_input("\x1b[B")
+    await terminal.send_input("\r")
+    await terminal.wait_for_render(since)
+    assert changes == [{"id": "theme", "value": "second"}, {"id": "other", "value": "on"}]
     await tui.stop()
 
 

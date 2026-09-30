@@ -13,6 +13,7 @@ import tonio.colored as tonio
 from tonio.colored import fs
 
 from pidrei_ai.utils.tasks import gather
+from pidrei_tui import detect_capabilities, get_terminal_color_mode
 
 from ..config import CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
@@ -754,6 +755,17 @@ class DefaultResourceLoader:
         else:
             themes = []
             diagnostics = []
+            # Theme construction only needs trueColor, so skip the unrelated tmux hyperlink probe.
+            color_mode = get_terminal_color_mode(
+                {
+                    **detect_capabilities(lambda: False),
+                    **self._settings_manager.get_terminal_capability_overrides(),
+                }
+            )
+
+            def load_theme(file_path: str):
+                return load_theme_from_path(file_path, color_mode)
+
             # pi's loadThemes(themePaths, false): the default directories arrive through
             # the package manager's auto-discovery, which gates project themes on trust
             # and applies settings overrides; scanning them here would bypass both.
@@ -765,9 +777,9 @@ class DefaultResourceLoader:
                     )
                     continue
                 if os.path.isdir(resolved):
-                    self._load_themes_from_dir_blocking(resolved, themes, diagnostics, load_theme_from_path)
+                    self._load_themes_from_dir_blocking(resolved, themes, diagnostics, load_theme)
                 else:
-                    self._load_theme_from_file(resolved, themes, diagnostics, load_theme_from_path)
+                    self._load_theme_from_file(resolved, themes, diagnostics, load_theme)
 
             deduped_themes, dedupe_diagnostics = self._dedupe_themes(themes)
             themes = deduped_themes

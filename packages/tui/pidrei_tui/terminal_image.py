@@ -93,7 +93,7 @@ def _detect_capabilities_from_environment(tmux_forwards_hyperlink) -> dict:
     terminal_emulator = (os.environ.get("TERMINAL_EMULATOR") or "").lower()
     term = (os.environ.get("TERM") or "").lower()
     color_term = (os.environ.get("COLORTERM") or "").lower()
-    has_true_color_hint = color_term in ("truecolor", "24bit")
+    has_true_color_hint = color_term in ("truecolor", "24bit") or term.endswith("-direct")
 
     # Emit OSC 8 hyperlinks only when tmux confirms it forwards.
     # Image protocols are unreliable under tmux, so leave `images: None`.
@@ -181,6 +181,14 @@ def get_capabilities() -> dict:
         if _capability_state is state:
             _capability_state = _CapabilityState(state.overrides, capabilities)
     return capabilities
+
+
+def get_terminal_color_mode(capabilities: dict | None = None) -> str:
+    """The ``TerminalColorMode`` ("256color" | "truecolor") for ``capabilities``
+    (the detected ones by default)."""
+    if capabilities is None:
+        capabilities = get_capabilities()
+    return "truecolor" if capabilities["trueColor"] else "256color"
 
 
 def reset_capabilities_cache() -> None:

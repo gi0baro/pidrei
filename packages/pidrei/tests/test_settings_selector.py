@@ -5,6 +5,8 @@ undefined, so here the config is spelled out with neutral values (a Python
 dict would raise KeyError instead).
 """
 
+import re
+
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
@@ -119,14 +121,21 @@ def _noop_preview(_theme) -> None:
 
 @pytest.mark.tonio
 async def test_keeps_the_configured_fixed_theme_marked_while_browsing():
-    config = {**BASE_CONFIG, "currentTheme": "dark", "terminalTheme": "dark", "availableThemes": ["dark", "light"]}
+    config = {
+        **BASE_CONFIG,
+        "currentTheme": "dark",
+        "terminalTheme": "dark",
+        "availableThemes": ["system", "dark", "light"],
+    }
     callbacks = {"onThemePreview": _noop_preview, "onCancel": _noop_cancel}
     settings_list = SettingsSelectorComponent(config, callbacks).get_settings_list()
 
     settings_list.select_item("theme")
     settings_list.handle_input("\r")
     output = _render(settings_list)
-    assert "    Automatic" in output
+    assert re.search(
+        r" {4}system +Theme created from your terminal's colors\n {4}automatic +Use separate themes", output
+    )
     assert "→ ✓ dark" in output
 
     settings_list.handle_input(DOWN)
