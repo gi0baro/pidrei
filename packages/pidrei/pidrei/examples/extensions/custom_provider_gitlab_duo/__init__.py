@@ -31,6 +31,7 @@ from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
     AuthResult,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -256,7 +257,7 @@ async def _post_token_form(form: dict[str, str], cancel: CancelToken) -> dict:
     return response.json()
 
 
-async def _login_gitlab(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_gitlab(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
     pkce = generate_pkce()
     auth_params = urlencode(
         {

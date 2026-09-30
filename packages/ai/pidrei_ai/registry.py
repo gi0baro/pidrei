@@ -41,6 +41,7 @@ from pidrei_ai.auth.types import (
     AuthType,
     Credential,
     CredentialStore,
+    LoginOptions,
     ProviderAuth,
 )
 from pidrei_ai.builders import UsageBuilder, UsageCostBuilder
@@ -857,12 +858,17 @@ class Models:
             auth=replace(result.auth, headers=merge_headers(result.auth.headers, provider_or_model.headers)),
         )
 
-    async def login(self, provider_id: str, type: AuthType, interaction: AuthInteraction) -> Credential:
+    async def login(
+        self, provider_id: str, type: AuthType, interaction: AuthInteraction, options: LoginOptions | None = None
+    ) -> Credential:
         """Run a provider-owned login flow and persist its returned credential.
 
         A cancellation raised before the store mutation begins rejects with the
         abort reason; once the mutation's callback has started, the write is
         awaited to completion so the stored credential stays locally consistent.
+
+        `options` reaches OAuth logins only: pi passes it to both methods, but
+        `ApiKeyAuth.login`'s type takes the interaction alone.
         """
         cancel = operation_cancel(interaction.cancel)
         cancel.raise_if_cancelled()
@@ -873,7 +879,9 @@ class Models:
         login = getattr(method, "login", None) if method is not None else None
         if login is None:
             raise ModelsError("auth", f"{provider.name} does not support {type} login")
-        credential = await race_with_cancel(login(_NormalizedAuthInteraction(interaction, cancel)), cancel)
+        normalized = _NormalizedAuthInteraction(interaction, cancel)
+        login_operation = login(normalized, options) if type == "oauth" else login(normalized)
+        credential = await race_with_cancel(login_operation, cancel)
 
         # The persist is detached on purpose (pi lets a started write finish
         # even when the caller aborts); the wait below resumes on started,

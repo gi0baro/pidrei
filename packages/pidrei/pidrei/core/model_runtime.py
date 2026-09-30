@@ -33,6 +33,7 @@ from pidrei_ai.auth.types import (
     Credential,
     CredentialInfo,
     CredentialStore,
+    LoginOptions,
 )
 from pidrei_ai.models_store import ModelsStore
 from pidrei_ai.providers.all import builtin_providers, get_builtin_model_data_generated_at
@@ -1037,11 +1038,15 @@ class ModelRuntime:
 
     # -- lifecycle -------------------------------------------------------------
 
-    async def login(self, provider_id: str, type: AuthType, interaction: AuthInteraction) -> Credential:
+    async def login(
+        self, provider_id: str, type: AuthType, interaction: AuthInteraction, options: LoginOptions | None = None
+    ) -> Credential:
         cancel = operation_cancel(interaction.cancel)
 
         async def task() -> Credential:
-            credential = await self._models.login(provider_id, type, _CancelBoundInteraction(interaction, cancel))
+            credential = await self._models.login(
+                provider_id, type, _CancelBoundInteraction(interaction, cancel), options
+            )
             await self._synchronize_credential_state(provider_id, "login", credential, cancel)
             return credential
 

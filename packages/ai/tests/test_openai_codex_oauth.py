@@ -7,8 +7,10 @@ only the message assertion.
 
 import base64
 import json
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from tonio.colored import net
 
 from pidrei_ai.auth.oauth.openai_codex import openai_codex_oauth
 from pidrei_ai.auth.types import AuthPrompt, OAuthCredential
@@ -288,3 +290,43 @@ async def test_reports_token_refresh_failures_through_the_raised_error():
         await openai_codex_oauth.refresh(
             OAuthCredential(access="invalid-access-token", refresh="invalid-refresh-token", expires=0), None
         )
+
+
+@pytest.mark.tonio
+async def test_falls_back_to_the_pasted_redirect_url_when_the_fixed_callback_port_is_taken():
+    # Port 1455 is registered with OpenAI; the Codex CLI may hold it. Occupy it unless it already is.
+    try:
+        blockers = await net.open_tcp_listeners(1455, host="127.0.0.1")
+    except OSError:
+        blockers = []
+    try:
+        exchange_bodies: list[dict[str, str]] = []
+
+        def handler(request: OAuthRequest):
+            assert request.url == TOKEN_URL
+            exchange_bodies.append(request.form)
+            return json_response(
+                {"access_token": create_access_token("acct"), "refresh_token": "refresh", "expires_in": 3600}
+            )
+
+        interaction = RecordingInteraction()
+
+        def prompt(prompt: AuthPrompt) -> str:
+            if prompt.type == "select":
+                return "browser"
+            if prompt.type != "manual_code":
+                raise AssertionError(f"Unexpected prompt: {prompt.type}")
+            state = parse_qs(urlsplit(interaction.events_of("auth_url")[0].url).query)["state"][0]
+            return f"http://localhost:1455/auth/callback?code=pasted-code&state={state}"
+
+        interaction._prompt = prompt
+
+        with stub_oauth_http(handler):
+            credential = await openai_codex_oauth.login(interaction)
+
+        assert credential.extra["accountId"] == "acct"
+        assert exchange_bodies[0]["code"] == "pasted-code"
+        assert exchange_bodies[0]["redirect_uri"] == "http://localhost:1455/auth/callback"
+    finally:
+        for blocker in blockers:
+            blocker.close()

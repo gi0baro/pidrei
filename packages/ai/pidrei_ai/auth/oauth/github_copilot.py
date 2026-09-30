@@ -22,6 +22,7 @@ from pidrei_ai.auth.oauth.urls import http_or_https_url
 from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -486,7 +487,9 @@ async def _enable_models(
     return enabled_model_ids
 
 
-async def _login_github_copilot(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_github_copilot(
+    interaction: ProviderAuthInteraction, options: LoginOptions | None = None
+) -> OAuthCredential:
     value = await interaction.prompt(
         AuthPrompt(
             type="text",

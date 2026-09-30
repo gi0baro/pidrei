@@ -30,6 +30,7 @@ import json
 import math
 import os
 import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -985,6 +986,21 @@ class SettingsManager:
 
     def set_enable_provider_attribution(self, enabled: bool) -> None:
         self._set_global("enableProviderAttribution", enabled)
+
+    def get_or_create_device_id(self) -> str:
+        """Stable ID of this installation, e.g. sent to OpenAI as its agent host
+        ID. Created on first use. Project settings are ignored so a committed
+        project settings file cannot give every clone the same ID.
+
+        The check and the create hold `_write_lock` together, so two logins
+        racing on first use get the same ID.
+        """
+        with self._write_lock:
+            device_id = self._global_settings.get("deviceId")
+            if not device_id:
+                device_id = str(uuid.uuid4())
+                self._set_global("deviceId", device_id)
+        return device_id
 
     def get_packages(self) -> list[Any]:
         return list(self._settings.get("packages") or [])

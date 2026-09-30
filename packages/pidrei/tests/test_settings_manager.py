@@ -6,6 +6,7 @@ ported (POSIX-only); the POSIX fallback (nano) is covered.
 
 import json
 import os
+import re
 
 import pytest
 
@@ -93,6 +94,24 @@ class TestPreservesExternallyAddedSettings:
 
         saved_settings = read_json(settings_path)
         assert saved_settings["defaultThinkingLevel"] == "high"
+
+
+class TestDeviceId:
+    @pytest.mark.tonio
+    async def test_creates_one_global_device_id_and_reuses_it_in_later_processes(self, dirs):
+        agent_dir, project_dir = dirs
+        settings_path = agent_dir / "settings.json"
+        write_json(settings_path, {"theme": "dark"})
+        write_json(project_dir / ".pidrei" / "settings.json", {"deviceId": "project-device"})
+        first = await SettingsManager(str(project_dir), str(agent_dir))
+
+        device_id = first.get_or_create_device_id()
+        await first.flush()
+
+        assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", device_id)
+        assert first.get_or_create_device_id() == device_id
+        assert (await SettingsManager(str(project_dir), str(agent_dir))).get_or_create_device_id() == device_id
+        assert read_json(settings_path) == {"theme": "dark", "deviceId": device_id}
 
 
 class TestPackagesMigration:

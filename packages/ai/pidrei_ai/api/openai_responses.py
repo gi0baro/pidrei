@@ -45,6 +45,18 @@ from pidrei_ai.utils.user_agent import set_default_user_agent
 OPENAI_TOOL_CALL_PROVIDERS = frozenset(("openai", "openai-codex", "opencode"))
 # OpenAI Responses rejects max_output_tokens below 16.
 OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16
+CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage"
+
+
+def _is_chatgpt_sign_in(model: Model, api_key: str | None) -> bool:
+    """OpenAI API keys start with `sk-`; a different credential sent directly to
+    OpenAI is a Sign in with ChatGPT access token."""
+    return (
+        model.provider == "openai"
+        and model.base_url == "https://api.openai.com/v1"
+        and api_key is not None
+        and not api_key.startswith("sk-")
+    )
 
 
 @dataclass(slots=True)
@@ -323,17 +335,19 @@ def build_params(
         cache_key = clamp_openai_prompt_cache_key(options.session_id)
         if cache_key is not None:
             params["prompt_cache_key"] = cache_key
-    prompt_cache_retention = _get_prompt_cache_retention(compat, cache_retention)
+    # Sign in with ChatGPT rejects these request fields.
+    omit_unsupported_fields = _is_chatgpt_sign_in(model, options.api_key)
+    prompt_cache_retention = None if omit_unsupported_fields else _get_prompt_cache_retention(compat, cache_retention)
     if prompt_cache_retention is not None:
         params["prompt_cache_retention"] = prompt_cache_retention
-    prompt_cache_options = _get_prompt_cache_options(compat, cache_retention)
+    prompt_cache_options = None if omit_unsupported_fields else _get_prompt_cache_options(compat, cache_retention)
     if prompt_cache_options is not None:
         params["prompt_cache_options"] = prompt_cache_options
 
-    if options.max_tokens and compat.supports_max_output_tokens:
+    if options.max_tokens and compat.supports_max_output_tokens and not omit_unsupported_fields:
         params["max_output_tokens"] = max(options.max_tokens, OPENAI_RESPONSES_MIN_OUTPUT_TOKENS)
 
-    if options.temperature is not None:
+    if options.temperature is not None and not omit_unsupported_fields:
         params["temperature"] = options.temperature
 
     if options.service_tier is not None:
@@ -474,9 +488,15 @@ def stream(
             out_stream.end()
         except Exception as error:
             output.stop_reason = "aborted" if opts.cancel is not None and opts.cancel.cancelled else "error"
-            output.error_message = format_provider_error(
+            error_message = format_provider_error(
                 normalize_provider_error(error),
                 f"{'OpenAI' if model.provider == 'openai' else model.provider} API error",
+            )
+            # Sign in with ChatGPT shares the subscription's usage limit with other apps.
+            output.error_message = (
+                f"{error_message}\nCheck your ChatGPT usage: {CHATGPT_USAGE_URL}"
+                if "subscription_sharing_usage_limit_exceeded" in error_message
+                else error_message
             )
             out_stream.push(ErrorEvent(reason=output.stop_reason, error=output))
             out_stream.end()

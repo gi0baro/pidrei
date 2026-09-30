@@ -20,7 +20,14 @@ from typing import Any
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
 from pidrei_ai.auth.oauth.urls import http_or_https_url
-from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
+from pidrei_ai.auth.types import (
+    AuthEvent,
+    LoginOptions,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuthInteraction,
+)
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 
@@ -173,7 +180,7 @@ async def _mint_api_key(identity_token: str, cancel: CancelToken) -> OAuthCreden
     return OAuthCredential(refresh=identity_token, access=api_key, expires=clock.now_ms() + API_KEY_LIFETIME_MS)
 
 
-async def _login_meta(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_meta(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
     cancel = interaction.cancel
     try:
         device = await _start_device_authorization(cancel)

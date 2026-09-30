@@ -17,7 +17,8 @@ service that does nothing without pi's own credentials.
 
 Run `/login` in interactive mode and pick a provider:
 
-- ChatGPT Plus/Pro (Codex)
+- ChatGPT (Sign in with ChatGPT on the OpenAI provider)
+- ChatGPT Plus/Pro (OpenAI Codex, legacy)
 - Claude Pro/Max
 - GitHub Copilot
 - xAI (Grok/X subscription)
@@ -45,6 +46,15 @@ Anthropic subscription auth works for Claude Pro/Max accounts. Third-party
 harness usage draws from [extra usage](https://claude.ai/settings/usage) and is
 billed per token rather than against plan limits. pidrei warns about this the
 first time; the warning can be turned off in `/settings`.
+
+### OpenAI (Sign in with ChatGPT)
+
+`/login openai` offers **Sign in with ChatGPT** next to the API-key path. The
+ChatGPT access token is sent directly to the OpenAI API and shares the
+subscription's usage limit with other apps; when it is reached, the error links
+to [ChatGPT usage](https://chatgpt.com/settings/usage). The sign-in identifies
+this installation with a `deviceId` that pidrei creates in the global
+`settings.json` on first use. It supersedes the legacy OpenAI Codex login.
 
 ### GitHub Copilot
 

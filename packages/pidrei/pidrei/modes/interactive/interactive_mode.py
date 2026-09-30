@@ -32,7 +32,7 @@ import tonio.colored as tonio
 from tonio.colored import fs, signals as tonio_signals
 
 from pidrei_agent.harness.session.serde import serialize_message
-from pidrei_ai.auth.types import AuthOperationOptions
+from pidrei_ai.auth.types import AuthOperationOptions, LoginOptions
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
@@ -6376,7 +6376,12 @@ class InteractiveMode:
             def notify(self, event) -> None:
                 mode._notify_auth_dialog(dialog, event)
 
-        await self.session.model_runtime.login(provider_id, method, DialogInteraction())
+        await self.session.model_runtime.login(
+            provider_id,
+            method,
+            DialogInteraction(),
+            LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
+        )
 
     def _show_login_dialog(self, provider_id: str, provider_name: str) -> None:
         """Reached from `_start_provider_login`: mounted here; the OAuth flow

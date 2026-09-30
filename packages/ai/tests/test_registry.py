@@ -1057,7 +1057,7 @@ async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_c
         await blocked_refresh.wait()
         return OAuthCredential(access="new", refresh="old-refresh", expires=_far_future_ms())
 
-    async def login(_interaction):
+    async def login(_interaction, _options=None):
         raise RuntimeError("not used")
 
     async def to_auth(credential):

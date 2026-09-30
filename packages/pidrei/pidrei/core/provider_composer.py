@@ -35,6 +35,7 @@ from pidrei_ai.auth.types import (
     AuthInteraction,
     AuthPrompt,
     AuthResult,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -420,7 +421,7 @@ def apply_extension(
 
 
 def adapt_oauth(config: ExtensionOAuthConfig) -> OAuthAuth:
-    async def login(interaction: AuthInteraction) -> OAuthCredential:
+    async def login(interaction: AuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
         def notify_event(type: str, info: dict[str, Any]) -> None:
             interaction.notify(AuthEvent(type=type, **info))
 

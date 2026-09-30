@@ -25,6 +25,12 @@ async def load_openai_codex_oauth() -> OAuthAuth:
     return openai_codex_oauth
 
 
+async def load_openai_chatgpt_oauth() -> OAuthAuth:
+    from pidrei_ai.auth.oauth.openai_chatgpt import openai_chatgpt_oauth
+
+    return openai_chatgpt_oauth
+
+
 async def load_github_copilot_oauth() -> OAuthAuth:
     from pidrei_ai.auth.oauth.github_copilot import github_copilot_oauth
 
