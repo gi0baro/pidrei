@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "gpt-oss-120b": {
+    "chat:gpt-oss-120b": {
       "id": "gpt-oss-120b",
       "name": "GPT OSS 120B",
       "api": "openai-completions",
@@ -30,9 +30,10 @@
         "high": "high",
         "xhigh": null,
         "max": null
-      }
+      },
+      "type": "chat"
     },
-    "qwen-3.8-27b": {
+    "chat:qwen-3.8-27b": {
       "id": "qwen-3.8-27b",
       "name": "Qwen3.8 27B",
       "api": "openai-completions",
@@ -46,7 +47,7 @@
       "cost": {
         "input": 0.99,
         "output": 1.49,
-        "cacheRead": 0,
+        "cacheRead": 0.99,
         "cacheWrite": 0
       },
       "contextWindow": 131072,
@@ -73,7 +74,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "Ling-2.6-1T": {
+    "chat:Ling-2.6-1T": {
       "id": "Ling-2.6-1T",
       "name": "Ling 2.6 1T",
       "api": "openai-completions",
@@ -26,9 +26,10 @@
         "thinkingFormat": "ant-ling",
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false
-      }
+      },
+      "type": "chat"
     },
-    "Ling-2.6-flash": {
+    "chat:Ling-2.6-flash": {
       "id": "Ling-2.6-flash",
       "name": "Ling 2.6 Flash",
       "api": "openai-completions",
@@ -54,9 +55,10 @@
         "thinkingFormat": "ant-ling",
         "supportsStrictMode": true,
         "supportsLongCacheRetention": false
-      }
+      },
+      "type": "chat"
     },
-    "Ring-2.6-1T": {
+    "chat:Ring-2.6-1T": {
       "id": "Ring-2.6-1T",
       "name": "Ring 2.6 1T",
       "api": "openai-completions",
@@ -90,7 +92,8 @@
         "medium": null,
         "high": "high",
         "xhigh": "xhigh"
-      }
+      },
+      "type": "chat"
     }
   }
 }

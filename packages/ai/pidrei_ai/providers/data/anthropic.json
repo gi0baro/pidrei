@@ -1,6 +1,6 @@
 {
   "anthropic-messages": {
-    "claude-fable-5": {
+    "chat:claude-fable-5": {
       "id": "claude-fable-5",
       "name": "Claude Fable 5",
       "api": "anthropic-messages",
@@ -67,9 +67,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-fable-5-1": {
+    "chat:claude-fable-5-1": {
       "id": "claude-fable-5-1",
       "name": "Claude Fable 5.1",
       "api": "anthropic-messages",
@@ -115,9 +116,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-haiku-4-5": {
+    "chat:claude-haiku-4-5": {
       "id": "claude-haiku-4-5",
       "name": "Claude Haiku 4.5 (latest)",
       "api": "anthropic-messages",
@@ -154,9 +156,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-haiku-4-5-20251001": {
+    "chat:claude-haiku-4-5-20251001": {
       "id": "claude-haiku-4-5-20251001",
       "name": "Claude Haiku 4.5",
       "api": "anthropic-messages",
@@ -193,9 +196,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4-5": {
+    "chat:claude-opus-4-5": {
       "id": "claude-opus-4-5",
       "name": "Claude Opus 4.5 (latest)",
       "api": "anthropic-messages",
@@ -232,9 +236,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4-5-20251101": {
+    "chat:claude-opus-4-5-20251101": {
       "id": "claude-opus-4-5-20251101",
       "name": "Claude Opus 4.5",
       "api": "anthropic-messages",
@@ -271,9 +276,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4-6": {
+    "chat:claude-opus-4-6": {
       "id": "claude-opus-4-6",
       "name": "Claude Opus 4.6",
       "api": "anthropic-messages",
@@ -314,9 +320,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4-7": {
+    "chat:claude-opus-4-7": {
       "id": "claude-opus-4-7",
       "name": "Claude Opus 4.7",
       "api": "anthropic-messages",
@@ -359,9 +366,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4-8": {
+    "chat:claude-opus-4-8": {
       "id": "claude-opus-4-8",
       "name": "Claude Opus 4.8",
       "api": "anthropic-messages",
@@ -406,9 +414,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-5": {
+    "chat:claude-opus-5": {
       "id": "claude-opus-5",
       "name": "Claude Opus 5",
       "api": "anthropic-messages",
@@ -455,9 +464,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-5-5": {
+    "chat:claude-opus-5-5": {
       "id": "claude-opus-5-5",
       "name": "Claude Opus 5.5",
       "api": "anthropic-messages",
@@ -508,9 +518,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-sonnet-4-5": {
+    "chat:claude-sonnet-4-5": {
       "id": "claude-sonnet-4-5",
       "name": "Claude Sonnet 4.5 (latest)",
       "api": "anthropic-messages",
@@ -547,9 +558,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-sonnet-4-5-20250929": {
+    "chat:claude-sonnet-4-5-20250929": {
       "id": "claude-sonnet-4-5-20250929",
       "name": "Claude Sonnet 4.5",
       "api": "anthropic-messages",
@@ -586,9 +598,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-sonnet-4-6": {
+    "chat:claude-sonnet-4-6": {
       "id": "claude-sonnet-4-6",
       "name": "Claude Sonnet 4.6",
       "api": "anthropic-messages",
@@ -629,9 +642,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-sonnet-5": {
+    "chat:claude-sonnet-5": {
       "id": "claude-sonnet-5",
       "name": "Claude Sonnet 5",
       "api": "anthropic-messages",
@@ -673,7 +687,62 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
+    },
+    "chat:claude-sonnet-5-5": {
+      "id": "claude-sonnet-5-5",
+      "name": "Claude Sonnet 5.5",
+      "api": "anthropic-messages",
+      "provider": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsMidConvoEffort": true,
+        "supportsMidConvoSystemMessages": true,
+        "supportsMidConvoToolChanges": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false,
+        "supportsStrictTools": true
+      },
+      "promptCache": {
+        "short": 300,
+        "long": 3600
+      },
+      "inputLimits": {
+        "maxRequestBytes": 33554432,
+        "images": {
+          "maxPerRequest": 600,
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
     }
   }
 }

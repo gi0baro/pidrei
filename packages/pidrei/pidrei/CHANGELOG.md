@@ -6,6 +6,138 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.99.1.0] - 2026-10-01
+
+Tracks [Pi 0.99.1](https://github.com/earendil-works/pi/releases/tag/v0.99.1).
+
+### Added
+
+- Models: GPT-6.1 Sol (OpenAI, Azure OpenAI Responses and OpenAI Codex, where
+  it is the new default) and Claude Sonnet 5.5 (Anthropic, adaptive thinking,
+  1M context).
+- System theme, now the default: pidrei's colors come from the terminal's
+  reported foreground, background and ANSI palette, and are rebuilt when the
+  terminal switches between light and dark. Theme files accept `#rgb`,
+  `oklch()` and `okhsl()` colors and an optional `appearance` field;
+  extensions get `theme.style()`, `theme.colors` and `theme.appearance`.
+- Sign in with ChatGPT: `/login openai` uses a ChatGPT subscription with the
+  OpenAI provider. The login stores a stable `deviceId` in the global
+  settings.
+- Experimental virtual models: extensions register them with
+  `pi.register_virtual_model()` and pick a physical model and thinking level
+  for each request. The footer shows the routed model, `/session` lists cost
+  per physical model, and `examples/extensions/jev_router.py` routes with the
+  Jev classifier. See the new virtual-models page.
+- Classifier models: `ModelRuntime.classify()` with the built-in TypeSafe
+  `jev-latest` model and Jev classifiers on OpenRouter, Cloudflare Workers
+  AI, Vercel AI Gateway and OpenCode Zen.
+- One model catalog for chat, image and classifier models:
+  `ModelRuntime.generate_images()` with runtime-resolved authentication, plus
+  `get_models_of_type()`, `get_model_of_type()`, `get_available_of_type()`,
+  `get_all_models()` and `get_all_available()`. OpenRouter image models are
+  listed under the `openrouter` provider and share its credential. Extension
+  model lists can mix chat, image and classifier entries. Chat-facing reads
+  and the model picker are unchanged.
+- Extension tool APIs for orchestrating tools: `exposure` (`direct`,
+  `model-only`, `codemode`, `deferred` or `hidden`), `namespace`,
+  `annotations`, `output_schema` with `structured_content`, `is_error`
+  results, `prepare_loadout()`, and `ctx.execute_tool()` for nested tool
+  calls. Nested calls emit tool events with `parent_tool_call_id`, are
+  recorded as bounded `nested_calls` on the calling tool's result, and their
+  usage counts toward the session cost.
+- `pi.register_mcp_server()` and the `mcp_servers_change` event, for
+  extensions that implement MCP. Registered servers no extension handles are
+  reported as an error.
+- Built-in extensions are named `builtin:<name>`: `pidrei config` gains a
+  Built-in section to disable them globally or per project (stored as
+  `-builtin:<name>` in the `extensions` setting), `-e builtin:<name>` loads
+  one explicitly, and SDK inline extensions opt in with `builtin=True`. An
+  extension that replaces a built-in one now produces a warning.
+- `+name` and `-name` entries in the `defaultTools` setting add or remove
+  tools without repeating the defaults; project entries apply on top of the
+  user setting.
+- The `fullscreenWheelScrollLines` setting and `/settings` entry for
+  fullscreen mouse-wheel scrolling; the default `"auto"` accelerates fast
+  wheel spins outside local macOS terminals.
+- RPC `prompt`, `steer` and `follow_up` responses report each input's
+  disposition, as do `AgentSession.steer()`/`follow_up()` and the
+  `RpcClient` methods; `RpcClient.prompt()` accepts `streaming_behavior`.
+- The `provider_stream_event` extension event observes parsed provider events
+  before normalization, with an opt-in `/debug-provider` example viewer.
+- HTML exports have a show/hide toggle (`H`) for custom messages marked
+  `display: false`.
+
+### Changed
+
+- The startup header shows the logo with the version instead of the app name.
+- The built-in `dark` and `light` themes use the revised colors, written in
+  OKHSL.
+- Light/dark detection uses the reported background color first, then the
+  terminal's light/dark report, then `COLORFGBG`. The first-time setup no
+  longer shows the detected appearance.
+- `TERM=*-direct` is treated as truecolor.
+- The OpenAI Codex provider is renamed "OpenAI Codex (legacy)"; Sign in with
+  ChatGPT on the OpenAI provider supersedes it.
+- Built-in extensions and tools are named `builtin:<name>` in errors,
+  diagnostics and RPC source info, and their slash commands no longer carry
+  an autocomplete tag. `--no-extensions` also disables built-in extensions.
+- Tool calls without a custom call renderer show their arguments: as
+  `key=value` pairs on the title line when collapsed and one `key: value` line
+  per argument when expanded.
+- A failing `bash` command returns an error result instead of raising. Its
+  structured result holds up to 1 MiB of output (the first and last 512 KiB
+  of longer output) and adds `truncated`, `full_output_path`, `exit_code` and
+  `wall_time_seconds`.
+- Model catalog regenerated from models.dev, now covering image and
+  classifier models.
+- Bumped the tonio dependency to 0.10.3.
+
+### Removed
+
+- `pidrei_ai.image_models`: image models live in the unified catalog.
+
+### Fixed
+
+- X11 clipboard text is no longer taken for an image when the clipboard owner
+  accepts image targets it does not advertise.
+- Pinned git extensions loaded with `-e` follow a changed ref instead of
+  reusing the first downloaded commit.
+- Full-file `read` calls no longer render as `:1` when the model sends `null`
+  for `offset` and `limit`.
+- New sessions are no longer lost when pidrei exits before the first
+  assistant response: the session file is created at the first user message.
+- Custom themes honor `terminal.trueColor` and the other terminal capability
+  overrides.
+- The startup header, loaded resources and chat notices follow theme changes.
+- Keyboard input is no longer lost after a mouse click closes a `/settings`
+  submenu.
+- Fireworks, OpenCode Go and Together default to Kimi K3 instead of the
+  removed Kimi K2.6.
+- Less CPU while streaming in long sessions and when previewing themes.
+- Skill autocomplete no longer appears empty for skill names without the
+  letters of `skill`, and path and `@` autocomplete work after `(`, `[`,
+  `{`, `<` and backticks.
+- Kitty graphics images are no longer stretched.
+- Provider fixes: Vercel AI Gateway one-hour Anthropic cache writes and
+  OpenAI Fast mode are priced correctly; model `samplingParams` apply to
+  direct `stream()`/`complete()` calls; Mistral GLM survives empty content
+  deltas and Mistral reasoning models honor the thinking level; OpenCode
+  `qwen3.8-flash` thinking replays as thinking; Responses streams without
+  `output_index` end with an error instead of running mixed-up tool calls;
+  GitHub Copilot Claude Opus 5.5 offers only supported thinking levels.
+- Anthropic and OpenAI Codex browser sign-in stop waiting when the provider
+  redirects with an authorization error.
+
+### Not ported
+
+- Codemode, tool search and MCP support (the `codemode` tool and settings,
+  `tool_search`, the MCP client, `mcp.json`, `/mcp` and the `mcp` CLI
+  commands). They land together in a later release; the core tool
+  orchestration and MCP registry they build on are in this one.
+- Classification with llama.cpp models: pidrei has no llama.cpp extension.
+- Pasting files copied in Finder as paths: it relies on upstream's native
+  macOS clipboard helper.
+
 ## [0.87.1.0] - 2026-09-28
 
 Tracks [Pi 0.87.1](https://github.com/earendil-works/pi/releases/tag/v0.87.1).

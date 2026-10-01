@@ -1,6 +1,6 @@
 {
   "google-vertex": {
-    "gemini-2.5-flash": {
+    "chat:gemini-2.5-flash": {
       "id": "gemini-2.5-flash",
       "name": "Gemini 2.5 Flash",
       "api": "google-vertex",
@@ -28,9 +28,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-2.5-flash-lite": {
+    "chat:gemini-2.5-flash-lite": {
       "id": "gemini-2.5-flash-lite",
       "name": "Gemini 2.5 Flash-Lite",
       "api": "google-vertex",
@@ -58,9 +59,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-2.5-pro": {
+    "chat:gemini-2.5-pro": {
       "id": "gemini-2.5-pro",
       "name": "Gemini 2.5 Pro",
       "api": "google-vertex",
@@ -88,9 +90,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3-flash-preview": {
+    "chat:gemini-3-flash-preview": {
       "id": "gemini-3-flash-preview",
       "name": "Gemini 3 Flash Preview",
       "api": "google-vertex",
@@ -127,9 +130,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.1-flash-lite": {
+    "chat:gemini-3.1-flash-lite": {
       "id": "gemini-3.1-flash-lite",
       "name": "Gemini 3.1 Flash Lite",
       "api": "google-vertex",
@@ -166,9 +170,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.1-pro-preview": {
+    "chat:gemini-3.1-pro-preview": {
       "id": "gemini-3.1-pro-preview",
       "name": "Gemini 3.1 Pro Preview",
       "api": "google-vertex",
@@ -205,9 +210,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.1-pro-preview-customtools": {
+    "chat:gemini-3.1-pro-preview-customtools": {
       "id": "gemini-3.1-pro-preview-customtools",
       "name": "Gemini 3.1 Pro Preview Custom Tools",
       "api": "google-vertex",
@@ -244,9 +250,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.5-flash": {
+    "chat:gemini-3.5-flash": {
       "id": "gemini-3.5-flash",
       "name": "Gemini 3.5 Flash",
       "api": "google-vertex",
@@ -283,9 +290,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.5-flash-lite": {
+    "chat:gemini-3.5-flash-lite": {
       "id": "gemini-3.5-flash-lite",
       "name": "Gemini 3.5 Flash Lite",
       "api": "google-vertex",
@@ -322,9 +330,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.6-flash": {
+    "chat:gemini-3.6-flash": {
       "id": "gemini-3.6-flash",
       "name": "Gemini 3.6 Flash",
       "api": "google-vertex",
@@ -361,9 +370,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.7-flash": {
+    "chat:gemini-3.7-flash": {
       "id": "gemini-3.7-flash",
       "name": "Gemini 3.7 Flash",
       "api": "google-vertex",
@@ -400,9 +410,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.8-flash": {
+    "chat:gemini-3.8-flash": {
       "id": "gemini-3.8-flash",
       "name": "Gemini 3.8 Flash",
       "api": "google-vertex",
@@ -439,9 +450,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-flash-latest": {
+    "chat:gemini-flash-latest": {
       "id": "gemini-flash-latest",
       "name": "Gemini Flash Latest",
       "api": "google-vertex",
@@ -478,9 +490,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-flash-lite-latest": {
+    "chat:gemini-flash-lite-latest": {
       "id": "gemini-flash-lite-latest",
       "name": "Gemini Flash-Lite Latest",
       "api": "google-vertex",
@@ -517,7 +530,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

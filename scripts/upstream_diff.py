@@ -737,6 +737,47 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "on state.messages lands as a rebind; _reduce publishes (*old, msg)"
             ),
         ),
+        (
+            "nested-calls-channel",
+            (
+                "pidrei-only observe(event): nested tool events enter the run's "
+                "dispatcher as observe-only tickets (no _reduce); dropped once "
+                "the dispatcher closed (events_guard)"
+            ),
+        ),
+    ),
+    # Nested tool calls (0.99.1 port): a per-top-level-call channel folded by
+    # the tool wrapper replaces pi's shared NestedCallRecorder/scopes map.
+    "packages/agent/src/agent-loop.ts": (
+        (
+            "nested-calls-channel",
+            (
+                "the wrapper's fold rides on AgentToolResult (nested_calls/"
+                "nested_usage), moved off the result before the hooks and "
+                "tool_execution_end and combined onto the tool-result message "
+                "in _create_tool_result_message (pi: message_start listener)"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/nested-tool-calls.ts": (
+        (
+            "nested-calls-channel",
+            (
+                "NestedCallRecorder is fold_nested_calls over NestedCallFeed "
+                "messages; scopes/takeRecord/clear do not exist (NestedCallScope "
+                "rides in the tool context); queueTail is an Event-tail chain"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
+        (
+            "nested-calls-channel",
+            (
+                "owner (no inherited scope) opens the feed and drains it when "
+                "execute returns or raises with calls recorded; nested calls run "
+                "through with_nested_scope bound copies as producers"
+            ),
+        ),
     ),
     # PROPER_MT_DESIGN.md step 5 (state epochs): writes to agent.state.messages
     # are rebinds; identity WeakMap/WeakSet become a run-scoped strong id() table.
@@ -748,6 +789,22 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "_boundaryDispatchedMessages identity maps land in the run-scoped "
                 "id() table (cleared per prompt-loop iteration) with the positional "
                 "projection walk as fallback"
+            ),
+        ),
+        (
+            "state-epochs",
+            (
+                "_applyToolLoadout publishes (tools, hidden_declarations) as one "
+                "_ToolLoadoutEpoch under _tool_loadout_guard (sync RLock, also "
+                "around the registry rebind); readers pin one epoch"
+            ),
+        ),
+        (
+            "nested-calls-channel",
+            (
+                "_executeNestedToolCall/_handleAgentEvent: no takeRecord in the "
+                "message_start listener; nested events go through agent.observe; "
+                "the NestedToolCallRunner is created with the session"
             ),
         ),
     ),
@@ -799,6 +856,16 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "finish_before_next_input"
             ),
         ),
+        (
+            "terminal-colors-loop",
+            (
+                "queryTerminalColors registers the query in a sync prefix and "
+                "returns its applied Event; every colour report (settled, "
+                "timeout partial, late reply) is sent under _query_lock to "
+                "_terminal_events, whose consumer is the only caller of the "
+                "on_terminal_colors listener"
+            ),
+        ),
     ),
     "packages/tui/src/terminal.ts": (
         (
@@ -809,6 +876,10 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "Kitty activation is queued in input order; start takes "
                 "on_reply/on_error; stop drops queued items"
             ),
+        ),
+        (
+            "terminal-colors-loop",
+            "only the DA1 owed to the Kitty query is swallowed; later DA1 replies go to on_reply",
         ),
     ),
     "packages/tui/src/stdin-buffer.ts": (
@@ -870,6 +941,28 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    # System theme (0.99.1 port): theme applications are serialized; terminal
+    # colour globals are guarded.
+    "packages/coding-agent/src/modes/interactive/theme/theme-controller.ts": (
+        (
+            "terminal-colors-loop",
+            (
+                "every theme application (settings, selections, previews, "
+                "instance sets, both terminal listeners) runs under _apply_lock; "
+                "no TUI lock is held across its awaits"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/modes/interactive/theme/theme.ts": (
+        (
+            "terminal-colors-loop",
+            (
+                "terminal colour globals live under _theme_state_lock with a "
+                "conftest guard; Theme.colors publishes one (terminal, colors) "
+                "tuple"
+            ),
+        ),
+    ),
     # PROPER_MT_DESIGN.md step 3 (config epochs): config services publish
     # immutable snapshots swapped atomically; readers pin one attribute read.
     "packages/coding-agent/src/core/settings-manager.ts": (
@@ -921,7 +1014,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "(get_error, get_registered_*, get_provider_auth_status, "
                 "get_compatibility_request_config, _get_model_auth) pin one "
                 "epoch; _prepare_request resolves the provider once and "
-                "auths against it (_get_model_auth)"
+                "auths against it (_get_model_auth); virtual models live in "
+                "the epoch (virtual_models, inner dicts replaced, never "
+                "mutated) and resolve_model pins it"
             ),
         ),
     ),

@@ -1,6 +1,6 @@
 {
   "anthropic-messages": {
-    "claude-fable-5": {
+    "chat:claude-fable-5": {
       "id": "claude-fable-5",
       "name": "Claude Fable 5",
       "api": "anthropic-messages",
@@ -43,9 +43,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-fable-5.1": {
+    "chat:claude-fable-5.1": {
       "id": "claude-fable-5.1",
       "name": "Claude Fable 5.1",
       "api": "anthropic-messages",
@@ -88,9 +89,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-haiku-4.5": {
+    "chat:claude-haiku-4.5": {
       "id": "claude-haiku-4.5",
       "name": "Claude Haiku 4.5 (latest)",
       "api": "anthropic-messages",
@@ -127,9 +129,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4.7": {
+    "chat:claude-opus-4.7": {
       "id": "claude-opus-4.7",
       "name": "Claude Opus 4.7",
       "api": "anthropic-messages",
@@ -172,9 +175,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-4.8": {
+    "chat:claude-opus-4.8": {
       "id": "claude-opus-4.8",
       "name": "Claude Opus 4.8",
       "api": "anthropic-messages",
@@ -218,9 +222,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-5": {
+    "chat:claude-opus-5": {
       "id": "claude-opus-5",
       "name": "Claude Opus 5",
       "api": "anthropic-messages",
@@ -264,9 +269,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-opus-5.5": {
+    "chat:claude-opus-5.5": {
       "id": "claude-opus-5.5",
       "name": "Claude Opus 5.5",
       "api": "anthropic-messages",
@@ -314,9 +320,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-sonnet-4.6": {
+    "chat:claude-sonnet-4.6": {
       "id": "claude-sonnet-4.6",
       "name": "Claude Sonnet 4.6",
       "api": "anthropic-messages",
@@ -357,9 +364,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "claude-sonnet-5": {
+    "chat:claude-sonnet-5": {
       "id": "claude-sonnet-5",
       "name": "Claude Sonnet 5",
       "api": "anthropic-messages",
@@ -400,11 +408,58 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
+    },
+    "chat:claude-sonnet-5.5": {
+      "id": "claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5",
+      "api": "anthropic-messages",
+      "provider": "github-copilot",
+      "baseUrl": "https://api.individual.githubcopilot.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "headers": {
+        "User-Agent": "GitHubCopilotChat/0.35.0",
+        "Editor-Version": "vscode/1.107.0",
+        "Editor-Plugin-Version": "copilot-chat/0.35.0",
+        "Copilot-Integration-Id": "vscode-chat"
+      },
+      "compat": {
+        "supportsMidConvoSystemMessages": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
     }
   },
   "openai-completions": {
-    "gemini-3.5-flash": {
+    "chat:gemini-3.5-flash": {
       "id": "gemini-3.5-flash",
       "name": "Gemini 3.5 Flash",
       "api": "openai-completions",
@@ -444,9 +499,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.6-flash": {
+    "chat:gemini-3.6-flash": {
       "id": "gemini-3.6-flash",
       "name": "Gemini 3.6 Flash",
       "api": "openai-completions",
@@ -486,9 +542,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.7-flash": {
+    "chat:gemini-3.7-flash": {
       "id": "gemini-3.7-flash",
       "name": "Gemini 3.7 Flash",
       "api": "openai-completions",
@@ -528,9 +585,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gemini-3.8-flash": {
+    "chat:gemini-3.8-flash": {
       "id": "gemini-3.8-flash",
       "name": "Gemini 3.8 Flash",
       "api": "openai-completions",
@@ -570,9 +628,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-k2.7-code": {
+    "chat:kimi-k2.7-code": {
       "id": "kimi-k2.7-code",
       "name": "Kimi K2.7 Code",
       "api": "openai-completions",
@@ -612,9 +671,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-k3": {
+    "chat:kimi-k3": {
       "id": "kimi-k3",
       "name": "Kimi K3",
       "api": "openai-completions",
@@ -655,11 +715,12 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   },
   "openai-responses": {
-    "gpt-5-mini": {
+    "chat:gpt-5-mini": {
       "id": "gpt-5-mini",
       "name": "GPT-5 Mini",
       "api": "openai-responses",
@@ -705,9 +766,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.3-codex": {
+    "chat:gpt-5.3-codex": {
       "id": "gpt-5.3-codex",
       "name": "GPT-5.3 Codex",
       "api": "openai-responses",
@@ -753,9 +815,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4": {
+    "chat:gpt-5.4": {
       "id": "gpt-5.4",
       "name": "GPT-5.4",
       "api": "openai-responses",
@@ -812,9 +875,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4-mini": {
+    "chat:gpt-5.4-mini": {
       "id": "gpt-5.4-mini",
       "name": "GPT-5.4 mini",
       "api": "openai-responses",
@@ -862,9 +926,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4-nano": {
+    "chat:gpt-5.4-nano": {
       "id": "gpt-5.4-nano",
       "name": "GPT-5.4 nano",
       "api": "openai-responses",
@@ -906,9 +971,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.5": {
+    "chat:gpt-5.5": {
       "id": "gpt-5.5",
       "name": "GPT-5.5",
       "api": "openai-responses",
@@ -965,9 +1031,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.6-luna": {
+    "chat:gpt-5.6-luna": {
       "id": "gpt-5.6-luna",
       "name": "GPT-5.6 Luna",
       "api": "openai-responses",
@@ -1024,9 +1091,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.6-sol": {
+    "chat:gpt-5.6-sol": {
       "id": "gpt-5.6-sol",
       "name": "GPT-5.6 Sol",
       "api": "openai-responses",
@@ -1083,9 +1151,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.6-terra": {
+    "chat:gpt-5.6-terra": {
       "id": "gpt-5.6-terra",
       "name": "GPT-5.6 Terra",
       "api": "openai-responses",
@@ -1142,9 +1211,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-6-astra": {
+    "chat:gpt-6-astra": {
       "id": "gpt-6-astra",
       "name": "GPT-6 Astra",
       "api": "openai-responses",
@@ -1201,9 +1271,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-6-luna": {
+    "chat:gpt-6-luna": {
       "id": "gpt-6-luna",
       "name": "GPT-6 Luna",
       "api": "openai-responses",
@@ -1260,9 +1331,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-6-sol": {
+    "chat:gpt-6-sol": {
       "id": "gpt-6-sol",
       "name": "GPT-6 Sol",
       "api": "openai-responses",
@@ -1319,9 +1391,70 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "grok-4.5": {
+    "chat:gpt-6.1-sol": {
+      "id": "gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "api": "openai-responses",
+      "provider": "github-copilot",
+      "baseUrl": "https://api.individual.githubcopilot.com",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4,
+            "output": 15,
+            "cacheRead": 0.2,
+            "cacheWrite": 5
+          }
+        ]
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "headers": {
+        "User-Agent": "GitHubCopilotChat/0.35.0",
+        "Editor-Version": "vscode/1.107.0",
+        "Editor-Plugin-Version": "copilot-chat/0.35.0",
+        "Copilot-Integration-Id": "vscode-chat"
+      },
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true,
+        "supportsMidConvoSystemMessages": true,
+        "supportsAdditionalTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:grok-4.5": {
       "id": "grok-4.5",
       "name": "Grok 4.5",
       "api": "openai-responses",
@@ -1373,9 +1506,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "grok-4.6": {
+    "chat:grok-4.6": {
       "id": "grok-4.6",
       "name": "Grok 4.6",
       "api": "openai-responses",
@@ -1427,9 +1561,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "grok-4.7": {
+    "chat:grok-4.7": {
       "id": "grok-4.7",
       "name": "Grok 4.7",
       "api": "openai-responses",
@@ -1481,9 +1616,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mai-code-1-flash-picker": {
+    "chat:mai-code-1-flash-picker": {
       "id": "mai-code-1-flash-picker",
       "name": "MAI-Code-1-Flash",
       "api": "openai-responses",
@@ -1515,9 +1651,10 @@
         "high": "high",
         "xhigh": null,
         "max": null
-      }
+      },
+      "type": "chat"
     },
-    "mai-code-1.1-flash": {
+    "chat:mai-code-1.1-flash": {
       "id": "mai-code-1.1-flash",
       "name": "MAI-Code-1.1-Flash",
       "api": "openai-responses",
@@ -1560,7 +1697,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }
