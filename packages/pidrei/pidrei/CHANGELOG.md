@@ -69,7 +69,8 @@ Tracks [Pi 0.99.1](https://github.com/earendil-works/pi/releases/tag/v0.99.1).
 
 ### Changed
 
-- The startup header shows the logo with the version instead of the app name.
+- The startup header shows the pidrei logo (pi's logo with a 3) and the
+  version instead of the app name.
 - The built-in `dark` and `light` themes use the revised colors, written in
   OKHSL.
 - Light/dark detection uses the reported background color first, then the

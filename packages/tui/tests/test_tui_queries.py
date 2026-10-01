@@ -179,7 +179,9 @@ async def test_queries_all_colors_in_one_write_and_consumes_the_replies():
         written = terminal.expect_write(QUERY_START)
         applied = tui.query_terminal_colors(timeout_ms=1000)
         await written.wait(5)
-        burst = terminal.writes[-1]
+        # pi reads the last write; here the render loop may write a frame
+        # after the burst, so pick the burst out by its content.
+        [burst] = [data for data in terminal.writes if QUERY_START in data]
         assert burst.startswith(QUERY_START) and burst.endswith("\x1b[c")
 
         await terminal.send_input("x")

@@ -19,7 +19,8 @@ THEME_OPTIONS = [
     {"value": "light", "label": "Light"},
 ]
 
-SETUP_LOGO_LINES = ["██████", "██  ██", "████  ██", "██    ██"]
+# pi's logo followed by a 3 (pidrei-only), one pixel apart.
+SETUP_LOGO_LINES = ["██████    ██████", "██  ██      ████", "████  ██      ██", "██    ██  ██████"]
 
 
 class FirstTimeSetupComponent(Container):
