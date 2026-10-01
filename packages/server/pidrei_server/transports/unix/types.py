@@ -1,7 +1,7 @@
 """Unix listener option types (port of pi server `transports/unix/types.ts`).
 
 pi's `UnixServerOptions` (the listener options merged with the protocol
-server's) went with the protocol server — UPSTREAM_EXPERIMENTAL_RULING.md.
+server's) went with the protocol server — spec/upstream-sync.md.
 """
 
 from collections.abc import Callable

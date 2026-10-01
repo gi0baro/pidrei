@@ -77,8 +77,11 @@ async def test_does_not_repeat_unchanged_anthropic_thinking_drops():
 
 @pytest.mark.tonio
 async def test_ignores_the_current_message_when_it_is_already_persisted():
-    # pidrei-specific: the UI owner can handle message_end after the session persisted
-    # the message, so the branch's last assistant entry may be the message itself.
+    # pidrei-specific guard: when the notice runs after the session persisted the
+    # message, the branch's last assistant entry is the message itself. (It dates
+    # from when interactive mode handled message_end after persistence; the
+    # listener now applies it inside the emit, but the guard keeps the notice
+    # correct either way.)
     await init_theme("dark")
     context = SimpleNamespace(
         _chat_container=Container(),

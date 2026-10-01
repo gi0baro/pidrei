@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "pidrei-protocol"
 version = "0.84.4.1"
 # Workspace-only transport remnant (CBOR + framing); not published — see
-# UPSTREAM_EXPERIMENTAL_RULING.md.
+# spec/upstream-sync.md.
 description = "CBOR and framing transport layer of pidrei (port of pi-protocol's transport half)"
 requires-python = ">=3.14"
 license = "MIT"

@@ -43,7 +43,7 @@ class ModelsStore(Protocol):
 class InMemoryModelsStore(ModelsStore):
     # `_entries` is an immutable snapshot swapped on write (never mutated in
     # place), so readers pin one attribute read; the deepcopies keep pi's
-    # value semantics at the API edge (PROPER_MT_DESIGN.md step 3).
+    # value semantics at the API edge (config epochs, spec/concurrency.md).
     def __init__(self) -> None:
         self._entries: dict[str, ModelsStoreEntry] = {}
 

@@ -6,7 +6,7 @@ one view for partial updates and the final result; truncated runs point at the
 env's spill file with the full output.
 
 pi's durable-recovery checkpoint flag on `onUpdate` (every 2 s) is
-harness-runtime facing and not ported (PORT_0.85.0.md, `eb1185d9`).
+harness-runtime facing and not ported (0.85.0 delta port, `eb1185d9`).
 """
 
 import math

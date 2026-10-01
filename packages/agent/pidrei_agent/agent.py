@@ -15,7 +15,7 @@ Runtime mapping notes:
   (`_dispatch_events`) that reduces state and awaits listeners in emit order.
 - pi's loose queue/lifecycle fields (the pending-message queues, the active
   run, the "already processing" guards) are the internal `_AgentMailbox`
-  (PROPER_MT_DESIGN.md §6): a standing actor task that owns the queues and
+  (spec/concurrency.md, "The mailbox"): a standing actor task that owns the queues and
   run admission. Enqueues and clears stay sync (fire-and-forget mailbox
   sends — FIFO makes them visible to every later drain or query); only
   `has_queued_messages` is awaited in pidrei (it needs the mailbox's
@@ -106,7 +106,7 @@ class AgentState:
 
     Assigning `tools` copies the provided top-level list; reading it returns the
     internal list (appending to it is visible, as in pi). `messages` is
-    rebind-only (PROPER_MT_DESIGN step 5, state epochs): it publishes a tuple,
+    rebind-only (spec/concurrency.md, "State epochs"): it publishes a tuple,
     assignment stores `tuple(next_messages)`, and every writer — the
     dispatcher's `_reduce` included — rebinds instead of mutating, so a reader
     that pins one read never sees the value change under it. `system_prompt`
@@ -239,7 +239,7 @@ def _append_stall_log_blocking(path: str, text: str) -> None:
 class _DispatchStallMeter:
     """Per-run observation-latency meter for the dispatcher — the §1 gate data.
 
-    PROPER_MT_DESIGN.md keeps the fused observer pipeline (§1) until a trace
+    spec/concurrency.md keeps the fused observer pipeline until a trace
     shows the dispatcher stalled behind a slow listener while producers queue;
     this meter is that trace. Enabled by pointing ``PIDREI_DISPATCH_STALL_LOG``
     at a file — when unset the dispatcher takes no timestamps, so the default
@@ -325,7 +325,7 @@ class _MailboxJob:
 
 class _AgentMailbox:
     """Standing actor task owning one `Agent`'s queues and run admission
-    (PROPER_MT_DESIGN.md §6).
+    (spec/concurrency.md, "The mailbox").
 
     pi keeps this state as loose fields on the Agent; here one consumer task
     owns it and every operation arrives as a `_MailboxJob` on the channel,
@@ -912,7 +912,7 @@ class Agent:
         """Single consumer of a run's events: reduce state, then await listeners in order.
 
         A `message_update` carries a frozen per-delta snapshot of the
-        provider's message (PROPER_MT_DESIGN.md step 2 — the old "live view,
+        provider's message (spec/concurrency.md, "The data plane" — the old "live view,
         deltas are authoritative" doctrine is retired), so any listener may
         hold any event's message indefinitely.
         """

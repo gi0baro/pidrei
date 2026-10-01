@@ -13,7 +13,7 @@ class RuntimeCredentials(CredentialStore):
         self._store = store
         # Immutable snapshot swapped on write (never mutated in place):
         # readers pin one attribute read and take no lock; the guard
-        # serializes writers only (PROPER_MT_DESIGN.md step 3).
+        # serializes writers only (spec/concurrency.md, configuration epochs).
         self._overrides: dict[str, str] = {}
         self._guard = threading.Lock()
 

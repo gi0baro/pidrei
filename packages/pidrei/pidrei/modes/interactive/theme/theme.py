@@ -779,7 +779,7 @@ async def _load_theme_or_fallback(name: str) -> tuple[Theme, str | None]:
 def _change_theme(apply: Callable[[], bool]) -> None:
     """Swap the theme through the registered change callback, which runs
     `apply` under the host's UI lock together with its refresh, so a frame
-    never mixes two themes (UI_ISLAND_DESIGN §4.5c). With no callback
+    never mixes two themes (spec/ui-island.md, whole changes). With no callback
     registered (the startup screens) the swap happens here."""
     with _theme_state_lock:
         callback = _on_theme_change_callback

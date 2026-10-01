@@ -319,7 +319,7 @@ class ShellToolConfig:
 
     pi added this so the bash tool and a Windows-only powershell tool could
     share one implementation. powershell is dropped surface here (POSIX-only;
-    PORT_0.84.3.md decision 2), so bash is the only config in tree — the seam
+    0.84.3 delta port), so bash is the only config in tree — the seam
     is kept so the shared body stays 1:1 with upstream.
     """
 

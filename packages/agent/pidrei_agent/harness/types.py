@@ -365,7 +365,7 @@ class AgentHarnessTool[TContext, TDetails]:
         pi's signature is `(toolCallId, params, onUpdate, toolContext,
         invocation, context)`; the durable-replay `invocation` belongs to the
         harness runtime (not ported) and `context` is the call's cancel token
-        (cancel-token recipe, UPSTREAM_DELTA_PORT.md).
+        (cancel-token recipe, spec/upstream-sync.md).
         """
         raise NotImplementedError
 

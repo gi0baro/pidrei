@@ -718,7 +718,7 @@ async def test_listeners_never_overlap_under_parallel_tools():
 
 @pytest.mark.tonio
 async def test_dispatch_stall_meter_records_a_blocked_listener():
-    # Forced probe for the §1 gate metric (PROPER_MT_DESIGN.md step 0): with
+    # Forced probe for the stall gate metric (spec/concurrency.md): with
     # PIDREI_DISPATCH_STALL_LOG set, a listener holding the dispatcher past
     # the ~50 ms threshold must produce a per-event stall line, and closing
     # the run's dispatcher must append the per-type summary.
@@ -1214,7 +1214,7 @@ async def test_forwards_session_id_to_stream_function_options():
 
 
 # ---------------------------------------------------------------------------
-# pidrei-own: the internal agent mailbox (PROPER_MT_DESIGN.md step 4).
+# pidrei-own: the internal agent mailbox (spec/concurrency.md, "The mailbox").
 # Not part of the pi mirror — pi's single thread has no admission races and
 # no mailbox ordering contract to pin.
 

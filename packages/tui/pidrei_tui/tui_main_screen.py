@@ -6,7 +6,7 @@ repaints only what changed. ``tui_alt_screen`` is the other renderer; the
 machinery both share lives in ``tui``.
 
 Port deviations: the exit sequence is async (the terminal driver is); pi's
-``doRender`` is split in two (UI_ISLAND_DESIGN §4.1): ``_compose_frame``
+``doRender`` is split in two (spec/ui-island.md, "Rendering"): ``_compose_frame``
 walks the tree under the UI state lock and ``_write_frame`` diffs and emits
 under the render lock only. The crash/debug logs a frame writes are deferred
 until the frame is done (``_defer_frame_io``) and go through the async fs /

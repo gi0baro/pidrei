@@ -41,7 +41,7 @@ jobs:
           # workspace with no [project], where bare `uv build` silently
           # produces an "unknown-0.0.0" artifact instead of failing. Not
           # --all-packages either: protocol/client/server are workspace-only
-          # transport remnants (UPSTREAM_EXPERIMENTAL_RULING.md), never shipped.
+          # transport remnants (spec/upstream-sync.md), never shipped.
           for name in pidrei pidrei-ai pidrei-agent pidrei-tui; do
             uv build --package "${name}"
           done

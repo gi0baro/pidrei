@@ -7,7 +7,7 @@ Parallelism/async deltas vs pi's single-threaded runtime:
 - fire-and-forget promises become spawned tasks (``_spawn_flow`` for UI flows)
 - pi async methods whose synchronous prefix is observable are split into a
   synchronous handler that runs the prefix and spawns the rest
-- UI state is guarded by the TUI's state lock (UI_ISLAND_DESIGN.md): helpers
+- UI state is guarded by the TUI's state lock (spec/ui-island.md): helpers
   take it around their bodies, flows around each stretch between awaits
 - ``ui.start()``/``ui.stop()`` are awaited (the tonio TUI driver is async)
 """
@@ -230,7 +230,7 @@ async def _wait_for_answer(done, outcome: dict):
     return outcome["value"]
 
 
-# UI state discipline (UI_ISLAND_DESIGN.md). What a call site keeps from pi is
+# UI state discipline (spec/ui-island.md). What a call site keeps from pi is
 # whether pi runs the call to completion before moving on or fires it and
 # forgets it — not its colour.
 # - A UI-mutating helper is one synchronous function that takes the UI state
@@ -404,7 +404,7 @@ class ExtensionUIContext:
     and `_NoOpUIContext` — pi's counterpart is a camelCase JS object; the
     dict-of-callbacks it was ported as matched neither. The shape is part of
     the contract and identical across the real, no-op and RPC contexts
-    (UI_ISLAND_DESIGN §10.2):
+    (spec/ui-island.md, `ctx.ui`):
 
     - Setters and getters are synchronous, each one call through the UI
       state lock: the change is whole, and the caller's next line sees it.
@@ -494,7 +494,7 @@ class ExtensionUIContext:
     def paste_to_editor(self, text: str) -> None:
         # pi's direct `editor.handleInput(paste)`, whatever has focus, as one
         # hold of the lock (the editor is resolved inside it, behind any
-        # editor swap). Not through the input stream (UI_ISLAND_DESIGN §10.2).
+        # editor swap). Not through the input stream (spec/ui-island.md).
         data = f"\x1b[200~{text}\x1b[201~"
         with self._mode.ui.state_lock:
             self._mode.editor.handle_input(data)
@@ -603,7 +603,7 @@ class InteractiveMode:
         self._main_screen_render_state = None
         self._fullscreen_layout_root = None
         self.ui = create_interactive_tui_reference(lambda: self._renderer)
-        # What extension factories receive as `tui` (UI_ISLAND_DESIGN §10.3).
+        # What extension factories receive as `tui` (spec/ui-island.md).
         self._extension_tui = ExtensionTui(self.ui)
         self.ui.set_clear_on_shrink(self.settings_manager.get_clear_on_shrink())
         self.ui.set_render_error_handler(self._uncaught_crash)
@@ -2638,7 +2638,7 @@ class InteractiveMode:
         """Show a selector for extensions: mounted before this returns (pi's
         synchronous mount, so a key that opens it sends the next key to it);
         returns the spawn handle of the wait for the pick, which the caller
-        may await or drop (UI_ISLAND_DESIGN §10.2)."""
+        may await or drop (spec/ui-island.md, `ctx.ui`)."""
         opts = opts or {}
         done = tonio.Event()
         # Settled by a pick, the countdown or an abort callback on any task:
@@ -2923,7 +2923,7 @@ class InteractiveMode:
 
         The factory is synchronous and runs in one hold of the UI state lock
         with the editor-text snapshot (pi takes it at call time) and the
-        mount (UI_ISLAND_DESIGN §10.2), so no frame or key lands in between.
+        mount (spec/ui-island.md, `ctx.ui`), so no frame or key lands in between.
         Returns the spawn handle of the wait for the result, which the caller
         may await or drop. `done` (`close`) takes the lock itself: callable
         from input handling, a timer, spawned work or the factory itself.
@@ -3097,7 +3097,7 @@ class InteractiveMode:
     def _spawn_flow(self, flow: Awaitable[None]) -> None:
         """Run `flow` on its own task, fire-and-forget (pi's `void` call).
         Whatever escapes it goes to the crash handler, as an unhandled
-        rejection does in pi (UI_ISLAND_DESIGN §4.7)."""
+        rejection does in pi (spec/ui-island.md, errors)."""
 
         async def run() -> None:
             try:
@@ -3387,7 +3387,7 @@ class InteractiveMode:
         self.ui.request_render()
 
     def _subscribe_to_agent(self) -> None:
-        # The fused emit contract (UI_ISLAND_DESIGN §4.8): the session's
+        # The fused emit contract (spec/ui-island.md, agent events): the session's
         # listener applies each event in place, under the UI state lock, as
         # synchronously as pi's listener — the UI reflects an event when its
         # emit returns, and an apply error propagates to the emitter (for
@@ -3531,7 +3531,7 @@ class InteractiveMode:
                         if retry_attempt > 0
                         else "Operation aborted"
                     )
-                    # Step 2 (PROPER_MT_DESIGN.md): messages are frozen values,
+                    # Frozen messages (spec/concurrency.md): messages are frozen values,
                     # so the abort decoration is a display-only copy. pi mutates
                     # the shared message here, which also lands in the session
                     # file; the persisted message now keeps the provider's
@@ -4363,7 +4363,7 @@ class InteractiveMode:
         stopped and SIGTSTP sent. The resume is its own task, as pi's
         `process.once("SIGCONT")` handler is: it restores the TUI when
         SIGCONT comes, and input handling never waits for it
-        (UI_ISLAND_DESIGN §4.4).
+        (spec/ui-island.md).
 
         Deviations: Python processes stay alive without pi's event-loop
         keep-alive timer, and SIGCONT is awaited through a tonio signal
@@ -4526,7 +4526,7 @@ class InteractiveMode:
         the text is read and the TUI stopped here, as pi's handler does before
         its first await; the edit (the user's editor, then the restart) runs
         on its own task, so the agent keeps running meanwhile, as in pi
-        (UI_ISLAND_DESIGN §4.4)."""
+        (spec/ui-island.md)."""
         editor_cmd = self.settings_manager.get_external_editor_command()
         get_expanded = getattr(self.editor, "get_expanded_text", None)
         content = get_expanded() if get_expanded is not None else self.editor.get_text()
@@ -5104,7 +5104,7 @@ class InteractiveMode:
     def _on_settings_tui_mode_change(self, mode: str, selector) -> None:
         # From the settings input. pi switches in place; here the switch is
         # the key's completion, so the next key goes to the new renderer
-        # (UI_ISLAND_DESIGN §4.4).
+        # (spec/ui-island.md).
         self._finish_before_next_input(self._switch_tui_mode_from_settings(mode, selector))
 
     async def _switch_tui_mode_from_settings(self, mode: str, selector) -> None:
@@ -6621,7 +6621,7 @@ class InteractiveMode:
         """Share the session as a secret gist.
 
         pi also tries a Radius artifact upload first and falls back to the gist
-        path; Radius is dropped surface here (see FEASIBILITY), so only the
+        path; Radius is dropped surface here (initial port), so only the
         gist half exists and the JSONL export that feeds Radius is not made.
         pi later moved both halves into `modes/interactive/session-share.ts`
         (upstream 460191cf); that file is dropped with the Radius flow, so the

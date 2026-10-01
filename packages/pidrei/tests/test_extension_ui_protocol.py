@@ -1,4 +1,4 @@
-"""pidrei-only: the extension UI protocol (UI_ISLAND_DESIGN §10).
+"""pidrei-only: the extension UI protocol (spec/ui-island.md, "Extensions").
 
 pi's extensions reach its one-threaded TUI directly; here `ctx.ui` calls go
 through the UI state lock, the dialogs mount at call time, component

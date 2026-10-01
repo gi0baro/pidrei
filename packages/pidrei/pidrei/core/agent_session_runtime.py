@@ -77,7 +77,7 @@ class AgentSessionRuntime:
         model_fallback_message: str | None = None,
     ):
         self._rebind_session: Callable[[AgentSession, Callable[[], None]], Any] | None = None
-        # One session replacement at a time (UI_ISLAND_DESIGN §7.3): the
+        # One session replacement at a time (spec/ui-island.md, the guards): the
         # before-hooks, teardown, creation, swap and rebind of one
         # replacement never interleave with another's. `with_session` runs
         # after it, so the callback may replace the session again.
@@ -163,7 +163,7 @@ class AgentSessionRuntime:
         """pi's `apply` + `rebindSession`: swap in the new runtime and rebind
         the host. The rebind callback performs the swap itself (`swap`), so a
         host that guards its state applies it together with its first rebind
-        stretch (UI_ISLAND_DESIGN §4.5c); with no callback it happens here."""
+        stretch (spec/ui-island.md, whole changes); with no callback it happens here."""
 
         def swap() -> None:
             self._apply(result)

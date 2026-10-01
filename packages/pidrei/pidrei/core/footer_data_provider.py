@@ -1,9 +1,10 @@
 """Mirror of pi coding-agent src/core/footer-data-provider.ts.
 
-Parallelism deltas vs single-threaded pi: watcher callbacks and the debounce
-/ retry timers (`pidrei_tui._timers.Timeout`) fire on the TUI's owner task;
-the RLock guards provider state against `set_cwd`/`dispose` callers on
-other tasks. pi's async git refresh (execFile) becomes a subprocess call on
+Parallelism deltas vs single-threaded pi: watcher callbacks (from
+`fs_watch`'s polling coroutine) and the debounce / retry timers
+(`pidrei_tui._timers.Timeout`, each firing on its own coroutine) run in
+parallel with `set_cwd`/`dispose` callers; the RLock guards provider state
+against all of them. pi's async git refresh (execFile) becomes a subprocess call on
 the blocking pool; the sync/async split is kept as two module-level seams so
 mirrored tests can patch and count them separately.
 """
@@ -234,7 +235,7 @@ class FooterDataProvider:
             await self.watch_cwd()
 
     # `set_cwd` in three steps, so a caller can apply the change together with
-    # its own (UI_ISLAND_DESIGN §4.5b): resolve (filesystem I/O, no state
+    # its own (spec/ui-island.md, whole changes): resolve (filesystem I/O, no state
     # change), apply (instant), then watch (I/O again, after the apply).
 
     async def resolve_cwd(self, cwd: str) -> dict:

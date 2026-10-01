@@ -1,7 +1,7 @@
 """Mirror of pi's context-estimate.test.ts (the estimateContextTokens cases).
 
 The `buildBaseOptions` assertion from the original suite lands with the
-simple-options port (PLAN.md Phase 1).
+simple-options port (initial port).
 """
 
 from pidrei_ai.types import AssistantMessage, Context, TextContent, ToolCall, Usage, UserMessage

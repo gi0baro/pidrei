@@ -833,7 +833,7 @@ class TestGetSessionStats:
 
         session_manager = SessionManager.in_memory()
         root_id = await session_manager.append_message(UserMessage(content="hello", timestamp=1))
-        # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — usage
+        # Freeze-at-seam relaxation (spec/upstream-sync.md): frozen message — usage
         # attached by construction instead of mutation.
         assistant = replace(
             _stats_assistant("response", 100, 2), usage=replace(_stats_usage(100), cost=UsageCost(total=0.5))
@@ -912,7 +912,7 @@ class TestAutoCompactionQueue:
 
             from pidrei_ai.providers.faux import faux_assistant_message
 
-            # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — shaped
+            # Freeze-at-seam relaxation (spec/upstream-sync.md): frozen message — shaped
             # by construction instead of mutation.
             message = replace(
                 faux_assistant_message("compacted"),

@@ -297,7 +297,7 @@ async def run_rpc_mode(runtime_host) -> None:  # noqa: C901
     def create_dialog_promise(opts: Any, default_value: Any, request: dict[str, Any], parse_response) -> Any:
         """Helper for dialog methods with cancel/timeout support. The request
         goes out at call time; returns the spawn handle of the wait for the
-        answer, which the caller may await or drop (UI_ISLAND_DESIGN §10.5)."""
+        answer, which the caller may await or drop (spec/ui-island.md, `ctx.ui`)."""
         cancel = getattr(opts, "cancel", None) if opts is not None else None
         timeout = getattr(opts, "timeout", None) if opts is not None else None
         if cancel is not None and cancel.cancelled:

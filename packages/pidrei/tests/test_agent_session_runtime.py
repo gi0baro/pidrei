@@ -665,7 +665,7 @@ async def test_session_info_modified_uses_last_message_timestamp(tmp_path):
 
 
 class TestSessionReplacementGuards:
-    """pidrei-specific (UI_ISLAND_DESIGN §4.5c, §7.3)."""
+    """pidrei-specific (spec/ui-island.md, "Flows that await several times" and "The guards")."""
 
     @pytest.mark.tonio
     async def test_the_rebind_callback_makes_the_new_session_current_with_swap(self, tmp_path):

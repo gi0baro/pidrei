@@ -3,7 +3,7 @@
 Keeps one prompt cache entry alive by re-sending its request with a one-token
 output cap before the entry expires.
 
-Runtime mapping (PORT_0.87.1.md decision 6):
+Runtime mapping (0.87.1 delta port):
 - `Date.now()` / `setTimeout` go through the `clock.now_ms` and
   `timers.set_timeout` seams (module attributes, so tests swap them). The timer
   callback spawns the refresh as its own task.

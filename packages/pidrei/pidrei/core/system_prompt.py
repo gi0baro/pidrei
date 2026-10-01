@@ -3,7 +3,7 @@
 System prompt construction and project context loading. The prompt text is
 byte-identical to pi's except the harness name ("pi" → "pidrei"), which pi
 hardcodes in the template, and the PowerShell file-operation rule (the
-powershell tool is not ported; PORT_0.84.3.md decision 2).
+powershell tool is not ported; 0.84.3 delta port).
 
 The prompt is a set of ordered, independently replaceable sections: the
 transcript's system messages carry them, and `diff_system_prompt_sections`

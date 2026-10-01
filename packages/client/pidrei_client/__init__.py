@@ -2,7 +2,7 @@
 
 The unix transport is a separate import (`pidrei_client.unix`), matching pi's
 `@earendil-works/pi-client/unix` subpath export. The protocol client itself is
-not ported — UPSTREAM_EXPERIMENTAL_RULING.md.
+not ported — spec/upstream-sync.md.
 """
 
 from .transport import ByteTransport, ByteTransportFactory, ByteTransportHandlers

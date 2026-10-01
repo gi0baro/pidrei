@@ -865,7 +865,7 @@ async def test_overlay_and_cursor_changes_write_cursor_state_only_from_the_rende
     await tui.stop()
 
 
-# The ownership contract (the island): mutation and render are owner work
+# The island: mutation and the frame's tree walk run under the UI state lock
 
 
 @pytest.mark.tonio
@@ -980,7 +980,7 @@ async def test_next_key_waits_for_work_a_key_registered_and_its_error_takes_the_
 
 @pytest.mark.tonio
 async def test_finish_before_next_input_is_refused_outside_input_handling():
-    """pidrei-only (UI_ISLAND_DESIGN §10.5): a completion registered outside
+    """pidrei-only (spec/ui-island.md, "When a key must wait for I/O"): a completion registered outside
     input handling would be awaited by an unrelated key, or never."""
     tui = TuiMainScreen(VirtualTerminal(40, 10))
 
@@ -1062,7 +1062,7 @@ async def _started_probe_tui():
 
 @pytest.mark.tonio
 async def test_tree_walk_input_and_apply_hold_the_ui_state_lock():
-    """pidrei-only (UI_ISLAND_DESIGN §4.1): the tree walk, input handling and
+    """pidrei-only (spec/ui-island.md, "The guards"): the tree walk, input handling and
     `apply` each hold the UI state lock."""
     terminal, tui, probe = await _started_probe_tui()
     assert not _held(tui.state_lock)
@@ -1144,7 +1144,7 @@ class _RequestsWhileRendered(InputComponent):
 
 @pytest.mark.tonio
 async def test_a_forced_request_that_finds_one_pending_still_repaints_everything():
-    """pidrei-only (UI_ISLAND_DESIGN §4.1): `force` rides in the pending
+    """pidrei-only (spec/ui-island.md, "Rendering"): `force` rides in the pending
     request, so a forced request whose send finds the channel full is not
     lost (the Ctrl+Z resume: `start()`'s request, then `request_render(True)`)."""
     terminal = VirtualTerminal(40, 10)
@@ -1170,7 +1170,7 @@ async def test_a_forced_request_that_finds_one_pending_still_repaints_everything
 
 @pytest.mark.tonio
 async def test_requests_made_during_a_frame_queue_exactly_one_more_frame():
-    """pidrei-only (UI_ISLAND_DESIGN §4.1): the loop receives before it walks
+    """pidrei-only (spec/ui-island.md, "Rendering"): the loop receives before it walks
     the tree, so changes after the receive get one more frame, and
     duplicate requests collapse into it."""
     terminal = VirtualTerminal(40, 10)
@@ -1195,7 +1195,7 @@ async def test_requests_made_during_a_frame_queue_exactly_one_more_frame():
 
 @pytest.mark.tonio
 async def test_a_frame_holds_the_ui_state_lock_for_the_tree_walk_only():
-    """pidrei-only (UI_ISLAND_DESIGN §4.1): the diff and the output run under
+    """pidrei-only (spec/ui-island.md, "Rendering"): the diff and the output run under
     the render lock only."""
     terminal = VirtualTerminal(40, 10)
     tui = TuiMainScreen(terminal)

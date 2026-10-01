@@ -41,7 +41,7 @@ ENTRIES = [
 
 
 def _response(content: list, stop_reason: str = "stop") -> AssistantMessage:
-    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # Freeze-at-seam relaxation (spec/upstream-sync.md): messages are frozen values now,
     # so the response shape is built by construction instead of mutation.
     return replace(
         faux_assistant_message("", stop_reason=stop_reason, timestamp=int(time.time() * 1000)),

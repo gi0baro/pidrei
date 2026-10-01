@@ -6,7 +6,7 @@ into an `AssistantMessage`. Terminal settlement (`done`/`error`) is
 intentionally excluded and must be persisted separately.
 
 pi's only consumers are its durable harness runtime, which is not ported
-(UPSTREAM_EXPERIMENTAL_RULING.md); the utility lands with its mirrored tests
+(spec/upstream-sync.md); the utility lands with its mirrored tests
 and no consumer. Landed at its `8b5899dc` state: the burst-safe rewrite
 (`5c6655e7`) and the stream-compat restore are folded in; `0fdec07b`'s
 `providerThinkingLevel` line follows with that field.

@@ -9,7 +9,7 @@ message already contains the body.
 pi probes JS-SDK-specific fields (Mistral `statusCode`, openai `status`/`error`,
 Bedrock `$metadata`/`$response`); the Python port probes the snake_case
 equivalents our adapters and punkreq raise. Bedrock shapes are added with the
-Bedrock adapter (PLAN.md Phase 5).
+Bedrock adapter (initial port).
 """
 
 import json

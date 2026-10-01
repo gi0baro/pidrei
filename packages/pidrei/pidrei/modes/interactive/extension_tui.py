@@ -1,4 +1,4 @@
-"""The `tui` extensions receive (UI_ISLAND_DESIGN §10.3).
+"""The `tui` extensions receive (spec/ui-island.md).
 
 pidrei-only: pi hands extension factories its real `TUI`, safe on its one
 thread. Here extension code runs on its own coroutines and on the UI's loops

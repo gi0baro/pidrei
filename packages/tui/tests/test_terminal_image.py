@@ -820,7 +820,7 @@ def test_omits_filename_segment_when_not_provided():
 
 
 def test_an_override_change_during_detection_leaves_no_stale_cache(monkeypatch):
-    """pidrei-only (UI_ISLAND_DESIGN §7.2): overrides and cache are one
+    """pidrei-only (spec/ui-island.md, "Terminal-level state"): overrides and cache are one
     snapshot, so capabilities computed from old overrides are not stored
     next to new ones."""
     detected = {"images": None, "trueColor": True, "hyperlinks": False}

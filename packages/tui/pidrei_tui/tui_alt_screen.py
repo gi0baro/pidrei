@@ -17,7 +17,7 @@ listeners, and the keyboard half stays in the listener. The OSC 52 clipboard
 write selection triggers is spawned rather than awaited — pi's
 ``terminal.write`` is sync — with the selection text captured on the release
 itself, since the spawned task may first run after the next press has changed
-the selection. pi's ``doRender`` is split in two (UI_ISLAND_DESIGN §4.1):
+the selection. pi's ``doRender`` is split in two (spec/ui-island.md, "Rendering"):
 ``_compose_frame`` lays the frame out and publishes the layout input reads
 back, under the UI state lock; ``_write_frame`` diffs and emits under the
 render lock only.

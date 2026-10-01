@@ -845,7 +845,7 @@ class Models:
         """pidrei-only epoch variant of `get_auth`: resolve auth against an
         already-pinned provider object, so a caller that resolved the provider
         for a request cannot get auth from a newer composition than the
-        provider it will stream with (PROPER_MT_DESIGN.md step 3)."""
+        provider it will stream with (config epochs, spec/concurrency.md)."""
         cancel = operation_cancel(overrides.cancel if overrides is not None else None)
         merged_overrides = (
             replace(overrides, cancel=cancel) if overrides is not None else AuthResolutionOverrides(cancel=cancel)

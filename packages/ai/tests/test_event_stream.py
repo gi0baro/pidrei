@@ -173,7 +173,7 @@ async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
     assert [event.type for event in events] == ["error"]
     assert events[0].reason == "aborted"
     # The seam publishes a frozen snapshot of the producer-private builder
-    # (step 2 of PROPER_MT_DESIGN.md): value equality, not identity.
+    # (spec/concurrency.md, the data plane): value equality, not identity.
     assert isinstance(result, AssistantMessage)
     assert result.stop_reason == "aborted"
     assert result.error_message == "Request was aborted"
@@ -220,7 +220,7 @@ def _seam_builder():
 
 @pytest.mark.tonio
 async def test_push_publishes_an_independent_frozen_snapshot_per_event():
-    # The step 2 seam (PROPER_MT_DESIGN.md): every pushed event carries a
+    # The freeze seam (spec/concurrency.md): every pushed event carries a
     # frozen snapshot of the producer-private builder — later builder mutation
     # must not be visible through an already-published event. Fails on the old
     # shape, where `partial` was the live shared message.

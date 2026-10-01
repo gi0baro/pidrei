@@ -4,7 +4,7 @@ No pi counterpart: pi uses the JS event loop's global timers. Here a timer is
 a task parked on its cancel event with the delay as timeout
 (`Event.wait(delay)`, a runtime timer): once the delay passes, `fn` runs
 unless `cancel()` set the event first. The timer knows nothing else, as
-`setTimeout` does not (UI_ISLAND_DESIGN step 7).
+`setTimeout` does not (spec/ui-island.md, "Timers").
 
 `fn` is synchronous, like pi's timer callbacks, and runs on the timer's own
 task. Whatever it touches is the caller's to guard: a callback that mutates

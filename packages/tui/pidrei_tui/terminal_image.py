@@ -33,7 +33,7 @@ _cell_dimensions = {"widthPx": 9, "heightPx": 18}
 @dataclass(frozen=True, slots=True)
 class _CapabilityState:
     """The overrides and the capabilities computed from them, replaced as one
-    (UI_ISLAND_DESIGN §7.2): a cache computed from old overrides can never be
+    (spec/ui-island.md, "Terminal-level state"): a cache computed from old overrides can never be
     stored next to new ones."""
 
     overrides: dict

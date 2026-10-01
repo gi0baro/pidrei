@@ -128,8 +128,8 @@ class _RegisteredVirtualModel:
 class _CompositionEpoch:
     """One immutable snapshot of the provider-composition inputs, published
     by `_publish_composition` under `_composition_guard` and pinned by
-    readers with a single attribute read (PROPER_MT_DESIGN.md step 3, the
-    §5 pattern `_Snapshot` established for availability). The working dicts
+    readers with a single attribute read (spec/concurrency.md, configuration
+    epochs; the pattern `_Snapshot` established for availability). The working dicts
     stay writer-private under the guard; the epoch's dicts are copies that
     are never mutated after publication, so an operation that pins the epoch
     can never see config from one composition pass and extension providers

@@ -1,7 +1,7 @@
 """Port of pi client `test/unix.test.ts` (POSIX-only; the win32 guard test is dropped).
 
 Driven against the transport directly (the protocol client is not ported —
-UPSTREAM_EXPERIMENTAL_RULING.md): the framed exchange feeds a `FrameDecoder`
+spec/upstream-sync.md): the framed exchange feeds a `FrameDecoder`
 from the transport handlers instead of going through the client's handshake,
 and the truncated-final-frame case is gone with the client that rejected it.
 """

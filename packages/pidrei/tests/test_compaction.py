@@ -4,7 +4,7 @@ The cut-point, buildSessionContext, prepareCompaction and large-fixture blocks
 are covered by the agent-session compaction suites (`test_agent_session_compaction*.py`,
 the numbered regressions); this file pins the pure token helpers that used to
 be shared with the agent harness compaction port (removed 2026-09-04,
-UPSTREAM_EXPERIMENTAL_RULING.md) and the summarization serializer.
+spec/upstream-sync.md) and the summarization serializer.
 """
 
 import time

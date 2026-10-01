@@ -66,7 +66,7 @@ def mock_summary_response() -> AssistantMessage:
 
 
 def mock_tool_call_response() -> AssistantMessage:
-    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # Freeze-at-seam relaxation (spec/upstream-sync.md): messages are frozen values now,
     # so the tool-call shape is built by construction instead of mutation.
     return replace(
         mock_summary_response(),

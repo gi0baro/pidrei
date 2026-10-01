@@ -1,7 +1,7 @@
 """pidrei-specific: `Timeout`/`Interval`, pi's `setTimeout`/`setInterval`.
 
 A timer is a task parked on its cancel event with the delay as timeout; it
-knows nothing about UI state (UI_ISLAND_DESIGN step 7).
+knows nothing about UI state (spec/ui-island.md, "Timers").
 """
 
 import pytest

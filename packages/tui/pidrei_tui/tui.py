@@ -6,7 +6,7 @@ renderer-independent half of the TUI. The two renderers live next door —
 main screen and scrollback) and ``tui_alt_screen.TuiAltScreen`` (an
 application-owned viewport on the alternate screen).
 
-Concurrency contract (UI_ISLAND_DESIGN.md): the UI is passive state plus
+Concurrency contract (spec/ui-island.md): the UI is passive state plus
 one guard, and independent loops work on it in parallel.
 
 - **The UI state lock** (``state_lock``, a reentrant thread lock with the
@@ -44,7 +44,7 @@ Port deviations (documented once here):
   Python stand-in for that annotation is ``TuiBase`` itself, re-exported under
   the name ``TUI``. Construct a renderer, never ``TUI``.
 
-- Render scheduling (UI_ISLAND_DESIGN §4.1): pi chains ``process.nextTick``
+- Render scheduling (spec/ui-island.md, "Rendering"): pi chains ``process.nextTick``
   + a 16ms ``setTimeout`` throttle; here a render loop (one task per start)
   receives requests from a one-slot channel and draws one frame per
   request. ``request_render()`` stays sync and touches no lock: it sends
@@ -83,7 +83,7 @@ Port deviations (documented once here):
   timeout run on their own coroutine. Pending-query transitions and report
   sends take a sync lock because the terminal's input reader and that
   coroutine may run on different tonio workers.
-- Input (UI_ISLAND_DESIGN §4.2): the terminal hands terminal replies to
+- Input (spec/ui-island.md, "Input"): the terminal hands terminal replies to
   ``_consume_terminal_reply`` from its reader, ahead of the input order, so
   a query is answered even while input handling waits on the work that
   asked; colour reports and colour-scheme reports go to their own loop (a
@@ -487,8 +487,8 @@ def call_sync(fn):
     """Call ``fn`` and return its result, refusing an awaitable one with
     ``TypeError`` (the coroutine is closed, not left unawaited).
 
-    What runs under the UI state lock must not await (UI_ISLAND_DESIGN
-    §10.2): ``apply`` and the extension UI contexts call through here. This
+    What runs under the UI state lock must not await (spec/ui-island.md,
+    "`ctx.ui`"): ``apply`` and the extension UI contexts call through here. This
     enforces synchronous-only; it is not a ``T | Awaitable[T]`` union.
     """
     # An `async def` only builds its coroutine here: nothing runs.
@@ -585,7 +585,7 @@ class TuiBase(Container, ABC):
         self._frame_writer_error: BaseException | None = None
         # Async callback invoked when a frame raises; see `_render_loop`.
         self._render_error_handler = None
-        # The UI state lock (UI_ISLAND_DESIGN §4.1, §4.6): a reentrant thread
+        # The UI state lock (spec/ui-island.md, "The guards"): a reentrant thread
         # lock with the terminal's lifetime, shared by every TUI on that
         # terminal; a terminal without one (tests) gets the TUI's own. It is
         # held for synchronous sections only — nothing awaits under it.
@@ -609,7 +609,7 @@ class TuiBase(Container, ABC):
         self._color_scheme_notifications_enabled = False
         # Terminal events (colour and colour-scheme reports) from the input
         # reader and the colour queries to their own loop, off the key path
-        # (UI_ISLAND_DESIGN §4.2): the sender while the TUI is started
+        # (spec/ui-island.md, "Input"): the sender while the TUI is started
         # (swapped under `_query_lock`), and the loop's task.
         self._terminal_events = None
         self._terminal_event_task = None
@@ -706,7 +706,7 @@ class TuiBase(Container, ABC):
         """Hand an error that nothing up the stack can take to the installed
         handler (interactive mode's crash handler), on a task of its own:
         the input consumer's item, the output pump's write, a terminal event,
-        a component's spawned work (UI_ISLAND_DESIGN §4.7). With no handler
+        a component's spawned work (spec/ui-island.md, "Errors"). With no handler
         installed it is re-raised to the caller."""
         handler = self._render_error_handler
         if handler is None:
@@ -1219,7 +1219,8 @@ class TuiBase(Container, ABC):
         ``preserveScreen`` leaves the renderer's output on the terminal for
         another TUI taking the same terminal over (the runtime UI-mode switch).
 
-        Never waits on input handling (UI_ISLAND_DESIGN §4.4), so a key's
+        Never waits on input handling (spec/ui-island.md, "Stopping the UI
+        from inside a key"), so a key's
         completion may stop the UI, as pi's key handlers do in place.
         """
         options = options or {}

@@ -1,7 +1,7 @@
 """Port of pi's builtin provider aggregate (packages/ai/src/providers/all.ts).
 
 Provider factories join `builtin_providers()` as their adapters land
-(PLAN.md); the catalog reads (`get_builtin_model`/`get_builtin_models`) cover
+(initial port); the catalog reads (`get_builtin_model`/`get_builtin_models`) cover
 every provider present in the vendored data regardless.
 """
 
@@ -129,7 +129,7 @@ def get_builtin_model_data_generated_at() -> Awaitable[int | None]:
 def builtin_providers() -> list[Provider]:
     """All built-in providers, freshly constructed, in pi's order.
 
-    Complete except for pi's `radius`, deliberately dropped (FEASIBILITY.md):
+    Complete except for pi's `radius`, deliberately dropped (initial port):
     it is a pi-specific service that does nothing without pi's own credentials.
     """
     return [

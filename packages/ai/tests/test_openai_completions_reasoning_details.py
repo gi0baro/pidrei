@@ -130,7 +130,7 @@ async def test_falls_back_to_encrypted_tool_call_signatures_for_older_stored_ass
     client = QueuedClient(tool_call_chunk_sets())
 
     assistant_message = await run_stream(client)
-    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # freeze-at-seam relaxation (spec/upstream-sync.md): messages are frozen values now,
     # so the older stored shape is built by construction instead of mutation.
     blocks = [
         replace(block, thought_signature=json.dumps(REASONING_DETAIL)) if block.type == "toolCall" else block

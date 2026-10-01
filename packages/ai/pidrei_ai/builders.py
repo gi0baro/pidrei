@@ -9,7 +9,7 @@ every ported mutation line (`block.text +=`, `content.append`,
 verbatim — and `AssistantMessageEventStream.push()` calls `freeze()` at the
 publication seam, so each pushed event carries an independent frozen
 snapshot (per-delta cadence; measured at ~3 µs per delta, see
-PROPER_MT_DESIGN.md step 2a).
+spec/concurrency.md).
 
 Builders are producer-private by contract: nothing outside the producing
 adapter (and the stream's abort path, which the producer's owner task runs)

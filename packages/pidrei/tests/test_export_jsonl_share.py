@@ -2,7 +2,7 @@
 
 pi's case drives `exportSessionForShare` from `session-share.ts`, which
 appends a `pi.share` presentation entry for the Radius upload. Radius is
-dropped surface here (see FEASIBILITY), so the trailing entry is built in
+dropped surface here (initial port), so the trailing entry is built in
 the test instead — what is under test either way is
 `export_session_to_jsonl`: that a trailing entry chains onto the last
 conversation entry without disturbing any of their ids or links, that a

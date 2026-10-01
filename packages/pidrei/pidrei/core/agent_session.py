@@ -135,7 +135,7 @@ class _NestedToolCallHost:
 
     Nested `tool_execution_*` events go through `Agent.observe`: the run's
     dispatcher delivers them to the session's listener in one serialized
-    stream with the loop's own events (PORT_0.99.1 decision 5)."""
+    stream with the loop's own events (0.99.1 delta port)."""
 
     __slots__ = ("_session",)
 
@@ -522,7 +522,7 @@ class AgentSession:
         self.settings_manager = config.settings_manager
 
         self._scoped_models: list[ScopedModel] = config.scoped_models or []
-        # One model change at a time (UI_ISLAND_DESIGN §7.3): repeated
+        # One model change at a time (spec/ui-island.md, the guards): repeated
         # `set_model` / `cycle_model` calls (Ctrl+P pressed twice, Enter on the
         # selector twice) apply in turn instead of reading the same current
         # model. The model_select event is emitted after it, so an extension
@@ -586,7 +586,7 @@ class AgentSession:
         # Extension system
         self._extension_runner: ExtensionRunner | None = None
         self._turn_index = 0
-        # State epochs (PROPER_MT_DESIGN step 5): pi's `WeakMap<message, entryId>` and
+        # State epochs (spec/concurrency.md): pi's `WeakMap<message, entryId>` and
         # `WeakSet<message>` become run-scoped strong tables keyed by id(). They hold only
         # messages persisted or dispatched during the current prompt-loop iteration (strong
         # refs pin each id for the run) and are cleared when it ends; older messages resolve

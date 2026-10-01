@@ -23,7 +23,7 @@ Port deviations (documented once here):
   ported (POSIX-only port; native modifier addons omitted per plan) — the
   Apple Terminal Shift+Enter rewrite therefore never sees a pressed Shift.
 - Input is a read-ahead reader and one sequential consumer
-  (UI_ISLAND_DESIGN §4.2). The reader (`_read_input`, one task per start)
+  (spec/ui-island.md, "Input"). The reader (`_read_input`, one task per start)
   reads stdin, splits it with the StdinBuffer, completes the Kitty/DA
   negotiation, hands terminal replies to `start`'s ``on_reply`` (pidrei-only:
   pi's input handler sees them), and queues every other item. It never waits
@@ -39,7 +39,7 @@ Port deviations (documented once here):
   keys parse (`keys.set_kitty_protocol_active`), so the reader queues its
   activation as an item (`_KITTY_PROTOCOL_ACTIVE`) and the consumer applies
   it under the UI state lock in input order: keys read before the reply
-  still parse in the old mode (UI_ISLAND_DESIGN §7.2).
+  still parse in the old mode (spec/ui-island.md, "Terminal-level state").
 - Output is a single pump task (`_output_pump`): every writer enqueues a
   complete sequence, the pump emits them in FIFO order with `arm_w`
   readiness. `write()` waits for its bytes to go out (backpressure for the
@@ -290,7 +290,7 @@ class ProcessTerminal:
         self._saved_termios: list | None = None
         self._saved_blocking: bool | None = None
         self._saved_output_blocking: bool | None = None
-        # The UI state lock (UI_ISLAND_DESIGN §4.1, §4.6) has the terminal's
+        # The UI state lock (spec/ui-island.md, "The guards") has the terminal's
         # lifetime: every TUI on this terminal shares it.
         self.state_lock = threading.RLock()
         # The input handler and its generation, under the state lock (see

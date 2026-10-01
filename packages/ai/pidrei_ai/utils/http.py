@@ -1,7 +1,7 @@
 """The HTTP-stack seam: the only pidrei module that imports punkreq or httpunk.
 
 Adapters obtain clients and HTTP types exclusively from here, so alpha-stage
-punkreq API churn stays contained in one file (see PLAN.md). The defaults
+punkreq API churn stays contained in one file (initial port). The defaults
 encode the LLM-streaming idiom: bound connect and per-chunk reads, never the
 whole request — a legitimately long SSE stream must not hit a total deadline.
 

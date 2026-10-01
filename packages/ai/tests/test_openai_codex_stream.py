@@ -598,22 +598,19 @@ async def test_clamps_codex_session_id_header_to_64_characters():
 
 
 @pytest.mark.tonio
-async def test_preserves_gpt55_xhigh_reasoning_effort_from_simple_options():
+async def test_preserves_gpt55_xhigh_reasoning_effort_from_simple_options(monkeypatch):
     from pidrei_ai.types import SimpleStreamOptions
 
     client = sse_client()
+    # pi stubs the global fetch. stream_simple builds its own options, so the
+    # fake replaces the default client instead of being injected; without it
+    # the request goes to the real endpoint.
+    monkeypatch.setattr(codex, "_PunkreqCodexClient", lambda _env: client)
     model = make_model("gpt-5.5", thinking_level_map={"xhigh": "xhigh"})
     await stream_simple_codex(
         model,
         hello_context(),
         SimpleStreamOptions(api_key=mock_token(), reasoning="xhigh", transport="sse"),
-    ).result()
-    # stream_simple builds its own options, so the transport is asserted through
-    # a second run that injects the client.
-    await stream_codex(
-        model,
-        hello_context(),
-        OpenAICodexResponsesOptions(api_key=mock_token(), transport="sse", reasoning_effort="xhigh", client=client),
     ).result()
     assert client.requests[0].payload()["reasoning"] == {"effort": "xhigh", "summary": "auto"}
 

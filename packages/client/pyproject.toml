@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "pidrei-client"
 version = "0.84.4.1"
 # Workspace-only transport remnant (byte transport + unix socket); not
-# published — see UPSTREAM_EXPERIMENTAL_RULING.md.
+# published — see spec/upstream-sync.md.
 description = "Byte-transport layer of pidrei's client package (port of pi-client's transport half)"
 requires-python = ">=3.14"
 license = "MIT"

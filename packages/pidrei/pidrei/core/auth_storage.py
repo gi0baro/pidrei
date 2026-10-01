@@ -82,7 +82,7 @@ class _AuthFileSnapshot:
     """One immutable (data, revision) pair, published by rebinding
     `_AuthFileReadState.snapshot` as a unit — a reader pinning the snapshot
     can never see the data of one reload with the revision of another
-    (PROPER_MT_DESIGN.md step 3)."""
+    (spec/concurrency.md, configuration epochs)."""
 
     data: dict[str, Credential]
     revision: str | None

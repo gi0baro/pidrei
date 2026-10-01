@@ -7,7 +7,7 @@ and all three live in different files that nothing otherwise ties together:
 - the four published `pyproject.toml` versions (a release that skews them
   ships a `pidrei` depending on a differently-versioned `pidrei-ai`) —
   protocol/client/server are workspace-only transport remnants
-  (UPSTREAM_EXPERIMENTAL_RULING.md) and are neither published nor pinned,
+  (spec/upstream-sync.md) and are neither published nor pinned,
 - `pidrei/upstream.py`'s `UPSTREAM_VERSION`, which the first three segments must
   equal — so the pi ref and the version cannot be bumped independently,
 - the repo-root `.last_upstream_ref`, which tooling reads without importing

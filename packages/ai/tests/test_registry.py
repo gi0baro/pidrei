@@ -1136,7 +1136,7 @@ async def test_get_available_filters_unconfigured_and_applies_filter_models():
 
 def test_calculate_cost_base_rates():
     model = make_model(cost=ModelCost(input=3.0, output=15.0, cache_read=0.3, cache_write=3.75))
-    # Step 2 translation (PROPER_MT_DESIGN.md): calculate_cost is producer-side
+    # freeze-at-seam translation (spec/upstream-sync.md): calculate_cost is producer-side
     # and mutates a usage *builder*; the frozen Usage is a value.
     usage = UsageBuilder(input=1_000_000, output=100_000, cache_read=2_000_000, cache_write=500_000)
 

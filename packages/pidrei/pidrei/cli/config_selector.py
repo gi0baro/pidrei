@@ -43,7 +43,8 @@ async def select_config(
 
     # The component calls these from its input handling. pi stops the UI in
     # place there; here the stop is the key's completion, which the next key
-    # waits for (UI_ISLAND_DESIGN §4.4), and `closed` is set only once the
+    # waits for (spec/ui-island.md, stopping the UI from inside a key), and
+    # `closed` is set only once the
     # terminal is restored.
     finishing = False
 

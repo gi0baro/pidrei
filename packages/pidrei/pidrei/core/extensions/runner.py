@@ -768,7 +768,7 @@ class ExtensionRunner:
     def _with_ui_prompt(self, kind: str, title: str | None, run: Callable[[], Any]) -> Any:
         """pi's withUIPrompt: the prompt opens (and mounts, through `run`) at
         call time; returns the spawn handle of the wait for its answer, after
-        which the prompt ends (UI_ISLAND_DESIGN §10.2)."""
+        which the prompt ends (spec/ui-island.md, `ctx.ui`)."""
         with self._ui_prompt_guard:
             outer_prompt = self._ui_prompt_depth == 0
             self._ui_prompt_depth += 1

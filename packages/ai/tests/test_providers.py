@@ -2,7 +2,7 @@
 
 Partial mirror of pi's providers.test.ts: its `envApiKeyAuth` and
 `createProvider` describes live in test_registry.py, and the bedrock / cloudflare
-/ vertex auth-flow cases join with those providers (PLAN.md Phase 5d).
+/ vertex auth-flow cases join with those providers (initial port).
 """
 
 import pytest

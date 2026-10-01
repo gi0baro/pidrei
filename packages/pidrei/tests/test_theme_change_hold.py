@@ -1,5 +1,5 @@
 """pidrei-specific: a theme change swaps the global theme inside the host's
-change callback (UI_ISLAND_DESIGN §4.5c).
+change callback (spec/ui-island.md, "Flows that await several times").
 
 pi's `setTheme` swaps the theme and notifies in one synchronous block. Here
 every component reads the global theme while rendering under the UI state

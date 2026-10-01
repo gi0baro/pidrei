@@ -783,7 +783,7 @@ class TestCreateBranchedSession:
         session = await SessionManager(temp_dir, temp_dir)
         await session.append_message(user_msg("edit this file"))
         await session.append_message(assistant_msg("editing"))
-        # Step 2 relaxation (PROPER_MT_DESIGN.md): frozen message — details
+        # Freeze-at-seam relaxation (spec/upstream-sync.md): frozen message — details
         # attached by construction instead of mutation.
         message = replace(
             tool_result_msg("done"),

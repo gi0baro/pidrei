@@ -1,7 +1,7 @@
 """Transport layer of pi's protocol package: CBOR and length-prefixed framing.
 
 The message schemas and codec (the remote-session wire vocabulary) are not
-ported — UPSTREAM_EXPERIMENTAL_RULING.md.
+ported — spec/upstream-sync.md.
 """
 
 from .cbor import (

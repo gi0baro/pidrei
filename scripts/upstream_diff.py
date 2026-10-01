@@ -24,11 +24,10 @@ Every changed file is classified:
   drop, and document the decision here).
 
 A portable file listed in DIVERGED additionally carries a diverged-region
-warning: part of its pidrei mirror deliberately diverges from pi
-(PROPER_MT_DESIGN.md), and a hunk landing in that region is translated per
-the named recipe in UPSTREAM_DELTA_PORT.md ("Diverged regions and their
-recipes") instead of ported side-by-side. Hunks outside the region port
-normally.
+warning: part of its pidrei mirror deliberately diverges from pi, and a hunk
+landing in that region is translated per the named recipe in
+spec/upstream-sync.md ("Diverged regions") instead of ported side-by-side.
+Hunks outside the region port normally.
 
 A mapped target that does not exist is `[NEW]` for files pi added; for files
 pi *modified* it usually means pidrei renamed the module — verify and extend
@@ -118,38 +117,38 @@ DROPPED_PREFIXES = (
         "packages/coding-agent/test/sdk-codex-cache-probe-tool-loop.ts",
         "manual SDK probe script, not ported",
     ),
-    # 0.84.x additions (PORT_0.84.1.md).
+    # 0.84.x additions (0.84.1 delta port).
     (
         "packages/session-backends/",
         "storage backends not ported (packages/storage/ renamed upstream in 79cc1ef0)",
     ),
     (
         "packages/telemetry/",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/agent/src/harness/telemetry.ts",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/agent/test/harness/telemetry.test.ts",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/agent/scripts/generate-telemetry-docs.ts",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/ai/test/telemetry-options.test.ts",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/ai/docs/telemetry-schema.md",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/agent/telemetry-schema.md",
-        "telemetry not ported (no phone-home; PORT_0.84.1.md decision 3)",
+        "telemetry not ported (no phone-home; 0.84.1 delta port)",
     ),
     (
         "packages/tui/native/",
@@ -173,11 +172,11 @@ DROPPED_PREFIXES = (
     ),
     (
         "packages/coding-agent/src/modes/interactive/components/mermaid.ts",
-        "Mermaid rendering not ported (grok-mermaid JS dep; PORT_0.84.1.md decision 4)",
+        "Mermaid rendering not ported (grok-mermaid JS dep; 0.84.1 delta port)",
     ),
     (
         "packages/coding-agent/test/mermaid.test.ts",
-        "Mermaid rendering not ported (grok-mermaid JS dep; PORT_0.84.1.md decision 4)",
+        "Mermaid rendering not ported (grok-mermaid JS dep; 0.84.1 delta port)",
     ),
     (
         "packages/ai/src/cli.ts",
@@ -211,7 +210,7 @@ DROPPED_PREFIXES = (
         "packages/agent/test/proxy.test.ts",
         "server-proxied stream fn: public pi-agent API with no pidrei consumer, not ported",
     ),
-    # 0.84.3 drops (PORT_0.84.3.md).
+    # 0.84.3 drops (0.84.3 delta port).
     (
         "packages/coding-agent/src/migrations.ts",
         (
@@ -220,7 +219,7 @@ DROPPED_PREFIXES = (
         ),
     ),
 )
-#: 0.84.3 additions (PORT_0.84.3.md decision 5).
+#: 0.84.3 additions (0.84.3 delta port).
 DROPPED_PREFIXES += (
     (
         "packages/tui/src/native-module-path.ts",
@@ -237,18 +236,18 @@ DROPPED_PREFIXES += (
     (
         "packages/coding-agent/src/core/tools/powershell.ts",
         (
-            "powershell tool not ported (Windows-only by construction; PORT_0.84.3.md decision 2) — "
+            "powershell tool not ported (Windows-only by construction; 0.84.3 delta port) — "
             "the shell-tool refactor it shares with bash did land, see core/tools/bash.py"
         ),
     ),
     (
         "packages/coding-agent/test/powershell-tool.test.ts",
-        "powershell tool not ported (Windows-only by construction; PORT_0.84.3.md decision 2)",
+        "powershell tool not ported (Windows-only by construction; 0.84.3 delta port)",
     ),
     (
         "packages/coding-agent/src/modes/interactive/session-share.ts",
         (
-            "Radius share flow not ported (PORT_0.84.3.md decision 1); the surviving gist half "
+            "Radius share flow not ported (0.84.3 delta port); the surviving gist half "
             "stays inline in interactive_mode.py and the export half is core/session_export.py"
         ),
     ),
@@ -278,15 +277,15 @@ DROPPED_PREFIXES += (
     ),
     (
         "packages/coding-agent/examples/rpc-client.ts",
-        "RpcClient example; the RPC surface stays unpublished (PORT_0.87.1.md decision 3)",
+        "RpcClient example; the RPC surface stays unpublished (0.87.1 delta port)",
     ),
     (
         "packages/coding-agent/docs/rpc-commands.md",
-        "RPC docs stay out of the curated set (PORT_0.87.1.md decision 3; transport remnants are unpublished)",
+        "RPC docs stay out of the curated set (0.87.1 delta port; transport remnants are unpublished)",
     ),
     (
         "packages/coding-agent/docs/rpc-extension-ui.md",
-        "RPC docs stay out of the curated set (PORT_0.87.1.md decision 3; transport remnants are unpublished)",
+        "RPC docs stay out of the curated set (0.87.1 delta port; transport remnants are unpublished)",
     ),
     (
         "packages/coding-agent/examples/sdk/",
@@ -301,7 +300,7 @@ DROPPED_PREFIXES += (
 #: skills, system-prompt, types) and the transport survivors (protocol cbor +
 #: framing, server unix listener + byte contracts, client unix transport)
 #: keep their mechanical mapping.
-_EXPERIMENTAL_REASON = "experimental stack not ported (UPSTREAM_EXPERIMENTAL_RULING.md)"
+_EXPERIMENTAL_REASON = "experimental stack not ported (spec/upstream-sync.md, what is not ported)"
 DROPPED_PREFIXES += tuple(
     (path, _EXPERIMENTAL_REASON)
     for path in (
@@ -446,10 +445,10 @@ DROPPED_PREFIXES += tuple(
     )
 )
 DROPPED_PREFIXES += (
-    # 0.85.0 drops (PORT_0.85.0.md).
+    # 0.85.0 drops (0.85.0 delta port).
     (
         "packages/coding-agent/test/session-share.test.ts",
-        "Radius share flow not ported (PORT_0.84.3.md decision 1)",
+        "Radius share flow not ported (0.84.3 delta port)",
     ),
     (
         "packages/tui/test/alt-screen-large-transcript-bench.ts",
@@ -465,7 +464,7 @@ DROPPED_PREFIXES += (
     ),
 )
 DROPPED_PREFIXES += (
-    # 0.87.1 drops (PORT_0.87.1.md).
+    # 0.87.1 drops (0.87.1 delta port).
     (
         "packages/ai/src/bun-oauth.ts",
         "Bun bundle OAuth loader, JS-runtime only",
@@ -473,7 +472,7 @@ DROPPED_PREFIXES += (
     (
         "packages/ai/src/compat.ts",
         (
-            "deprecated global pi-ai API shim, never ported (PLAN.md); its dispatch deltas land "
+            "deprecated global pi-ai API shim, never ported (initial port); its dispatch deltas land "
             "through models.ts → registry.py Models.stream"
         ),
     ),
@@ -505,7 +504,7 @@ DROPPED_PREFIXES += (
         "packages/agent/test/harness/text-line-reader.test.ts",
         (
             "harness/env TextLineReader not ported: its only consumer is the experimental JSONL fork "
-            "(PORT_0.87.1.md decision 7; the env/nodejs.ts + types.ts hunks are per-hunk skips)"
+            "(0.87.1 delta port; the env/nodejs.ts + types.ts hunks are per-hunk skips)"
         ),
     ),
     (
@@ -531,8 +530,8 @@ DROPPED_PREFIXES += tuple(
     )
 )
 #: `/bug` bug reporting (Radius upload, zip export, crash log) is dropped
-#: completely (PORT_0.87.1.md decision 1).
-_BUG_REPORT_REASON = "/bug reporting not ported (PORT_0.87.1.md decision 1)"
+#: completely (0.87.1 delta port).
+_BUG_REPORT_REASON = "/bug reporting not ported (0.87.1 delta port)"
 DROPPED_PREFIXES += tuple(
     (path, _BUG_REPORT_REASON)
     for path in (
@@ -549,9 +548,9 @@ DROPPED_PREFIXES += tuple(
     )
 )
 #: Codemode, MCP and tool-search port later, together, as one unit
-#: (PORT_0.99.1.md decisions 1-2). core/mcp-servers.ts is not listed: its
+#: (0.99.1 delta port). core/mcp-servers.ts is not listed: its
 #: `McpServerRegistry` ports now with the tool-orchestration core.
-_DEFERRED_CODEMODE_REASON = "deferred, ports with codemode (PORT_0.99.1.md decisions 1-2)"
+_DEFERRED_CODEMODE_REASON = "deferred, ports with codemode (0.99.1 delta port)"
 DROPPED_PREFIXES += tuple(
     (path, _DEFERRED_CODEMODE_REASON)
     for path in (
@@ -572,10 +571,10 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/suite/mcp-oauth-server.ts",
     )
 )
-#: 0.99.1 drops (PORT_0.99.1.md decision 9).
+#: 0.99.1 drops (0.99.1 delta port).
 _LLAMA_CLASSIFY_REASON = (
     "llama.cpp classifier API not ported: its only consumer is the unported llama extension "
-    "(PORT_0.99.1.md decision 9; types.py keeps the api literal and ClassifierOptions.temperature)"
+    "(0.99.1 delta port; types.py keeps the api literal and ClassifierOptions.temperature)"
 )
 DROPPED_PREFIXES += (
     # llama-cpp-classify.ts and its .lazy.ts shim
@@ -584,19 +583,19 @@ DROPPED_PREFIXES += (
     (
         "packages/coding-agent/test/model-catalog-protocol.test.ts",
         (
-            "catalog publish protocol not ported (PORT_0.99.1.md decision 9); the client half "
+            "catalog publish protocol not ported (0.99.1 delta port); the client half "
             "(?types=, merge by type+id, unknown types ignored) is covered by test_remote_catalog_provider.py"
         ),
     ),
     (
         "packages/coding-agent/test/rpc-example.ts",
-        "interactive RpcClient example script; the RPC surface stays unpublished (PORT_0.87.1.md decision 3)",
+        "interactive RpcClient example script; the RPC surface stays unpublished (0.87.1 delta port)",
     ),
     (
         "packages/ai/src/image-models.ts",
         (
             "deprecated static image-catalog reads, kept upstream for npm consumers: image_models.py deleted "
-            "(PORT_0.99.1.md decision 9); get_builtin_image_model(s) in providers/all.py replace them"
+            "(0.99.1 delta port); get_builtin_image_model(s) in providers/all.py replace them"
         ),
     ),
 )
@@ -624,7 +623,7 @@ DROPPED_PREFIXES += tuple(
 #: The radius provider (pi's own gateway) is the documented provider drop;
 #: its files carry "radius" in the basename wherever they sit.
 DROPPED_BASENAME_RE = re.compile(r"radius")
-DROPPED_BASENAME_REASON = "radius provider dropped (pi-specific gateway; FEASIBILITY.md)"
+DROPPED_BASENAME_REASON = "radius provider dropped (pi-specific gateway; initial port)"
 
 #: pi path -> pidrei path where the port's name diverges from the mechanical
 #: mapping. Hand-verified; extend when the report flags a modified file whose
@@ -632,10 +631,10 @@ DROPPED_BASENAME_REASON = "radius provider dropped (pi-specific gateway; FEASIBI
 RENAMES = {
     "packages/coding-agent/src/core/remote-catalog-provider.ts": "packages/pidrei/pidrei/core/remote_catalog.py",
     "packages/coding-agent/test/package-command-paths.test.ts": "packages/pidrei/tests/test_package_commands.py",
-    # 0.84.x additions (PORT_0.84.1.md).
+    # 0.84.x additions (0.84.1 delta port).
     "packages/coding-agent/src/package-manager-cli.ts": "packages/pidrei/pidrei/cli/package_commands.py",
     "packages/agent/src/harness/env/nodejs.ts": "packages/agent/pidrei_agent/harness/env/local.py",
-    # 0.85.1 (PORT_0.85.1.md U4): pi split its process-title/env/undici prologue into
+    # 0.85.1 (0.85.1 delta port): pi split its process-title/env/undici prologue into
     # cli/setup.ts; pidrei's equivalent has always been the entry module's run().
     "packages/coding-agent/src/cli/setup.ts": "packages/pidrei/pidrei/__main__.py",
     "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
@@ -690,12 +689,11 @@ GENERATED_CATALOG_STUB_RE = re.compile(r"packages/ai/src/providers/[^/]+\.models
 
 #: pi file → diverged regions inside its pidrei mirror, as (recipe id, note)
 #: pairs. The file still ports through the normal mapping, but a hunk landing
-#: in the named region is translated per the recipe in UPSTREAM_DELTA_PORT.md
-#: ("Diverged regions and their recipes"), not side-by-side. Same maintenance
-#: model as RENAMES/TEST_HOMES: one hand-verified entry per divergence,
-#: extended as PROPER_MT_DESIGN.md steps land. Pattern-shaped divergences
-#: with no single upstream file (e.g. recipe `cancel-token`) live only in the
-#: runbook section.
+#: in the named region is translated per the recipe in spec/upstream-sync.md
+#: ("Diverged regions"), not side-by-side. Same maintenance model as
+#: RENAMES/TEST_HOMES: one hand-verified entry per divergence, added with its
+#: recipe. Pattern-shaped divergences with no single upstream file (e.g.
+#: recipe `cancel-token`) live only in the spec.
 _FREEZE_ADAPTER_NOTE = (
     "streamed partial is built via producer-private builders "
     "(pidrei_ai/builders.py): construction sites use *Builder type names, "
@@ -779,7 +777,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
-    # PROPER_MT_DESIGN.md step 5 (state epochs): writes to agent.state.messages
+    # State epochs: writes to agent.state.messages
     # are rebinds; identity WeakMap/WeakSet become a run-scoped strong id() table.
     "packages/coding-agent/src/core/agent-session.ts": (
         (
@@ -808,7 +806,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
-    # PROPER_MT_DESIGN.md step 2 (freeze at the seam): message/content types
+    # Freeze at the seam: message/content types
     # are frozen dataclasses; producers build via builders and
     # AssistantMessageEventStream.push() freezes at publication.
     "packages/ai/src/types.ts": (
@@ -842,7 +840,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
     "packages/ai/src/api/mistral-conversations.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/bedrock-converse-stream.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/providers/faux.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
-    # UI_ISLAND_DESIGN.md (the TUI island): passive UI state under one
+    # The TUI island: passive UI state under one
     # reentrant lock, with input, render and terminal-event loops.
     "packages/tui/src/tui.ts": (
         (
@@ -913,7 +911,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             "tui-island",
             (
                 "withUIPrompt opens the prompt at call time and returns the "
-                "spawn handle of the wait (UI_ISLAND_DESIGN §10.2); the prompt "
+                "spawn handle of the wait; the prompt "
                 "depth is guarded; noOpUIContext mirrors the TUI context's shape"
             ),
         ),
@@ -963,7 +961,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
-    # PROPER_MT_DESIGN.md step 3 (config epochs): config services publish
+    # Config epochs: config services publish
     # immutable snapshots swapped atomically; readers pin one attribute read.
     "packages/coding-agent/src/core/settings-manager.ts": (
         (
@@ -1066,7 +1064,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
 #: ported production module but no mirrored tests — backfill when a commit
 #: touches them.
 TEST_HOMES = {
-    # Pre-existing gaps surfaced by the 0.85.0 triage (PORT_0.85.0.md U0).
+    # Pre-existing gaps surfaced by the 0.85.0 triage (0.85.0 delta port).
     "packages/ai/test/openai-completions-cache-control-format.test.ts": (
         "PARITY GAP: anthropic-style cache-marker placement for openai-completions has no standalone "
         "mirror (cache_control cases live in test_openai_completions.py); port deltas there"
@@ -1107,8 +1105,8 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/agent-session-codemode.test.ts": (
         "partial mirror: test_agent_session_tool_orchestration.py holds the core cases (nested calls in "
         "parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
-        "structured result) driven by a Python tool; the script cases port with codemode (PORT_0.99.1.md "
-        "decisions 1-2)"
+        "structured result) driven by a Python tool; the script cases port with codemode (0.99.1 delta "
+        "port)"
     ),
     "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
     "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
@@ -1116,7 +1114,7 @@ TEST_HOMES = {
     "packages/coding-agent/test/test-network-env.ts": "pi test infra (PI_OFFLINE stub); pidrei conftest.py is hermetic via the PIDREI_OFFLINE equivalent",
     "packages/coding-agent/test/test-harness.test.ts": "pi test-infra self-tests, not mirrored",
     "packages/ai/test/fetch-option.test.ts": "DEVIATION: per-request fetch injection (0.83.0) not ported — JS-specific SDK surface with no coding-agent consumer; pidrei adapters expose per-request client injection instead",
-    # 0.84.x additions (PORT_0.84.1.md).
+    # 0.84.x additions (0.84.1 delta port).
     "packages/tui/test/overlay-non-capturing.test.ts": "covered by packages/tui/tests/test_tui_overlays.py (+ test_tui_focus.py for focus cases)",
     "packages/tui/test/overlay-options.test.ts": "covered by packages/tui/tests/test_tui_overlays.py (+ test_tui_focus.py for focus cases)",
     "packages/tui/test/overlay-short-content.test.ts": "covered by packages/tui/tests/test_tui_overlays.py",
@@ -1166,7 +1164,7 @@ TEST_HOMES = {
         "N/A: Node module-loader probe asserting provider SDKs stay unloaded at import — "
         "pidrei has no provider SDKs (native punkreq transports)"
     ),
-    # 0.84.3 additions (PORT_0.84.3.md classifier triage).
+    # 0.84.3 additions (0.84.3 delta port).
     "packages/coding-agent/test/session-manager/tree-traversal.test.ts": (
         "covered by packages/pidrei/tests/test_session_manager.py (tree-traversal cases "
         "live with the rest of the session-manager mirror)"
@@ -1189,13 +1187,13 @@ TEST_HOMES = {
         "covered by packages/pidrei/tests/test_session_manager.py (file-operations cases "
         "live with the rest of the session-manager mirror)"
     ),
-    # 0.85.0 additions (PORT_0.85.0.md U3).
+    # 0.85.0 additions (0.85.0 delta port).
     "packages/coding-agent/test/suite/regressions/4167-thinking-toggle-pending-tool-render.test.ts": (
         "PARITY GAP: pending tool render surviving a thinking toggle (pi 755da309, pre-dates this "
         "sync) has no mirror; the sibling 8611 case lives in test_8611_thinking_toggle_pending_bash_output.py. "
         "In-range deltas only touch the fake-`this` fixture (maybeShowAssistantDiagnostics stub)"
     ),
-    # 0.87.1 additions (PORT_0.87.1.md U0 triage).
+    # 0.87.1 additions (0.87.1 delta port).
     "packages/coding-agent/test/clipboard-image-native-errors.test.ts": (
         "N/A: specs paste aborting on native clipboard helper errors; pidrei has no native helper and "
         "read_clipboard_image never raises (clipboard_image.py docstring)"
@@ -1495,7 +1493,7 @@ def report(pi_root: str) -> int:
             mark = marker(status, kind, target)
             print(f"             → {target}{mark}")
             for recipe_id, region_note in DIVERGED.get(path, ()):
-                print(f"             ⚠ diverged [{recipe_id}]: {region_note} — recipe in UPSTREAM_DELTA_PORT.md")
+                print(f"             ⚠ diverged [{recipe_id}]: {region_note} — recipe in spec/upstream-sync.md")
             if mark == "  [NEW]":
                 new_files += 1
             elif mark.startswith("  [MISSING"):

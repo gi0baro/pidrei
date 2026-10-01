@@ -23,7 +23,7 @@ import tomllib
 
 REPO = "gi0baro/pidrei"
 # The published distributions; protocol/client/server are workspace-only
-# transport remnants (UPSTREAM_EXPERIMENTAL_RULING.md) and are not built.
+# transport remnants (spec/upstream-sync.md) and are not built.
 PACKAGES = ("pidrei", "pidrei_ai", "pidrei_agent", "pidrei_tui")
 WORKSPACE_MEMBERS = frozenset(name.replace("_", "-") for name in PACKAGES)
 

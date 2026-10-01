@@ -1,4 +1,4 @@
-"""Regression net for PROPER_MT_DESIGN.md step 3 (config epochs).
+"""Regression net for config epochs (spec/concurrency.md, "Configuration: epochs instead of reload chains").
 
 Not a pi mirror. Pins the snapshot-swap contract of the config services:
 published state (settings dicts, the auth read-state pair, the runtime

@@ -2,8 +2,9 @@
 
 No pi counterpart: pi's single JS thread makes every listener UI-side for
 free. Here the session listener applies each event in place under the UI
-state lock (UI_ISLAND_DESIGN §4.8), and the posting paths keep their order
-against the UI owner.
+state lock (spec/ui-island.md, "Agent events"), and flows apply each stretch
+between their awaits in one hold of that lock (spec/ui-island.md, "Whole
+changes").
 """
 
 import threading
@@ -74,7 +75,7 @@ def _subscribed_mode(session: _Session, **attributes):
 
 
 def test_message_end_is_applied_before_the_session_moves_on():
-    """UI_ISLAND_DESIGN §6.2 regression: the session emits `message_end`, then
+    """Regression (spec/ui-island.md, "Agent events"): the session emits `message_end`, then
     persists the message and resets its retry counter. The UI applies the
     event inside the emit, so an aborted retry reads the counter the event
     belongs to ("Aborted after 2 retry attempts"); applied later (posted to
@@ -464,7 +465,7 @@ class _HoldRecorder:
 
 @pytest.mark.tonio
 async def test_a_session_swap_and_the_rebinds_first_block_are_one_hold():
-    """UI_ISLAND_DESIGN §4.5c: pi's swap and the rebind's first synchronous
+    """spec/ui-island.md, "Flows that await several times": pi's swap and the rebind's first synchronous
     block (runtime settings, the chat redraw, the subscription) never show
     apart; the block's I/O (the cwd, the trust warning's check) runs before
     the hold, for the new session."""
@@ -520,7 +521,7 @@ async def test_a_session_swap_and_the_rebinds_first_block_are_one_hold():
 
 
 def test_a_bash_command_submitted_while_another_starts_gets_the_busy_warning():
-    """UI_ISLAND_DESIGN §7.3: "running" is set only once the first command's
+    """spec/ui-island.md, "The guards": "running" is set only once the first command's
     flow reaches the executor (after the extensions' hook); the claim taken
     with the check at submit closes that window, and pi's warning shows."""
     flows: list = []

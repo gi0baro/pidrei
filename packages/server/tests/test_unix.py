@@ -5,7 +5,7 @@ script forked via tonio's process API: it binds the socket, prints readiness,
 and sleeps until SIGKILLed, leaving a genuinely stale socket behind.
 
 Driven against the listener directly (the protocol server is not ported —
-UPSTREAM_EXPERIMENTAL_RULING.md): the echo round-trip replaces upstream's
+spec/upstream-sync.md): the echo round-trip replaces upstream's
 hello handshake as the "is it serving" probe, and the unix-server preset case
 is gone with the preset.
 """

@@ -554,7 +554,7 @@ async def test_bind_extensions_emits_session_start_and_reload_emits_shutdown_the
 
 @pytest.mark.tonio
 async def test_overlapping_model_cycles_apply_one_at_a_time(harnesses):
-    """pidrei-specific (UI_ISLAND_DESIGN §7.3): Ctrl+P pressed twice runs two
+    """pidrei-specific (spec/ui-island.md, "The guards"): Ctrl+P pressed twice runs two
     cycles on their own tasks. The second waits for the first to finish
     (persisting its change included) before it reads the current model."""
     harness = await create_harness(

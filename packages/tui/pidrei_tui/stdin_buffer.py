@@ -27,7 +27,7 @@ Port deviations (pi is single-threaded JS):
   (``deadline``, on the ``clock``, monotonic seconds by default) that the
   buffer's reader honours by calling ``expire()`` once it passes. In
   `ProcessTerminal` the stdin reader waits on "more bytes, or the deadline"
-  (UI_ISLAND_DESIGN §4.2), so a flushed ESC takes its place in the input
+  (spec/ui-island.md, "Input"), so a flushed ESC takes its place in the input
   order and nothing fires from another task.
 - Non-escape input is split per Unicode codepoint, not per UTF-16 unit, so
   astral-plane characters are never cut into surrogate halves.

@@ -13,7 +13,7 @@ Supports three modes:
   - Chain: { chain: [{ agent: "name", task: "... {previous} ..." }, ...] }
 
 Deliberate divergences from pi's example (recipe `subagent-inprocess` in
-UPSTREAM_DELTA_PORT.md):
+spec/upstream-sync.md):
   - No subprocess: `run_single_agent` builds a lean session (in-memory session
     manager, no extensions/themes/prompt templates, the agent's system prompt
     appended directly). Skipping extensions also means a subagent cannot

@@ -213,7 +213,7 @@ class _SettingsKeyProbe(_InvalidationProbe):
 @pytest.mark.tonio
 async def test_the_key_after_a_settings_tui_mode_change_goes_to_the_new_renderer():
     # pi switches in place from the settings input. Here the switch is the
-    # key's completion (UI_ISLAND_DESIGN §4.4): the next key waits for it and
+    # key's completion (spec/ui-island.md, "Stopping the UI from inside a key"): the next key waits for it and
     # reaches the new renderer.
     terminal = RecordingTerminal(40, 8)
     renderer = create_interactive_tui(
@@ -590,7 +590,7 @@ async def test_shows_the_configured_jump_to_bottom_shortcut_while_scrolled_up():
 
 @pytest.mark.tonio
 async def test_debug_run_as_work_a_key_waits_for_completes(monkeypatch, tmp_path):
-    """pidrei-only regression (UI_ISLAND_DESIGN step 1): `/debug` is work the
+    """pidrei-only regression (spec/ui-island.md, "When a key must wait for I/O"): `/debug` is work the
     next key waits for. Its tree render used to wait on the UI owner, which
     that very input job was parked on, so input froze for good."""
     await init_theme("dark")

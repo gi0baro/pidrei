@@ -623,7 +623,7 @@ def test_pipe_separated_tool_ids_are_normalized():
     call_id = "call_abc|fc_" + "x" * 10
     from pidrei_ai.types import ToolCall
 
-    # Step 2 relaxation (PROPER_MT_DESIGN.md): messages are frozen values now,
+    # freeze-at-seam relaxation (spec/upstream-sync.md): messages are frozen values now,
     # so the content is supplied at construction instead of assigned after.
     other_model_message = AssistantMessage(
         # Cross-model so normalize_tool_call_id applies.

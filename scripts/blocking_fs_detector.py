@@ -2,7 +2,7 @@
 
 Why this exists
 ---------------
-The "never block the runtime" rule (PLAN.md) is about a *transitive* property:
+The "never block the runtime" rule (AGENTS.md) is about a *transitive* property:
 a sync helper doing I/O is fine until something async calls it. Static analysis
 cannot see that here — two attempts at a call-graph check returned 614 and 1531
 findings that were almost entirely name collisions, because resolving

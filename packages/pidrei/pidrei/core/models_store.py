@@ -26,7 +26,7 @@ def _auth_options(options: ModelsStoreOperationOptions | None) -> AuthOperationO
 class _ModelsFileSnapshot:
     """One immutable (data, revision) pair, published by rebinding
     `_ModelsFileReadState.snapshot` as a unit — see the auth-storage
-    counterpart (PROPER_MT_DESIGN.md step 3)."""
+    counterpart (spec/concurrency.md, configuration epochs)."""
 
     data: dict[str, Any]
     revision: str | None

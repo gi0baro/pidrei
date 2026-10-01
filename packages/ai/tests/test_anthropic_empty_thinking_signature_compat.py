@@ -1,6 +1,6 @@
 """Mirror of pi's anthropic-empty-thinking-signature-compat.test.ts.
 
-The Kimi Coding case joins when that provider's catalog lands (PLAN.md).
+The Kimi Coding case joins when that provider's catalog lands (initial port).
 """
 
 import pytest

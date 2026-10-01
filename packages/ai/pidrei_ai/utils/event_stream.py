@@ -91,15 +91,16 @@ class EventStream[T, R]:
 
         The tonio shape of pi's "fetch with an AbortSignal": the producer's
         awaits — request head, retry backoff, every body read — are plain
-        awaits; cancelling `cancel` cancels the scope, and the owner task,
-        which waits inside the scope for either the producer to finish or
-        the token to fire, then leaves it, which is when tonio evaluates the
-        cancellation and unwinds the child at its current suspension point.
-        Nothing is paid per chunk.
+        awaits; cancelling `cancel` cancels the scope, and the owner
+        coroutine, which waits inside the scope for either the producer to
+        finish or the token to fire, then leaves it, which is when tonio
+        evaluates the cancellation and raises `CancelledError` into the child
+        at its current suspension point. Nothing is paid per chunk.
 
-        After a cancel the producer may not get to run its own error path
-        (a child parked on I/O is not resumed), so the owner terminates the
-        stream itself via `_abort` if it is still open. If the producer
+        After a cancel the producer does not end the stream itself: adapters
+        catch `Exception`, which `CancelledError` is not, and every await on
+        its way out raises again, so the owner terminates the stream via
+        `_abort` if it is still open. If the producer
         escapes with anything else, the stream fails (`result()` raises) —
         adapters convert `Exception` to an error event themselves; this
         covers what they don't.
@@ -193,7 +194,7 @@ class AssistantMessageEventStream(EventStream[AssistantMessageEvent, AssistantMe
         """Publication seam: freeze the event's message payloads, then deliver.
 
         Every event leaves here carrying an independent frozen snapshot
-        (per-delta cadence; see PROPER_MT_DESIGN.md step 2a), so any consumer
+        (per-delta cadence; see spec/concurrency.md), so any consumer
         on any task may hold it indefinitely. Already-frozen payloads pass
         through untouched, so producers that push constructed
         `AssistantMessage` values (extensions, fakes) work unchanged.

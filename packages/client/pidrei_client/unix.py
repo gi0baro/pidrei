@@ -32,7 +32,7 @@ def create_unix_transport_factory(options: UnixTransportOptions) -> ByteTranspor
 
     pi's `discoverUnixServers` (the other export of `unix.ts`) probes each
     socket with a protocol `Client` handshake, which is not ported —
-    UPSTREAM_EXPERIMENTAL_RULING.md.
+    spec/upstream-sync.md.
     """
     max_pending_bytes = _validate_unix_transport_options(options)
 

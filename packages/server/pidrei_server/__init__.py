@@ -2,7 +2,7 @@
 
 The unix transport is `pidrei_server.transports.unix` (pi's `/unix` subpath
 export). The protocol server itself is not ported —
-UPSTREAM_EXPERIMENTAL_RULING.md.
+spec/upstream-sync.md.
 """
 
 from .connection import ByteConnection, ByteConnectionAcceptor, ByteConnectionHandler

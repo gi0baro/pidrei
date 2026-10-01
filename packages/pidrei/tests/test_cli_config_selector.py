@@ -1,7 +1,7 @@
 """pidrei-specific: `pidrei config` closes only once the terminal is restored.
 
 pi's `finish` stops the UI in place, then resolves. Here the stop is the
-closing key's completion (UI_ISLAND_DESIGN §4.4): `select_config` must not
+closing key's completion (spec/ui-island.md, "Stopping the UI from inside a key"): `select_config` must not
 return while the terminal is still being stopped.
 """
 

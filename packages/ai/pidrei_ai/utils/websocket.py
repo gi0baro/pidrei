@@ -7,8 +7,8 @@ drives. It owns nothing protocol-shaped: httpunk performs the handshake through
 `utils/http.py` (`Response.is_upgrade` -> `H1Upgraded`, which drains the bytes
 already buffered past the response head), and `websockets`' sans-io `Protocol`
 does the framing, masking, automatic pongs and close bookkeeping. What is left
-is this file: connect, a read task, a write task. See PLAN.md §5c for why that
-codec and not `wsproto`, `picows` or a monkey-patched `websockets` client.
+is this file: connect, a read task, a write task. The initial port chose that
+codec over `wsproto`, `picows` or a monkey-patched `websockets` client.
 
 **Divergence from pi's surface, deliberate.** pi's `WebSocketLike` is
 DOM-shaped: `addEventListener("message" | "error" | "close", ...)`. JavaScript

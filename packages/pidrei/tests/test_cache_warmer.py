@@ -3,7 +3,7 @@
 pi drives `Date.now()`/`setTimeout` with vitest fake timers and lets
 `advanceTimersByTimeAsync` flush the refresh the timer starts. pidrei swaps the
 `clock.now_ms` / `timers.set_timeout` seams for the shared `FakeTimers`
-(PORT_0.87.1.md decision 6): `advance_timers` takes each due refresh timer off
+(0.87.1 delta port): `advance_timers` takes each due refresh timer off
 the queue and awaits the refresh it would have spawned (`_refresh`) instead of
 racing a detached task.
 """

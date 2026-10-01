@@ -108,7 +108,7 @@ DROPPABLE_AWAITABLES = {
 # Each needs a reason; "it was ported that way" is not one. Entries that stop
 # matching pi are dead weight — prune them rather than leaving them to rot.
 JUSTIFIED_SYNC_PORTS = {
-    # Synchronous handlers (UI_ISLAND_DESIGN.md §3, §5): pi's part before its
+    # Synchronous handlers (spec/ui-island.md, "Input"): pi's part before its
     # first await runs in the caller (a keypress, a selector callback) under
     # the UI state lock, and the handler spawns the rest itself, as pi's
     # caller `void`s the promise. Callers never wait for these.
@@ -176,10 +176,11 @@ def _collect_module_functions(paths: list[pathlib.Path]) -> tuple[set[str], set[
 # function name). Each with a reason.
 ALLOWED_AWAITABLE_PROBES = {
     # What runs under the UI state lock must not await: `apply` and the
-    # extension UI contexts refuse an awaitable result (UI_ISLAND_DESIGN §10.2).
+    # extension UI contexts refuse an awaitable result (spec/ui-island.md,
+    # "`ctx.ui`").
     "call_sync",
     # Extension timers refuse an async callback when the timer is created,
-    # not at its first fire (UI_ISLAND_DESIGN §10.3).
+    # not at its first fire (spec/ui-island.md, "The `tui` extensions receive").
     "ExtensionTui._guarded",
 }
 

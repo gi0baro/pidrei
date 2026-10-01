@@ -1,4 +1,4 @@
-"""Regression net for PROPER_MT_DESIGN.md step 3 (config epochs), ai package.
+"""Regression net for config epochs (spec/concurrency.md), ai package.
 
 Not a pi mirror. Pins the snapshot-swap contract: published state is
 immutable and rebound wholesale, so a reader that pinned a snapshot can

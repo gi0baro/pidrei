@@ -7,7 +7,7 @@ in a `finally` block instead. Socket paths live under the test's `sock_dir`
 paths overflow `sun_path` on macOS); the listener itself creates the
 per-server subdirectories (mirroring `mkdtemp` per server upstream).
 
-The protocol server is not ported (UPSTREAM_EXPERIMENTAL_RULING.md), so the
+The protocol server is not ported (spec/upstream-sync.md), so the
 listener is driven directly: the accept handler echoes bytes and a raw socket
 round-trip stands in for the hello handshake as the liveness probe.
 """

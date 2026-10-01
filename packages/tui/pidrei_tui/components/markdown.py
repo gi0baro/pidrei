@@ -54,10 +54,10 @@ class Markdown:
         self._default_style_prefix: str | None = None
 
         # Cache for rendered output: one immutable (text, width, lines) tuple
-        # read once per render. Mutation and render both run on the UI owner
-        # task (the ownership contract), so the single tuple is hygiene —
-        # one publication a probe can never observe half-cleared — not
-        # correctness.
+        # read once per render. Mutation and render both run under the UI
+        # state lock (the TUI's concurrency contract), so the single tuple is
+        # hygiene — one publication a probe can never observe half-cleared —
+        # not correctness.
         self._cache: tuple[str, int, list[str]] | None = None
         # Per-block cache, keyed on the lexed token itself (plus the width and
         # the following block's type, the only other render inputs). While a

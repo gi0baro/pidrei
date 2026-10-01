@@ -104,7 +104,7 @@ class ExtensionEditorComponent(Container):
         self._editor.handle_input(key_data)
 
     async def _stop_for_external_editor(self, content: str) -> None:
-        # A completion may stop the UI (UI_ISLAND_DESIGN §4.4).
+        # A completion may stop the UI (spec/ui-island.md).
         await self._tui.stop()
         tonio.spawn.without_tracking(self._edit_in_external_editor(content))
 

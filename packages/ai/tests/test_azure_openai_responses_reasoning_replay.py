@@ -34,7 +34,7 @@ def create_model() -> Model:
     )
 
 
-# Step 2 translation (PROPER_MT_DESIGN.md): the streamed output message is a
+# freeze-at-seam translation (spec/upstream-sync.md): the streamed output message is a
 # producer-private builder; pi passes its mutable message here.
 def create_output(model: Model) -> AssistantMessageBuilder:
     return AssistantMessageBuilder(

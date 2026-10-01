@@ -15,7 +15,7 @@ synchronously — so a setter can publish meanwhile. A load publishes only a
 read no setter raced; otherwise it flushes again (the setter's write
 included) and rereads.
 
-Epoch discipline (PROPER_MT_DESIGN.md step 3): the published scope state
+Epoch discipline (spec/concurrency.md, configuration epochs): the published scope state
 (`_settings`, `_global_settings`, `_project_settings`) is immutable —
 setters deep-copy the scope, run pi's mutation lines on the private copy
 (`_update_global_settings`), and publish by rebinding under `_write_lock`.

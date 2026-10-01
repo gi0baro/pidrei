@@ -2,7 +2,7 @@
 
 pi extracted this out of `AgentSession.exportToJsonl` so its Radius share
 path could append presentation entries after the conversation. Radius is
-dropped surface here (see FEASIBILITY), so nothing in-tree passes
+dropped surface here (initial port), so nothing in-tree passes
 `create_trailing_entries` yet; the hook is kept so the module stays 1:1 with
 upstream and any later export that needs a trailing entry has the seam.
 

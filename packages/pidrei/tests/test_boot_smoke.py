@@ -1,7 +1,7 @@
 """pidrei-specific: the real CLI boots interactive mode and completes a turn.
 
 No pi counterpart — this exists because 2,199 green mirrored tests coexisted
-with an interactive mode that crashed in `init()` (PLAN.md Phase 4.5). Every
+with an interactive mode that crashed in `init()` (initial port). Every
 other test drives methods against hand-built fakes; nothing constructed
 InteractiveMode against a real AgentSession, so four defects (an action-dict
 key mismatch, an `await` on a sync method, two un-awaited coroutines and a

@@ -246,7 +246,8 @@ async def test_pty_drain_input_drops_items_queued_behind_the_one_being_handled()
     # drain's cut falls between events. Here the reader reads ahead of input
     # handling, and drain cuts at once (it never waits on input handling, which
     # may be what asked for it): "b", read while "a" is being handled, is dropped
-    # with the rest of the typeahead, as `stop` drops it (UI_ISLAND_DESIGN §4.4).
+    # with the rest of the typeahead, as `stop` drops it (spec/ui-island.md,
+    # "Stopping the UI from inside a key").
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     emulator = FdStream(master)  # owns `master` from here
@@ -475,7 +476,8 @@ async def test_pty_input_survives_a_raising_input_handler():
 async def test_pty_terminal_stops_from_inside_its_own_input_handling():
     """Input handling stops the terminal (pi's key handler stopping the UI in
     place; here a key's completion, which the consumer waits on): the stop
-    never waits on input handling, so it completes (UI_ISLAND_DESIGN §4.4)."""
+    never waits on input handling, so it completes (spec/ui-island.md,
+    "Stopping the UI from inside a key")."""
     master, slave = pty.openpty()
     os.set_blocking(master, False)
     errors = []
@@ -503,7 +505,8 @@ async def test_pty_terminal_stops_from_inside_its_own_input_handling():
 @pytest.mark.tonio
 async def test_pty_items_queued_when_the_terminal_stops_are_dropped():
     """Stopping drops the items read ahead and not yet handled, with the
-    parser state (UI_ISLAND_DESIGN §4.4): after a restart, input starts from
+    parser state (spec/ui-island.md, "Stopping the UI from inside a key"):
+    after a restart, input starts from
     what is typed then — even when the restart comes from the same input
     handling (the TUI-mode switch), before the queued item is taken."""
     master, slave = pty.openpty()
@@ -583,7 +586,7 @@ async def test_pty_a_lone_escape_is_flushed_by_the_reader_deadline():
 
 @pytest.mark.tonio
 async def test_pty_keys_read_before_the_kitty_reply_parse_in_the_old_mode():
-    """pidrei-only (UI_ISLAND_DESIGN §7.2): the reader reads ahead, so the
+    """pidrei-only (spec/ui-island.md, "Terminal-level state"): the reader reads ahead, so the
     Kitty activation travels in input order. With Kitty on, a legacy `\n`
     is shift+enter (Ghostty's mapping); one typed before the reply is not."""
     master, slave = pty.openpty()
@@ -674,7 +677,7 @@ class _KeyWork:
 async def test_pty_a_query_from_a_key_completion_gets_its_reply():
     """A key's completion queries the terminal: the reader settles the query
     with the reply while input handling waits on that same completion
-    (UI_ISLAND_DESIGN §4.2). Queued as input, the reply would wait behind
+    (spec/ui-island.md, "Input"). Queued as input, the reply would wait behind
     the completion, and the query would time out."""
     master, slave = pty.openpty()
     os.set_blocking(master, False)
@@ -719,7 +722,7 @@ async def test_pty_a_query_from_a_key_completion_gets_its_reply():
 
 @pytest.mark.tonio
 async def test_pty_a_colour_scheme_report_reaches_listeners_while_input_waits():
-    """A colour-scheme report is a terminal event (UI_ISLAND_DESIGN §4.2): its
+    """A colour-scheme report is a terminal event (spec/ui-island.md, "Input"): its
     listeners run while input handling is parked on a key's completion."""
     master, slave = pty.openpty()
     os.set_blocking(master, False)
@@ -769,7 +772,7 @@ async def test_pty_a_colour_scheme_report_reaches_listeners_while_input_waits():
 
 @pytest.mark.tonio
 async def test_pty_tui_reports_input_and_output_errors_to_its_handler():
-    """pidrei-only (UI_ISLAND_DESIGN §4.7, step 8): the terminal's own tasks
+    """pidrei-only (spec/ui-island.md, "Errors"): the terminal's own tasks
     hand what they cannot take to the TUI's installed handler through
     `report_error`: a key handler's exception (the input consumer) and a
     payload the output pump cannot write."""
@@ -819,8 +822,8 @@ async def test_pty_tui_reports_input_and_output_errors_to_its_handler():
     os.close(slave)
 
 
-# TUI island stress: input storms while mutations stream (PROPER_MT_DESIGN
-# step 1). "Frozen" would show as the sentinel key never arriving or frames
+# TUI island stress: input storms while mutations stream
+# (spec/ui-island.md). "Frozen" would show as the sentinel key never arriving or frames
 # going silent — the 0.84.2.5 failure mode the island makes structural.
 
 
