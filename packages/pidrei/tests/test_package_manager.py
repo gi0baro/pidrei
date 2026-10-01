@@ -111,6 +111,37 @@ async def test_resolves_local_extension_paths_from_settings(dirs):
 
 
 @pytest.mark.tonio
+async def test_resolves_built_in_extensions_with_user_exclusions_and_project_overrides(dirs):
+    manager = DefaultPackageManager(
+        cwd=dirs.root, agent_dir=dirs.agent_dir, settings_manager=dirs.settings, builtin_extensions=["mcp", "llama.cpp"]
+    )
+
+    async def builtins() -> list[tuple]:
+        return [
+            (resource.path, resource.enabled, resource.metadata.source, resource.metadata.scope)
+            for resource in (await manager.resolve()).extensions
+        ]
+
+    assert await builtins() == [
+        ("builtin:mcp", True, "builtin", "user"),
+        ("builtin:llama.cpp", True, "builtin", "user"),
+    ]
+
+    dirs.settings.set_extension_paths(["-builtin:mcp"])
+    dirs.settings.set_project_extension_paths(["+builtin:mcp", "-builtin:llama.cpp"])
+    assert await builtins() == [
+        ("builtin:mcp", True, "builtin", "project"),
+        ("builtin:llama.cpp", False, "builtin", "project"),
+    ]
+
+    dirs.settings.set_project_extension_paths([])
+    assert await builtins() == [
+        ("builtin:mcp", False, "builtin", "user"),
+        ("builtin:llama.cpp", True, "builtin", "user"),
+    ]
+
+
+@pytest.mark.tonio
 async def test_resolves_skill_paths_from_settings(dirs):
     skill_file = write_skill(
         os.path.join(dirs.agent_dir, "skills", "my-skill", "SKILL.md"), "test-skill", "A test skill"

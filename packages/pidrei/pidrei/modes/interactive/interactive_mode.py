@@ -801,7 +801,8 @@ class InteractiveMode:
     # =========================================================================
 
     def _get_autocomplete_source_tag(self, source_info=None) -> str | None:
-        if source_info is None:
+        # Built-in extension commands are untagged, like built-in commands.
+        if source_info is None or source_info.source == "builtin":
             return None
 
         if source_info.scope == "user":
@@ -3562,6 +3563,9 @@ class InteractiveMode:
             pass
 
         elif event_type == "tool_execution_start":
+            # Nested calls (from other tools, e.g. codemode scripts) are shown inside their parent's row.
+            if event.parent_tool_call_id:
+                return
             component = self._pending_tools.get(event.tool_call_id)
             if component is None:
                 component = ToolExecutionComponent(
@@ -6818,6 +6822,8 @@ class InteractiveMode:
         # Snapshot the stats; the text is built on demand so it follows theme changes.
         cache_warming_status = self.session.cache_warming_status
         cache_warming_mode = self.settings_manager.get_cache_warming_mode()
+        model = self.session.model
+        selected_model_key = f"{model.provider}/{model.id}" if model is not None else None
 
         def render_info() -> str:
             info = f"{theme.bold('Session Info')}\n\n"
@@ -6865,7 +6871,8 @@ class InteractiveMode:
             if stats.cost > 0 or cache_waste.missed_tokens > 0:
                 info += f"\n{theme.bold('Cost')}\n"
                 info += f"{theme.fg('dim', 'Total:')} ${stats.cost:.3f}"
-                if len(usage_breakdown) > 1:
+                # A single entry repeats the total, unless it names a model other than the selected one.
+                if len(usage_breakdown) > 1 or (usage_breakdown and usage_breakdown[0].key != selected_model_key):
                     for entry in usage_breakdown:
                         info += (
                             f"\n  {theme.fg('dim', f'{entry.key}:')} ${entry.cost:.3f} "

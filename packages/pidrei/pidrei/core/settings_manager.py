@@ -433,6 +433,10 @@ class SettingsManager:
 
     # -- scope state ----------------------------------------------------------
 
+    def get_settings(self) -> Settings:
+        """A copy of the effective settings: global and project settings merged, with overrides."""
+        return copy.deepcopy(self._settings)
+
     def get_global_settings(self) -> Settings:
         return copy.deepcopy(self._global_settings)
 

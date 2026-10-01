@@ -14,9 +14,11 @@ is here.
 """
 
 import base64
+import copy
 import os
 import re
 import threading
+import traceback
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
@@ -26,6 +28,7 @@ import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
 
 from pidrei_agent.agent import Agent
+from pidrei_agent.agent_loop import RunToolCallOptions, run_tool_call
 from pidrei_agent.types import (
     AfterToolCallContext,
     AfterToolCallResult,
@@ -35,6 +38,8 @@ from pidrei_agent.types import (
     AgentLoopTurnUpdate,
     AgentRequestUpdate,
     AgentTool,
+    AgentToolCallOutcome,
+    AgentToolResult,
     AgentTurnContext,
     AgentTurnDecision,
     BeforeToolCallContext,
@@ -87,12 +92,21 @@ from .compaction import (
 from .defaults import DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS
 from .extensions import ExtensionRunner, wrap_registered_tools
 from .extensions.runner import emit_session_shutdown_event
-from .extensions.types import AgentActivityOutcome, BoundaryContextPreview, ExtensionError
+from .extensions.types import (
+    AgentActivityOutcome,
+    BoundaryContextPreview,
+    ExtensionError,
+    ToolAnnotations,
+    ToolExposure,
+    ToolLoadout,
+    ToolNamespace,
+)
 from .messages import BashExecutionMessage, CustomMessage, convert_to_llm
 from .model_registry import ModelRegistry
 from .model_runtime import ModelRuntimeAuthOverrides
+from .nested_tool_calls import ExecuteToolOptions, NestedCallScope, NestedToolCallRunner
 from .prompt_templates import expand_prompt_template
-from .session_manager import SessionManager, get_latest_compaction_entry
+from .session_manager import SessionManager, SessionProjection, get_latest_compaction_entry
 from .settings_manager import CacheWarmingMode
 from .source_info import BUILTIN_PATH_PREFIX, create_synthetic_source_info, is_synthetic_path
 from .system_prompt import (
@@ -105,6 +119,61 @@ from .system_prompt import (
 )
 from .tools import create_all_tool_definitions, create_local_bash_operations
 from .tools.tool_definition_wrapper import create_tool_definition_from_agent_tool
+from .virtual_models import (
+    VIRTUAL_MODEL_STATE_ENTRY,
+    RoutedResponse,
+    find_latest_response,
+    get_branch_selection,
+    get_virtual_model_state,
+    is_same_state,
+    is_virtual_model,
+)
+
+
+class _NestedToolCallHost:
+    """The session side of `ctx.execute_tool()` (pi's inline `NestedToolCallHost`).
+
+    Nested `tool_execution_*` events go through `Agent.observe`: the run's
+    dispatcher delivers them to the session's listener in one serialized
+    stream with the loop's own events (PORT_0.99.1 decision 5)."""
+
+    __slots__ = ("_session",)
+
+    def __init__(self, session: AgentSession):
+        self._session = session
+
+    def get_tools(self) -> list[AgentTool]:
+        return self._session._get_callable_tools()
+
+    def is_sequential(self) -> bool:
+        return self._session.agent.tool_execution == "sequential"
+
+    def run_tool_call(
+        self,
+        tool_call: Any,
+        parent_tool_call_id: str,
+        scope: NestedCallScope,
+        cancel: CancelToken | None,
+        on_update: Callable[[Any], Awaitable[None]],
+    ) -> Awaitable[AgentToolCallOutcome]:
+        return self._session._run_nested_tool_call(tool_call, parent_tool_call_id, scope, cancel, on_update)
+
+    def emit(self, event: AgentEvent) -> Awaitable[None]:
+        return self._session.agent.observe(event)
+
+
+def _with_parent_tool_call_id(payload: dict[str, Any], event: Any) -> dict[str, Any]:
+    """Nested calls' `tool_execution_*` events carry `parentToolCallId`; the loop's own do not."""
+    if event.parent_tool_call_id is not None:
+        payload["parentToolCallId"] = event.parent_tool_call_id
+    return payload
+
+
+def _with_description(tool: AgentTool, description: str) -> AgentTool:
+    """pi: `{ ...tool, description }` — the declared copy of an active tool."""
+    declared = copy.copy(tool)
+    declared.description = description
+    return declared
 
 
 def _iso_to_epoch_ms(timestamp: Any) -> float:
@@ -386,6 +455,20 @@ class ToolInfo:
     parameters: dict[str, Any]
     prompt_guidelines: list[str] | None
     source_info: Any
+    exposure: ToolExposure = "direct"
+    namespace: ToolNamespace | None = None
+    annotations: ToolAnnotations | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class _ToolLoadoutEpoch:
+    """The active tools as declared to the model and the declarations requests
+    leave out, published together (pi writes them as two fields; a request
+    prepared in parallel must never see one without the other). Readers pin it
+    with one attribute read."""
+
+    tools: tuple[AgentTool, ...] = ()
+    hidden_declarations: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True)
@@ -491,6 +574,10 @@ class AgentSession:
         # Retry state
         self._retry_cancel: CancelToken | None = None
         self._retry_attempt = 0
+        # Failed response that the next request repeats, set by auto-retry and overflow recovery. The
+        # retry is routed with it as `failed`, since the context no longer contains it. Taken under
+        # `_state_guard` (`_take_failed_response`).
+        self._failed_response: AssistantMessage | None = None
 
         # Bash execution state
         self._bash_cancels: set[CancelToken] = set()
@@ -551,6 +638,20 @@ class AgentSession:
 
         # Tool registry for extension getTools/setTools
         self._tool_registry: dict[str, AgentTool] = {}
+        # Active tools as declared to the model plus the declarations requests
+        # leave out, from `prepare_loadout` hooks (`_apply_tool_loadout`).
+        self._tool_loadout = _ToolLoadoutEpoch()
+        # pi rebuilds the registry and applies a loadout on one thread; here an
+        # extension can set active tools from a parallel tool while a refresh
+        # rebinds `_tool_registry` and `_tool_definitions`. The rebind, a
+        # loadout (computed from both, published with `agent.state.tools`), and
+        # the callable-tools read each run under this. Sync sections only.
+        self._tool_loadout_guard = threading.RLock()
+        # Runs `ctx.execute_tool()` calls. pi creates it on the first call;
+        # here nested calls of parallel tools could race that creation (and
+        # each runner would have its own exclusive queue), so it exists from
+        # the start.
+        self._nested_tool_calls = NestedToolCallRunner(_NestedToolCallHost(self))
         self._tool_definitions: dict[str, _ToolDefinitionEntry] = {}
         self._tool_prompt_snippets: dict[str, str] = {}
         self._tool_prompt_guidelines: dict[str, list[str]] = {}
@@ -571,6 +672,7 @@ class AgentSession:
         self._install_agent_next_turn_refresh()
         self._install_agent_request_projection()
         self._install_agent_boundary_hooks()
+        self._install_hidden_declarations_projection()
         self._install_agent_forced_prompt_projection()
 
         self._build_runtime(
@@ -610,130 +712,255 @@ class AgentSession:
             )
         raise Exception(format_no_api_key_found_message(model.provider))
 
-    async def _get_summarization_request_auth(self, model: Model, cancel: CancelToken | None = None) -> dict[str, Any]:
-        """Auth for summarization requests, plus the model to send them to.
+    async def _get_summarization_request_auth(
+        self, selected_model: Model, cancel: CancelToken | None = None
+    ) -> dict[str, Any]:
+        """Auth for summarization requests, plus the model and thinking level to send them with.
 
         A credential-resolved `base_url` (GitHub Copilot Business/Enterprise)
         must reach the request, so the resolved model comes back with it applied
         (pi #6768). A cancelled `cancel` propagates instead of degrading to
         unauthenticated.
         """
+        # Route a virtual model first: summaries size their input and output from the model they get.
+        if is_virtual_model(selected_model):
+            route = await self._model_runtime.resolve_model(
+                selected_model,
+                convert_to_llm(self.messages),
+                reason="direct",
+                thinking_level=self.thinking_level,
+                cancel=cancel,
+            )
+            model, thinking_level = route.model, route.thinking_level
+        else:
+            model, thinking_level = selected_model, self.thinking_level
+        unauthenticated = {
+            "model": model,
+            "api_key": None,
+            "headers": None,
+            "env": None,
+            "thinking_level": thinking_level,
+        }
         try:
             result = await self._model_runtime.get_auth(model, ModelRuntimeAuthOverrides(cancel=cancel))
             if result is None:
-                return {"model": model, "api_key": None, "headers": None, "env": None}
+                return unauthenticated
             return {
                 "model": dataclass_replace(model, base_url=result.auth.base_url) if result.auth.base_url else model,
                 "api_key": result.auth.api_key,
                 "headers": _without_deleted_headers(result.auth.headers),
                 "env": dict(result.env) if result.env is not None else None,
+                "thinking_level": thinking_level,
             }
         except Exception:
             if cancel is not None and cancel.cancelled:
                 raise
-            return {"model": model, "api_key": None, "headers": None, "env": None}
+            return unauthenticated
+
+    def _model_for_message(self, message: AssistantMessage) -> Model | None:
+        """The model whose limits apply to `message`, or None when the message
+        came from another model. Under a virtual selection, that is the physical
+        model that produced it."""
+        model = self.model
+        if model is not None and is_virtual_model(model):
+            return self._model_runtime.get_physical_model(message.provider, message.model)
+        return model if model is not None and model.provider == message.provider and model.id == message.model else None
+
+    async def _record_selection(self) -> None:
+        """Record the selection on the current branch when the branch implies
+        another one, so a resume restores it. Tree navigation can leave the
+        latest `model_change` on another branch; responses cannot record a
+        virtual selection because they name physical models. Responses do record
+        a physical selection unless the branch holds a virtual one; checking a
+        physical selection against responses would record it on every prompt
+        while `prepare_request` redirects to another model."""
+        model = self.model
+        if model is None:
+            return
+        get_model = self._model_runtime.get_model
+        recorded = get_branch_selection(self.session_manager.get_branch(), get_model)
+        if recorded is None or recorded == (model.provider, model.id):
+            return
+        recorded_model = get_model(*recorded)
+        if not is_virtual_model(model) and not (recorded_model is not None and is_virtual_model(recorded_model)):
+            return
+        await self.session_manager.append_model_change(model.provider, model.id)
+
+    def _limits_model(self) -> Model | None:
+        """The model whose limits apply to the conversation."""
+        routed = self.routed_model
+        return routed.model if routed is not None else self.model
 
     def _install_agent_tool_hooks(self) -> None:
         """Install tool hooks once on the Agent instance.
 
         The callbacks read `self._extension_runner` at execution time, so
         extension reload swaps in the new runner without reinstalling hooks."""
+        self.agent.before_tool_call = self._before_tool_call
+        self.agent.after_tool_call = self._after_tool_call
 
-        async def before_tool_call(ctx: BeforeToolCallContext, _cancel=None):
-            runner = self._extension_runner
-            if not runner.has_handlers("tool_call"):
-                return None
+    async def _before_tool_call(
+        self, ctx: BeforeToolCallContext, _cancel: CancelToken | None = None, parent_tool_call_id: str | None = None
+    ) -> BeforeToolCallResult | None:
+        """`tool_call` handlers. `parent_tool_call_id` is set for calls another tool made."""
+        runner = self._extension_runner
+        if not runner.has_handlers("tool_call"):
+            return None
 
-            try:
-                result = await runner.emit_tool_call(
-                    {
-                        "type": "tool_call",
-                        "toolName": ctx.tool_call.name,
-                        "toolCallId": ctx.tool_call.id,
-                        "input": ctx.args,
-                    }
-                )
-            except Exception as err:
-                if isinstance(err, Exception):
-                    raise
-                raise Exception(f"Extension failed, blocking execution: {err}")
-            if result is None:
-                return None
+        event: dict[str, Any] = {"type": "tool_call", "toolName": ctx.tool_call.name, "toolCallId": ctx.tool_call.id}
+        if parent_tool_call_id:
+            event["parentToolCallId"] = parent_tool_call_id
+        event["input"] = ctx.args
+        try:
+            result = await runner.emit_tool_call(event)
+        except Exception as err:
+            if isinstance(err, Exception):
+                raise
+            raise Exception(f"Extension failed, blocking execution: {err}")
+        if result is None:
+            return None
 
-            return BeforeToolCallResult(
-                block=result.get("block"), reason=result.get("reason"), terminate=result.get("terminate")
+        return BeforeToolCallResult(
+            block=result.get("block"), reason=result.get("reason"), terminate=result.get("terminate")
+        )
+
+    async def _after_tool_call(
+        self, ctx: AfterToolCallContext, _cancel: CancelToken | None = None, parent_tool_call_id: str | None = None
+    ) -> AfterToolCallResult | None:
+        """`tool_result` handlers and image normalization. `parent_tool_call_id` is set for calls another tool made."""
+        runner = self._extension_runner
+        hook_result: dict[str, Any] | None = None
+        if runner.has_handlers("tool_result"):
+            event: dict[str, Any] = {
+                "type": "tool_result",
+                "toolName": ctx.tool_call.name,
+                "toolCallId": ctx.tool_call.id,
+            }
+            if parent_tool_call_id:
+                event["parentToolCallId"] = parent_tool_call_id
+            event["input"] = ctx.args
+            event["content"] = ctx.result.content
+            event["details"] = ctx.result.details
+            if ctx.result.structured_content is not None:
+                event["structuredContent"] = ctx.result.structured_content
+            event["isError"] = ctx.is_error
+            event["usage"] = ctx.result.usage
+            hook_result = await runner.emit_tool_result(event)
+
+        content = (hook_result.get("content") if hook_result is not None else None) or ctx.result.content or []
+        # Runs after the extension hook so images injected or replaced by
+        # extensions are normalized too.
+        normalized_content = await normalize_tool_result_images(
+            content,
+            auto_resize_images=self.settings_manager.get_image_auto_resize(),
+            resize_options=self._model_image_resize_options(),
+        )
+
+        if hook_result is None and normalized_content is content:
+            return None
+
+        # The hook result already dropped structured content that replaced content no longer matches.
+        structured_content = (
+            hook_result.get("structuredContent") if hook_result is not None else ctx.result.structured_content
+        )
+        hook_result = hook_result or {}
+        return AfterToolCallResult(
+            content=normalized_content,
+            details=hook_result.get("details"),
+            structured_content=structured_content,
+            is_error=hook_result.get("isError") if hook_result.get("isError") is not None else ctx.is_error,
+            usage=hook_result.get("usage"),
+        )
+
+    async def _run_nested_tool_call(
+        self,
+        tool_call: Any,
+        parent_tool_call_id: str,
+        scope: NestedCallScope,
+        cancel: CancelToken | None,
+        on_update: Callable[[Any], Awaitable[None]],
+    ) -> AgentToolCallOutcome:
+        """Run a call that the tool call `parent_tool_call_id` made through
+        `ctx.execute_tool()`. It goes through the agent's tool pipeline with the
+        session's hooks, against the callable tools; the target runs bound to
+        `scope`, so the calls it makes in turn land in the same record."""
+        assistant_message = self._find_last_assistant_message()
+        if assistant_message is None:
+            return AgentToolCallOutcome(
+                tool_call=tool_call,
+                result=AgentToolResult(content=[TextContent(text="No assistant message issued this call")], details={}),
+                is_error=True,
             )
+        # Registry tools are all wrapped definitions (`_refresh_tool_registry`).
+        tools = [
+            tool.with_nested_scope(scope) if tool.name == tool_call.name else tool
+            for tool in self._get_callable_tools()
+        ]
 
-        async def after_tool_call(ctx: AfterToolCallContext, _cancel=None):
-            runner = self._extension_runner
-            hook_result = (
-                await runner.emit_tool_result(
-                    {
-                        "type": "tool_result",
-                        "toolName": ctx.tool_call.name,
-                        "toolCallId": ctx.tool_call.id,
-                        "input": ctx.args,
-                        "content": ctx.result.content,
-                        "details": ctx.result.details,
-                        "isError": ctx.is_error,
-                        "usage": ctx.result.usage,
-                    }
-                )
-                if runner.has_handlers("tool_result")
-                else None
-            )
+        def before_tool_call(ctx: BeforeToolCallContext, hook_cancel: CancelToken | None = None):
+            return self._before_tool_call(ctx, hook_cancel, parent_tool_call_id)
 
-            content = (hook_result.get("content") if hook_result is not None else None) or ctx.result.content or []
-            # Runs after the extension hook so images injected or replaced by
-            # extensions are normalized too.
-            normalized_content = await normalize_tool_result_images(
-                content,
-                auto_resize_images=self.settings_manager.get_image_auto_resize(),
-                resize_options=self._model_image_resize_options(),
-            )
+        def after_tool_call(ctx: AfterToolCallContext, hook_cancel: CancelToken | None = None):
+            return self._after_tool_call(ctx, hook_cancel, parent_tool_call_id)
 
-            if hook_result is None and normalized_content is content:
-                return None
+        return await run_tool_call(
+            tool_call,
+            RunToolCallOptions(
+                tools=tools,
+                assistant_message=assistant_message,
+                context=AgentContext(messages=list(self.agent.state.messages), tools=list(self.agent.state.tools)),
+                before_tool_call=before_tool_call,
+                after_tool_call=after_tool_call,
+                cancel=cancel,
+                on_update=on_update,
+            ),
+        )
 
-            hook_result = hook_result or {}
-            return AfterToolCallResult(
-                content=normalized_content,
-                details=hook_result.get("details"),
-                is_error=hook_result.get("isError") if hook_result.get("isError") is not None else ctx.is_error,
-                usage=hook_result.get("usage"),
-            )
+    def _execute_nested_tool_call(
+        self, scope: NestedCallScope, name: str, args: Any, options: ExecuteToolOptions
+    ) -> Awaitable[AgentToolCallOutcome]:
+        """Backs `ctx.execute_tool()` for the call that owns `scope`."""
+        return self._nested_tool_calls.execute(scope, name, args, options)
 
-        self.agent.before_tool_call = before_tool_call
-        self.agent.after_tool_call = after_tool_call
+    def _exceeds_compaction_threshold(self, model: Model, projection: SessionProjection) -> bool:
+        """Whether `projection`, the current session projection, exceeds the compaction threshold of `model`."""
+        if model.context_window <= 0:
+            return False
+        return should_compact(
+            estimate_projected_context_tokens(projection, self.session_manager.get_branch()).tokens,
+            model.context_window,
+            _compaction_settings_from(self.settings_manager.get_compaction_settings(self.model)),
+        )
 
     async def _compact_before_next_assistant_response(self, context: AgentContext) -> AgentContext:
-        model = self.model
-        settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
         projection = self.session_manager.build_session_projection()
-
-        if (
-            model is None
-            or model.context_window <= 0
-            or not should_compact(
-                estimate_projected_context_tokens(projection, self.session_manager.get_branch()).tokens,
-                model.context_window,
-                settings,
-            )
-        ):
+        # A virtual selection is checked in prepare_request, against the model the request is routed to.
+        model = self.model
+        if model is None or is_virtual_model(model) or not self._exceeds_compaction_threshold(model, projection):
             return dataclass_replace(context, messages=list(projection.messages))
 
         await self._run_auto_compaction("threshold", False)
         return dataclass_replace(context, messages=list(self.session_manager.build_session_projection().messages))
 
+    def _take_failed_response(self) -> AssistantMessage | None:
+        with self._state_guard:
+            failed = self._failed_response
+            self._failed_response = None
+            return failed
+
     def _install_agent_request_projection(self) -> None:
         previous_prepare_request = self.agent.prepare_request
 
-        async def prepare_request(request: PrepareRequestContext, cancel=None) -> AgentRequestUpdate:
+        async def prepare(
+            request: PrepareRequestContext, cancel: CancelToken | None
+        ) -> tuple[AgentRequestUpdate | None, AgentContext, SessionProjection]:
+            projection = self.session_manager.build_session_projection()
             canonical_context = dataclass_replace(
                 request.context,
-                messages=list(self.session_manager.build_session_projection().messages),
-                # Messages declare the provider-visible loadout; context.tools keeps executable implementations.
-                tools=list(self.agent.state.tools),
+                messages=list(projection.messages),
+                # Messages declare the provider-visible loadout; context.tools keeps executable
+                # implementations. Read from the loadout epoch the hidden declarations come from.
+                tools=list(self._tool_loadout.tools),
             )
             previous = (
                 await previous_prepare_request(
@@ -748,17 +975,52 @@ class AgentSession:
                 if previous_prepare_request is not None
                 else None
             )
-            return AgentRequestUpdate(
-                context=previous.context
-                if previous is not None and previous.context is not None
-                else canonical_context,
-                model=previous.model if previous is not None and previous.model is not None else self.agent.state.model,
-                thinking_level=(
-                    previous.thinking_level
-                    if previous is not None and previous.thinking_level is not None
-                    else self.agent.state.thinking_level
-                ),
+            context = previous.context if previous is not None and previous.context is not None else canonical_context
+            return previous, context, projection
+
+        async def prepare_request(request: PrepareRequestContext, cancel=None) -> AgentRequestUpdate:
+            failed = self._take_failed_response()
+            previous, context, projection = await prepare(request, cancel)
+            model = previous.model if previous is not None and previous.model is not None else self.agent.state.model
+            thinking_level = (
+                previous.thinking_level
+                if previous is not None and previous.thinking_level is not None
+                else self.agent.state.thinking_level
             )
+            if not is_virtual_model(model):
+                return AgentRequestUpdate(context=context, model=model, thinking_level=thinking_level)
+
+            # The selection stays in agent state; only this request uses the routed model. A routing
+            # failure raises, which ends the run with an error response. Only messages the user wrote
+            # start a turn; extension messages can follow them, e.g. from before_agent_start.
+            messages = context.messages
+            last_response = next(
+                (index for index in range(len(messages) - 1, -1, -1) if messages[index].role == "assistant"), -1
+            )
+            user_turn = any(message.role == "user" for message in messages[last_response + 1 :])
+            state = get_virtual_model_state(self.session_manager.get_branch(), model.provider, model.id)
+            route = await self._model_runtime.resolve_model(
+                model,
+                convert_to_llm(messages),
+                reason="retry" if failed is not None else "user" if user_turn else "continuation",
+                thinking_level=thinking_level,
+                cancel=cancel,
+                failed=failed,
+                state=state,
+            )
+            if route.state is not None and not is_same_state(route.state, state):
+                data = {"provider": model.provider, "modelId": model.id, "state": route.state}
+                entry = self.session_manager.get_entry(
+                    await self.session_manager.append_custom_entry(VIRTUAL_MODEL_STATE_ENTRY, data)
+                )
+                if entry is not None:
+                    self._emit(EntryAppendedEvent(entry=entry))
+            # The route stands: the router already decided this request. The state entry does not change
+            # the projection.
+            if self._exceeds_compaction_threshold(route.model, projection):
+                await self._run_auto_compaction("threshold", False)
+                previous, context, projection = await prepare(request, cancel)
+            return AgentRequestUpdate(context=context, model=route.model, thinking_level=route.thinking_level)
 
         self.agent.prepare_request = prepare_request
 
@@ -837,9 +1099,7 @@ class AgentSession:
             previous_with_context = adapted
 
         async def prepare_next_turn_with_context(turn: PrepareNextTurnContext, cancel=None):
-            context = await self._compact_before_next_assistant_response(
-                dataclass_replace(turn.context, messages=list(self.session_manager.build_session_projection().messages))
-            )
+            context = await self._compact_before_next_assistant_response(turn.context)
             previous_snapshot = None
             if previous_with_context is not None:
                 previous_snapshot = await previous_with_context(dataclass_replace(turn, context=context), cancel)
@@ -1266,33 +1526,42 @@ class AgentSession:
                 self._replace_message_in_state(event, replacement)
         elif event.type == "tool_execution_start":
             await runner.emit(
-                {
-                    "type": "tool_execution_start",
-                    "toolCallId": event.tool_call_id,
-                    "toolName": event.tool_name,
-                    "args": event.args,
-                }
+                _with_parent_tool_call_id(
+                    {
+                        "type": "tool_execution_start",
+                        "toolCallId": event.tool_call_id,
+                        "toolName": event.tool_name,
+                        "args": event.args,
+                    },
+                    event,
+                )
             )
         elif event.type == "tool_execution_update":
             if runner.has_handlers("tool_execution_update"):
                 await runner.emit(
-                    {
-                        "type": "tool_execution_update",
-                        "toolCallId": event.tool_call_id,
-                        "toolName": event.tool_name,
-                        "args": event.args,
-                        "partialResult": event.partial_result,
-                    }
+                    _with_parent_tool_call_id(
+                        {
+                            "type": "tool_execution_update",
+                            "toolCallId": event.tool_call_id,
+                            "toolName": event.tool_name,
+                            "args": event.args,
+                            "partialResult": event.partial_result,
+                        },
+                        event,
+                    )
                 )
         elif event.type == "tool_execution_end":
             await runner.emit(
-                {
-                    "type": "tool_execution_end",
-                    "toolCallId": event.tool_call_id,
-                    "toolName": event.tool_name,
-                    "result": event.result,
-                    "isError": event.is_error,
-                }
+                _with_parent_tool_call_id(
+                    {
+                        "type": "tool_execution_end",
+                        "toolCallId": event.tool_call_id,
+                        "toolName": event.tool_name,
+                        "result": event.result,
+                        "isError": event.is_error,
+                    },
+                    event,
+                )
             )
 
     def _replace_message_in_state(self, event: AgentMessageEndEvent, replacement: Any) -> None:
@@ -1388,6 +1657,18 @@ class AgentSession:
         return self.agent.state.thinking_level
 
     @property
+    def routed_model(self) -> RoutedResponse | None:
+        """Under a virtual selection, the physical model and thinking level of the latest successful response."""
+        model = self.model
+        if model is None or not is_virtual_model(model):
+            return None
+        latest = find_latest_response(self.agent.state.messages)
+        physical = self._model_runtime.get_physical_model(latest.provider, latest.model) if latest is not None else None
+        if physical is None or latest is None:
+            return None
+        return RoutedResponse(model=physical, thinking_level=latest.thinking_level)
+
+    @property
     def is_streaming(self) -> bool:
         """Whether the session is currently processing an agent run or post-run continuation."""
         return self._is_agent_run_active
@@ -1409,9 +1690,17 @@ class AgentSession:
         return self._retry_attempt
 
     def get_active_tool_names(self) -> list[str]:
+        """The names of the active tools, which are the tools declared to the
+        model. Tools with "codemode" or "deferred" exposure are callable from
+        other tools without being active."""
         return [tool.name for tool in self.agent.state.tools]
 
+    def get_callable_tool_names(self) -> list[str]:
+        """The names of the tools that tools can call through `ctx.execute_tool()`."""
+        return [tool.name for tool in self._get_callable_tools()]
+
     def get_all_tools(self) -> list[ToolInfo]:
+        """All configured tools with parameter schema, prompt guidelines, exposure, and source metadata."""
         return [
             ToolInfo(
                 name=entry.definition.name,
@@ -1419,6 +1708,9 @@ class AgentSession:
                 parameters=entry.definition.parameters,
                 prompt_guidelines=entry.definition.prompt_guidelines,
                 source_info=entry.source_info,
+                exposure=self._get_tool_exposure(entry.definition.name),
+                namespace=entry.definition.namespace,
+                annotations=entry.definition.annotations,
             )
             for entry in self._tool_definitions.values()
         ]
@@ -1428,17 +1720,86 @@ class AgentSession:
         return entry.definition if entry is not None else None
 
     def set_active_tools_by_name(self, tool_names: list[str]) -> None:
-        """Set active tools by name. Unknown tool names are ignored. Also rebuilds
-        the system prompt. Changes take effect on the next agent turn."""
+        """Set active tools by name. Unknown and "hidden" tool names are ignored.
+        Also rebuilds the system prompt. Changes take effect on the next agent turn."""
+        with self._tool_loadout_guard:
+            tools = self._apply_tool_loadout(tool_names)
+            self._rebuild_system_prompt([tool.name for tool in tools])
+
+    def _get_tool_exposure(self, name: str) -> ToolExposure:
+        entry = self._tool_definitions.get(name)
+        exposure = entry.definition.exposure if entry is not None else None
+        return exposure if exposure is not None else "direct"
+
+    def _get_callable_tools(self, active: set[str] | None = None) -> list[AgentTool]:
+        """Tools callable through `ctx.execute_tool()`: the active "direct"
+        tools and every registered "codemode" or "deferred" tool."""
+        with self._tool_loadout_guard:
+            if active is None:
+                active = set(self.get_active_tool_names())
+            callable_tools: list[AgentTool] = []
+            for tool in self._tool_registry.values():
+                exposure = self._get_tool_exposure(tool.name)
+                if exposure in ("codemode", "deferred") or (exposure == "direct" and tool.name in active):
+                    callable_tools.append(tool)
+            return callable_tools
+
+    def _apply_tool_loadout(self, tool_names: list[str]) -> list[AgentTool]:
+        """Set the agent's tools for the given active tool names and return
+        them. The active tools are the registered, non-hidden ones; they are
+        declared to the model. Active tools with a `prepare_loadout` hook can
+        change the declared descriptions and hide declarations from requests
+        (see `_install_hidden_declarations_projection`). Callers hold
+        `_tool_loadout_guard`."""
         tools: list[AgentTool] = []
-        valid_tool_names: list[str] = []
-        for name in tool_names:
+        for name in dict.fromkeys(tool_names):
             tool = self._tool_registry.get(name)
-            if tool is not None:
+            if tool is not None and self._get_tool_exposure(name) != "hidden":
                 tools.append(tool)
-                valid_tool_names.append(name)
-        self.agent.state.tools = tools
-        self._rebuild_system_prompt(valid_tool_names)
+        hooks = [
+            entry
+            for entry in (self._tool_definitions.get(tool.name) for tool in tools)
+            if entry is not None and entry.definition.prepare_loadout is not None
+        ]
+        hidden: set[str] = set()
+        declared = tools
+        if hooks:
+
+            def get_namespace(name: str) -> ToolNamespace | None:
+                entry = self._tool_definitions.get(name)
+                return entry.definition.namespace if entry is not None else None
+
+            loadout = ToolLoadout(
+                declared=tuple(tools),
+                callable=tuple(self._get_callable_tools({tool.name for tool in tools})),
+                registered=tuple(self._tool_registry.values()),
+                get_exposure=self._get_tool_exposure,
+                get_namespace=get_namespace,
+            )
+            descriptions: dict[str, str] = {}
+            for entry in hooks:
+                try:
+                    changes = entry.definition.prepare_loadout(loadout)
+                    if changes is not None:
+                        descriptions.update(changes.descriptions or {})
+                        hidden.update(changes.hidden_declarations or ())
+                except Exception as error:
+                    self._extension_runner.emit_error(
+                        ExtensionError(
+                            extension_path=entry.source_info.path,
+                            event="prepare_loadout",
+                            error=str(error),
+                            stack=traceback.format_exc(),
+                        )
+                    )
+            declared = [
+                tool if tool.name not in descriptions else _with_description(tool, descriptions[tool.name])
+                for tool in tools
+            ]
+        epoch = _ToolLoadoutEpoch(tools=tuple(declared), hidden_declarations=frozenset(hidden))
+        self._tool_loadout = epoch
+        self.agent.state.tools = list(epoch.tools)
+        return declared
 
     @property
     def is_compacting(self) -> bool:
@@ -1557,10 +1918,8 @@ class AgentSession:
         and persisted, and the forced text is projected onto the request by
         `_install_agent_forced_prompt_projection`.
         """
-        options.selected_tools = [
-            name for name in dict.fromkeys(options.selected_tools or []) if name in self._tool_registry
-        ]
-        self.agent.state.tools = [self._tool_registry[name] for name in options.selected_tools]
+        with self._tool_loadout_guard:
+            options.selected_tools = [tool.name for tool in self._apply_tool_loadout(options.selected_tools or [])]
         current = get_current_system_message(messages if messages is not None else self.agent.state.messages)
         sections = diff_system_prompt_sections(
             (current.sections if current is not None else None) or {}, build_system_prompt_sections(options)
@@ -1601,14 +1960,45 @@ class AgentSession:
 
         self.agent.transform_context = transform_context
 
+    def _install_hidden_declarations_projection(self) -> None:
+        """Remove the declarations that `prepare_loadout` hooks hide from every
+        request. The whole transcript is filtered with the current set, so the
+        projected declarations stay consistent across requests and only change
+        when the loadout does."""
+        previous_transform_context = self.agent.transform_context
+
+        async def transform_context(messages: list[Any], cancel=None) -> list[Any]:
+            transformed = (
+                await previous_transform_context(messages, cancel)
+                if previous_transform_context is not None
+                else messages
+            )
+            hidden = self._tool_loadout.hidden_declarations
+            if not hidden:
+                return transformed
+            projected: list[Any] = []
+            for message in transformed:
+                if getattr(message, "role", None) != "system" or (
+                    message.tools_added is None and message.tools_removed is None
+                ):
+                    projected.append(message)
+                    continue
+                added = [tool for tool in message.tools_added or [] if tool.name not in hidden]
+                removed = [tool for tool in message.tools_removed or [] if tool.name not in hidden]
+                projected.append(dataclass_replace(message, tools_added=added or None, tools_removed=removed or None))
+            return projected
+
+        self.agent.transform_context = transform_context
+
     def _restore_tools_from_transcript(self) -> None:
-        """Restore the active tool loadout declared by the session transcript, if it declares one."""
+        """Restore the active tool loadout declared by the session transcript, if
+        it declares one. Tools reachable only from other tools are never
+        declared, but they do not depend on the active set, so the transcript's
+        declarations are the whole loadout."""
         current = get_current_system_message(self.session_manager.build_session_context().messages)
         if current is None:
             return
-        tool_names = [tool.name for tool in current.tools_added or [] if tool.name in self._tool_registry]
-        self.agent.state.tools = [self._tool_registry[name] for name in tool_names]
-        self._rebuild_system_prompt(tool_names)
+        self.set_active_tools_by_name([tool.name for tool in current.tools_added or []])
 
     # =========================================================================
     # Prompting
@@ -1618,6 +2008,10 @@ class AgentSession:
         async with self._run_admission:
             with self._state_guard:
                 self._agent_run_abort_requested = False
+                # Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
+                self._failed_response = None
+            await self._record_selection()
+            with self._state_guard:
                 self._is_agent_run_active = True
         try:
             await self.agent.prompt(messages)
@@ -1635,6 +2029,8 @@ class AgentSession:
         finally:
             if self._agent_run_abort_requested:
                 self._finish_cancelled_retry()
+            with self._state_guard:
+                self._failed_response = None
             self._run_system_prompt_options = None
             # Post-run recovery was the last reader of the run-scoped identity tables.
             self._entry_ids_by_message = {}
@@ -1672,6 +2068,8 @@ class AgentSession:
         if self._is_retryable_error(message) and await self._prepare_retry(message):
             if self._agent_run_abort_requested:
                 self._finish_cancelled_retry()
+            with self._state_guard:
+                self._failed_response = message
             return not self._agent_run_abort_requested
         if self._agent_run_abort_requested:
             self._finish_cancelled_retry()
@@ -1730,7 +2128,8 @@ class AgentSession:
                 self._is_before_settle = False
 
     def _model_image_resize_options(self) -> ModelImageResizeOptions | None:
-        limits = self.model.input_limits if self.model is not None else None
+        model = self._limits_model()
+        limits = model.input_limits if model is not None else None
         return limits.images.resize if limits is not None and limits.images is not None else None
 
     async def _normalize_prompt_images(self, images: list[ImageContent] | None) -> tuple[list[ImageContent], list[str]]:
@@ -2479,25 +2878,24 @@ class AgentSession:
     async def _run_default_compaction(
         self,
         preparation: CompactionPreparation,
-        request_model: Model,
-        api_key: str | None,
-        headers: dict[str, str] | None,
+        model: Model,
         custom_instructions: str | None,
         cancel,
-        env: dict[str, str] | None,
         reason: str,
     ) -> CompactionResult:
         """Generate Pi's built-in compaction summary for manual and automatic compaction."""
+        # Resolve the request only when pidrei summarizes itself: routing may call models or fail.
+        request = await self._get_summarization_request_auth(model, cancel)
         return await run_compact(
             preparation,
-            request_model,
-            api_key,
-            headers,
+            request["model"],
+            request["api_key"],
+            request["headers"],
             custom_instructions,
             cancel,
-            self.thinking_level,
+            request["thinking_level"],
             self.agent.stream_function,
-            env,
+            request["env"],
             _retry_policy_from(self.settings_manager.get_retry_settings()),
             self._summarization_retry_callbacks({"source": "compaction", "reason": reason}),
             None,  # session_id
@@ -2530,8 +2928,6 @@ class AgentSession:
                 raise Exception(format_no_model_selected_message())
 
             settings = _compaction_settings_from(self.settings_manager.get_compaction_settings(model))
-            auth = await self._get_summarization_request_auth(model, compaction_cancel)
-
             path_entries = self.session_manager.get_branch()
 
             preparation = prepare_compaction(path_entries, settings)
@@ -2576,12 +2972,9 @@ class AgentSession:
                 # Shared default summary generator, also used by automatic compaction.
                 result = await self._run_default_compaction(
                     preparation,
-                    auth["model"],
-                    auth["api_key"],
-                    auth["headers"],
+                    model,
                     custom_instructions,
                     self._compaction_cancel,
-                    auth["env"],
                     "manual",
                 )
                 summary = result.summary
@@ -2706,16 +3099,14 @@ class AgentSession:
         if skip_aborted_check and assistant_message.stop_reason == "aborted":
             return False
 
-        context_window = self.model.context_window if self.model is not None else 0
-        context_window = context_window or 0
-
         # Skip overflow check if the message came from a different model (e.g. the
-        # user switched from a smaller-context to a larger-context model).
-        same_model = (
-            self.model is not None
-            and assistant_message.provider == self.model.provider
-            and assistant_message.model == self.model.id
-        )
+        # user switched from a smaller-context to a larger-context model). Under a
+        # virtual selection, the physical model that produced the message supplies
+        # the limits.
+        message_model = self._model_for_message(assistant_message)
+        same_model = message_model is not None
+        limits_model = message_model if message_model is not None else self.model
+        context_window = (limits_model.context_window if limits_model is not None else 0) or 0
 
         # Skip compaction checks if this assistant message is older than the latest
         # compaction boundary. This prevents a stale pre-compaction usage/error
@@ -2765,9 +3156,9 @@ class AgentSession:
             or (assistant_usage_matches_projection and is_context_overflow(assistant_message, context_window))
         )
         recoverable_length = (
-            same_model
+            message_model is not None
             and assistant_is_projected
-            and is_recoverable_length(assistant_message, (self.model.max_tokens if self.model is not None else 0) or 0)
+            and is_recoverable_length(assistant_message, message_model.max_tokens)
         )
         if context_overflow or recoverable_length:
             will_retry = assistant_message.stop_reason != "stop"
@@ -2808,7 +3199,11 @@ class AgentSession:
             # Persistently omit the selected final attempt before post-run recovery compaction.
             self._overflow_recovery_attempted = True
             await self._omit_recovery_attempt(assistant_message, tool_results)
-            return await self._run_auto_compaction("overflow", will_retry, abort_generation)
+            retry = await self._run_auto_compaction("overflow", will_retry, abort_generation)
+            if retry:
+                with self._state_guard:
+                    self._failed_response = assistant_message
+            return retry
 
         # Case 3: threshold compaction without retry. For error messages or all-zero
         # usage messages, estimate from the last valid response so sessions hitting
@@ -2890,9 +3285,6 @@ class AgentSession:
             self._emit(CompactionStartEvent(reason=reason))
             compaction_cancel.raise_if_cancelled()
 
-            auth = await self._get_summarization_request_auth(model, compaction_cancel)
-            compaction_cancel.raise_if_cancelled()
-
             extension_compaction: CompactionResult | None = None
 
             if self._extension_runner.has_handlers("session_before_compact"):
@@ -2927,12 +3319,9 @@ class AgentSession:
                 # Shared default summary generator, also used by manual compaction.
                 compact_result = await self._run_default_compaction(
                     preparation,
-                    auth["model"],
-                    auth["api_key"],
-                    auth["headers"],
+                    model,
                     None,
                     compaction_cancel,
-                    auth["env"],
                     reason,
                 )
                 summary = compact_result.summary
@@ -3040,6 +3429,7 @@ class AgentSession:
 
         self._apply_extension_bindings(self._extension_runner)
         await self._extension_runner.emit(self._session_start_event)
+        self._extension_runner.report_unhandled_mcp_servers()
         await self._extend_resources_from_extensions(
             "reload" if self._session_start_event.get("reason") == "reload" else "startup"
         )
@@ -3232,6 +3622,7 @@ class AgentSession:
                 # now return coroutines; `loader.py` awaits them.
                 "get_active_tools": lambda: self.get_active_tool_names(),
                 "get_all_tools": lambda: self.get_all_tools(),
+                "get_settings": lambda: self.settings_manager.get_settings(),
                 "set_active_tools": lambda tool_names: self.set_active_tools_by_name(tool_names),
                 "refresh_tools": lambda: self._refresh_tool_registry(),
                 "get_commands": get_commands,
@@ -3255,6 +3646,8 @@ class AgentSession:
                 "get_system_prompt": lambda: self.system_prompt,
                 "check_out_system_prompt_options": self._check_out_system_prompt_options,
                 "publish_system_prompt_options": self._publish_system_prompt_options,
+                "execute_tool": self._execute_nested_tool_call,
+                "get_callable_tools": self._get_callable_tools,
             },
             {
                 "register_provider": lambda name, provider_config: (
@@ -3269,13 +3662,31 @@ class AgentSession:
                     self._model_runtime.unregister_provider(name),
                     self._refresh_current_model_from_registry(),
                 )[0],
+                "register_virtual_model": lambda definition: (
+                    self._model_runtime.register_virtual_model(definition),
+                    self._refresh_current_model_from_registry(),
+                )[0],
+                "unregister_virtual_model": lambda provider, model_id: (
+                    self._model_runtime.unregister_virtual_model(provider, model_id),
+                    self._refresh_current_model_from_registry(),
+                )[0],
             },
         )
 
     def _refresh_tool_registry(
         self, active_tool_names: list[str] | None = None, include_all_extension_tools: bool | None = None
     ) -> None:
-        previous_registry_names = set(self._tool_registry.keys())
+        with self._tool_loadout_guard:
+            self._refresh_tool_registry_locked(active_tool_names, include_all_extension_tools)
+
+    def _refresh_tool_registry_locked(
+        self, active_tool_names: list[str] | None, include_all_extension_tools: bool | None
+    ) -> None:
+        # Tools that were already activated on registration. A tool whose exposure changes to
+        # "direct" or "model-only" (for example from "hidden") is activated like a new tool.
+        previous_activated_on_registration = {
+            name for name in self._tool_registry if self._is_activated_on_registration(name)
+        }
         previous_active_tool_names = self.get_active_tool_names()
         allowed_tool_names = self._allowed_tool_names
         excluded_tool_names = self._excluded_tool_names
@@ -3353,17 +3764,30 @@ class AgentSession:
 
         if allowed_tool_names is not None:
             for tool_name in self._tool_registry:
-                if tool_name in allowed_tool_names:
+                # Naming a tool activates it even when it is not active by default.
+                if tool_name in allowed_tool_names and self._is_declarable(tool_name):
                     next_active_tool_names.append(tool_name)
         elif include_all_extension_tools:
             for tool in wrapped_extension_tools:
-                next_active_tool_names.append(tool.name)
+                if self._is_activated_on_registration(tool.name):
+                    next_active_tool_names.append(tool.name)
         elif active_tool_names is None:
             for tool_name in self._tool_registry:
-                if tool_name not in previous_registry_names:
+                if tool_name not in previous_activated_on_registration and self._is_activated_on_registration(
+                    tool_name
+                ):
                     next_active_tool_names.append(tool_name)
 
         self.set_active_tools_by_name(list(dict.fromkeys(next_active_tool_names)))
+
+    def _is_declarable(self, name: str) -> bool:
+        """Whether activating the tool declares it to the model."""
+        return self._get_tool_exposure(name) in ("direct", "model-only")
+
+    def _is_activated_on_registration(self, name: str) -> bool:
+        """Whether registering the tool activates it, which declares it to the model."""
+        entry = self._tool_definitions.get(name)
+        return self._is_declarable(name) and not (entry is not None and entry.definition.default_active is False)
 
     def _build_runtime(
         self,
@@ -3445,6 +3869,7 @@ class AgentSession:
             if before_session_start is not None:
                 await before_session_start()
             await self._extension_runner.emit({"type": "session_start", "reason": "reload"})
+            self._extension_runner.report_unhandled_mcp_servers()
             await self._extend_resources_from_extensions("reload")
 
     # =========================================================================
@@ -3454,7 +3879,9 @@ class AgentSession:
     def _is_retryable_error(self, message: AssistantMessage) -> bool:
         """Retryable = overloaded, rate limit, server errors. Context overflow is
         NOT retryable (handled by compaction instead)."""
-        context_window = self.model.context_window if self.model is not None else 0
+        message_model = self._model_for_message(message)
+        limits_model = message_model if message_model is not None else self.model
+        context_window = limits_model.context_window if limits_model is not None else 0
         if is_context_overflow(message, context_window or 0):
             return False
         return is_retryable_assistant_error(message)
@@ -3757,8 +4184,7 @@ class AgentSession:
             summary_details: Any = None
             summary_usage: Usage | None = None
             if options.get("summarize") and entries_to_summarize and extension_summary is None:
-                model = self.model
-                auth = await self._get_summarization_request_auth(model)
+                auth = await self._get_summarization_request_auth(self.model, self._branch_summary_cancel)
                 branch_summary_settings = self.settings_manager.get_branch_summary_settings()
                 result = await generate_branch_summary(
                     entries_to_summarize,
@@ -3951,7 +4377,7 @@ class AgentSession:
         )
 
     def get_context_usage(self) -> ContextUsage | None:
-        model = self.model
+        model = self._limits_model()
         if model is None:
             return None
 

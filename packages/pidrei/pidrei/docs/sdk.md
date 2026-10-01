@@ -62,6 +62,18 @@ in-process extensions (each factory an `async def` taking `pi`, like a module's
 `extension`); supply your own loader only if the host owns resource
 discovery entirely.
 
+Give a factory a name with `InlineExtension(name=..., factory=...)` (from
+`pidrei.core.extensions.types`) when it needs a stable name in diagnostics and
+startup output. With `replaceable=True` it is left out when another extension
+registers a tool, command, or flag with a name it registers during loading,
+instead of both loading with a conflict. With `builtin=True` it is not an
+inline extension: it supplies the code of the `builtin:<name>` extension, which
+loads like a configured extension file. It loads by default, is listed in
+`pidrei config`, and is disabled by `-builtin:<name>` in the `extensions`
+setting or by `no_extensions`; `additional_extension_paths=["builtin:<name>"]`
+loads it explicitly. It loads after project trust is resolved, so it cannot
+handle `project_trust`. pidrei itself ships no built-in extensions yet.
+
 Objects that load from disk are built by awaiting them:
 `await SettingsManager(cwd)`,
 `await DefaultResourceLoader(cwd=cwd, agent_dir=agent_dir)`,

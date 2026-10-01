@@ -524,6 +524,7 @@ DROPPED_PREFIXES += tuple(
     for path in (
         "packages/coding-agent/test/git-merge-and-resolve-extension.test.ts",
         "packages/coding-agent/test/input-transform-streaming-example.test.ts",
+        "packages/coding-agent/test/jev-router-example.test.ts",
         "packages/coding-agent/test/plan-mode-extension.test.ts",
         "packages/coding-agent/test/plan-mode-utils.test.ts",
         "packages/coding-agent/test/trigger-compact-extension.test.ts",
@@ -566,9 +567,6 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/mcp-extension.test.ts",
         "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
         "packages/coding-agent/test/tool-search.test.ts",
-        # U5 mirrors its core (non-codemode) cases into
-        # test_agent_session_tool_orchestration.py; the entry then moves to TEST_HOMES.
-        "packages/coding-agent/test/suite/agent-session-codemode.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
         "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
         "packages/coding-agent/test/suite/mcp-oauth-server.ts",
@@ -1011,6 +1009,12 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts": "partial mirror: test_agent_session_bash_persistence.py holds the 0.83.0 concurrency cases; the rest of the characterization suite is a PARITY GAP",
     "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": "PARITY GAP: compaction transient-retry regression unmirrored",
     "packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts": "PARITY GAP: session_start transient-UI regression unmirrored",
+    "packages/coding-agent/test/suite/agent-session-codemode.test.ts": (
+        "partial mirror: test_agent_session_tool_orchestration.py holds the core cases (nested calls in "
+        "parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
+        "structured result) driven by a Python tool; the script cases port with codemode (PORT_0.99.1.md "
+        "decisions 1-2)"
+    ),
     "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
     "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
     "packages/coding-agent/test/utilities.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",

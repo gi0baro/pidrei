@@ -34,6 +34,7 @@ def create_session(
     compaction_usage: Usage | None = None,
     tool_usage: Usage | None = None,
     using_subscription: bool = False,
+    routed_model: SimpleNamespace | None = None,
 ):
     entries: list = []
 
@@ -63,6 +64,7 @@ def create_session(
         # AgentSession.get_context_usage is a method (pi calls it too) — the
         # fake must be callable, not a data attribute.
         get_context_usage=lambda: SimpleNamespace(context_window=200_000, percent=12.3),
+        routed_model=routed_model,
         model_runtime=SimpleNamespace(is_using_subscription=lambda provider_id: using_subscription),
     )
 
@@ -114,6 +116,20 @@ class TestFooterComponentWidthHandling:
         lines = footer.render(width)
         for line in lines:
             assert visible_width(line) <= width
+
+    def test_shows_the_physical_model_a_virtual_model_routed_to(self):
+        session = create_session(
+            session_name="",
+            model_id="auto",
+            reasoning=True,
+            thinking_level="high",
+            routed_model=SimpleNamespace(model=SimpleNamespace(id="gpt-5.6-luna"), thinking_level="medium"),
+        )
+        footer = FooterComponent(session, create_footer_data(1))
+
+        stats_line = strip_ansi(footer.render(120)[1])
+
+        assert "auto • high → gpt-5.6-luna • medium" in stats_line
 
     def test_includes_summary_and_tool_result_usage_in_the_total_cost(self):
         session = create_session(

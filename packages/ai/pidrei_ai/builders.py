@@ -28,6 +28,7 @@ from pidrei_ai.types import (
     AssistantMessage,
     AssistantMessageDiagnostic,
     DeferredHandle,
+    ModelThinkingLevel,
     ProviderId,
     StopReason,
     TextContent,
@@ -145,6 +146,7 @@ class AssistantMessageBuilder:
     response_model: str | None = None
     response_id: str | None = None
     provider_thinking_level: str | None = None
+    thinking_level: ModelThinkingLevel | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -173,6 +175,7 @@ class AssistantMessageBuilder:
             response_model=self.response_model,
             response_id=self.response_id,
             provider_thinking_level=self.provider_thinking_level,
+            thinking_level=self.thinking_level,
             diagnostics=list(self.diagnostics) if self.diagnostics is not None else None,
             error_message=self.error_message,
             raw_stop_reason=self.raw_stop_reason,

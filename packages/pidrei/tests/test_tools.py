@@ -9,6 +9,7 @@ agent-package mirror.
 
 import base64
 import os
+import re
 import shutil
 import struct
 import sys
@@ -44,6 +45,7 @@ from pidrei.core.tools.grep import create_grep_tool_definition
 from pidrei.core.tools.ls import create_ls_tool_definition
 from pidrei.core.tools.read import create_read_tool_definition
 from pidrei.core.tools.renderers.bash import _format_shell_call
+from pidrei.core.tools.truncate import truncate_middle
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
@@ -103,6 +105,21 @@ def create_tiny_bmp_1x1_red_24bpp() -> bytes:
 
 
 PNG_1X1_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
+
+
+class TestTruncateMiddle:
+    # pi tests truncateMiddle in mcp-extension.test.ts, whose other cases port
+    # with MCP; the helper itself is core, so its case lives here.
+    def test_cuts_multi_byte_text_only_at_character_boundaries(self):
+        text = f"{'é' * 20_000}end"
+        result = truncate_middle(text, 1001)
+        assert result.truncated is True
+        assert "�" not in result.content
+        assert result.content.endswith("end")
+        head, tail = re.split(r"…\d+ chars truncated…", result.content)
+        assert len(head.encode()) <= 500
+        assert len(tail.encode()) <= 501
+        assert len(head) + len(tail) + result.removed_chars == len(text)
 
 
 class TestReadTool:
@@ -539,10 +556,49 @@ class TestBashTool:
         assert result.details is None
 
     @pytest.mark.tonio
-    async def test_handles_command_errors(self, tmp_path):
+    async def test_reports_non_zero_exit_codes_as_error_results_with_structured_content(self, tmp_path):
         bash_tool = create_bash_tool(str(tmp_path))
-        with pytest.raises(Exception, match="Command failed|code 1"):
-            await bash_tool.execute("test-call-9", {"command": "exit 1"})
+        result = await bash_tool.execute("test-call-9", {"command": "echo out; exit 3"})
+        assert result.is_error is True
+        assert get_text_output(result) == "out\n\n\nCommand exited with code 3"
+        wall_time = result.structured_content["wall_time_seconds"]
+        assert isinstance(wall_time, float)
+        assert result.structured_content == {
+            "output": "out\n",
+            "truncated": False,
+            "exit_code": 3,
+            "wall_time_seconds": wall_time,
+        }
+
+        ok = await bash_tool.execute("test-call-9b", {"command": "echo fine"})
+        assert ok.is_error is None
+        assert (ok.structured_content["output"], ok.structured_content["exit_code"]) == ("fine\n", 0)
+
+        empty = await bash_tool.execute("test-call-9c", {"command": "true"})
+        assert get_text_output(empty) == "(no output)"
+        assert (empty.structured_content["output"], empty.structured_content["truncated"]) == ("", False)
+
+    @pytest.mark.tonio
+    async def test_returns_up_to_1_mib_of_output_in_structured_content(self, tmp_path):
+        bash_tool = create_bash_tool(str(tmp_path))
+        # 3000 lines exceed the model-facing 2000 line limit but not 1 MiB.
+        medium = await bash_tool.execute("test-call-9d", {"command": "seq 1 3000"})
+        assert "\n1\n2\n" not in get_text_output(medium)
+        assert medium.details.truncation.truncated is True
+        assert medium.structured_content["truncated"] is False
+        assert medium.structured_content["output"] == "".join(f"{i}\n" for i in range(1, 3001))
+
+        # About 2 MB: keeps the first and last 512 KiB around an omission marker.
+        large = await bash_tool.execute("test-call-9e", {"command": "seq 1 300000"})
+        output = large.structured_content["output"]
+        assert large.structured_content["truncated"] is True
+        assert output.startswith("1\n2\n3\n")
+        assert output.endswith("299999\n300000\n")
+        assert re.search(r"\n\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n\n", output)
+        assert len(output.encode()) < 1024 * 1024 + 100
+        assert large.structured_content["full_output_path"] == large.details.full_output_path
+        with open(large.structured_content["full_output_path"], encoding="utf-8") as full:
+            assert full.read().endswith("300000\n")
 
     # Regression tests for https://github.com/earendil-works/pi/issues/9577
     @pytest.mark.tonio
@@ -553,13 +609,14 @@ class TestBashTool:
             assert result.exit_code == exit_code
 
     @pytest.mark.tonio
-    async def test_rejects_signal_killed_commands_while_preserving_partial_output(self, tmp_path):
+    async def test_reports_signal_killed_commands_as_errors_while_preserving_partial_output(self, tmp_path):
         bash_tool = create_bash_tool(str(tmp_path))
         for signal, exit_code in (("KILL", 137), ("TERM", 143)):
-            with pytest.raises(Exception, match=rf"before-kill\s+Command exited with code {exit_code}$"):
-                await bash_tool.execute(
-                    f"test-call-signal-{signal}", {"command": f"printf 'before-kill\\n'; kill -{signal} $$"}
-                )
+            result = await bash_tool.execute(
+                f"test-call-signal-{signal}", {"command": f"printf 'before-kill\\n'; kill -{signal} $$"}
+            )
+            assert result.is_error is True
+            assert re.search(rf"before-kill\s+Command exited with code {exit_code}$", get_text_output(result))
 
     @pytest.mark.tonio
     async def test_rejects_a_none_exit_code_from_custom_operations(self, tmp_path):

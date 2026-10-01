@@ -18,12 +18,20 @@ Concurrency notes (vs pi's single JS thread):
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Protocol
 
 import tonio.colored as tonio
 from tonio.colored.sync import channel
 
-from pidrei_ai.types import AssistantMessage, Context, SystemMessage, TextContent, ToolResultMessage
+from pidrei_ai.types import (
+    AssistantMessage,
+    Context,
+    NestedToolCalls,
+    SystemMessage,
+    TextContent,
+    ToolResultMessage,
+    Usage,
+)
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.cancel import CancelToken
@@ -35,11 +43,13 @@ from pidrei_ai.utils.transcript import (
     normalize_context,
     to_tool_declaration,
 )
+from pidrei_ai.utils.usage import combine_usage
 from pidrei_ai.utils.validation import validate_tool_arguments
 
 from .stream_fn import get_default_stream_fn
 from .types import (
     AfterToolCallContext,
+    AfterToolCallResult,
     AgentContext,
     AgentEndEvent,
     AgentEvent,
@@ -48,8 +58,10 @@ from .types import (
     AgentStartEvent,
     AgentTool,
     AgentToolCall,
+    AgentToolCallOutcome,
     AgentToolResult,
     BeforeToolCallContext,
+    BeforeToolCallResult,
     MessageEndEvent,
     MessageStartEvent,
     MessageUpdateEvent,
@@ -443,6 +455,10 @@ async def _stream_assistant_response(
         config.model, llm_context, replace(config, api_key=resolved_api_key, cancel=cancel)
     )
 
+    async def result() -> AssistantMessage:
+        # Record the requested level, whichever stream function answered.
+        return replace(await response.result(), thinking_level=config.reasoning or "off")
+
     partial_message: AssistantMessage | None = None
     added_partial = False
 
@@ -468,7 +484,7 @@ async def _stream_assistant_response(
                 context.messages[-1] = partial_message
                 await emit(MessageUpdateEvent(message=replace(partial_message), assistant_message_event=event))
         elif event.type in ("done", "error"):
-            final_message = await response.result()
+            final_message = await result()
             if added_partial:
                 context.messages[-1] = final_message
             else:
@@ -478,7 +494,7 @@ async def _stream_assistant_response(
             await emit(MessageEndEvent(message=final_message))
             return final_message
 
-    final_message = await response.result()
+    final_message = await result()
     if added_partial:
         context.messages[-1] = final_message
     else:
@@ -507,10 +523,24 @@ class _ImmediateToolCallOutcome:
     is_error: bool
 
 
+@dataclass(slots=True, frozen=True)
+class _NestedCallsRecord:
+    """The nested calls and usage the tool wrapper folded onto a result. Kept
+    beside the result, not on it: pi attaches them at `message_start`, so
+    neither the hooks nor `tool_execution_end` see them."""
+
+    calls: NestedToolCalls | None = None
+    usage: Usage | None = None
+
+
+_NO_NESTED_CALLS = _NestedCallsRecord()
+
+
 @dataclass(slots=True)
 class _ExecutedToolCallOutcome:
     result: AgentToolResult[Any]
     is_error: bool
+    nested: _NestedCallsRecord = _NO_NESTED_CALLS
 
 
 @dataclass(slots=True)
@@ -518,6 +548,81 @@ class _FinalizedToolCallOutcome:
     tool_call: AgentToolCall
     result: AgentToolResult[Any]
     is_error: bool
+    nested: _NestedCallsRecord = _NO_NESTED_CALLS
+
+
+# The `before_tool_call` and `after_tool_call` hooks of `AgentLoopConfig`
+# (pi: `Pick<AgentLoopConfig, "beforeToolCall" | "afterToolCall">`).
+class ToolCallHooks(Protocol):
+    before_tool_call: (
+        Callable[[BeforeToolCallContext, CancelToken | None], Awaitable[BeforeToolCallResult | None]] | None
+    )
+    after_tool_call: Callable[[AfterToolCallContext, CancelToken | None], Awaitable[AfterToolCallResult | None]] | None
+
+
+# Receives a tool's partial results. Async-only.
+type ToolUpdateSink = Callable[[AgentToolResult[Any]], Awaitable[None]]
+
+
+@dataclass(slots=True, kw_only=True)
+class RunToolCallOptions:
+    """Options for `run_tool_call`."""
+
+    # Tools the call resolves against.
+    tools: list[AgentTool]
+    # Passed to the hooks as the message that issued the call.
+    assistant_message: AssistantMessage
+    # Passed to the hooks as the current agent context.
+    context: AgentContext
+    before_tool_call: (
+        Callable[[BeforeToolCallContext, CancelToken | None], Awaitable[BeforeToolCallResult | None]] | None
+    ) = None
+    after_tool_call: (
+        Callable[[AfterToolCallContext, CancelToken | None], Awaitable[AfterToolCallResult | None]] | None
+    ) = None
+    cancel: CancelToken | None = None
+    on_update: ToolUpdateSink | None = None
+
+
+async def run_tool_call(tool_call: AgentToolCall, options: RunToolCallOptions) -> AgentToolCallOutcome:
+    """Run one tool call through the same steps as a model-issued call:
+    argument preparation, schema validation, `before_tool_call`, execution,
+    and `after_tool_call`. Emits no events and adds no messages. Tools that
+    call other tools use this so the hooks (for example permission checks)
+    apply to those calls too.
+
+    Never raises for tool failures: unknown tools, validation errors, blocked
+    calls, and raised errors come back as `is_error=True`.
+    """
+    cancel = options.cancel
+    preparation = await _prepare_tool_call(
+        options.context, options.assistant_message, tool_call, options, cancel, options.tools
+    )
+    if isinstance(preparation, _ImmediateToolCallOutcome):
+        return AgentToolCallOutcome(tool_call=tool_call, result=preparation.result, is_error=preparation.is_error)
+    executed = await _execute_prepared_tool_call(preparation, cancel, options.on_update or _ignore_update)
+    finalized = await _finalize_executed_tool_call(
+        options.context, options.assistant_message, preparation, executed, options, cancel
+    )
+    return AgentToolCallOutcome(tool_call=finalized.tool_call, result=finalized.result, is_error=finalized.is_error)
+
+
+async def _ignore_update(_partial_result: AgentToolResult[Any]) -> None:
+    pass
+
+
+def _emit_tool_execution_update(tool_call: AgentToolCall, emit: AgentEventSink) -> ToolUpdateSink:
+    def sink(partial_result: AgentToolResult[Any]) -> Awaitable[None]:
+        return emit(
+            ToolExecutionUpdateEvent(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                args=tool_call.arguments,
+                partial_result=partial_result,
+            )
+        )
+
+    return sink
 
 
 async def _fail_tool_calls_from_truncated_message(
@@ -593,7 +698,9 @@ async def _execute_tool_calls_sequential(
                 tool_call=tool_call, result=preparation.result, is_error=preparation.is_error
             )
         else:
-            executed = await _execute_prepared_tool_call(preparation, cancel, emit)
+            executed = await _execute_prepared_tool_call(
+                preparation, cancel, _emit_tool_execution_update(tool_call, emit)
+            )
             finalized = await _finalize_executed_tool_call(
                 current_context, assistant_message, preparation, executed, config, cancel
             )
@@ -646,7 +753,9 @@ async def _execute_tool_calls_parallel(
                     )
                     await _emit_tool_execution_end(finalized, emit)
                     return finalized
-                executed = await _execute_prepared_tool_call(prepared, cancel, emit)
+                executed = await _execute_prepared_tool_call(
+                    prepared, cancel, _emit_tool_execution_update(prepared.tool_call, emit)
+                )
                 finalized = await _finalize_executed_tool_call(
                     current_context, assistant_message, prepared, executed, config, cancel
                 )
@@ -702,10 +811,12 @@ async def _prepare_tool_call(
     current_context: AgentContext,
     assistant_message: AssistantMessage,
     tool_call: AgentToolCall,
-    config: AgentLoopConfig,
+    config: ToolCallHooks,
     cancel: CancelToken | None,
+    tools: list[AgentTool] | None = None,
 ) -> _PreparedToolCall | _ImmediateToolCallOutcome:
-    tool = next((entry for entry in current_context.tools or [] if entry.name == tool_call.name), None)
+    candidates = tools if tools is not None else current_context.tools or []
+    tool = next((entry for entry in candidates if entry.name == tool_call.name), None)
     if tool is None:
         return _ImmediateToolCallOutcome(
             result=_create_error_tool_result(f"Tool {tool_call.name} not found"), is_error=True
@@ -741,12 +852,12 @@ async def _prepare_tool_call(
 async def _execute_prepared_tool_call(
     prepared: _PreparedToolCall,
     cancel: CancelToken | None,
-    emit: AgentEventSink,
+    on_update: ToolUpdateSink,
 ) -> _ExecutedToolCallOutcome:
-    # `on_update` is sync (tool contract). pi's `updateEvents.push(
-    # Promise.resolve(emit(...)))` starts `emit` synchronously, so updates are
-    # delivered live; a Python coroutine only runs once awaited or spawned. A
-    # per-call channel + one forwarder task gives the same thing: updates are
+    # The tool's `on_update` is sync (tool contract). pi's `updateEvents.push(
+    # Promise.resolve(onUpdate(...)))` starts the sink synchronously, so updates
+    # are delivered live; a Python coroutine only runs once awaited or spawned.
+    # A per-call channel + one forwarder task gives the same thing: updates are
     # delivered as they arrive, in order, and the forwarder is joined at
     # settle (pi's `Promise.all(updateEvents)`).
     accepting_updates = True
@@ -754,24 +865,17 @@ async def _execute_prepared_tool_call(
 
     async def forward_updates() -> None:
         while True:
-            event = await update_receiver.receive()
-            if event is None:
+            partial_result = await update_receiver.receive()
+            if partial_result is None:
                 return
-            await emit(event)
+            await on_update(partial_result)
 
     forwarder = tonio.spawn(forward_updates())
 
-    def on_update(partial_result: AgentToolResult[Any]) -> None:
+    def tool_on_update(partial_result: AgentToolResult[Any]) -> None:
         if not accepting_updates:
             return
-        update_sender.send(
-            ToolExecutionUpdateEvent(
-                tool_call_id=prepared.tool_call.id,
-                tool_name=prepared.tool_call.name,
-                args=prepared.tool_call.arguments,
-                partial_result=partial_result,
-            )
-        )
+        update_sender.send(partial_result)
 
     async def settle_updates() -> None:
         nonlocal accepting_updates
@@ -780,9 +884,13 @@ async def _execute_prepared_tool_call(
         await forwarder
 
     try:
-        result = await prepared.tool.execute(prepared.tool_call.id, prepared.args, cancel, on_update)
+        result = await prepared.tool.execute(prepared.tool_call.id, prepared.args, cancel, tool_on_update)
         await settle_updates()
-        return _ExecutedToolCallOutcome(result=result, is_error=False)
+        nested = _NO_NESTED_CALLS
+        if result.nested_calls is not None or result.nested_usage is not None:
+            nested = _NestedCallsRecord(calls=result.nested_calls, usage=result.nested_usage)
+            result = replace(result, nested_calls=None, nested_usage=None)
+        return _ExecutedToolCallOutcome(result=result, is_error=result.is_error is True, nested=nested)
     except Exception as error:
         if accepting_updates:
             await settle_updates()
@@ -794,7 +902,7 @@ async def _finalize_executed_tool_call(
     assistant_message: AssistantMessage,
     prepared: _PreparedToolCall,
     executed: _ExecutedToolCallOutcome,
-    config: AgentLoopConfig,
+    config: ToolCallHooks,
     cancel: CancelToken | None,
 ) -> _FinalizedToolCallOutcome:
     result = executed.result
@@ -814,19 +922,26 @@ async def _finalize_executed_tool_call(
                 cancel,
             )
             if after_result is not None:
+                # Structured content not replaced along with the content may no longer match it.
+                structured_content = after_result.structured_content
+                if structured_content is None and after_result.content is None:
+                    structured_content = result.structured_content
                 result = replace(
                     result,
                     content=after_result.content if after_result.content is not None else result.content,
                     details=after_result.details if after_result.details is not None else result.details,
                     usage=after_result.usage if after_result.usage is not None else result.usage,
                     terminate=after_result.terminate if after_result.terminate is not None else result.terminate,
+                    structured_content=structured_content,
                 )
                 is_error = after_result.is_error if after_result.is_error is not None else is_error
         except Exception as error:
             result = _create_error_tool_result(str(error))
             is_error = True
 
-    return _FinalizedToolCallOutcome(tool_call=prepared.tool_call, result=result, is_error=is_error)
+    return _FinalizedToolCallOutcome(
+        tool_call=prepared.tool_call, result=result, is_error=is_error, nested=executed.nested
+    )
 
 
 def _create_error_tool_result(message: str) -> AgentToolResult[Any]:
@@ -845,6 +960,11 @@ async def _emit_tool_execution_end(finalized: _FinalizedToolCallOutcome, emit: A
 
 
 def _create_tool_result_message(finalized: _FinalizedToolCallOutcome) -> ToolResultMessage:
+    usage = finalized.result.usage
+    nested = finalized.nested
+    if nested.usage is not None:
+        # Nested results are not persisted, so their usage counts through the parent's.
+        usage = combine_usage(usage, nested.usage) if usage is not None else nested.usage
     return ToolResultMessage(
         tool_call_id=finalized.tool_call.id,
         tool_name=finalized.tool_call.name,
@@ -852,7 +972,8 @@ def _create_tool_result_message(finalized: _FinalizedToolCallOutcome) -> ToolRes
         # null never enters session history or provider payloads.
         content=finalized.result.content if finalized.result.content is not None else [],
         details=finalized.result.details,
-        usage=finalized.result.usage,
+        usage=usage,
+        nested_calls=nested.calls,
         is_error=finalized.is_error,
         timestamp=clock.now_ms(),
     )

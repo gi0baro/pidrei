@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 def wrap_registered_tool(registered_tool: RegisteredTool, runner: ExtensionRunner) -> AgentTool:
     """Wrap a RegisteredTool into an AgentTool.
 
-    Uses the runner's create_context() for consistent context across tools and event handlers.
+    Uses the runner's create_tool_context() for consistent context across tools and event handlers.
     """
-    return wrap_tool_definition(registered_tool.definition, runner.create_context)
+    return wrap_tool_definition(registered_tool.definition, runner.create_tool_context)
 
 
 def wrap_registered_tools(registered_tools: list[RegisteredTool], runner: ExtensionRunner) -> list[AgentTool]:

@@ -33,6 +33,7 @@ from .session_manager import SessionManager, get_default_session_dir_blocking
 from .settings_manager import DEFAULT_TOOL_NAMES, SettingsManager
 from .timings import time
 from .tools import ALL_TOOL_NAMES  # noqa: F401  (re-export surface parity)
+from .virtual_models import get_branch_selection
 
 
 @dataclass(slots=True, kw_only=True)
@@ -175,15 +176,18 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
     model = options.model
     model_fallback_message: str | None = None
 
+    # Assistant messages name the physical model that answered, so a virtual selection is only in
+    # model_change entries.
+    session_model = get_branch_selection(session_manager.get_branch(), model_runtime.get_model)
+
     # If session has data, try to restore model from it
-    if model is None and has_existing_session and existing_session.model is not None:
-        restored_model = model_runtime.get_model(existing_session.model.provider, existing_session.model.model_id)
+    if model is None and has_existing_session and session_model is not None:
+        session_provider, session_model_id = session_model
+        restored_model = model_runtime.get_model(session_provider, session_model_id)
         if restored_model is not None and model_runtime.has_configured_auth(restored_model.provider):
             model = restored_model
         if model is None:
-            model_fallback_message = (
-                f"Could not restore model {existing_session.model.provider}/{existing_session.model.model_id}"
-            )
+            model_fallback_message = f"Could not restore model {session_provider}/{session_model_id}"
 
     # If still no model, use find_initial_model (settings default, then provider defaults)
     if model is None:
@@ -252,6 +256,8 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
         model_runtime, session_manager, settings_manager.get_cache_warming_mode, decide_cache_warming
     )
 
+    # Warm only requests for the selected model. Requests a virtual selection routed, or that an
+    # extension redirected, may not be repeated by the next request, so warming them could be wasted.
     def cache_context_is_current(request_model: Model):
         # A snapshot of the transcript the request was built from: warming continues
         # while the current transcript still extends it and the model is unchanged.

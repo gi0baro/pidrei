@@ -28,7 +28,7 @@ Runtime mapping notes:
 import os
 import threading
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import tonio.colored as tonio
@@ -290,6 +290,8 @@ class _PendingEvent:
     event: AgentEvent
     observed: tonio.Event
     error: BaseException | None = None
+    # Observe-only (`Agent.observe`): listeners see it, the state reducer does not.
+    reduce: bool = True
 
 
 @dataclass(slots=True)
@@ -303,6 +305,12 @@ class _ActiveRun:
     # failure surfacing through `_handle_run_failure`, a cancellation);
     # re-raised at the `prompt()`/`continue_()` awaiter after `done`.
     error: BaseException | None = None
+    # Observe-only events (`Agent.observe`) can come from detached tool work
+    # after the loop's emitters are joined. Closing the feed and an observer's
+    # "still open? then send" are one step under this guard, so no observer
+    # parks on a ticket the finished dispatcher will never serve.
+    events_guard: threading.Lock = field(default_factory=threading.Lock)
+    events_closed: bool = False
 
 
 @dataclass(slots=True)
@@ -807,7 +815,9 @@ class Agent:
             except Exception as error:
                 await self._handle_run_failure(error, run.cancel.cancelled)
             finally:
-                run.events.send(None)
+                with run.events_guard:
+                    run.events_closed = True
+                    run.events.send(None)
                 await dispatcher
         except Exception as error:
             # Re-raised at the awaiting entry point after `done` — this task
@@ -856,11 +866,44 @@ class Agent:
         is considered idle later, after all awaited listeners for `agent_end`
         finish and `_finish_run()` clears runtime-owned state.
         """
+        await self._enqueue_event(event)
+
+    async def observe(self, event: AgentEvent) -> None:
+        """Deliver an event the loop did not emit to this run's listeners.
+        pidrei-only.
+
+        Tools that call other tools (`ctx.execute_tool()`) emit the nested
+        calls' `tool_execution_*` events. pi's session delivers them directly;
+        here they take the same ticket as the loop's own events, so every
+        event a listener sees is one serialized stream and returning means
+        "listeners have settled". The state reducer skips them, as pi's does:
+        nested calls are not the agent's pending tool calls.
+
+        Once the run's dispatcher has closed there is nothing to serialize
+        with, and the event is dropped: only a call a tool left running after
+        the run's emitters finished gets here, and its record already calls it
+        unfinished.
+        """
+        run = self._mailbox.current
+        if run is None:
+            return
+        pending = _PendingEvent(event=event, observed=tonio.Event(), reduce=False)
+        with run.events_guard:
+            if run.events_closed:
+                return
+            run.events.send(pending)
+        await self._await_observed(pending)
+
+    async def _enqueue_event(self, event: AgentEvent) -> None:
         run = self._mailbox.current
         if run is None:
             raise Exception("Agent listener invoked outside active run")
         pending = _PendingEvent(event=event, observed=tonio.Event())
         run.events.send(pending)
+        await self._await_observed(pending)
+
+    @staticmethod
+    async def _await_observed(pending: _PendingEvent) -> None:
         await pending.observed.wait()
         if pending.error is not None:
             raise pending.error
@@ -883,7 +926,8 @@ class Agent:
                 return
             started = clock.monotonic() if meter is not None else 0.0
             try:
-                self._reduce(pending.event)
+                if pending.reduce:
+                    self._reduce(pending.event)
                 run = self._mailbox.current
                 cancel = run.cancel if run is not None else CancelToken()
                 for listener in self._listeners:

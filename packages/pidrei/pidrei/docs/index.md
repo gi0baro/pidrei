@@ -25,6 +25,7 @@ where this documentation says otherwise.
 - [Themes](themes.md) — built-in and custom terminal themes.
 - [Packages](packages.md) — bundle and share extensions, skills, prompts, and themes.
 - [Custom providers](custom-provider.md) — register a provider from an extension.
+- [Virtual models](virtual-models.md) — route each request to a model from an extension.
 
 ## Programmatic use
 

@@ -15,7 +15,7 @@ from tonio.colored import fs
 from pidrei_ai.utils.tasks import gather
 from pidrei_tui import detect_capabilities, get_terminal_color_mode
 
-from ..config import CONFIG_DIR_NAME
+from ..config import APP_NAME, CONFIG_DIR_NAME
 from ..utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
 from ..utils.text import strip_bom
 from .diagnostics import ResourceCollision, ResourceDiagnostic
@@ -26,14 +26,27 @@ from .extensions.loader import (
     load_extension_from_factory,
     load_extensions_cached,
 )
-from .extensions.types import Extension, ExtensionLoadError, ExtensionRuntime, LoadExtensionsResult
+from .extensions.types import (
+    Extension,
+    ExtensionLoadError,
+    ExtensionLoadWarning,
+    ExtensionRuntime,
+    LoadExtensionsResult,
+)
 from .footer_data_provider import _find_git_paths_blocking
 from .output_guard import write_stderr
 from .package_manager import DefaultPackageManager, ResolvedResource
 from .prompt_templates import PromptTemplate, load_prompt_templates
 from .settings_manager import SettingsManager
 from .skills import LoadSkillsResult, Skill, load_skills
-from .source_info import PathMetadata, SourceInfo, create_source_info
+from .source_info import (
+    BUILTIN_PATH_PREFIX,
+    PathMetadata,
+    SourceInfo,
+    create_source_info,
+    get_synthetic_path_source,
+    is_synthetic_path,
+)
 from .timings import reset_timings
 
 
@@ -169,6 +182,68 @@ def _load_project_context_files_blocking(*, cwd: str, agent_dir: str) -> list[Ag
     return context_files
 
 
+def is_builtin_extension(entry: Any) -> bool:
+    """Built-in extensions supply the code of `builtin:<name>` extension paths
+    (an `InlineExtension` with `builtin=True`)."""
+    return not callable(entry) and getattr(entry, "builtin", False) is True
+
+
+def _merge_extension_warnings(result: LoadExtensionsResult, warnings: list[ExtensionLoadWarning]) -> None:
+    """Append warnings, one per path (a later warning for a path replaces an earlier one)."""
+    by_path = {warning.path: warning for warning in [*result.warnings, *warnings]}
+    result.warnings = list(by_path.values())
+
+
+def _omit_replaced_extensions(
+    extensions: list[Extension], warnings: list[ExtensionLoadWarning] | None = None
+) -> list[Extension]:
+    """Leave out replaceable extensions (see `InlineExtension`) that share a
+    tool, command, or flag name with another extension. For example, a
+    third-party MCP extension that registers `/mcp` replaces the built-in MCP
+    extension instead of both connecting the same servers."""
+
+    def names(extension: Extension) -> list[str]:
+        return [
+            *(f"tool:{name}" for name in extension.tools),
+            *(f"command:{name}" for name in extension.commands),
+            *(f"flag:{name}" for name in extension.flags),
+        ]
+
+    taken: dict[str, Extension] = {}
+    for extension in extensions:
+        if not extension.replaceable:
+            for name in names(extension):
+                taken[name] = extension
+
+    kept: list[Extension] = []
+    for extension in extensions:
+        replacement = (
+            next(((name, taken[name]) for name in names(extension) if name in taken), None)
+            if extension.replaceable
+            else None
+        )
+        if replacement is None:
+            kept.append(extension)
+            continue
+        if warnings is not None and extension.path.startswith(BUILTIN_PATH_PREFIX):
+            builtin_name = extension.path[len(BUILTIN_PATH_PREFIX) :]
+            name, owner = replacement
+            kind, raw_name = name.split(":", 1)
+            registered_name = f"/{raw_name}" if kind == "command" else f"--{raw_name}" if kind == "flag" else raw_name
+            warnings.append(
+                ExtensionLoadWarning(
+                    path=extension.path,
+                    warning=(
+                        f"Extension {owner.path} registers {kind} `{registered_name}`, so built-in extension "
+                        f"`{builtin_name}` was not loaded. To use `{builtin_name}`, run `{APP_NAME} config` and "
+                        "make sure it is enabled under Built-in extensions, then disable or remove the existing "
+                        "extension. We recommend only having one or the other loaded at a time."
+                    ),
+                )
+            )
+    return kept
+
+
 class DefaultResourceLoader:
     def __init__(
         self,
@@ -204,7 +279,12 @@ class DefaultResourceLoader:
         self._settings_manager = settings_manager
         self._package_manager: DefaultPackageManager | None = None
         self._event_bus = event_bus if event_bus is not None else EventBus()
-        self._extension_factories = extension_factories or []
+        factories = extension_factories or []
+        self._extension_factories = [entry for entry in factories if not is_builtin_extension(entry)]
+        # Built-in extensions supply the code of `builtin:<name>` extension paths.
+        self._builtin_extensions: dict[str, Any] = {
+            entry.name: entry for entry in factories if is_builtin_extension(entry)
+        }
         self._additional_extension_paths = additional_extension_paths or []
         self._additional_skill_paths = additional_skill_paths or []
         self._additional_prompt_template_paths = additional_prompt_template_paths or []
@@ -250,7 +330,10 @@ class DefaultResourceLoader:
             self._settings_manager = await SettingsManager(self._cwd, self._agent_dir)
         if self._package_manager is None:
             self._package_manager = DefaultPackageManager(
-                cwd=self._cwd, agent_dir=self._agent_dir, settings_manager=self._settings_manager
+                cwd=self._cwd,
+                agent_dir=self._agent_dir,
+                settings_manager=self._settings_manager,
+                builtin_extensions=list(self._builtin_extensions),
             )
         return self
 
@@ -513,7 +596,13 @@ class DefaultResourceLoader:
         )
         enabled = [resource.path for resource in resolved_paths.extensions if resource.enabled]
         cli_enabled = [resource.path for resource in cli_extension_paths.extensions if resource.enabled]
-        extension_paths = cli_enabled if self._no_extensions else await self._merge_paths(cli_enabled, enabled)
+        # Built-in extensions wait for the final pass: project settings can disable them, and a loaded
+        # extension cannot be unloaded.
+        extension_paths = [
+            path
+            for path in (cli_enabled if self._no_extensions else await self._merge_paths(cli_enabled, enabled))
+            if not path.startswith(BUILTIN_PATH_PREFIX)
+        ]
 
         extensions_result = await load_extensions_cached(extension_paths, self._cwd, self._event_bus)
         if not include_inline_factories:
@@ -522,46 +611,72 @@ class DefaultResourceLoader:
         inline_extensions, inline_errors = await self._load_extension_factories(extensions_result.runtime)
         extensions_result.extensions.extend(inline_extensions)
         extensions_result.errors.extend(inline_errors)
+        replacement_warnings: list[ExtensionLoadWarning] = []
+        extensions_result.extensions = _omit_replaced_extensions(extensions_result.extensions, replacement_warnings)
+        _merge_extension_warnings(extensions_result, replacement_warnings)
         return extensions_result
 
     def _resolve_extension_load_path(self, path: str) -> str:
-        return resolve_path(path, self._cwd, normalize_unicode_spaces=True)
+        return path if is_synthetic_path(path) else resolve_path(path, self._cwd, normalize_unicode_spaces=True)
+
+    async def _load_extension_paths(
+        self, paths: list[str], runtime: ExtensionRuntime | None = None
+    ) -> LoadExtensionsResult:
+        """Load extension paths: files from disk and `builtin:<name>` paths from the built-in extensions."""
+        result = await load_extensions_cached(
+            [path for path in paths if not path.startswith(BUILTIN_PATH_PREFIX)], self._cwd, self._event_bus, runtime
+        )
+        for path in paths:
+            if not path.startswith(BUILTIN_PATH_PREFIX):
+                continue
+            builtin = self._builtin_extensions.get(path[len(BUILTIN_PATH_PREFIX) :])
+            if builtin is None:
+                result.errors.append(ExtensionLoadError(path=path, error=f"Unknown built-in extension: {path}"))
+                continue
+            try:
+                extension = await load_extension_from_factory(
+                    builtin.factory, self._cwd, self._event_bus, result.runtime, path
+                )
+            except Exception as error:
+                result.errors.append(ExtensionLoadError(path=path, error=str(error)))
+                continue
+            extension.hidden = True
+            extension.replaceable = getattr(builtin, "replaceable", False) is True
+            result.extensions.append(extension)
+        return result
 
     async def _load_final_extension_set(
         self, extension_paths: list[str], pre_trust_extensions: LoadExtensionsResult | None
     ) -> LoadExtensionsResult:
-        if pre_trust_extensions is None:
-            extensions_result = await load_extensions_cached(extension_paths, self._cwd, self._event_bus)
-            inline_extensions, inline_errors = await self._load_extension_factories(extensions_result.runtime)
-            extensions_result.extensions.extend(inline_extensions)
-            extensions_result.errors.extend(inline_errors)
-            self._add_extension_conflict_diagnostics(extensions_result)
-            return extensions_result
-
-        # The bootstrap pass already ran these factories; re-running them would
+        # Without a pre-trust pass nothing is preloaded, and inline extensions load here.
+        # The bootstrap pass already ran its factories; re-running them would
         # double every registration, so only the paths it did not reach load now.
+        preloaded = pre_trust_extensions.extensions if pre_trust_extensions is not None else []
         preloaded_by_path = {
-            extension.resolved_path: extension
-            for extension in pre_trust_extensions.extensions
-            if not extension.path.startswith("<inline:")
+            extension.resolved_path: extension for extension in preloaded if not extension.path.startswith("<inline:")
         }
-        failed_preload_paths = {self._resolve_extension_load_path(error.path) for error in pre_trust_extensions.errors}
+        failed_preload_paths = {
+            self._resolve_extension_load_path(error.path)
+            for error in (pre_trust_extensions.errors if pre_trust_extensions is not None else [])
+        }
         remaining_paths = [
             path
             for path in extension_paths
             if self._resolve_extension_load_path(path) not in preloaded_by_path
             and self._resolve_extension_load_path(path) not in failed_preload_paths
         ]
-        remaining = await load_extensions_cached(
-            remaining_paths, self._cwd, self._event_bus, pre_trust_extensions.runtime
+        remaining = await self._load_extension_paths(
+            remaining_paths, pre_trust_extensions.runtime if pre_trust_extensions is not None else None
         )
         loaded_by_path = dict(preloaded_by_path)
         for extension in remaining.extensions:
             loaded_by_path[extension.resolved_path] = extension
 
-        inline_extensions = [
-            extension for extension in pre_trust_extensions.extensions if extension.path.startswith("<inline:")
-        ]
+        if pre_trust_extensions is not None:
+            inline_extensions = [extension for extension in preloaded if extension.path.startswith("<inline:")]
+            inline_errors: list[ExtensionLoadError] = []
+        else:
+            inline_extensions, inline_errors = await self._load_extension_factories(remaining.runtime)
         ordered = [
             extension
             for path in extension_paths
@@ -569,12 +684,21 @@ class DefaultResourceLoader:
         ]
         ordered.extend(inline_extensions)
 
+        replacement_warnings: list[ExtensionLoadWarning] = []
         extensions_result = LoadExtensionsResult(
-            extensions=ordered,
-            errors=[*pre_trust_extensions.errors, *remaining.errors],
-            warnings=[*pre_trust_extensions.warnings, *remaining.warnings],
-            runtime=pre_trust_extensions.runtime,
+            extensions=_omit_replaced_extensions(ordered, replacement_warnings),
+            errors=[
+                *(pre_trust_extensions.errors if pre_trust_extensions is not None else []),
+                *remaining.errors,
+                *inline_errors,
+            ],
+            warnings=[
+                *(pre_trust_extensions.warnings if pre_trust_extensions is not None else []),
+                *remaining.warnings,
+            ],
+            runtime=remaining.runtime,
         )
+        _merge_extension_warnings(extensions_result, replacement_warnings)
         self._add_extension_conflict_diagnostics(extensions_result)
         return extensions_result
 
@@ -593,6 +717,7 @@ class DefaultResourceLoader:
                     factory, self._cwd, self._event_bus, runtime, extension_path
                 )
                 extension.hidden = bool(named and getattr(entry, "hidden", False))
+                extension.replaceable = named and getattr(entry, "replaceable", False) is True
                 extensions.append(extension)
             except Exception as error:
                 errors.append(ExtensionLoadError(path=extension_path, error=str(error)))
@@ -839,7 +964,7 @@ class DefaultResourceLoader:
         if not resource_path:
             return None
 
-        if resource_path.startswith("<"):
+        if is_synthetic_path(resource_path):
             return await self._get_default_source_info_for_path(resource_path)
 
         normalized_resource_path = os.path.abspath(resource_path)
@@ -866,13 +991,9 @@ class DefaultResourceLoader:
         return None
 
     async def _get_default_source_info_for_path(self, file_path: str) -> SourceInfo:
-        if file_path.startswith("<") and file_path.endswith(">"):
-            return SourceInfo(
-                path=file_path,
-                source=file_path[1:-1].split(":")[0] or "temporary",
-                scope="temporary",
-                origin="top-level",
-            )
+        synthetic_source = get_synthetic_path_source(file_path)
+        if synthetic_source:
+            return SourceInfo(path=file_path, source=synthetic_source, scope="temporary", origin="top-level")
 
         normalized_path = os.path.abspath(file_path)
         agent_roots = [os.path.join(self._agent_dir, name) for name in ("skills", "prompts", "themes", "extensions")]
@@ -913,7 +1034,7 @@ class DefaultResourceLoader:
         return merged
 
     def _resolve_resource_path(self, path: str) -> str:
-        return resolve_path(path, self._cwd, trim=True)
+        return path if is_synthetic_path(path) else resolve_path(path, self._cwd, trim=True)
 
     def _dedupe_prompts(self, prompts: list[PromptTemplate]) -> LoadPromptsResult:
         seen: dict[str, PromptTemplate] = {}

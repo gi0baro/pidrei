@@ -127,8 +127,8 @@ pidrei -e ./review.py
 
 | Option | Behavior |
 |--------|----------|
-| `-e`, `--extension <path>` | Load an extension file or directory; repeatable |
-| `-ne`, `--no-extensions` | Skip discovered and configured extensions; `-e` still loads |
+| `-e`, `--extension <path>` | Load an extension file or directory, or a built-in extension as `builtin:<name>`; repeatable |
+| `-ne`, `--no-extensions` | Skip discovered, configured, and built-in extensions; `-e` still loads |
 | `--skill <path>` | Load a skill file or directory; repeatable |
 | `-ns`, `--no-skills` | Skip discovered and configured skills; `--skill` still loads |
 | `--prompt-template <path>` | Load a prompt template file or directory; repeatable |

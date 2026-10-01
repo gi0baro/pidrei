@@ -4,6 +4,7 @@ Executes extension handlers and owns the hook bus AgentSession emits into.
 """
 
 import copy
+import dataclasses
 import threading
 import traceback
 from collections.abc import Awaitable, Callable
@@ -13,9 +14,12 @@ from typing import Any
 import tonio.colored as tonio
 
 from pidrei.core.diagnostics import ResourceDiagnostic
+from pidrei_agent.types import AgentToolCallOutcome, AgentToolResult
+from pidrei_ai.types import TextContent, ToolCall
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_tui.tui import call_sync
 
+from ..nested_tool_calls import ExecuteToolOptions, NestedCallScope
 from ..output_guard import write_stderr
 from ..system_prompt import BuildSystemPromptOptions, build_system_prompt, normalize_build_system_prompt_options
 from .types import (
@@ -391,6 +395,56 @@ class _RunnerContext:
         return self._runner._get_system_prompt_fn()
 
 
+class _RunnerToolContext(_RunnerContext):
+    """pi's `ExtensionToolContext`: the context passed to a tool's `execute()`
+    in a session — the extension context plus `tools` and `execute_tool()` for
+    running other tools through the same validation, hooks, and permission
+    checks as model-issued calls.
+
+    A tool wrapped with `wrap_tool_definition()` without a context factory,
+    such as a built-in tool created with `create_bash_tool()` and run in a
+    plain `Agent` or called directly, gets no context.
+    """
+
+    def __init__(self, runner: ExtensionRunner, tool_call_id: str, cancel: Any, scope: NestedCallScope):
+        super().__init__(runner)
+        self._tool_call_id = tool_call_id
+        self._cancel = cancel
+        self._scope = scope
+
+    @property
+    def tools(self) -> list[Any]:
+        """Tools `execute_tool` can call."""
+        self._runner._assert_active()
+        return self._runner._get_callable_tools_fn()
+
+    async def execute_tool(self, name: str, args: Any, options: ExecuteToolOptions | None = None) -> Any:
+        """Run another tool. The call gets the id `<calling id>/<n>`, and the
+        `tool_call`, `tool_result`, and `tool_execution_*` events carry
+        `parentToolCallId`. It does not appear in the transcript; a bounded
+        record of it is kept as `nested_calls` on the calling tool's result
+        message.
+
+        Never raises for tool failures: unknown tools, validation errors,
+        blocked calls, and raised errors come back as `is_error=True`.
+        """
+        runner = self._runner
+        runner._assert_active()
+        execute_tool = runner._execute_tool_fn
+        if execute_tool is None:
+            return AgentToolCallOutcome(
+                tool_call=ToolCall(id=f"{self._tool_call_id}/0", name=name, arguments={}),
+                result=AgentToolResult(
+                    content=[TextContent(text="Nested tool calls are not available in this context")], details={}
+                ),
+                is_error=True,
+            )
+        options = options if options is not None else ExecuteToolOptions()
+        if options.cancel is None:
+            options = dataclasses.replace(options, cancel=self._cancel)
+        return await execute_tool(self._scope, name, args, options)
+
+
 class _RunnerCommandContext(_RunnerContext):
     def __init__(self, runner: ExtensionRunner):
         super().__init__(runner)
@@ -528,6 +582,13 @@ class ExtensionRunner:
             lambda _source, _options: None
         )
         self._shutdown_handler: Callable[[], None] = lambda: None
+        # Back `_RunnerToolContext.execute_tool()`/`.tools`. Without the first,
+        # nested calls fail.
+        self._execute_tool_fn: Callable[..., Awaitable[AgentToolCallOutcome]] | None = None
+        self._get_callable_tools_fn: Callable[[], list[Any]] = list
+        # Registered MCP servers already reported as unhandled.
+        self._reported_mcp_servers: set[str] = set()
+        self._reported_mcp_servers_guard = threading.Lock()
 
         self._wait_for_idle_fn = _default_async_noop
         self._new_session_handler = _default_cancelled_result
@@ -551,12 +612,14 @@ class ExtensionRunner:
         runtime.set_label = actions["set_label"]
         runtime.get_active_tools = actions["get_active_tools"]
         runtime.get_all_tools = actions["get_all_tools"]
+        runtime.get_settings = actions["get_settings"]
         runtime.set_active_tools = actions["set_active_tools"]
         runtime.refresh_tools = actions["refresh_tools"]
         runtime.get_commands = actions["get_commands"]
         runtime.set_model = actions["set_model"]
         runtime.get_thinking_level = actions["get_thinking_level"]
         runtime.set_thinking_level = actions["set_thinking_level"]
+        runtime.create_context = self.create_context
 
         # Context actions (required)
         self._get_model = context_actions["get_model"]
@@ -574,6 +637,19 @@ class ExtensionRunner:
         if check_out_options is not None:
             self._check_out_system_prompt_options_fn = check_out_options
             self._publish_system_prompt_options_fn = context_actions["publish_system_prompt_options"]
+        self._execute_tool_fn = context_actions.get("execute_tool")
+        self._get_callable_tools_fn = context_actions.get("get_callable_tools") or list
+
+        # Servers registered from now on reach the extension that connects them right away. Servers
+        # registered during loading are read on session_start.
+        def on_mcp_servers_change() -> None:
+            # pi: `void this.emit(...)`; `emit` reports handler errors instead of raising.
+            tonio.spawn.without_tracking(
+                self.emit({"type": "mcp_servers_change", "servers": runtime.mcp_servers.list()})
+            )
+            self.report_unhandled_mcp_servers()
+
+        runtime.mcp_servers.set_change_listener(on_mcp_servers_change)
 
         provider_actions = provider_actions or {}
         register_provider = provider_actions.get("register_provider")
@@ -613,6 +689,28 @@ class ExtensionRunner:
                     )
                 )
         runtime.pending_native_provider_registrations = []
+        register_virtual_model = provider_actions.get("register_virtual_model")
+        unregister_virtual_model = provider_actions.get("unregister_virtual_model")
+
+        def runtime_register_virtual_model(definition: Any, _extension_path: str = "<unknown>") -> None:
+            if register_virtual_model is not None:
+                register_virtual_model(definition)
+                return
+            self._model_registry.register_virtual_model(definition)
+
+        for registration in runtime.pending_virtual_model_registrations:
+            try:
+                runtime_register_virtual_model(registration["definition"])
+            except Exception as error:
+                self.emit_error(
+                    ExtensionError(
+                        extension_path=registration.get("extension_path", "<unknown>"),
+                        event="register_virtual_model",
+                        error=str(error),
+                        stack=traceback.format_exc(),
+                    )
+                )
+        runtime.pending_virtual_model_registrations = []
 
         # From this point on, provider registration/unregistration takes effect
         # immediately without requiring a /reload.
@@ -634,9 +732,17 @@ class ExtensionRunner:
                 return
             self._model_registry.unregister_provider(name)
 
+        def runtime_unregister_virtual_model(provider: str, model_id: str) -> None:
+            if unregister_virtual_model is not None:
+                unregister_virtual_model(provider, model_id)
+                return
+            self._model_registry.unregister_virtual_model(provider, model_id)
+
         runtime.register_provider = runtime_register_provider
         runtime.register_native_provider = runtime_register_native_provider
         runtime.unregister_provider = runtime_unregister_provider
+        runtime.register_virtual_model = runtime_register_virtual_model
+        runtime.unregister_virtual_model = runtime_unregister_virtual_model
 
     def bind_command_context(self, actions: dict[str, Any] | None = None) -> None:
         if actions:
@@ -892,6 +998,28 @@ class ExtensionRunner:
     def has_handlers(self, event_type: str) -> bool:
         return any(ext.handlers.get(event_type) for ext in self._extensions)
 
+    def report_unhandled_mcp_servers(self) -> None:
+        """Report registered MCP servers when no extension handles
+        `mcp_servers_change`, which means nothing connects them (for example
+        when another MCP extension replaced the built-in one)."""
+        if self.has_handlers("mcp_servers_change"):
+            return
+        for server in self._runtime.mcp_servers.list():
+            with self._reported_mcp_servers_guard:
+                if server.name in self._reported_mcp_servers:
+                    continue
+                self._reported_mcp_servers.add(server.name)
+            # pi adds "; another extension may have replaced the built-in MCP
+            # support". pidrei has no built-in MCP extension yet (it ports with
+            # codemode), so the clause would mislead.
+            self.emit_error(
+                ExtensionError(
+                    extension_path=server.extension_path,
+                    event="register_mcp_server",
+                    error=f'MCP server "{server.name}" is registered, but no loaded extension connects MCP servers',
+                )
+            )
+
     def get_message_renderer(self, custom_type: str) -> Any:
         for ext in self._extensions:
             renderer = ext.message_renderers.get(custom_type)
@@ -913,6 +1041,13 @@ class ExtensionRunner:
 
     def create_context(self) -> _RunnerContext:
         return _RunnerContext(self)
+
+    def create_tool_context(self, tool_call_id: str, cancel: Any, scope: NestedCallScope) -> _RunnerToolContext:
+        """Create the context for executing the tool call `tool_call_id`: the
+        extension context plus `tools` and `execute_tool()`. `cancel` is the
+        default cancel token of nested calls; `scope` carries where they are
+        recorded (see `nested_tool_calls.py`)."""
+        return _RunnerToolContext(self, tool_call_id, cancel, scope)
 
     def create_command_context(self) -> _RunnerCommandContext:
         return _RunnerCommandContext(self)
@@ -1079,7 +1214,13 @@ class ExtensionRunner:
                     if not isinstance(handler_result, dict):
                         continue
 
-                    for key in ("content", "details", "isError", "usage"):
+                    if "content" in handler_result:
+                        current_event["content"] = handler_result["content"]
+                        # Structured content that is not replaced along with the content may no longer match it.
+                        if "structuredContent" not in handler_result:
+                            current_event.pop("structuredContent", None)
+                        modified = True
+                    for key in ("details", "structuredContent", "isError", "usage"):
                         if key in handler_result:
                             current_event[key] = handler_result[key]
                             modified = True
@@ -1099,6 +1240,7 @@ class ExtensionRunner:
         return {
             "content": current_event.get("content"),
             "details": current_event.get("details"),
+            "structuredContent": current_event.get("structuredContent"),
             "isError": current_event.get("isError"),
             "usage": current_event.get("usage"),
         }

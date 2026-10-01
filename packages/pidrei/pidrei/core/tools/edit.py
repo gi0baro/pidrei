@@ -115,10 +115,13 @@ def _is_single_edit_input(value: Any) -> bool:
 
 
 def prepare_edit_arguments(input: Any) -> Any:
+    """pi normalizes the arguments in place and returns the same object. They
+    belong to the published assistant message here, so a change goes into a
+    copy instead; input that needs none comes back unchanged, as in pi."""
     if not input or not isinstance(input, dict):
         return input
 
-    args = dict(input)
+    args = input
 
     # Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array.
     # Others send a single edit object instead of a one-element edits array.
@@ -126,13 +129,13 @@ def prepare_edit_arguments(input: Any) -> Any:
         try:
             parsed = json.loads(args["edits"])
             if isinstance(parsed, list):
-                args["edits"] = parsed
+                args = {**args, "edits": parsed}
             elif _is_single_edit_input(parsed):
-                args["edits"] = [parsed]
+                args = {**args, "edits": [parsed]}
         except Exception:
             pass
     elif _is_single_edit_input(args.get("edits")):
-        args["edits"] = [args["edits"]]
+        args = {**args, "edits": [args["edits"]]}
 
     if not isinstance(args.get("oldText"), str) or not isinstance(args.get("newText"), str):
         return args

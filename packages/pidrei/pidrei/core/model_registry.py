@@ -4,14 +4,27 @@ Synchronous compatibility facade exposed to extensions. Coding-agent
 internals use ModelRuntime directly.
 """
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
-from pidrei_ai.auth.types import AuthResult
+from pidrei_ai.auth.types import AuthOperationOptions, AuthResult
 from pidrei_ai.registry import Provider
-from pidrei_ai.types import Context, Model, SimpleStreamOptions, StreamOptions
+from pidrei_ai.types import (
+    AnyModel,
+    ClassifierContext,
+    ClassifierModel,
+    ClassifierOptions,
+    ClassifierResult,
+    Context,
+    Model,
+    ModelType,
+    SimpleStreamOptions,
+    StreamOptions,
+)
 
 from .model_runtime import ModelRuntime
 from .provider_composer import AuthStatus, ProviderConfigInput, clear_api_key_cache
+from .virtual_models import VirtualModelDefinition
 
 
 __all__ = ["ModelRegistry", "ProviderConfigInput", "ResolvedRequestAuth", "clear_api_key_cache"]
@@ -49,6 +62,10 @@ class ModelRegistry:
 
     def find(self, provider: str, model_id: str) -> Model | None:
         return self._runtime.get_model(provider, model_id)
+
+    def find_of_type(self, type: ModelType, provider: str, model_id: str) -> AnyModel | None:
+        """Find a model of a non-chat type, e.g. `find_of_type("classifier", "typesafe", "jev-latest")`."""
+        return self._runtime.get_model_of_type(type, provider, model_id)
 
     def has_configured_auth(self, model: Model) -> bool:
         return self._runtime.has_configured_auth(model.provider)
@@ -94,6 +111,25 @@ class ModelRegistry:
     def complete(self, model: Model, context: Context, options: StreamOptions | None = None):
         return self._runtime.complete(model, context, options)
 
+    def get_models_of_type(self, type: ModelType, provider: str | None = None) -> list[AnyModel]:
+        """Every known model of a type (chat, image, classifier), optionally for one provider."""
+        return self._runtime.get_models_of_type(type, provider)
+
+    def get_available_of_type(
+        self, type: ModelType, provider: str | None = None, options: AuthOperationOptions | None = None
+    ) -> Awaitable[list[AnyModel]]:
+        """Models of a type whose provider has working credentials."""
+        return self._runtime.get_available_of_type(type, provider, options)
+
+    def get_model_of_type(self, type: ModelType, provider: str, model_id: str) -> AnyModel | None:
+        return self._runtime.get_model_of_type(type, provider, model_id)
+
+    def classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> Awaitable[ClassifierResult]:
+        """Classify structured state with request-time authentication. Never raises."""
+        return self._runtime.classify(model, context, options)
+
     def get_provider_display_name(self, provider: str) -> str:
         entry = self._runtime.get_provider(provider)
         return entry.name if entry is not None and entry.name is not None else provider
@@ -121,6 +157,12 @@ class ModelRegistry:
 
     def unregister_provider(self, provider_name: str) -> None:
         self._runtime.unregister_provider(provider_name)
+
+    def register_virtual_model(self, definition: VirtualModelDefinition) -> None:
+        self._runtime.register_virtual_model(definition)
+
+    def unregister_virtual_model(self, provider_name: str, model_id: str) -> None:
+        self._runtime.unregister_virtual_model(provider_name, model_id)
 
     def get_registered_provider_config(self, provider_name: str) -> ProviderConfigInput | None:
         return self._runtime.get_registered_provider_config(provider_name)

@@ -8,6 +8,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from pidrei_ai.types import Usage
+from pidrei_ai.utils.usage import combine_usage
+
+
+__all__ = [
+    "UsageCostBreakdownEntry",
+    "UsageTotals",
+    "add_usage_to_totals",
+    "combine_usage",
+    "create_usage_totals",
+    "get_usage_cost_breakdown",
+]
 
 
 @dataclass(slots=True)

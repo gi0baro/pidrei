@@ -157,6 +157,17 @@ async def create_agent_session_services(options: CreateAgentSessionServicesOptio
                 )
             )
     extensions_result.runtime.pending_native_provider_registrations = []
+    for registration in extensions_result.runtime.pending_virtual_model_registrations:
+        try:
+            model_runtime.register_virtual_model(registration["definition"])
+        except Exception as error:
+            diagnostics.append(
+                AgentSessionRuntimeDiagnostic(
+                    type="error",
+                    message=f'Extension "{registration.get("extension_path")}" error: {error}',
+                )
+            )
+    extensions_result.runtime.pending_virtual_model_registrations = []
     # lazy: import cycle within core
     from .model_runtime import ModelsRefreshOptions
 

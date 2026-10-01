@@ -205,6 +205,11 @@ When the service reports token counts, as all System One services do,
 models without one, such as TypeSafe's direct `jev-latest`, report tokens at
 no cost.
 
+Extensions call classifiers through `ctx.model_registry.classify()` and find
+them with `ctx.model_registry.find_of_type("classifier", provider, id)`.
+[Virtual models](virtual-models.md#route-requests) can use them to route
+requests; see the `jev_router.py` example.
+
 ## Validating
 
 A malformed `models.json` does not stop pidrei — it reports the failing path at

@@ -289,6 +289,8 @@ class AssistantMessage:
     response_id: str | None = None  # Provider-specific response/message identifier
     # Exact provider-native effort level used for this response. None for legacy or unmanaged responses.
     provider_thinking_level: str | None = None
+    # pidrei thinking level the agent loop requested for this response. None outside the agent loop and for legacy responses.
+    thinking_level: ModelThinkingLevel | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -301,6 +303,32 @@ class AssistantMessage:
 
 
 @dataclass(slots=True, frozen=True)
+class NestedToolCallRecord:
+    """A tool call that another tool made while it ran, for example from a codemode script."""
+
+    id: str
+    name: str
+    # "unfinished": the call was still running when the calling tool finished.
+    status: Literal["ok", "error", "unfinished"]
+    # None when over the size limits; `arguments_bytes` then gives their size.
+    arguments: dict[str, Any] | None = None
+    # UTF-8 size of the arguments as JSON, set when `arguments` is None.
+    arguments_bytes: int | None = None
+    duration_ms: int | None = None
+    # Error text, truncated.
+    error: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class NestedToolCalls:
+    """Bounded record of the nested calls a tool made. Results are not recorded."""
+
+    calls: list[NestedToolCallRecord]
+    # False when calls were dropped, arguments omitted, or calls had not finished.
+    complete: bool
+
+
+@dataclass(slots=True, frozen=True)
 class ToolResultMessage:
     tool_call_id: str
     tool_name: str
@@ -310,6 +338,8 @@ class ToolResultMessage:
     details: Any = None
     # Usage from the tool execution itself, if available. Not part of main LLM context accounting.
     usage: Usage | None = None
+    # Calls this tool made to other tools. Kept for the session record; not sent to the model.
+    nested_calls: NestedToolCalls | None = None
     role: Literal["toolResult"] = "toolResult"
 
 

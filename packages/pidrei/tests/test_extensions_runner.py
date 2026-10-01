@@ -82,6 +82,7 @@ def extension_actions() -> dict:
         "set_label": lambda *args: None,
         "get_active_tools": list,
         "get_all_tools": list,
+        "get_settings": dict,
         "set_active_tools": lambda *args: None,
         "refresh_tools": lambda: None,
         "get_commands": list,
@@ -1029,11 +1030,13 @@ async def extension(pi):
         }
     )
 
-    # pi asserts with toEqual, which drops the `usage: undefined` pi also
-    # returns; None is a value in Python, so it is spelled out here.
+    # pi asserts with toEqual, which drops the `structuredContent: undefined`
+    # and `usage: undefined` pi also returns; None is a value in Python, so they
+    # are spelled out here.
     assert chained == {
         "content": [{"type": "text", "text": "first"}],
         "details": {"source": "ext1"},
+        "structuredContent": None,
         "isError": True,
         "usage": None,
     }

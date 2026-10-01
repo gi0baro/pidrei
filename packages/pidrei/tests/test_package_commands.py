@@ -26,6 +26,13 @@ from pidrei.cli.package_commands import (
     handle_package_command,
     parse_package_command,
 )
+from pidrei.core.package_manager import DefaultPackageManager
+from pidrei.core.settings_manager import SettingsManager
+from pidrei.modes.interactive.components.config_selector import (
+    ConfigSelectorComponent,
+    build_canonical_path_map_blocking,
+)
+from pidrei.modes.interactive.theme import init_theme
 
 
 @pytest.fixture
@@ -217,6 +224,62 @@ class TestInstallRemoveList:
         with capture() as captured:
             assert await handle_package_command(["list", "--no-approve"]) == 0
         assert "project-only" not in captured.out
+
+
+def _config_selector(resolved, settings_manager, workspace, write_scope: str):
+    return ConfigSelectorComponent(
+        {"global": resolved, "project": resolved},
+        settings_manager,
+        workspace["project_dir"],
+        workspace["agent_dir"],
+        lambda: None,
+        lambda: None,
+        lambda: None,
+        24,
+        write_scope,
+        canonical_by_path=build_canonical_path_map_blocking({"global": resolved, "project": resolved}),
+    )
+
+
+class TestConfigBuiltinExtensions:
+    @pytest.mark.tonio
+    async def test_toggles_built_in_extensions_in_config_global_mode(self, workspace):
+        await init_theme("dark")
+        settings_manager = SettingsManager.in_memory(project_trusted=True)
+        resolved = await DefaultPackageManager(
+            cwd=workspace["project_dir"],
+            agent_dir=workspace["agent_dir"],
+            settings_manager=settings_manager,
+            builtin_extensions=["llama.cpp", "mcp"],
+        ).resolve()
+        resource_list = _config_selector(resolved, settings_manager, workspace, "global").get_resource_list()
+
+        rendered = "\n".join(resource_list.render(80))
+        assert "Built-in" in rendered
+        assert "llama.cpp" in rendered
+        resource_list.handle_input(" ")
+        assert settings_manager.get_global_settings()["extensions"] == ["-builtin:llama.cpp"]
+        resource_list.handle_input(" ")
+        assert settings_manager.get_global_settings()["extensions"] == ["+builtin:llama.cpp"]
+
+    @pytest.mark.tonio
+    async def test_cycles_project_built_in_extension_overrides_in_config_local_mode(self, workspace):
+        await init_theme("dark")
+        settings_manager = SettingsManager.in_memory({"extensions": ["-builtin:mcp"]}, project_trusted=True)
+        resolved = await DefaultPackageManager(
+            cwd=workspace["project_dir"],
+            agent_dir=workspace["agent_dir"],
+            settings_manager=settings_manager,
+            builtin_extensions=["mcp"],
+        ).resolve()
+        resource_list = _config_selector(resolved, settings_manager, workspace, "project").get_resource_list()
+
+        resource_list.handle_input(" ")
+        assert settings_manager.get_project_settings()["extensions"] == ["+builtin:mcp"]
+        resource_list.handle_input(" ")
+        assert settings_manager.get_project_settings()["extensions"] == ["-builtin:mcp"]
+        resource_list.handle_input(" ")
+        assert settings_manager.get_project_settings()["extensions"] == []
 
 
 class TestSelfUpdateIsRefused:

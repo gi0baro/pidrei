@@ -33,8 +33,16 @@ def create_file_ops() -> FileOperations:
 
 
 def extract_file_ops_from_message(message: AgentMessage, file_ops: FileOperations) -> None:
-    """Extract file operations from tool calls in an assistant message."""
-    if getattr(message, "role", None) != "assistant":
+    """Extract file operations from tool calls in an assistant message, or from
+    the nested calls recorded on a tool result."""
+    role = getattr(message, "role", None)
+    if role == "toolResult":
+        # Calls made from other tools (e.g. codemode scripts) are recorded on the calling tool's result.
+        nested_calls = message.nested_calls
+        for call in nested_calls.calls if nested_calls is not None else []:
+            _add_file_op(call.name, call.arguments, file_ops)
+        return
+    if role != "assistant":
         return
     content = getattr(message, "content", None)
     if not isinstance(content, list):
@@ -43,19 +51,19 @@ def extract_file_ops_from_message(message: AgentMessage, file_ops: FileOperation
     for block in content:
         if getattr(block, "type", None) != "toolCall":
             continue
-        args = getattr(block, "arguments", None)
-        if not isinstance(args, dict):
-            continue
-        path = args.get("path")
-        if not isinstance(path, str) or not path:
-            continue
-        name = getattr(block, "name", None)
-        if name == "read":
-            file_ops.read.add(path)
-        elif name == "write":
-            file_ops.written.add(path)
-        elif name == "edit":
-            file_ops.edited.add(path)
+        _add_file_op(getattr(block, "name", None), getattr(block, "arguments", None), file_ops)
+
+
+def _add_file_op(tool_name: str | None, args: Any, file_ops: FileOperations) -> None:
+    path = args.get("path") if isinstance(args, dict) else None
+    if not isinstance(path, str) or not path:
+        return
+    if tool_name == "read":
+        file_ops.read.add(path)
+    elif tool_name == "write":
+        file_ops.written.add(path)
+    elif tool_name == "edit":
+        file_ops.edited.add(path)
 
 
 def compute_file_lists(file_ops: FileOperations) -> tuple[list[str], list[str]]:

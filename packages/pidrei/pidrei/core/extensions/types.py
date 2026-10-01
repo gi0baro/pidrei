@@ -8,9 +8,11 @@ context objects extensions actually receive live in `runner.py`
 resolves through the runner at access time.
 """
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+from ..mcp_servers import McpServerRegistry
 
 
 RUNTIME_NOT_INITIALIZED = "Extension runtime not initialized. Action methods cannot be called during extension loading."
@@ -30,6 +32,73 @@ class ExtensionContext:
 
     def __getattr__(self, _name: str) -> Any:
         return None
+
+
+# How the model reaches a tool. "Callable" means callable from other tools
+# through `ctx.execute_tool()`, as the codemode tool does.
+# - "direct": declared to the model while active, and callable while active.
+# - "model-only": declared to the model while active, never callable. Use it for
+#   orchestrating or interactive tools.
+# - "codemode": callable whenever registered. Not declared to the model unless
+#   explicitly activated. Codemode tools list it in their description.
+# - "deferred": like "codemode", but codemode tools do not list it; tool search can find it.
+# - "hidden": registered but unreachable. Activating it has no effect.
+# "direct" and "model-only" tools are activated when they are registered; the
+# others are not. The active tool set (`get_active_tools`/`set_active_tools`)
+# is the set declared to the model.
+type ToolExposure = Literal["direct", "model-only", "codemode", "deferred", "hidden"]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ToolAnnotations:
+    """Hints about what a tool does, with the meaning of MCP tool annotations.
+    They come from the tool's author and are not verified; permission
+    extensions can use them to decide which calls to confirm."""
+
+    # The tool does not modify its environment.
+    read_only_hint: bool | None = None
+    # The tool may delete or overwrite data, rather than only add to it. Meaningful when not read-only.
+    destructive_hint: bool | None = None
+    # Repeating a call with the same arguments has no further effect. Meaningful when not read-only.
+    idempotent_hint: bool | None = None
+    # The tool reaches an open world of external entities, such as the web, rather than a closed domain.
+    open_world_hint: bool | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ToolNamespace:
+    """A group of related tools, such as the tools of one MCP server. Codemode tools list them together."""
+
+    # For example `mcp__docs`.
+    name: str
+    # Shown once above the group's tools.
+    description: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ToolLoadout:
+    """The tools of a session as `ToolDefinition.prepare_loadout` sees them."""
+
+    # Tools declared to the model (the active tools), in order, with their original descriptions.
+    declared: tuple[Any, ...]
+    # Tools callable through `ctx.execute_tool()`.
+    callable: tuple[Any, ...]
+    # Every registered tool.
+    registered: tuple[Any, ...]
+    get_exposure: Callable[[str], ToolExposure]
+    get_namespace: Callable[[str], ToolNamespace | None]
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ToolLoadoutChanges:
+    """Changes `ToolDefinition.prepare_loadout` makes to what the model sees."""
+
+    # Model-facing descriptions of declared tools, by tool name.
+    descriptions: dict[str, str] | None = None
+    # Declared tools whose declarations requests leave out. They stay active
+    # and callable, and the transcript still declares them, so the active set
+    # survives `/tree` and resume.
+    hidden_declarations: tuple[str, ...] | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -60,6 +129,26 @@ class ToolDefinition:
     render_result: Any = None
     # Optional compatibility shim to prepare raw tool call arguments before schema validation.
     prepare_arguments: Any = None
+    # JSON Schema of `structured_content` in successful results. Tools that
+    # declare it should always set `structured_content`; codemode scripts then
+    # receive it instead of the text content.
+    output_schema: dict[str, Any] | None = None
+    # How the model reaches the tool. None means "direct". See `ToolExposure`.
+    exposure: ToolExposure | None = None
+    # Group the tool belongs to, for example its MCP server.
+    namespace: ToolNamespace | None = None
+    # Hints about what the tool does, for example from an MCP server.
+    annotations: ToolAnnotations | None = None
+    # Whether registering the tool activates it. None means True for "direct"
+    # and "model-only" tools; other exposures are never activated on
+    # registration. A tool with `default_active=False` is activated by naming
+    # it in `--tools` or the `defaultTools` setting, or with `set_active_tools()`.
+    default_active: bool | None = None
+    # Adjust how the loadout is presented to the model while this tool is
+    # active: `(loadout: ToolLoadout) -> ToolLoadoutChanges | None`. Called
+    # whenever the active tools change. Tools that orchestrate other tools use
+    # it, for example to list the callable tools in their own description.
+    prepare_loadout: Callable[[ToolLoadout], ToolLoadoutChanges | None] | None = None
     # Per-tool execution mode override ("sequential" | "parallel").
     execution_mode: str | None = None
     # Extra metadata slot mirroring pi's open object shape.
@@ -180,6 +269,34 @@ class ResolvedCommand(RegisteredCommand):
     invocation_name: str = ""
 
 
+@dataclass(slots=True, kw_only=True)
+class InlineExtension:
+    """A named inline extension factory (pi's `InlineExtension` object arm; a
+    bare factory is the other arm). Duck-typed objects with these attributes
+    work too."""
+
+    # Display name shown as `<inline:name>` in the startup Extensions list and
+    # errors. With `builtin`, the extension is named `builtin:name` in errors
+    # and diagnostics.
+    name: str
+    factory: Callable[[Any], Any]
+    # Omit this extension from the startup Extensions list.
+    hidden: bool = False
+    # Leave this extension out when another extension registers a tool,
+    # command, or flag with a name it registers during loading, instead of
+    # reporting a conflict. The factory still runs, so it should only register
+    # tools, commands, flags, and event handlers.
+    replaceable: bool = False
+    # Supply the code of the `builtin:<name>` extension instead of loading as an
+    # inline extension. `builtin:<name>` is an extension resource like a file:
+    # it loads by default, `pidrei config` lists it, `-builtin:<name>` in the
+    # `extensions` setting and `--no-extensions` disable it, and
+    # `-e builtin:<name>` loads it explicitly. It is hidden from the startup
+    # Extensions list and loads after project trust is resolved, so it cannot
+    # handle `project_trust`.
+    builtin: bool = False
+
+
 @dataclass(slots=True)
 class Extension:
     """Loaded extension record iterated by the ExtensionRunner."""
@@ -191,6 +308,8 @@ class Extension:
     source_info: Any = None
     # Omit this extension from the startup Extensions list.
     hidden: bool = False
+    # See `InlineExtension.replaceable`.
+    replaceable: bool = False
     # event type -> handlers; a single extension may register several per event.
     handlers: dict[str, list[Any]] = field(default_factory=dict)
     tools: dict[str, RegisteredTool] = field(default_factory=dict)
@@ -200,6 +319,26 @@ class Extension:
     message_renderers: dict[str, Any] = field(default_factory=dict)
     markdown_transformer: Any = None
     entry_renderers: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True, kw_only=True)
+class ExtensionVirtualModel:
+    """Virtual model registered via `pi.register_virtual_model()`: the fields of
+    `VirtualModelDefinition`, with a `route(request, ctx)` that also receives an
+    extension context. Async-only."""
+
+    provider: str
+    id: str
+    name: str
+    route: Callable[[Any, Any], Awaitable[Any]]
+    thinking_levels: Sequence[str] | None = None
+    context_window: int | None = None
+    max_tokens: int | None = None
+    input: list[Literal["text", "image"]] | None = None
+
+
+def _not_initialized(*_args: Any) -> Any:
+    raise RuntimeError(RUNTIME_NOT_INITIALIZED)
 
 
 class ExtensionRuntime:
@@ -214,6 +353,10 @@ class ExtensionRuntime:
         self.flag_values: dict[str, Any] = {}
         self.pending_provider_registrations: list[Any] = []
         self.pending_native_provider_registrations: list[Any] = []
+        # Virtual model registrations queued during extension loading, processed when the runner binds.
+        self.pending_virtual_model_registrations: list[Any] = []
+        # Servers registered with `pi.register_mcp_server()`.
+        self.mcp_servers = McpServerRegistry()
 
         # register_tool() is valid during extension load; a refresh is only
         # needed once the session is bound.
@@ -228,11 +371,14 @@ class ExtensionRuntime:
         self.set_label: Callable[..., None] | None = None
         self.get_active_tools: Callable[[], list[str]] = list
         self.get_all_tools: Callable[[], list[Any]] = list
+        self.get_settings: Callable[[], Any] = _not_initialized
         self.set_active_tools: Callable[..., None] | None = None
         self.get_commands: Callable[[], list[Any]] = list
         self.set_model: Callable[..., Any] | None = None
         self.get_thinking_level: Callable[[], Any] = lambda: "off"
         self.set_thinking_level: Callable[..., None] | None = None
+        # Create an extension context. Raises before the runner binds.
+        self.create_context: Callable[[], Any] = _not_initialized
 
         # Provider registration hooks. Pre-bind they queue, so a registration
         # made while extensions are still loading survives until the model
@@ -241,6 +387,8 @@ class ExtensionRuntime:
         self.register_provider: Callable[..., None] = self._queue_provider
         self.register_native_provider: Callable[..., None] = self._queue_native_provider
         self.unregister_provider: Callable[..., None] = self._unqueue_provider
+        self.register_virtual_model: Callable[..., None] = self._queue_virtual_model
+        self.unregister_virtual_model: Callable[..., None] = self._unqueue_virtual_model
 
         self._stale_message: str | None = None
         self._event_bus_unsubscribers: set = set()
@@ -257,6 +405,16 @@ class ExtensionRuntime:
         ]
         self.pending_native_provider_registrations = [
             entry for entry in self.pending_native_provider_registrations if entry["provider"].id != name
+        ]
+
+    def _queue_virtual_model(self, definition: Any, extension_path: str = "<unknown>") -> None:
+        self.pending_virtual_model_registrations.append({"definition": definition, "extension_path": extension_path})
+
+    def _unqueue_virtual_model(self, provider: str, model_id: str) -> None:
+        self.pending_virtual_model_registrations = [
+            entry
+            for entry in self.pending_virtual_model_registrations
+            if entry["definition"].provider != provider or entry["definition"].id != model_id
         ]
 
     def invalidate(self, message: str) -> None:

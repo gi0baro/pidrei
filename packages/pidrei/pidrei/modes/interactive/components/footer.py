@@ -233,6 +233,11 @@ class FooterComponent:
                 right_side_without_provider = f"{model_name} • thinking off"
             else:
                 right_side_without_provider = f"{model_name} • {thinking_level}"
+        # A virtual model routes each request; show where the latest response went.
+        routed = self._session.routed_model
+        if routed is not None:
+            level = f" • {routed.thinking_level}" if routed.thinking_level else ""
+            right_side_without_provider += f" → {routed.model.id}{level}"
 
         # Prepend the provider in parentheses if there are multiple providers
         # and there's enough room

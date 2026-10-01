@@ -259,8 +259,9 @@ user sends a prompt
 | `provider_stream_event` | Each parsed provider stream event, before pidrei normalizes it (`provider`, `api`, `model`, `data`) | — (notification-only, not persisted) |
 | `cache_warming_decision` | Before each prompt-cache refresh, with pidrei's decision (`warmCost`, `missCost`, `continuationProbability`, `action`) | Return `{"action": "warm"}` or `{"action": "stop"}`; the last handler that returns an action wins; `"stop"` ends warming until the next real request |
 | `message_start` / `message_update` / `message_end` | Assistant message stream | `message_end` may rewrite |
-| `tool_call` | Before a tool runs | Block it, or rewrite arguments |
-| `tool_result` | After a tool runs | Rewrite the result |
+| `tool_call` | Before a tool runs (`parentToolCallId` set for calls another tool made) | Block it, or rewrite arguments |
+| `tool_result` | After a tool runs (`parentToolCallId` as for `tool_call`; `structuredContent` when the tool returned one) | Rewrite the result; replacing `content` without `structuredContent` drops it |
+| `mcp_servers_change` | An extension registered or unregistered an MCP server after load (`servers`) | — |
 | `user_bash` | User ran a `!` command | Return exactly one of `{"operations": ...}` (run through that backend) or a complete `{"result": ...}` (record without running), which stops propagation; `None` passes to the next handler, then to local execution; an invalid result or a raise blocks the command |
 | `ui_prompt_start` / `ui_prompt_end` | Around a blocking `ctx.ui` prompt (`select`, `confirm`, `input`, `editor`, `custom`) — nested prompts coalesce into one outer waiting span; handlers are best-effort and not awaited | — |
 | `model_select` / `thinking_level_select` | Selection changed | — |
@@ -519,8 +520,9 @@ context.
 | `await set_session_name(name)` / `get_session_name()` | Session name |
 | `await set_label(entry_id, label)` | Label a session entry |
 | `await exec(command, args, *, cwd=None, **options)` | Run a subprocess |
-| `get_active_tools()` / `set_active_tools(names)` | The active tool set |
-| `get_all_tools()` | Every registered tool |
+| `get_active_tools()` / `set_active_tools(names)` | The active tool set: the tools declared to the model |
+| `get_all_tools()` | Every registered tool, with its `exposure`, `namespace` and `annotations` |
+| `get_settings()` | A copy of the effective settings (global and project merged, with overrides) |
 | `get_commands()` | Every registered command |
 | `await set_model(model)` | Switch the model for the current session (recorded in the session, restored on resume; the configured default for new sessions is unchanged). Returns `False` when the provider has no auth configured |
 | `get_thinking_level()` / `await set_thinking_level(level)` | Reasoning level, clamped to the model; the setter is session-scoped like `set_model` |
@@ -550,6 +552,28 @@ extension commands and expand skill commands and prompt templates (default:
 are still loading are queued and flushed once the model registry exists, so an
 extension does not need to defer them; later calls take effect immediately.
 See [custom-provider.md](custom-provider.md).
+
+`register_virtual_model(model)` adds a selectable model that routes each
+request to a physical one, and `unregister_virtual_model(provider, id)` removes
+it; see [virtual-models.md](virtual-models.md).
+
+### MCP servers
+
+`register_mcp_server(name, config)` records an MCP server for the current
+session, with the shape of an `mcpServers` entry in `mcp.json` (`command`,
+`args`, `env` and `cwd` for stdio servers, `url`, `headers` and `oauth` for
+HTTP servers, plus `exposure`, `toolExposure`, `enabled` and `timeout`);
+`unregister_mcp_server(name)` removes the extension's registration and
+`get_mcp_servers()` lists every registered server. Registering a name again
+replaces the extension's earlier registration; names another extension
+registered, invalid names and invalid configs raise. Registrations are not
+saved: register again on every load.
+
+pidrei does not connect MCP servers yet (its MCP client ports with codemode).
+An extension that connects them reads `get_mcp_servers()` on `session_start`
+and handles the `mcp_servers_change` event (`{"servers": [...]}`) for later
+changes. When no loaded extension handles that event, each registration is
+reported as an extension error.
 
 ## Custom tools
 
@@ -593,10 +617,40 @@ own renderers and state reconstruction, not sent to the model; leave it `None`
 when there is nothing structured. A tool that makes nested model calls should
 put their `usage` on the result so session totals stay accurate.
 
-Raise from `execute` to produce a failed tool result — returning a result
-never marks it as an error. Set `terminate=True` only to skip the automatic
+Raise from `execute` to produce a failed tool result, or return the result with
+`is_error=True` to report a failure that still carries data: the model sees an
+error, and `details` and `structured_content` are kept. Do not only describe
+the failure in `content`. Set `terminate=True` only to skip the automatic
 follow-up request; it takes effect only when every finished tool in the batch
 sets it.
+
+Declare `output_schema` and return a matching `structured_content` when the
+result is data. The model still receives `content`; programmatic callers (tools
+calling other tools) receive `structured_content`. The built-in `bash` tool
+returns `{"output", "truncated", "full_output_path"?, "exit_code",
+"wall_time_seconds"}`, also for non-zero exit codes, with up to 1 MiB of output.
+`tool_result` handlers that redact `content` should also replace
+`structuredContent`; replacing only `content` drops it.
+
+A tool can run other tools with `await ctx.execute_tool(name, args,
+ExecuteToolOptions(cancel=..., on_update=...))` (from
+`pidrei.core.nested_tool_calls`); the cancel token defaults to the calling
+tool's. Nested calls go through argument validation and the `tool_call` and
+`tool_result` handlers like model-issued calls, and emit
+`tool_execution_start`, `tool_execution_update` and `tool_execution_end`; all
+of these events carry `parentToolCallId`, and their `toolCallId` is assigned as
+`<parent id>/<n>`. The call returns an `AgentToolCallOutcome` and never raises
+for tool failures: unknown tools, validation errors, blocked calls and raised
+errors come back with `is_error=True`. Nested calls add no transcript entries:
+their results only reach the calling tool. The session keeps a bounded record
+of them (name, arguments, status, duration, error; never results) as
+`nested_calls` on the calling tool's result message, used for compaction file
+lists and shown in HTML exports. Arguments over 8 KiB per call or 32 KiB per
+tool result are omitted, at most 256 calls are kept, and `complete=False` marks
+a record that lost anything; a call still running when the calling tool
+returned is `unfinished`. The `usage` of nested results, at every depth, is
+added to the calling tool's result `usage`, so a tool reports only its own
+usage. `ctx.tools` lists the tools `execute_tool` can call.
 
 Tools run in parallel by default. Set `execution_mode="sequential"` when tools
 share mutable in-memory state, and wrap a file tool's whole read-modify-write
@@ -617,6 +671,42 @@ prefix.
 Extension tools respect the same filters as built-in ones: `--tools` restricts
 to a list, `--exclude-tools` removes some, and `--no-builtin-tools` drops
 pidrei's own tools while keeping extension tools.
+
+### Tool exposure
+
+`exposure` controls how the model reaches a tool. "Callable" means callable
+from other tools through `ctx.execute_tool()`:
+
+- `"direct"` (default): declared to the model while active, and callable while active.
+- `"model-only"`: declared to the model while active, never callable. Use it
+  for tools that orchestrate other tools or ask the user.
+- `"codemode"`: callable whenever registered. Not declared to the model unless
+  activated explicitly.
+- `"deferred"`: like `"codemode"`, but meant to be found by a search tool
+  rather than listed.
+- `"hidden"`: registered but unreachable. Re-register a tool with
+  `exposure="hidden"` to withdraw it, since tools cannot be unregistered.
+
+Registering a `"direct"` or `"model-only"` tool activates it; the other
+exposures are not activated on registration, and neither is a tool with
+`default_active=False` — name it in `--tools` or the `defaultTools` setting
+(`"+name"` adds it to the defaults), or activate it with `set_active_tools()`.
+`namespace=ToolNamespace(name=..., description=...)` groups related tools.
+
+`annotations=ToolAnnotations(...)` are hints about what a tool does, with the
+meaning of MCP tool annotations: `read_only_hint`, `destructive_hint`,
+`idempotent_hint` and `open_world_hint`. They are not verified, but a
+permission extension can use them to decide which calls to confirm.
+
+A tool that orchestrates other tools can adjust what the model sees while it is
+active with `prepare_loadout(loadout)`. It runs whenever the active tools
+change and receives a `ToolLoadout`: the declared tools, the callable tools,
+and every registered tool, with `get_exposure(name)` and `get_namespace(name)`.
+It returns a `ToolLoadoutChanges` with replacement `descriptions` for declared
+tools (including its own) and `hidden_declarations`: active tools whose
+declarations requests leave out while they stay active and callable. The
+exposure types, `ToolLoadout` and `ToolLoadoutChanges` come from
+`pidrei.core.extensions.types`.
 
 ## Commands, shortcuts and flags
 
