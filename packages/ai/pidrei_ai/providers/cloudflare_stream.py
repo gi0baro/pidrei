@@ -3,7 +3,7 @@
 from dataclasses import replace
 from typing import Any
 
-from pidrei_ai.types import Model, ProviderEnv
+from pidrei_ai.types import ClassifierModel, ClassifierResult, Model, ProviderEnv
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 
 
@@ -11,7 +11,7 @@ CLOUDFLARE_ACCOUNT_ID = "CLOUDFLARE_ACCOUNT_ID"
 CLOUDFLARE_GATEWAY_ID = "CLOUDFLARE_GATEWAY_ID"
 
 
-def resolve_cloudflare_model(model: Model, env: ProviderEnv | None) -> Model:
+def resolve_cloudflare_model[TModel: Model | ClassifierModel](model: TModel, env: ProviderEnv | None) -> TModel:
     if not env:
         return model
     base_url = model.base_url.replace(
@@ -41,3 +41,20 @@ class CloudflareStreams:
 
 def cloudflare_streams(streams: Any) -> CloudflareStreams:
     return CloudflareStreams(streams)
+
+
+class CloudflareClassifier:
+    """Classifier counterpart of `CloudflareStreams`."""
+
+    __slots__ = ("_classifier",)
+
+    def __init__(self, classifier: Any):
+        self._classifier = classifier
+
+    async def classify(self, model: ClassifierModel, context: Any, options: Any = None) -> ClassifierResult:
+        env = options.env if options is not None else None
+        return await self._classifier.classify(resolve_cloudflare_model(model, env), context, options)
+
+
+def cloudflare_classifier(classifier: Any) -> CloudflareClassifier:
+    return CloudflareClassifier(classifier)

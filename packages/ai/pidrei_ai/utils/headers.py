@@ -3,12 +3,19 @@
 from collections.abc import Mapping
 
 
-def provider_headers_to_record(headers: Mapping[str, str | None] | None) -> dict[str, str] | None:
-    """Port of `providerHeadersToRecord`: drop null values, None when empty."""
-    if not headers:
-        return None
-    result = {key: value for key, value in headers.items() if value is not None}
-    return result or None
+def provider_headers_to_record(*header_sources: Mapping[str, str | None] | None) -> dict[str, str] | None:
+    """Port of `providerHeadersToRecord`: merge the sources in order,
+    case-insensitively (a later name replaces an earlier one with the same
+    lowercased name and keeps its own casing), drop None values (a None also
+    suppresses an earlier entry), None when empty."""
+    merged: dict[str, tuple[str, str]] = {}
+    for source in header_sources:
+        for name, value in (source or {}).items():
+            normalized_name = name.lower()
+            merged.pop(normalized_name, None)
+            if value is not None:
+                merged[normalized_name] = (name, value)
+    return dict(merged.values()) if merged else None
 
 
 def merge_headers(

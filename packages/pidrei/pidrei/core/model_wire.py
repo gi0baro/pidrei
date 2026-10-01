@@ -12,13 +12,16 @@ from typing import Any
 
 from pidrei_ai.models_generated import (
     COMPAT_FIELD_PARSERS as _COMPAT_FIELD_PARSERS,
+    parse_any_model_dict,
     parse_input_limits,
     parse_model_dict,
 )
 from pidrei_ai.types import (
     AnthropicAllowedFallbackModel,
     AnthropicMessagesCompat,
+    AnyModel,
     BedrockCompat,
+    ImageModel,
     MistralConversationsCompat,
     Model,
     ModelCompat,
@@ -37,6 +40,7 @@ __all__ = [
     "merge_compat",
     "merge_input_limits",
     "model_to_dict",
+    "parse_any_model_dict",
     "parse_compat",
     "parse_input_limits",
     "parse_model_dict",
@@ -238,28 +242,37 @@ def merge_input_limits(base: ModelInputLimits | None, override: dict[str, Any] |
     return parse_input_limits(merged)
 
 
-def model_to_dict(model: Model) -> dict[str, Any]:
-    """Serialize a Model to the pi camelCase wire shape (inverse of parse_model_dict)."""
-    raw: dict[str, Any] = {
-        "id": model.id,
-        "name": model.name,
-        "api": model.api,
-        "provider": model.provider,
-        "baseUrl": model.base_url,
-        "reasoning": model.reasoning,
-        "input": list(model.input),
-        "cost": _cost_to_dict(model.cost),
-        "contextWindow": model.context_window,
-        "maxTokens": model.max_tokens,
-    }
+def model_to_dict(model: AnyModel) -> dict[str, Any]:
+    """Serialize a model of any type to the pi camelCase wire shape (inverse
+    of parse_any_model_dict)."""
+    raw: dict[str, Any] = {} if model.type is None else {"type": model.type}
+    raw.update(
+        {
+            "id": model.id,
+            "name": model.name,
+            "api": model.api,
+            "provider": model.provider,
+            "baseUrl": model.base_url,
+            "input": list(model.input),
+            "cost": _cost_to_dict(model.cost),
+        }
+    )
+    if isinstance(model, Model):
+        raw["reasoning"] = model.reasoning
+        raw["contextWindow"] = model.context_window
+        raw["maxTokens"] = model.max_tokens
+        if model.prompt_cache is not None:
+            raw["promptCache"] = dict(model.prompt_cache)
+        if model.thinking_level_map is not None:
+            raw["thinkingLevelMap"] = dict(model.thinking_level_map)
+        if model.compat is not None:
+            raw["compat"] = compat_to_dict(model.compat)
+    elif isinstance(model, ImageModel):
+        raw["output"] = list(model.output)
+    else:
+        raw["contextWindow"] = model.context_window
     if model.input_limits is not None:
         raw["inputLimits"] = input_limits_to_dict(model.input_limits)
-    if model.prompt_cache is not None:
-        raw["promptCache"] = dict(model.prompt_cache)
-    if model.thinking_level_map is not None:
-        raw["thinkingLevelMap"] = dict(model.thinking_level_map)
     if model.headers is not None:
         raw["headers"] = dict(model.headers)
-    if model.compat is not None:
-        raw["compat"] = compat_to_dict(model.compat)
     return raw

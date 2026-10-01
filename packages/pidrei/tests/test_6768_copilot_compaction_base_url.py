@@ -74,7 +74,7 @@ async def test_uses_the_auth_resolved_base_url_through_the_sdk_style_stream_wrap
             return AuthResult(auth=ModelAuth(api_key=credential.key), source="explicit token")
         return None
 
-    async def login(_interaction):
+    async def login(_interaction, _options=None):
         raise Exception("unused")
 
     async def refresh(credential, _cancel=None):

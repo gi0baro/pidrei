@@ -1,6 +1,6 @@
 """Partial mirror of pi coding-agent test/sdk-stream-options.test.ts: the
-cache-warming scheduling cases (0.87.1). The stream-option forwarding cases
-are not mirrored here.
+cache-warming scheduling cases (0.87.1) and provider stream event forwarding
+(0.99.1). The other stream-option forwarding cases are not mirrored here.
 """
 
 import dataclasses
@@ -11,6 +11,7 @@ import pytest
 from pidrei.core.auth_storage import AuthStorage
 from pidrei.core.cache_warmer import CacheWarmingStatus
 from pidrei.core.model_runtime import ModelRuntime
+from pidrei.core.resource_loader import DefaultResourceLoader
 from pidrei.core.sdk import CreateAgentSessionOptions, create_agent_session
 from pidrei.core.session_manager import SessionManager
 from pidrei.core.settings_manager import SettingsManager
@@ -101,6 +102,82 @@ async def _create_cache_warming_session(tmp_path, populate=None) -> _Fixture:
     )
     fixture.session = result.session
     return fixture
+
+
+class TestProviderStreamEvents:
+    # Regression test for #9784.
+    @pytest.mark.tonio
+    async def test_forwards_provider_stream_events_to_extensions(self, tmp_path):
+        cwd = os.path.join(str(tmp_path), "project")
+        agent_dir = os.path.join(str(tmp_path), "agent")
+        os.makedirs(cwd)
+        os.makedirs(agent_dir)
+        model = _create_model()
+        provider_event = {"openrouter_metadata": {"strategy": "direct"}}
+        extension_events: list = []
+        captured_options: list = []
+
+        async def extension(pi) -> None:
+            async def on_provider_stream_event(event, _ctx) -> None:
+                extension_events.append(event)
+
+            pi.on("provider_stream_event", on_provider_stream_event)
+
+        def stream_simple(request_model, _context, provider_options=None):
+            captured_options.append(provider_options)
+            stream = AssistantMessageEventStream()
+
+            async def produce() -> None:
+                await provider_options.on_provider_stream_event(provider_event, request_model)
+                push_done(stream, _create_done_message(request_model))
+
+            stream.spawn_producer(produce())
+            return stream
+
+        auth_storage = AuthStorage.in_memory()
+
+        async def set_key(_credential):
+            return ApiKeyCredential(key="test-api-key")
+
+        await auth_storage.modify(model.provider, set_key)
+        model_runtime = await ModelRuntime(
+            credentials=auth_storage,
+            models_path=os.path.join(agent_dir, "models.json"),
+            allow_model_network=False,
+        )
+        model_runtime.register_provider(model.provider, {"api": model.api, "streamSimple": stream_simple})
+        settings_manager = SettingsManager.in_memory({})
+        resource_loader = await DefaultResourceLoader(
+            cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager, extension_factories=[extension]
+        )
+        await resource_loader.reload()
+        result = await create_agent_session(
+            CreateAgentSessionOptions(
+                cwd=cwd,
+                agent_dir=agent_dir,
+                model=model,
+                model_runtime=model_runtime,
+                settings_manager=settings_manager,
+                session_manager=SessionManager.in_memory(cwd),
+                resource_loader=resource_loader,
+            )
+        )
+        try:
+            await result.session.prompt("test")
+        finally:
+            result.session.dispose()
+            model_runtime.unregister_provider("capture-provider")
+
+        assert captured_options[0].on_provider_stream_event is not None
+        assert extension_events == [
+            {
+                "data": provider_event,
+                "type": "provider_stream_event",
+                "provider": "capture-provider",
+                "api": "anthropic-messages",
+                "model": "capture-model",
+            }
+        ]
 
 
 class TestCacheWarmingScheduling:

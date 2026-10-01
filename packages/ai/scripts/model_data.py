@@ -2,7 +2,7 @@
 
 Two deliberate structural differences from pi, both forced by the layout:
 
-- pi derives the expected *structure* (`{provider: {modelId: api}}`) from its
+- pi derives the expected *structure* (`{provider: {"type:id": api}}`) from its
   committed TypeScript shards (`providers/<id>.models.ts`) and the
   `models.generated.ts` aggregator, then validates the JSON against it. pidrei
   loads the JSON directly and has no shards, so the second representation is the
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 
-MODEL_DATA_SCHEMA_VERSION = 3
+MODEL_DATA_SCHEMA_VERSION = 6
 MODEL_DATA_MANIFEST_FILE = "_manifest.json"
 
 type ModelDataStructure = dict[str, dict[str, str]]
@@ -110,6 +110,14 @@ def create_model_data_manifest(
 _VALID_MODALITIES = {"text", "image"}
 
 
+def _is_modality_list(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(entry in _VALID_MODALITIES for entry in value)
+
+
+def _is_positive_number(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int | float) and value > 0
+
+
 def _validate_model_value(
     value: Any,
     provider_id: str,
@@ -132,19 +140,27 @@ def _validate_model_value(
         errors.append(f"{label} has no model name")
     if not isinstance(value.get("baseUrl"), str):
         errors.append(f"{label} has no baseUrl string")
-    if not isinstance(value.get("reasoning"), bool):
-        errors.append(f"{label} has no reasoning boolean")
-    model_input = value.get("input")
-    if (
-        not isinstance(model_input, list)
-        or not model_input
-        or any(entry not in _VALID_MODALITIES for entry in model_input)
-    ):
+    if not _is_modality_list(value.get("input")):
         errors.append(f"{label} has invalid input modalities")
-    for field in ("contextWindow", "maxTokens"):
-        number = value.get(field)
-        if isinstance(number, bool) or not isinstance(number, int | float) or number <= 0:
-            errors.append(f"{label} has invalid {field}")
+    model_type = value.get("type")
+    if model_type == "image":
+        output = value.get("output")
+        if not _is_modality_list(output) or "image" not in output:
+            errors.append(f"{label} has invalid output modalities")
+    elif "output" in value:
+        errors.append(f"{label} has unsupported output modalities")
+    if model_type == "chat":
+        if not isinstance(value.get("reasoning"), bool):
+            errors.append(f"{label} has no reasoning boolean")
+        for field in ("contextWindow", "maxTokens"):
+            if not _is_positive_number(value.get(field)):
+                errors.append(f"{label} has invalid {field}")
+    elif model_type == "classifier":
+        if not _is_positive_number(value.get("contextWindow")):
+            errors.append(f"{label} has invalid contextWindow")
+    elif model_type != "image":
+        type_json = json.dumps(model_type) if "type" in value else "undefined"
+        errors.append(f'{label} has type {type_json}, expected "chat", "image", or "classifier"')
     cost = value.get("cost")
     if not isinstance(cost, dict):
         errors.append(f"{label} has invalid cost metadata")
@@ -212,12 +228,15 @@ def validate_model_data_directory(structure: ModelDataStructure, data_dir: Path)
             if not isinstance(value, dict):
                 errors.append(f"{filename} API group {json.dumps(api)} must be an object")
                 continue
-            for model_id, model in value.items():
-                if model_id in actual_models:
-                    errors.append(f"{provider_id}/{model_id} appears in more than one API group")
+            for model_key, model in value.items():
+                if model_key in actual_models:
+                    errors.append(f"{provider_id}/{model_key} appears in more than one API group")
                     continue
-                actual_models[model_id] = api
+                actual_models[model_key] = api
+                model_id = model_key.split(":", 1)[1] if ":" in model_key else model_key
                 _validate_model_value(model, provider_id, model_id, api, errors)
+                if isinstance(model, dict) and model_key != f"{_js_string(model, 'type')}:{_js_string(model, 'id')}":
+                    errors.append(f"{provider_id}/{model_key} has mismatched type/id identity")
 
         if sorted(expected_models) != sorted(actual_models):
             errors.append(
@@ -234,6 +253,14 @@ def validate_model_data_directory(structure: ModelDataStructure, data_dir: Path)
 
     if errors:
         _raise_validation_errors(errors)
+
+
+def _js_string(record: dict[str, Any], key: str) -> str:
+    """JS `String(record[key])` for the identity check (a missing key is "undefined")."""
+    if key not in record:
+        return "undefined"
+    value = record[key]
+    return value if isinstance(value, str) else json.dumps(value)
 
 
 def _parses_as_timestamp(value: str) -> bool:

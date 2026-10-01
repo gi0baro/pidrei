@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "deepseek-flash": {
+    "chat:deepseek-flash": {
       "id": "deepseek-flash",
       "name": "DeepSeek V4.1 Flash",
       "api": "openai-completions",
@@ -43,9 +43,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "deepseek-v4-pro": {
+    "chat:deepseek-v4-pro": {
       "id": "deepseek-v4-pro",
       "name": "DeepSeek V4 Pro",
       "api": "openai-completions",
@@ -78,7 +79,8 @@
         "medium": null,
         "high": "high",
         "max": "max"
-      }
+      },
+      "type": "chat"
     }
   }
 }

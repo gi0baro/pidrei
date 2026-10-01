@@ -127,7 +127,7 @@ pidrei list                      # what is configured, and where it lives
 pidrei update [source]           # update installed packages
 pidrei update --models           # refresh model catalogs
 pidrei update --all              # both
-pidrei config [-l]               # enable/disable individual resources (TUI)
+pidrei config [-l]               # enable/disable individual resources and built-in extensions (TUI)
 ```
 
 `install` writes to `~/.pidrei/agent/settings.json`; `-l` targets the

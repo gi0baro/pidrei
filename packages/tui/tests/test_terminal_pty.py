@@ -684,10 +684,14 @@ async def test_pty_a_query_from_a_key_completion_gets_its_reply():
     results = []
     answered = tonio.Event()
 
+    async def record(colors) -> None:
+        results.append(colors)
+
     async def ask() -> None:
-        results.append(await tui.query_terminal_background_color(timeout_ms=5000))
+        await tui.query_terminal_colors(timeout_ms=5000).wait(None)
         answered.set()
 
+    tui.on_terminal_colors(record)
     component = _KeyWork(tui, ask)
     tui.add_child(component)
     tui.set_focus(component)
@@ -696,14 +700,15 @@ async def test_pty_a_query_from_a_key_completion_gets_its_reply():
         await tui.start()
         async with tonio.scope(cancel_on_exc=True) as scope:
             scope.spawn(_drain_output(emulator, {b"\x1b]11;?\x07": queried}))
-            os.write(master, b"k")
+            # The DA1 owed to the startup Kitty query, then the key.
+            os.write(master, b"\x1b[?62;22ck")
             await queried.wait(5)
             assert queried.is_set(), "the completion never queried"
-            os.write(master, b"\x1b]11;rgb:ffff/ffff/ffff\x07")
+            os.write(master, b"\x1b]11;rgb:ffff/ffff/ffff\x07\x1b[?62;22c")
             await answered.wait(10)
             scope.cancel()
         assert answered.is_set()
-        assert results[0] is not None, "the query timed out: its reply waited behind the completion"
+        assert results[0]["background"] is not None, "the query timed out: its reply waited behind the completion"
     finally:
         await tui.stop()
         await tui.close()

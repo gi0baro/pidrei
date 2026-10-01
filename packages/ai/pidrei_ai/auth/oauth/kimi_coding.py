@@ -15,7 +15,14 @@ from typing import Any
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
 from pidrei_ai.auth.oauth.urls import http_or_https_url
-from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
+from pidrei_ai.auth.types import (
+    AuthEvent,
+    LoginOptions,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuthInteraction,
+)
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
@@ -243,7 +250,9 @@ async def _refresh_token(oauth_host: str, refresh_token_value: str, cancel: Canc
     raise last_error if last_error is not None else RuntimeError("Kimi Code token refresh failed")
 
 
-async def _login_kimi_coding(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_kimi_coding(
+    interaction: ProviderAuthInteraction, options: LoginOptions | None = None
+) -> OAuthCredential:
     oauth_host = _get_oauth_host()
     device = await _start_device_authorization(oauth_host, interaction.cancel)
     interaction.notify(

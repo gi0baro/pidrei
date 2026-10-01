@@ -29,7 +29,7 @@ from pidrei_ai.auth.types import (
 from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.registry import ModelsRefreshOptions, create_provider
 from pidrei_ai.utils.cancel import CancelToken
-from tests.model_runtime_helpers import make_model
+from tests.model_runtime_helpers import UnusedStreams, make_model
 
 
 def now_ms() -> int:
@@ -420,7 +420,7 @@ class TestExtensionProviderModelLifecycle:
             name="Extension Native",
             auth=ProviderAuth(api_key=ApiKeyAuth(name="Native setup", login=login, check=check, resolve=resolve)),
             models=[native_model],
-            api={},
+            api=UnusedStreams(),
         )
 
         runtime.register_native_provider(provider)
@@ -572,7 +572,7 @@ class TestExtensionProviderModelLifecycle:
                 name="Extension Native",
                 auth=ProviderAuth(api_key=ApiKeyAuth(name="Native key", resolve=resolve)),
                 models=[native_model],
-                api={},
+                api=UnusedStreams(),
             )
         )
 

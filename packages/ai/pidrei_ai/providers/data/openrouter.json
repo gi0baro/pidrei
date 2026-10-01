@@ -1,36 +1,7 @@
 {
   "anthropic-messages": {
-    "anthropic/claude-3-haiku": {
-      "id": "anthropic/claude-3-haiku",
-      "name": "Anthropic: Claude 3 Haiku",
-      "api": "anthropic-messages",
-      "baseUrl": "https://openrouter.ai/api",
-      "provider": "openrouter",
-      "reasoning": false,
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.25,
-        "output": 1.25,
-        "cacheRead": 0.03,
-        "cacheWrite": 0.3
-      },
-      "contextWindow": 200000,
-      "maxTokens": 4096,
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      }
-    },
-    "anthropic/claude-fable-5": {
+    "chat:anthropic/claude-fable-5": {
+      "type": "chat",
       "id": "anthropic/claude-fable-5",
       "name": "Anthropic: Claude Fable 5",
       "api": "anthropic-messages",
@@ -72,7 +43,8 @@
         }
       }
     },
-    "anthropic/claude-fable-5.1": {
+    "chat:anthropic/claude-fable-5.1": {
+      "type": "chat",
       "id": "anthropic/claude-fable-5.1",
       "name": "Anthropic: Claude Fable 5.1",
       "api": "anthropic-messages",
@@ -115,7 +87,8 @@
         }
       }
     },
-    "anthropic/claude-haiku-4.5": {
+    "chat:anthropic/claude-haiku-4.5": {
+      "type": "chat",
       "id": "anthropic/claude-haiku-4.5",
       "name": "Anthropic: Claude Haiku 4.5",
       "api": "anthropic-messages",
@@ -145,7 +118,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.1": {
+    "chat:anthropic/claude-opus-4.1": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.1",
       "name": "Anthropic: Claude Opus 4.1",
       "api": "anthropic-messages",
@@ -175,7 +149,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.5": {
+    "chat:anthropic/claude-opus-4.5": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.5",
       "name": "Anthropic: Claude Opus 4.5",
       "api": "anthropic-messages",
@@ -205,7 +180,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.6": {
+    "chat:anthropic/claude-opus-4.6": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.6",
       "name": "Anthropic: Claude Opus 4.6",
       "api": "anthropic-messages",
@@ -247,7 +223,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.7": {
+    "chat:anthropic/claude-opus-4.7": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.7",
       "name": "Anthropic: Claude Opus 4.7",
       "api": "anthropic-messages",
@@ -290,7 +267,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.8": {
+    "chat:anthropic/claude-opus-4.8": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.8",
       "name": "Anthropic: Claude Opus 4.8",
       "api": "anthropic-messages",
@@ -333,7 +311,8 @@
         }
       }
     },
-    "anthropic/claude-opus-5": {
+    "chat:anthropic/claude-opus-5": {
+      "type": "chat",
       "id": "anthropic/claude-opus-5",
       "name": "Anthropic: Claude Opus 5",
       "api": "anthropic-messages",
@@ -376,7 +355,8 @@
         }
       }
     },
-    "anthropic/claude-opus-5.5": {
+    "chat:anthropic/claude-opus-5.5": {
+      "type": "chat",
       "id": "anthropic/claude-opus-5.5",
       "name": "Anthropic: Claude Opus 5.5",
       "api": "anthropic-messages",
@@ -420,7 +400,8 @@
         }
       }
     },
-    "anthropic/claude-sonnet-4": {
+    "chat:anthropic/claude-sonnet-4": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-4",
       "name": "Anthropic: Claude Sonnet 4",
       "api": "anthropic-messages",
@@ -450,7 +431,8 @@
         }
       }
     },
-    "anthropic/claude-sonnet-4.5": {
+    "chat:anthropic/claude-sonnet-4.5": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-4.5",
       "name": "Anthropic: Claude Sonnet 4.5",
       "api": "anthropic-messages",
@@ -480,7 +462,8 @@
         }
       }
     },
-    "anthropic/claude-sonnet-4.6": {
+    "chat:anthropic/claude-sonnet-4.6": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-4.6",
       "name": "Anthropic: Claude Sonnet 4.6",
       "api": "anthropic-messages",
@@ -522,7 +505,8 @@
         }
       }
     },
-    "anthropic/claude-sonnet-5": {
+    "chat:anthropic/claude-sonnet-5": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-5",
       "name": "Anthropic: Claude Sonnet 5",
       "api": "anthropic-messages",
@@ -563,10 +547,56 @@
           }
         }
       }
+    },
+    "chat:anthropic/claude-sonnet-5.5": {
+      "type": "chat",
+      "id": "anthropic/claude-sonnet-5.5",
+      "name": "Anthropic: Claude Sonnet 5.5",
+      "api": "anthropic-messages",
+      "baseUrl": "https://openrouter.ai/api",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "compat": {
+        "supportsMidConvoEffort": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
     }
   },
   "openai-completions": {
-    "aion-labs/aion-2.0": {
+    "chat:aion-labs/aion-2.0": {
+      "type": "chat",
       "id": "aion-labs/aion-2.0",
       "name": "AionLabs: Aion-2.0",
       "api": "openai-completions",
@@ -594,7 +624,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "aion-labs/aion-3.0": {
+    "chat:aion-labs/aion-3.0": {
+      "type": "chat",
       "id": "aion-labs/aion-3.0",
       "name": "AionLabs: Aion-3.0",
       "api": "openai-completions",
@@ -622,7 +653,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "aion-labs/aion-3.0-mini": {
+    "chat:aion-labs/aion-3.0-mini": {
+      "type": "chat",
       "id": "aion-labs/aion-3.0-mini",
       "name": "AionLabs: Aion-3.0-Mini",
       "api": "openai-completions",
@@ -650,7 +682,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "aion-labs/aion-3.5": {
+    "chat:aion-labs/aion-3.5": {
+      "type": "chat",
       "id": "aion-labs/aion-3.5",
       "name": "AionLabs: Aion 3.5",
       "api": "openai-completions",
@@ -684,7 +717,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "aion-labs/aion-3.5-mini": {
+    "chat:aion-labs/aion-3.5-mini": {
+      "type": "chat",
       "id": "aion-labs/aion-3.5-mini",
       "name": "AionLabs: Aion 3.5 Mini",
       "api": "openai-completions",
@@ -718,7 +752,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "amazon/nova-2-lite-v1": {
+    "chat:amazon/nova-2-lite-v1": {
+      "type": "chat",
       "id": "amazon/nova-2-lite-v1",
       "name": "Amazon: Nova 2 Lite",
       "api": "openai-completions",
@@ -754,7 +789,8 @@
         }
       }
     },
-    "amazon/nova-lite-v1": {
+    "chat:amazon/nova-lite-v1": {
+      "type": "chat",
       "id": "amazon/nova-lite-v1",
       "name": "Amazon: Nova Lite 1.0",
       "api": "openai-completions",
@@ -790,7 +826,8 @@
         }
       }
     },
-    "amazon/nova-micro-v1": {
+    "chat:amazon/nova-micro-v1": {
+      "type": "chat",
       "id": "amazon/nova-micro-v1",
       "name": "Amazon: Nova Micro 1.0",
       "api": "openai-completions",
@@ -815,7 +852,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "amazon/nova-premier-v1": {
+    "chat:amazon/nova-premier-v1": {
+      "type": "chat",
       "id": "amazon/nova-premier-v1",
       "name": "Amazon: Nova Premier 1.0",
       "api": "openai-completions",
@@ -851,7 +889,8 @@
         }
       }
     },
-    "amazon/nova-pro-v1": {
+    "chat:amazon/nova-pro-v1": {
+      "type": "chat",
       "id": "amazon/nova-pro-v1",
       "name": "Amazon: Nova Pro 1.0",
       "api": "openai-completions",
@@ -887,7 +926,8 @@
         }
       }
     },
-    "anthropic/claude-fable-5.1:batch": {
+    "chat:anthropic/claude-fable-5.1:batch": {
+      "type": "chat",
       "id": "anthropic/claude-fable-5.1:batch",
       "name": "Anthropic: Claude Fable 5.1 (batch)",
       "api": "openai-completions",
@@ -932,7 +972,8 @@
         }
       }
     },
-    "anthropic/claude-fable-5:batch": {
+    "chat:anthropic/claude-fable-5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-fable-5:batch",
       "name": "Anthropic: Claude Fable 5 (batch)",
       "api": "openai-completions",
@@ -977,7 +1018,8 @@
         }
       }
     },
-    "anthropic/claude-haiku-4.5:batch": {
+    "chat:anthropic/claude-haiku-4.5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-haiku-4.5:batch",
       "name": "Anthropic: Claude Haiku 4.5 (batch)",
       "api": "openai-completions",
@@ -1013,7 +1055,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.1:batch": {
+    "chat:anthropic/claude-opus-4.1:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.1:batch",
       "name": "Anthropic: Claude Opus 4.1 (batch)",
       "api": "openai-completions",
@@ -1049,7 +1092,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.5:batch": {
+    "chat:anthropic/claude-opus-4.5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.5:batch",
       "name": "Anthropic: Claude Opus 4.5 (batch)",
       "api": "openai-completions",
@@ -1085,7 +1129,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.6:batch": {
+    "chat:anthropic/claude-opus-4.6:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.6:batch",
       "name": "Anthropic: Claude Opus 4.6 (batch)",
       "api": "openai-completions",
@@ -1130,7 +1175,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.7:batch": {
+    "chat:anthropic/claude-opus-4.7:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.7:batch",
       "name": "Anthropic: Claude Opus 4.7 (batch)",
       "api": "openai-completions",
@@ -1175,7 +1221,8 @@
         }
       }
     },
-    "anthropic/claude-opus-4.8:batch": {
+    "chat:anthropic/claude-opus-4.8:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-4.8:batch",
       "name": "Anthropic: Claude Opus 4.8 (batch)",
       "api": "openai-completions",
@@ -1220,7 +1267,8 @@
         }
       }
     },
-    "anthropic/claude-opus-5.5:batch": {
+    "chat:anthropic/claude-opus-5.5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-5.5:batch",
       "name": "Anthropic: Claude Opus 5.5 (batch)",
       "api": "openai-completions",
@@ -1265,7 +1313,8 @@
         }
       }
     },
-    "anthropic/claude-opus-5:batch": {
+    "chat:anthropic/claude-opus-5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-opus-5:batch",
       "name": "Anthropic: Claude Opus 5 (batch)",
       "api": "openai-completions",
@@ -1310,7 +1359,8 @@
         }
       }
     },
-    "anthropic/claude-sonnet-4.5:batch": {
+    "chat:anthropic/claude-sonnet-4.5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-4.5:batch",
       "name": "Anthropic: Claude Sonnet 4.5 (batch)",
       "api": "openai-completions",
@@ -1346,7 +1396,8 @@
         }
       }
     },
-    "anthropic/claude-sonnet-4.6:batch": {
+    "chat:anthropic/claude-sonnet-4.6:batch": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-4.6:batch",
       "name": "Anthropic: Claude Sonnet 4.6 (batch)",
       "api": "openai-completions",
@@ -1391,7 +1442,54 @@
         }
       }
     },
-    "anthropic/claude-sonnet-5:batch": {
+    "chat:anthropic/claude-sonnet-5.5:batch": {
+      "type": "chat",
+      "id": "anthropic/claude-sonnet-5.5:batch",
+      "name": "Anthropic: Claude Sonnet 5.5 (batch)",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 1.25
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "cacheControlFormat": "anthropic",
+        "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:anthropic/claude-sonnet-5:batch": {
+      "type": "chat",
       "id": "anthropic/claude-sonnet-5:batch",
       "name": "Anthropic: Claude Sonnet 5 (batch)",
       "api": "openai-completions",
@@ -1436,7 +1534,8 @@
         }
       }
     },
-    "arcee-ai/trinity-large-thinking": {
+    "chat:arcee-ai/trinity-large-thinking": {
+      "type": "chat",
       "id": "arcee-ai/trinity-large-thinking",
       "name": "Arcee AI: Trinity Large Thinking",
       "api": "openai-completions",
@@ -1464,7 +1563,7 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "auto": {
+    "chat:auto": {
       "id": "auto",
       "name": "Auto",
       "api": "openai-completions",
@@ -1498,9 +1597,11 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "bytedance-seed/seed-1.6": {
+    "chat:bytedance-seed/seed-1.6": {
+      "type": "chat",
       "id": "bytedance-seed/seed-1.6",
       "name": "ByteDance Seed: Seed 1.6",
       "api": "openai-completions",
@@ -1536,7 +1637,8 @@
         }
       }
     },
-    "bytedance-seed/seed-1.6-flash": {
+    "chat:bytedance-seed/seed-1.6-flash": {
+      "type": "chat",
       "id": "bytedance-seed/seed-1.6-flash",
       "name": "ByteDance Seed: Seed 1.6 Flash",
       "api": "openai-completions",
@@ -1572,7 +1674,8 @@
         }
       }
     },
-    "bytedance-seed/seed-2-1-turbo": {
+    "chat:bytedance-seed/seed-2-1-turbo": {
+      "type": "chat",
       "id": "bytedance-seed/seed-2-1-turbo",
       "name": "ByteDance Seed: Seed 2.1 Turbo",
       "api": "openai-completions",
@@ -1608,7 +1711,8 @@
         }
       }
     },
-    "bytedance-seed/seed-2.0-code": {
+    "chat:bytedance-seed/seed-2.0-code": {
+      "type": "chat",
       "id": "bytedance-seed/seed-2.0-code",
       "name": "ByteDance Seed: Seed-2.0-Code",
       "api": "openai-completions",
@@ -1653,7 +1757,8 @@
         }
       }
     },
-    "bytedance-seed/seed-2.0-lite": {
+    "chat:bytedance-seed/seed-2.0-lite": {
+      "type": "chat",
       "id": "bytedance-seed/seed-2.0-lite",
       "name": "ByteDance Seed: Seed-2.0-Lite",
       "api": "openai-completions",
@@ -1698,7 +1803,8 @@
         }
       }
     },
-    "bytedance-seed/seed-2.0-mini": {
+    "chat:bytedance-seed/seed-2.0-mini": {
+      "type": "chat",
       "id": "bytedance-seed/seed-2.0-mini",
       "name": "ByteDance Seed: Seed-2.0-Mini",
       "api": "openai-completions",
@@ -1743,7 +1849,8 @@
         }
       }
     },
-    "cohere/command-a-plus": {
+    "chat:cohere/command-a-plus": {
+      "type": "chat",
       "id": "cohere/command-a-plus",
       "name": "Cohere: Command A+",
       "api": "openai-completions",
@@ -1779,7 +1886,8 @@
         }
       }
     },
-    "cohere/command-r-08-2024": {
+    "chat:cohere/command-r-08-2024": {
+      "type": "chat",
       "id": "cohere/command-r-08-2024",
       "name": "Cohere: Command R (08-2024)",
       "api": "openai-completions",
@@ -1804,7 +1912,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "cohere/command-r-plus-08-2024": {
+    "chat:cohere/command-r-plus-08-2024": {
+      "type": "chat",
       "id": "cohere/command-r-plus-08-2024",
       "name": "Cohere: Command R+ (08-2024)",
       "api": "openai-completions",
@@ -1829,7 +1938,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "cohere/north-mini-code:free": {
+    "chat:cohere/north-mini-code:free": {
+      "type": "chat",
       "id": "cohere/north-mini-code:free",
       "name": "Cohere: North Mini Code (free)",
       "api": "openai-completions",
@@ -1854,7 +1964,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-chat": {
+    "chat:deepseek/deepseek-chat": {
+      "type": "chat",
       "id": "deepseek/deepseek-chat",
       "name": "DeepSeek: DeepSeek V3",
       "api": "openai-completions",
@@ -1865,13 +1976,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.32,
-        "output": 0.89,
+        "input": 0.2574,
+        "output": 1.0287,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 163840,
-      "maxTokens": 16384,
+      "contextWindow": 128000,
+      "maxTokens": 16000,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -1879,7 +1990,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-chat-v3-0324": {
+    "chat:deepseek/deepseek-chat-v3-0324": {
+      "type": "chat",
       "id": "deepseek/deepseek-chat-v3-0324",
       "name": "DeepSeek: DeepSeek V3 0324",
       "api": "openai-completions",
@@ -1890,9 +2002,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.25,
-        "output": 1.0,
-        "cacheRead": 0.0,
+        "input": 0.29,
+        "output": 1.14,
+        "cacheRead": 0.11,
         "cacheWrite": 0.0
       },
       "contextWindow": 163840,
@@ -1904,7 +2016,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-chat-v3.1": {
+    "chat:deepseek/deepseek-chat-v3.1": {
+      "type": "chat",
       "id": "deepseek/deepseek-chat-v3.1",
       "name": "DeepSeek: DeepSeek V3.1",
       "api": "openai-completions",
@@ -1929,7 +2042,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-r1": {
+    "chat:deepseek/deepseek-r1": {
+      "type": "chat",
       "id": "deepseek/deepseek-r1",
       "name": "DeepSeek: R1",
       "api": "openai-completions",
@@ -1957,7 +2071,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-r1-0528": {
+    "chat:deepseek/deepseek-r1-0528": {
+      "type": "chat",
       "id": "deepseek/deepseek-r1-0528",
       "name": "DeepSeek: R1 0528",
       "api": "openai-completions",
@@ -1985,7 +2100,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-v3.1-terminus": {
+    "chat:deepseek/deepseek-v3.1-terminus": {
+      "type": "chat",
       "id": "deepseek/deepseek-v3.1-terminus",
       "name": "DeepSeek: DeepSeek V3.1 Terminus",
       "api": "openai-completions",
@@ -1996,13 +2112,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.27,
+        "input": 0.3,
         "output": 1.0,
         "cacheRead": 0.135,
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 32768,
+      "maxTokens": 65536,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -2010,7 +2126,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-v3.2": {
+    "chat:deepseek/deepseek-v3.2": {
+      "type": "chat",
       "id": "deepseek/deepseek-v3.2",
       "name": "DeepSeek: DeepSeek V3.2",
       "api": "openai-completions",
@@ -2021,12 +2138,12 @@
         "text"
       ],
       "cost": {
-        "input": 0.269,
-        "output": 0.4,
-        "cacheRead": 0.1345,
+        "input": 0.28,
+        "output": 0.42,
+        "cacheRead": 0.028,
         "cacheWrite": 0.0
       },
-      "contextWindow": 163840,
+      "contextWindow": 131072,
       "maxTokens": 65536,
       "compat": {
         "supportsDeveloperRole": false,
@@ -2035,7 +2152,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-v3.2-exp": {
+    "chat:deepseek/deepseek-v3.2-exp": {
+      "type": "chat",
       "id": "deepseek/deepseek-v3.2-exp",
       "name": "DeepSeek: DeepSeek V3.2 Exp",
       "api": "openai-completions",
@@ -2052,7 +2170,7 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 163840,
-      "maxTokens": 65536,
+      "maxTokens": 147456,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -2060,7 +2178,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "deepseek/deepseek-v4-flash": {
+    "chat:deepseek/deepseek-v4-flash": {
+      "type": "chat",
       "id": "deepseek/deepseek-v4-flash",
       "name": "DeepSeek: DeepSeek V4 Flash 0423",
       "api": "openai-completions",
@@ -2080,9 +2199,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.04704,
-        "output": 0.09408,
-        "cacheRead": 0.009408,
+        "input": 0.07854,
+        "output": 0.15708,
+        "cacheRead": 0.015708,
         "cacheWrite": 0.0
       },
       "contextWindow": 1024000,
@@ -2095,7 +2214,8 @@
         "requiresReasoningContentOnAssistantMessages": true
       }
     },
-    "deepseek/deepseek-v4-flash-0731": {
+    "chat:deepseek/deepseek-v4-flash-0731": {
+      "type": "chat",
       "id": "deepseek/deepseek-v4-flash-0731",
       "name": "DeepSeek: DeepSeek V4 Flash 0731",
       "api": "openai-completions",
@@ -2115,9 +2235,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.03,
-        "output": 0.32,
-        "cacheRead": 0.016,
+        "input": 0.0089,
+        "output": 1.28,
+        "cacheRead": 0.0089,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -2130,7 +2250,8 @@
         "requiresReasoningContentOnAssistantMessages": true
       }
     },
-    "deepseek/deepseek-v4-flash-vision-exp": {
+    "chat:deepseek/deepseek-v4-flash-vision-exp": {
+      "type": "chat",
       "id": "deepseek/deepseek-v4-flash-vision-exp",
       "name": "DeepSeek: DeepSeek V4 Flash Vision Exp",
       "api": "openai-completions",
@@ -2151,9 +2272,128 @@
         "image"
       ],
       "cost": {
-        "input": 0.22,
-        "output": 0.66,
-        "cacheRead": 0.007,
+        "input": 0.2156,
+        "output": 0.6468,
+        "cacheRead": 0.00686,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 262144,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
+        "requiresReasoningContentOnAssistantMessages": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:deepseek/deepseek-v4-pro": {
+      "type": "chat",
+      "id": "deepseek/deepseek-v4-pro",
+      "name": "DeepSeek: DeepSeek V4 Pro 0423",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": null,
+        "medium": null,
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": null
+      },
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.783,
+        "output": 1.566,
+        "cacheRead": 0.06525,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1024000,
+      "maxTokens": 384000,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
+        "requiresReasoningContentOnAssistantMessages": true
+      }
+    },
+    "chat:deepseek/deepseek-v4-pro-0813": {
+      "type": "chat",
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "name": "DeepSeek: DeepSeek V4 Pro 0813",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.66,
+        "output": 1.98,
+        "cacheRead": 0.022,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 393216,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
+        "requiresReasoningContentOnAssistantMessages": true
+      }
+    },
+    "chat:deepseek/deepseek-v4.1-flash": {
+      "type": "chat",
+      "id": "deepseek/deepseek-v4.1-flash",
+      "name": "DeepSeek: DeepSeek V4.1 Flash",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.0198,
+        "output": 0.396,
+        "cacheRead": 0.00291,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -2176,123 +2416,8 @@
         }
       }
     },
-    "deepseek/deepseek-v4-pro": {
-      "id": "deepseek/deepseek-v4-pro",
-      "name": "DeepSeek: DeepSeek V4 Pro 0423",
-      "api": "openai-completions",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "provider": "openrouter",
-      "reasoning": true,
-      "thinkingLevelMap": {
-        "off": "none",
-        "minimal": null,
-        "low": null,
-        "medium": null,
-        "high": "high",
-        "xhigh": "xhigh",
-        "max": null
-      },
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.652152,
-        "output": 1.304304,
-        "cacheRead": 0.054346,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 1024000,
-      "maxTokens": 384000,
-      "compat": {
-        "supportsDeveloperRole": false,
-        "thinkingFormat": "openrouter",
-        "supportsStrictMode": true,
-        "sendSessionAffinityHeaders": true,
-        "requiresReasoningContentOnAssistantMessages": true
-      }
-    },
-    "deepseek/deepseek-v4-pro-0813": {
-      "id": "deepseek/deepseek-v4-pro-0813",
-      "name": "DeepSeek: DeepSeek V4 Pro 0813",
-      "api": "openai-completions",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "provider": "openrouter",
-      "reasoning": true,
-      "thinkingLevelMap": {
-        "off": "none",
-        "minimal": null,
-        "low": "low",
-        "medium": null,
-        "high": "high",
-        "xhigh": null,
-        "max": "max"
-      },
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.34584,
-        "output": 1.03752,
-        "cacheRead": 0.011528,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 1024000,
-      "maxTokens": 384000,
-      "compat": {
-        "supportsDeveloperRole": false,
-        "thinkingFormat": "openrouter",
-        "supportsStrictMode": true,
-        "sendSessionAffinityHeaders": true,
-        "requiresReasoningContentOnAssistantMessages": true
-      }
-    },
-    "deepseek/deepseek-v4.1-flash": {
-      "id": "deepseek/deepseek-v4.1-flash",
-      "name": "DeepSeek: DeepSeek V4.1 Flash",
-      "api": "openai-completions",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "provider": "openrouter",
-      "reasoning": true,
-      "thinkingLevelMap": {
-        "off": "none",
-        "minimal": null,
-        "low": "low",
-        "medium": null,
-        "high": "high",
-        "xhigh": null,
-        "max": "max"
-      },
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.15,
-        "output": 0.6,
-        "cacheRead": 0.003,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 1048576,
-      "maxTokens": 393216,
-      "compat": {
-        "supportsDeveloperRole": false,
-        "thinkingFormat": "openrouter",
-        "supportsStrictMode": true,
-        "sendSessionAffinityHeaders": true,
-        "requiresReasoningContentOnAssistantMessages": true
-      },
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      }
-    },
-    "deepseek/deepseek-v4.1-flash:batch": {
+    "chat:deepseek/deepseek-v4.1-flash:batch": {
+      "type": "chat",
       "id": "deepseek/deepseek-v4.1-flash:batch",
       "name": "DeepSeek: DeepSeek V4.1 Flash (batch)",
       "api": "openai-completions",
@@ -2338,7 +2463,8 @@
         }
       }
     },
-    "dots-studio/dots-3-note-preview:free": {
+    "chat:dots-studio/dots-3-note-preview:free": {
+      "type": "chat",
       "id": "dots-studio/dots-3-note-preview:free",
       "name": "Dots Studio: Dots3-Note Preview (free)",
       "api": "openai-completions",
@@ -2374,7 +2500,8 @@
         }
       }
     },
-    "fireworks/ember-1": {
+    "chat:fireworks/ember-1": {
+      "type": "chat",
       "id": "fireworks/ember-1",
       "name": "Fireworks: Ember-1",
       "api": "openai-completions",
@@ -2419,7 +2546,8 @@
         }
       }
     },
-    "google/gemini-2.5-flash": {
+    "chat:google/gemini-2.5-flash": {
+      "type": "chat",
       "id": "google/gemini-2.5-flash",
       "name": "Google: Gemini 2.5 Flash",
       "api": "openai-completions",
@@ -2455,7 +2583,8 @@
         }
       }
     },
-    "google/gemini-2.5-flash-lite": {
+    "chat:google/gemini-2.5-flash-lite": {
+      "type": "chat",
       "id": "google/gemini-2.5-flash-lite",
       "name": "Google: Gemini 2.5 Flash Lite",
       "api": "openai-completions",
@@ -2491,7 +2620,8 @@
         }
       }
     },
-    "google/gemini-2.5-flash-lite:batch": {
+    "chat:google/gemini-2.5-flash-lite:batch": {
+      "type": "chat",
       "id": "google/gemini-2.5-flash-lite:batch",
       "name": "Google: Gemini 2.5 Flash Lite (batch)",
       "api": "openai-completions",
@@ -2527,7 +2657,8 @@
         }
       }
     },
-    "google/gemini-2.5-flash:batch": {
+    "chat:google/gemini-2.5-flash:batch": {
+      "type": "chat",
       "id": "google/gemini-2.5-flash:batch",
       "name": "Google: Gemini 2.5 Flash (batch)",
       "api": "openai-completions",
@@ -2563,7 +2694,8 @@
         }
       }
     },
-    "google/gemini-2.5-pro": {
+    "chat:google/gemini-2.5-pro": {
+      "type": "chat",
       "id": "google/gemini-2.5-pro",
       "name": "Google: Gemini 2.5 Pro",
       "api": "openai-completions",
@@ -2602,7 +2734,8 @@
         }
       }
     },
-    "google/gemini-2.5-pro-preview": {
+    "chat:google/gemini-2.5-pro-preview": {
+      "type": "chat",
       "id": "google/gemini-2.5-pro-preview",
       "name": "Google: Gemini 2.5 Pro Preview 06-05",
       "api": "openai-completions",
@@ -2641,7 +2774,8 @@
         }
       }
     },
-    "google/gemini-2.5-pro:batch": {
+    "chat:google/gemini-2.5-pro:batch": {
+      "type": "chat",
       "id": "google/gemini-2.5-pro:batch",
       "name": "Google: Gemini 2.5 Pro (batch)",
       "api": "openai-completions",
@@ -2680,7 +2814,8 @@
         }
       }
     },
-    "google/gemini-3-flash-preview": {
+    "chat:google/gemini-3-flash-preview": {
+      "type": "chat",
       "id": "google/gemini-3-flash-preview",
       "name": "Google: Gemini 3 Flash Preview",
       "api": "openai-completions",
@@ -2725,7 +2860,8 @@
         }
       }
     },
-    "google/gemini-3-flash-preview:batch": {
+    "chat:google/gemini-3-flash-preview:batch": {
+      "type": "chat",
       "id": "google/gemini-3-flash-preview:batch",
       "name": "Google: Gemini 3 Flash Preview (batch)",
       "api": "openai-completions",
@@ -2770,7 +2906,8 @@
         }
       }
     },
-    "google/gemini-3-pro-image": {
+    "chat:google/gemini-3-pro-image": {
+      "type": "chat",
       "id": "google/gemini-3-pro-image",
       "name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
       "api": "openai-completions",
@@ -2809,7 +2946,8 @@
         }
       }
     },
-    "google/gemini-3.1-flash-lite": {
+    "chat:google/gemini-3.1-flash-lite": {
+      "type": "chat",
       "id": "google/gemini-3.1-flash-lite",
       "name": "Google: Gemini 3.1 Flash Lite",
       "api": "openai-completions",
@@ -2854,7 +2992,8 @@
         }
       }
     },
-    "google/gemini-3.1-flash-lite-preview": {
+    "chat:google/gemini-3.1-flash-lite-preview": {
+      "type": "chat",
       "id": "google/gemini-3.1-flash-lite-preview",
       "name": "Google: Gemini 3.1 Flash Lite Preview",
       "api": "openai-completions",
@@ -2899,7 +3038,8 @@
         }
       }
     },
-    "google/gemini-3.1-flash-lite:batch": {
+    "chat:google/gemini-3.1-flash-lite:batch": {
+      "type": "chat",
       "id": "google/gemini-3.1-flash-lite:batch",
       "name": "Google: Gemini 3.1 Flash Lite (batch)",
       "api": "openai-completions",
@@ -2944,7 +3084,8 @@
         }
       }
     },
-    "google/gemini-3.1-pro-preview": {
+    "chat:google/gemini-3.1-pro-preview": {
+      "type": "chat",
       "id": "google/gemini-3.1-pro-preview",
       "name": "Google: Gemini 3.1 Pro Preview",
       "api": "openai-completions",
@@ -2989,7 +3130,8 @@
         }
       }
     },
-    "google/gemini-3.1-pro-preview-customtools": {
+    "chat:google/gemini-3.1-pro-preview-customtools": {
+      "type": "chat",
       "id": "google/gemini-3.1-pro-preview-customtools",
       "name": "Google: Gemini 3.1 Pro Preview Custom Tools",
       "api": "openai-completions",
@@ -3034,7 +3176,8 @@
         }
       }
     },
-    "google/gemini-3.1-pro-preview:batch": {
+    "chat:google/gemini-3.1-pro-preview:batch": {
+      "type": "chat",
       "id": "google/gemini-3.1-pro-preview:batch",
       "name": "Google: Gemini 3.1 Pro Preview (batch)",
       "api": "openai-completions",
@@ -3079,7 +3222,8 @@
         }
       }
     },
-    "google/gemini-3.5-flash": {
+    "chat:google/gemini-3.5-flash": {
+      "type": "chat",
       "id": "google/gemini-3.5-flash",
       "name": "Google: Gemini 3.5 Flash",
       "api": "openai-completions",
@@ -3124,7 +3268,8 @@
         }
       }
     },
-    "google/gemini-3.5-flash-lite": {
+    "chat:google/gemini-3.5-flash-lite": {
+      "type": "chat",
       "id": "google/gemini-3.5-flash-lite",
       "name": "Google: Gemini 3.5 Flash Lite",
       "api": "openai-completions",
@@ -3169,7 +3314,8 @@
         }
       }
     },
-    "google/gemini-3.5-flash-lite:batch": {
+    "chat:google/gemini-3.5-flash-lite:batch": {
+      "type": "chat",
       "id": "google/gemini-3.5-flash-lite:batch",
       "name": "Google: Gemini 3.5 Flash Lite (batch)",
       "api": "openai-completions",
@@ -3214,7 +3360,8 @@
         }
       }
     },
-    "google/gemini-3.5-flash:batch": {
+    "chat:google/gemini-3.5-flash:batch": {
+      "type": "chat",
       "id": "google/gemini-3.5-flash:batch",
       "name": "Google: Gemini 3.5 Flash (batch)",
       "api": "openai-completions",
@@ -3259,7 +3406,8 @@
         }
       }
     },
-    "google/gemini-3.6-flash": {
+    "chat:google/gemini-3.6-flash": {
+      "type": "chat",
       "id": "google/gemini-3.6-flash",
       "name": "Google: Gemini 3.6 Flash",
       "api": "openai-completions",
@@ -3304,7 +3452,8 @@
         }
       }
     },
-    "google/gemini-3.6-flash:batch": {
+    "chat:google/gemini-3.6-flash:batch": {
+      "type": "chat",
       "id": "google/gemini-3.6-flash:batch",
       "name": "Google: Gemini 3.6 Flash (batch)",
       "api": "openai-completions",
@@ -3349,7 +3498,8 @@
         }
       }
     },
-    "google/gemini-3.7-flash": {
+    "chat:google/gemini-3.7-flash": {
+      "type": "chat",
       "id": "google/gemini-3.7-flash",
       "name": "Google: Gemini 3.7 Flash",
       "api": "openai-completions",
@@ -3394,7 +3544,8 @@
         }
       }
     },
-    "google/gemini-3.7-flash:batch": {
+    "chat:google/gemini-3.7-flash:batch": {
+      "type": "chat",
       "id": "google/gemini-3.7-flash:batch",
       "name": "Google: Gemini 3.7 Flash (batch)",
       "api": "openai-completions",
@@ -3439,7 +3590,8 @@
         }
       }
     },
-    "google/gemini-3.8-flash": {
+    "chat:google/gemini-3.8-flash": {
+      "type": "chat",
       "id": "google/gemini-3.8-flash",
       "name": "Google: Gemini 3.8 Flash",
       "api": "openai-completions",
@@ -3484,7 +3636,8 @@
         }
       }
     },
-    "google/gemini-3.8-flash:batch": {
+    "chat:google/gemini-3.8-flash:batch": {
+      "type": "chat",
       "id": "google/gemini-3.8-flash:batch",
       "name": "Google: Gemini 3.8 Flash (batch)",
       "api": "openai-completions",
@@ -3529,7 +3682,8 @@
         }
       }
     },
-    "google/gemma-3-12b-it": {
+    "chat:google/gemma-3-12b-it": {
+      "type": "chat",
       "id": "google/gemma-3-12b-it",
       "name": "Google: Gemma 3 12B",
       "api": "openai-completions",
@@ -3565,7 +3719,8 @@
         }
       }
     },
-    "google/gemma-3-27b-it": {
+    "chat:google/gemma-3-27b-it": {
+      "type": "chat",
       "id": "google/gemma-3-27b-it",
       "name": "Google: Gemma 3 27B",
       "api": "openai-completions",
@@ -3601,7 +3756,8 @@
         }
       }
     },
-    "google/gemma-4-26b-a4b-it": {
+    "chat:google/gemma-4-26b-a4b-it": {
+      "type": "chat",
       "id": "google/gemma-4-26b-a4b-it",
       "name": "Google: Gemma 4 26B A4B ",
       "api": "openai-completions",
@@ -3613,9 +3769,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.0675,
-        "output": 0.225,
-        "cacheRead": 0.0375,
+        "input": 0.0765,
+        "output": 0.255,
+        "cacheRead": 0.0425,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -3637,7 +3793,8 @@
         }
       }
     },
-    "google/gemma-4-26b-a4b-it:free": {
+    "chat:google/gemma-4-26b-a4b-it:free": {
+      "type": "chat",
       "id": "google/gemma-4-26b-a4b-it:free",
       "name": "Google: Gemma 4 26B A4B  (free)",
       "api": "openai-completions",
@@ -3673,7 +3830,8 @@
         }
       }
     },
-    "google/gemma-4-31b-it": {
+    "chat:google/gemma-4-31b-it": {
+      "type": "chat",
       "id": "google/gemma-4-31b-it",
       "name": "Google: Gemma 4 31B",
       "api": "openai-completions",
@@ -3709,7 +3867,8 @@
         }
       }
     },
-    "google/gemma-4-31b-it:free": {
+    "chat:google/gemma-4-31b-it:free": {
+      "type": "chat",
       "id": "google/gemma-4-31b-it:free",
       "name": "Google: Gemma 4 31B (free)",
       "api": "openai-completions",
@@ -3745,7 +3904,8 @@
         }
       }
     },
-    "ibm-granite/granite-4.2-8b": {
+    "chat:ibm-granite/granite-4.2-8b": {
+      "type": "chat",
       "id": "ibm-granite/granite-4.2-8b",
       "name": "IBM: Granite 4.2 8B",
       "api": "openai-completions",
@@ -3779,7 +3939,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "inception/mercury-2": {
+    "chat:inception/mercury-2": {
+      "type": "chat",
       "id": "inception/mercury-2",
       "name": "Inception: Mercury 2",
       "api": "openai-completions",
@@ -3813,7 +3974,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "inception/mercury-2.5": {
+    "chat:inception/mercury-2.5": {
+      "type": "chat",
       "id": "inception/mercury-2.5",
       "name": "Inception: Mercury 2.5",
       "api": "openai-completions",
@@ -3847,7 +4009,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "inclusionai/ling-3.0-flash": {
+    "chat:inclusionai/ling-3.0-flash": {
+      "type": "chat",
       "id": "inclusionai/ling-3.0-flash",
       "name": "inclusionAI: Ling 3.0 Flash",
       "api": "openai-completions",
@@ -3872,7 +4035,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "inclusionai/ling-3.0-flash-fin": {
+    "chat:inclusionai/ling-3.0-flash-fin": {
+      "type": "chat",
       "id": "inclusionai/ling-3.0-flash-fin",
       "name": "inclusionAI: Ling 3.0 Flash Fin",
       "api": "openai-completions",
@@ -3897,32 +4061,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "inclusionai/ling-3.0-flash-fin:free": {
-      "id": "inclusionai/ling-3.0-flash-fin:free",
-      "name": "inclusionAI: Ling 3.0 Flash Fin (free)",
-      "api": "openai-completions",
-      "baseUrl": "https://openrouter.ai/api/v1",
-      "provider": "openrouter",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 262144,
-      "maxTokens": 32768,
-      "compat": {
-        "supportsDeveloperRole": false,
-        "thinkingFormat": "openrouter",
-        "supportsStrictMode": true,
-        "sendSessionAffinityHeaders": true
-      }
-    },
-    "inclusionai/ling-3.0-flash-sante:free": {
+    "chat:inclusionai/ling-3.0-flash-sante:free": {
+      "type": "chat",
       "id": "inclusionai/ling-3.0-flash-sante:free",
       "name": "inclusionAI: Ling 3.0 Flash Sante (free)",
       "api": "openai-completions",
@@ -3947,7 +4087,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "inclusionai/ling-3.0-flash-vl": {
+    "chat:inclusionai/ling-3.0-flash-vl": {
+      "type": "chat",
       "id": "inclusionai/ling-3.0-flash-vl",
       "name": "inclusionAI: Ling 3.0 Flash VL",
       "api": "openai-completions",
@@ -3983,7 +4124,8 @@
         }
       }
     },
-    "kwaipilot/kat-coder-pro-v2.5": {
+    "chat:kwaipilot/kat-coder-pro-v2.5": {
+      "type": "chat",
       "id": "kwaipilot/kat-coder-pro-v2.5",
       "name": "Kwaipilot: KAT-Coder-Pro V2.5",
       "api": "openai-completions",
@@ -4008,7 +4150,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "liquid/lfm-2.5-2.6b:free": {
+    "chat:liquid/lfm-2.5-2.6b:free": {
+      "type": "chat",
       "id": "liquid/lfm-2.5-2.6b:free",
       "name": "LiquidAI: LFM2.5-2.6B (free)",
       "api": "openai-completions",
@@ -4036,7 +4179,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "meituan/longcat-2.0": {
+    "chat:meituan/longcat-2.0": {
+      "type": "chat",
       "id": "meituan/longcat-2.0",
       "name": "Meituan: LongCat 2.0",
       "api": "openai-completions",
@@ -4061,7 +4205,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "meta-llama/llama-3.1-70b-instruct": {
+    "chat:meta-llama/llama-3.1-70b-instruct": {
+      "type": "chat",
       "id": "meta-llama/llama-3.1-70b-instruct",
       "name": "Meta: Llama 3.1 70B Instruct",
       "api": "openai-completions",
@@ -4086,7 +4231,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "meta-llama/llama-3.1-8b-instruct": {
+    "chat:meta-llama/llama-3.1-8b-instruct": {
+      "type": "chat",
       "id": "meta-llama/llama-3.1-8b-instruct",
       "name": "Meta: Llama 3.1 8B Instruct",
       "api": "openai-completions",
@@ -4111,7 +4257,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "meta-llama/llama-3.3-70b-instruct": {
+    "chat:meta-llama/llama-3.3-70b-instruct": {
+      "type": "chat",
       "id": "meta-llama/llama-3.3-70b-instruct",
       "name": "Meta: Llama 3.3 70B Instruct",
       "api": "openai-completions",
@@ -4127,7 +4274,7 @@
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 131072,
+      "contextWindow": 65536,
       "maxTokens": 16384,
       "compat": {
         "supportsDeveloperRole": false,
@@ -4136,7 +4283,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "meta-llama/llama-4-maverick": {
+    "chat:meta-llama/llama-4-maverick": {
+      "type": "chat",
       "id": "meta-llama/llama-4-maverick",
       "name": "Meta: Llama 4 Maverick",
       "api": "openai-completions",
@@ -4172,7 +4320,8 @@
         }
       }
     },
-    "meta-llama/llama-4-scout": {
+    "chat:meta-llama/llama-4-scout": {
+      "type": "chat",
       "id": "meta-llama/llama-4-scout",
       "name": "Meta: Llama 4 Scout",
       "api": "openai-completions",
@@ -4208,7 +4357,8 @@
         }
       }
     },
-    "meta/muse-glimmer-30b": {
+    "chat:meta/muse-glimmer-30b": {
+      "type": "chat",
       "id": "meta/muse-glimmer-30b",
       "name": "Meta: Muse Glimmer 30B",
       "api": "openai-completions",
@@ -4229,13 +4379,13 @@
         "image"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
+        "input": 0.35,
+        "output": 1.5,
         "cacheRead": 0.04,
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 16384,
+      "maxTokens": 117964,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -4253,7 +4403,8 @@
         }
       }
     },
-    "meta/muse-spark-1.1": {
+    "chat:meta/muse-spark-1.1": {
+      "type": "chat",
       "id": "meta/muse-spark-1.1",
       "name": "Meta: Muse Spark 1.1",
       "api": "openai-completions",
@@ -4298,7 +4449,8 @@
         }
       }
     },
-    "meta/muse-spark-1.2": {
+    "chat:meta/muse-spark-1.2": {
+      "type": "chat",
       "id": "meta/muse-spark-1.2",
       "name": "Meta: Muse Spark 1.2",
       "api": "openai-completions",
@@ -4343,7 +4495,8 @@
         }
       }
     },
-    "meta/muse-spark-1.2-contributor": {
+    "chat:meta/muse-spark-1.2-contributor": {
+      "type": "chat",
       "id": "meta/muse-spark-1.2-contributor",
       "name": "Meta: Muse Spark 1.2 Contributor",
       "api": "openai-completions",
@@ -4388,7 +4541,8 @@
         }
       }
     },
-    "meta/muse-spark-1.3": {
+    "chat:meta/muse-spark-1.3": {
+      "type": "chat",
       "id": "meta/muse-spark-1.3",
       "name": "Meta: Muse Spark 1.3",
       "api": "openai-completions",
@@ -4433,7 +4587,8 @@
         }
       }
     },
-    "meta/muse-spark-1.3-contributor": {
+    "chat:meta/muse-spark-1.3-contributor": {
+      "type": "chat",
       "id": "meta/muse-spark-1.3-contributor",
       "name": "Meta: Muse Spark 1.3 Contributor",
       "api": "openai-completions",
@@ -4478,7 +4633,8 @@
         }
       }
     },
-    "minimax/minimax-m1": {
+    "chat:minimax/minimax-m1": {
+      "type": "chat",
       "id": "minimax/minimax-m1",
       "name": "MiniMax: MiniMax M1",
       "api": "openai-completions",
@@ -4503,7 +4659,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "minimax/minimax-m2": {
+    "chat:minimax/minimax-m2": {
+      "type": "chat",
       "id": "minimax/minimax-m2",
       "name": "MiniMax: MiniMax M2",
       "api": "openai-completions",
@@ -4531,7 +4688,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "minimax/minimax-m2.1": {
+    "chat:minimax/minimax-m2.1": {
+      "type": "chat",
       "id": "minimax/minimax-m2.1",
       "name": "MiniMax: MiniMax M2.1",
       "api": "openai-completions",
@@ -4559,7 +4717,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "minimax/minimax-m2.5": {
+    "chat:minimax/minimax-m2.5": {
+      "type": "chat",
       "id": "minimax/minimax-m2.5",
       "name": "MiniMax: MiniMax M2.5",
       "api": "openai-completions",
@@ -4587,7 +4746,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "minimax/minimax-m2.7": {
+    "chat:minimax/minimax-m2.7": {
+      "type": "chat",
       "id": "minimax/minimax-m2.7",
       "name": "MiniMax: MiniMax M2.7",
       "api": "openai-completions",
@@ -4601,13 +4761,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.3,
-        "output": 1.2,
-        "cacheRead": 0.06,
+        "input": 0.21,
+        "output": 0.84,
+        "cacheRead": 0.042,
         "cacheWrite": 0.0
       },
-      "contextWindow": 204800,
-      "maxTokens": 131072,
+      "contextWindow": 196608,
+      "maxTokens": 176947,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -4615,7 +4775,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "minimax/minimax-m3": {
+    "chat:minimax/minimax-m3": {
+      "type": "chat",
       "id": "minimax/minimax-m3",
       "name": "MiniMax: MiniMax M3",
       "api": "openai-completions",
@@ -4651,7 +4812,8 @@
         }
       }
     },
-    "mistralai/codestral-2508": {
+    "chat:mistralai/codestral-2508": {
+      "type": "chat",
       "id": "mistralai/codestral-2508",
       "name": "Mistral: Codestral 2508",
       "api": "openai-completions",
@@ -4676,7 +4838,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/codestral-2508:batch": {
+    "chat:mistralai/codestral-2508:batch": {
+      "type": "chat",
       "id": "mistralai/codestral-2508:batch",
       "name": "Mistral: Codestral 2508 (batch)",
       "api": "openai-completions",
@@ -4701,7 +4864,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/devstral-2512": {
+    "chat:mistralai/devstral-2512": {
+      "type": "chat",
       "id": "mistralai/devstral-2512",
       "name": "Mistral: Devstral 2 2512",
       "api": "openai-completions",
@@ -4726,7 +4890,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/ministral-14b-2512": {
+    "chat:mistralai/ministral-14b-2512": {
+      "type": "chat",
       "id": "mistralai/ministral-14b-2512",
       "name": "Mistral: Ministral 3 14B 2512",
       "api": "openai-completions",
@@ -4762,7 +4927,8 @@
         }
       }
     },
-    "mistralai/ministral-3b-2512": {
+    "chat:mistralai/ministral-3b-2512": {
+      "type": "chat",
       "id": "mistralai/ministral-3b-2512",
       "name": "Mistral: Ministral 3 3B 2512",
       "api": "openai-completions",
@@ -4798,7 +4964,8 @@
         }
       }
     },
-    "mistralai/ministral-8b-2512": {
+    "chat:mistralai/ministral-8b-2512": {
+      "type": "chat",
       "id": "mistralai/ministral-8b-2512",
       "name": "Mistral: Ministral 3 8B 2512",
       "api": "openai-completions",
@@ -4834,7 +5001,8 @@
         }
       }
     },
-    "mistralai/ministral-8b-2512:batch": {
+    "chat:mistralai/ministral-8b-2512:batch": {
+      "type": "chat",
       "id": "mistralai/ministral-8b-2512:batch",
       "name": "Mistral: Ministral 3 8B 2512 (batch)",
       "api": "openai-completions",
@@ -4870,7 +5038,8 @@
         }
       }
     },
-    "mistralai/mistral-large": {
+    "chat:mistralai/mistral-large": {
+      "type": "chat",
       "id": "mistralai/mistral-large",
       "name": "Mistral Large",
       "api": "openai-completions",
@@ -4895,7 +5064,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/mistral-large-2407": {
+    "chat:mistralai/mistral-large-2407": {
+      "type": "chat",
       "id": "mistralai/mistral-large-2407",
       "name": "Mistral Large 2407",
       "api": "openai-completions",
@@ -4920,7 +5090,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/mistral-large-2512": {
+    "chat:mistralai/mistral-large-2512": {
+      "type": "chat",
       "id": "mistralai/mistral-large-2512",
       "name": "Mistral: Mistral Large 3 2512",
       "api": "openai-completions",
@@ -4956,7 +5127,8 @@
         }
       }
     },
-    "mistralai/mistral-large-2512:batch": {
+    "chat:mistralai/mistral-large-2512:batch": {
+      "type": "chat",
       "id": "mistralai/mistral-large-2512:batch",
       "name": "Mistral: Mistral Large 3 2512 (batch)",
       "api": "openai-completions",
@@ -4992,7 +5164,8 @@
         }
       }
     },
-    "mistralai/mistral-medium-3": {
+    "chat:mistralai/mistral-medium-3": {
+      "type": "chat",
       "id": "mistralai/mistral-medium-3",
       "name": "Mistral: Mistral Medium 3",
       "api": "openai-completions",
@@ -5028,7 +5201,8 @@
         }
       }
     },
-    "mistralai/mistral-medium-3-5": {
+    "chat:mistralai/mistral-medium-3-5": {
+      "type": "chat",
       "id": "mistralai/mistral-medium-3-5",
       "name": "Mistral: Mistral Medium 3.5",
       "api": "openai-completions",
@@ -5073,7 +5247,8 @@
         }
       }
     },
-    "mistralai/mistral-medium-3-5:batch": {
+    "chat:mistralai/mistral-medium-3-5:batch": {
+      "type": "chat",
       "id": "mistralai/mistral-medium-3-5:batch",
       "name": "Mistral: Mistral Medium 3.5 (batch)",
       "api": "openai-completions",
@@ -5118,7 +5293,8 @@
         }
       }
     },
-    "mistralai/mistral-medium-3.1": {
+    "chat:mistralai/mistral-medium-3.1": {
+      "type": "chat",
       "id": "mistralai/mistral-medium-3.1",
       "name": "Mistral: Mistral Medium 3.1",
       "api": "openai-completions",
@@ -5154,7 +5330,8 @@
         }
       }
     },
-    "mistralai/mistral-medium-3.1:batch": {
+    "chat:mistralai/mistral-medium-3.1:batch": {
+      "type": "chat",
       "id": "mistralai/mistral-medium-3.1:batch",
       "name": "Mistral: Mistral Medium 3.1 (batch)",
       "api": "openai-completions",
@@ -5190,7 +5367,8 @@
         }
       }
     },
-    "mistralai/mistral-nemo": {
+    "chat:mistralai/mistral-nemo": {
+      "type": "chat",
       "id": "mistralai/mistral-nemo",
       "name": "Mistral: Mistral Nemo",
       "api": "openai-completions",
@@ -5215,7 +5393,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/mistral-saba": {
+    "chat:mistralai/mistral-saba": {
+      "type": "chat",
       "id": "mistralai/mistral-saba",
       "name": "Mistral: Saba",
       "api": "openai-completions",
@@ -5240,7 +5419,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/mistral-small-2603": {
+    "chat:mistralai/mistral-small-2603": {
+      "type": "chat",
       "id": "mistralai/mistral-small-2603",
       "name": "Mistral: Mistral Small 4",
       "api": "openai-completions",
@@ -5285,7 +5465,8 @@
         }
       }
     },
-    "mistralai/mistral-small-2603:batch": {
+    "chat:mistralai/mistral-small-2603:batch": {
+      "type": "chat",
       "id": "mistralai/mistral-small-2603:batch",
       "name": "Mistral: Mistral Small 4 (batch)",
       "api": "openai-completions",
@@ -5330,7 +5511,8 @@
         }
       }
     },
-    "mistralai/mistral-small-3.1-24b-instruct": {
+    "chat:mistralai/mistral-small-3.1-24b-instruct": {
+      "type": "chat",
       "id": "mistralai/mistral-small-3.1-24b-instruct",
       "name": "Mistral: Mistral Small 3.1 24B",
       "api": "openai-completions",
@@ -5366,7 +5548,8 @@
         }
       }
     },
-    "mistralai/mistral-small-3.2-24b-instruct": {
+    "chat:mistralai/mistral-small-3.2-24b-instruct": {
+      "type": "chat",
       "id": "mistralai/mistral-small-3.2-24b-instruct",
       "name": "Mistral: Mistral Small 3.2 24B",
       "api": "openai-completions",
@@ -5402,7 +5585,8 @@
         }
       }
     },
-    "mistralai/mixtral-8x22b-instruct": {
+    "chat:mistralai/mixtral-8x22b-instruct": {
+      "type": "chat",
       "id": "mistralai/mixtral-8x22b-instruct",
       "name": "Mistral: Mixtral 8x22B Instruct",
       "api": "openai-completions",
@@ -5427,7 +5611,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "mistralai/voxtral-small-24b-2507": {
+    "chat:mistralai/voxtral-small-24b-2507": {
+      "type": "chat",
       "id": "mistralai/voxtral-small-24b-2507",
       "name": "Mistral: Voxtral Small 24B 2507",
       "api": "openai-completions",
@@ -5452,7 +5637,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "moonshotai/kimi-k2": {
+    "chat:moonshotai/kimi-k2": {
+      "type": "chat",
       "id": "moonshotai/kimi-k2",
       "name": "MoonshotAI: Kimi K2 0711",
       "api": "openai-completions",
@@ -5477,7 +5663,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "moonshotai/kimi-k2-0905": {
+    "chat:moonshotai/kimi-k2-0905": {
+      "type": "chat",
       "id": "moonshotai/kimi-k2-0905",
       "name": "MoonshotAI: Kimi K2 0905",
       "api": "openai-completions",
@@ -5502,7 +5689,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "moonshotai/kimi-k2-thinking": {
+    "chat:moonshotai/kimi-k2-thinking": {
+      "type": "chat",
       "id": "moonshotai/kimi-k2-thinking",
       "name": "MoonshotAI: Kimi K2 Thinking",
       "api": "openai-completions",
@@ -5530,7 +5718,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "moonshotai/kimi-k2.5": {
+    "chat:moonshotai/kimi-k2.5": {
+      "type": "chat",
       "id": "moonshotai/kimi-k2.5",
       "name": "MoonshotAI: Kimi K2.5",
       "api": "openai-completions",
@@ -5566,7 +5755,8 @@
         }
       }
     },
-    "moonshotai/kimi-k2.6": {
+    "chat:moonshotai/kimi-k2.6": {
+      "type": "chat",
       "id": "moonshotai/kimi-k2.6",
       "name": "MoonshotAI: Kimi K2.6",
       "api": "openai-completions",
@@ -5578,9 +5768,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.95,
-        "output": 4.0,
-        "cacheRead": 0.16,
+        "input": 0.65,
+        "output": 3.41,
+        "cacheRead": 0.15,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -5603,7 +5793,8 @@
         }
       }
     },
-    "moonshotai/kimi-k2.7-code": {
+    "chat:moonshotai/kimi-k2.7-code": {
+      "type": "chat",
       "id": "moonshotai/kimi-k2.7-code",
       "name": "MoonshotAI: Kimi K2.7 Code",
       "api": "openai-completions",
@@ -5618,8 +5809,8 @@
         "image"
       ],
       "cost": {
-        "input": 0.6562,
-        "output": 3.3,
+        "input": 0.6712,
+        "output": 3.35,
         "cacheRead": 0.18,
         "cacheWrite": 0.0
       },
@@ -5642,7 +5833,8 @@
         }
       }
     },
-    "moonshotai/kimi-k3": {
+    "chat:moonshotai/kimi-k3": {
+      "type": "chat",
       "id": "moonshotai/kimi-k3",
       "name": "MoonshotAI: Kimi K3",
       "api": "openai-completions",
@@ -5663,9 +5855,9 @@
         "image"
       ],
       "cost": {
-        "input": 3.0,
-        "output": 15.0,
-        "cacheRead": 0.3,
+        "input": 0.28,
+        "output": 10.0,
+        "cacheRead": 0.27,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -5687,7 +5879,8 @@
         }
       }
     },
-    "moonshotai/kimi-k3:batch": {
+    "chat:moonshotai/kimi-k3:batch": {
+      "type": "chat",
       "id": "moonshotai/kimi-k3:batch",
       "name": "MoonshotAI: Kimi K3 (batch)",
       "api": "openai-completions",
@@ -5732,7 +5925,54 @@
         }
       }
     },
-    "nvidia/nemotron-3-nano-30b-a3b": {
+    "chat:nex-agi/nex-n2.5-pro": {
+      "type": "chat",
+      "id": "nex-agi/nex-n2.5-pro",
+      "name": "Nex AGI: Nex-N2.5-Pro",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": null,
+        "medium": "medium",
+        "high": "high",
+        "xhigh": null,
+        "max": null
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.075,
+        "output": 0.25,
+        "cacheRead": 0.015,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 235929,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:nvidia/nemotron-3-nano-30b-a3b": {
+      "type": "chat",
       "id": "nvidia/nemotron-3-nano-30b-a3b",
       "name": "NVIDIA: Nemotron 3 Nano 30B A3B",
       "api": "openai-completions",
@@ -5757,7 +5997,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+    "chat:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+      "type": "chat",
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       "name": "NVIDIA: Nemotron 3 Nano Omni (free)",
       "api": "openai-completions",
@@ -5793,7 +6034,8 @@
         }
       }
     },
-    "nvidia/nemotron-3-super-120b-a12b": {
+    "chat:nvidia/nemotron-3-super-120b-a12b": {
+      "type": "chat",
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "name": "NVIDIA: Nemotron 3 Super",
       "api": "openai-completions",
@@ -5827,7 +6069,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "nvidia/nemotron-3-super-120b-a12b:free": {
+    "chat:nvidia/nemotron-3-super-120b-a12b:free": {
+      "type": "chat",
       "id": "nvidia/nemotron-3-super-120b-a12b:free",
       "name": "NVIDIA: Nemotron 3 Super (free)",
       "api": "openai-completions",
@@ -5861,7 +6104,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "nvidia/nemotron-3-ultra-550b-a55b": {
+    "chat:nvidia/nemotron-3-ultra-550b-a55b": {
+      "type": "chat",
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
       "name": "NVIDIA: Nemotron 3 Ultra",
       "api": "openai-completions",
@@ -5895,7 +6139,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "nvidia/nemotron-3-ultra-550b-a55b:free": {
+    "chat:nvidia/nemotron-3-ultra-550b-a55b:free": {
+      "type": "chat",
       "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
       "name": "NVIDIA: Nemotron 3 Ultra (free)",
       "api": "openai-completions",
@@ -5929,7 +6174,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "nvidia/nemotron-3.5-lightning": {
+    "chat:nvidia/nemotron-3.5-lightning": {
+      "type": "chat",
       "id": "nvidia/nemotron-3.5-lightning",
       "name": "NVIDIA: Nemotron 3.5 Lightning",
       "api": "openai-completions",
@@ -5940,13 +6186,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.07,
-        "output": 0.2,
-        "cacheRead": 0.04,
+        "input": 0.06,
+        "output": 0.16,
+        "cacheRead": 0.03,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 235929,
+      "maxTokens": 32768,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -5954,7 +6200,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "nvidia/nemotron-3.5-lightning:free": {
+    "chat:nvidia/nemotron-3.5-lightning:free": {
+      "type": "chat",
       "id": "nvidia/nemotron-3.5-lightning:free",
       "name": "NVIDIA: Nemotron 3.5 Lightning (free)",
       "api": "openai-completions",
@@ -5979,7 +6226,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-3.5-turbo": {
+    "chat:openai/gpt-3.5-turbo": {
+      "type": "chat",
       "id": "openai/gpt-3.5-turbo",
       "name": "OpenAI: GPT-3.5 Turbo",
       "api": "openai-completions",
@@ -6003,7 +6251,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-3.5-turbo-0613": {
+    "chat:openai/gpt-3.5-turbo-0613": {
+      "type": "chat",
       "id": "openai/gpt-3.5-turbo-0613",
       "name": "OpenAI: GPT-3.5 Turbo (older v0613)",
       "api": "openai-completions",
@@ -6027,7 +6276,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-3.5-turbo-16k": {
+    "chat:openai/gpt-3.5-turbo-16k": {
+      "type": "chat",
       "id": "openai/gpt-3.5-turbo-16k",
       "name": "OpenAI: GPT-3.5 Turbo 16k",
       "api": "openai-completions",
@@ -6051,7 +6301,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-3.5-turbo:batch": {
+    "chat:openai/gpt-3.5-turbo:batch": {
+      "type": "chat",
       "id": "openai/gpt-3.5-turbo:batch",
       "name": "OpenAI: GPT-3.5 Turbo (batch)",
       "api": "openai-completions",
@@ -6075,7 +6326,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-4": {
+    "chat:openai/gpt-4": {
+      "type": "chat",
       "id": "openai/gpt-4",
       "name": "OpenAI: GPT-4",
       "api": "openai-completions",
@@ -6099,7 +6351,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-4-turbo": {
+    "chat:openai/gpt-4-turbo": {
+      "type": "chat",
       "id": "openai/gpt-4-turbo",
       "name": "OpenAI: GPT-4 Turbo",
       "api": "openai-completions",
@@ -6134,7 +6387,8 @@
         }
       }
     },
-    "openai/gpt-4-turbo:batch": {
+    "chat:openai/gpt-4-turbo:batch": {
+      "type": "chat",
       "id": "openai/gpt-4-turbo:batch",
       "name": "OpenAI: GPT-4 Turbo (batch)",
       "api": "openai-completions",
@@ -6169,7 +6423,8 @@
         }
       }
     },
-    "openai/gpt-4.1": {
+    "chat:openai/gpt-4.1": {
+      "type": "chat",
       "id": "openai/gpt-4.1",
       "name": "OpenAI: GPT-4.1",
       "api": "openai-completions",
@@ -6204,7 +6459,8 @@
         }
       }
     },
-    "openai/gpt-4.1-mini": {
+    "chat:openai/gpt-4.1-mini": {
+      "type": "chat",
       "id": "openai/gpt-4.1-mini",
       "name": "OpenAI: GPT-4.1 Mini",
       "api": "openai-completions",
@@ -6239,7 +6495,8 @@
         }
       }
     },
-    "openai/gpt-4.1-mini:batch": {
+    "chat:openai/gpt-4.1-mini:batch": {
+      "type": "chat",
       "id": "openai/gpt-4.1-mini:batch",
       "name": "OpenAI: GPT-4.1 Mini (batch)",
       "api": "openai-completions",
@@ -6274,7 +6531,8 @@
         }
       }
     },
-    "openai/gpt-4.1-nano": {
+    "chat:openai/gpt-4.1-nano": {
+      "type": "chat",
       "id": "openai/gpt-4.1-nano",
       "name": "OpenAI: GPT-4.1 Nano",
       "api": "openai-completions",
@@ -6309,7 +6567,8 @@
         }
       }
     },
-    "openai/gpt-4.1-nano:batch": {
+    "chat:openai/gpt-4.1-nano:batch": {
+      "type": "chat",
       "id": "openai/gpt-4.1-nano:batch",
       "name": "OpenAI: GPT-4.1 Nano (batch)",
       "api": "openai-completions",
@@ -6344,7 +6603,8 @@
         }
       }
     },
-    "openai/gpt-4.1:batch": {
+    "chat:openai/gpt-4.1:batch": {
+      "type": "chat",
       "id": "openai/gpt-4.1:batch",
       "name": "OpenAI: GPT-4.1 (batch)",
       "api": "openai-completions",
@@ -6379,7 +6639,8 @@
         }
       }
     },
-    "openai/gpt-4o": {
+    "chat:openai/gpt-4o": {
+      "type": "chat",
       "id": "openai/gpt-4o",
       "name": "OpenAI: GPT-4o",
       "api": "openai-completions",
@@ -6414,7 +6675,8 @@
         }
       }
     },
-    "openai/gpt-4o-2024-05-13": {
+    "chat:openai/gpt-4o-2024-05-13": {
+      "type": "chat",
       "id": "openai/gpt-4o-2024-05-13",
       "name": "OpenAI: GPT-4o (2024-05-13)",
       "api": "openai-completions",
@@ -6449,7 +6711,8 @@
         }
       }
     },
-    "openai/gpt-4o-2024-08-06": {
+    "chat:openai/gpt-4o-2024-08-06": {
+      "type": "chat",
       "id": "openai/gpt-4o-2024-08-06",
       "name": "OpenAI: GPT-4o (2024-08-06)",
       "api": "openai-completions",
@@ -6484,7 +6747,8 @@
         }
       }
     },
-    "openai/gpt-4o-2024-11-20": {
+    "chat:openai/gpt-4o-2024-11-20": {
+      "type": "chat",
       "id": "openai/gpt-4o-2024-11-20",
       "name": "OpenAI: GPT-4o (2024-11-20)",
       "api": "openai-completions",
@@ -6519,7 +6783,8 @@
         }
       }
     },
-    "openai/gpt-4o-mini": {
+    "chat:openai/gpt-4o-mini": {
+      "type": "chat",
       "id": "openai/gpt-4o-mini",
       "name": "OpenAI: GPT-4o-mini",
       "api": "openai-completions",
@@ -6554,7 +6819,8 @@
         }
       }
     },
-    "openai/gpt-4o-mini-2024-07-18": {
+    "chat:openai/gpt-4o-mini-2024-07-18": {
+      "type": "chat",
       "id": "openai/gpt-4o-mini-2024-07-18",
       "name": "OpenAI: GPT-4o-mini (2024-07-18)",
       "api": "openai-completions",
@@ -6589,7 +6855,8 @@
         }
       }
     },
-    "openai/gpt-4o-mini:batch": {
+    "chat:openai/gpt-4o-mini:batch": {
+      "type": "chat",
       "id": "openai/gpt-4o-mini:batch",
       "name": "OpenAI: GPT-4o-mini (batch)",
       "api": "openai-completions",
@@ -6624,7 +6891,8 @@
         }
       }
     },
-    "openai/gpt-4o:batch": {
+    "chat:openai/gpt-4o:batch": {
+      "type": "chat",
       "id": "openai/gpt-4o:batch",
       "name": "OpenAI: GPT-4o (batch)",
       "api": "openai-completions",
@@ -6659,7 +6927,8 @@
         }
       }
     },
-    "openai/gpt-5": {
+    "chat:openai/gpt-5": {
+      "type": "chat",
       "id": "openai/gpt-5",
       "name": "OpenAI: GPT-5",
       "api": "openai-completions",
@@ -6703,7 +6972,8 @@
         }
       }
     },
-    "openai/gpt-5-mini": {
+    "chat:openai/gpt-5-mini": {
+      "type": "chat",
       "id": "openai/gpt-5-mini",
       "name": "OpenAI: GPT-5 Mini",
       "api": "openai-completions",
@@ -6747,7 +7017,8 @@
         }
       }
     },
-    "openai/gpt-5-mini:batch": {
+    "chat:openai/gpt-5-mini:batch": {
+      "type": "chat",
       "id": "openai/gpt-5-mini:batch",
       "name": "OpenAI: GPT-5 Mini (batch)",
       "api": "openai-completions",
@@ -6791,7 +7062,8 @@
         }
       }
     },
-    "openai/gpt-5-nano": {
+    "chat:openai/gpt-5-nano": {
+      "type": "chat",
       "id": "openai/gpt-5-nano",
       "name": "OpenAI: GPT-5 Nano",
       "api": "openai-completions",
@@ -6835,7 +7107,8 @@
         }
       }
     },
-    "openai/gpt-5-nano:batch": {
+    "chat:openai/gpt-5-nano:batch": {
+      "type": "chat",
       "id": "openai/gpt-5-nano:batch",
       "name": "OpenAI: GPT-5 Nano (batch)",
       "api": "openai-completions",
@@ -6879,7 +7152,8 @@
         }
       }
     },
-    "openai/gpt-5-pro": {
+    "chat:openai/gpt-5-pro": {
+      "type": "chat",
       "id": "openai/gpt-5-pro",
       "name": "OpenAI: GPT-5 Pro",
       "api": "openai-completions",
@@ -6923,7 +7197,8 @@
         }
       }
     },
-    "openai/gpt-5-pro:batch": {
+    "chat:openai/gpt-5-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5-pro:batch",
       "name": "OpenAI: GPT-5 Pro (batch)",
       "api": "openai-completions",
@@ -6967,7 +7242,8 @@
         }
       }
     },
-    "openai/gpt-5.1": {
+    "chat:openai/gpt-5.1": {
+      "type": "chat",
       "id": "openai/gpt-5.1",
       "name": "OpenAI: GPT-5.1",
       "api": "openai-completions",
@@ -7011,7 +7287,8 @@
         }
       }
     },
-    "openai/gpt-5.1-codex": {
+    "chat:openai/gpt-5.1-codex": {
+      "type": "chat",
       "id": "openai/gpt-5.1-codex",
       "name": "OpenAI: GPT-5.1-Codex",
       "api": "openai-completions",
@@ -7055,7 +7332,8 @@
         }
       }
     },
-    "openai/gpt-5.1-codex-max": {
+    "chat:openai/gpt-5.1-codex-max": {
+      "type": "chat",
       "id": "openai/gpt-5.1-codex-max",
       "name": "OpenAI: GPT-5.1-Codex-Max",
       "api": "openai-completions",
@@ -7099,7 +7377,8 @@
         }
       }
     },
-    "openai/gpt-5.1-codex-mini": {
+    "chat:openai/gpt-5.1-codex-mini": {
+      "type": "chat",
       "id": "openai/gpt-5.1-codex-mini",
       "name": "OpenAI: GPT-5.1-Codex-Mini",
       "api": "openai-completions",
@@ -7143,7 +7422,8 @@
         }
       }
     },
-    "openai/gpt-5.1:batch": {
+    "chat:openai/gpt-5.1:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.1:batch",
       "name": "OpenAI: GPT-5.1 (batch)",
       "api": "openai-completions",
@@ -7187,7 +7467,8 @@
         }
       }
     },
-    "openai/gpt-5.2": {
+    "chat:openai/gpt-5.2": {
+      "type": "chat",
       "id": "openai/gpt-5.2",
       "name": "OpenAI: GPT-5.2",
       "api": "openai-completions",
@@ -7231,7 +7512,8 @@
         }
       }
     },
-    "openai/gpt-5.2-chat": {
+    "chat:openai/gpt-5.2-chat": {
+      "type": "chat",
       "id": "openai/gpt-5.2-chat",
       "name": "OpenAI: GPT-5.2 Chat",
       "api": "openai-completions",
@@ -7269,7 +7551,8 @@
         }
       }
     },
-    "openai/gpt-5.2-codex": {
+    "chat:openai/gpt-5.2-codex": {
+      "type": "chat",
       "id": "openai/gpt-5.2-codex",
       "name": "OpenAI: GPT-5.2-Codex",
       "api": "openai-completions",
@@ -7313,7 +7596,8 @@
         }
       }
     },
-    "openai/gpt-5.2-pro": {
+    "chat:openai/gpt-5.2-pro": {
+      "type": "chat",
       "id": "openai/gpt-5.2-pro",
       "name": "OpenAI: GPT-5.2 Pro",
       "api": "openai-completions",
@@ -7357,7 +7641,8 @@
         }
       }
     },
-    "openai/gpt-5.2-pro:batch": {
+    "chat:openai/gpt-5.2-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.2-pro:batch",
       "name": "OpenAI: GPT-5.2 Pro (batch)",
       "api": "openai-completions",
@@ -7401,7 +7686,8 @@
         }
       }
     },
-    "openai/gpt-5.2:batch": {
+    "chat:openai/gpt-5.2:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.2:batch",
       "name": "OpenAI: GPT-5.2 (batch)",
       "api": "openai-completions",
@@ -7445,7 +7731,8 @@
         }
       }
     },
-    "openai/gpt-5.3-codex": {
+    "chat:openai/gpt-5.3-codex": {
+      "type": "chat",
       "id": "openai/gpt-5.3-codex",
       "name": "OpenAI: GPT-5.3-Codex",
       "api": "openai-completions",
@@ -7489,7 +7776,8 @@
         }
       }
     },
-    "openai/gpt-5.4": {
+    "chat:openai/gpt-5.4": {
+      "type": "chat",
       "id": "openai/gpt-5.4",
       "name": "OpenAI: GPT-5.4",
       "api": "openai-completions",
@@ -7534,7 +7822,8 @@
         }
       }
     },
-    "openai/gpt-5.4-mini": {
+    "chat:openai/gpt-5.4-mini": {
+      "type": "chat",
       "id": "openai/gpt-5.4-mini",
       "name": "OpenAI: GPT-5.4 Mini",
       "api": "openai-completions",
@@ -7579,7 +7868,8 @@
         }
       }
     },
-    "openai/gpt-5.4-mini:batch": {
+    "chat:openai/gpt-5.4-mini:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.4-mini:batch",
       "name": "OpenAI: GPT-5.4 Mini (batch)",
       "api": "openai-completions",
@@ -7623,7 +7913,8 @@
         }
       }
     },
-    "openai/gpt-5.4-nano": {
+    "chat:openai/gpt-5.4-nano": {
+      "type": "chat",
       "id": "openai/gpt-5.4-nano",
       "name": "OpenAI: GPT-5.4 Nano",
       "api": "openai-completions",
@@ -7667,7 +7958,8 @@
         }
       }
     },
-    "openai/gpt-5.4-nano:batch": {
+    "chat:openai/gpt-5.4-nano:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.4-nano:batch",
       "name": "OpenAI: GPT-5.4 Nano (batch)",
       "api": "openai-completions",
@@ -7711,7 +8003,8 @@
         }
       }
     },
-    "openai/gpt-5.4-pro": {
+    "chat:openai/gpt-5.4-pro": {
+      "type": "chat",
       "id": "openai/gpt-5.4-pro",
       "name": "OpenAI: GPT-5.4 Pro",
       "api": "openai-completions",
@@ -7756,7 +8049,8 @@
         }
       }
     },
-    "openai/gpt-5.4-pro:batch": {
+    "chat:openai/gpt-5.4-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.4-pro:batch",
       "name": "OpenAI: GPT-5.4 Pro (batch)",
       "api": "openai-completions",
@@ -7800,7 +8094,8 @@
         }
       }
     },
-    "openai/gpt-5.4:batch": {
+    "chat:openai/gpt-5.4:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.4:batch",
       "name": "OpenAI: GPT-5.4 (batch)",
       "api": "openai-completions",
@@ -7844,7 +8139,8 @@
         }
       }
     },
-    "openai/gpt-5.5": {
+    "chat:openai/gpt-5.5": {
+      "type": "chat",
       "id": "openai/gpt-5.5",
       "name": "OpenAI: GPT-5.5",
       "api": "openai-completions",
@@ -7889,7 +8185,8 @@
         }
       }
     },
-    "openai/gpt-5.5-pro": {
+    "chat:openai/gpt-5.5-pro": {
+      "type": "chat",
       "id": "openai/gpt-5.5-pro",
       "name": "OpenAI: GPT-5.5 Pro",
       "api": "openai-completions",
@@ -7933,7 +8230,8 @@
         }
       }
     },
-    "openai/gpt-5.5-pro:batch": {
+    "chat:openai/gpt-5.5-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.5-pro:batch",
       "name": "OpenAI: GPT-5.5 Pro (batch)",
       "api": "openai-completions",
@@ -7977,7 +8275,8 @@
         }
       }
     },
-    "openai/gpt-5.5:batch": {
+    "chat:openai/gpt-5.5:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.5:batch",
       "name": "OpenAI: GPT-5.5 (batch)",
       "api": "openai-completions",
@@ -8021,7 +8320,8 @@
         }
       }
     },
-    "openai/gpt-5.6-luna": {
+    "chat:openai/gpt-5.6-luna": {
+      "type": "chat",
       "id": "openai/gpt-5.6-luna",
       "name": "OpenAI: GPT-5.6 Luna",
       "api": "openai-completions",
@@ -8066,7 +8366,8 @@
         }
       }
     },
-    "openai/gpt-5.6-luna-pro": {
+    "chat:openai/gpt-5.6-luna-pro": {
+      "type": "chat",
       "id": "openai/gpt-5.6-luna-pro",
       "name": "OpenAI: GPT-5.6 Luna Pro",
       "api": "openai-completions",
@@ -8110,7 +8411,8 @@
         }
       }
     },
-    "openai/gpt-5.6-luna-pro:batch": {
+    "chat:openai/gpt-5.6-luna-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.6-luna-pro:batch",
       "name": "OpenAI: GPT-5.6 Luna Pro (batch)",
       "api": "openai-completions",
@@ -8154,7 +8456,8 @@
         }
       }
     },
-    "openai/gpt-5.6-luna:batch": {
+    "chat:openai/gpt-5.6-luna:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.6-luna:batch",
       "name": "OpenAI: GPT-5.6 Luna (batch)",
       "api": "openai-completions",
@@ -8198,7 +8501,8 @@
         }
       }
     },
-    "openai/gpt-5.6-sol": {
+    "chat:openai/gpt-5.6-sol": {
+      "type": "chat",
       "id": "openai/gpt-5.6-sol",
       "name": "OpenAI: GPT-5.6 Sol",
       "api": "openai-completions",
@@ -8243,7 +8547,8 @@
         }
       }
     },
-    "openai/gpt-5.6-sol-pro": {
+    "chat:openai/gpt-5.6-sol-pro": {
+      "type": "chat",
       "id": "openai/gpt-5.6-sol-pro",
       "name": "OpenAI: GPT-5.6 Sol Pro",
       "api": "openai-completions",
@@ -8264,10 +8569,10 @@
         "image"
       ],
       "cost": {
-        "input": 2.0,
-        "output": 10.0,
-        "cacheRead": 0.2,
-        "cacheWrite": 2.5
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.4,
+        "cacheWrite": 5.0
       },
       "contextWindow": 1050000,
       "maxTokens": 128000,
@@ -8287,7 +8592,8 @@
         }
       }
     },
-    "openai/gpt-5.6-sol-pro:batch": {
+    "chat:openai/gpt-5.6-sol-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.6-sol-pro:batch",
       "name": "OpenAI: GPT-5.6 Sol Pro (batch)",
       "api": "openai-completions",
@@ -8331,7 +8637,8 @@
         }
       }
     },
-    "openai/gpt-5.6-sol:batch": {
+    "chat:openai/gpt-5.6-sol:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.6-sol:batch",
       "name": "OpenAI: GPT-5.6 Sol (batch)",
       "api": "openai-completions",
@@ -8375,7 +8682,8 @@
         }
       }
     },
-    "openai/gpt-5.6-terra": {
+    "chat:openai/gpt-5.6-terra": {
+      "type": "chat",
       "id": "openai/gpt-5.6-terra",
       "name": "OpenAI: GPT-5.6 Terra",
       "api": "openai-completions",
@@ -8420,7 +8728,8 @@
         }
       }
     },
-    "openai/gpt-5.6-terra-pro": {
+    "chat:openai/gpt-5.6-terra-pro": {
+      "type": "chat",
       "id": "openai/gpt-5.6-terra-pro",
       "name": "OpenAI: GPT-5.6 Terra Pro",
       "api": "openai-completions",
@@ -8464,7 +8773,8 @@
         }
       }
     },
-    "openai/gpt-5.6-terra-pro:batch": {
+    "chat:openai/gpt-5.6-terra-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.6-terra-pro:batch",
       "name": "OpenAI: GPT-5.6 Terra Pro (batch)",
       "api": "openai-completions",
@@ -8508,7 +8818,8 @@
         }
       }
     },
-    "openai/gpt-5.6-terra:batch": {
+    "chat:openai/gpt-5.6-terra:batch": {
+      "type": "chat",
       "id": "openai/gpt-5.6-terra:batch",
       "name": "OpenAI: GPT-5.6 Terra (batch)",
       "api": "openai-completions",
@@ -8552,7 +8863,8 @@
         }
       }
     },
-    "openai/gpt-5:batch": {
+    "chat:openai/gpt-5:batch": {
+      "type": "chat",
       "id": "openai/gpt-5:batch",
       "name": "OpenAI: GPT-5 (batch)",
       "api": "openai-completions",
@@ -8596,7 +8908,8 @@
         }
       }
     },
-    "openai/gpt-6-astra": {
+    "chat:openai/gpt-6-astra": {
+      "type": "chat",
       "id": "openai/gpt-6-astra",
       "name": "OpenAI: GPT-6 Astra",
       "api": "openai-completions",
@@ -8641,7 +8954,8 @@
         }
       }
     },
-    "openai/gpt-6-astra-pro": {
+    "chat:openai/gpt-6-astra-pro": {
+      "type": "chat",
       "id": "openai/gpt-6-astra-pro",
       "name": "OpenAI: GPT-6 Astra Pro",
       "api": "openai-completions",
@@ -8685,7 +8999,8 @@
         }
       }
     },
-    "openai/gpt-6-astra-pro:batch": {
+    "chat:openai/gpt-6-astra-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-6-astra-pro:batch",
       "name": "OpenAI: GPT-6 Astra Pro (batch)",
       "api": "openai-completions",
@@ -8729,7 +9044,8 @@
         }
       }
     },
-    "openai/gpt-6-astra:batch": {
+    "chat:openai/gpt-6-astra:batch": {
+      "type": "chat",
       "id": "openai/gpt-6-astra:batch",
       "name": "OpenAI: GPT-6 Astra (batch)",
       "api": "openai-completions",
@@ -8773,7 +9089,8 @@
         }
       }
     },
-    "openai/gpt-6-luna": {
+    "chat:openai/gpt-6-luna": {
+      "type": "chat",
       "id": "openai/gpt-6-luna",
       "name": "OpenAI: GPT-6 Luna",
       "api": "openai-completions",
@@ -8818,7 +9135,8 @@
         }
       }
     },
-    "openai/gpt-6-luna-pro": {
+    "chat:openai/gpt-6-luna-pro": {
+      "type": "chat",
       "id": "openai/gpt-6-luna-pro",
       "name": "OpenAI: GPT-6 Luna Pro",
       "api": "openai-completions",
@@ -8862,7 +9180,8 @@
         }
       }
     },
-    "openai/gpt-6-luna-pro:batch": {
+    "chat:openai/gpt-6-luna-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-6-luna-pro:batch",
       "name": "OpenAI: GPT-6 Luna Pro (batch)",
       "api": "openai-completions",
@@ -8906,7 +9225,8 @@
         }
       }
     },
-    "openai/gpt-6-luna:batch": {
+    "chat:openai/gpt-6-luna:batch": {
+      "type": "chat",
       "id": "openai/gpt-6-luna:batch",
       "name": "OpenAI: GPT-6 Luna (batch)",
       "api": "openai-completions",
@@ -8950,7 +9270,8 @@
         }
       }
     },
-    "openai/gpt-6-sol": {
+    "chat:openai/gpt-6-sol": {
+      "type": "chat",
       "id": "openai/gpt-6-sol",
       "name": "OpenAI: GPT-6 Sol",
       "api": "openai-completions",
@@ -8995,7 +9316,8 @@
         }
       }
     },
-    "openai/gpt-6-sol-pro": {
+    "chat:openai/gpt-6-sol-pro": {
+      "type": "chat",
       "id": "openai/gpt-6-sol-pro",
       "name": "OpenAI: GPT-6 Sol Pro",
       "api": "openai-completions",
@@ -9039,7 +9361,8 @@
         }
       }
     },
-    "openai/gpt-6-sol-pro:batch": {
+    "chat:openai/gpt-6-sol-pro:batch": {
+      "type": "chat",
       "id": "openai/gpt-6-sol-pro:batch",
       "name": "OpenAI: GPT-6 Sol Pro (batch)",
       "api": "openai-completions",
@@ -9083,7 +9406,8 @@
         }
       }
     },
-    "openai/gpt-6-sol:batch": {
+    "chat:openai/gpt-6-sol:batch": {
+      "type": "chat",
       "id": "openai/gpt-6-sol:batch",
       "name": "OpenAI: GPT-6 Sol (batch)",
       "api": "openai-completions",
@@ -9127,7 +9451,189 @@
         }
       }
     },
-    "openai/gpt-audio": {
+    "chat:openai/gpt-6.1-sol": {
+      "type": "chat",
+      "id": "openai/gpt-6.1-sol",
+      "name": "OpenAI: GPT-6.1 Sol",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true,
+        "supportsMidConvoSystemMessages": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:openai/gpt-6.1-sol-pro": {
+      "type": "chat",
+      "id": "openai/gpt-6.1-sol-pro",
+      "name": "OpenAI: GPT-6.1 Sol Pro",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:openai/gpt-6.1-sol-pro:batch": {
+      "type": "chat",
+      "id": "openai/gpt-6.1-sol-pro:batch",
+      "name": "OpenAI: GPT-6.1 Sol Pro (batch)",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cacheRead": 0.05,
+        "cacheWrite": 1.25
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:openai/gpt-6.1-sol:batch": {
+      "type": "chat",
+      "id": "openai/gpt-6.1-sol:batch",
+      "name": "OpenAI: GPT-6.1 Sol (batch)",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cacheRead": 0.05,
+        "cacheWrite": 1.25
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "compat": {
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:openai/gpt-audio": {
+      "type": "chat",
       "id": "openai/gpt-audio",
       "name": "OpenAI: GPT Audio",
       "api": "openai-completions",
@@ -9151,7 +9657,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-audio-mini": {
+    "chat:openai/gpt-audio-mini": {
+      "type": "chat",
       "id": "openai/gpt-audio-mini",
       "name": "OpenAI: GPT Audio Mini",
       "api": "openai-completions",
@@ -9175,7 +9682,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-chat-latest": {
+    "chat:openai/gpt-chat-latest": {
+      "type": "chat",
       "id": "openai/gpt-chat-latest",
       "name": "OpenAI: GPT Chat Latest",
       "api": "openai-completions",
@@ -9210,7 +9718,8 @@
         }
       }
     },
-    "openai/gpt-oss-120b": {
+    "chat:openai/gpt-oss-120b": {
+      "type": "chat",
       "id": "openai/gpt-oss-120b",
       "name": "OpenAI: gpt-oss-120b",
       "api": "openai-completions",
@@ -9230,20 +9739,21 @@
         "text"
       ],
       "cost": {
-        "input": 0.15,
-        "output": 0.6,
-        "cacheRead": 0.075,
+        "input": 0.037,
+        "output": 0.17,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 65536,
+      "maxTokens": 117964,
       "compat": {
         "thinkingFormat": "openrouter",
         "supportsStrictMode": true,
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-oss-120b:batch": {
+    "chat:openai/gpt-oss-120b:batch": {
+      "type": "chat",
       "id": "openai/gpt-oss-120b:batch",
       "name": "OpenAI: gpt-oss-120b (batch)",
       "api": "openai-completions",
@@ -9276,7 +9786,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-oss-20b": {
+    "chat:openai/gpt-oss-20b": {
+      "type": "chat",
       "id": "openai/gpt-oss-20b",
       "name": "OpenAI: gpt-oss-20b",
       "api": "openai-completions",
@@ -9298,7 +9809,7 @@
       "cost": {
         "input": 0.018,
         "output": 0.09,
-        "cacheRead": 0.0,
+        "cacheRead": 0.009,
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
@@ -9309,7 +9820,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-oss-20b:batch": {
+    "chat:openai/gpt-oss-20b:batch": {
+      "type": "chat",
       "id": "openai/gpt-oss-20b:batch",
       "name": "OpenAI: gpt-oss-20b (batch)",
       "api": "openai-completions",
@@ -9342,7 +9854,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/gpt-oss-safeguard-20b": {
+    "chat:openai/gpt-oss-safeguard-20b": {
+      "type": "chat",
       "id": "openai/gpt-oss-safeguard-20b",
       "name": "OpenAI: gpt-oss-safeguard-20b",
       "api": "openai-completions",
@@ -9369,7 +9882,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/o1": {
+    "chat:openai/o1": {
+      "type": "chat",
       "id": "openai/o1",
       "name": "OpenAI: o1",
       "api": "openai-completions",
@@ -9404,7 +9918,8 @@
         }
       }
     },
-    "openai/o3": {
+    "chat:openai/o3": {
+      "type": "chat",
       "id": "openai/o3",
       "name": "OpenAI: o3",
       "api": "openai-completions",
@@ -9439,7 +9954,8 @@
         }
       }
     },
-    "openai/o3-mini": {
+    "chat:openai/o3-mini": {
+      "type": "chat",
       "id": "openai/o3-mini",
       "name": "OpenAI: o3 Mini",
       "api": "openai-completions",
@@ -9463,7 +9979,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/o3-mini-high": {
+    "chat:openai/o3-mini-high": {
+      "type": "chat",
       "id": "openai/o3-mini-high",
       "name": "OpenAI: o3 Mini High",
       "api": "openai-completions",
@@ -9496,7 +10013,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/o3-mini:batch": {
+    "chat:openai/o3-mini:batch": {
+      "type": "chat",
       "id": "openai/o3-mini:batch",
       "name": "OpenAI: o3 Mini (batch)",
       "api": "openai-completions",
@@ -9520,7 +10038,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "openai/o3-pro": {
+    "chat:openai/o3-pro": {
+      "type": "chat",
       "id": "openai/o3-pro",
       "name": "OpenAI: o3 Pro",
       "api": "openai-completions",
@@ -9555,7 +10074,8 @@
         }
       }
     },
-    "openai/o3:batch": {
+    "chat:openai/o3:batch": {
+      "type": "chat",
       "id": "openai/o3:batch",
       "name": "OpenAI: o3 (batch)",
       "api": "openai-completions",
@@ -9590,7 +10110,8 @@
         }
       }
     },
-    "openai/o4-mini": {
+    "chat:openai/o4-mini": {
+      "type": "chat",
       "id": "openai/o4-mini",
       "name": "OpenAI: o4 Mini",
       "api": "openai-completions",
@@ -9625,7 +10146,8 @@
         }
       }
     },
-    "openai/o4-mini-high": {
+    "chat:openai/o4-mini-high": {
+      "type": "chat",
       "id": "openai/o4-mini-high",
       "name": "OpenAI: o4 Mini High",
       "api": "openai-completions",
@@ -9669,7 +10191,8 @@
         }
       }
     },
-    "openai/o4-mini:batch": {
+    "chat:openai/o4-mini:batch": {
+      "type": "chat",
       "id": "openai/o4-mini:batch",
       "name": "OpenAI: o4 Mini (batch)",
       "api": "openai-completions",
@@ -9704,7 +10227,8 @@
         }
       }
     },
-    "openrouter/auto": {
+    "chat:openrouter/auto": {
+      "type": "chat",
       "id": "openrouter/auto",
       "name": "Auto Router",
       "api": "openai-completions",
@@ -9740,7 +10264,8 @@
         }
       }
     },
-    "openrouter/auto-beta": {
+    "chat:openrouter/auto-beta": {
+      "type": "chat",
       "id": "openrouter/auto-beta",
       "name": "Auto Router (Beta)",
       "api": "openai-completions",
@@ -9776,7 +10301,8 @@
         }
       }
     },
-    "openrouter/free": {
+    "chat:openrouter/free": {
+      "type": "chat",
       "id": "openrouter/free",
       "name": "Free Models Router",
       "api": "openai-completions",
@@ -9812,7 +10338,7 @@
         }
       }
     },
-    "openrouter/fusion": {
+    "chat:openrouter/fusion": {
       "id": "openrouter/fusion",
       "name": "OpenRouter: Fusion",
       "api": "openai-completions",
@@ -9835,9 +10361,11 @@
         "thinkingFormat": "openrouter",
         "supportsStrictMode": true,
         "sendSessionAffinityHeaders": true
-      }
+      },
+      "type": "chat"
     },
-    "perceptron/perceptron-mk1.5": {
+    "chat:perceptron/perceptron-mk1.5": {
+      "type": "chat",
       "id": "perceptron/perceptron-mk1.5",
       "name": "Perceptron: Perceptron Mk1.5",
       "api": "openai-completions",
@@ -9882,7 +10410,8 @@
         }
       }
     },
-    "poolside/laguna-s-2.1": {
+    "chat:poolside/laguna-s-2.1": {
+      "type": "chat",
       "id": "poolside/laguna-s-2.1",
       "name": "Poolside: Laguna S 2.1",
       "api": "openai-completions",
@@ -9907,7 +10436,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "poolside/laguna-s-2.1:free": {
+    "chat:poolside/laguna-s-2.1:free": {
+      "type": "chat",
       "id": "poolside/laguna-s-2.1:free",
       "name": "Poolside: Laguna S 2.1 (free)",
       "api": "openai-completions",
@@ -9932,7 +10462,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "poolside/laguna-xs-2.1": {
+    "chat:poolside/laguna-xs-2.1": {
+      "type": "chat",
       "id": "poolside/laguna-xs-2.1",
       "name": "Poolside: Laguna XS 2.1",
       "api": "openai-completions",
@@ -9957,7 +10488,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "poolside/laguna-xs-2.1:free": {
+    "chat:poolside/laguna-xs-2.1:free": {
+      "type": "chat",
       "id": "poolside/laguna-xs-2.1:free",
       "name": "Poolside: Laguna XS 2.1 (free)",
       "api": "openai-completions",
@@ -9982,7 +10514,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "prism-ml/ternary-bonsai-2-27b": {
+    "chat:prism-ml/ternary-bonsai-2-27b": {
+      "type": "chat",
       "id": "prism-ml/ternary-bonsai-2-27b",
       "name": "PrismML: Ternary Bonsai 2 27B",
       "api": "openai-completions",
@@ -10005,7 +10538,7 @@
       "cost": {
         "input": 0.075,
         "output": 0.5,
-        "cacheRead": 0.0,
+        "cacheRead": 0.0375,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
@@ -10027,7 +10560,8 @@
         }
       }
     },
-    "qwen/qwen-2.5-72b-instruct": {
+    "chat:qwen/qwen-2.5-72b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen-2.5-72b-instruct",
       "name": "Qwen2.5 72B Instruct",
       "api": "openai-completions",
@@ -10052,7 +10586,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen-2.5-7b-instruct": {
+    "chat:qwen/qwen-2.5-7b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen-2.5-7b-instruct",
       "name": "Qwen: Qwen2.5 7B Instruct",
       "api": "openai-completions",
@@ -10077,7 +10612,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen-plus": {
+    "chat:qwen/qwen-plus": {
+      "type": "chat",
       "id": "qwen/qwen-plus",
       "name": "Qwen: Qwen-Plus",
       "api": "openai-completions",
@@ -10102,7 +10638,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen-plus-2025-07-28": {
+    "chat:qwen/qwen-plus-2025-07-28": {
+      "type": "chat",
       "id": "qwen/qwen-plus-2025-07-28",
       "name": "Qwen: Qwen Plus 0728",
       "api": "openai-completions",
@@ -10127,7 +10664,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-14b": {
+    "chat:qwen/qwen3-14b": {
+      "type": "chat",
       "id": "qwen/qwen3-14b",
       "name": "Qwen: Qwen3 14B",
       "api": "openai-completions",
@@ -10152,7 +10690,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-235b-a22b": {
+    "chat:qwen/qwen3-235b-a22b": {
+      "type": "chat",
       "id": "qwen/qwen3-235b-a22b",
       "name": "Qwen: Qwen3 235B A22B",
       "api": "openai-completions",
@@ -10177,7 +10716,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-235b-a22b-2507": {
+    "chat:qwen/qwen3-235b-a22b-2507": {
+      "type": "chat",
       "id": "qwen/qwen3-235b-a22b-2507",
       "name": "Qwen: Qwen3 235B A22B Instruct 2507",
       "api": "openai-completions",
@@ -10202,7 +10742,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-235b-a22b-thinking-2507": {
+    "chat:qwen/qwen3-235b-a22b-thinking-2507": {
+      "type": "chat",
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
       "name": "Qwen: Qwen3 235B A22B Thinking 2507",
       "api": "openai-completions",
@@ -10230,7 +10771,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-30b-a3b": {
+    "chat:qwen/qwen3-30b-a3b": {
+      "type": "chat",
       "id": "qwen/qwen3-30b-a3b",
       "name": "Qwen: Qwen3 30B A3B",
       "api": "openai-completions",
@@ -10255,7 +10797,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-30b-a3b-instruct-2507": {
+    "chat:qwen/qwen3-30b-a3b-instruct-2507": {
+      "type": "chat",
       "id": "qwen/qwen3-30b-a3b-instruct-2507",
       "name": "Qwen: Qwen3 30B A3B Instruct 2507",
       "api": "openai-completions",
@@ -10266,13 +10809,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.1,
-        "output": 0.3,
+        "input": 0.04815,
+        "output": 0.19305,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 262144,
-      "maxTokens": 235929,
+      "contextWindow": 128000,
+      "maxTokens": 32000,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -10280,7 +10823,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-30b-a3b-thinking-2507": {
+    "chat:qwen/qwen3-30b-a3b-thinking-2507": {
+      "type": "chat",
       "id": "qwen/qwen3-30b-a3b-thinking-2507",
       "name": "Qwen: Qwen3 30B A3B Thinking 2507",
       "api": "openai-completions",
@@ -10308,7 +10852,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-32b": {
+    "chat:qwen/qwen3-32b": {
+      "type": "chat",
       "id": "qwen/qwen3-32b",
       "name": "Qwen: Qwen3 32B",
       "api": "openai-completions",
@@ -10333,7 +10878,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-8b": {
+    "chat:qwen/qwen3-8b": {
+      "type": "chat",
       "id": "qwen/qwen3-8b",
       "name": "Qwen: Qwen3 8B",
       "api": "openai-completions",
@@ -10358,7 +10904,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-coder": {
+    "chat:qwen/qwen3-coder": {
+      "type": "chat",
       "id": "qwen/qwen3-coder",
       "name": "Qwen: Qwen3 Coder 480B A35B",
       "api": "openai-completions",
@@ -10383,7 +10930,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-coder-30b-a3b-instruct": {
+    "chat:qwen/qwen3-coder-30b-a3b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen3-coder-30b-a3b-instruct",
       "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
       "api": "openai-completions",
@@ -10408,7 +10956,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-coder-flash": {
+    "chat:qwen/qwen3-coder-flash": {
+      "type": "chat",
       "id": "qwen/qwen3-coder-flash",
       "name": "Qwen: Qwen3 Coder Flash",
       "api": "openai-completions",
@@ -10433,7 +10982,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-coder-next": {
+    "chat:qwen/qwen3-coder-next": {
+      "type": "chat",
       "id": "qwen/qwen3-coder-next",
       "name": "Qwen: Qwen3 Coder Next",
       "api": "openai-completions",
@@ -10458,7 +11008,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-coder-plus": {
+    "chat:qwen/qwen3-coder-plus": {
+      "type": "chat",
       "id": "qwen/qwen3-coder-plus",
       "name": "Qwen: Qwen3 Coder Plus",
       "api": "openai-completions",
@@ -10483,7 +11034,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-max": {
+    "chat:qwen/qwen3-max": {
+      "type": "chat",
       "id": "qwen/qwen3-max",
       "name": "Qwen: Qwen3 Max",
       "api": "openai-completions",
@@ -10508,7 +11060,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-max-thinking": {
+    "chat:qwen/qwen3-max-thinking": {
+      "type": "chat",
       "id": "qwen/qwen3-max-thinking",
       "name": "Qwen: Qwen3 Max Thinking",
       "api": "openai-completions",
@@ -10533,7 +11086,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-next-80b-a3b-instruct": {
+    "chat:qwen/qwen3-next-80b-a3b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen3-next-80b-a3b-instruct",
       "name": "Qwen: Qwen3 Next 80B A3B Instruct",
       "api": "openai-completions",
@@ -10558,7 +11112,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-next-80b-a3b-thinking": {
+    "chat:qwen/qwen3-next-80b-a3b-thinking": {
+      "type": "chat",
       "id": "qwen/qwen3-next-80b-a3b-thinking",
       "name": "Qwen: Qwen3 Next 80B A3B Thinking",
       "api": "openai-completions",
@@ -10586,7 +11141,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3-vl-235b-a22b-instruct": {
+    "chat:qwen/qwen3-vl-235b-a22b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
       "name": "Qwen: Qwen3 VL 235B A22B Instruct",
       "api": "openai-completions",
@@ -10622,7 +11178,8 @@
         }
       }
     },
-    "qwen/qwen3-vl-235b-a22b-thinking": {
+    "chat:qwen/qwen3-vl-235b-a22b-thinking": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-235b-a22b-thinking",
       "name": "Qwen: Qwen3 VL 235B A22B Thinking",
       "api": "openai-completions",
@@ -10661,7 +11218,8 @@
         }
       }
     },
-    "qwen/qwen3-vl-30b-a3b-instruct": {
+    "chat:qwen/qwen3-vl-30b-a3b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-30b-a3b-instruct",
       "name": "Qwen: Qwen3 VL 30B A3B Instruct",
       "api": "openai-completions",
@@ -10697,7 +11255,8 @@
         }
       }
     },
-    "qwen/qwen3-vl-30b-a3b-thinking": {
+    "chat:qwen/qwen3-vl-30b-a3b-thinking": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-30b-a3b-thinking",
       "name": "Qwen: Qwen3 VL 30B A3B Thinking",
       "api": "openai-completions",
@@ -10736,7 +11295,8 @@
         }
       }
     },
-    "qwen/qwen3-vl-32b-instruct": {
+    "chat:qwen/qwen3-vl-32b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-32b-instruct",
       "name": "Qwen: Qwen3 VL 32B Instruct",
       "api": "openai-completions",
@@ -10772,7 +11332,8 @@
         }
       }
     },
-    "qwen/qwen3-vl-8b-instruct": {
+    "chat:qwen/qwen3-vl-8b-instruct": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-8b-instruct",
       "name": "Qwen: Qwen3 VL 8B Instruct",
       "api": "openai-completions",
@@ -10808,7 +11369,8 @@
         }
       }
     },
-    "qwen/qwen3-vl-8b-thinking": {
+    "chat:qwen/qwen3-vl-8b-thinking": {
+      "type": "chat",
       "id": "qwen/qwen3-vl-8b-thinking",
       "name": "Qwen: Qwen3 VL 8B Thinking",
       "api": "openai-completions",
@@ -10847,7 +11409,8 @@
         }
       }
     },
-    "qwen/qwen3.5-122b-a10b": {
+    "chat:qwen/qwen3.5-122b-a10b": {
+      "type": "chat",
       "id": "qwen/qwen3.5-122b-a10b",
       "name": "Qwen: Qwen3.5-122B-A10B",
       "api": "openai-completions",
@@ -10883,7 +11446,8 @@
         }
       }
     },
-    "qwen/qwen3.5-27b": {
+    "chat:qwen/qwen3.5-27b": {
+      "type": "chat",
       "id": "qwen/qwen3.5-27b",
       "name": "Qwen: Qwen3.5-27B",
       "api": "openai-completions",
@@ -10919,7 +11483,8 @@
         }
       }
     },
-    "qwen/qwen3.5-35b-a3b": {
+    "chat:qwen/qwen3.5-35b-a3b": {
+      "type": "chat",
       "id": "qwen/qwen3.5-35b-a3b",
       "name": "Qwen: Qwen3.5-35B-A3B",
       "api": "openai-completions",
@@ -10931,13 +11496,13 @@
         "image"
       ],
       "cost": {
-        "input": 0.3125,
-        "output": 1.25,
-        "cacheRead": 0.15625,
+        "input": 0.1625,
+        "output": 1.3,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
-      "contextWindow": 256000,
-      "maxTokens": 16384,
+      "contextWindow": 262144,
+      "maxTokens": 65536,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -10955,7 +11520,8 @@
         }
       }
     },
-    "qwen/qwen3.5-397b-a17b": {
+    "chat:qwen/qwen3.5-397b-a17b": {
+      "type": "chat",
       "id": "qwen/qwen3.5-397b-a17b",
       "name": "Qwen: Qwen3.5 397B A17B",
       "api": "openai-completions",
@@ -10991,7 +11557,8 @@
         }
       }
     },
-    "qwen/qwen3.5-9b": {
+    "chat:qwen/qwen3.5-9b": {
+      "type": "chat",
       "id": "qwen/qwen3.5-9b",
       "name": "Qwen: Qwen3.5-9B",
       "api": "openai-completions",
@@ -11027,7 +11594,8 @@
         }
       }
     },
-    "qwen/qwen3.5-flash-02-23": {
+    "chat:qwen/qwen3.5-flash-02-23": {
+      "type": "chat",
       "id": "qwen/qwen3.5-flash-02-23",
       "name": "Qwen: Qwen3.5-Flash",
       "api": "openai-completions",
@@ -11063,7 +11631,8 @@
         }
       }
     },
-    "qwen/qwen3.5-plus-02-15": {
+    "chat:qwen/qwen3.5-plus-02-15": {
+      "type": "chat",
       "id": "qwen/qwen3.5-plus-02-15",
       "name": "Qwen: Qwen3.5 Plus 2026-02-15",
       "api": "openai-completions",
@@ -11099,7 +11668,8 @@
         }
       }
     },
-    "qwen/qwen3.5-plus-20260420": {
+    "chat:qwen/qwen3.5-plus-20260420": {
+      "type": "chat",
       "id": "qwen/qwen3.5-plus-20260420",
       "name": "Qwen: Qwen3.5 Plus 2026-04-20",
       "api": "openai-completions",
@@ -11135,7 +11705,8 @@
         }
       }
     },
-    "qwen/qwen3.6-27b": {
+    "chat:qwen/qwen3.6-27b": {
+      "type": "chat",
       "id": "qwen/qwen3.6-27b",
       "name": "Qwen: Qwen3.6 27B",
       "api": "openai-completions",
@@ -11148,12 +11719,12 @@
       ],
       "cost": {
         "input": 0.32,
-        "output": 2.7,
-        "cacheRead": 0.15,
+        "output": 3.2,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 262140,
+      "maxTokens": 81920,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -11171,7 +11742,8 @@
         }
       }
     },
-    "qwen/qwen3.6-35b-a3b": {
+    "chat:qwen/qwen3.6-35b-a3b": {
+      "type": "chat",
       "id": "qwen/qwen3.6-35b-a3b",
       "name": "Qwen: Qwen3.6 35B A3B",
       "api": "openai-completions",
@@ -11207,7 +11779,8 @@
         }
       }
     },
-    "qwen/qwen3.6-flash": {
+    "chat:qwen/qwen3.6-flash": {
+      "type": "chat",
       "id": "qwen/qwen3.6-flash",
       "name": "Qwen: Qwen3.6 Flash",
       "api": "openai-completions",
@@ -11243,7 +11816,8 @@
         }
       }
     },
-    "qwen/qwen3.6-max-preview": {
+    "chat:qwen/qwen3.6-max-preview": {
+      "type": "chat",
       "id": "qwen/qwen3.6-max-preview",
       "name": "Qwen: Qwen3.6 Max Preview",
       "api": "openai-completions",
@@ -11268,7 +11842,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3.6-plus": {
+    "chat:qwen/qwen3.6-plus": {
+      "type": "chat",
       "id": "qwen/qwen3.6-plus",
       "name": "Qwen: Qwen3.6 Plus",
       "api": "openai-completions",
@@ -11304,7 +11879,8 @@
         }
       }
     },
-    "qwen/qwen3.7-flash": {
+    "chat:qwen/qwen3.7-flash": {
+      "type": "chat",
       "id": "qwen/qwen3.7-flash",
       "name": "Qwen: Qwen3.7 Flash",
       "api": "openai-completions",
@@ -11340,7 +11916,8 @@
         }
       }
     },
-    "qwen/qwen3.7-max": {
+    "chat:qwen/qwen3.7-max": {
+      "type": "chat",
       "id": "qwen/qwen3.7-max",
       "name": "Qwen: Qwen3.7 Max",
       "api": "openai-completions",
@@ -11365,7 +11942,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3.7-plus": {
+    "chat:qwen/qwen3.7-plus": {
+      "type": "chat",
       "id": "qwen/qwen3.7-plus",
       "name": "Qwen: Qwen3.7 Plus",
       "api": "openai-completions",
@@ -11401,7 +11979,8 @@
         }
       }
     },
-    "qwen/qwen3.8-2.4t-a95b": {
+    "chat:qwen/qwen3.8-2.4t-a95b": {
+      "type": "chat",
       "id": "qwen/qwen3.8-2.4t-a95b",
       "name": "Qwen: Qwen3.8 2.4T A95B",
       "api": "openai-completions",
@@ -11435,7 +12014,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "qwen/qwen3.8-27b": {
+    "chat:qwen/qwen3.8-27b": {
+      "type": "chat",
       "id": "qwen/qwen3.8-27b",
       "name": "Qwen: Qwen3.8 27B",
       "api": "openai-completions",
@@ -11480,7 +12060,8 @@
         }
       }
     },
-    "qwen/qwen3.8-27b:free": {
+    "chat:qwen/qwen3.8-27b:free": {
+      "type": "chat",
       "id": "qwen/qwen3.8-27b:free",
       "name": "Qwen: Qwen3.8 27B (free)",
       "api": "openai-completions",
@@ -11525,7 +12106,8 @@
         }
       }
     },
-    "qwen/qwen3.8-flash": {
+    "chat:qwen/qwen3.8-flash": {
+      "type": "chat",
       "id": "qwen/qwen3.8-flash",
       "name": "Qwen: Qwen3.8 Flash",
       "api": "openai-completions",
@@ -11561,7 +12143,8 @@
         }
       }
     },
-    "qwen/qwen3.8-max-0902": {
+    "chat:qwen/qwen3.8-max-0902": {
+      "type": "chat",
       "id": "qwen/qwen3.8-max-0902",
       "name": "Qwen: Qwen3.8 Max (0902)",
       "api": "openai-completions",
@@ -11606,7 +12189,8 @@
         }
       }
     },
-    "qwen/qwen3.8-max-prime": {
+    "chat:qwen/qwen3.8-max-prime": {
+      "type": "chat",
       "id": "qwen/qwen3.8-max-prime",
       "name": "Qwen: Qwen3.8 Max Prime",
       "api": "openai-completions",
@@ -11651,7 +12235,8 @@
         }
       }
     },
-    "qwen/qwen3.8-omni-flash": {
+    "chat:qwen/qwen3.8-omni-flash": {
+      "type": "chat",
       "id": "qwen/qwen3.8-omni-flash",
       "name": "Qwen: Qwen3.8 Omni Flash",
       "api": "openai-completions",
@@ -11687,7 +12272,8 @@
         }
       }
     },
-    "rekaai/reka-edge": {
+    "chat:rekaai/reka-edge": {
+      "type": "chat",
       "id": "rekaai/reka-edge",
       "name": "Reka Edge",
       "api": "openai-completions",
@@ -11723,7 +12309,8 @@
         }
       }
     },
-    "relace/relace-search": {
+    "chat:relace/relace-search": {
+      "type": "chat",
       "id": "relace/relace-search",
       "name": "Relace: Relace Search",
       "api": "openai-completions",
@@ -11748,7 +12335,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "sakana/fugu-max": {
+    "chat:sakana/fugu-max": {
+      "type": "chat",
       "id": "sakana/fugu-max",
       "name": "Sakana: Fugu Max",
       "api": "openai-completions",
@@ -11793,7 +12381,8 @@
         }
       }
     },
-    "sakana/fugu-ultra": {
+    "chat:sakana/fugu-ultra": {
+      "type": "chat",
       "id": "sakana/fugu-ultra",
       "name": "Sakana: Fugu Ultra",
       "api": "openai-completions",
@@ -11838,7 +12427,8 @@
         }
       }
     },
-    "sakana/fugu-ultra-v2": {
+    "chat:sakana/fugu-ultra-v2": {
+      "type": "chat",
       "id": "sakana/fugu-ultra-v2",
       "name": "Sakana: Fugu Ultra v2",
       "api": "openai-completions",
@@ -11883,7 +12473,8 @@
         }
       }
     },
-    "sakana/sakana-namazu": {
+    "chat:sakana/sakana-namazu": {
+      "type": "chat",
       "id": "sakana/sakana-namazu",
       "name": "Sakana: Sakana Namazu",
       "api": "openai-completions",
@@ -11928,7 +12519,8 @@
         }
       }
     },
-    "sao10k/l3.1-euryale-70b": {
+    "chat:sao10k/l3.1-euryale-70b": {
+      "type": "chat",
       "id": "sao10k/l3.1-euryale-70b",
       "name": "Sao10K: Llama 3.1 Euryale 70B v2.2",
       "api": "openai-completions",
@@ -11953,7 +12545,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "stealth/space-bunny-alpha": {
+    "chat:stealth/space-bunny-alpha": {
+      "type": "chat",
       "id": "stealth/space-bunny-alpha",
       "name": "Space Bunny Alpha",
       "api": "openai-completions",
@@ -11998,7 +12591,8 @@
         }
       }
     },
-    "stepfun/step-3.5-flash": {
+    "chat:stepfun/step-3.5-flash": {
+      "type": "chat",
       "id": "stepfun/step-3.5-flash",
       "name": "StepFun: Step 3.5 Flash",
       "api": "openai-completions",
@@ -12026,7 +12620,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "stepfun/step-3.7-flash": {
+    "chat:stepfun/step-3.7-flash": {
+      "type": "chat",
       "id": "stepfun/step-3.7-flash",
       "name": "StepFun: Step 3.7 Flash",
       "api": "openai-completions",
@@ -12071,7 +12666,8 @@
         }
       }
     },
-    "tencent/hy3": {
+    "chat:tencent/hy3": {
+      "type": "chat",
       "id": "tencent/hy3",
       "name": "Tencent: Hy3",
       "api": "openai-completions",
@@ -12105,7 +12701,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "tencent/hy3-preview": {
+    "chat:tencent/hy3-preview": {
+      "type": "chat",
       "id": "tencent/hy3-preview",
       "name": "Tencent: Hy3 preview",
       "api": "openai-completions",
@@ -12139,7 +12736,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "tencent/hy4-preview": {
+    "chat:tencent/hy4-preview": {
+      "type": "chat",
       "id": "tencent/hy4-preview",
       "name": "Tencent: Hy4 preview",
       "api": "openai-completions",
@@ -12159,9 +12757,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.834,
-        "output": 2.501,
-        "cacheRead": 0.042,
+        "input": 0.7506,
+        "output": 2.2509,
+        "cacheRead": 0.0378,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -12173,7 +12771,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "thinkingmachines/inkling": {
+    "chat:thinkingmachines/inkling": {
+      "type": "chat",
       "id": "thinkingmachines/inkling",
       "name": "Thinking Machines: Inkling",
       "api": "openai-completions",
@@ -12218,7 +12817,8 @@
         }
       }
     },
-    "thinkingmachines/inkling-small": {
+    "chat:thinkingmachines/inkling-small": {
+      "type": "chat",
       "id": "thinkingmachines/inkling-small",
       "name": "Thinking Machines: Inkling Small",
       "api": "openai-completions",
@@ -12263,7 +12863,8 @@
         }
       }
     },
-    "thinkingmachines/inkling-small:free": {
+    "chat:thinkingmachines/inkling-small:free": {
+      "type": "chat",
       "id": "thinkingmachines/inkling-small:free",
       "name": "Thinking Machines: Inkling Small (free)",
       "api": "openai-completions",
@@ -12308,7 +12909,8 @@
         }
       }
     },
-    "thinkingmachines/inkling:free": {
+    "chat:thinkingmachines/inkling:free": {
+      "type": "chat",
       "id": "thinkingmachines/inkling:free",
       "name": "Thinking Machines: Inkling (free)",
       "api": "openai-completions",
@@ -12353,7 +12955,45 @@
         }
       }
     },
-    "unbiased/pareto": {
+    "chat:typesafe/jev-router": {
+      "type": "chat",
+      "id": "typesafe/jev-router",
+      "name": "TypeSafe: Jev Router",
+      "api": "openai-completions",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "provider": "openrouter",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": -1000000.0,
+        "output": -1000000.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 4096,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "thinkingFormat": "openrouter",
+        "supportsStrictMode": true,
+        "sendSessionAffinityHeaders": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "chat:unbiased/pareto": {
+      "type": "chat",
       "id": "unbiased/pareto",
       "name": "Pareto",
       "api": "openai-completions",
@@ -12389,7 +13029,8 @@
         }
       }
     },
-    "upstage/solar-mini4": {
+    "chat:upstage/solar-mini4": {
+      "type": "chat",
       "id": "upstage/solar-mini4",
       "name": "Upstage: Solar Mini 4",
       "api": "openai-completions",
@@ -12423,7 +13064,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "upstage/solar-pro-3": {
+    "chat:upstage/solar-pro-3": {
+      "type": "chat",
       "id": "upstage/solar-pro-3",
       "name": "Upstage: Solar Pro 3",
       "api": "openai-completions",
@@ -12457,7 +13099,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "upstage/solar-pro4": {
+    "chat:upstage/solar-pro4": {
+      "type": "chat",
       "id": "upstage/solar-pro4",
       "name": "Upstage: Solar Pro 4",
       "api": "openai-completions",
@@ -12491,7 +13134,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "x-ai/grok-4.20": {
+    "chat:x-ai/grok-4.20": {
+      "type": "chat",
       "id": "x-ai/grok-4.20",
       "name": "SpaceXAI: Grok 4.20",
       "api": "openai-completions",
@@ -12527,7 +13171,8 @@
         }
       }
     },
-    "x-ai/grok-4.3": {
+    "chat:x-ai/grok-4.3": {
+      "type": "chat",
       "id": "x-ai/grok-4.3",
       "name": "SpaceXAI: Grok 4.3",
       "api": "openai-completions",
@@ -12572,7 +13217,8 @@
         }
       }
     },
-    "x-ai/grok-4.3:batch": {
+    "chat:x-ai/grok-4.3:batch": {
+      "type": "chat",
       "id": "x-ai/grok-4.3:batch",
       "name": "SpaceXAI: Grok 4.3 (batch)",
       "api": "openai-completions",
@@ -12617,7 +13263,8 @@
         }
       }
     },
-    "x-ai/grok-4.5": {
+    "chat:x-ai/grok-4.5": {
+      "type": "chat",
       "id": "x-ai/grok-4.5",
       "name": "SpaceXAI: Grok 4.5",
       "api": "openai-completions",
@@ -12662,7 +13309,8 @@
         }
       }
     },
-    "x-ai/grok-4.6": {
+    "chat:x-ai/grok-4.6": {
+      "type": "chat",
       "id": "x-ai/grok-4.6",
       "name": "SpaceXAI: Grok 4.6",
       "api": "openai-completions",
@@ -12707,7 +13355,8 @@
         }
       }
     },
-    "x-ai/grok-4.7": {
+    "chat:x-ai/grok-4.7": {
+      "type": "chat",
       "id": "x-ai/grok-4.7",
       "name": "SpaceXAI: Grok 4.7",
       "api": "openai-completions",
@@ -12728,9 +13377,9 @@
         "image"
       ],
       "cost": {
-        "input": 1.6,
-        "output": 4.8,
-        "cacheRead": 0.4,
+        "input": 2.0,
+        "output": 6.0,
+        "cacheRead": 0.5,
         "cacheWrite": 0.0
       },
       "contextWindow": 500000,
@@ -12752,7 +13401,8 @@
         }
       }
     },
-    "x-ai/grok-build-0.1": {
+    "chat:x-ai/grok-build-0.1": {
+      "type": "chat",
       "id": "x-ai/grok-build-0.1",
       "name": "SpaceXAI: Grok Build 0.1",
       "api": "openai-completions",
@@ -12791,7 +13441,8 @@
         }
       }
     },
-    "xiaomi/mimo-v2.5": {
+    "chat:xiaomi/mimo-v2.5": {
+      "type": "chat",
       "id": "xiaomi/mimo-v2.5",
       "name": "Xiaomi: MiMo-V2.5",
       "api": "openai-completions",
@@ -12827,7 +13478,8 @@
         }
       }
     },
-    "xiaomi/mimo-v2.5-pro": {
+    "chat:xiaomi/mimo-v2.5-pro": {
+      "type": "chat",
       "id": "xiaomi/mimo-v2.5-pro",
       "name": "Xiaomi: MiMo-V2.5-Pro",
       "api": "openai-completions",
@@ -12852,7 +13504,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "xiaomi/mimo-v2.6-flash": {
+    "chat:xiaomi/mimo-v2.6-flash": {
+      "type": "chat",
       "id": "xiaomi/mimo-v2.6-flash",
       "name": "Xiaomi: MiMo-V2.6-Flash",
       "api": "openai-completions",
@@ -12888,7 +13541,8 @@
         }
       }
     },
-    "xiaomi/mimo-v2.6-pro": {
+    "chat:xiaomi/mimo-v2.6-pro": {
+      "type": "chat",
       "id": "xiaomi/mimo-v2.6-pro",
       "name": "Xiaomi: MiMo-V2.6-Pro",
       "api": "openai-completions",
@@ -12924,7 +13578,8 @@
         }
       }
     },
-    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+    "chat:xiaomi/mimo-v2.6-pro-ultraspeed": {
+      "type": "chat",
       "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
       "name": "Xiaomi: MiMo-V2.6-Pro-UltraSpeed",
       "api": "openai-completions",
@@ -12960,7 +13615,8 @@
         }
       }
     },
-    "z-ai/glm-4.5": {
+    "chat:z-ai/glm-4.5": {
+      "type": "chat",
       "id": "z-ai/glm-4.5",
       "name": "Z.ai: GLM 4.5",
       "api": "openai-completions",
@@ -12985,7 +13641,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-4.5-air": {
+    "chat:z-ai/glm-4.5-air": {
+      "type": "chat",
       "id": "z-ai/glm-4.5-air",
       "name": "Z.ai: GLM 4.5 Air",
       "api": "openai-completions",
@@ -13010,7 +13667,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-4.5v": {
+    "chat:z-ai/glm-4.5v": {
+      "type": "chat",
       "id": "z-ai/glm-4.5v",
       "name": "Z.ai: GLM 4.5V",
       "api": "openai-completions",
@@ -13046,7 +13704,8 @@
         }
       }
     },
-    "z-ai/glm-4.6": {
+    "chat:z-ai/glm-4.6": {
+      "type": "chat",
       "id": "z-ai/glm-4.6",
       "name": "Z.ai: GLM 4.6",
       "api": "openai-completions",
@@ -13071,7 +13730,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-4.6v": {
+    "chat:z-ai/glm-4.6v": {
+      "type": "chat",
       "id": "z-ai/glm-4.6v",
       "name": "Z.ai: GLM 4.6V",
       "api": "openai-completions",
@@ -13107,7 +13767,8 @@
         }
       }
     },
-    "z-ai/glm-4.7": {
+    "chat:z-ai/glm-4.7": {
+      "type": "chat",
       "id": "z-ai/glm-4.7",
       "name": "Z.ai: GLM 4.7",
       "api": "openai-completions",
@@ -13132,7 +13793,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-4.7-flash": {
+    "chat:z-ai/glm-4.7-flash": {
+      "type": "chat",
       "id": "z-ai/glm-4.7-flash",
       "name": "Z.ai: GLM 4.7 Flash",
       "api": "openai-completions",
@@ -13157,7 +13819,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5": {
+    "chat:z-ai/glm-5": {
+      "type": "chat",
       "id": "z-ai/glm-5",
       "name": "Z.ai: GLM 5",
       "api": "openai-completions",
@@ -13182,7 +13845,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5-turbo": {
+    "chat:z-ai/glm-5-turbo": {
+      "type": "chat",
       "id": "z-ai/glm-5-turbo",
       "name": "Z.ai: GLM 5 Turbo",
       "api": "openai-completions",
@@ -13207,7 +13871,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5.1": {
+    "chat:z-ai/glm-5.1": {
+      "type": "chat",
       "id": "z-ai/glm-5.1",
       "name": "Z.ai: GLM 5.1",
       "api": "openai-completions",
@@ -13232,7 +13897,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5.2": {
+    "chat:z-ai/glm-5.2": {
+      "type": "chat",
       "id": "z-ai/glm-5.2",
       "name": "Z.ai: GLM 5.2",
       "api": "openai-completions",
@@ -13252,13 +13918,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.6496,
-        "output": 2.0416,
-        "cacheRead": 0.12064,
+        "input": 0.3249,
+        "output": 3.99,
+        "cacheRead": 0.26,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 131072,
+      "maxTokens": 943718,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -13266,7 +13932,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5.3": {
+    "chat:z-ai/glm-5.3": {
+      "type": "chat",
       "id": "z-ai/glm-5.3",
       "name": "Z.ai: GLM 5.3",
       "api": "openai-completions",
@@ -13300,7 +13967,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5.3-flash": {
+    "chat:z-ai/glm-5.3-flash": {
+      "type": "chat",
       "id": "z-ai/glm-5.3-flash",
       "name": "Z.ai: GLM 5.3 Flash",
       "api": "openai-completions",
@@ -13321,13 +13989,13 @@
         "image"
       ],
       "cost": {
-        "input": 0.045,
-        "output": 0.14,
-        "cacheRead": 0.01,
+        "input": 0.15,
+        "output": 0.5,
+        "cacheRead": 0.03,
         "cacheWrite": 0.0
       },
-      "contextWindow": 1048576,
-      "maxTokens": 128000,
+      "contextWindow": 1048575,
+      "maxTokens": 943717,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -13345,7 +14013,8 @@
         }
       }
     },
-    "z-ai/glm-5.3-flash:batch": {
+    "chat:z-ai/glm-5.3-flash:batch": {
+      "type": "chat",
       "id": "z-ai/glm-5.3-flash:batch",
       "name": "Z.ai: GLM 5.3 Flash (batch)",
       "api": "openai-completions",
@@ -13390,7 +14059,8 @@
         }
       }
     },
-    "z-ai/glm-5.3-flashx": {
+    "chat:z-ai/glm-5.3-flashx": {
+      "type": "chat",
       "id": "z-ai/glm-5.3-flashx",
       "name": "Z.ai: GLM 5.3 FlashX",
       "api": "openai-completions",
@@ -13435,7 +14105,8 @@
         }
       }
     },
-    "z-ai/glm-5.3-prime": {
+    "chat:z-ai/glm-5.3-prime": {
+      "type": "chat",
       "id": "z-ai/glm-5.3-prime",
       "name": "Z.ai: GLM 5.3 Prime",
       "api": "openai-completions",
@@ -13469,7 +14140,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5.3:batch": {
+    "chat:z-ai/glm-5.3:batch": {
+      "type": "chat",
       "id": "z-ai/glm-5.3:batch",
       "name": "Z.ai: GLM 5.3 (batch)",
       "api": "openai-completions",
@@ -13503,7 +14175,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "z-ai/glm-5v-turbo": {
+    "chat:z-ai/glm-5v-turbo": {
+      "type": "chat",
       "id": "z-ai/glm-5v-turbo",
       "name": "Z.ai: GLM 5V Turbo",
       "api": "openai-completions",
@@ -13539,7 +14212,8 @@
         }
       }
     },
-    "~anthropic/claude-fable-latest": {
+    "chat:~anthropic/claude-fable-latest": {
+      "type": "chat",
       "id": "~anthropic/claude-fable-latest",
       "name": "Anthropic: Claude Fable Latest",
       "api": "openai-completions",
@@ -13585,7 +14259,8 @@
         }
       }
     },
-    "~anthropic/claude-haiku-latest": {
+    "chat:~anthropic/claude-haiku-latest": {
+      "type": "chat",
       "id": "~anthropic/claude-haiku-latest",
       "name": "Anthropic: Claude Haiku Latest",
       "api": "openai-completions",
@@ -13622,7 +14297,8 @@
         }
       }
     },
-    "~anthropic/claude-opus-latest": {
+    "chat:~anthropic/claude-opus-latest": {
+      "type": "chat",
       "id": "~anthropic/claude-opus-latest",
       "name": "Anthropic: Claude Opus Latest",
       "api": "openai-completions",
@@ -13668,7 +14344,8 @@
         }
       }
     },
-    "~anthropic/claude-sonnet-latest": {
+    "chat:~anthropic/claude-sonnet-latest": {
+      "type": "chat",
       "id": "~anthropic/claude-sonnet-latest",
       "name": "Anthropic: Claude Sonnet Latest",
       "api": "openai-completions",
@@ -13676,7 +14353,7 @@
       "provider": "openrouter",
       "reasoning": true,
       "thinkingLevelMap": {
-        "off": "none",
+        "off": null,
         "minimal": null,
         "low": "low",
         "medium": "medium",
@@ -13714,7 +14391,8 @@
         }
       }
     },
-    "~deepseek/deepseek-flash-latest": {
+    "chat:~deepseek/deepseek-flash-latest": {
+      "type": "chat",
       "id": "~deepseek/deepseek-flash-latest",
       "name": "DeepSeek: DeepSeek Flash Latest",
       "api": "openai-completions",
@@ -13735,9 +14413,9 @@
         "image"
       ],
       "cost": {
-        "input": 0.1,
-        "output": 0.5,
-        "cacheRead": 0.01,
+        "input": 0.0198,
+        "output": 0.396,
+        "cacheRead": 0.00291,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -13759,7 +14437,8 @@
         }
       }
     },
-    "~deepseek/deepseek-pro-latest": {
+    "chat:~deepseek/deepseek-pro-latest": {
+      "type": "chat",
       "id": "~deepseek/deepseek-pro-latest",
       "name": "DeepSeek: DeepSeek Pro Latest",
       "api": "openai-completions",
@@ -13779,13 +14458,13 @@
         "text"
       ],
       "cost": {
-        "input": 0.2528,
-        "output": 1.9584,
-        "cacheRead": 0.08832,
+        "input": 0.123,
+        "output": 3.5,
+        "cacheRead": 0.123,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 943718,
+      "maxTokens": 393216,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -13793,7 +14472,8 @@
         "sendSessionAffinityHeaders": true
       }
     },
-    "~deepseek/deepseek-v4-flash-latest": {
+    "chat:~deepseek/deepseek-v4-flash-latest": {
+      "type": "chat",
       "id": "~deepseek/deepseek-v4-flash-latest",
       "name": "DeepSeek: DeepSeek V4 Flash Latest",
       "api": "openai-completions",
@@ -13813,9 +14493,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.03,
-        "output": 0.32,
-        "cacheRead": 0.016,
+        "input": 0.0089,
+        "output": 1.28,
+        "cacheRead": 0.0089,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -13828,7 +14508,8 @@
         "requiresReasoningContentOnAssistantMessages": true
       }
     },
-    "~google/gemini-flash-latest": {
+    "chat:~google/gemini-flash-latest": {
+      "type": "chat",
       "id": "~google/gemini-flash-latest",
       "name": "Google: Gemini Flash Latest",
       "api": "openai-completions",
@@ -13873,7 +14554,8 @@
         }
       }
     },
-    "~google/gemini-pro-latest": {
+    "chat:~google/gemini-pro-latest": {
+      "type": "chat",
       "id": "~google/gemini-pro-latest",
       "name": "Google: Gemini Pro Latest",
       "api": "openai-completions",
@@ -13918,7 +14600,8 @@
         }
       }
     },
-    "~moonshotai/kimi-latest": {
+    "chat:~moonshotai/kimi-latest": {
+      "type": "chat",
       "id": "~moonshotai/kimi-latest",
       "name": "MoonshotAI: Kimi Latest",
       "api": "openai-completions",
@@ -13939,9 +14622,9 @@
         "image"
       ],
       "cost": {
-        "input": 1.2,
-        "output": 10.5346,
-        "cacheRead": 0.3,
+        "input": 0.28,
+        "output": 10.0,
+        "cacheRead": 0.27,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -13963,7 +14646,8 @@
         }
       }
     },
-    "~openai/gpt-astra-latest": {
+    "chat:~openai/gpt-astra-latest": {
+      "type": "chat",
       "id": "~openai/gpt-astra-latest",
       "name": "OpenAI: GPT Astra Latest",
       "api": "openai-completions",
@@ -14008,7 +14692,8 @@
         }
       }
     },
-    "~openai/gpt-luna-latest": {
+    "chat:~openai/gpt-luna-latest": {
+      "type": "chat",
       "id": "~openai/gpt-luna-latest",
       "name": "OpenAI: GPT Luna Latest",
       "api": "openai-completions",
@@ -14053,7 +14738,8 @@
         }
       }
     },
-    "~openai/gpt-mini-latest": {
+    "chat:~openai/gpt-mini-latest": {
+      "type": "chat",
       "id": "~openai/gpt-mini-latest",
       "name": "OpenAI: GPT Mini Latest",
       "api": "openai-completions",
@@ -14098,7 +14784,8 @@
         }
       }
     },
-    "~openai/gpt-sol-latest": {
+    "chat:~openai/gpt-sol-latest": {
+      "type": "chat",
       "id": "~openai/gpt-sol-latest",
       "name": "OpenAI: GPT Sol Latest",
       "api": "openai-completions",
@@ -14106,7 +14793,7 @@
       "provider": "openrouter",
       "reasoning": true,
       "thinkingLevelMap": {
-        "off": "none",
+        "off": null,
         "minimal": null,
         "low": "low",
         "medium": "medium",
@@ -14121,7 +14808,7 @@
       "cost": {
         "input": 2.0,
         "output": 10.0,
-        "cacheRead": 0.2,
+        "cacheRead": 0.1,
         "cacheWrite": 2.5
       },
       "contextWindow": 1050000,
@@ -14143,7 +14830,8 @@
         }
       }
     },
-    "~openai/gpt-terra-latest": {
+    "chat:~openai/gpt-terra-latest": {
+      "type": "chat",
       "id": "~openai/gpt-terra-latest",
       "name": "OpenAI: GPT Terra Latest",
       "api": "openai-completions",
@@ -14188,7 +14876,8 @@
         }
       }
     },
-    "~x-ai/grok-latest": {
+    "chat:~x-ai/grok-latest": {
+      "type": "chat",
       "id": "~x-ai/grok-latest",
       "name": "xAI: Grok Latest",
       "api": "openai-completions",
@@ -14209,9 +14898,9 @@
         "image"
       ],
       "cost": {
-        "input": 1.6,
-        "output": 4.8,
-        "cacheRead": 0.4,
+        "input": 2.0,
+        "output": 6.0,
+        "cacheRead": 0.5,
         "cacheWrite": 0.0
       },
       "contextWindow": 500000,
@@ -14233,7 +14922,8 @@
         }
       }
     },
-    "~z-ai/glm-flash-latest": {
+    "chat:~z-ai/glm-flash-latest": {
+      "type": "chat",
       "id": "~z-ai/glm-flash-latest",
       "name": "Z.ai: GLM Flash Latest",
       "api": "openai-completions",
@@ -14254,13 +14944,13 @@
         "image"
       ],
       "cost": {
-        "input": 0.045,
-        "output": 0.14,
+        "input": 0.02,
+        "output": 0.2475,
         "cacheRead": 0.01,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 128000,
+      "maxTokens": 943718,
       "compat": {
         "supportsDeveloperRole": false,
         "thinkingFormat": "openrouter",
@@ -14278,7 +14968,8 @@
         }
       }
     },
-    "~z-ai/glm-latest": {
+    "chat:~z-ai/glm-latest": {
+      "type": "chat",
       "id": "~z-ai/glm-latest",
       "name": "Z.ai: GLM Latest",
       "api": "openai-completions",
@@ -14298,9 +14989,9 @@
         "text"
       ],
       "cost": {
-        "input": 0.5614,
-        "output": 1.7644,
-        "cacheRead": 0.10426,
+        "input": 0.1736,
+        "output": 0.5456,
+        "cacheRead": 0.03224,
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
@@ -14311,6 +15002,1928 @@
         "supportsStrictMode": true,
         "sendSessionAffinityHeaders": true
       }
+    }
+  },
+  "openrouter-images": {
+    "image:black-forest-labs/flux.2-flex": {
+      "type": "image",
+      "id": "black-forest-labs/flux.2-flex",
+      "name": "Black Forest Labs: FLUX.2 Flex",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:black-forest-labs/flux.2-klein-4b": {
+      "type": "image",
+      "id": "black-forest-labs/flux.2-klein-4b",
+      "name": "Black Forest Labs: FLUX.2 Klein 4B",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:black-forest-labs/flux.2-max": {
+      "type": "image",
+      "id": "black-forest-labs/flux.2-max",
+      "name": "Black Forest Labs: FLUX.2 Max",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:black-forest-labs/flux.2-pro": {
+      "type": "image",
+      "id": "black-forest-labs/flux.2-pro",
+      "name": "Black Forest Labs: FLUX.2 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:bytedance-seed/seedream-4.5": {
+      "type": "image",
+      "id": "bytedance-seed/seedream-4.5",
+      "name": "ByteDance Seed: Seedream 4.5",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:bytedance-seed/seedream-5-0-lite": {
+      "type": "image",
+      "id": "bytedance-seed/seedream-5-0-lite",
+      "name": "ByteDance Seed: Seedream 5.0 Lite",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:bytedance-seed/seedream-5-0-pro": {
+      "type": "image",
+      "id": "bytedance-seed/seedream-5-0-pro",
+      "name": "ByteDance Seed: Seedream 5.0 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:google/gemini-2.5-flash-image": {
+      "type": "image",
+      "id": "google/gemini-2.5-flash-image",
+      "name": "Google: Nano Banana (Gemini 2.5 Flash Image)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 2.5,
+        "cacheRead": 0.03,
+        "cacheWrite": 0.083333
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:google/gemini-3-pro-image": {
+      "type": "image",
+      "id": "google/gemini-3-pro-image",
+      "name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 12.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 0.375
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:google/gemini-3-pro-image-preview": {
+      "type": "image",
+      "id": "google/gemini-3-pro-image-preview",
+      "name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 2.0,
+        "output": 12.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 0.375
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:google/gemini-3.1-flash-image": {
+      "type": "image",
+      "id": "google/gemini-3.1-flash-image",
+      "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:google/gemini-3.1-flash-image-preview": {
+      "type": "image",
+      "id": "google/gemini-3.1-flash-image-preview",
+      "name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:google/gemini-3.1-flash-lite-image": {
+      "type": "image",
+      "id": "google/gemini-3.1-flash-lite-image",
+      "name": "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 0.25,
+        "output": 1.5,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:inclusionai/ming-image-0.1-design": {
+      "type": "image",
+      "id": "inclusionai/ming-image-0.1-design",
+      "name": "inclusionAI: Ming Image 0.1 Design",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      }
+    },
+    "image:inclusionai/ming-image-0.1-design-layer": {
+      "type": "image",
+      "id": "inclusionai/ming-image-0.1-design-layer",
+      "name": "inclusionAI: Ming Image 0.1 Design Layer",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:krea/krea-2-large": {
+      "type": "image",
+      "id": "krea/krea-2-large",
+      "name": "Krea: Krea 2 Large",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:krea/krea-2-medium": {
+      "type": "image",
+      "id": "krea/krea-2-medium",
+      "name": "Krea: Krea 2 Medium",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:krea/krea-2-medium-turbo": {
+      "type": "image",
+      "id": "krea/krea-2-medium-turbo",
+      "name": "Krea: Krea 2 Medium Turbo",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:meta/muse-image": {
+      "type": "image",
+      "id": "meta/muse-image",
+      "name": "Meta: Muse Image",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:microsoft/mai-image-2.5": {
+      "type": "image",
+      "id": "microsoft/mai-image-2.5",
+      "name": "Microsoft AI: MAI-Image-2.5",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 5.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:microsoft/mai-image-2.5-pro": {
+      "type": "image",
+      "id": "microsoft/mai-image-2.5-pro",
+      "name": "Microsoft AI: MAI-Image-2.5 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 5.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:microsoft/mai-image-2.6": {
+      "type": "image",
+      "id": "microsoft/mai-image-2.6",
+      "name": "Microsoft AI: MAI-Image-2.6",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 5.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:microsoft/mai-image-2.6-flash": {
+      "type": "image",
+      "id": "microsoft/mai-image-2.6-flash",
+      "name": "Microsoft AI: MAI-Image-2.6 Flash",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 1.75,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-5-image": {
+      "type": "image",
+      "id": "openai/gpt-5-image",
+      "name": "OpenAI: GPT-5 Image",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 10.0,
+        "output": 10.0,
+        "cacheRead": 1.25,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-5-image-mini": {
+      "type": "image",
+      "id": "openai/gpt-5-image-mini",
+      "name": "OpenAI: GPT-5 Image Mini",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 2.5,
+        "output": 2.0,
+        "cacheRead": 0.25,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-5.4-image-2": {
+      "type": "image",
+      "id": "openai/gpt-5.4-image-2",
+      "name": "OpenAI: GPT-5.4 Image 2",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "image",
+        "text"
+      ],
+      "output": [
+        "image",
+        "text"
+      ],
+      "cost": {
+        "input": 8.0,
+        "output": 15.0,
+        "cacheRead": 2.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-image-1": {
+      "type": "image",
+      "id": "openai/gpt-image-1",
+      "name": "OpenAI: GPT Image 1",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 10.0,
+        "output": 10.0,
+        "cacheRead": 1.25,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-image-1-mini": {
+      "type": "image",
+      "id": "openai/gpt-image-1-mini",
+      "name": "OpenAI: GPT Image 1 Mini",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 2.5,
+        "output": 2.5,
+        "cacheRead": 0.25,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-image-2": {
+      "type": "image",
+      "id": "openai/gpt-image-2",
+      "name": "OpenAI: GPT Image 2",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 8.0,
+        "output": 8.0,
+        "cacheRead": 2.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-image-2.5-flare": {
+      "type": "image",
+      "id": "openai/gpt-image-2.5-flare",
+      "name": "OpenAI: GPT Image 2.5 Flare",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 8.0,
+        "output": 8.0,
+        "cacheRead": 2.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openai/gpt-image-2.5-sunburst": {
+      "type": "image",
+      "id": "openai/gpt-image-2.5-sunburst",
+      "name": "OpenAI: GPT Image 2.5 Sunburst",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 8.0,
+        "output": 8.0,
+        "cacheRead": 2.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openrouter/auto": {
+      "type": "image",
+      "id": "openrouter/auto",
+      "name": "Auto Router",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": -1000000.0,
+        "output": -1000000.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:openrouter/auto-beta": {
+      "type": "image",
+      "id": "openrouter/auto-beta",
+      "name": "Auto Router (Beta)",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": -1000000.0,
+        "output": -1000000.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:qwen/qwen-image-3": {
+      "type": "image",
+      "id": "qwen/qwen-image-3",
+      "name": "Qwen: Qwen Image 3",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:qwen/qwen-image-3-pro": {
+      "type": "image",
+      "id": "qwen/qwen-image-3-pro",
+      "name": "Qwen: Qwen Image 3 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v3": {
+      "type": "image",
+      "id": "recraft/recraft-v3",
+      "name": "Recraft: Recraft V3",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4": {
+      "type": "image",
+      "id": "recraft/recraft-v4",
+      "name": "Recraft: Recraft V4",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-pro": {
+      "type": "image",
+      "id": "recraft/recraft-v4-pro",
+      "name": "Recraft: Recraft V4 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-pro-vector": {
+      "type": "image",
+      "id": "recraft/recraft-v4-pro-vector",
+      "name": "Recraft: Recraft V4 Pro Vector",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-styles": {
+      "type": "image",
+      "id": "recraft/recraft-v4-styles",
+      "name": "Recraft: Recraft V4 Styles",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-styles-pro": {
+      "type": "image",
+      "id": "recraft/recraft-v4-styles-pro",
+      "name": "Recraft: Recraft V4 Styles Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-styles-pro-vector": {
+      "type": "image",
+      "id": "recraft/recraft-v4-styles-pro-vector",
+      "name": "Recraft: Recraft V4 Styles Pro Vector",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-styles-vector": {
+      "type": "image",
+      "id": "recraft/recraft-v4-styles-vector",
+      "name": "Recraft: Recraft V4 Styles Vector",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4-vector": {
+      "type": "image",
+      "id": "recraft/recraft-v4-vector",
+      "name": "Recraft: Recraft V4 Vector",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4.1": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1",
+      "name": "Recraft: Recraft V4.1",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4.1-flash": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1-flash",
+      "name": "Recraft: Recraft V4.1 Flash",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      }
+    },
+    "image:recraft/recraft-v4.1-pro": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1-pro",
+      "name": "Recraft: Recraft V4.1 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4.1-pro-vector": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1-pro-vector",
+      "name": "Recraft: Recraft V4.1 Pro Vector",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4.1-utility": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1-utility",
+      "name": "Recraft: Recraft V4.1 Utility",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4.1-utility-pro": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1-utility-pro",
+      "name": "Recraft: Recraft V4.1 Utility Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:recraft/recraft-v4.1-vector": {
+      "type": "image",
+      "id": "recraft/recraft-v4.1-vector",
+      "name": "Recraft: Recraft V4.1 Vector",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:sourceful/riverflow-v2-fast": {
+      "type": "image",
+      "id": "sourceful/riverflow-v2-fast",
+      "name": "Sourceful: Riverflow V2 Fast",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:sourceful/riverflow-v2-pro": {
+      "type": "image",
+      "id": "sourceful/riverflow-v2-pro",
+      "name": "Sourceful: Riverflow V2 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:sourceful/riverflow-v2.5-fast": {
+      "type": "image",
+      "id": "sourceful/riverflow-v2.5-fast",
+      "name": "Sourceful: Riverflow V2.5 Fast",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:sourceful/riverflow-v2.5-pro": {
+      "type": "image",
+      "id": "sourceful/riverflow-v2.5-pro",
+      "name": "Sourceful: Riverflow V2.5 Pro",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:x-ai/grok-imagine-image-2.0": {
+      "type": "image",
+      "id": "x-ai/grok-imagine-image-2.0",
+      "name": "xAI: Grok Imagine Image 2.0",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    },
+    "image:x-ai/grok-imagine-image-quality": {
+      "type": "image",
+      "id": "x-ai/grok-imagine-image-quality",
+      "name": "SpaceXAI: Grok Imagine Image Quality",
+      "api": "openrouter-images",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "image"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      }
+    }
+  },
+  "typesafe-system-one": {
+    "classifier:inception/mercury-decide:free": {
+      "type": "classifier",
+      "id": "inception/mercury-decide:free",
+      "name": "Inception: Mercury Decide (free)",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 32768
+    },
+    "classifier:jaredpalmer/kev-4b": {
+      "type": "classifier",
+      "id": "jaredpalmer/kev-4b",
+      "name": "Jared Palmer: Kev 4B",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 8192
+    },
+    "classifier:respan/span-01": {
+      "type": "classifier",
+      "id": "respan/span-01",
+      "name": "Respan: Span-01",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.02,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 4096
+    },
+    "classifier:respan/span-01-lite": {
+      "type": "classifier",
+      "id": "respan/span-01-lite",
+      "name": "Respan: Span-01 Lite",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 4096
+    },
+    "classifier:respan/span-01-lite:free": {
+      "type": "classifier",
+      "id": "respan/span-01-lite:free",
+      "name": "Respan: Span-01 Lite (free)",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 4096
+    },
+    "classifier:togethercomputer/tev1-4b-experimental": {
+      "type": "classifier",
+      "id": "togethercomputer/tev1-4b-experimental",
+      "name": "Together: Tev1 4B Experimental",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 32768
+    },
+    "classifier:typesafe/jev-1.13": {
+      "type": "classifier",
+      "id": "typesafe/jev-1.13",
+      "name": "TypeSafe: Jev 1.13",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 32000
+    },
+    "classifier:upstage/solar-decide": {
+      "type": "classifier",
+      "id": "upstage/solar-decide",
+      "name": "Upstage: Solar Decide",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.05,
+        "output": 0.0,
+        "cacheRead": 0.05,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 524288
+    },
+    "classifier:~typesafe/jev-latest": {
+      "type": "classifier",
+      "id": "~typesafe/jev-latest",
+      "name": "TypeSafe: Jev Latest",
+      "api": "typesafe-system-one",
+      "provider": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 32000
     }
   }
 }

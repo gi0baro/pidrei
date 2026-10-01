@@ -7,10 +7,18 @@ observable request headers without a mocked network layer.
 
 import time
 
-from pidrei_ai.api.openai_responses import OpenAIResponsesOptions, _create_client, build_params
+import pytest
+
+from pidrei_ai.api.openai_responses import (
+    OpenAIResponsesOptions,
+    _create_client,
+    build_params,
+    stream as stream_responses,
+)
+from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, OpenAIResponsesCompat, TranscriptContext, UserMessage
 from pidrei_ai.utils.transcript import normalize_context
-from tests.test_openai_responses import make_model
+from tests.test_openai_responses import FakeClient, make_model
 
 
 def make_context() -> TranscriptContext:
@@ -135,3 +143,52 @@ def test_sets_strict_mode_explicitly_for_cloudflare_openai_responses_tools():
         ("ordinary", False),
         ("constrained", True),
     ]
+
+
+@pytest.mark.tonio
+@pytest.mark.parametrize(
+    ("model_id", "service_tier", "response_service_tier", "multiplier"),
+    [
+        ("gpt-5.4", "priority", "priority", 2),
+        ("gpt-5.5", "priority", "priority", 2.5),
+        ("gpt-5.5", "flex", "flex", 0.5),
+        # GPT-6 models report Fast mode as "fast" even when "priority" is requested (#10034)
+        ("gpt-6-luna", "priority", "fast", 2),
+        ("gpt-6-luna", "fast", "fast", 2),
+    ],
+)
+async def test_applies_cost_multiplier_for_requested_and_returned_service_tier(
+    model_id, service_tier, response_service_tier, multiplier
+):
+    model = get_builtin_model("openai", model_id)
+    token_count = 100_000
+    token_scale = token_count / 1_000_000
+    client = FakeClient(
+        [
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "service_tier": response_service_tier,
+                    "usage": {
+                        "input_tokens": token_count,
+                        "output_tokens": token_count,
+                        "total_tokens": token_count * 2,
+                        "input_tokens_details": {"cached_tokens": 0},
+                    },
+                },
+            }
+        ]
+    )
+
+    result = await stream_responses(
+        model,
+        make_context(),
+        OpenAIResponsesOptions(api_key="test-key", service_tier=service_tier, client=client),
+    ).result()
+
+    assert result.usage.cost.input == pytest.approx(model.cost.input * multiplier * token_scale, abs=1e-12)
+    assert result.usage.cost.output == pytest.approx(model.cost.output * multiplier * token_scale, abs=1e-12)
+    assert result.usage.cost.total == pytest.approx(
+        (model.cost.input + model.cost.output) * multiplier * token_scale, abs=1e-12
+    )

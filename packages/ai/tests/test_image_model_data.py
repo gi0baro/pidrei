@@ -1,69 +1,101 @@
 """Mirror of pi's image-model-data.test.ts.
 
-Covers `parse_openrouter_image_models` from the catalog generator, the same
-function pi's spec imports from `scripts/generate-image-models.ts`.
+Covers `build_openrouter_catalog` from the catalog generator, the function pi's
+spec imports from `scripts/openrouter-catalog.ts`.
 """
 
 import sys
 from pathlib import Path
 
-import pytest
-
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from generate_image_models import parse_openrouter_image_models
+from generate_models import build_openrouter_catalog
 
 
-VALID_IMAGE_MODEL = {
+IMAGE_ONLY = {
     "id": "example/image-model",
     "name": "Example Image Model",
     "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["image"]},
     "pricing": {"prompt": "0.000001", "completion": "0.000002"},
 }
 
+CHAT_WITH_IMAGES = {
+    "id": "example/multimodal",
+    "name": "Example Multimodal",
+    "supported_parameters": ["tools"],
+    "architecture": {
+        "modality": "text+image->text+image",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text", "image"],
+    },
+    "context_length": 32000,
+}
 
-@pytest.mark.parametrize("payload", [{}, {"data": []}, {"data": "invalid"}])
-def test_rejects_a_missing_or_empty_strict_catalog(payload):
-    with pytest.raises(ValueError, match="missing or empty image model list"):
-        parse_openrouter_image_models(payload, True)
+CHAT_ONLY = {
+    "id": "example/chat",
+    "name": "Example Chat",
+    "supported_parameters": ["tools"],
+    "architecture": {"modality": "text->text", "output_modalities": ["text"]},
+}
 
-
-def test_rejects_a_strict_catalog_with_no_usable_image_models():
-    payload = {
-        "data": [
-            {
-                **VALID_IMAGE_MODEL,
-                "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
-            }
-        ]
-    }
-
-    with pytest.raises(ValueError, match="no usable image models"):
-        parse_openrouter_image_models(payload, True)
-
-
-def test_parses_a_non_empty_image_model_catalog():
-    models = parse_openrouter_image_models({"data": [VALID_IMAGE_MODEL]}, True)
-
-    assert len(models) == 1
-    assert models[0]["id"] == "example/image-model"
-    assert models[0]["input"] == ["text", "image"]
-    assert models[0]["output"] == ["image"]
-
-
-def test_a_non_strict_empty_catalog_returns_no_models_instead_of_raising():
-    assert parse_openrouter_image_models({}, False) == []
+DECISION_MODEL = {
+    "id": "typesafe/jev-1.13",
+    "name": "TypeSafe: Jev 1.13",
+    "supported_parameters": [],
+    "architecture": {"modality": "text->decisions", "input_modalities": ["text"], "output_modalities": ["decisions"]},
+    "pricing": {"prompt": "0.000000042", "completion": "0"},
+    "context_length": 32000,
+    "top_provider": {"context_length": 32000, "max_completion_tokens": 28800},
+}
 
 
-def test_pricing_is_scaled_to_dollars_per_million_tokens():
-    models = parse_openrouter_image_models({"data": [VALID_IMAGE_MODEL]}, True)
+def test_emits_image_only_models_from_the_image_listing_as_image_models():
+    catalog = build_openrouter_catalog([], [IMAGE_ONLY], [])
+    assert catalog["chat"] == []
+    [image] = catalog["images"]
+    assert image["type"] == "image"
+    assert image["id"] == "example/image-model"
+    assert image["api"] == "openrouter-images"
+    assert image["input"] == ["text", "image"]
+    assert image["output"] == ["image"]
+    assert image["cost"]["input"] == 1
+    assert image["cost"]["output"] == 2
 
-    assert models[0]["cost"]["input"] == pytest.approx(1.0)
-    assert models[0]["cost"]["output"] == pytest.approx(2.0)
+
+def test_emits_separate_chat_and_image_entries_for_an_id_that_supports_both_operations():
+    catalog = build_openrouter_catalog([CHAT_WITH_IMAGES, CHAT_ONLY], [CHAT_WITH_IMAGES, IMAGE_ONLY], [])
+    assert [model["id"] for model in catalog["chat"]] == ["example/multimodal", "example/chat"]
+    assert [model["type"] for model in catalog["chat"]] == ["chat", "chat"]
+    assert [model["id"] for model in catalog["images"]] == ["example/multimodal", "example/image-model"]
+    assert all(model["type"] == "image" for model in catalog["images"])
+    assert [model["output"] for model in catalog["images"]] == [["text", "image"], ["image"]]
 
 
-def test_a_model_without_input_modalities_defaults_to_text():
-    payload = {"data": [{**VALID_IMAGE_MODEL, "architecture": {"output_modalities": ["image"]}}]}
+def test_ignores_listed_models_that_neither_support_tools_nor_emit_images():
+    catalog = build_openrouter_catalog(
+        [{**CHAT_ONLY, "supported_parameters": []}],
+        [{**IMAGE_ONLY, "architecture": {"output_modalities": ["text"]}}],
+        [{**DECISION_MODEL, "architecture": {"output_modalities": ["text"]}}],
+    )
+    assert catalog["chat"] == []
+    assert catalog["images"] == []
+    assert catalog["classifiers"] == []
 
-    assert parse_openrouter_image_models(payload, True)[0]["input"] == ["text"]
+
+def test_emits_decision_models_as_system_one_classifier_models():
+    catalog = build_openrouter_catalog([], [], [DECISION_MODEL, DECISION_MODEL])
+    assert catalog["chat"] == []
+    assert catalog["classifiers"] == [
+        {
+            "type": "classifier",
+            "id": "typesafe/jev-1.13",
+            "name": "TypeSafe: Jev 1.13",
+            "api": "typesafe-system-one",
+            "provider": "openrouter",
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "input": ["text"],
+            "cost": {"input": 0.042, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 32000,
+        }
+    ]

@@ -1,6 +1,6 @@
 {
   "azure-openai-responses": {
-    "gpt-4": {
+    "chat:gpt-4": {
       "id": "gpt-4",
       "name": "GPT-4",
       "api": "azure-openai-responses",
@@ -17,9 +17,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 8192,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "gpt-4-turbo": {
+    "chat:gpt-4-turbo": {
       "id": "gpt-4-turbo",
       "name": "GPT-4 Turbo",
       "api": "azure-openai-responses",
@@ -47,9 +48,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4.1": {
+    "chat:gpt-4.1": {
       "id": "gpt-4.1",
       "name": "GPT-4.1",
       "api": "azure-openai-responses",
@@ -77,9 +79,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4.1-mini": {
+    "chat:gpt-4.1-mini": {
       "id": "gpt-4.1-mini",
       "name": "GPT-4.1 mini",
       "api": "azure-openai-responses",
@@ -107,9 +110,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4.1-nano": {
+    "chat:gpt-4.1-nano": {
       "id": "gpt-4.1-nano",
       "name": "GPT-4.1 nano",
       "api": "azure-openai-responses",
@@ -137,9 +141,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4o": {
+    "chat:gpt-4o": {
       "id": "gpt-4o",
       "name": "GPT-4o",
       "api": "azure-openai-responses",
@@ -167,9 +172,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4o-2024-05-13": {
+    "chat:gpt-4o-2024-05-13": {
       "id": "gpt-4o-2024-05-13",
       "name": "GPT-4o (2024-05-13)",
       "api": "azure-openai-responses",
@@ -197,9 +203,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4o-2024-08-06": {
+    "chat:gpt-4o-2024-08-06": {
       "id": "gpt-4o-2024-08-06",
       "name": "GPT-4o (2024-08-06)",
       "api": "azure-openai-responses",
@@ -227,9 +234,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4o-2024-11-20": {
+    "chat:gpt-4o-2024-11-20": {
       "id": "gpt-4o-2024-11-20",
       "name": "GPT-4o (2024-11-20)",
       "api": "azure-openai-responses",
@@ -257,9 +265,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-4o-mini": {
+    "chat:gpt-4o-mini": {
       "id": "gpt-4o-mini",
       "name": "GPT-4o mini",
       "api": "azure-openai-responses",
@@ -287,9 +296,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5": {
+    "chat:gpt-5": {
       "id": "gpt-5",
       "name": "GPT-5",
       "api": "azure-openai-responses",
@@ -323,9 +333,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5-chat-latest": {
+    "chat:gpt-5-chat-latest": {
       "id": "gpt-5-chat-latest",
       "name": "GPT-5 Chat Latest",
       "api": "azure-openai-responses",
@@ -359,9 +370,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5-mini": {
+    "chat:gpt-5-mini": {
       "id": "gpt-5-mini",
       "name": "GPT-5 Mini",
       "api": "azure-openai-responses",
@@ -395,9 +407,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5-nano": {
+    "chat:gpt-5-nano": {
       "id": "gpt-5-nano",
       "name": "GPT-5 Nano",
       "api": "azure-openai-responses",
@@ -431,9 +444,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5-pro": {
+    "chat:gpt-5-pro": {
       "id": "gpt-5-pro",
       "name": "GPT-5 Pro",
       "api": "azure-openai-responses",
@@ -467,9 +481,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.1": {
+    "chat:gpt-5.1": {
       "id": "gpt-5.1",
       "name": "GPT-5.1",
       "api": "azure-openai-responses",
@@ -503,9 +518,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.2": {
+    "chat:gpt-5.2": {
       "id": "gpt-5.2",
       "name": "GPT-5.2",
       "api": "azure-openai-responses",
@@ -540,9 +556,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.2-chat-latest": {
+    "chat:gpt-5.2-chat-latest": {
       "id": "gpt-5.2-chat-latest",
       "name": "GPT-5.2 Chat",
       "api": "azure-openai-responses",
@@ -577,9 +594,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.2-pro": {
+    "chat:gpt-5.2-pro": {
       "id": "gpt-5.2-pro",
       "name": "GPT-5.2 Pro",
       "api": "azure-openai-responses",
@@ -614,9 +632,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.3-chat-latest": {
+    "chat:gpt-5.3-chat-latest": {
       "id": "gpt-5.3-chat-latest",
       "name": "GPT-5.3 Chat (latest)",
       "api": "azure-openai-responses",
@@ -651,9 +670,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.3-codex": {
+    "chat:gpt-5.3-codex": {
       "id": "gpt-5.3-codex",
       "name": "GPT-5.3 Codex",
       "api": "azure-openai-responses",
@@ -688,9 +708,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.3-codex-spark": {
+    "chat:gpt-5.3-codex-spark": {
       "id": "gpt-5.3-codex-spark",
       "name": "GPT-5.3 Codex Spark",
       "api": "azure-openai-responses",
@@ -725,9 +746,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4": {
+    "chat:gpt-5.4": {
       "id": "gpt-5.4",
       "name": "GPT-5.4",
       "api": "azure-openai-responses",
@@ -762,9 +784,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4-mini": {
+    "chat:gpt-5.4-mini": {
       "id": "gpt-5.4-mini",
       "name": "GPT-5.4 mini",
       "api": "azure-openai-responses",
@@ -799,9 +822,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4-nano": {
+    "chat:gpt-5.4-nano": {
       "id": "gpt-5.4-nano",
       "name": "GPT-5.4 nano",
       "api": "azure-openai-responses",
@@ -836,9 +860,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.4-pro": {
+    "chat:gpt-5.4-pro": {
       "id": "gpt-5.4-pro",
       "name": "GPT-5.4 Pro",
       "api": "azure-openai-responses",
@@ -873,9 +898,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.5": {
+    "chat:gpt-5.5": {
       "id": "gpt-5.5",
       "name": "GPT-5.5",
       "api": "azure-openai-responses",
@@ -910,9 +936,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.5-pro": {
+    "chat:gpt-5.5-pro": {
       "id": "gpt-5.5-pro",
       "name": "GPT-5.5 Pro",
       "api": "azure-openai-responses",
@@ -949,9 +976,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.6-luna": {
+    "chat:gpt-5.6-luna": {
       "id": "gpt-5.6-luna",
       "name": "GPT-5.6 Luna",
       "api": "azure-openai-responses",
@@ -987,9 +1015,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.6-sol": {
+    "chat:gpt-5.6-sol": {
       "id": "gpt-5.6-sol",
       "name": "GPT-5.6 Sol",
       "api": "azure-openai-responses",
@@ -1025,9 +1054,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-5.6-terra": {
+    "chat:gpt-5.6-terra": {
       "id": "gpt-5.6-terra",
       "name": "GPT-5.6 Terra",
       "api": "azure-openai-responses",
@@ -1063,9 +1093,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-6-astra": {
+    "chat:gpt-6-astra": {
       "id": "gpt-6-astra",
       "name": "GPT-6 Astra",
       "api": "azure-openai-responses",
@@ -1105,9 +1136,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-6-luna": {
+    "chat:gpt-6-luna": {
       "id": "gpt-6-luna",
       "name": "GPT-6 Luna",
       "api": "azure-openai-responses",
@@ -1147,9 +1179,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-6-sol": {
+    "chat:gpt-6-sol": {
       "id": "gpt-6-sol",
       "name": "GPT-6 Sol",
       "api": "azure-openai-responses",
@@ -1189,9 +1222,115 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "gpt-realtime-2.1": {
+    "chat:gpt-6.1-sol": {
+      "id": "gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "api": "azure-openai-responses",
+      "provider": "azure-openai-responses",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 272000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "off": null,
+        "minimal": null,
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "compat": {
+        "supportsOpenAIGrammarTools": true
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:gpt-daybreak-blue-latest": {
+      "id": "gpt-daybreak-blue-latest",
+      "name": "Daybreak Blue",
+      "api": "azure-openai-responses",
+      "provider": "azure-openai-responses",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 4,
+        "output": 20,
+        "cacheRead": 0.4,
+        "cacheWrite": 5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:gpt-daybreak-red-latest": {
+      "id": "gpt-daybreak-red-latest",
+      "name": "Daybreak Red",
+      "api": "azure-openai-responses",
+      "provider": "azure-openai-responses",
+      "baseUrl": "",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 12.5,
+        "output": 75,
+        "cacheRead": 1.25,
+        "cacheWrite": 15.625
+      },
+      "contextWindow": 400000,
+      "maxTokens": 128000,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:gpt-realtime-2.1": {
       "id": "gpt-realtime-2.1",
       "name": "GPT-Realtime-2.1",
       "api": "azure-openai-responses",
@@ -1219,9 +1358,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "o1": {
+    "chat:o1": {
       "id": "o1",
       "name": "o1",
       "api": "azure-openai-responses",
@@ -1249,9 +1389,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "o1-pro": {
+    "chat:o1-pro": {
       "id": "o1-pro",
       "name": "o1-pro",
       "api": "azure-openai-responses",
@@ -1279,9 +1420,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "o3": {
+    "chat:o3": {
       "id": "o3",
       "name": "o3",
       "api": "azure-openai-responses",
@@ -1309,9 +1451,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "o3-mini": {
+    "chat:o3-mini": {
       "id": "o3-mini",
       "name": "o3-mini",
       "api": "azure-openai-responses",
@@ -1328,9 +1471,10 @@
         "cacheWrite": 0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "type": "chat"
     },
-    "o3-pro": {
+    "chat:o3-pro": {
       "id": "o3-pro",
       "name": "o3-pro",
       "api": "azure-openai-responses",
@@ -1358,9 +1502,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "o4-mini": {
+    "chat:o4-mini": {
       "id": "o4-mini",
       "name": "o4-mini",
       "api": "azure-openai-responses",
@@ -1388,7 +1533,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

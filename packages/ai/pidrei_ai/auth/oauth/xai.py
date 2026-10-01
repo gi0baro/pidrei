@@ -8,7 +8,14 @@ from typing import Any
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
 from pidrei_ai.auth.oauth.urls import https_url
-from pidrei_ai.auth.types import AuthEvent, ModelAuth, OAuthAuth, OAuthCredential, ProviderAuthInteraction
+from pidrei_ai.auth.types import (
+    AuthEvent,
+    LoginOptions,
+    ModelAuth,
+    OAuthAuth,
+    OAuthCredential,
+    ProviderAuthInteraction,
+)
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.user_agent import CLIENT_NAME
@@ -188,7 +195,7 @@ def _poll_for_tokens(device: _XaiDeviceCode, cancel: CancelToken) -> Awaitable[O
     )
 
 
-async def _login_xai(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_xai(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
     device = await _request_device_code(interaction.cancel)
     interaction.notify(
         AuthEvent(

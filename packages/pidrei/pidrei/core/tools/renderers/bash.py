@@ -27,7 +27,7 @@ BASH_UPDATE_THROTTLE_S = 0.1
 class BashResultRenderComponent(Container):
     def __init__(self) -> None:
         super().__init__()
-        self.state = {"cachedWidth": None, "cachedLines": None, "cachedSkipped": None}
+        self.state = {"cachedWidth": None, "cachedLines": None}
 
 
 class _BashPreviewOutput:
@@ -39,24 +39,24 @@ class _BashPreviewOutput:
 
     def render(self, width: int) -> list:
         state = self._state
+        # Cache the complete output: this renders on every frame for every bash result in the transcript.
         if state["cachedLines"] is None or state["cachedWidth"] != width:
             preview = truncate_to_visual_lines(self._styled_output, BASH_PREVIEW_LINES, width)
-            state["cachedLines"] = preview["visualLines"]
-            state["cachedSkipped"] = preview["skippedCount"]
+            hint_lines: list[str] = []
+            if preview["skippedCount"] > 0:
+                hint = (
+                    theme.fg("muted", f"... ({preview['skippedCount']} earlier lines,")
+                    + f" {key_hint('app.tools.expand', 'to expand')}"
+                    + theme.fg("muted", ")")
+                )
+                hint_lines.append(truncate_to_width(hint, width, "..."))
+            state["cachedLines"] = ["", *hint_lines, *preview["visualLines"]]
             state["cachedWidth"] = width
-        if state["cachedSkipped"]:
-            hint = (
-                theme.fg("muted", f"... ({state['cachedSkipped']} earlier lines,")
-                + f" {key_hint('app.tools.expand', 'to expand')}"
-                + theme.fg("muted", ")")
-            )
-            return ["", truncate_to_width(hint, width, "..."), *(state["cachedLines"] or [])]
-        return ["", *(state["cachedLines"] or [])]
+        return state["cachedLines"]
 
     def invalidate(self) -> None:
         self._state["cachedWidth"] = None
         self._state["cachedLines"] = None
-        self._state["cachedSkipped"] = None
 
 
 def _format_duration(ms: float) -> str:

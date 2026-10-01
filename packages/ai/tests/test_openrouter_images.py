@@ -12,8 +12,8 @@ import pytest
 from pidrei_ai.api import openrouter_images
 from pidrei_ai.images import generate_images
 from pidrei_ai.types import (
+    ImageModel,
     ImagesContext,
-    ImagesModel,
     ImagesOptions,
     ModelCost,
     ProviderResponse,
@@ -64,8 +64,8 @@ def _reset():
     last_params.clear()
 
 
-def make_model(id: str, output: list[str], headers: dict | None = None) -> ImagesModel:
-    return ImagesModel(
+def make_model(id: str, output: list[str], headers: dict | None = None) -> ImageModel:
+    return ImageModel(
         id=id,
         name=id,
         api="openrouter-images",

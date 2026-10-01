@@ -67,18 +67,67 @@ async def extension(pi):
 | `base_url` | API root |
 | `headers` | Static headers |
 | `auth` | A `ProviderAuth` describing how credentials are obtained |
-| `models` | Static model list |
-| `fetch_models` | Async callable returning models, for dynamic catalogs |
-| `filter_models` | Narrow the list based on the resolved credential |
-| `api` | The wire implementation |
+| `models` | Static model list: chat `Model`s, plus any `ImageModel`s and `ClassifierModel`s |
+| `fetch_models` | Async callable returning models of any type, for dynamic catalogs |
+| `filter_models` | Narrow the chat models based on the resolved credential |
+| `filter_all_models` | The same across every model type |
+| `api` | The chat wire implementation |
+| `images` | Image-generation implementations keyed by image model `api` |
+| `classifiers` | Classifier implementations keyed by classifier model `api` |
+
+A provider needs at least one of `api`, `images` or `classifiers`.
 
 `pi.register_provider(name, config)` is the by-name form, taking the same
-camelCase config shape `models.json` uses (plus `oauth`, `refreshModels` and
-`streamSimple`). Prefer a complete provider for anything beyond static endpoint
-and model metadata; `models.json` overrides still compose on top of either
-form. A by-name registration with only `baseUrl` or `headers` keeps the
-provider's built-in models; one with `models` replaces the provider's model
-list with its own.
+camelCase config shape `models.json` uses (plus `oauth`, `refreshModels`,
+`streamSimple`, `images` and `classifiers`). Prefer a complete provider for
+anything beyond static endpoint and model metadata; `models.json` overrides
+still compose on top of either form. A by-name registration with only
+`baseUrl` or `headers` keeps the provider's built-in models of every
+operation; one with `models` replaces the provider's models across chat,
+image and classifier operations. An omitted `type` means `"chat"`; image and
+classifier models need an explicit `type` and implementations keyed by their
+`api` in `images` and `classifiers`:
+
+```python
+async def generate_images(model, context, options=None): ...
+async def classify(model, context, options=None): ...
+
+
+pi.register_provider(
+    "media-tools",
+    {
+        "apiKey": "$MEDIA_TOOLS_API_KEY",
+        "models": [
+            {
+                "type": "image",
+                "id": "image-v1",
+                "name": "Image V1",
+                "api": "media-images",
+                "baseUrl": "https://media.example.com/v1",
+                "input": ["text"],
+                "output": ["image"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            },
+            {
+                "type": "classifier",
+                "id": "classifier-v1",
+                "name": "Classifier V1",
+                "api": "media-classifier",
+                "baseUrl": "https://media.example.com/v1",
+                "input": ["text"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                "contextWindow": 64000,
+            },
+        ],
+        "images": {"media-images": SimpleNamespace(generate_images=generate_images)},
+        "classifiers": {"media-classifier": SimpleNamespace(classify=classify)},
+    },
+)
+```
+
+Model-level `baseUrl` values take precedence over the provider endpoint. Equal
+model IDs in different operations stay distinct, including their
+model-specific headers.
 
 Registrations made while extensions are still loading are queued and applied
 once the model registry exists, so an extension can register from its factory
@@ -91,7 +140,8 @@ restores any built-in behavior it replaced.
 
 `fetch_models` is for catalogs that come from a live service. It receives a
 `RefreshModelsContext` and returns the current model list, which pidrei
-merges over the static `models` by id and persists in `models-store.json`, so
+merges over the static `models` by type and id (dropping models of types it
+does not know) and persists in `models-store.json`, so
 the last snapshot is restored at the next startup even offline. It is not
 called when `context.allow_network` is false; pass `context.cancel` into
 blocking I/O so a refresh can be cancelled. A provider that must not persist
@@ -99,7 +149,7 @@ its list (a local server's loaded models, say) implements `refresh_models`
 itself and publishes only an in-memory `update` through `context.publish`.
 
 The by-name form's `refreshModels` is async and returns camelCase model
-definitions, which replace that registration's models.
+definitions of any type, which replace that registration's models.
 
 Set a model's `prompt_cache` (`promptCache` in the by-name form) only when you
 know the provider's cache lifetime; without it that model is never
@@ -151,9 +201,11 @@ messages mid-conversation. A stream must:
    terminal `done` or `error` event; cancellation becomes an aborted result.
    Error and aborted messages need an `error_message`.
 4. Call `options.on_payload` before sending (using any replacement payload it
-   returns) and `options.on_response` before consuming the response body, and
-   pass through `options.cancel` and `options.env`. Extensions' request hooks
-   depend on these.
+   returns) and `options.on_response` before consuming the response body,
+   await `options.on_provider_stream_event(provider_event, model)` (when set)
+   for each parsed provider event before normalizing it, and pass through
+   `options.cancel` and `options.env`. Extensions' request hooks and stream
+   observers depend on these.
 
 ## Context overflow
 

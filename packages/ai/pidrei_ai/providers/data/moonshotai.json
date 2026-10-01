@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "kimi-k2.6": {
+    "chat:kimi-k2.6": {
       "id": "kimi-k2.6",
       "name": "Kimi K2.6",
       "api": "openai-completions",
@@ -37,9 +37,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-k2.7-code": {
+    "chat:kimi-k2.7-code": {
       "id": "kimi-k2.7-code",
       "name": "Kimi K2.7 Code",
       "api": "openai-completions",
@@ -79,9 +80,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-k2.7-code-highspeed": {
+    "chat:kimi-k2.7-code-highspeed": {
       "id": "kimi-k2.7-code-highspeed",
       "name": "Kimi K2.7 Code HighSpeed",
       "api": "openai-completions",
@@ -121,9 +123,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-k3": {
+    "chat:kimi-k3": {
       "id": "kimi-k3",
       "name": "Kimi K3",
       "api": "openai-completions",
@@ -171,7 +174,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

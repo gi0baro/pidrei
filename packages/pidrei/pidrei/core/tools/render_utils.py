@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent src/core/tools/render-utils.ts."""
 
+import json
 import os
 from pathlib import Path
 
@@ -81,6 +82,40 @@ def _block_get(block, key: str):
     # dataclass content blocks use snake_case field names
     snake = {"mimeType": "mime_type"}.get(key, key)
     return getattr(block, snake, None)
+
+
+COLLAPSED_ARGS_CHARS = 100
+
+
+def _json_stringify(value, indent: int | None = None) -> str:
+    """pi's `JSON.stringify(value) ?? String(value)` for a display string."""
+    try:
+        if indent is None:
+            return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(value, indent=indent, ensure_ascii=False)
+    except TypeError, ValueError:
+        return str(value)
+
+
+def format_tool_call_with_args(title: str, args, theme, expanded: bool) -> str:
+    """Generic tool call header: the title followed by the arguments. Collapsed, they are
+    `key=value` pairs on the title line, cut to `COLLAPSED_ARGS_CHARS`. Expanded, each is a
+    `key: value` line below the title, with strings shown raw and continuation lines indented."""
+    header = theme.fg("toolTitle", theme.bold(title))
+    if args is None:
+        return header
+    entries = list(args.items()) if isinstance(args, dict) else [("args", args)]
+    if not entries:
+        return header
+    if expanded:
+        lines = []
+        for key, value in entries:
+            text = value if isinstance(value, str) else _json_stringify(value, 2)
+            lines.append(f"  {key}: " + "\n    ".join(replace_tabs(text).replace("\r", "").split("\n")))
+        return f"{header}\n{theme.fg('muted', chr(10).join(lines))}"
+    pairs = " ".join(f"{key}={_json_stringify(value)}" for key, value in entries)
+    preview = f"{pairs[: COLLAPSED_ARGS_CHARS - 3]}..." if len(pairs) > COLLAPSED_ARGS_CHARS else pairs
+    return f"{header} {theme.fg('muted', preview)}"
 
 
 def invalid_arg_text(theme) -> str:

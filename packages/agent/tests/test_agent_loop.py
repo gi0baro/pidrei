@@ -6,7 +6,13 @@ from dataclasses import dataclass, replace
 import pytest
 import tonio.colored as tonio
 
-from pidrei_agent.agent_loop import agent_loop, agent_loop_continue, run_agent_loop
+from pidrei_agent.agent_loop import (
+    RunToolCallOptions,
+    agent_loop,
+    agent_loop_continue,
+    run_agent_loop,
+    run_tool_call,
+)
 from pidrei_agent.stream_fn import set_default_stream_fn
 from pidrei_agent.types import (
     AfterToolCallResult,
@@ -1619,3 +1625,108 @@ async def test_continue_should_allow_custom_message_types_as_last_message():
     messages = await stream.result()
     assert len(messages) == 1
     assert messages[0].role == "assistant"
+
+
+# --- run_tool_call ------------------------------------------------------------
+
+
+class _UpdatingTool(AgentTool):
+    def __init__(self, name: str, parameters: dict, execute, output_schema=None):
+        self.name = name
+        self.label = name
+        self.description = name
+        self.parameters = parameters
+        self.output_schema = output_schema
+        self._execute = execute
+
+    async def execute(self, tool_call_id, params, cancel, on_update):
+        return await self._execute(params, on_update)
+
+
+async def _echo_execute(params, on_update):
+    if on_update is not None:
+        on_update(AgentToolResult(content=[TextContent(text="partial")], details={}))
+    return AgentToolResult(
+        content=[TextContent(text=params["value"])], details={}, structured_content={"value": params["value"]}
+    )
+
+
+async def _failing_execute(_params, _on_update):
+    return AgentToolResult(content=[TextContent(text="bad")], details={"partial": True}, is_error=True)
+
+
+RUN_ECHO = _UpdatingTool("echo", VALUE_SCHEMA, _echo_execute, output_schema=VALUE_SCHEMA)
+RUN_FAILING = _UpdatingTool("failing", {"type": "object", "properties": {}}, _failing_execute)
+
+
+def _call(call_id: str, name: str, arguments: dict) -> ToolCall:
+    return ToolCall(id=call_id, name=name, arguments=arguments)
+
+
+@pytest.mark.tonio
+async def test_run_tool_call_validates_runs_the_hooks_and_reports_failures_as_error_outcomes():
+    hook_calls: list[str] = []
+    updates: list = []
+
+    async def before_tool_call(context, _cancel=None):
+        hook_calls.append(f"before {context.tool_call.id}")
+        if context.args.get("value") == "blocked":
+            return BeforeToolCallResult(block=True, reason="nope")
+        return None
+
+    async def after_tool_call(context, _cancel=None):
+        hook_calls.append(f"after {context.tool_call.id}")
+
+    async def on_update(partial):
+        updates.append(partial)
+
+    options = RunToolCallOptions(
+        tools=[RUN_ECHO, RUN_FAILING],
+        assistant_message=create_assistant_message([]),
+        context=AgentContext(messages=[]),
+        before_tool_call=before_tool_call,
+        after_tool_call=after_tool_call,
+        on_update=on_update,
+    )
+
+    echoed = await run_tool_call(_call("a", "echo", {"value": "a"}), options)
+    assert (echoed.tool_call.id, echoed.result.structured_content, echoed.is_error) == ("a", {"value": "a"}, False)
+    assert (await run_tool_call(_call("b", "echo", {"value": {"nested": True}}), options)).is_error is True
+    blocked = await run_tool_call(_call("c", "echo", {"value": "blocked"}), options)
+    assert (blocked.result.content, blocked.is_error) == ([TextContent(text="nope")], True)
+    missing = await run_tool_call(_call("d", "missing", {}), options)
+    assert (missing.result.content, missing.is_error) == ([TextContent(text="Tool missing not found")], True)
+    # Error results keep their details.
+    failed = await run_tool_call(_call("e", "failing", {}), options)
+    assert (failed.result.details, failed.is_error) == ({"partial": True}, True)
+    assert updates == [AgentToolResult(content=[TextContent(text="partial")], details={})]
+    # Validation failures and unknown tools never reach the hooks; blocked calls skip after_tool_call.
+    assert hook_calls == ["before a", "after a", "before c", "before e", "after e"]
+
+
+@pytest.mark.tonio
+async def test_run_tool_call_lets_after_tool_call_replace_structured_content_and_drops_it_with_content_only():
+    redacted = [TextContent(text="redacted")]
+    results = [
+        AfterToolCallResult(content=redacted),
+        AfterToolCallResult(structured_content={"value": "replaced"}),
+        AfterToolCallResult(content=redacted, structured_content={"value": "both"}),
+        AfterToolCallResult(details={"note": "kept"}),
+    ]
+    seen = []
+    for after_result in results:
+
+        async def after_tool_call(_context, _cancel=None, after_result=after_result):
+            return after_result
+
+        outcome = await run_tool_call(
+            _call("x", "echo", {"value": "original"}),
+            RunToolCallOptions(
+                tools=[RUN_ECHO],
+                assistant_message=create_assistant_message([]),
+                context=AgentContext(messages=[]),
+                after_tool_call=after_tool_call,
+            ),
+        )
+        seen.append(outcome.result.structured_content)
+    assert seen == [None, {"value": "replaced"}, {"value": "both"}, {"value": "original"}]

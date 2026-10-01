@@ -26,7 +26,7 @@ classifiers = [
 
 dependencies = [
     "pidrei-protocol",
-    "tonio~=0.10.1",
+    "tonio~=0.10.3",
 ]
 
 [tool.uv.sources]

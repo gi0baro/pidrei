@@ -9,6 +9,7 @@ import os
 from pidrei_tui import Container, Input, Spacer, get_keybindings, matches_key, truncate_to_width, visible_width
 
 from ....config import CONFIG_DIR_NAME
+from ....core.source_info import BUILTIN_PATH_PREFIX
 from ....utils.paths import canonicalize_path_blocking, is_local_path, resolve_path
 from ..theme import theme
 from .dynamic_border import DynamicBorder
@@ -42,6 +43,8 @@ def _format_base_dir(base_dir: str) -> str:
 def _get_group_label(metadata, agent_dir: str) -> str:
     if metadata.origin == "package":
         return f"{metadata.source} ({metadata.scope})"
+    if metadata.source == "builtin":
+        return "Built-in" if metadata.scope == "user" else "Built-in (project override)"
     # Top-level resources
     if metadata.source == "auto":
         if metadata.base_dir:
@@ -83,7 +86,9 @@ def build_groups(resolved, agent_dir: str) -> list:
 
             file_name = os.path.basename(path)
             parent_folder = os.path.basename(os.path.dirname(path))
-            if resource_type == "extensions" and parent_folder != "extensions":
+            if metadata.source == "builtin":
+                display_name = path[len(BUILTIN_PATH_PREFIX) :]
+            elif resource_type == "extensions" and parent_folder != "extensions":
                 display_name = f"{parent_folder}/{file_name}"
             elif resource_type == "skills" and file_name == "SKILL.md":
                 display_name = parent_folder
@@ -596,7 +601,8 @@ class ResourceList:
                 continue
             updated.append(entry)
         if state != "inherit":
-            if self._is_inherited_global_item(item) and pattern not in updated:
+            # Project entries name inherited files to override them. Built-in paths need no entry.
+            if self._is_inherited_global_item(item) and item["metadata"].source != "builtin" and pattern not in updated:
                 updated.append(pattern)
             updated.append(f"{'+' if state == 'load' else '-'}{pattern}")
         self._set_project_top_level_paths(item["resourceType"], updated)
@@ -720,7 +726,7 @@ class ResourceList:
 
     def _get_resource_pattern_for_scope(self, item: dict, scope: str) -> str:
         source_scope = self._get_item_scope(item)
-        if scope != source_scope:
+        if scope != source_scope or item["metadata"].source == "builtin":
             return item["path"]
         base_dir = item["metadata"].base_dir or self._get_top_level_base_dir(source_scope)
         return os.path.relpath(item["path"], base_dir)
@@ -779,6 +785,8 @@ class ResourceList:
         return os.path.join(self._cwd, CONFIG_DIR_NAME) if scope == "project" else self._agent_dir
 
     def _get_resource_pattern(self, item: dict) -> str:
+        if item["metadata"].source == "builtin":
+            return item["path"]
         scope = item["metadata"].scope
         base_dir = item["metadata"].base_dir or self._get_top_level_base_dir(scope)
         return os.path.relpath(item["path"], base_dir)

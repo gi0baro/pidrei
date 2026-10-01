@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/tui-renderer.ts."""
 
-from pidrei_tui import TUI, ProcessTerminal, TuiAltScreen, TuiMainScreen
+from pidrei_tui import TUI, ProcessTerminal, TuiAltScreen, TuiMainScreen, WheelScrollLines
 
 from ...utils.clipboard import copy_to_clipboard
 from ...utils.open_browser import open_browser
@@ -15,6 +15,7 @@ def create_interactive_tui(
     log_directory: str,
     terminal=None,
     fullscreen_copy_on_select: bool | None = None,
+    fullscreen_wheel_scroll_lines: WheelScrollLines | None = None,
 ) -> TUI:
     """Composition root shared by coding-agent presentations."""
     terminal = terminal if terminal is not None else ProcessTerminal()
@@ -45,6 +46,7 @@ def create_interactive_tui(
             scroll_to_end_indicator=scroll_to_end_indicator,
             open_url=open_browser,
             copy_on_select=fullscreen_copy_on_select,
+            wheel_scroll_lines=fullscreen_wheel_scroll_lines if fullscreen_wheel_scroll_lines is not None else "auto",
             copy_selection=copy_selection,
         )
     return TuiMainScreen(terminal, show_hardware_cursor, log_directory)

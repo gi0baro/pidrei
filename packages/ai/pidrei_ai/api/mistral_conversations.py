@@ -38,6 +38,7 @@ from pidrei_ai.types import (
     Message,
     MistralConversationsCompat,
     Model,
+    OnProviderStreamEvent,
     ProviderResponse,
     SimpleStreamOptions,
     StartEvent,
@@ -245,7 +246,7 @@ class MistralOptions(StreamOptions):
     # "auto" | "none" | "any" | "required" | {"type": "function", "function": {"name": ...}}
     tool_choice: Any = None
     prompt_mode: str | None = None  # "reasoning"
-    reasoning_effort: str | None = None  # "none" | "high"
+    reasoning_effort: str | None = None  # "none" | "low" | "medium" | "high" | "max"
     # Transport seam (pi injects a per-request `fetch` here).
     client: Any = None
 
@@ -291,7 +292,7 @@ def stream(
                 payload = next_payload
             mistral_stream = await request_mistral_stream(model, payload, api_key, opts)
             out_stream.push(StartEvent(partial=output))
-            await consume_chat_stream(model, output, out_stream, mistral_stream)
+            await consume_chat_stream(model, output, out_stream, mistral_stream, opts.on_provider_stream_event)
 
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
@@ -329,14 +330,20 @@ def stream_simple(
         clamp_thinking_level(model, options.reasoning) if options is not None and options.reasoning else None
     )
     reasoning = None if clamped_reasoning == "off" else clamped_reasoning
-    should_use_reasoning = model.reasoning and reasoning is not None
+    # Models with a thinking level map use `reasoning_effort`; other reasoning models use `prompt_mode`.
+    effort_map = model.thinking_level_map if model.reasoning else None
+    reasoning_effort = None
+    if effort_map is not None:
+        if reasoning:
+            mapped = effort_map.get(reasoning)
+            reasoning_effort = mapped if mapped is not None else "high"
+        else:
+            reasoning_effort = effort_map.get("off")
 
     opts = _mistral_options(base)
     opts.tool_choice = options.tool_choice if options else None
-    opts.prompt_mode = "reasoning" if should_use_reasoning and _uses_prompt_mode_reasoning(model) else None
-    opts.reasoning_effort = (
-        _map_reasoning_effort(model, reasoning) if should_use_reasoning and _uses_reasoning_effort(model) else None
-    )
+    opts.prompt_mode = "reasoning" if model.reasoning and effort_map is None and reasoning else None
+    opts.reasoning_effort = reasoning_effort
     return stream(model, context, opts, into=into)
 
 
@@ -461,7 +468,13 @@ def _get_mistral_cached_prompt_tokens(usage: dict, prompt_tokens: int) -> int:
     return min(prompt_tokens, max(0, int(cached)))
 
 
-async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out_stream, mistral_stream) -> None:
+async def consume_chat_stream(
+    model: Model,
+    output: AssistantMessageBuilder,
+    out_stream,
+    mistral_stream,
+    on_provider_stream_event: OnProviderStreamEvent | None,
+) -> None:
     current_block: TextContent | ThinkingContent | None = None
     blocks = output.content
     tool_blocks_by_key: dict[str | int, int] = {}
@@ -487,6 +500,7 @@ async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out
         return current_block
 
     async for chunk in mistral_stream:
+        await maybe_call(on_provider_stream_event, chunk, model)
         # Mistral's streamed chunk carries an id; keep the first non-empty one.
         if not output.response_id:
             output.response_id = chunk.get("id")
@@ -525,6 +539,10 @@ async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out
             for item in content_items:
                 if isinstance(item, str):
                     text_delta = sanitize_surrogates(item)
+                    # GLM models on Mistral send empty content deltas around thinking and tool calls.
+                    # Opening a block for them splits thinking into multiple blocks, which Mistral rejects on replay.
+                    if not text_delta:
+                        continue
                     if current_block is None or current_block.type != "text":
                         current_block = start_text_block(text_delta)
                     current_block.text += text_delta
@@ -549,6 +567,8 @@ async def consume_chat_stream(model: Model, output: AssistantMessageBuilder, out
 
                 if item.get("type") == "text":
                     text_delta = sanitize_surrogates(item.get("text", ""))
+                    if not text_delta:
+                        continue
                     if current_block is None or current_block.type != "text":
                         current_block = start_text_block(text_delta)
                     current_block.text += text_delta
@@ -725,24 +745,6 @@ def build_tool_result_text(text: str, has_images: bool, supports_images: bool, i
         )
 
     return "[tool error] (no tool output)" if is_error else "(no tool output)"
-
-
-def _uses_reasoning_effort(model: Model) -> bool:
-    return (
-        model.id in ("mistral-small-2603", "mistral-small-latest")
-        or model.id.startswith("mistral-medium-")
-        or model.id == "zai-glm-5-2"
-    )
-
-
-def _uses_prompt_mode_reasoning(model: Model) -> bool:
-    return model.reasoning and not _uses_reasoning_effort(model)
-
-
-def _map_reasoning_effort(model: Model, level: str) -> str:
-    mapping = dict(model.thinking_level_map) if model.thinking_level_map is not None else {}
-    mapped = mapping.get(level)
-    return mapped if mapped is not None else "high"
 
 
 def map_tool_choice(choice: Any) -> Any:

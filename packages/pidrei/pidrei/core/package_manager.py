@@ -43,7 +43,7 @@ from .extensions.loader import is_extension_file, resolve_extension_entries_bloc
 from .pidrei_manifest import read_pidrei_manifest_blocking
 from .settings_manager import SettingsManager
 from .skills import IgnoreMatcher, add_ignore_rules_blocking
-from .source_info import PathMetadata
+from .source_info import BUILTIN_PATH_PREFIX, PathMetadata
 
 
 RESOURCE_TYPES = ("extensions", "skills", "prompts", "themes")
@@ -146,6 +146,9 @@ def _get_home_dir() -> str:
 
 
 def _resource_precedence_rank(metadata: PathMetadata) -> int:
+    # Built-in extensions load after file and package extensions, whichever scope enables them.
+    if metadata.source == "builtin":
+        return 5
     if metadata.origin == "package":
         return 4
     scope_base = 0 if metadata.scope == "project" else 2
@@ -582,10 +585,19 @@ class DefaultPackageManager:
     """Resource and package-source resolver (see the module docstring for what
     the git-only decision drops)."""
 
-    def __init__(self, *, cwd: str, agent_dir: str, settings_manager: SettingsManager):
+    def __init__(
+        self,
+        *,
+        cwd: str,
+        agent_dir: str,
+        settings_manager: SettingsManager,
+        builtin_extensions: list[str] | None = None,
+    ):
         self._cwd = resolve_path(cwd)
         self._agent_dir = resolve_path(agent_dir)
         self._settings_manager = settings_manager
+        # Names of built-in extensions, resolved as `builtin:<name>` extension resources.
+        self._builtin_extensions = list(builtin_extensions or [])
         self._progress_callback = None
 
     # -- progress ----------------------------------------------------------------
@@ -668,9 +680,9 @@ class DefaultPackageManager:
             raise Exception(f"Refusing to use path outside package install root: {resolved_path}")
         return resolved_path
 
-    async def _get_temporary_dir(self, prefix: str, suffix: str | None = None) -> str:
+    async def _get_temporary_dir(self, prefix: str, suffix: str | None = None, ref: str | None = None) -> str:
         root = self._resolve_managed_path(await get_extension_temp_folder(self._agent_dir), prefix)
-        digest = hashlib.sha256(f"{prefix}-{suffix or ''}".encode()).hexdigest()[:8]
+        digest = hashlib.sha256(f"{prefix}-{suffix or ''}{f'@{ref}' if ref else ''}".encode()).hexdigest()[:8]
         return self._resolve_managed_path(root, digest, suffix or "")
 
     def _get_git_install_root(self, scope: str) -> str | None:
@@ -683,7 +695,8 @@ class DefaultPackageManager:
 
     async def _get_git_install_path(self, source: GitSource, scope: str) -> str:
         if scope == "temporary":
-            return await self._get_temporary_dir(f"git-{source.host}", source.path)
+            # Include the ref in the hash so each pinned ref gets its own checkout.
+            return await self._get_temporary_dir(f"git-{source.host}", source.path, source.ref)
         install_root = self._get_git_install_root(scope)
         if not install_root:
             raise Exception("Missing git install root")
@@ -1538,6 +1551,26 @@ class DefaultPackageManager:
         self._add_auto_discovered_resources_blocking(
             accumulator, global_settings, project_settings, global_base_dir, project_base_dir
         )
+
+        # Built-in extensions are enabled unless the user `extensions` setting excludes them, for
+        # example with `-builtin:mcp`. A matching `+`, `-`, or `!` entry in the project setting
+        # overrides that.
+        for name in self._builtin_extensions:
+            path = f"{BUILTIN_PATH_PREFIX}{name}"
+            project_enabled = apply_autoload_disabled_patterns(
+                [path], _get_override_patterns(list(project_settings.get("extensions") or [])), project_base_dir
+            ).get(path)
+            self._add_resource(
+                accumulator["extensions"],
+                path,
+                PathMetadata(
+                    source="builtin", scope="user" if project_enabled is None else "project", origin="top-level"
+                ),
+                project_enabled
+                if project_enabled is not None
+                else is_enabled_by_overrides(path, list(global_settings.get("extensions") or []), global_base_dir),
+            )
+
         return self._to_resolved_paths_blocking(accumulator)
 
     async def resolve_extension_sources(
@@ -1548,5 +1581,15 @@ class DefaultPackageManager:
         its skills and themes too."""
         accumulator = self._create_accumulator()
         scope = "temporary" if temporary else ("project" if local else "user")
-        await self._resolve_package_sources([(source, scope) for source in sources], accumulator)
+        # `-e builtin:<name>` loads a built-in extension; the resource loader reports unknown names.
+        for source in sources:
+            if source.startswith(BUILTIN_PATH_PREFIX):
+                self._add_resource(
+                    accumulator["extensions"],
+                    source,
+                    PathMetadata(source="builtin", scope=scope, origin="top-level"),
+                    True,
+                )
+        package_sources = [(source, scope) for source in sources if not source.startswith(BUILTIN_PATH_PREFIX)]
+        await self._resolve_package_sources(package_sources, accumulator)
         return await tonio.spawn_blocking(self._to_resolved_paths_blocking, accumulator)

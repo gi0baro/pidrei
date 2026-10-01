@@ -83,19 +83,30 @@ class FooterComponent:
         # Git watcher cleanup handled by provider
         pass
 
-    def _usage_totals(self):
-        """Cumulative usage from ALL session entries (not just post-compaction messages).
+    def _session_stats(self):
+        """Usage totals and context usage scan the whole session, and the footer renders on every frame.
 
-        pi walks the entries every frame; here the walk is keyed on the
-        session manager and its entries revision, so while nothing was
-        appended a frame costs one comparison instead of O(history).
+        The results only change with the session, its entries, the leaf, or the model whose context
+        window applies. pi keys on the entry count (entries are append-only); pidrei keys on the
+        session manager's entries revision, which also moves when a branched session rewrites them.
         """
-        session_manager = self._session.session_manager
+        session = self._session
+        session_manager = session.session_manager
         revision = session_manager.get_entries_revision()
+        leaf_id = session_manager.get_leaf_id()
+        limits_model = session.model
         cached = self._usage_cache
-        if cached is not None and cached[0] is session_manager and cached[1] == revision:
-            return cached[2], cached[3]
+        if (
+            cached is not None
+            and cached[0] is session
+            and cached[1] is session_manager
+            and cached[2] == revision
+            and cached[3] == leaf_id
+            and cached[4] is limits_model
+        ):
+            return cached[5]
 
+        # Calculate cumulative usage from ALL session entries (not just post-compaction messages)
         usage_totals = create_usage_totals()
         latest_cache_hit_rate: float | None = None
 
@@ -115,18 +126,18 @@ class FooterComponent:
             elif entry.get("type") in ("branch_summary", "compaction") and entry.get("usage"):
                 add_usage_to_totals(usage_totals, entry["usage"])
 
-        self._usage_cache = (session_manager, revision, usage_totals, latest_cache_hit_rate)
-        return usage_totals, latest_cache_hit_rate
+        # Calculate context usage from session (handles compaction
+        # correctly). After compaction, tokens are unknown until the next LLM
+        # response.
+        context_usage = session.get_context_usage()
+        stats = (usage_totals, latest_cache_hit_rate, context_usage)
+        self._usage_cache = (session, session_manager, revision, leaf_id, limits_model, stats)
+        return stats
 
     def render(self, width: int) -> list:
         state = self._session.state
 
-        usage_totals, latest_cache_hit_rate = self._usage_totals()
-
-        # Calculate context usage from session (handles compaction
-        # correctly). After compaction, tokens are unknown until the next LLM
-        # response.
-        context_usage = self._session.get_context_usage()
+        usage_totals, latest_cache_hit_rate, context_usage = self._session_stats()
         if context_usage is not None:
             context_window = context_usage.context_window
         elif state.model is not None:
@@ -222,6 +233,11 @@ class FooterComponent:
                 right_side_without_provider = f"{model_name} • thinking off"
             else:
                 right_side_without_provider = f"{model_name} • {thinking_level}"
+        # A virtual model routes each request; show where the latest response went.
+        routed = self._session.routed_model
+        if routed is not None:
+            level = f" • {routed.thinking_level}" if routed.thinking_level else ""
+            right_side_without_provider += f" → {routed.model.id}{level}"
 
         # Prepend the provider in parentheses if there are multiple providers
         # and there's enough room

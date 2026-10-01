@@ -1,9 +1,12 @@
 """Mirror of pi coding-agent src/core/tools/output-accumulator.ts."""
 
 import codecs
+import os
 import secrets
 import threading
-from dataclasses import replace
+from dataclasses import dataclass, replace
+
+import tonio.colored as tonio
 
 from ...config import TEMP_DIR
 from ...utils.temp_file_writer import TempFileWriter
@@ -117,6 +120,18 @@ class OutputAccumulator:
             return
         await temp_file.close()
 
+    async def read_full_output(self, max_bytes: int) -> FullOutput:
+        """The complete output, for callers that can take more than the display
+        snapshot. Call after `finish()` and `close_temp_file()`. Output longer
+        than `max_bytes` raw bytes keeps its first and last `max_bytes // 2`
+        bytes around an omission marker."""
+        with self._lock:
+            temp_file_path = self._temp_file_path
+            raw = b"".join(self._raw_chunks)
+        if temp_file_path is None:
+            return FullOutput(content=raw.decode("utf-8", "replace"), truncated=False)
+        return await tonio.spawn_blocking(_read_full_output_blocking, temp_file_path, max_bytes)
+
     def get_last_line_bytes(self) -> int:
         with self._lock:
             return self._current_line_bytes
@@ -183,6 +198,34 @@ class OutputAccumulator:
         for chunk in self._raw_chunks:
             self._temp_file.write(chunk)
         self._raw_chunks = []
+
+
+@dataclass(slots=True, frozen=True)
+class FullOutput:
+    content: str
+    # Whether `content` omits part of the output.
+    truncated: bool
+
+
+def _read_full_output_blocking(path: str, max_bytes: int) -> FullOutput:
+    with open(path, "rb") as file:
+        size = os.fstat(file.fileno()).st_size
+        if size <= max_bytes:
+            return FullOutput(content=file.read().decode("utf-8", "replace"), truncated=False)
+        head_bytes = max_bytes // 2
+        tail_bytes = max_bytes - head_bytes
+        head = file.read(head_bytes)
+        file.seek(size - tail_bytes)
+        tail = file.read(tail_bytes)
+    # Cut at character boundaries: the incremental decode holds back an
+    # incomplete trailing sequence, and the tail skips leading continuation bytes.
+    head_text = codecs.getincrementaldecoder("utf-8")("replace").decode(head)
+    tail_start = 0
+    while tail_start < len(tail) and (tail[tail_start] & 0xC0) == 0x80:
+        tail_start += 1
+    tail_text = tail[tail_start:].decode("utf-8", "replace")
+    omitted = size - head_bytes - tail_bytes
+    return FullOutput(content=f"{head_text}\n\n[... {omitted} bytes omitted ...]\n\n{tail_text}", truncated=True)
 
 
 class _OutputSnapshot:

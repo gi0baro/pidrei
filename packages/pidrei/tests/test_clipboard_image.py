@@ -70,7 +70,34 @@ async def test_x11_command_failures_read_as_no_image():
     with _commands(result) as calls:
         assert await read_clipboard_image({"platform": "linux", "env": {"DISPLAY": ":0"}}) is None
 
-    assert [name for name, _ in calls] == ["xclip"] * 5
+    assert [name for name, _ in calls] == ["xclip"]
+
+
+@pytest.mark.tonio
+async def test_x11_does_not_probe_image_types_when_targets_fails():
+    # Regression test for #9786.
+    async def result(_name, args):
+        return None if "TARGETS" in args else b"hello"
+
+    with _commands(result) as calls:
+        assert await read_clipboard_image({"platform": "linux", "env": {"DISPLAY": ":0"}}) is None
+
+    assert calls == [("xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"])]
+
+
+@pytest.mark.tonio
+async def test_x11_does_not_probe_unadvertised_image_types():
+    async def result(_name, args):
+        if "TARGETS" in args:
+            return b"image/png\n"
+        if "image/png" in args:
+            return None
+        return b"hello"
+
+    with _commands(result) as calls:
+        assert await read_clipboard_image({"platform": "linux", "env": {"DISPLAY": ":0"}}) is None
+
+    assert [args[3] for _, args in calls] == ["TARGETS", "image/png"]
 
 
 @pytest.mark.tonio

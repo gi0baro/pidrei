@@ -26,6 +26,8 @@ from pidrei_ai.types import (
     GrammarConstrainedSampling,
     ImageContent,
     JsonSchemaConstrainedSampling,
+    NestedToolCallRecord,
+    NestedToolCalls,
     SystemMessage,
     TextContent,
     ThinkingContent,
@@ -234,6 +236,8 @@ def serialize_message(message: Any) -> Any:
         _put(data, "rawStopReason", message.raw_stop_reason)
         _put(data, "endTurn", message.end_turn)
         _put(data, "deferred", _serialize_deferred_handle(message.deferred))
+        # The agent loop assigns it onto the finished message, so it lands last.
+        _put(data, "thinkingLevel", message.thinking_level)
         return data
     if role == "toolResult":
         data = {
@@ -246,6 +250,9 @@ def serialize_message(message: Any) -> Any:
         _put(data, "usage", serialize_usage(message.usage))
         data["isError"] = message.is_error
         data["timestamp"] = message.timestamp
+        # pi's session assigns it onto the finished message, so it lands last.
+        if message.nested_calls is not None:
+            data["nestedCalls"] = _serialize_nested_calls(message.nested_calls)
         return data
     if role == "custom":
         data = {"role": "custom", "customType": message.custom_type, "content": serialize_content(message.content)}
@@ -311,6 +318,7 @@ def parse_message(data: Any) -> Any:
             response_model=data.get("responseModel"),
             response_id=data.get("responseId"),
             provider_thinking_level=data.get("providerThinkingLevel"),
+            thinking_level=data.get("thinkingLevel"),
             diagnostics=(
                 [_parse_diagnostic(diagnostic) for diagnostic in data["diagnostics"]]
                 if isinstance(data.get("diagnostics"), list)
@@ -330,6 +338,7 @@ def parse_message(data: Any) -> Any:
             timestamp=data.get("timestamp", 0),
             details=data.get("details"),
             usage=parse_usage(data.get("usage")),
+            nested_calls=_parse_nested_calls(data.get("nestedCalls")),
         )
     if role == "custom":
         return CustomMessage(
@@ -361,6 +370,39 @@ def parse_message(data: Any) -> Any:
             timestamp=data.get("timestamp", 0),
         )
     return data
+
+
+def _serialize_nested_calls(nested: NestedToolCalls) -> dict[str, Any]:
+    calls = []
+    for call in nested.calls:
+        data: dict[str, Any] = {"id": call.id, "name": call.name, "status": call.status}
+        _put(data, "arguments", call.arguments)
+        _put(data, "argumentsBytes", call.arguments_bytes)
+        _put(data, "durationMs", call.duration_ms)
+        _put(data, "error", call.error)
+        calls.append(data)
+    return {"calls": calls, "complete": nested.complete}
+
+
+def _parse_nested_calls(data: Any) -> NestedToolCalls | None:
+    if not isinstance(data, dict) or not isinstance(data.get("calls"), list):
+        return None
+    return NestedToolCalls(
+        calls=[
+            NestedToolCallRecord(
+                id=call.get("id", ""),
+                name=call.get("name", ""),
+                status=call.get("status", "unfinished"),
+                arguments=call.get("arguments"),
+                arguments_bytes=call.get("argumentsBytes"),
+                duration_ms=call.get("durationMs"),
+                error=call.get("error"),
+            )
+            for call in data["calls"]
+            if isinstance(call, dict)
+        ],
+        complete=bool(data.get("complete", False)),
+    )
 
 
 def _serialize_deferred_handle(handle: Any) -> Any:

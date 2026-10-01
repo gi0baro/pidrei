@@ -162,6 +162,7 @@ def stream(
                 return len(blocks) - 1
 
             async for chunk in google_stream:
+                await maybe_call(opts.on_provider_stream_event, chunk, model)
                 # Vertex uses the same GenerateContentResponse shape as Gemini;
                 # responseId is an output-only identifier for each response.
                 if not output.response_id:

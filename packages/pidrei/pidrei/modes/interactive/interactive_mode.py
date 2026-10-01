@@ -22,6 +22,7 @@ import signal
 import subprocess
 import threading
 import traceback
+import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as dataclass_replace
@@ -31,7 +32,7 @@ import tonio.colored as tonio
 from tonio.colored import fs, signals as tonio_signals
 
 from pidrei_agent.harness.session.serde import serialize_message
-from pidrei_ai.auth.types import AuthOperationOptions
+from pidrei_ai.auth.types import AuthOperationOptions, LoginOptions
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.utils import clock
 from pidrei_ai.utils.cancel import CancelToken as AiCancelToken
@@ -113,7 +114,7 @@ from ...core.trust_manager import (
 )
 from ...core.usage_totals import get_usage_cost_breakdown
 from ...utils.changelog import get_new_entries, normalize_changelog_links, parse_changelog
-from ...utils.clipboard import copy_to_clipboard, read_clipboard_text
+from ...utils.clipboard import copy_to_clipboard, read_clipboard_file_paths, read_clipboard_text
 from ...utils.clipboard_image import extension_for_image_mime_type, read_clipboard_image
 from ...utils.colors import dim
 from ...utils.fd_io import hard_exit
@@ -169,11 +170,14 @@ from .components import (
     load_earendil_image_base64,
     raw_key_hint,
 )
+from .components.pi_logo import pi_logo_lines
+from .components.themed_text import ThemedText
 from .extension_tui import ExtensionTui, guard_overlay_handle
 from .external_editor import edit_in_external_editor
 from .model_catalog_refresh import refresh_model_catalogs
 from .model_search import get_model_search_text
 from .theme import (
+    SYSTEM_THEME_NAME,
     InteractiveThemeController,
     get_available_themes,
     get_available_themes_with_paths,
@@ -252,14 +256,17 @@ def is_working_status_editor(editor) -> bool:
     )
 
 
-class ExpandableText(Text):
+class ExpandableText(ThemedText):
     def __init__(self, get_collapsed_text, get_expanded_text, expanded=False, padding_x=0, padding_y=0) -> None:
-        super().__init__(get_expanded_text() if expanded else get_collapsed_text(), padding_x, padding_y)
-        self._get_collapsed_text = get_collapsed_text
-        self._get_expanded_text = get_expanded_text
+        state = {"expanded": expanded}
+        super().__init__(
+            lambda: get_expanded_text() if state["expanded"] else get_collapsed_text(), padding_x, padding_y
+        )
+        self._state = state
 
     def set_expanded(self, expanded: bool) -> None:
-        self.set_text(self._get_expanded_text() if expanded else self._get_collapsed_text())
+        self._state["expanded"] = expanded
+        self.invalidate()
 
 
 def _is_custom_session_entry(item) -> bool:
@@ -591,6 +598,7 @@ class InteractiveMode:
             log_directory=get_agent_dir(),
             terminal=options.get("terminal"),
             fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
+            fullscreen_wheel_scroll_lines=self.settings_manager.get_fullscreen_wheel_scroll_lines(),
         )
         self._main_screen_render_state = None
         self._fullscreen_layout_root = None
@@ -686,6 +694,7 @@ class InteractiveMode:
         # updates)
         self._last_status_spacer = None
         self._last_status_text = None
+        self._last_status_message = ""
         self._managed_tool_status_started = False
 
         # Streaming message tracking
@@ -792,7 +801,8 @@ class InteractiveMode:
     # =========================================================================
 
     def _get_autocomplete_source_tag(self, source_info=None) -> str | None:
-        if source_info is None:
+        # Built-in extension commands are untagged, like built-in commands.
+        if source_info is None or source_info.source == "builtin":
             return None
 
         if source_info.scope == "user":
@@ -995,7 +1005,7 @@ class InteractiveMode:
                 condensed_text = f"Updated to v{latest_version}. Use {theme.bold('/changelog')} to view full changelog."
                 self._chat_container.add_child(Text(condensed_text, 1, 0))
             else:
-                self._chat_container.add_child(Text(theme.bold(theme.fg("accent", "What's New")), 1, 0))
+                self._chat_container.add_child(ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0))
                 self._chat_container.add_child(Spacer(1))
                 self._chat_container.add_child(
                     Markdown(self._changelog_markdown.strip(), 1, 0, self._get_markdown_theme_with_settings())
@@ -1055,6 +1065,7 @@ class InteractiveMode:
                     log_directory=get_agent_dir(),
                     terminal=previous_ui.terminal,
                     fullscreen_copy_on_select=self.settings_manager.get_fullscreen_copy_on_select(),
+                    fullscreen_wheel_scroll_lines=self.settings_manager.get_fullscreen_wheel_scroll_lines(),
                 )
                 next_ui.set_clear_on_shrink(previous_ui.get_clear_on_shrink())
                 next_ui.set_render_error_handler(self._uncaught_crash)
@@ -1172,58 +1183,75 @@ class InteractiveMode:
         self._is_initialized = True
 
         await self._theme_controller.apply_from_settings()
+        # The header and startup notices bake theme colors into their text, so
+        # build them once the terminal reported its colors. This ends at the
+        # terminal's DA1 reply, or after 100 ms if it answers nothing.
+        await self._theme_controller.wait_for_terminal_colors()
 
         # Add header with keybindings from config (unless silenced)
         if self._options.get("verbose") or not self.settings_manager.get_quiet_startup():
-            logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", f" v{self._version}")
+            # Built on demand so the header follows theme changes. The logo's
+            # first line carries the version, its second line the first line
+            # of key hints.
+            def with_logo(hints: str) -> str:
+                top, bottom = pi_logo_lines()
+                return f"{top} {theme.fg('dim', f'v{self._version}')}\n{bottom} {hints}"
 
-            expanded_instructions = "\n".join(
-                [
-                    key_hint("app.interrupt", "to interrupt"),
-                    key_hint("app.clear", "to clear"),
-                    raw_key_hint(f"{key_text('app.clear')} twice", "to exit"),
-                    key_hint("app.exit", "to exit (empty)"),
-                    key_hint("app.suspend", "to suspend"),
-                    key_hint("tui.editor.deleteToLineEnd", "to delete to end"),
-                    key_hint("app.thinking.cycle", "to cycle thinking level"),
-                    raw_key_hint(
-                        f"{key_text('app.model.cycleForward')}/{key_text('app.model.cycleBackward')}",
-                        "to cycle models",
-                    ),
-                    key_hint("app.model.select", "to select model"),
-                    key_hint("app.tools.expand", "to expand tools"),
-                    key_hint("app.thinking.toggle", "to expand thinking"),
-                    key_hint("app.editor.external", "for external editor"),
-                    raw_key_hint("/", "for commands"),
-                    raw_key_hint("!", "to run bash"),
-                    raw_key_hint("!!", "to run bash (no context)"),
-                    key_hint("app.message.followUp", "to queue follow-up"),
-                    key_hint("app.message.dequeue", "to edit all queued messages"),
-                    key_hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
-                    raw_key_hint("drop files", "to attach"),
-                ]
-            )
-            compact_instructions = theme.fg("muted", " · ").join(
-                [
-                    key_hint("app.interrupt", "interrupt"),
-                    raw_key_hint(f"{key_text('app.clear')}/{key_text('app.exit')}", "clear/exit"),
-                    raw_key_hint("/", "commands"),
-                    raw_key_hint("!", "bash"),
-                    key_hint("app.tools.expand", "more"),
-                ]
-            )
-            compact_onboarding = theme.fg(
-                "dim",
-                f"Press {key_text('app.tools.expand')} to show full startup help and loaded resources.",
-            )
-            onboarding = theme.fg(
-                "dim",
-                f"{APP_NAME} can explain its own features and look up its docs. "
-                f"Ask it how to use or extend {APP_NAME}.",
-            )
+            def expanded_instructions() -> str:
+                return "\n".join(
+                    [
+                        key_hint("app.interrupt", "to interrupt"),
+                        key_hint("app.clear", "to clear"),
+                        raw_key_hint(f"{key_text('app.clear')} twice", "to exit"),
+                        key_hint("app.exit", "to exit (empty)"),
+                        key_hint("app.suspend", "to suspend"),
+                        key_hint("tui.editor.deleteToLineEnd", "to delete to end"),
+                        key_hint("app.thinking.cycle", "to cycle thinking level"),
+                        raw_key_hint(
+                            f"{key_text('app.model.cycleForward')}/{key_text('app.model.cycleBackward')}",
+                            "to cycle models",
+                        ),
+                        key_hint("app.model.select", "to select model"),
+                        key_hint("app.tools.expand", "to expand tools"),
+                        key_hint("app.thinking.toggle", "to expand thinking"),
+                        key_hint("app.editor.external", "for external editor"),
+                        raw_key_hint("/", "for commands"),
+                        raw_key_hint("!", "to run bash"),
+                        raw_key_hint("!!", "to run bash (no context)"),
+                        key_hint("app.message.followUp", "to queue follow-up"),
+                        key_hint("app.message.dequeue", "to edit all queued messages"),
+                        key_hint("app.clipboard.pasteImage", "to paste files on macOS, images, or text"),
+                        raw_key_hint("drop files", "to attach"),
+                    ]
+                )
+
+            def compact_instructions() -> str:
+                return theme.fg("muted", " · ").join(
+                    [
+                        key_hint("app.interrupt", "interrupt"),
+                        raw_key_hint(f"{key_text('app.clear')}/{key_text('app.exit')}", "clear/exit"),
+                        raw_key_hint("/", "commands"),
+                        raw_key_hint("!", "bash"),
+                        key_hint("app.tools.expand", "more"),
+                    ]
+                )
+
+            def compact_onboarding() -> str:
+                return theme.fg(
+                    "dim",
+                    f"Press {key_text('app.tools.expand')} to show full startup help and loaded resources.",
+                )
+
+            def onboarding() -> str:
+                return theme.fg(
+                    "dim",
+                    f"{APP_NAME} can explain its own features and look up its docs. "
+                    f"Ask it how to use or extend {APP_NAME}.",
+                )
+
             self._built_in_header = ExpandableText(
-                lambda: f"{logo}\n{compact_instructions}\n{compact_onboarding}\n\n{onboarding}",
-                lambda: f"{logo}\n{expanded_instructions}\n\n{onboarding}",
+                lambda: f"{with_logo(compact_instructions())}\n{compact_onboarding()}\n\n{onboarding()}",
+                lambda: f"{with_logo(expanded_instructions())}\n\n{onboarding()}",
                 self._get_startup_expansion_state(),
                 1,
                 0,
@@ -1830,13 +1858,12 @@ class InteractiveMode:
                     labels.sort(key=lambda label: (label.lower(), label))
                 return theme.fg("dim", f"  {', '.join(labels)}")
 
-            def add_loaded_section(
-                name: str, collapsed_body: str, expanded_body=None, color: str = "mdHeading"
-            ) -> None:
+            # Bodies are built on demand so the listing follows theme changes.
+            def add_loaded_section(name: str, collapsed_body, expanded_body=None, color: str = "mdHeading") -> None:
                 expanded = expanded_body if expanded_body is not None else collapsed_body
                 section = ExpandableText(
-                    lambda name=name, body=collapsed_body, color=color: f"{section_header(name, color)}\n{body}",
-                    lambda name=name, body=expanded, color=color: f"{section_header(name, color)}\n{body}",
+                    lambda name=name, body=collapsed_body, color=color: f"{section_header(name, color)}\n{body()}",
+                    lambda name=name, body=expanded, color=color: f"{section_header(name, color)}\n{body()}",
                     self._get_startup_expansion_state(),
                     0,
                     0,
@@ -1878,13 +1905,18 @@ class InteractiveMode:
                 ]
                 if context_files:
                     self._loaded_resources_container.add_child(Spacer(1))
-                    context_list = "\n".join(
-                        theme.fg("dim", f"  {self._format_display_path(f.path)}") for f in context_files
-                    )
-                    context_compact_list = format_compact_list(
-                        [self._format_context_path(context_file.path) for context_file in context_files],
-                        {"sort": False},
-                    )
+
+                    def context_list() -> str:
+                        return "\n".join(
+                            theme.fg("dim", f"  {self._format_display_path(f.path)}") for f in context_files
+                        )
+
+                    def context_compact_list() -> str:
+                        return format_compact_list(
+                            [self._format_context_path(context_file.path) for context_file in context_files],
+                            {"sort": False},
+                        )
+
                     add_loaded_section("Context", context_compact_list, context_list)
 
                 skills = skills_result.skills
@@ -1892,16 +1924,21 @@ class InteractiveMode:
                     groups = self._build_scope_groups(
                         [{"path": skill.file_path, "sourceInfo": skill.source_info} for skill in skills]
                     )
-                    skill_list = self._format_scope_groups(
-                        groups,
-                        {
-                            "formatPath": lambda item: self._format_display_path(item["path"]),
-                            "formatPackagePath": lambda item, source: self._get_short_path(
-                                item["path"], item.get("sourceInfo")
-                            ),
-                        },
-                    )
-                    skill_compact_list = format_compact_list([skill.name for skill in skills])
+
+                    def skill_list(groups=groups) -> str:
+                        return self._format_scope_groups(
+                            groups,
+                            {
+                                "formatPath": lambda item: self._format_display_path(item["path"]),
+                                "formatPackagePath": lambda item, source: self._get_short_path(
+                                    item["path"], item.get("sourceInfo")
+                                ),
+                            },
+                        )
+
+                    def skill_compact_list() -> str:
+                        return format_compact_list([skill.name for skill in skills])
+
                     add_loaded_section("Skills", skill_compact_list, skill_list)
 
                 templates = self.session.prompt_templates
@@ -1915,79 +1952,76 @@ class InteractiveMode:
                         template = template_by_path.get(item["path"])
                         return f"/{template.name}" if template else self._format_display_path(item["path"])
 
-                    template_list = self._format_scope_groups(
-                        groups,
-                        {
-                            "formatPath": format_template,
-                            "formatPackagePath": format_template,
-                        },
-                    )
-                    prompt_compact_list = format_compact_list([f"/{template.name}" for template in templates])
+                    def template_list(groups=groups) -> str:
+                        return self._format_scope_groups(
+                            groups,
+                            {
+                                "formatPath": format_template,
+                                "formatPackagePath": format_template,
+                            },
+                        )
+
+                    def prompt_compact_list() -> str:
+                        return format_compact_list([f"/{template.name}" for template in templates])
+
                     add_loaded_section("Prompts", prompt_compact_list, template_list)
 
                 if extensions:
                     groups = self._build_scope_groups(extensions)
-                    ext_list = self._format_scope_groups(
-                        groups,
-                        {
-                            "formatPath": lambda item: self._format_extension_display_path(item["path"]),
-                            "formatPackagePath": lambda item, source: self._format_extension_display_path(
-                                self._get_short_path(item["path"], item.get("sourceInfo"))
-                            ),
-                        },
-                    )
-                    extension_compact_list = format_compact_list(self._get_compact_extension_labels(extensions))
-                    add_loaded_section("Extensions", extension_compact_list, ext_list, "mdHeading")
 
-                # Show loaded themes (excluding built-in)
-                custom_themes = [t for t in themes_result["themes"] if t.source_path]
-                if custom_themes:
-                    groups = self._build_scope_groups(
-                        [
-                            {"path": loaded_theme.source_path, "sourceInfo": loaded_theme.source_info}
-                            for loaded_theme in custom_themes
-                        ]
-                    )
-                    theme_list = self._format_scope_groups(
-                        groups,
-                        {
-                            "formatPath": lambda item: self._format_display_path(item["path"]),
-                            "formatPackagePath": lambda item, source: self._get_short_path(
-                                item["path"], item.get("sourceInfo")
-                            ),
-                        },
-                    )
-                    theme_compact_list = format_compact_list(
-                        [
-                            loaded_theme.name
-                            if loaded_theme.name is not None
-                            else self._get_compact_path_label(loaded_theme.source_path, loaded_theme.source_info)
-                            for loaded_theme in custom_themes
-                        ]
-                    )
-                    add_loaded_section("Themes", theme_compact_list, theme_list)
+                    def ext_list(groups=groups) -> str:
+                        return self._format_scope_groups(
+                            groups,
+                            {
+                                "formatPath": lambda item: self._format_extension_display_path(item["path"]),
+                                "formatPackagePath": lambda item, source: self._format_extension_display_path(
+                                    self._get_short_path(item["path"], item.get("sourceInfo"))
+                                ),
+                            },
+                        )
+
+                    extension_labels = self._get_compact_extension_labels(extensions)
+
+                    def extension_compact_list() -> str:
+                        return format_compact_list(extension_labels)
+
+                    add_loaded_section("Extensions", extension_compact_list, ext_list, "mdHeading")
 
             if show_diagnostics:
                 skill_diagnostics = skills_result.diagnostics
                 if skill_diagnostics:
-                    warning_lines = self._format_diagnostics(skill_diagnostics, source_infos)
                     self._loaded_resources_container.add_child(
-                        Text(f"{theme.fg('warning', '[Skill conflicts]')}\n{warning_lines}", 0, 0)
+                        ThemedText(
+                            lambda: (
+                                f"{theme.fg('warning', '[Skill conflicts]')}\n"
+                                f"{self._format_diagnostics(skill_diagnostics, source_infos)}"
+                            ),
+                            0,
+                            0,
+                        )
                     )
                     self._loaded_resources_container.add_child(Spacer(1))
 
                 prompt_diagnostics = prompts_result.diagnostics
                 if prompt_diagnostics:
-                    warning_lines = self._format_diagnostics(prompt_diagnostics, source_infos)
                     self._loaded_resources_container.add_child(
-                        Text(f"{theme.fg('warning', '[Prompt conflicts]')}\n{warning_lines}", 0, 0)
+                        ThemedText(
+                            lambda: (
+                                f"{theme.fg('warning', '[Prompt conflicts]')}\n"
+                                f"{self._format_diagnostics(prompt_diagnostics, source_infos)}"
+                            ),
+                            0,
+                            0,
+                        )
                     )
                     self._loaded_resources_container.add_child(Spacer(1))
 
                 extension_diagnostics: list = []
-                extension_errors = self.session.resource_loader.get_extensions().errors
-                for error in extension_errors:
+                extensions_result = self.session.resource_loader.get_extensions()
+                for error in extensions_result.errors:
                     extension_diagnostics.append({"type": "error", "message": error.error, "path": error.path})
+                for warning in extensions_result.warnings:
+                    extension_diagnostics.append({"type": "warning", "message": warning.warning, "path": warning.path})
 
                 runner = self.session.extension_runner
                 get_command_diagnostics = getattr(runner, "get_command_diagnostics", None)
@@ -2000,17 +2034,29 @@ class InteractiveMode:
                     extension_diagnostics.extend(get_shortcut_diagnostics())
 
                 if extension_diagnostics:
-                    warning_lines = self._format_diagnostics(extension_diagnostics, source_infos)
                     self._loaded_resources_container.add_child(
-                        Text(f"{theme.fg('warning', '[Extension issues]')}\n{warning_lines}", 0, 0)
+                        ThemedText(
+                            lambda: (
+                                f"{theme.fg('warning', '[Extension issues]')}\n"
+                                f"{self._format_diagnostics(extension_diagnostics, source_infos)}"
+                            ),
+                            0,
+                            0,
+                        )
                     )
                     self._loaded_resources_container.add_child(Spacer(1))
 
                 theme_diagnostics = themes_result["diagnostics"]
                 if theme_diagnostics:
-                    warning_lines = self._format_diagnostics(theme_diagnostics, source_infos)
                     self._loaded_resources_container.add_child(
-                        Text(f"{theme.fg('warning', '[Theme conflicts]')}\n{warning_lines}", 0, 0)
+                        ThemedText(
+                            lambda: (
+                                f"{theme.fg('warning', '[Theme conflicts]')}\n"
+                                f"{self._format_diagnostics(theme_diagnostics, source_infos)}"
+                            ),
+                            0,
+                            0,
+                        )
                     )
                     self._loaded_resources_container.add_child(Spacer(1))
 
@@ -2114,6 +2160,9 @@ class InteractiveMode:
             # pi configures the undici HTTP dispatcher here; pidrei's HTTP
             # transport is punkreq's concern (see core/http_config.py).
             self._apply_fullscreen_scrollbar_setting()
+            if isinstance(self._renderer, TuiAltScreen):
+                self._renderer.set_copy_on_select(self.settings_manager.get_fullscreen_copy_on_select())
+                self._renderer.set_wheel_scroll_lines(self.settings_manager.get_fullscreen_wheel_scroll_lines())
             self._footer.set_session(self.session)
             self._footer.set_auto_compact_enabled(self.session.auto_compaction_enabled)
             cwd_changed = self._footer_data_provider.apply_cwd(resolved_cwd)
@@ -2402,7 +2451,7 @@ class InteractiveMode:
                 for line in content[: InteractiveMode.MAX_WIDGET_LINES]:
                     container.add_child(Text(line, 1, 0))
                 if len(content) > InteractiveMode.MAX_WIDGET_LINES:
-                    container.add_child(Text(theme.fg("muted", "... (widget truncated)"), 1, 0))
+                    container.add_child(ThemedText(lambda: theme.fg("muted", "... (widget truncated)"), 1, 0))
                 component = container
             else:
                 # Factory function - create component
@@ -2951,16 +3000,19 @@ class InteractiveMode:
     def _show_extension_error(self, extension_path: str, error: str, stack=None) -> None:
         """Show an extension error in the UI."""
         error_msg = f'Extension "{extension_path}" error: {error}'
-        error_text = Text(theme.fg("error", error_msg), 1, 0)
+        error_text = ThemedText(lambda: theme.fg("error", error_msg), 1, 0)
         # Show stack trace in dim color, indented (skip first line, it
         # duplicates the error message)
-        stack_lines = "\n".join(theme.fg("dim", f"  {line.strip()}") for line in stack.split("\n")[1:]) if stack else ""
+        stack_lines = stack.split("\n")[1:] if stack else []
+
+        def render_stack() -> str:
+            return "\n".join(theme.fg("dim", f"  {line.strip()}") for line in stack_lines)
 
         # Raised on whatever task hit the extension error.
         with self.ui.state_lock:
             self._chat_container.add_child(error_text)
             if stack_lines:
-                self._chat_container.add_child(Text(stack_lines, 1, 0))
+                self._chat_container.add_child(ThemedText(render_stack, 1, 0))
             self.ui.request_render()
 
     # =========================================================================
@@ -3063,6 +3115,36 @@ class InteractiveMode:
 
     async def _handle_clipboard_paste(self) -> None:
         try:
+            file_paths = await read_clipboard_file_paths()
+            if file_paths:
+                if any(unicodedata.category(char) == "Cc" for file_path in file_paths for char in file_path):
+                    raise Exception("Clipboard file path contains control characters")
+                paths = (
+                    " ".join(_quote_if_needed(file_path) for file_path in file_paths)
+                    if self._is_bash_mode
+                    else "\n".join(file_paths)
+                )
+                # The cursor read and the insert are one hold, so a key typed
+                # meanwhile cannot move the cursor between them.
+                with self.ui.state_lock:
+                    # pi: `this.editor.getCursor?.()` — custom editors may not have one.
+                    get_cursor = getattr(self.editor, "get_cursor", None)
+                    cursor = get_cursor() if get_cursor is not None else None
+                    character_before_cursor = character_after_cursor = ""
+                    if cursor is not None:
+                        lines = self.editor.get_text().split("\n")
+                        current_line = lines[cursor["line"]] if cursor["line"] < len(lines) else ""
+                        col = cursor["col"]
+                        character_before_cursor = current_line[col - 1] if 0 < col <= len(current_line) else ""
+                        character_after_cursor = current_line[col] if col < len(current_line) else ""
+                    leading_space = " " if character_before_cursor and not character_before_cursor.isspace() else ""
+                    trailing_space = " " if character_after_cursor and not character_after_cursor.isspace() else ""
+                    insert = getattr(self.editor, "insert_text_at_cursor", None)
+                    if insert is not None:
+                        insert(f"{leading_space}{paths}{trailing_space}")
+                self.ui.request_render()
+                return
+
             image = await read_clipboard_image()
             if image:
                 ext = extension_for_image_mime_type(image["mimeType"]) or "png"
@@ -3078,9 +3160,8 @@ class InteractiveMode:
             if text:
                 self._insert_into_editor(text)
                 self.ui.request_render()
-        except Exception:
-            # Silently ignore clipboard errors (permissions etc.)
-            pass
+        except Exception as error:
+            self.show_error(f"Failed to paste from clipboard: {error}")
 
     # pi's `this.editor.setText(...)` and friends: like pi's, they request no
     # render of their own (their callers do, or a render follows anyway).
@@ -3482,6 +3563,9 @@ class InteractiveMode:
             pass
 
         elif event_type == "tool_execution_start":
+            # Nested calls (from other tools, e.g. codemode scripts) are shown inside their parent's row.
+            if event.parent_tool_call_id:
+                return
             component = self._pending_tools.get(event.tool_call_id)
             if component is None:
                 component = ToolExecutionComponent(
@@ -3590,7 +3674,8 @@ class InteractiveMode:
                     self.show_error(event.error_message)
                 else:
                     self._chat_container.add_child(Spacer(1))
-                    self._chat_container.add_child(Text(theme.fg("error", event.error_message), 1, 0))
+                    error_message = event.error_message
+                    self._chat_container.add_child(ThemedText(lambda: theme.fg("error", error_message), 1, 0))
             self._flush_compaction_queue({"willRetry": event.will_retry})
             self.ui.request_render()
 
@@ -3660,7 +3745,7 @@ class InteractiveMode:
                 self._managed_tool_status_started = True
             message = f"Warning: {status['message']}" if status["type"] == "warning" else status["message"]
             color = "warning" if status["type"] == "warning" else "dim"
-            self._chat_container.add_child(Text(theme.fg(color, message), 1, 0))
+            self._chat_container.add_child(ThemedText(lambda: theme.fg(color, message), 1, 0))
             self._last_status_spacer = None
             self._last_status_text = None
             self.ui.request_render()
@@ -3689,12 +3774,14 @@ class InteractiveMode:
                 and last is self._last_status_text
                 and second_last is self._last_status_spacer
             ):
-                self._last_status_text.set_text(theme.fg("dim", message))
+                self._last_status_message = message
+                self._last_status_text.invalidate()
                 self.ui.request_render()
                 return
 
             spacer = Spacer(1)
-            text = Text(theme.fg("dim", message), 1, 0)
+            self._last_status_message = message
+            text = ThemedText(lambda: theme.fg("dim", self._last_status_message), 1, 0)
             self._chat_container.add_child(spacer)
             self._chat_container.add_child(text)
             self._last_status_spacer = spacer
@@ -3934,7 +4021,8 @@ class InteractiveMode:
         if not self.settings_manager.get_show_cache_miss_notices():
             return
         self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(theme.fg("dim", format_cache_warming_usage(entry)), 1, 0))
+        usage = format_cache_warming_usage(entry)
+        self._chat_container.add_child(ThemedText(lambda: theme.fg("dim", usage), 1, 0))
 
     def _add_compaction_cost_notice(self, notice: dict) -> None:
         """Render billing usage for a compaction or branch summary. The notice is derived
@@ -3948,7 +4036,7 @@ class InteractiveMode:
         label = "Compaction" if notice["kind"] == "compaction" else "Branch summary"
         self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(
-            Text(theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
+            ThemedText(lambda: theme.fg("warning", f"{label}: {format_tokens(tokens)} tokens billed{cost}"), 1, 0)
         )
 
     @staticmethod
@@ -3993,7 +4081,9 @@ class InteractiveMode:
         noun = "thinking block" if dropped_count == 1 else "thinking blocks"
         self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(
-            Text(theme.fg("warning", f"Anthropic dropped {dropped_count} {noun} (details in session)"), 1, 0)
+            ThemedText(
+                lambda: theme.fg("warning", f"Anthropic dropped {dropped_count} {noun} (details in session)"), 1, 0
+            )
         )
 
     def _maybe_show_cache_miss_notice(self, message) -> None:
@@ -4022,9 +4112,8 @@ class InteractiveMode:
             label = "Cache miss after model switch"
         elif miss.idle_ms >= CACHE_TTL_MS:
             label = f"Cache miss after {round(miss.idle_ms / 60_000)}m idle"
-        text = theme.fg("warning", f"{label}: {re_billed}")
         self._chat_container.add_child(Spacer(1))
-        self._chat_container.add_child(Text(text, 1, 0))
+        self._chat_container.add_child(ThemedText(lambda: theme.fg("warning", f"{label}: {re_billed}"), 1, 0))
 
     def _render_initial_messages(self, trust_warning: bool) -> None:
         """`trust_warning` is `_needs_project_trust_warning()`, awaited by the
@@ -4065,8 +4154,8 @@ class InteractiveMode:
         if self._chat_container.children:
             self._chat_container.add_child(Spacer(1))
         self._chat_container.add_child(
-            Text(
-                theme.fg(
+            ThemedText(
+                lambda: theme.fg(
                     "warning",
                     f"This project is not trusted. Project {CONFIG_DIR_NAME} resources and packages "
                     f"are ignored. Use /trust to save a trust decision, then restart {APP_NAME}.",
@@ -4460,33 +4549,43 @@ class InteractiveMode:
     def show_error(self, error_message: str) -> None:
         with self.ui.state_lock:
             self._chat_container.add_child(Spacer(1))
-            self._chat_container.add_child(Text(theme.fg("error", f"Error: {error_message}"), self._output_pad, 0))
+            self._chat_container.add_child(
+                ThemedText(lambda: theme.fg("error", f"Error: {error_message}"), self._output_pad, 0)
+            )
             self.ui.request_render()
 
     def show_warning(self, warning_message: str) -> None:
         with self.ui.state_lock:
             self._chat_container.add_child(Spacer(1))
-            self._chat_container.add_child(Text(theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
+            self._chat_container.add_child(ThemedText(lambda: theme.fg("warning", f"Warning: {warning_message}"), 1, 0))
             self.ui.request_render()
 
     def show_new_version_notification(self, release: dict) -> None:
-        action = theme.fg("accent", f"{APP_NAME} update")
-        update_instruction = theme.fg("muted", f"New version {release['version']} is available. Run ") + action
+        def update_instruction() -> str:
+            return theme.fg("muted", f"New version {release['version']} is available. Run ") + theme.fg(
+                "accent", f"{APP_NAME} update"
+            )
+
         # The release's own page, from the same record the check produced.
         changelog_url = release.get("url") or RELEASES_URL
-        changelog_link = (
-            hyperlink(theme.fg("accent", changelog_url), changelog_url)
-            if get_capabilities()["hyperlinks"]
-            else theme.fg("accent", changelog_url)
-        )
-        changelog_line = theme.fg("muted", "Release notes: ") + changelog_link
+
+        def changelog_line() -> str:
+            changelog_link = (
+                hyperlink(theme.fg("accent", changelog_url), changelog_url)
+                if get_capabilities()["hyperlinks"]
+                else theme.fg("accent", changelog_url)
+            )
+            return theme.fg("muted", "Release notes: ") + changelog_link
+
         note = (release.get("note") or "").strip()
 
         with self.ui.state_lock:
             self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self._chat_container.add_child(
-                Text(f"{theme.bold(theme.fg('warning', 'Update Available'))}\n{update_instruction}", 1, 0)
+                ThemedText(
+                    lambda: f"{theme.bold(theme.fg('warning', 'Update Available'))}\n{update_instruction()}", 1, 0
+                )
             )
             if note:
                 self._chat_container.add_child(Spacer(1))
@@ -4500,22 +4599,27 @@ class InteractiveMode:
                     )
                 )
                 self._chat_container.add_child(Spacer(1))
-            self._chat_container.add_child(Text(changelog_line, 1, 0))
+            self._chat_container.add_child(ThemedText(changelog_line, 1, 0))
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self.ui.request_render()
 
     def show_package_update_notification(self, packages: list) -> None:
-        action = theme.fg("accent", f"{APP_NAME} update --extensions")
-        update_instruction = theme.fg("muted", "Package updates are available. Run ") + action
+        def update_instruction() -> str:
+            return theme.fg("muted", "Package updates are available. Run ") + theme.fg(
+                "accent", f"{APP_NAME} update --extensions"
+            )
+
         package_lines = "\n".join(f"- {pkg}" for pkg in packages)
 
         with self.ui.state_lock:
             self._chat_container.add_child(Spacer(1))
             self._chat_container.add_child(DynamicBorder(lambda text: theme.fg("warning", text)))
             self._chat_container.add_child(
-                Text(
-                    f"{theme.bold(theme.fg('warning', 'Package Updates Available'))}\n{update_instruction}\n"
-                    f"{theme.fg('muted', 'Packages:')}\n{package_lines}",
+                ThemedText(
+                    lambda: (
+                        f"{theme.bold(theme.fg('warning', 'Package Updates Available'))}\n{update_instruction()}\n"
+                        f"{theme.fg('muted', 'Packages:')}\n{package_lines}"
+                    ),
                     1,
                     0,
                 )
@@ -4890,6 +4994,11 @@ class InteractiveMode:
                 if isinstance(self._renderer, TuiAltScreen):
                     self._renderer.set_copy_on_select(enabled)
 
+            def on_fullscreen_wheel_scroll_lines_change(lines) -> None:
+                self.settings_manager.set_fullscreen_wheel_scroll_lines(lines)
+                if isinstance(self._renderer, TuiAltScreen):
+                    self._renderer.set_wheel_scroll_lines(lines)
+
             def on_cancel() -> None:
                 done()
                 self.ui.request_render()
@@ -4913,7 +5022,7 @@ class InteractiveMode:
                     "thinkingLevel": self.settings_manager.get_default_thinking_level() or DEFAULT_THINKING_LEVEL,
                     "availableThinkingLevels": list(THINKING_LEVEL_OPTIONS),
                     "modelThinkingLevels": self.settings_manager.get_all_model_thinking_levels(),
-                    "currentTheme": self._theme_controller.get_theme_selection() or "dark",
+                    "currentTheme": self._theme_controller.get_theme_selection() or SYSTEM_THEME_NAME,
                     "terminalTheme": self._theme_controller.get_terminal_theme(),
                     "availableThemes": available_themes,
                     "hideThinkingBlock": self._hide_thinking_block,
@@ -4934,6 +5043,7 @@ class InteractiveMode:
                     "fullscreenExitOutput": self.settings_manager.get_fullscreen_exit_output(),
                     "fullscreenScrollbar": self.settings_manager.get_fullscreen_scrollbar(),
                     "fullscreenCopyOnSelect": self.settings_manager.get_fullscreen_copy_on_select(),
+                    "fullscreenWheelScrollLines": self.settings_manager.get_fullscreen_wheel_scroll_lines(),
                     "warnings": self.settings_manager.get_warnings(),
                 },
                 {
@@ -4982,6 +5092,7 @@ class InteractiveMode:
                     ),
                     "onFullscreenScrollbarChange": on_fullscreen_scrollbar_change,
                     "onFullscreenCopyOnSelectChange": on_fullscreen_copy_on_select_change,
+                    "onFullscreenWheelScrollLinesChange": on_fullscreen_wheel_scroll_lines_change,
                     "onWarningsChange": lambda warnings: self.settings_manager.set_warnings(warnings),
                     "onCancel": on_cancel,
                 },
@@ -6269,7 +6380,12 @@ class InteractiveMode:
             def notify(self, event) -> None:
                 mode._notify_auth_dialog(dialog, event)
 
-        await self.session.model_runtime.login(provider_id, method, DialogInteraction())
+        await self.session.model_runtime.login(
+            provider_id,
+            method,
+            DialogInteraction(),
+            LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
+        )
 
     def _show_login_dialog(self, provider_id: str, provider_name: str) -> None:
         """Reached from `_start_provider_login`: mounted here; the OAuth flow
@@ -6331,8 +6447,8 @@ class InteractiveMode:
             reload_box.add_child(DynamicBorder(border_color))
             reload_box.add_child(Spacer(1))
             reload_box.add_child(
-                Text(
-                    theme.fg(
+                ThemedText(
+                    lambda: theme.fg(
                         "muted", "Reloading keybindings, extensions, skills, prompts, themes, and context files..."
                     ),
                     1,
@@ -6671,7 +6787,9 @@ class InteractiveMode:
             with self.ui.state_lock:
                 current_name = self.session_manager.get_session_name()
                 if current_name:
-                    self._append_to_chat(Spacer(1), Text(theme.fg("dim", f"Session name: {current_name}"), 1, 0))
+                    self._append_to_chat(
+                        Spacer(1), ThemedText(lambda: theme.fg("dim", f"Session name: {current_name}"), 1, 0)
+                    )
                 else:
                     self.show_warning("Usage: /name <name>")
                 self._set_editor_text("")
@@ -6683,9 +6801,10 @@ class InteractiveMode:
         session_name = self.session_manager.get_session_name()
         if session_name != name:
             self.show_warning(f"Session name was normalized from {json.dumps(name)} to {json.dumps(session_name)}")
+        display_name = session_name if session_name is not None else name
         self._append_to_chat(
             Spacer(1),
-            Text(theme.fg("dim", f"Session name set: {session_name if session_name is not None else name}"), 1, 0),
+            ThemedText(lambda: theme.fg("dim", f"Session name set: {display_name}"), 1, 0),
         )
 
     def handle_session_command(self) -> None:
@@ -6700,68 +6819,77 @@ class InteractiveMode:
         # the session total.
         usage_breakdown = get_usage_cost_breakdown(entries)
 
-        info = f"{theme.bold('Session Info')}\n\n"
-        if session_name:
-            info += f"{theme.fg('dim', 'Name:')} {session_name}\n"
-        info += f"{theme.fg('dim', 'File:')} {stats.session_file if stats.session_file is not None else 'In-memory'}\n"
-        info += f"{theme.fg('dim', 'ID:')} {stats.session_id}\n\n"
-        info += f"{theme.bold('Messages')}\n"
-        info += f"{theme.fg('dim', 'Total:')} {stats.total_messages}\n"
-        info += f"{theme.fg('dim', 'User:')} {stats.user_messages}\n"
-        info += f"{theme.fg('dim', 'Assistant:')} {stats.assistant_messages}\n"
-        info += f"{theme.fg('dim', 'Tools:')} {stats.tool_calls} calls, {stats.tool_results} results\n\n"
-        info += f"{theme.bold('Tokens')}\n"
-        # "Input" is the full prompt volume. With cache activity, split it into
-        # cached (served from cache) vs uncached (everything else) - the only
-        # provider-independent split. Cache writes, where reported, are a
-        # detail of the uncached portion.
-        input_tokens = stats.tokens.input
-        cache_read = stats.tokens.cache_read
-        cache_write = stats.tokens.cache_write
-        prompt_tokens = input_tokens + cache_read + cache_write
-        info += f"{theme.fg('dim', 'Input:')} {prompt_tokens:,}\n"
-        if prompt_tokens > 0 and (cache_read > 0 or cache_write > 0):
-            hit_rate = theme.fg("dim", f"({cache_read / prompt_tokens * 100:.1f}%)")
-            info += f"  {theme.fg('dim', 'Cached:')} {cache_read:,} {hit_rate}\n"
-            written = f" {theme.fg('dim', f'({cache_write:,} written to cache)')}" if cache_write > 0 else ""
-            info += f"  {theme.fg('dim', 'Uncached:')} {input_tokens + cache_write:,}{written}\n"
-        info += f"{theme.fg('dim', 'Output:')} {stats.tokens.output:,}\n"
-        info += f"{theme.fg('dim', 'Total:')} {stats.tokens.total:,}\n"
-
+        # Snapshot the stats; the text is built on demand so it follows theme changes.
         cache_warming_status = self.session.cache_warming_status
-        info += f"\n{theme.bold('Cache Warming')}\n"
-        info += f"{theme.fg('dim', 'Mode:')} {self.settings_manager.get_cache_warming_mode()}\n"
-        status_text = (
-            format_cache_warming_status(cache_warming_status)
-            if cache_warming_status is not None
-            else "Inactive (cache warming unavailable)"
-        )
-        info += f"{theme.fg('dim', 'Status:')} {status_text}\n"
-        decision = cache_warming_status.decision if cache_warming_status is not None else None
-        if decision is not None and decision.economics_available:
-            info += f"{theme.fg('dim', 'Cache miss penalty:')} ${decision.miss_cost:.3f}\n"
-            info += f"{theme.fg('dim', 'Refresh cost:')} ${decision.warm_cost:.3f}\n"
+        cache_warming_mode = self.settings_manager.get_cache_warming_mode()
+        model = self.session.model
+        selected_model_key = f"{model.provider}/{model.id}" if model is not None else None
 
-        if stats.cost > 0 or cache_waste.missed_tokens > 0:
-            info += f"\n{theme.bold('Cost')}\n"
-            info += f"{theme.fg('dim', 'Total:')} ${stats.cost:.3f}"
-            if len(usage_breakdown) > 1:
-                for entry in usage_breakdown:
+        def render_info() -> str:
+            info = f"{theme.bold('Session Info')}\n\n"
+            if session_name:
+                info += f"{theme.fg('dim', 'Name:')} {session_name}\n"
+            session_file = stats.session_file if stats.session_file is not None else "In-memory"
+            info += f"{theme.fg('dim', 'File:')} {session_file}\n"
+            info += f"{theme.fg('dim', 'ID:')} {stats.session_id}\n\n"
+            info += f"{theme.bold('Messages')}\n"
+            info += f"{theme.fg('dim', 'Total:')} {stats.total_messages}\n"
+            info += f"{theme.fg('dim', 'User:')} {stats.user_messages}\n"
+            info += f"{theme.fg('dim', 'Assistant:')} {stats.assistant_messages}\n"
+            info += f"{theme.fg('dim', 'Tools:')} {stats.tool_calls} calls, {stats.tool_results} results\n\n"
+            info += f"{theme.bold('Tokens')}\n"
+            # "Input" is the full prompt volume. With cache activity, split it
+            # into cached (served from cache) vs uncached (everything else) -
+            # the only provider-independent split. Cache writes, where
+            # reported, are a detail of the uncached portion.
+            input_tokens = stats.tokens.input
+            cache_read = stats.tokens.cache_read
+            cache_write = stats.tokens.cache_write
+            prompt_tokens = input_tokens + cache_read + cache_write
+            info += f"{theme.fg('dim', 'Input:')} {prompt_tokens:,}\n"
+            if prompt_tokens > 0 and (cache_read > 0 or cache_write > 0):
+                hit_rate = theme.fg("dim", f"({cache_read / prompt_tokens * 100:.1f}%)")
+                info += f"  {theme.fg('dim', 'Cached:')} {cache_read:,} {hit_rate}\n"
+                written = f" {theme.fg('dim', f'({cache_write:,} written to cache)')}" if cache_write > 0 else ""
+                info += f"  {theme.fg('dim', 'Uncached:')} {input_tokens + cache_write:,}{written}\n"
+            info += f"{theme.fg('dim', 'Output:')} {stats.tokens.output:,}\n"
+            info += f"{theme.fg('dim', 'Total:')} {stats.tokens.total:,}\n"
+
+            info += f"\n{theme.bold('Cache Warming')}\n"
+            info += f"{theme.fg('dim', 'Mode:')} {cache_warming_mode}\n"
+            status_text = (
+                format_cache_warming_status(cache_warming_status)
+                if cache_warming_status is not None
+                else "Inactive (cache warming unavailable)"
+            )
+            info += f"{theme.fg('dim', 'Status:')} {status_text}\n"
+            decision = cache_warming_status.decision if cache_warming_status is not None else None
+            if decision is not None and decision.economics_available:
+                info += f"{theme.fg('dim', 'Cache miss penalty:')} ${decision.miss_cost:.3f}\n"
+                info += f"{theme.fg('dim', 'Refresh cost:')} ${decision.warm_cost:.3f}\n"
+
+            if stats.cost > 0 or cache_waste.missed_tokens > 0:
+                info += f"\n{theme.bold('Cost')}\n"
+                info += f"{theme.fg('dim', 'Total:')} ${stats.cost:.3f}"
+                # A single entry repeats the total, unless it names a model other than the selected one.
+                if len(usage_breakdown) > 1 or (usage_breakdown and usage_breakdown[0].key != selected_model_key):
+                    for entry in usage_breakdown:
+                        info += (
+                            f"\n  {theme.fg('dim', f'{entry.key}:')} ${entry.cost:.3f} "
+                            f"{theme.fg('dim', f'({format_tokens(entry.tokens)} tokens)')}"
+                        )
+                if cache_waste.missed_tokens > 0:
+                    miss_label = "1 miss" if cache_waste.miss_count == 1 else f"{cache_waste.miss_count} misses"
+                    detail = f"{cache_waste.missed_tokens:,} tokens, {miss_label}"
                     info += (
-                        f"\n  {theme.fg('dim', f'{entry.key}:')} ${entry.cost:.3f} "
-                        f"{theme.fg('dim', f'({format_tokens(entry.tokens)} tokens)')}"
+                        f"\n{theme.fg('dim', 'Cache Re-billed:')} ${cache_waste.missed_cost:.3f} "
+                        f"{theme.fg('dim', f'({detail})')}"
+                        if cache_waste.missed_cost >= 0.0001
+                        else f"\n{theme.fg('dim', 'Cache Re-billed:')} {detail}"
                     )
-            if cache_waste.missed_tokens > 0:
-                miss_label = "1 miss" if cache_waste.miss_count == 1 else f"{cache_waste.miss_count} misses"
-                detail = f"{cache_waste.missed_tokens:,} tokens, {miss_label}"
-                info += (
-                    f"\n{theme.fg('dim', 'Cache Re-billed:')} ${cache_waste.missed_cost:.3f} "
-                    f"{theme.fg('dim', f'({detail})')}"
-                    if cache_waste.missed_cost >= 0.0001
-                    else f"\n{theme.fg('dim', 'Cache Re-billed:')} {detail}"
-                )
+            return info
 
-        self._append_to_chat(Spacer(1), Text(info, 1, 0))
+        self._append_to_chat(Spacer(1), ThemedText(render_info, 1, 0))
 
     async def _handle_changelog_command(self) -> None:
         changelog_path = get_changelog_path()
@@ -6776,7 +6904,7 @@ class InteractiveMode:
         self._append_to_chat(
             Spacer(1),
             DynamicBorder(),
-            Text(theme.bold(theme.fg("accent", "What's New")), 1, 0),
+            ThemedText(lambda: theme.bold(theme.fg("accent", "What's New")), 1, 0),
             Spacer(1),
             Markdown(changelog_markdown, 1, 1, self._get_markdown_theme_with_settings()),
             DynamicBorder(),
@@ -6876,7 +7004,7 @@ class InteractiveMode:
 | `{copy_message}` | Copy selection or last assistant message |
 | `{follow_up}` | Queue follow-up message |
 | `{dequeue}` | Restore queued messages |
-| `{paste_image}` | Paste image or text from clipboard |
+| `{paste_image}` | Paste files on macOS, images, or text from clipboard |
 | `/` | Slash commands |
 | `!` | Run bash command |
 | `!!` | Run bash command (excluded from context) |
@@ -6896,7 +7024,7 @@ class InteractiveMode:
         self._append_to_chat(
             Spacer(1),
             DynamicBorder(),
-            Text(theme.bold(theme.fg("accent", "Keyboard Shortcuts")), 1, 0),
+            ThemedText(lambda: theme.bold(theme.fg("accent", "Keyboard Shortcuts")), 1, 0),
             Spacer(1),
             Markdown(hotkeys.strip(), 1, 1, self._get_markdown_theme_with_settings()),
             DynamicBorder(),
@@ -6914,7 +7042,7 @@ class InteractiveMode:
             if result.get("cancelled"):
                 return
             # After the new session's chat reset (the rebind, inside `new_session`).
-            self._append_to_chat(Spacer(1), Text(theme.fg("accent", "✓ New session started"), 1, 1))
+            self._append_to_chat(Spacer(1), ThemedText(lambda: theme.fg("accent", "✓ New session started"), 1, 1))
         except Exception as error:
             await self._handle_fatal_runtime_error("Failed to create session", error)
 
@@ -6950,7 +7078,9 @@ class InteractiveMode:
 
         self._append_to_chat(
             Spacer(1),
-            Text(f"{theme.fg('accent', '✓ Debug log written')}\n{theme.fg('muted', debug_log_path)}", 1, 1),
+            ThemedText(
+                lambda: f"{theme.fg('accent', '✓ Debug log written')}\n{theme.fg('muted', debug_log_path)}", 1, 1
+            ),
         )
 
     def _handle_armin_says_hi(self) -> None:

@@ -39,8 +39,11 @@ type KnownApi = Literal[
 ]
 type Api = str  # KnownApi or any custom string
 
-type KnownImagesApi = Literal["openrouter-images"]
-type ImagesApi = str  # KnownImagesApi or any custom string
+type KnownImageApi = Literal["openrouter-images"]
+type ImageApi = str  # KnownImageApi or any custom string
+
+type KnownClassifierApi = Literal["typesafe-system-one", "cloudflare-workers-ai-system-one", "llama-cpp-classify"]
+type ClassifierApi = str  # KnownClassifierApi or any custom string
 
 type KnownProvider = Literal[
     "amazon-bedrock",
@@ -51,6 +54,7 @@ type KnownProvider = Literal[
     "openai",
     "azure-openai-responses",
     "openai-codex",
+    "typesafe",
     "nvidia",
     "deepseek",
     "github-copilot",
@@ -85,9 +89,6 @@ type KnownProvider = Literal[
     "xiaomi-token-plan-sgp",
 ]
 type ProviderId = str  # KnownProvider or any custom string
-
-type KnownImagesProvider = Literal["openrouter"]
-type ImagesProviderId = str  # KnownImagesProvider or any custom string
 
 type ToolChoice = Literal["auto", "none"]
 type ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
@@ -288,6 +289,8 @@ class AssistantMessage:
     response_id: str | None = None  # Provider-specific response/message identifier
     # Exact provider-native effort level used for this response. None for legacy or unmanaged responses.
     provider_thinking_level: str | None = None
+    # pidrei thinking level the agent loop requested for this response. None outside the agent loop and for legacy responses.
+    thinking_level: ModelThinkingLevel | None = None
     diagnostics: list[AssistantMessageDiagnostic] | None = None
     error_message: str | None = None
     raw_stop_reason: str | None = None
@@ -300,6 +303,32 @@ class AssistantMessage:
 
 
 @dataclass(slots=True, frozen=True)
+class NestedToolCallRecord:
+    """A tool call that another tool made while it ran, for example from a codemode script."""
+
+    id: str
+    name: str
+    # "unfinished": the call was still running when the calling tool finished.
+    status: Literal["ok", "error", "unfinished"]
+    # None when over the size limits; `arguments_bytes` then gives their size.
+    arguments: dict[str, Any] | None = None
+    # UTF-8 size of the arguments as JSON, set when `arguments` is None.
+    arguments_bytes: int | None = None
+    duration_ms: int | None = None
+    # Error text, truncated.
+    error: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class NestedToolCalls:
+    """Bounded record of the nested calls a tool made. Results are not recorded."""
+
+    calls: list[NestedToolCallRecord]
+    # False when calls were dropped, arguments omitted, or calls had not finished.
+    complete: bool
+
+
+@dataclass(slots=True, frozen=True)
 class ToolResultMessage:
     tool_call_id: str
     tool_name: str
@@ -309,6 +338,8 @@ class ToolResultMessage:
     details: Any = None
     # Usage from the tool execution itself, if available. Not part of main LLM context accounting.
     usage: Usage | None = None
+    # Calls this tool made to other tools. Kept for the session record; not sent to the model.
+    nested_calls: NestedToolCalls | None = None
     role: Literal["toolResult"] = "toolResult"
 
 
@@ -617,6 +648,8 @@ class ModelInputLimits:
 
 @dataclass(slots=True)
 class Model:
+    """Chat model: usable with `stream()` and friends."""
+
     id: str
     name: str
     api: Api
@@ -638,6 +671,10 @@ class Model:
     headers: dict[str, str] | None = None
     # Compatibility overrides; when None, auto-detected from base_url (API-specific).
     compat: ModelCompat | None = None
+    # Optional: chat is the default model type, so models without `type` are chat
+    # models. Narrow mixed model lists with `is_model_type()` instead of comparing
+    # `type` directly.
+    type: Literal["chat"] | None = None
 
 
 # --- stream options / provider contracts --------------------------------------
@@ -654,6 +691,7 @@ class ProviderResponse:
 # coroutines hide — decided 2026-07-28: callback contracts are async-only).
 type OnPayload = Callable[[Any, Model], Awaitable[Any]]
 type OnResponse = Callable[[ProviderResponse, Model], Awaitable[Any]]
+type OnProviderStreamEvent = Callable[[Any, Model], Awaitable[Any]]
 
 
 @dataclass(slots=True)
@@ -683,6 +721,12 @@ class ProviderRequestOptions:
 
 @dataclass(slots=True)
 class StreamOptions(ProviderRequestOptions):
+    # Optional observer for each parsed provider stream event before normalization.
+    # Adapter support is explicit; unsupported adapters do not invoke it. The data
+    # is passed by reference and is adapter-owned, read-only: it is awaited inline
+    # on the adapter's coroutine before the adapter reads it, so nothing reads it
+    # concurrently, but a mutating observer corrupts the adapter's view.
+    on_provider_stream_event: OnProviderStreamEvent | None = None
     temperature: float | None = None
     # Arbitrary sampling parameters merged into the request body as-is, after the
     # named request fields, so keys here override them. Lets custom
@@ -895,18 +939,46 @@ type ImagesStopReason = Literal["stop", "error", "aborted"]
 
 
 @dataclass(slots=True)
-class ImagesModel:
-    """`Model` minus the chat-only fields, plus the produced modalities."""
+class ImageModel:
+    """Image-generation model: usable with `generate_images()` only."""
 
     id: str
     name: str
-    api: ImagesApi
-    provider: ImagesProviderId
+    api: ImageApi
+    provider: ProviderId
     base_url: str
     input: list[Literal["text", "image"]]
+    # Output modalities. Always includes "image"; "text" means the model can also return text blocks.
     output: list[Literal["text", "image"]]
     cost: ModelCost
+    # Provider input limits and cache-safe preprocessing metadata.
+    input_limits: ModelInputLimits | None = None
     headers: dict[str, str] | None = None
+    type: Literal["image"] = "image"
+
+
+@dataclass(slots=True)
+class ClassifierModel:
+    """Structured classifier model: usable with `classify()` only."""
+
+    id: str
+    name: str
+    api: ClassifierApi
+    provider: ProviderId
+    base_url: str
+    input: list[Literal["text", "image"]]
+    cost: ModelCost
+    context_window: int
+    # Provider input limits and cache-safe preprocessing metadata.
+    input_limits: ModelInputLimits | None = None
+    headers: dict[str, str] | None = None
+    type: Literal["classifier"] = "classifier"
+
+
+# What a catalog entry is for. Decides which `Models` operation accepts it.
+type ModelType = Literal["chat", "image", "classifier"]
+# Anything a provider can list. Narrow with `is_model_type()`.
+type AnyModel = Model | ImageModel | ClassifierModel
 
 
 @dataclass(slots=True)
@@ -916,8 +988,8 @@ class ImagesContext:
 
 @dataclass(slots=True)
 class AssistantImages:
-    api: ImagesApi
-    provider: ImagesProviderId
+    api: ImageApi
+    provider: ProviderId
     model: str
     output: list[ImagesOutputContent]
     stop_reason: ImagesStopReason
@@ -933,6 +1005,99 @@ class ImagesOptions(ProviderRequestOptions):
 
 
 class ProviderImages(Protocol):
+    """The uniform contract of an image-generation API implementation module:
+    every image API module under `pidrei_ai/api/` exports exactly
+    `generate_images`, so the module itself satisfies this protocol. Lazy
+    wrappers and `create_provider(images=...)` pass these around as values."""
+
     async def generate_images(
-        self, model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
     ) -> AssistantImages: ...
+
+
+# --- classifiers ---------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class ClassifierChoiceQuestion:
+    instructions: str
+    criteria: dict[str, str]
+    type: Literal["choice"] = "choice"
+
+
+@dataclass(slots=True, frozen=True)
+class ClassifierScoreQuestion:
+    instructions: str
+    criteria: list[str]
+    type: Literal["score"] = "score"
+
+
+@dataclass(slots=True, frozen=True)
+class ClassifierBoolQuestion:
+    instructions: str
+    # pi: `{ true: string; false: string }`
+    criteria: dict[Literal["true", "false"], str]
+    type: Literal["bool"] = "bool"
+
+
+type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierScoreQuestion | ClassifierBoolQuestion
+
+
+@dataclass(slots=True)
+class ClassifierContext:
+    state: dict[str, Any]
+    questions: dict[str, ClassifierQuestion]
+
+
+@dataclass(slots=True, frozen=True)
+class ClassifierChoiceAnswer:
+    choice: str
+    probabilities: dict[str, float]
+    confidence: float
+    type: Literal["choice"] = "choice"
+
+
+@dataclass(slots=True, frozen=True)
+class ClassifierScoreAnswer:
+    score: float
+    confidence: float
+    type: Literal["score"] = "score"
+
+
+@dataclass(slots=True, frozen=True)
+class ClassifierBoolAnswer:
+    probability: float
+    type: Literal["bool"] = "bool"
+
+
+type ClassifierAnswer = ClassifierChoiceAnswer | ClassifierScoreAnswer | ClassifierBoolAnswer
+type ClassifierStopReason = Literal["stop", "error", "aborted"]
+
+
+@dataclass(slots=True)
+class ClassifierResult:
+    api: ClassifierApi
+    provider: ProviderId
+    model: str
+    answers: dict[str, ClassifierAnswer]
+    stop_reason: ClassifierStopReason
+    timestamp: int  # Unix timestamp in milliseconds
+    # Token usage and its cost at the model's catalog price, when the service reports token counts.
+    usage: Usage | None = None
+    error_message: str | None = None
+
+
+@dataclass(slots=True)
+class ClassifierOptions(ProviderRequestOptions):
+    # Divides the answer logits by this value before they are normalized into
+    # probabilities. Values above 1 soften the distribution; values below 1
+    # sharpen it. Must be positive. APIs that cannot apply it ignore it.
+    temperature: float | None = None
+
+
+class ProviderClassifier(Protocol):
+    """The uniform contract implemented by classifier API modules."""
+
+    async def classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> ClassifierResult: ...

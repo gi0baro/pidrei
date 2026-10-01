@@ -46,6 +46,35 @@ def _theme_json_validator_guard():
 
 
 @pytest.fixture(autouse=True)
+def _terminal_colors_guard():
+    """Fail-loud reset of the process-wide terminal colors in the theme module.
+
+    `set_terminal_colors`/`set_terminal_color_scheme` record what the terminal
+    reported, and every theme resolves "" tokens (and the system theme its
+    whole palette and light/dark appearance) from them; a test that feeds
+    reports and leaves them set changes every later test's colors. The warning
+    names the polluting test; the reset keeps the poison from spreading. The
+    pending flag is reset silently: every `InteractiveThemeController`
+    construction sets it (production behavior), so only its reset matters.
+    """
+    theme_module = importlib.import_module("pidrei.modes.interactive.theme.theme")
+    yield
+    # A timed-out query records a report of Nones: nothing reported, nothing left.
+    left_colors = (
+        any(value is not None for value in theme_module._terminal_colors.values())
+        or theme_module._terminal_color_scheme is not None
+    )
+    theme_module.set_terminal_colors({})
+    theme_module.set_terminal_color_scheme(None)
+    if left_colors:
+        warnings.warn(
+            "test left the theme module's terminal colors set "
+            "(set_terminal_colors/set_terminal_color_scheme were not reset); reset",
+            stacklevel=1,
+        )
+
+
+@pytest.fixture(autouse=True)
 def _capability_overrides_guard():
     """Fail-loud reset of the process-wide terminal capability overrides.
 

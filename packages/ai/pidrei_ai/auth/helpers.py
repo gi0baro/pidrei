@@ -8,6 +8,7 @@ from pidrei_ai.auth.types import (
     AuthContext,
     AuthPrompt,
     AuthResult,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -60,8 +61,8 @@ def lazy_oauth(
             loaded[0] = await load()
         return loaded[0]
 
-    async def login(interaction: ProviderAuthInteraction) -> OAuthCredential:
-        return await (await _loaded()).login(interaction)
+    async def login(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
+        return await (await _loaded()).login(interaction, options)
 
     async def refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
         return await (await _loaded()).refresh(credential, cancel)

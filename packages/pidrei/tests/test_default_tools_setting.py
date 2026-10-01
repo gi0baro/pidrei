@@ -96,6 +96,20 @@ async def test_uses_the_configured_list_as_the_initial_built_in_selection(dirs):
 
 
 @pytest.mark.tonio
+async def test_activates_an_inactive_extension_tool_with_plus_name(dirs):
+    async def factory(pi) -> None:
+        tool = _tool("inactive_tool", "Inactive Tool", "Extension tool registered inactive")
+        tool.default_active = False
+        pi.register_tool(tool)
+
+    session = await create_session(dirs, ["+inactive_tool", "-write"], extension_factories=[factory])
+    try:
+        assert sorted(session.get_active_tool_names()) == ["bash", "edit", "inactive_tool", "read"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
 async def test_keeps_extension_and_sdk_custom_tools_enabled(dirs):
     async def factory(pi) -> None:
         pi.register_tool(_tool("static_tool", "Static Tool", "Statically registered extension tool"))

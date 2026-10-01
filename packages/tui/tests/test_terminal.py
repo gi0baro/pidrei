@@ -178,6 +178,21 @@ async def test_falls_back_to_modify_other_keys_for_device_attributes_without_kit
 
 
 @pytest.mark.tonio
+async def test_forwards_device_attributes_replies_that_answer_other_queries():
+    harness = _NegotiationHarness()
+    try:
+        await harness.send("\x1b[?7u")
+        await harness.send("\x1b[?62;4;52c")
+        assert harness.input is None
+
+        # The TUI's color query uses DA1 as its own sentinel.
+        await harness.send("\x1b[?62;4;52c")
+        assert harness.input == "\x1b[?62;4;52c"
+    finally:
+        await harness.cleanup()
+
+
+@pytest.mark.tonio
 async def test_forwards_normal_input_while_waiting_for_kitty_response():
     harness = _NegotiationHarness()
     try:

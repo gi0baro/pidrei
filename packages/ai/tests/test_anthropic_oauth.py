@@ -1,15 +1,17 @@
 """Mirror of pi's anthropic-oauth.test.ts.
 
-These cases exercise the manual-paste branch, so the flow really does open its
-loopback callback server on the fixed port — pi's suite does the same.
+Every login case really opens the loopback callback server on the fixed port —
+pi's suite does the same — and the browser-callback case fetches it.
 """
 
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import tonio.colored as tonio
 
 from pidrei_ai.auth.oauth.anthropic import anthropic_oauth
-from pidrei_ai.auth.types import AuthPrompt, OAuthCredential
+from pidrei_ai.auth.types import AuthEvent, AuthPrompt, OAuthCredential
+from pidrei_ai.utils import http
 
 from .oauth_helpers import (
     DEFAULT_START_MS,
@@ -107,3 +109,50 @@ async def test_login_resolves_through_the_manual_code_prompt_and_aborts_it_after
     assert manual_prompts
     # the prompt's token is cancelled once login settles, so UIs can dismiss it
     assert manual_prompts[0].cancel is not None and manual_prompts[0].cancel.cancelled
+
+
+@pytest.mark.tonio
+async def test_completes_login_through_the_browser_callback_and_shows_the_sign_in_page():
+    exchanged_codes: list[str] = []
+
+    def handler(request: OAuthRequest):
+        assert request.url == TOKEN_URL
+        exchanged_codes.append(request.json_body["code"])
+        return json_response({"access_token": "access", "refresh_token": "refresh", "expires_in": 3600})
+
+    callback_page: list[tuple[int, str]] = []
+    page_fetched = tonio.Event()
+
+    async def fetch_callback(url: str) -> None:
+        client = http.create_client(timeout=http.oneshot_timeout(5_000), trust_env=False)
+        try:
+            response = await client.get(url)
+            callback_page.append((response.status_code, (await response.read()).decode("utf-8")))
+        finally:
+            await client.close()
+            page_fetched.set()
+
+    async def pending_prompt(prompt: AuthPrompt) -> str:
+        done = tonio.Event()
+        prompt.cancel.on_cancel(lambda _reason: done.set())
+        await done.wait()
+        raise RuntimeError("aborted")
+
+    interaction = RecordingInteraction(prompt=pending_prompt)
+
+    def notify(event: AuthEvent) -> None:
+        if event.type != "auth_url":
+            return
+        state = parse_qs(urlsplit(event.url).query)["state"][0]
+        tonio.spawn.without_tracking(fetch_callback(f"http://127.0.0.1:53692/callback?code=browser-code&state={state}"))
+
+    interaction.notify = notify  # type: ignore[method-assign]
+
+    with stub_oauth_http(handler):
+        credential = await anthropic_oauth.login(interaction)
+
+    assert credential.access == "access"
+    assert exchanged_codes == ["browser-code"]
+    await page_fetched.wait()
+    assert callback_page and callback_page[0][0] == 200
+    assert "Signed in to Anthropic." in callback_page[0][1]

@@ -116,7 +116,7 @@ class TestConcurrentPromptGuard:
         await streaming.wait(5)
         assert streaming.is_set()
 
-        await session.steer("Steering message")
+        assert await session.steer("Steering message") == "queued"
         assert session.pending_message_count == 1
 
         await session.abort()
@@ -135,7 +135,7 @@ class TestConcurrentPromptGuard:
         await streaming.wait(5)
         assert streaming.is_set()
 
-        await session.follow_up("Follow-up message")
+        assert await session.follow_up("Follow-up message") == "queued"
         assert session.pending_message_count == 1
 
         await session.abort()

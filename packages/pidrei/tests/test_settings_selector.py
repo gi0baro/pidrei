@@ -5,6 +5,8 @@ undefined, so here the config is spelled out with neutral values (a Python
 dict would raise KeyError instead).
 """
 
+import re
+
 import pytest
 
 from pidrei.core.keybindings import KeybindingsManager
@@ -41,6 +43,7 @@ BASE_CONFIG = {
     "fullscreenExitOutput": "transcript",
     "fullscreenScrollbar": "auto",
     "fullscreenCopyOnSelect": True,
+    "fullscreenWheelScrollLines": 7,
     "hideThinkingBlock": False,
     "httpIdleTimeoutMs": 0,
     "imageWidthCells": 40,
@@ -72,6 +75,7 @@ async def test_cycles_through_fullscreen_settings():
     exit_output_changes: list[str] = []
     scrollbar_changes: list[str] = []
     copy_on_select_changes: list[bool] = []
+    wheel_scroll_lines_changes: list = []
 
     def on_cancel() -> None:
         pass
@@ -80,6 +84,7 @@ async def test_cycles_through_fullscreen_settings():
         "onFullscreenExitOutputChange": exit_output_changes.append,
         "onFullscreenScrollbarChange": scrollbar_changes.append,
         "onFullscreenCopyOnSelectChange": copy_on_select_changes.append,
+        "onFullscreenWheelScrollLinesChange": wheel_scroll_lines_changes.append,
         "onWarningsChange": lambda warnings: None,
         "onCancel": on_cancel,
     }
@@ -97,6 +102,9 @@ async def test_cycles_through_fullscreen_settings():
     assert scrollbar_changes == ["always", "hidden", "auto"]
     await cycle("Fullscreen copy on select", 2)
     assert copy_on_select_changes == [False, True]
+    # #9758: custom values from settings.json stay in the cycle.
+    await cycle("Fullscreen wheel scrolling", 3)
+    assert wheel_scroll_lines_changes == [10, "auto", 1]
 
 
 def _render(settings_list) -> str:
@@ -113,14 +121,21 @@ def _noop_preview(_theme) -> None:
 
 @pytest.mark.tonio
 async def test_keeps_the_configured_fixed_theme_marked_while_browsing():
-    config = {**BASE_CONFIG, "currentTheme": "dark", "terminalTheme": "dark", "availableThemes": ["dark", "light"]}
+    config = {
+        **BASE_CONFIG,
+        "currentTheme": "dark",
+        "terminalTheme": "dark",
+        "availableThemes": ["system", "dark", "light"],
+    }
     callbacks = {"onThemePreview": _noop_preview, "onCancel": _noop_cancel}
     settings_list = SettingsSelectorComponent(config, callbacks).get_settings_list()
 
     settings_list.select_item("theme")
     settings_list.handle_input("\r")
     output = _render(settings_list)
-    assert "    Automatic" in output
+    assert re.search(
+        r" {4}system +Theme created from your terminal's colors\n {4}automatic +Use separate themes", output
+    )
     assert "→ ✓ dark" in output
 
     settings_list.handle_input(DOWN)

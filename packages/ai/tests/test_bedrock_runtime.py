@@ -100,17 +100,19 @@ async def test_a_frame_split_across_transport_chunks_is_reassembled():
 
 
 @pytest.mark.tonio
-async def test_a_modelled_stream_exception_is_raised_not_yielded():
+async def test_a_modelled_stream_exception_is_yielded_as_a_union_member():
     frames = [
         event_frame("messageStart", {"role": "assistant"}),
         event_frame("throttlingException", {"message": "slow down"}),
     ]
 
-    with pytest.raises(BedrockRuntimeServiceException) as excinfo:
-        await collect(frames)
+    events = await collect(frames)
 
-    assert excinfo.value.name == "ThrottlingException"
-    assert "slow down" in str(excinfo.value)
+    assert events[0] == {"messageStart": {"role": "assistant"}}
+    error = events[1]["throttlingException"]
+    assert isinstance(error, BedrockRuntimeServiceException)
+    assert error.name == "ThrottlingException"
+    assert "slow down" in str(error)
 
 
 def test_an_exception_message_type_is_raised_with_its_exception_type():

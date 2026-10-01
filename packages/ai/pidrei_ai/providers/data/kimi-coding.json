@@ -1,6 +1,6 @@
 {
   "anthropic-messages": {
-    "k3": {
+    "chat:k3": {
       "id": "k3",
       "name": "Kimi K3",
       "api": "anthropic-messages",
@@ -41,9 +41,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "k3-256k": {
+    "chat:k3-256k": {
       "id": "k3-256k",
       "name": "Kimi K3-256K",
       "api": "anthropic-messages",
@@ -83,9 +84,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-for-coding": {
+    "chat:kimi-for-coding": {
       "id": "kimi-for-coding",
       "name": "kimi-for-coding",
       "api": "anthropic-messages",
@@ -126,9 +128,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "kimi-for-coding-highspeed": {
+    "chat:kimi-for-coding-highspeed": {
       "id": "kimi-for-coding-highspeed",
       "name": "Kimi For Coding HighSpeed",
       "api": "anthropic-messages",
@@ -159,7 +162,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

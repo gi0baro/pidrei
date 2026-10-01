@@ -33,13 +33,48 @@ from pidrei_ai.auth.types import (
     Credential,
     CredentialInfo,
     CredentialStore,
+    LoginOptions,
 )
 from pidrei_ai.models_store import ModelsStore
 from pidrei_ai.providers.all import builtin_providers, get_builtin_model_data_generated_at
-from pidrei_ai.registry import ModelsRefreshOptions, ModelsRefreshResult, Provider, create_models
-from pidrei_ai.types import Context, DeferredHandle, Model, SimpleStreamOptions, StreamOptions, TranscriptContext
+from pidrei_ai.registry import (
+    ModelsRefreshOptions,
+    ModelsRefreshResult,
+    Provider,
+    clamp_thinking_level,
+    create_models,
+)
+from pidrei_ai.types import (
+    AnyModel,
+    AssistantImages,
+    AssistantMessage,
+    ClassifierContext,
+    ClassifierModel,
+    ClassifierOptions,
+    ClassifierResult,
+    Context,
+    DeferredHandle,
+    ImageModel,
+    ImagesContext,
+    ImagesOptions,
+    Message,
+    Model,
+    ModelThinkingLevel,
+    ModelType,
+    ProviderRequestOptions,
+    SimpleStreamOptions,
+    StreamOptions,
+    TranscriptContext,
+)
 from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.headers import merge_headers
+from pidrei_ai.utils.model_operations import (
+    assert_chat_model,
+    assert_classifier_model,
+    assert_image_model,
+    classifier_error_result,
+    image_error_result,
+)
 from pidrei_ai.utils.transcript import normalize_context
 
 from ..config import get_agent_dir
@@ -59,6 +94,19 @@ from .provider_composer import (
 )
 from .remote_catalog import with_remote_catalog
 from .runtime_credentials import RuntimeCredentials
+from .virtual_models import (
+    FailedRoute,
+    ModelRoute,
+    ModelRouteReason,
+    ModelRouteRequest,
+    RoutedResponse,
+    RouteFn,
+    VirtualModelDefinition,
+    create_virtual_model,
+    find_latest_response,
+    is_virtual_model,
+    with_virtual_models,
+)
 
 
 @dataclass(slots=True)
@@ -68,6 +116,12 @@ class _Snapshot:
     configured_providers: set[str] = field(default_factory=set)
     stored_providers: set[str] = field(default_factory=set)
     auth: dict[str, AuthCheck | None] = field(default_factory=dict)
+
+
+@dataclass(slots=True, frozen=True)
+class _RegisteredVirtualModel:
+    model: Model
+    route: RouteFn
 
 
 @dataclass(slots=True, frozen=True)
@@ -86,6 +140,13 @@ class _CompositionEpoch:
     extension_providers: dict[str, ProviderConfigInput]
     native_extension_providers: dict[str, Provider]
     composition_errors: dict[str, str]
+    # Virtual models by provider id, then model id.
+    virtual_models: dict[str, dict[str, _RegisteredVirtualModel]]
+
+
+def _cancelled(options: ProviderRequestOptions | None) -> bool:
+    """pi: `options?.signal?.aborted`."""
+    return options is not None and options.cancel is not None and options.cancel.cancelled
 
 
 def _unwrap_spawn_error(error: Exception) -> Exception:
@@ -212,6 +273,9 @@ class ModelRuntime:
         self._builtins: dict[str, Provider] = dict(self._default_builtins)
         self._native_extension_providers: dict[str, Provider] = {}
         self._extension_providers: dict[str, ProviderConfigInput] = {}
+        # Virtual models by provider id, then model id. The inner dicts are
+        # replaced, never mutated, so the epoch's shallow copy stays stable.
+        self._virtual_models: dict[str, dict[str, _RegisteredVirtualModel]] = {}
         self._composition_errors: dict[str, str] = {}
         self._snapshot = _Snapshot()
         self._availability_refresh_seq = 0
@@ -275,6 +339,7 @@ class ModelRuntime:
             extension_providers={},
             native_extension_providers={},
             composition_errors={},
+            virtual_models={},
         )
         self._models = create_models(credentials=credentials, models_store=models_store)
         self._rebuild_providers()
@@ -351,6 +416,7 @@ class ModelRuntime:
             self._native_extension_providers.keys(),
             self._config.get_provider_ids(),
             self._extension_providers.keys(),
+            self._virtual_models.keys(),
         ):
             for provider_id in source:
                 seen[provider_id] = None
@@ -365,33 +431,41 @@ class ModelRuntime:
             extension_providers=dict(self._extension_providers),
             native_extension_providers=dict(self._native_extension_providers),
             composition_errors=dict(self._composition_errors),
+            virtual_models=dict(self._virtual_models),
         )
 
-    def _recompose_provider(self, provider_id: str) -> None:
+    def _recompose_provider(self, provider_id: str) -> Provider | None:
+        """Returns the provider without virtual models, or None when only virtual models define it."""
         with self._composition_guard:
             try:
-                base = self._native_extension_providers.get(provider_id) or self._builtins.get(provider_id)
-                extension = self._extension_providers.get(provider_id)
-                if base is None and self._config.get_provider(provider_id) is None and extension is None:
+                provider = self._compose_provider(provider_id)
+                virtual_models = [entry.model for entry in self._virtual_models.get(provider_id, {}).values()]
+                if virtual_models:
+                    self._models.set_provider(with_virtual_models(provider_id, provider, virtual_models))
+                elif provider is not None:
+                    self._models.set_provider(provider)
+                else:
                     self._models.delete_provider(provider_id)
-                    self._composition_errors.pop(provider_id, None)
-                    return
-                if base is not None and self._config.get_provider(provider_id) is None and extension is None:
-                    # No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
-                    self._models.set_provider(base)
-                    self._composition_errors.pop(provider_id, None)
-                    return
-                try:
-                    self._models.set_provider(compose_model_provider(provider_id, base, self._config, extension))
-                    self._composition_errors.pop(provider_id, None)
-                except Exception as error:
-                    self._composition_errors[provider_id] = str(error)
-                    if base is not None:
-                        self._models.set_provider(base)
-                    else:
-                        self._models.delete_provider(provider_id)
+                return provider
             finally:
                 self._publish_composition()
+
+    def _compose_provider(self, provider_id: str) -> Provider | None:
+        """The provider without virtual models, or None when nothing defines it.
+        Callers hold `_composition_guard`."""
+        base = self._native_extension_providers.get(provider_id) or self._builtins.get(provider_id)
+        extension = self._extension_providers.get(provider_id)
+        if self._config.get_provider(provider_id) is None and extension is None:
+            # No overlays: use the builtin untouched so its auth/login/stream behavior is exact.
+            self._composition_errors.pop(provider_id, None)
+            return base
+        try:
+            provider = compose_model_provider(provider_id, base, self._config, extension)
+            self._composition_errors.pop(provider_id, None)
+            return provider
+        except Exception as error:
+            self._composition_errors[provider_id] = str(error)
+            return base
 
     def _rebuild_providers(self) -> None:
         # pi clears the collection and recomposes; its event loop makes that
@@ -610,6 +684,25 @@ class ModelRuntime:
     def get_model(self, provider_id: str, model_id: str) -> Model | None:
         return self._models.get_model(provider_id, model_id)
 
+    def get_models_of_type(self, type: ModelType, provider_id: str | None = None) -> list[AnyModel]:
+        return self._models.get_models_of_type(type, provider_id)
+
+    def get_model_of_type(self, type: ModelType, provider_id: str, model_id: str) -> AnyModel | None:
+        return self._models.get_model_of_type(type, provider_id, model_id)
+
+    def get_all_models(self, provider_id: str | None = None) -> list[AnyModel]:
+        return self._models.get_all_models(provider_id)
+
+    async def get_available_of_type(
+        self, type: ModelType, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[AnyModel]:
+        return await self._models.get_available_of_type(type, provider_id, options)
+
+    async def get_all_available(
+        self, provider_id: str | None = None, options: AuthOperationOptions | None = None
+    ) -> list[AnyModel]:
+        return await self._models.get_all_available(provider_id, options)
+
     async def check_auth(self, provider_id: str, options: AuthOperationOptions | None = None) -> AuthCheck | None:
         return await self._models.check_auth(provider_id, options)
 
@@ -694,7 +787,7 @@ class ModelRuntime:
 
     async def get_auth(
         self,
-        provider_or_model: str | Model,
+        provider_or_model: str | AnyModel,
         overrides: ModelRuntimeAuthOverrides | None = None,
     ) -> AuthResult | None:
         overrides = overrides if overrides is not None else ModelRuntimeAuthOverrides()
@@ -716,7 +809,7 @@ class ModelRuntime:
     async def _get_model_auth(
         self,
         provider: Provider,
-        model: Model,
+        model: AnyModel,
         overrides: ModelRuntimeAuthOverrides,
     ) -> AuthResult | None:
         """`get_auth`'s Model path against a pinned provider and one pinned
@@ -866,11 +959,12 @@ class ModelRuntime:
 
     # -- streaming -------------------------------------------------------------
 
-    async def _prepare_request(
+    async def _prepare_request[TModel: Model | ImageModel | ClassifierModel, TOptions: ProviderRequestOptions](
         self,
-        model: Model,
-        options: StreamOptions | None,
-    ) -> tuple[Provider, Model, StreamOptions]:
+        model: TModel,
+        options: TOptions | None,
+        default_options: Callable[[], TOptions] = StreamOptions,
+    ) -> tuple[Provider, TModel, TOptions]:
         provider = self._models.get_provider(model.provider)
         if provider is None:
             raise ModelsError("provider", f"Unknown provider: {model.provider}")
@@ -888,7 +982,7 @@ class ModelRuntime:
         if resolution is None:
             raise ModelsError("auth", f"Provider is not configured: {model.provider}")
 
-        provider_options = options if options is not None else StreamOptions()
+        provider_options = options if options is not None else default_options()
         transform_headers = provider_options.transform_headers
         headers = merge_headers(resolution.auth.headers, provider_options.headers)
         if transform_headers is not None:
@@ -912,6 +1006,7 @@ class ModelRuntime:
         transcript = normalize_context(context)
 
         async def setup(stream):
+            assert_chat_model(model)
             provider, request_model, request_options = await self._prepare_request(model, options)
             return call_stream_into(provider.stream, request_model, transcript, request_options, into=stream)
 
@@ -924,8 +1019,36 @@ class ModelRuntime:
         self, model: Model, context: Context | TranscriptContext, options: SimpleStreamOptions | None = None
     ):
         transcript = normalize_context(context)
+        if is_virtual_model(model):
+            # Requests outside the agent loop are routed here. Callers sized them before routing, so
+            # cap the output budget to the routed model.
+            async def route_request(_stream):
+                route = await self.resolve_model(
+                    model,
+                    transcript.messages,
+                    reason="direct",
+                    thinking_level=options.reasoning if options is not None and options.reasoning else "off",
+                    cancel=options.cancel if options is not None else None,
+                )
+                limit = route.model.max_tokens
+                requested = options.max_tokens if options is not None else None
+                max_tokens = min(requested, limit) if requested and limit > 0 else requested
+                reasoning = None if route.thinking_level == "off" else route.thinking_level
+                routed = replace(
+                    options if options is not None else SimpleStreamOptions(),
+                    max_tokens=max_tokens,
+                    reasoning=reasoning,
+                )
+                if route.model.provider != model.provider:
+                    # Caller credentials were resolved for the virtual model's provider. Another provider
+                    # resolves its own, so they are not sent to the wrong vendor.
+                    routed = replace(routed, api_key=None, headers=None, env=None)
+                return self.stream_simple(route.model, context, routed)
+
+            return lazy_stream(model, route_request, _cancel_of(options))
 
         async def setup(stream):
+            assert_chat_model(model)
             provider, request_model, request_options = await self._prepare_request(model, options)
             return call_stream_into(provider.stream_simple, request_model, transcript, request_options, into=stream)
 
@@ -936,6 +1059,7 @@ class ModelRuntime:
 
     def stream_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None):
         async def setup(_stream):
+            assert_chat_model(model)
             provider, request_model, request_options = await self._prepare_request(model, options)
             if not getattr(provider, "supports_fetch_deferred", False):
                 raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
@@ -947,18 +1071,52 @@ class ModelRuntime:
         return await self.stream_deferred(model, handle, options).result()
 
     async def cancel_deferred(self, model: Model, handle: DeferredHandle, options: StreamOptions | None = None) -> None:
+        assert_chat_model(model)
         provider, request_model, request_options = await self._prepare_request(model, options)
         if not getattr(provider, "supports_cancel_deferred", False):
             raise ModelsError("provider", f"Provider {model.provider} does not support deferred responses")
         await provider.cancel_deferred(request_model, handle, request_options)
 
+    # -- one-shot operations ---------------------------------------------------
+
+    async def generate_images(
+        self, model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
+    ) -> AssistantImages:
+        """Image generation with runtime-resolved auth (stored credentials,
+        OAuth, runtime API keys, models.json headers). Never raises."""
+        try:
+            assert_image_model(model)
+            provider, request_model, request_options = await self._prepare_request(model, options, ImagesOptions)
+            if provider.generate_images is None:
+                raise ModelsError("provider", f"Provider {model.provider} does not support image generation")
+            return await provider.generate_images(request_model, context, request_options)
+        except Exception as error:
+            return image_error_result(model, error, _cancelled(options))
+
+    async def classify(
+        self, model: ClassifierModel, context: ClassifierContext, options: ClassifierOptions | None = None
+    ) -> ClassifierResult:
+        """Classification with runtime-resolved auth. Never raises."""
+        try:
+            assert_classifier_model(model)
+            provider, request_model, request_options = await self._prepare_request(model, options, ClassifierOptions)
+            if provider.classify is None:
+                raise ModelsError("provider", f"Provider {model.provider} does not support classification")
+            return await provider.classify(request_model, context, request_options)
+        except Exception as error:
+            return classifier_error_result(model, error, _cancelled(options))
+
     # -- lifecycle -------------------------------------------------------------
 
-    async def login(self, provider_id: str, type: AuthType, interaction: AuthInteraction) -> Credential:
+    async def login(
+        self, provider_id: str, type: AuthType, interaction: AuthInteraction, options: LoginOptions | None = None
+    ) -> Credential:
         cancel = operation_cancel(interaction.cancel)
 
         async def task() -> Credential:
-            credential = await self._models.login(provider_id, type, _CancelBoundInteraction(interaction, cancel))
+            credential = await self._models.login(
+                provider_id, type, _CancelBoundInteraction(interaction, cancel), options
+            )
             await self._synchronize_credential_state(provider_id, "login", credential, cancel)
             return credential
 
@@ -1097,3 +1255,108 @@ class ModelRuntime:
             self._recompose_provider(provider_id)
             self._update_model_snapshot()
         self._request_refresh()
+
+    def register_virtual_model(self, definition: VirtualModelDefinition) -> None:
+        """Register a virtual model under `definition.provider`, which may also
+        list physical models or several virtual models. Re-registering the same
+        provider and id replaces the virtual model. Raises when the id belongs
+        to a physical model of that provider."""
+        provider_id, model_id = definition.provider, definition.id
+        if not provider_id.strip() or not model_id.strip():
+            raise Exception("Virtual model provider and id must not be empty.")
+        with self._composition_guard:
+            existing = self._models.get_model(provider_id, model_id)
+            if existing is not None and not is_virtual_model(existing):
+                raise Exception(f"Virtual model {provider_id}/{model_id} conflicts with a physical model.")
+            registered = _RegisteredVirtualModel(model=create_virtual_model(definition), route=definition.route)
+            self._virtual_models[provider_id] = {**self._virtual_models.get(provider_id, {}), model_id: registered}
+            if self._recompose_provider(provider_id) is None:
+                with self._availability_guard:
+                    if provider_id not in self._snapshot.configured_providers:
+                        # A provider of only virtual models needs no credentials. Mark it configured
+                        # now: session restore checks auth before the refresh below lands.
+                        self._snapshot = replace(
+                            self._snapshot,
+                            auth={**self._snapshot.auth, provider_id: AuthCheck(type="api_key", source="virtual")},
+                            configured_providers=self._snapshot.configured_providers | {provider_id},
+                        )
+            self._update_model_snapshot()
+        self._request_refresh()
+
+    def unregister_virtual_model(self, provider_id: str, model_id: str) -> None:
+        with self._composition_guard:
+            models = self._virtual_models.get(provider_id)
+            if models is None or model_id not in models:
+                return
+            remaining = {key: entry for key, entry in models.items() if key != model_id}
+            if remaining:
+                self._virtual_models[provider_id] = remaining
+            else:
+                del self._virtual_models[provider_id]
+            self._recompose_provider(provider_id)
+            self._update_model_snapshot()
+        self._request_refresh()
+
+    async def resolve_model(
+        self,
+        model: Model,
+        messages: list[Message],
+        *,
+        reason: ModelRouteReason,
+        thinking_level: ModelThinkingLevel,
+        cancel: CancelToken | None = None,
+        failed: AssistantMessage | None = None,
+        state: Any = None,
+    ) -> ModelRoute:
+        """Ask a virtual model's router for the model and thinking level of one
+        request. The router must return a physical catalog model whose provider
+        has credentials; the thinking level is clamped to that model. Raises
+        when routing fails.
+
+        `previous` reports the latest successful response in `messages`. A
+        retry passes the failed response as `failed`; `messages` no longer
+        contains it. `state` is the router state stored by the caller, which
+        also stores the returned state.
+        """
+        name = f"Virtual model {model.provider}/{model.id}"
+        virtual = self._composition.virtual_models.get(model.provider, {}).get(model.id)
+        if virtual is None:
+            raise Exception(f"{name} is not registered.")
+        latest = find_latest_response(messages)
+        previous_model = self.get_physical_model(latest.provider, latest.model) if latest is not None else None
+        # A failed routing attempt names the virtual model; there is no physical request to report.
+        failed_model = self.get_physical_model(failed.provider, failed.model) if failed is not None else None
+        route = await virtual.route(
+            ModelRouteRequest(
+                model=model,
+                thinking_level=thinking_level,
+                reason=reason,
+                messages=messages,
+                previous=(
+                    RoutedResponse(model=previous_model, thinking_level=latest.thinking_level)
+                    if previous_model is not None and latest is not None
+                    else None
+                ),
+                failed=(
+                    FailedRoute(model=failed_model, message=failed, thinking_level=failed.thinking_level)
+                    if failed_model is not None and failed is not None
+                    else None
+                ),
+                state=state,
+                cancel=cancel,
+            )
+        )
+        target = self.get_physical_model(route.model.provider, route.model.id)
+        routed = f"{name} routed to {route.model.provider}/{route.model.id}"
+        if target is None:
+            raise Exception(f"{routed}, which is not a physical model.")
+        if not self.has_configured_auth(target.provider):
+            raise Exception(f"{routed}, which has no credentials.")
+        return ModelRoute(
+            model=target, thinking_level=clamp_thinking_level(target, route.thinking_level), state=route.state
+        )
+
+    def get_physical_model(self, provider_id: str, model_id: str) -> Model | None:
+        """A catalog chat model that is not virtual."""
+        model = self._models.get_model(provider_id, model_id)
+        return model if model is not None and not is_virtual_model(model) else None

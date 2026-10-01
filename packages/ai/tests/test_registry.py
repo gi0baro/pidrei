@@ -252,6 +252,22 @@ def test_get_models_is_best_effort():
     assert models.get_models("bad") == []
 
 
+@pytest.mark.tonio
+async def test_keeps_chat_reads_independent_from_the_all_model_catalog():
+    models, _api = make_models_with_echo()
+    provider = models.get_provider("test")
+
+    def get_all_models():
+        raise RuntimeError("all models unavailable")
+
+    provider.get_all_models = get_all_models
+
+    assert [model.id for model in models.get_models("test")] == ["model-1"]
+    assert models.get_model("test", "model-1").id == "model-1"
+    assert [model.id for model in await models.get_available("test")] == ["model-1"]
+    assert models.get_all_models("test") == []
+
+
 def test_create_provider_merges_dynamic_overlay():
     provider = create_provider(
         id="test",
@@ -1041,7 +1057,7 @@ async def test_passes_cancellation_to_oauth_refresh_and_preserves_the_previous_c
         await blocked_refresh.wait()
         return OAuthCredential(access="new", refresh="old-refresh", expires=_far_future_ms())
 
-    async def login(_interaction):
+    async def login(_interaction, _options=None):
         raise RuntimeError("not used")
 
     async def to_auth(credential):

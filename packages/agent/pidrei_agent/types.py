@@ -10,6 +10,7 @@ from pidrei_ai.types import (
     ImageContent,
     Message,
     Model,
+    NestedToolCalls,
     SimpleStreamOptions,
     TextContent,
     ToolCall,
@@ -68,13 +69,37 @@ class AgentToolResult[TDetails]:
     content: list[TextContent | ImageContent] = field(default_factory=list)
     # Arbitrary structured details for logs or UI rendering.
     details: TDetails | None = None
+    # Machine-readable result matching the tool's `output_schema`, for
+    # programmatic callers. Not sent to the model; `content` remains the
+    # model-facing result.
+    structured_content: Any = None
     # Usage from the final tool execution itself, if available. Not used for
     # main LLM context accounting.
     usage: Usage | None = None
+    # Report a failure without raising. The model sees `content` as an error
+    # result, like a raised error, but `details` and `structured_content` are
+    # kept for the UI and programmatic callers.
+    is_error: bool | None = None
     # Hint that the agent should stop after the current tool batch. Early
     # termination only happens when every finalized tool result in the batch
     # sets this to True.
     terminate: bool | None = None
+    # pidrei-only: the calls this tool made to other tools and their summed
+    # usage, folded by the tool wrapper when `execute` returned. The loop puts
+    # them on the tool result message (pi's session attaches them at
+    # `message_start`, after the hooks), so `usage` stays the tool's own for the
+    # `after_tool_call` hooks.
+    nested_calls: NestedToolCalls | None = None
+    nested_usage: Usage | None = None
+
+
+@dataclass(slots=True)
+class AgentToolCallOutcome:
+    """Final outcome of a tool call after hooks ran."""
+
+    tool_call: AgentToolCall
+    result: AgentToolResult[Any]
+    is_error: bool
 
 
 # Callback used by tools to stream partial execution updates. The callback is
@@ -91,8 +116,9 @@ class AgentTool[TDetails]:
 
     pi builds tools as object literals typed `AgentTool`; the Python port uses
     a base class — concrete tools subclass it (or applications construct
-    lightweight instances) and implement `execute`, which must raise on
-    failure instead of encoding errors in `content`.
+    lightweight instances) and implement `execute`, which raises on failure
+    or returns a result with `is_error=True`; it does not only describe the
+    failure in `content`.
     """
 
     name: str
@@ -106,6 +132,9 @@ class AgentTool[TDetails]:
     # Per-tool execution mode override; None applies the loop default.
     execution_mode: ToolExecutionMode | None = None
     prepare_arguments: PrepareArguments | None = None
+    # JSON Schema of `structured_content` in successful results. Tools that
+    # declare it should always set `structured_content`.
+    output_schema: dict[str, Any] | None = None
 
     async def execute(
         self,
@@ -149,12 +178,15 @@ class AfterToolCallResult:
     """Partial override returned from `after_tool_call`.
 
     Merge semantics are field-by-field: a provided (non-None) field replaces
-    the corresponding tool result value in full; None keeps the original.
-    There is no deep merge.
+    the corresponding tool result value in full; None keeps the original,
+    except that `content` provided without `structured_content` drops the
+    structured content, because it may no longer match the content. Return it
+    along with `content` to keep it. There is no deep merge.
     """
 
     content: list[TextContent | ImageContent] | None = None
     details: Any = None
+    structured_content: Any = None
     is_error: bool | None = None
     # Usage from the final tool execution itself, if available. Not used for
     # main LLM context accounting.
@@ -398,11 +430,17 @@ class MessageEndEvent:
     type: Literal["message_end"] = "message_end"
 
 
+# `parent_tool_call_id` is set on the `tool_execution_*` events of calls another
+# tool made (pi types it on the session's events; pidrei delivers those events
+# through `Agent.observe`, so the agent's event types carry it).
+
+
 @dataclass(slots=True)
 class ToolExecutionStartEvent:
     tool_call_id: str
     tool_name: str
     args: Any
+    parent_tool_call_id: str | None = None
     type: Literal["tool_execution_start"] = "tool_execution_start"
 
 
@@ -412,6 +450,7 @@ class ToolExecutionUpdateEvent:
     tool_name: str
     args: Any
     partial_result: Any
+    parent_tool_call_id: str | None = None
     type: Literal["tool_execution_update"] = "tool_execution_update"
 
 
@@ -421,6 +460,7 @@ class ToolExecutionEndEvent:
     tool_name: str
     result: Any
     is_error: bool
+    parent_tool_call_id: str | None = None
     type: Literal["tool_execution_end"] = "tool_execution_end"
 
 

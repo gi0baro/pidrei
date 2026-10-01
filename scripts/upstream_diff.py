@@ -524,6 +524,7 @@ DROPPED_PREFIXES += tuple(
     for path in (
         "packages/coding-agent/test/git-merge-and-resolve-extension.test.ts",
         "packages/coding-agent/test/input-transform-streaming-example.test.ts",
+        "packages/coding-agent/test/jev-router-example.test.ts",
         "packages/coding-agent/test/plan-mode-extension.test.ts",
         "packages/coding-agent/test/plan-mode-utils.test.ts",
         "packages/coding-agent/test/trigger-compact-extension.test.ts",
@@ -547,6 +548,58 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/crash-log.test.ts",
     )
 )
+#: Codemode, MCP and tool-search port later, together, as one unit
+#: (PORT_0.99.1.md decisions 1-2). core/mcp-servers.ts is not listed: its
+#: `McpServerRegistry` ports now with the tool-orchestration core.
+_DEFERRED_CODEMODE_REASON = "deferred, ports with codemode (PORT_0.99.1.md decisions 1-2)"
+DROPPED_PREFIXES += tuple(
+    (path, _DEFERRED_CODEMODE_REASON)
+    for path in (
+        "packages/codemode/",
+        "packages/mcp/",
+        "packages/agent/examples/mcp-codemode/",
+        "packages/coding-agent/src/extensions/codemode/",
+        "packages/coding-agent/src/extensions/mcp/",
+        "packages/coding-agent/src/extensions/tool-search/",
+        "packages/coding-agent/docs/mcp.md",
+        "packages/coding-agent/test/codemode-renderer.test.ts",
+        "packages/coding-agent/test/mcp-command.test.ts",
+        "packages/coding-agent/test/mcp-extension.test.ts",
+        "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
+        "packages/coding-agent/test/tool-search.test.ts",
+        "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
+        "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
+        "packages/coding-agent/test/suite/mcp-oauth-server.ts",
+    )
+)
+#: 0.99.1 drops (PORT_0.99.1.md decision 9).
+_LLAMA_CLASSIFY_REASON = (
+    "llama.cpp classifier API not ported: its only consumer is the unported llama extension "
+    "(PORT_0.99.1.md decision 9; types.py keeps the api literal and ClassifierOptions.temperature)"
+)
+DROPPED_PREFIXES += (
+    # llama-cpp-classify.ts and its .lazy.ts shim
+    ("packages/ai/src/api/llama-cpp-classify", _LLAMA_CLASSIFY_REASON),
+    ("packages/ai/test/llama-cpp-classify.test.ts", _LLAMA_CLASSIFY_REASON),
+    (
+        "packages/coding-agent/test/model-catalog-protocol.test.ts",
+        (
+            "catalog publish protocol not ported (PORT_0.99.1.md decision 9); the client half "
+            "(?types=, merge by type+id, unknown types ignored) is covered by test_remote_catalog_provider.py"
+        ),
+    ),
+    (
+        "packages/coding-agent/test/rpc-example.ts",
+        "interactive RpcClient example script; the RPC surface stays unpublished (PORT_0.87.1.md decision 3)",
+    ),
+    (
+        "packages/ai/src/image-models.ts",
+        (
+            "deprecated static image-catalog reads, kept upstream for npm consumers: image_models.py deleted "
+            "(PORT_0.99.1.md decision 9); get_builtin_image_model(s) in providers/all.py replace them"
+        ),
+    ),
+)
 
 #: Live-API ai tests (`skipIf(!API_KEY)` upstream): they exercise real
 #: providers, so pidrei drops them; offline mirrors exist where noted in
@@ -557,6 +610,7 @@ LIVE_API_AI_TESTS = (
     "cross-provider-handoff",
     "empty",
     "image-tool-result",
+    "images",
     "openai-completions-thinking-as-text",
     "stream",
     "tokens",
@@ -620,7 +674,19 @@ RENAMES = {
     # 0.84.3 additions. pi split its user-agent helper out under a pi-prefixed
     # name; pidrei's has always been utils/user_agent.py.
     "packages/ai/src/utils/pi-user-agent.ts": "packages/ai/pidrei_ai/utils/user_agent.py",
+    # 0.99.1 additions. model-catalog.ts's flatten*ModelCatalog helpers are the
+    # catalog loader pidrei always had; the per-provider *.models.ts stubs map
+    # through GENERATED_CATALOG_STUB_RE below.
+    "packages/ai/src/model-catalog.ts": "packages/ai/pidrei_ai/models_generated.py",
+    # Consolidated into generate_models.py like openrouter-reasoning-options.ts.
+    "packages/ai/scripts/openrouter-catalog.ts": "packages/ai/scripts/generate_models.py",
 }
+
+#: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
+#: `flatten*ModelCatalog` call per model type over `data/<id>.json`). pidrei
+#: loads every vendored JSON in models_generated.py; there is no per-provider
+#: module.
+GENERATED_CATALOG_STUB_RE = re.compile(r"packages/ai/src/providers/[^/]+\.models\.ts")
 
 #: pi file → diverged regions inside its pidrei mirror, as (recipe id, note)
 #: pairs. The file still ports through the normal mapping, but a hunk landing
@@ -671,6 +737,47 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "on state.messages lands as a rebind; _reduce publishes (*old, msg)"
             ),
         ),
+        (
+            "nested-calls-channel",
+            (
+                "pidrei-only observe(event): nested tool events enter the run's "
+                "dispatcher as observe-only tickets (no _reduce); dropped once "
+                "the dispatcher closed (events_guard)"
+            ),
+        ),
+    ),
+    # Nested tool calls (0.99.1 port): a per-top-level-call channel folded by
+    # the tool wrapper replaces pi's shared NestedCallRecorder/scopes map.
+    "packages/agent/src/agent-loop.ts": (
+        (
+            "nested-calls-channel",
+            (
+                "the wrapper's fold rides on AgentToolResult (nested_calls/"
+                "nested_usage), moved off the result before the hooks and "
+                "tool_execution_end and combined onto the tool-result message "
+                "in _create_tool_result_message (pi: message_start listener)"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/nested-tool-calls.ts": (
+        (
+            "nested-calls-channel",
+            (
+                "NestedCallRecorder is fold_nested_calls over NestedCallFeed "
+                "messages; scopes/takeRecord/clear do not exist (NestedCallScope "
+                "rides in the tool context); queueTail is an Event-tail chain"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": (
+        (
+            "nested-calls-channel",
+            (
+                "owner (no inherited scope) opens the feed and drains it when "
+                "execute returns or raises with calls recorded; nested calls run "
+                "through with_nested_scope bound copies as producers"
+            ),
+        ),
     ),
     # PROPER_MT_DESIGN.md step 5 (state epochs): writes to agent.state.messages
     # are rebinds; identity WeakMap/WeakSet become a run-scoped strong id() table.
@@ -682,6 +789,22 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "_boundaryDispatchedMessages identity maps land in the run-scoped "
                 "id() table (cleared per prompt-loop iteration) with the positional "
                 "projection walk as fallback"
+            ),
+        ),
+        (
+            "state-epochs",
+            (
+                "_applyToolLoadout publishes (tools, hidden_declarations) as one "
+                "_ToolLoadoutEpoch under _tool_loadout_guard (sync RLock, also "
+                "around the registry rebind); readers pin one epoch"
+            ),
+        ),
+        (
+            "nested-calls-channel",
+            (
+                "_executeNestedToolCall/_handleAgentEvent: no takeRecord in the "
+                "message_start listener; nested events go through agent.observe; "
+                "the NestedToolCallRunner is created with the session"
             ),
         ),
     ),
@@ -733,6 +856,16 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "finish_before_next_input"
             ),
         ),
+        (
+            "terminal-colors-loop",
+            (
+                "queryTerminalColors registers the query in a sync prefix and "
+                "returns its applied Event; every colour report (settled, "
+                "timeout partial, late reply) is sent under _query_lock to "
+                "_terminal_events, whose consumer is the only caller of the "
+                "on_terminal_colors listener"
+            ),
+        ),
     ),
     "packages/tui/src/terminal.ts": (
         (
@@ -743,6 +876,10 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "Kitty activation is queued in input order; start takes "
                 "on_reply/on_error; stop drops queued items"
             ),
+        ),
+        (
+            "terminal-colors-loop",
+            "only the DA1 owed to the Kitty query is swallowed; later DA1 replies go to on_reply",
         ),
     ),
     "packages/tui/src/stdin-buffer.ts": (
@@ -804,6 +941,28 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
+    # System theme (0.99.1 port): theme applications are serialized; terminal
+    # colour globals are guarded.
+    "packages/coding-agent/src/modes/interactive/theme/theme-controller.ts": (
+        (
+            "terminal-colors-loop",
+            (
+                "every theme application (settings, selections, previews, "
+                "instance sets, both terminal listeners) runs under _apply_lock; "
+                "no TUI lock is held across its awaits"
+            ),
+        ),
+    ),
+    "packages/coding-agent/src/modes/interactive/theme/theme.ts": (
+        (
+            "terminal-colors-loop",
+            (
+                "terminal colour globals live under _theme_state_lock with a "
+                "conftest guard; Theme.colors publishes one (terminal, colors) "
+                "tuple"
+            ),
+        ),
+    ),
     # PROPER_MT_DESIGN.md step 3 (config epochs): config services publish
     # immutable snapshots swapped atomically; readers pin one attribute read.
     "packages/coding-agent/src/core/settings-manager.ts": (
@@ -855,7 +1014,9 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "(get_error, get_registered_*, get_provider_auth_status, "
                 "get_compatibility_request_config, _get_model_auth) pin one "
                 "epoch; _prepare_request resolves the provider once and "
-                "auths against it (_get_model_auth)"
+                "auths against it (_get_model_auth); virtual models live in "
+                "the epoch (virtual_models, inner dicts replaced, never "
+                "mutated) and resolve_model pins it"
             ),
         ),
     ),
@@ -925,6 +1086,9 @@ TEST_HOMES = {
     "packages/ai/test/supports-xhigh.test.ts": "covered by packages/ai/tests/test_registry.py + test_models_generated.py (get_supported_thinking_levels)",
     "packages/ai/test/models-runtime.test.ts": "covered by packages/ai/tests/test_registry.py (models.ts ported as registry.py)",
     "packages/ai/test/provider-error-body-regression.test.ts": "PARITY GAP: per-adapter 403-body passthrough (4 cases) unmirrored — needs punkreq fault injection per adapter",
+    "packages/ai/test/provider-error-body-passthrough.test.ts": (
+        "PARITY GAP: openrouter-images 403-body passthrough (1 case) unmirrored, like provider-error-body-regression"
+    ),
     "packages/ai/test/openai-responses-partial-json-cleanup.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/openai-responses-terminal-event.test.ts": "covered by packages/ai/tests/test_openai_responses.py",
     "packages/ai/test/constrained-sampling.test.ts": (
@@ -940,6 +1104,12 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/agent-session-bash-persistence.test.ts": "partial mirror: test_agent_session_bash_persistence.py holds the 0.83.0 concurrency cases; the rest of the characterization suite is a PARITY GAP",
     "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": "PARITY GAP: compaction transient-retry regression unmirrored",
     "packages/coding-agent/test/suite/regressions/5943-session-start-notify.test.ts": "PARITY GAP: session_start transient-UI regression unmirrored",
+    "packages/coding-agent/test/suite/agent-session-codemode.test.ts": (
+        "partial mirror: test_agent_session_tool_orchestration.py holds the core cases (nested calls in "
+        "parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
+        "structured result) driven by a Python tool; the script cases port with codemode (PORT_0.99.1.md "
+        "decisions 1-2)"
+    ),
     "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
     "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
     "packages/coding-agent/test/utilities.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
@@ -973,7 +1143,10 @@ TEST_HOMES = {
     ),
     "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": "PARITY GAP: dynamic tool registration flows unmirrored",
     "packages/coding-agent/test/edit-tool-no-full-redraw.test.ts": "PARITY GAP: edit-tool render regression unmirrored",
-    "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": "PARITY GAP: rpc prompt/response semantics suite unmirrored",
+    "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": (
+        "PARITY GAP: rpc prompt/response semantics suite unmirrored (incl. the 0.99.1 data.disposition cases; "
+        "steer/follow_up 'queued' is covered in test_agent_session.py)"
+    ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": "PARITY GAP: model-runtime auth options unmirrored",
     "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": "PARITY GAP: modifyModels compat unmirrored",
@@ -1061,7 +1234,8 @@ TEST_HOMES = {
         "'Image omitted' resize fallbacks are a PARITY GAP"
     ),
     "packages/coding-agent/test/sdk-stream-options.test.ts": (
-        "partial mirror: test_sdk_stream_options.py holds the 0.87.1 cache-warming scheduling cases; "
+        "partial mirror: test_sdk_stream_options.py holds the 0.87.1 cache-warming scheduling cases "
+        "and the 0.99.1 provider_stream_event case; "
         "sdk.py stream_fn option forwarding (timeout/websocket/provider-retry/transform_headers) is a PARITY GAP"
     ),
     "packages/coding-agent/test/suite/agent-session-queue.test.ts": (
@@ -1112,6 +1286,7 @@ NOISE_BASENAMES = {
     "test.sh",
     "mini-test.sh",
     "pi-test.sh",
+    "pi-test.ps1",
     ".npmignore",
     ".gitignore",
     ".gitattributes",
@@ -1166,6 +1341,8 @@ def map_path(pi_path: str) -> tuple[str, str] | None:
     """Return (kind, pidrei_path) for a portable pi file, else None."""
     if pi_path in RENAMES:
         return "src", RENAMES[pi_path]
+    if GENERATED_CATALOG_STUB_RE.fullmatch(pi_path):
+        return "src", "packages/ai/pidrei_ai/models_generated.py"
     for prefix, target, kind in PREFIX_MAP:
         if not pi_path.startswith(prefix):
             continue
@@ -1195,6 +1372,9 @@ def map_path(pi_path: str) -> tuple[str, str] | None:
             # package/subpackage facade convention (may be a deliberately-empty
             # facade on the pidrei side: pidrei_agent, pidrei — judge per delta)
             parts[-1] = "__init__.py"
+        elif parts[-1].endswith(".lazy.ts"):
+            # deferred-import shims: pidrei names them <module>_lazy.py
+            parts[-1] = parts[-1][: -len(".lazy.ts")] + "_lazy.py"
         elif parts[-1].endswith(".ts"):
             parts[-1] = parts[-1][: -len(".ts")] + ".py"
         return kind, target + "/".join(parts)

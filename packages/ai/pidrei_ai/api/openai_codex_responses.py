@@ -38,6 +38,7 @@ from pidrei_ai.types import (
     DoneEvent,
     ErrorEvent,
     Model,
+    OnProviderStreamEvent,
     OpenAIResponsesCompat,
     ProviderEnv,
     ProviderHeaders,
@@ -167,6 +168,12 @@ class CodexProtocolError(Exception):
     def __init__(self, message: str, *, payload: Any = None):
         super().__init__(message)
         self.payload = payload
+
+
+class ProviderStreamEventCallbackError(Exception):
+    def __init__(self, cause: Exception):
+        super().__init__(format_thrown_value(cause))
+        self.__cause__ = cause
 
 
 class RetryDelayExceededError(Exception):
@@ -875,7 +882,12 @@ async def _process_stream(
     options: OpenAICodexResponsesOptions | None = None,
 ) -> None:
     await process_responses_stream(
-        _map_codex_events(_parse_sse(response, options.cancel if options else None), output),
+        _map_codex_events(
+            _parse_sse(response, options.cancel if options else None),
+            output,
+            model,
+            options.on_provider_stream_event if options else None,
+        ),
         output,
         stream,
         model,
@@ -887,7 +899,7 @@ async def _process_stream(
 
 
 def _is_codex_non_transport_error(error: Any) -> bool:
-    return isinstance(error, CodexApiError | CodexProtocolError)
+    return isinstance(error, CodexApiError | CodexProtocolError | ProviderStreamEventCallbackError)
 
 
 def _is_websocket_connection_limit_reached_error(error: Any) -> bool:
@@ -909,13 +921,23 @@ def _extract_codex_event_error(event: dict) -> tuple[str | None, str | None]:
     return code, message
 
 
-async def _map_codex_events(events: AsyncIterable[dict], output: AssistantMessageBuilder) -> AsyncGenerator[dict]:
+async def _map_codex_events(
+    events: AsyncIterable[dict],
+    output: AssistantMessageBuilder,
+    model: Model,
+    on_provider_stream_event: OnProviderStreamEvent | None,
+) -> AsyncGenerator[dict]:
     # This generator returns at the terminal event, abandoning its source
     # mid-yield; the source owns the HTTP body, so it is closed explicitly rather
     # than left to the GC (which cannot await — see `utils/http.finish_body`).
     source = aiter(events)
     try:
         async for event in source:
+            try:
+                await maybe_call(on_provider_stream_event, event, model)
+            except Exception as error:
+                # Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
+                raise ProviderStreamEventCallbackError(error) from error
             event_type = event.get("type") if isinstance(event.get("type"), str) else None
             if not event_type:
                 continue
@@ -1393,6 +1415,8 @@ async def _process_websocket_stream(
                 _map_codex_events(
                     _parse_websocket(socket, options.cancel if options else None, idle_timeout_ms),
                     output,
+                    model,
+                    options.on_provider_stream_event if options else None,
                 ),
                 on_start,
             ),

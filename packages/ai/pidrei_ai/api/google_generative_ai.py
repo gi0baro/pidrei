@@ -140,6 +140,7 @@ def stream(
                 return len(blocks) - 1
 
             async for chunk in google_stream:
+                await maybe_call(opts.on_provider_stream_event, chunk, model)
                 # `responseId` is documented as an output-only field identifying each
                 # response. Keep the first non-empty one from the stream.
                 if not output.response_id:

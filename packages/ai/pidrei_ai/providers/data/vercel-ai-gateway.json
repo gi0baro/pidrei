@@ -1,6 +1,6 @@
 {
   "anthropic-messages": {
-    "alibaba/qwen-3-14b": {
+    "chat:alibaba/qwen-3-14b": {
       "id": "alibaba/qwen-3-14b",
       "name": "Qwen3-14B",
       "api": "anthropic-messages",
@@ -20,9 +20,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 40960,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "type": "chat"
     },
-    "alibaba/qwen-3-235b": {
+    "chat:alibaba/qwen-3-235b": {
       "id": "alibaba/qwen-3-235b",
       "name": "Qwen3 235B A22B",
       "api": "anthropic-messages",
@@ -42,9 +43,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "type": "chat"
     },
-    "alibaba/qwen-3-30b": {
+    "chat:alibaba/qwen-3-30b": {
       "id": "alibaba/qwen-3-30b",
       "name": "Qwen3-30B-A3B",
       "api": "anthropic-messages",
@@ -64,9 +66,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 40960,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "type": "chat"
     },
-    "alibaba/qwen-3-32b": {
+    "chat:alibaba/qwen-3-32b": {
       "id": "alibaba/qwen-3-32b",
       "name": "Qwen 3 32B",
       "api": "anthropic-messages",
@@ -86,9 +89,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "alibaba/qwen-3.6-max-preview": {
+    "chat:alibaba/qwen-3.6-max-preview": {
       "id": "alibaba/qwen-3.6-max-preview",
       "name": "Qwen 3.6 Max Preview",
       "api": "anthropic-messages",
@@ -108,9 +112,10 @@
         "cacheWrite": 1.625
       },
       "contextWindow": 240000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "type": "chat"
     },
-    "alibaba/qwen3-235b-a22b-thinking": {
+    "chat:alibaba/qwen3-235b-a22b-thinking": {
       "id": "alibaba/qwen3-235b-a22b-thinking",
       "name": "Qwen3 VL 235B A22B Thinking",
       "api": "anthropic-messages",
@@ -141,9 +146,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3-coder": {
+    "chat:alibaba/qwen3-coder": {
       "id": "alibaba/qwen3-coder",
       "name": "Qwen3 Coder 480B A35B Instruct",
       "api": "anthropic-messages",
@@ -163,9 +169,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "type": "chat"
     },
-    "alibaba/qwen3-coder-30b-a3b": {
+    "chat:alibaba/qwen3-coder-30b-a3b": {
       "id": "alibaba/qwen3-coder-30b-a3b",
       "name": "Qwen 3 Coder 30B A3B Instruct",
       "api": "anthropic-messages",
@@ -185,9 +192,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "alibaba/qwen3-coder-next": {
+    "chat:alibaba/qwen3-coder-next": {
       "id": "alibaba/qwen3-coder-next",
       "name": "Qwen3 Coder Next",
       "api": "anthropic-messages",
@@ -207,9 +215,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 256000
+      "maxTokens": 256000,
+      "type": "chat"
     },
-    "alibaba/qwen3-coder-plus": {
+    "chat:alibaba/qwen3-coder-plus": {
       "id": "alibaba/qwen3-coder-plus",
       "name": "Qwen3 Coder Plus",
       "api": "anthropic-messages",
@@ -229,9 +238,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "type": "chat"
     },
-    "alibaba/qwen3-max": {
+    "chat:alibaba/qwen3-max": {
       "id": "alibaba/qwen3-max",
       "name": "Qwen3 Max",
       "api": "anthropic-messages",
@@ -251,9 +261,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "type": "chat"
     },
-    "alibaba/qwen3-max-preview": {
+    "chat:alibaba/qwen3-max-preview": {
       "id": "alibaba/qwen3-max-preview",
       "name": "Qwen3 Max Preview",
       "api": "anthropic-messages",
@@ -273,9 +284,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "type": "chat"
     },
-    "alibaba/qwen3-max-thinking": {
+    "chat:alibaba/qwen3-max-thinking": {
       "id": "alibaba/qwen3-max-thinking",
       "name": "Qwen 3 Max Thinking",
       "api": "anthropic-messages",
@@ -295,9 +307,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "type": "chat"
     },
-    "alibaba/qwen3-next-80b-a3b-instruct": {
+    "chat:alibaba/qwen3-next-80b-a3b-instruct": {
       "id": "alibaba/qwen3-next-80b-a3b-instruct",
       "name": "Qwen3 Next 80B A3B Instruct",
       "api": "anthropic-messages",
@@ -317,9 +330,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262114,
-      "maxTokens": 262114
+      "maxTokens": 262114,
+      "type": "chat"
     },
-    "alibaba/qwen3-next-80b-a3b-thinking": {
+    "chat:alibaba/qwen3-next-80b-a3b-thinking": {
       "id": "alibaba/qwen3-next-80b-a3b-thinking",
       "name": "Qwen3 Next 80B A3B Thinking",
       "api": "anthropic-messages",
@@ -339,9 +353,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "alibaba/qwen3-vl-235b-a22b-instruct": {
+    "chat:alibaba/qwen3-vl-235b-a22b-instruct": {
       "id": "alibaba/qwen3-vl-235b-a22b-instruct",
       "name": "Qwen3 VL 235B A22B Instruct",
       "api": "anthropic-messages",
@@ -372,9 +387,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3-vl-instruct": {
+    "chat:alibaba/qwen3-vl-instruct": {
       "id": "alibaba/qwen3-vl-instruct",
       "name": "Qwen3 VL 235B A22B Instruct",
       "api": "anthropic-messages",
@@ -405,9 +421,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3-vl-thinking": {
+    "chat:alibaba/qwen3-vl-thinking": {
       "id": "alibaba/qwen3-vl-thinking",
       "name": "Qwen3 VL 235B A22B Thinking",
       "api": "anthropic-messages",
@@ -438,9 +455,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.5-flash": {
+    "chat:alibaba/qwen3.5-flash": {
       "id": "alibaba/qwen3.5-flash",
       "name": "Qwen 3.5 Flash",
       "api": "anthropic-messages",
@@ -471,9 +489,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.5-plus": {
+    "chat:alibaba/qwen3.5-plus": {
       "id": "alibaba/qwen3.5-plus",
       "name": "Qwen 3.5 Plus",
       "api": "anthropic-messages",
@@ -504,9 +523,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.6-27b": {
+    "chat:alibaba/qwen3.6-27b": {
       "id": "alibaba/qwen3.6-27b",
       "name": "Qwen 3.6 27B",
       "api": "anthropic-messages",
@@ -537,9 +557,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.6-plus": {
+    "chat:alibaba/qwen3.6-plus": {
       "id": "alibaba/qwen3.6-plus",
       "name": "Qwen 3.6 Plus",
       "api": "anthropic-messages",
@@ -570,9 +591,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.7-flash": {
+    "chat:alibaba/qwen3.7-flash": {
       "id": "alibaba/qwen3.7-flash",
       "name": "Qwen 3.7 Flash",
       "api": "anthropic-messages",
@@ -603,9 +625,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.7-max": {
+    "chat:alibaba/qwen3.7-max": {
       "id": "alibaba/qwen3.7-max",
       "name": "Qwen 3.7 Max",
       "api": "anthropic-messages",
@@ -625,9 +648,10 @@
         "cacheWrite": 3.125
       },
       "contextWindow": 991000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "type": "chat"
     },
-    "alibaba/qwen3.7-plus": {
+    "chat:alibaba/qwen3.7-plus": {
       "id": "alibaba/qwen3.7-plus",
       "name": "Qwen 3.7 Plus",
       "api": "anthropic-messages",
@@ -658,9 +682,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-2.4t-a95b": {
+    "chat:alibaba/qwen3.8-2.4t-a95b": {
       "id": "alibaba/qwen3.8-2.4t-a95b",
       "name": "Qwen3.8 2.4T A95B",
       "api": "anthropic-messages",
@@ -691,9 +716,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-27b": {
+    "chat:alibaba/qwen3.8-27b": {
       "id": "alibaba/qwen3.8-27b",
       "name": "Qwen3.8 27B",
       "api": "anthropic-messages",
@@ -724,9 +750,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-flash": {
+    "chat:alibaba/qwen3.8-flash": {
       "id": "alibaba/qwen3.8-flash",
       "name": "Qwen 3.8 Flash",
       "api": "anthropic-messages",
@@ -757,9 +784,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-max": {
+    "chat:alibaba/qwen3.8-max": {
       "id": "alibaba/qwen3.8-max",
       "name": "Qwen 3.8 Max",
       "api": "anthropic-messages",
@@ -790,9 +818,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-max-0902": {
+    "chat:alibaba/qwen3.8-max-0902": {
       "id": "alibaba/qwen3.8-max-0902",
       "name": "Qwen3.8 Max 0902",
       "api": "anthropic-messages",
@@ -823,9 +852,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-max-prime": {
+    "chat:alibaba/qwen3.8-max-prime": {
       "id": "alibaba/qwen3.8-max-prime",
       "name": "Qwen 3.8 Max Prime",
       "api": "anthropic-messages",
@@ -856,9 +886,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "alibaba/qwen3.8-omni-flash": {
+    "chat:alibaba/qwen3.8-omni-flash": {
       "id": "alibaba/qwen3.8-omni-flash",
       "name": "Qwen 3.8 Omni Flash",
       "api": "anthropic-messages",
@@ -889,9 +920,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "amazon/nova-2-lite": {
+    "chat:amazon/nova-2-lite": {
       "id": "amazon/nova-2-lite",
       "name": "Nova 2 Lite",
       "api": "anthropic-messages",
@@ -922,9 +954,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "amazon/nova-lite": {
+    "chat:amazon/nova-lite": {
       "id": "amazon/nova-lite",
       "name": "Nova Lite",
       "api": "anthropic-messages",
@@ -955,9 +988,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "amazon/nova-micro": {
+    "chat:amazon/nova-micro": {
       "id": "amazon/nova-micro",
       "name": "Nova Micro",
       "api": "anthropic-messages",
@@ -977,9 +1011,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "amazon/nova-pro": {
+    "chat:amazon/nova-pro": {
       "id": "amazon/nova-pro",
       "name": "Nova Pro",
       "api": "anthropic-messages",
@@ -1010,9 +1045,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-3-haiku": {
+    "chat:anthropic/claude-3-haiku": {
       "id": "anthropic/claude-3-haiku",
       "name": "Claude 3 Haiku",
       "api": "anthropic-messages",
@@ -1043,9 +1079,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-fable-5": {
+    "chat:anthropic/claude-fable-5": {
       "id": "anthropic/claude-fable-5",
       "name": "Claude Fable 5",
       "api": "anthropic-messages",
@@ -1082,9 +1119,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-fable-5.1": {
+    "chat:anthropic/claude-fable-5.1": {
       "id": "anthropic/claude-fable-5.1",
       "name": "Claude Fable 5.1",
       "api": "anthropic-messages",
@@ -1121,9 +1159,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-haiku-4.5": {
+    "chat:anthropic/claude-haiku-4.5": {
       "id": "anthropic/claude-haiku-4.5",
       "name": "Claude Haiku 4.5",
       "api": "anthropic-messages",
@@ -1154,9 +1193,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-4": {
+    "chat:anthropic/claude-opus-4": {
       "id": "anthropic/claude-opus-4",
       "name": "Claude Opus 4",
       "api": "anthropic-messages",
@@ -1187,9 +1227,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-4.5": {
+    "chat:anthropic/claude-opus-4.5": {
       "id": "anthropic/claude-opus-4.5",
       "name": "Claude Opus 4.5",
       "api": "anthropic-messages",
@@ -1220,9 +1261,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-4.6": {
+    "chat:anthropic/claude-opus-4.6": {
       "id": "anthropic/claude-opus-4.6",
       "name": "Claude Opus 4.6",
       "api": "anthropic-messages",
@@ -1257,9 +1299,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-4.7": {
+    "chat:anthropic/claude-opus-4.7": {
       "id": "anthropic/claude-opus-4.7",
       "name": "Claude Opus 4.7",
       "api": "anthropic-messages",
@@ -1296,9 +1339,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-4.8": {
+    "chat:anthropic/claude-opus-4.8": {
       "id": "anthropic/claude-opus-4.8",
       "name": "Claude Opus 4.8",
       "api": "anthropic-messages",
@@ -1335,9 +1379,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-4.8-fast": {
+    "chat:anthropic/claude-opus-4.8-fast": {
       "id": "anthropic/claude-opus-4.8-fast",
       "name": "Claude Opus 4.8 (Fast)",
       "api": "anthropic-messages",
@@ -1374,9 +1419,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-5": {
+    "chat:anthropic/claude-opus-5": {
       "id": "anthropic/claude-opus-5",
       "name": "Claude Opus 5",
       "api": "anthropic-messages",
@@ -1413,9 +1459,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-5-fast": {
+    "chat:anthropic/claude-opus-5-fast": {
       "id": "anthropic/claude-opus-5-fast",
       "name": "Claude Opus 5 (Fast)",
       "api": "anthropic-messages",
@@ -1452,9 +1499,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-5.5": {
+    "chat:anthropic/claude-opus-5.5": {
       "id": "anthropic/claude-opus-5.5",
       "name": "Claude Opus 5.5",
       "api": "anthropic-messages",
@@ -1491,9 +1539,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-opus-5.5-fast": {
+    "chat:anthropic/claude-opus-5.5-fast": {
       "id": "anthropic/claude-opus-5.5-fast",
       "name": "Claude Opus 5.5 (Fast)",
       "api": "anthropic-messages",
@@ -1530,9 +1579,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-sonnet-4": {
+    "chat:anthropic/claude-sonnet-4": {
       "id": "anthropic/claude-sonnet-4",
       "name": "Claude Sonnet 4",
       "api": "anthropic-messages",
@@ -1563,9 +1613,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-sonnet-4.5": {
+    "chat:anthropic/claude-sonnet-4.5": {
       "id": "anthropic/claude-sonnet-4.5",
       "name": "Claude Sonnet 4.5",
       "api": "anthropic-messages",
@@ -1596,9 +1647,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-sonnet-4.6": {
+    "chat:anthropic/claude-sonnet-4.6": {
       "id": "anthropic/claude-sonnet-4.6",
       "name": "Claude Sonnet 4.6",
       "api": "anthropic-messages",
@@ -1633,9 +1685,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "anthropic/claude-sonnet-5": {
+    "chat:anthropic/claude-sonnet-5": {
       "id": "anthropic/claude-sonnet-5",
       "name": "Claude Sonnet 5",
       "api": "anthropic-messages",
@@ -1671,9 +1724,50 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "arcee-ai/trinity-large-thinking": {
+    "chat:anthropic/claude-sonnet-5.5": {
+      "id": "anthropic/claude-sonnet-5.5",
+      "name": "Claude Sonnet 5.5",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true,
+        "forceAdaptiveThinking": true,
+        "supportsTemperature": false
+      },
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1000000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh",
+        "max": "max"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:arcee-ai/trinity-large-thinking": {
       "id": "arcee-ai/trinity-large-thinking",
       "name": "Trinity Large Thinking",
       "api": "anthropic-messages",
@@ -1693,9 +1787,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262100,
-      "maxTokens": 80000
+      "maxTokens": 80000,
+      "type": "chat"
     },
-    "bytedance/seed-1.6": {
+    "chat:bytedance/seed-1.6": {
       "id": "bytedance/seed-1.6",
       "name": "Seed 1.6",
       "api": "anthropic-messages",
@@ -1726,9 +1821,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "bytedance/seed-1.8": {
+    "chat:bytedance/seed-1.8": {
       "id": "bytedance/seed-1.8",
       "name": "Bytedance Seed 1.8",
       "api": "anthropic-messages",
@@ -1759,9 +1855,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "bytedance/seed-2.1-turbo": {
+    "chat:bytedance/seed-2.1-turbo": {
       "id": "bytedance/seed-2.1-turbo",
       "name": "Seed 2.1 Turbo",
       "api": "anthropic-messages",
@@ -1792,9 +1889,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "cohere/command-a": {
+    "chat:cohere/command-a": {
       "id": "cohere/command-a",
       "name": "Command A",
       "api": "anthropic-messages",
@@ -1814,9 +1912,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 8000
+      "maxTokens": 8000,
+      "type": "chat"
     },
-    "deepseek/deepseek-r1": {
+    "chat:deepseek/deepseek-r1": {
       "id": "deepseek/deepseek-r1",
       "name": "DeepSeek-R1",
       "api": "anthropic-messages",
@@ -1836,9 +1935,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "deepseek/deepseek-v3.1": {
+    "chat:deepseek/deepseek-v3.1": {
       "id": "deepseek/deepseek-v3.1",
       "name": "DeepSeek V3.1",
       "api": "anthropic-messages",
@@ -1858,9 +1958,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 163840,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v3.1-terminus": {
+    "chat:deepseek/deepseek-v3.1-terminus": {
       "id": "deepseek/deepseek-v3.1-terminus",
       "name": "DeepSeek V3.1 Terminus",
       "api": "anthropic-messages",
@@ -1880,9 +1981,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "type": "chat"
     },
-    "deepseek/deepseek-v3.2": {
+    "chat:deepseek/deepseek-v3.2": {
       "id": "deepseek/deepseek-v3.2",
       "name": "DeepSeek V3.2",
       "api": "anthropic-messages",
@@ -1902,9 +2004,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8000
+      "maxTokens": 8000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v3.2-thinking": {
+    "chat:deepseek/deepseek-v3.2-thinking": {
       "id": "deepseek/deepseek-v3.2-thinking",
       "name": "DeepSeek V3.2 Thinking",
       "api": "anthropic-messages",
@@ -1924,9 +2027,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8000
+      "maxTokens": 8000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v4-flash": {
+    "chat:deepseek/deepseek-v4-flash": {
       "id": "deepseek/deepseek-v4-flash",
       "name": "DeepSeek V4 Flash",
       "api": "anthropic-messages",
@@ -1946,9 +2050,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v4-flash-0731": {
+    "chat:deepseek/deepseek-v4-flash-0731": {
       "id": "deepseek/deepseek-v4-flash-0731",
       "name": "DeepSeek V4 Flash 0731",
       "api": "anthropic-messages",
@@ -1968,9 +2073,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v4-flash-vision-exp": {
+    "chat:deepseek/deepseek-v4-flash-vision-exp": {
       "id": "deepseek/deepseek-v4-flash-vision-exp",
       "name": "DeepSeek V4 Flash Vision Exp",
       "api": "anthropic-messages",
@@ -2001,9 +2107,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "deepseek/deepseek-v4-pro": {
+    "chat:deepseek/deepseek-v4-pro": {
       "id": "deepseek/deepseek-v4-pro",
       "name": "DeepSeek V4 Pro",
       "api": "anthropic-messages",
@@ -2023,9 +2130,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v4-pro-0813": {
+    "chat:deepseek/deepseek-v4-pro-0813": {
       "id": "deepseek/deepseek-v4-pro-0813",
       "name": "DeepSeek V4 Pro 0813",
       "api": "anthropic-messages",
@@ -2045,9 +2153,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "type": "chat"
     },
-    "deepseek/deepseek-v4.1-flash": {
+    "chat:deepseek/deepseek-v4.1-flash": {
       "id": "deepseek/deepseek-v4.1-flash",
       "name": "DeepSeek V4.1 Flash",
       "api": "anthropic-messages",
@@ -2078,9 +2187,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "fireworks/ember-1": {
+    "chat:fireworks/ember-1": {
       "id": "fireworks/ember-1",
       "name": "Ember-1",
       "api": "anthropic-messages",
@@ -2111,9 +2221,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-2.5-flash": {
+    "chat:google/gemini-2.5-flash": {
       "id": "google/gemini-2.5-flash",
       "name": "Gemini 2.5 Flash",
       "api": "anthropic-messages",
@@ -2144,9 +2255,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-2.5-flash-lite": {
+    "chat:google/gemini-2.5-flash-lite": {
       "id": "google/gemini-2.5-flash-lite",
       "name": "Gemini 2.5 Flash Lite",
       "api": "anthropic-messages",
@@ -2177,9 +2289,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-2.5-pro": {
+    "chat:google/gemini-2.5-pro": {
       "id": "google/gemini-2.5-pro",
       "name": "Gemini 2.5 Pro",
       "api": "anthropic-messages",
@@ -2210,9 +2323,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3-flash": {
+    "chat:google/gemini-3-flash": {
       "id": "google/gemini-3-flash",
       "name": "Gemini 3 Flash",
       "api": "anthropic-messages",
@@ -2243,9 +2357,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.1-flash-lite": {
+    "chat:google/gemini-3.1-flash-lite": {
       "id": "google/gemini-3.1-flash-lite",
       "name": "Gemini 3.1 Flash Lite",
       "api": "anthropic-messages",
@@ -2276,9 +2391,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.1-pro-preview": {
+    "chat:google/gemini-3.1-pro-preview": {
       "id": "google/gemini-3.1-pro-preview",
       "name": "Gemini 3.1 Pro Preview",
       "api": "anthropic-messages",
@@ -2309,9 +2425,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.5-flash": {
+    "chat:google/gemini-3.5-flash": {
       "id": "google/gemini-3.5-flash",
       "name": "Gemini 3.5 Flash",
       "api": "anthropic-messages",
@@ -2342,9 +2459,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.5-flash-lite": {
+    "chat:google/gemini-3.5-flash-lite": {
       "id": "google/gemini-3.5-flash-lite",
       "name": "Gemini 3.5 Flash Lite",
       "api": "anthropic-messages",
@@ -2375,9 +2493,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.6-flash": {
+    "chat:google/gemini-3.6-flash": {
       "id": "google/gemini-3.6-flash",
       "name": "Gemini 3.6 Flash",
       "api": "anthropic-messages",
@@ -2408,9 +2527,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.7-flash": {
+    "chat:google/gemini-3.7-flash": {
       "id": "google/gemini-3.7-flash",
       "name": "Gemini 3.7 Flash",
       "api": "anthropic-messages",
@@ -2441,9 +2561,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemini-3.8-flash": {
+    "chat:google/gemini-3.8-flash": {
       "id": "google/gemini-3.8-flash",
       "name": "Gemini 3.8 Flash",
       "api": "anthropic-messages",
@@ -2474,9 +2595,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemma-4-26b-a4b-it": {
+    "chat:google/gemma-4-26b-a4b-it": {
       "id": "google/gemma-4-26b-a4b-it",
       "name": "Google Gemma 4 26B A4B",
       "api": "anthropic-messages",
@@ -2507,9 +2629,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "google/gemma-4-31b-it": {
+    "chat:google/gemma-4-31b-it": {
       "id": "google/gemma-4-31b-it",
       "name": "Gemma 4 31B IT",
       "api": "anthropic-messages",
@@ -2540,9 +2663,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "inception/mercury-2": {
+    "chat:inception/mercury-2": {
       "id": "inception/mercury-2",
       "name": "Mercury 2",
       "api": "anthropic-messages",
@@ -2562,9 +2686,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "type": "chat"
     },
-    "inception/mercury-2.5": {
+    "chat:inception/mercury-2.5": {
       "id": "inception/mercury-2.5",
       "name": "Mercury 2.5",
       "api": "anthropic-messages",
@@ -2584,9 +2709,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 260000,
-      "maxTokens": 65536
+      "maxTokens": 65536,
+      "type": "chat"
     },
-    "inception/mercury-coder-small": {
+    "chat:inception/mercury-coder-small": {
       "id": "inception/mercury-coder-small",
       "name": "Mercury Coder Small Beta",
       "api": "anthropic-messages",
@@ -2606,9 +2732,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 32000,
-      "maxTokens": 16384
+      "maxTokens": 16384,
+      "type": "chat"
     },
-    "inclusionai/ling-3.0-flash": {
+    "chat:inclusionai/ling-3.0-flash": {
       "id": "inclusionai/ling-3.0-flash",
       "name": "Ling 3.0 Flash",
       "api": "anthropic-messages",
@@ -2628,9 +2755,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "type": "chat"
     },
-    "inclusionai/ling-3.0-flash-fin": {
+    "chat:inclusionai/ling-3.0-flash-fin": {
       "id": "inclusionai/ling-3.0-flash-fin",
       "name": "Ling 3.0 Flash Fin",
       "api": "anthropic-messages",
@@ -2644,37 +2772,16 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
+        "input": 0.075,
+        "output": 0.22,
+        "cacheRead": 0.015,
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "type": "chat"
     },
-    "inclusionai/ling-3.0-flash-fin-free": {
-      "id": "inclusionai/ling-3.0-flash-fin-free",
-      "name": "Ling 3.0 Flash Fin (Free)",
-      "api": "anthropic-messages",
-      "baseUrl": "https://ai-gateway.vercel.sh",
-      "provider": "vercel-ai-gateway",
-      "reasoning": true,
-      "input": [
-        "text"
-      ],
-      "compat": {
-        "allowEmptySignature": true
-      },
-      "cost": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
-      },
-      "contextWindow": 256000,
-      "maxTokens": 32000
-    },
-    "inclusionai/ling-3.0-flash-sante": {
+    "chat:inclusionai/ling-3.0-flash-sante": {
       "id": "inclusionai/ling-3.0-flash-sante",
       "name": "Ling 3.0 Flash Sante",
       "api": "anthropic-messages",
@@ -2694,9 +2801,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "type": "chat"
     },
-    "inclusionai/ling-3.0-flash-sante-free": {
+    "chat:inclusionai/ling-3.0-flash-sante-free": {
       "id": "inclusionai/ling-3.0-flash-sante-free",
       "name": "Ling 3.0 Flash Sante (Free)",
       "api": "anthropic-messages",
@@ -2716,9 +2824,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "type": "chat"
     },
-    "inclusionai/ling-3.0-flash-vl": {
+    "chat:inclusionai/ling-3.0-flash-vl": {
       "id": "inclusionai/ling-3.0-flash-vl",
       "name": "Ling 3.0 Flash VL",
       "api": "anthropic-messages",
@@ -2749,9 +2858,56 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "interfaze/interfaze-beta": {
+    "chat:inclusionai/ling-3.1-flash": {
+      "id": "inclusionai/ling-3.1-flash",
+      "name": "Ling 3.1 Flash",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "type": "chat"
+    },
+    "chat:inclusionai/ling-3.1-flash-free": {
+      "id": "inclusionai/ling-3.1-flash-free",
+      "name": "Ling 3.1 Flash (Free)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 262144,
+      "maxTokens": 32768,
+      "type": "chat"
+    },
+    "chat:interfaze/interfaze-beta": {
       "id": "interfaze/interfaze-beta",
       "name": "Interfaze Beta",
       "api": "anthropic-messages",
@@ -2782,9 +2938,44 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/llama-3.1-70b": {
+    "chat:meituan/longcat-2.5-preview": {
+      "id": "meituan/longcat-2.5-preview",
+      "name": "LongCat 2.5 Preview",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0.0
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 131072,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:meta/llama-3.1-70b": {
       "id": "meta/llama-3.1-70b",
       "name": "Llama 3.1 70B Instruct",
       "api": "anthropic-messages",
@@ -2804,9 +2995,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "meta/llama-3.1-8b": {
+    "chat:meta/llama-3.1-8b": {
       "id": "meta/llama-3.1-8b",
       "name": "Llama 3.1 8B Instruct",
       "api": "anthropic-messages",
@@ -2826,9 +3018,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "meta/llama-3.3-70b": {
+    "chat:meta/llama-3.3-70b": {
       "id": "meta/llama-3.3-70b",
       "name": "Llama 3.3 70B Instruct",
       "api": "anthropic-messages",
@@ -2848,9 +3041,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "meta/llama-4-maverick": {
+    "chat:meta/llama-4-maverick": {
       "id": "meta/llama-4-maverick",
       "name": "Llama 4 Maverick 17B Instruct",
       "api": "anthropic-messages",
@@ -2881,9 +3075,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/llama-4-scout": {
+    "chat:meta/llama-4-scout": {
       "id": "meta/llama-4-scout",
       "name": "Llama 4 Scout 17B Instruct",
       "api": "anthropic-messages",
@@ -2914,9 +3109,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/muse-glimmer-30b": {
+    "chat:meta/muse-glimmer-30b": {
       "id": "meta/muse-glimmer-30b",
       "name": "Muse Glimmer 30B",
       "api": "anthropic-messages",
@@ -2947,9 +3143,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/muse-spark-1.1": {
+    "chat:meta/muse-spark-1.1": {
       "id": "meta/muse-spark-1.1",
       "name": "Muse Spark 1.1",
       "api": "anthropic-messages",
@@ -2980,9 +3177,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/muse-spark-1.2": {
+    "chat:meta/muse-spark-1.2": {
       "id": "meta/muse-spark-1.2",
       "name": "Muse Spark 1.2",
       "api": "anthropic-messages",
@@ -3013,9 +3211,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/muse-spark-1.2-contributor": {
+    "chat:meta/muse-spark-1.2-contributor": {
       "id": "meta/muse-spark-1.2-contributor",
       "name": "Muse Spark 1.2 Contributor",
       "api": "anthropic-messages",
@@ -3046,9 +3245,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/muse-spark-1.3": {
+    "chat:meta/muse-spark-1.3": {
       "id": "meta/muse-spark-1.3",
       "name": "Muse Spark 1.3",
       "api": "anthropic-messages",
@@ -3079,9 +3279,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "meta/muse-spark-1.3-contributor": {
+    "chat:meta/muse-spark-1.3-contributor": {
       "id": "meta/muse-spark-1.3-contributor",
       "name": "Muse Spark 1.3 Contributor",
       "api": "anthropic-messages",
@@ -3112,9 +3313,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "minimax/minimax-m2": {
+    "chat:minimax/minimax-m2": {
       "id": "minimax/minimax-m2",
       "name": "MiniMax M2",
       "api": "anthropic-messages",
@@ -3134,9 +3336,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 205000,
-      "maxTokens": 205000
+      "maxTokens": 205000,
+      "type": "chat"
     },
-    "minimax/minimax-m2.1": {
+    "chat:minimax/minimax-m2.1": {
       "id": "minimax/minimax-m2.1",
       "name": "MiniMax M2.1",
       "api": "anthropic-messages",
@@ -3156,9 +3359,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 204800,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "minimax/minimax-m2.1-lightning": {
+    "chat:minimax/minimax-m2.1-lightning": {
       "id": "minimax/minimax-m2.1-lightning",
       "name": "MiniMax M2.1 Lightning",
       "api": "anthropic-messages",
@@ -3178,9 +3382,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 204800,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "minimax/minimax-m2.5": {
+    "chat:minimax/minimax-m2.5": {
       "id": "minimax/minimax-m2.5",
       "name": "MiniMax M2.5",
       "api": "anthropic-messages",
@@ -3200,9 +3405,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 204800,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "type": "chat"
     },
-    "minimax/minimax-m2.5-highspeed": {
+    "chat:minimax/minimax-m2.5-highspeed": {
       "id": "minimax/minimax-m2.5-highspeed",
       "name": "MiniMax M2.5 High Speed",
       "api": "anthropic-messages",
@@ -3222,9 +3428,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 204800,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "type": "chat"
     },
-    "minimax/minimax-m2.7": {
+    "chat:minimax/minimax-m2.7": {
       "id": "minimax/minimax-m2.7",
       "name": "MiniMax M2.7",
       "api": "anthropic-messages",
@@ -3244,9 +3451,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 204800,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "type": "chat"
     },
-    "minimax/minimax-m2.7-highspeed": {
+    "chat:minimax/minimax-m2.7-highspeed": {
       "id": "minimax/minimax-m2.7-highspeed",
       "name": "MiniMax M2.7 High Speed",
       "api": "anthropic-messages",
@@ -3266,9 +3474,10 @@
         "cacheWrite": 0.375
       },
       "contextWindow": 204800,
-      "maxTokens": 131100
+      "maxTokens": 131100,
+      "type": "chat"
     },
-    "minimax/minimax-m3": {
+    "chat:minimax/minimax-m3": {
       "id": "minimax/minimax-m3",
       "name": "MiniMax M3",
       "api": "anthropic-messages",
@@ -3299,9 +3508,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mistral/codestral": {
+    "chat:mistral/codestral": {
       "id": "mistral/codestral",
       "name": "Mistral Codestral",
       "api": "anthropic-messages",
@@ -3321,9 +3531,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 4000
+      "maxTokens": 4000,
+      "type": "chat"
     },
-    "mistral/ministral-14b": {
+    "chat:mistral/ministral-14b": {
       "id": "mistral/ministral-14b",
       "name": "Ministral 14B",
       "api": "anthropic-messages",
@@ -3354,9 +3565,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mistral/ministral-3b": {
+    "chat:mistral/ministral-3b": {
       "id": "mistral/ministral-3b",
       "name": "Ministral 3B",
       "api": "anthropic-messages",
@@ -3387,9 +3599,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mistral/ministral-8b": {
+    "chat:mistral/ministral-8b": {
       "id": "mistral/ministral-8b",
       "name": "Ministral 8B",
       "api": "anthropic-messages",
@@ -3420,9 +3633,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mistral/mistral-large-3": {
+    "chat:mistral/mistral-large-3": {
       "id": "mistral/mistral-large-3",
       "name": "Mistral Large 3",
       "api": "anthropic-messages",
@@ -3453,9 +3667,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mistral/mistral-medium-3.5": {
+    "chat:mistral/mistral-medium-3.5": {
       "id": "mistral/mistral-medium-3.5",
       "name": "Mistral Medium Latest",
       "api": "anthropic-messages",
@@ -3486,9 +3701,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mistral/mistral-nemo": {
+    "chat:mistral/mistral-nemo": {
       "id": "mistral/mistral-nemo",
       "name": "Mistral Nemo 12B",
       "api": "anthropic-messages",
@@ -3508,9 +3724,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 60288,
-      "maxTokens": 16000
+      "maxTokens": 16000,
+      "type": "chat"
     },
-    "mistral/mistral-small": {
+    "chat:mistral/mistral-small": {
       "id": "mistral/mistral-small",
       "name": "Mistral Small",
       "api": "anthropic-messages",
@@ -3541,9 +3758,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "mixedbread/toast-1": {
+    "chat:mixedbread/toast-1": {
       "id": "mixedbread/toast-1",
       "name": "Toast 1",
       "api": "anthropic-messages",
@@ -3563,9 +3781,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131000,
-      "maxTokens": 4000
+      "maxTokens": 4000,
+      "type": "chat"
     },
-    "moonshotai/kimi-k2": {
+    "chat:moonshotai/kimi-k2": {
       "id": "moonshotai/kimi-k2",
       "name": "Kimi K2 Instruct",
       "api": "anthropic-messages",
@@ -3585,9 +3804,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "moonshotai/kimi-k2-thinking": {
+    "chat:moonshotai/kimi-k2-thinking": {
       "id": "moonshotai/kimi-k2-thinking",
       "name": "Kimi K2 Thinking",
       "api": "anthropic-messages",
@@ -3607,9 +3827,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 216144,
-      "maxTokens": 216144
+      "maxTokens": 216144,
+      "type": "chat"
     },
-    "moonshotai/kimi-k2.5": {
+    "chat:moonshotai/kimi-k2.5": {
       "id": "moonshotai/kimi-k2.5",
       "name": "Kimi K2.5",
       "api": "anthropic-messages",
@@ -3640,9 +3861,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/kimi-k2.6": {
+    "chat:moonshotai/kimi-k2.6": {
       "id": "moonshotai/kimi-k2.6",
       "name": "Kimi K2.6",
       "api": "anthropic-messages",
@@ -3673,9 +3895,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/kimi-k2.7-code": {
+    "chat:moonshotai/kimi-k2.7-code": {
       "id": "moonshotai/kimi-k2.7-code",
       "name": "Kimi K2.7 Code",
       "api": "anthropic-messages",
@@ -3692,7 +3915,7 @@
       "cost": {
         "input": 0.95,
         "output": 4.0,
-        "cacheRead": 0.16,
+        "cacheRead": 0.19,
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
@@ -3706,9 +3929,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/kimi-k2.7-code-highspeed": {
+    "chat:moonshotai/kimi-k2.7-code-highspeed": {
       "id": "moonshotai/kimi-k2.7-code-highspeed",
       "name": "Kimi K2.7 Code High Speed",
       "api": "anthropic-messages",
@@ -3739,9 +3963,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/kimi-k3": {
+    "chat:moonshotai/kimi-k3": {
       "id": "moonshotai/kimi-k3",
       "name": "Kimi K3",
       "api": "anthropic-messages",
@@ -3772,9 +3997,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/kimi-k3-fast": {
+    "chat:moonshotai/kimi-k3-fast": {
       "id": "moonshotai/kimi-k3-fast",
       "name": "Kimi K3 Fast",
       "api": "anthropic-messages",
@@ -3805,9 +4031,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "nvidia/nemotron-3-nano-30b-a3b": {
+    "chat:nvidia/nemotron-3-nano-30b-a3b": {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
       "name": "Nemotron 3 Nano 30B A3B",
       "api": "anthropic-messages",
@@ -3827,9 +4054,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "nvidia/nemotron-3-super-120b-a12b": {
+    "chat:nvidia/nemotron-3-super-120b-a12b": {
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "name": "NVIDIA Nemotron 3 Super 120B A12B",
       "api": "anthropic-messages",
@@ -3849,9 +4077,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32000
+      "maxTokens": 32000,
+      "type": "chat"
     },
-    "nvidia/nemotron-3-ultra-550b-a55b": {
+    "chat:nvidia/nemotron-3-ultra-550b-a55b": {
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
       "name": "Nemotron 3 Ultra",
       "api": "anthropic-messages",
@@ -3871,9 +4100,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 65000
+      "maxTokens": 65000,
+      "type": "chat"
     },
-    "nvidia/nemotron-3.5-lightning": {
+    "chat:nvidia/nemotron-3.5-lightning": {
       "id": "nvidia/nemotron-3.5-lightning",
       "name": "Nemotron 3.5 Lightning 30B",
       "api": "anthropic-messages",
@@ -3893,9 +4123,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "nvidia/nemotron-nano-12b-v2-vl": {
+    "chat:nvidia/nemotron-nano-12b-v2-vl": {
       "id": "nvidia/nemotron-nano-12b-v2-vl",
       "name": "Nvidia Nemotron Nano 12B V2 VL",
       "api": "anthropic-messages",
@@ -3926,9 +4157,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "nvidia/nemotron-nano-9b-v2": {
+    "chat:nvidia/nemotron-nano-9b-v2": {
       "id": "nvidia/nemotron-nano-9b-v2",
       "name": "Nvidia Nemotron Nano 9B V2",
       "api": "anthropic-messages",
@@ -3948,9 +4180,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "openai/gpt-3.5-turbo": {
+    "chat:openai/gpt-3.5-turbo": {
       "id": "openai/gpt-3.5-turbo",
       "name": "GPT-3.5 Turbo",
       "api": "anthropic-messages",
@@ -3970,9 +4203,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 16385,
-      "maxTokens": 4096
+      "maxTokens": 4096,
+      "type": "chat"
     },
-    "openai/gpt-4-turbo": {
+    "chat:openai/gpt-4-turbo": {
       "id": "openai/gpt-4-turbo",
       "name": "GPT-4 Turbo",
       "api": "anthropic-messages",
@@ -4003,9 +4237,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4.1": {
+    "chat:openai/gpt-4.1": {
       "id": "openai/gpt-4.1",
       "name": "GPT-4.1",
       "api": "anthropic-messages",
@@ -4036,9 +4271,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4.1-fast": {
+    "chat:openai/gpt-4.1-fast": {
       "id": "openai/gpt-4.1-fast",
       "name": "GPT-4.1 (Fast)",
       "api": "anthropic-messages",
@@ -4069,9 +4305,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4.1-mini": {
+    "chat:openai/gpt-4.1-mini": {
       "id": "openai/gpt-4.1-mini",
       "name": "GPT-4.1 mini",
       "api": "anthropic-messages",
@@ -4102,9 +4339,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4.1-mini-fast": {
+    "chat:openai/gpt-4.1-mini-fast": {
       "id": "openai/gpt-4.1-mini-fast",
       "name": "GPT-4.1 mini (Fast)",
       "api": "anthropic-messages",
@@ -4135,9 +4373,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4.1-nano": {
+    "chat:openai/gpt-4.1-nano": {
       "id": "openai/gpt-4.1-nano",
       "name": "GPT-4.1 nano",
       "api": "anthropic-messages",
@@ -4168,9 +4407,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4.1-nano-fast": {
+    "chat:openai/gpt-4.1-nano-fast": {
       "id": "openai/gpt-4.1-nano-fast",
       "name": "GPT-4.1 nano (Fast)",
       "api": "anthropic-messages",
@@ -4201,9 +4441,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4o": {
+    "chat:openai/gpt-4o": {
       "id": "openai/gpt-4o",
       "name": "GPT-4o",
       "api": "anthropic-messages",
@@ -4234,9 +4475,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4o-fast": {
+    "chat:openai/gpt-4o-fast": {
       "id": "openai/gpt-4o-fast",
       "name": "GPT-4o (Fast)",
       "api": "anthropic-messages",
@@ -4267,9 +4509,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4o-mini": {
+    "chat:openai/gpt-4o-mini": {
       "id": "openai/gpt-4o-mini",
       "name": "GPT-4o mini",
       "api": "anthropic-messages",
@@ -4300,9 +4543,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-4o-mini-fast": {
+    "chat:openai/gpt-4o-mini-fast": {
       "id": "openai/gpt-4o-mini-fast",
       "name": "GPT-4o mini (Fast)",
       "api": "anthropic-messages",
@@ -4333,9 +4577,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5": {
+    "chat:openai/gpt-5": {
       "id": "openai/gpt-5",
       "name": "GPT-5",
       "api": "anthropic-messages",
@@ -4366,9 +4611,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5-codex": {
+    "chat:openai/gpt-5-codex": {
       "id": "openai/gpt-5-codex",
       "name": "GPT-5-Codex",
       "api": "anthropic-messages",
@@ -4399,9 +4645,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5-fast": {
+    "chat:openai/gpt-5-fast": {
       "id": "openai/gpt-5-fast",
       "name": "GPT-5 (Fast)",
       "api": "anthropic-messages",
@@ -4432,9 +4679,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5-mini": {
+    "chat:openai/gpt-5-mini": {
       "id": "openai/gpt-5-mini",
       "name": "GPT-5 mini",
       "api": "anthropic-messages",
@@ -4465,9 +4713,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5-mini-fast": {
+    "chat:openai/gpt-5-mini-fast": {
       "id": "openai/gpt-5-mini-fast",
       "name": "GPT-5 mini (Fast)",
       "api": "anthropic-messages",
@@ -4498,9 +4747,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5-nano": {
+    "chat:openai/gpt-5-nano": {
       "id": "openai/gpt-5-nano",
       "name": "GPT-5 nano",
       "api": "anthropic-messages",
@@ -4531,9 +4781,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5-pro": {
+    "chat:openai/gpt-5-pro": {
       "id": "openai/gpt-5-pro",
       "name": "GPT-5 pro",
       "api": "anthropic-messages",
@@ -4564,9 +4815,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.1-codex": {
+    "chat:openai/gpt-5.1-codex": {
       "id": "openai/gpt-5.1-codex",
       "name": "GPT-5.1-Codex",
       "api": "anthropic-messages",
@@ -4597,9 +4849,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.1-codex-max": {
+    "chat:openai/gpt-5.1-codex-max": {
       "id": "openai/gpt-5.1-codex-max",
       "name": "GPT 5.1 Codex Max",
       "api": "anthropic-messages",
@@ -4630,9 +4883,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.1-codex-mini": {
+    "chat:openai/gpt-5.1-codex-mini": {
       "id": "openai/gpt-5.1-codex-mini",
       "name": "GPT 5.1 Codex Mini",
       "api": "anthropic-messages",
@@ -4663,9 +4917,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.1-thinking": {
+    "chat:openai/gpt-5.1-thinking": {
       "id": "openai/gpt-5.1-thinking",
       "name": "GPT 5.1 Thinking",
       "api": "anthropic-messages",
@@ -4696,9 +4951,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.1-thinking-fast": {
+    "chat:openai/gpt-5.1-thinking-fast": {
       "id": "openai/gpt-5.1-thinking-fast",
       "name": "GPT 5.1 Thinking (Fast)",
       "api": "anthropic-messages",
@@ -4729,9 +4985,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.2": {
+    "chat:openai/gpt-5.2": {
       "id": "openai/gpt-5.2",
       "name": "GPT 5.2",
       "api": "anthropic-messages",
@@ -4765,9 +5022,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.2-codex": {
+    "chat:openai/gpt-5.2-codex": {
       "id": "openai/gpt-5.2-codex",
       "name": "GPT 5.2 Codex",
       "api": "anthropic-messages",
@@ -4801,9 +5059,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.2-fast": {
+    "chat:openai/gpt-5.2-fast": {
       "id": "openai/gpt-5.2-fast",
       "name": "GPT 5.2 (Fast)",
       "api": "anthropic-messages",
@@ -4837,9 +5096,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.2-pro": {
+    "chat:openai/gpt-5.2-pro": {
       "id": "openai/gpt-5.2-pro",
       "name": "GPT 5.2 ",
       "api": "anthropic-messages",
@@ -4873,9 +5133,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.3-codex": {
+    "chat:openai/gpt-5.3-codex": {
       "id": "openai/gpt-5.3-codex",
       "name": "GPT 5.3 Codex",
       "api": "anthropic-messages",
@@ -4909,9 +5170,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.3-codex-fast": {
+    "chat:openai/gpt-5.3-codex-fast": {
       "id": "openai/gpt-5.3-codex-fast",
       "name": "GPT 5.3 Codex (Fast)",
       "api": "anthropic-messages",
@@ -4945,9 +5207,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.4": {
+    "chat:openai/gpt-5.4": {
       "id": "openai/gpt-5.4",
       "name": "GPT 5.4",
       "api": "anthropic-messages",
@@ -4981,9 +5244,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.4-fast": {
+    "chat:openai/gpt-5.4-fast": {
       "id": "openai/gpt-5.4-fast",
       "name": "GPT 5.4 (Fast)",
       "api": "anthropic-messages",
@@ -5017,9 +5281,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.4-mini": {
+    "chat:openai/gpt-5.4-mini": {
       "id": "openai/gpt-5.4-mini",
       "name": "GPT 5.4 Mini",
       "api": "anthropic-messages",
@@ -5053,9 +5318,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.4-mini-fast": {
+    "chat:openai/gpt-5.4-mini-fast": {
       "id": "openai/gpt-5.4-mini-fast",
       "name": "GPT 5.4 Mini (Fast)",
       "api": "anthropic-messages",
@@ -5089,9 +5355,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.4-nano": {
+    "chat:openai/gpt-5.4-nano": {
       "id": "openai/gpt-5.4-nano",
       "name": "GPT 5.4 Nano",
       "api": "anthropic-messages",
@@ -5125,9 +5392,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.4-pro": {
+    "chat:openai/gpt-5.4-pro": {
       "id": "openai/gpt-5.4-pro",
       "name": "GPT 5.4 Pro",
       "api": "anthropic-messages",
@@ -5161,9 +5429,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.5": {
+    "chat:openai/gpt-5.5": {
       "id": "openai/gpt-5.5",
       "name": "GPT 5.5",
       "api": "anthropic-messages",
@@ -5197,9 +5466,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.5-fast": {
+    "chat:openai/gpt-5.5-fast": {
       "id": "openai/gpt-5.5-fast",
       "name": "GPT 5.5 (Fast)",
       "api": "anthropic-messages",
@@ -5233,9 +5503,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.5-pro": {
+    "chat:openai/gpt-5.5-pro": {
       "id": "openai/gpt-5.5-pro",
       "name": "GPT 5.5 Pro",
       "api": "anthropic-messages",
@@ -5272,9 +5543,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.6-luna": {
+    "chat:openai/gpt-5.6-luna": {
       "id": "openai/gpt-5.6-luna",
       "name": "GPT 5.6 Luna",
       "api": "anthropic-messages",
@@ -5308,9 +5580,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.6-luna-fast": {
+    "chat:openai/gpt-5.6-luna-fast": {
       "id": "openai/gpt-5.6-luna-fast",
       "name": "GPT 5.6 Luna (Fast)",
       "api": "anthropic-messages",
@@ -5344,9 +5617,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.6-sol": {
+    "chat:openai/gpt-5.6-sol": {
       "id": "openai/gpt-5.6-sol",
       "name": "GPT 5.6 Sol",
       "api": "anthropic-messages",
@@ -5380,9 +5654,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.6-sol-fast": {
+    "chat:openai/gpt-5.6-sol-fast": {
       "id": "openai/gpt-5.6-sol-fast",
       "name": "GPT 5.6 Sol (Fast)",
       "api": "anthropic-messages",
@@ -5416,9 +5691,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.6-terra": {
+    "chat:openai/gpt-5.6-terra": {
       "id": "openai/gpt-5.6-terra",
       "name": "GPT 5.6 Terra",
       "api": "anthropic-messages",
@@ -5452,9 +5728,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-5.6-terra-fast": {
+    "chat:openai/gpt-5.6-terra-fast": {
       "id": "openai/gpt-5.6-terra-fast",
       "name": "GPT 5.6 Terra (Fast)",
       "api": "anthropic-messages",
@@ -5488,9 +5765,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-6-astra": {
+    "chat:openai/gpt-6-astra": {
       "id": "openai/gpt-6-astra",
       "name": "GPT-6 Astra",
       "api": "anthropic-messages",
@@ -5524,9 +5802,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-6-astra-fast": {
+    "chat:openai/gpt-6-astra-fast": {
       "id": "openai/gpt-6-astra-fast",
       "name": "GPT-6 Astra (Fast)",
       "api": "anthropic-messages",
@@ -5560,9 +5839,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-6-luna": {
+    "chat:openai/gpt-6-luna": {
       "id": "openai/gpt-6-luna",
       "name": "GPT-6 Luna",
       "api": "anthropic-messages",
@@ -5596,9 +5876,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-6-luna-fast": {
+    "chat:openai/gpt-6-luna-fast": {
       "id": "openai/gpt-6-luna-fast",
       "name": "GPT-6 Luna (Fast)",
       "api": "anthropic-messages",
@@ -5632,9 +5913,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-6-sol": {
+    "chat:openai/gpt-6-sol": {
       "id": "openai/gpt-6-sol",
       "name": "GPT-6 Sol",
       "api": "anthropic-messages",
@@ -5668,9 +5950,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-6-sol-fast": {
+    "chat:openai/gpt-6-sol-fast": {
       "id": "openai/gpt-6-sol-fast",
       "name": "GPT-6 Sol (Fast)",
       "api": "anthropic-messages",
@@ -5704,9 +5987,84 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-oss-120b": {
+    "chat:openai/gpt-6.1-sol": {
+      "id": "openai/gpt-6.1-sol",
+      "name": "GPT-6.1 Sol",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cacheRead": 0.1,
+        "cacheWrite": 2.5
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:openai/gpt-6.1-sol-fast": {
+      "id": "openai/gpt-6.1-sol-fast",
+      "name": "GPT-6.1 Sol (Fast)",
+      "api": "anthropic-messages",
+      "baseUrl": "https://ai-gateway.vercel.sh",
+      "provider": "vercel-ai-gateway",
+      "reasoning": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "compat": {
+        "allowEmptySignature": true
+      },
+      "cost": {
+        "input": 4.0,
+        "output": 20.0,
+        "cacheRead": 0.2,
+        "cacheWrite": 5.0
+      },
+      "contextWindow": 1050000,
+      "maxTokens": 128000,
+      "thinkingLevelMap": {
+        "xhigh": "xhigh"
+      },
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
       "name": "GPT OSS 120B",
       "api": "anthropic-messages",
@@ -5726,9 +6084,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "openai/gpt-oss-20b": {
+    "chat:openai/gpt-oss-20b": {
       "id": "openai/gpt-oss-20b",
       "name": "GPT OSS 20B",
       "api": "anthropic-messages",
@@ -5748,9 +6107,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 131072,
-      "maxTokens": 8192
+      "maxTokens": 8192,
+      "type": "chat"
     },
-    "openai/gpt-oss-safeguard-120b": {
+    "chat:openai/gpt-oss-safeguard-120b": {
       "id": "openai/gpt-oss-safeguard-120b",
       "name": "GPT OSS Safeguard 120B",
       "api": "anthropic-messages",
@@ -5770,9 +6130,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 16000
+      "maxTokens": 16000,
+      "type": "chat"
     },
-    "openai/gpt-oss-safeguard-20b": {
+    "chat:openai/gpt-oss-safeguard-20b": {
       "id": "openai/gpt-oss-safeguard-20b",
       "name": "GPT OSS Safeguard 20B",
       "api": "anthropic-messages",
@@ -5792,9 +6153,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 16000
+      "maxTokens": 16000,
+      "type": "chat"
     },
-    "openai/o1": {
+    "chat:openai/o1": {
       "id": "openai/o1",
       "name": "o1",
       "api": "anthropic-messages",
@@ -5825,9 +6187,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/o3": {
+    "chat:openai/o3": {
       "id": "openai/o3",
       "name": "o3",
       "api": "anthropic-messages",
@@ -5858,9 +6221,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/o3-fast": {
+    "chat:openai/o3-fast": {
       "id": "openai/o3-fast",
       "name": "o3 (Fast)",
       "api": "anthropic-messages",
@@ -5891,9 +6255,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/o3-mini": {
+    "chat:openai/o3-mini": {
       "id": "openai/o3-mini",
       "name": "o3-mini",
       "api": "anthropic-messages",
@@ -5913,9 +6278,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "type": "chat"
     },
-    "openai/o3-pro": {
+    "chat:openai/o3-pro": {
       "id": "openai/o3-pro",
       "name": "o3 Pro",
       "api": "anthropic-messages",
@@ -5946,9 +6312,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/o4-mini": {
+    "chat:openai/o4-mini": {
       "id": "openai/o4-mini",
       "name": "o4-mini",
       "api": "anthropic-messages",
@@ -5979,9 +6346,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "openai/o4-mini-fast": {
+    "chat:openai/o4-mini-fast": {
       "id": "openai/o4-mini-fast",
       "name": "o4-mini (Fast)",
       "api": "anthropic-messages",
@@ -6012,9 +6380,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "poolside/laguna-s-2.1": {
+    "chat:poolside/laguna-s-2.1": {
       "id": "poolside/laguna-s-2.1",
       "name": "Laguna S 2.1",
       "api": "anthropic-messages",
@@ -6034,9 +6403,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "poolside/laguna-s-2.1-free": {
+    "chat:poolside/laguna-s-2.1-free": {
       "id": "poolside/laguna-s-2.1-free",
       "name": "Laguna S 2.1 Free",
       "api": "anthropic-messages",
@@ -6056,9 +6426,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 256000,
-      "maxTokens": 32768
+      "maxTokens": 32768,
+      "type": "chat"
     },
-    "quiverai/arrow-2": {
+    "chat:quiverai/arrow-2": {
       "id": "quiverai/arrow-2",
       "name": "Arrow 2",
       "api": "anthropic-messages",
@@ -6089,9 +6460,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "quiverai/arrow-2-telos": {
+    "chat:quiverai/arrow-2-telos": {
       "id": "quiverai/arrow-2-telos",
       "name": "Arrow 2 Telos",
       "api": "anthropic-messages",
@@ -6122,9 +6494,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "sakana/fugu-max": {
+    "chat:sakana/fugu-max": {
       "id": "sakana/fugu-max",
       "name": "Fugu Max",
       "api": "anthropic-messages",
@@ -6155,9 +6528,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "sakana/fugu-ultra": {
+    "chat:sakana/fugu-ultra": {
       "id": "sakana/fugu-ultra",
       "name": "Fugu Ultra",
       "api": "anthropic-messages",
@@ -6188,9 +6562,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "sakana/fugu-ultra-v2": {
+    "chat:sakana/fugu-ultra-v2": {
       "id": "sakana/fugu-ultra-v2",
       "name": "Fugu Ultra v2",
       "api": "anthropic-messages",
@@ -6221,9 +6596,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "sakana/namazu": {
+    "chat:sakana/namazu": {
       "id": "sakana/namazu",
       "name": "Sakana Namazu",
       "api": "anthropic-messages",
@@ -6254,9 +6630,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.1-fast-non-reasoning": {
+    "chat:spacexai/grok-4.1-fast-non-reasoning": {
       "id": "spacexai/grok-4.1-fast-non-reasoning",
       "name": "Grok 4.1 Fast Non-Reasoning",
       "api": "anthropic-messages",
@@ -6287,9 +6664,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.1-fast-reasoning": {
+    "chat:spacexai/grok-4.1-fast-reasoning": {
       "id": "spacexai/grok-4.1-fast-reasoning",
       "name": "Grok 4.1 Fast Reasoning",
       "api": "anthropic-messages",
@@ -6320,9 +6698,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.20-multi-agent": {
+    "chat:spacexai/grok-4.20-multi-agent": {
       "id": "spacexai/grok-4.20-multi-agent",
       "name": "Grok 4.20 Multi-Agent",
       "api": "anthropic-messages",
@@ -6353,9 +6732,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.20-multi-agent-beta": {
+    "chat:spacexai/grok-4.20-multi-agent-beta": {
       "id": "spacexai/grok-4.20-multi-agent-beta",
       "name": "Grok 4.20 Multi Agent Beta",
       "api": "anthropic-messages",
@@ -6386,9 +6766,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.20-non-reasoning": {
+    "chat:spacexai/grok-4.20-non-reasoning": {
       "id": "spacexai/grok-4.20-non-reasoning",
       "name": "Grok 4.20 Non-Reasoning",
       "api": "anthropic-messages",
@@ -6419,9 +6800,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.20-non-reasoning-beta": {
+    "chat:spacexai/grok-4.20-non-reasoning-beta": {
       "id": "spacexai/grok-4.20-non-reasoning-beta",
       "name": "Grok 4.20 Beta Non-Reasoning",
       "api": "anthropic-messages",
@@ -6452,9 +6834,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.20-reasoning": {
+    "chat:spacexai/grok-4.20-reasoning": {
       "id": "spacexai/grok-4.20-reasoning",
       "name": "Grok 4.20 Reasoning",
       "api": "anthropic-messages",
@@ -6485,9 +6868,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.20-reasoning-beta": {
+    "chat:spacexai/grok-4.20-reasoning-beta": {
       "id": "spacexai/grok-4.20-reasoning-beta",
       "name": "Grok 4.20 Beta Reasoning",
       "api": "anthropic-messages",
@@ -6518,9 +6902,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.3": {
+    "chat:spacexai/grok-4.3": {
       "id": "spacexai/grok-4.3",
       "name": "Grok 4.3",
       "api": "anthropic-messages",
@@ -6551,9 +6936,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.5": {
+    "chat:spacexai/grok-4.5": {
       "id": "spacexai/grok-4.5",
       "name": "Grok 4.5",
       "api": "anthropic-messages",
@@ -6584,9 +6970,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.6": {
+    "chat:spacexai/grok-4.6": {
       "id": "spacexai/grok-4.6",
       "name": "Grok 4.6",
       "api": "anthropic-messages",
@@ -6617,9 +7004,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-4.7": {
+    "chat:spacexai/grok-4.7": {
       "id": "spacexai/grok-4.7",
       "name": "Grok 4.7",
       "api": "anthropic-messages",
@@ -6634,9 +7022,9 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 1.2,
-        "output": 3.6,
-        "cacheRead": 0.3,
+        "input": 2.0,
+        "output": 6.0,
+        "cacheRead": 0.5,
         "cacheWrite": 0.0
       },
       "contextWindow": 500000,
@@ -6650,9 +7038,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "spacexai/grok-build-0.1": {
+    "chat:spacexai/grok-build-0.1": {
       "id": "spacexai/grok-build-0.1",
       "name": "Grok Build 0.1",
       "api": "anthropic-messages",
@@ -6683,9 +7072,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "stepfun/step-3.5-flash": {
+    "chat:stepfun/step-3.5-flash": {
       "id": "stepfun/step-3.5-flash",
       "name": "StepFun 3.5 Flash",
       "api": "anthropic-messages",
@@ -6716,9 +7106,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "stepfun/step-3.7-flash": {
+    "chat:stepfun/step-3.7-flash": {
       "id": "stepfun/step-3.7-flash",
       "name": "Step 3.7 Flash",
       "api": "anthropic-messages",
@@ -6749,9 +7140,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "tencent/hy3": {
+    "chat:tencent/hy3": {
       "id": "tencent/hy3",
       "name": "Hy3",
       "api": "anthropic-messages",
@@ -6771,9 +7163,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 262144,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "tencent/hy4-preview": {
+    "chat:tencent/hy4-preview": {
       "id": "tencent/hy4-preview",
       "name": "Tencent Hy4 Preview",
       "api": "anthropic-messages",
@@ -6793,9 +7186,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1024000,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "type": "chat"
     },
-    "thinkingmachines/inkling": {
+    "chat:thinkingmachines/inkling": {
       "id": "thinkingmachines/inkling",
       "name": "Inkling",
       "api": "anthropic-messages",
@@ -6826,9 +7220,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "thinkingmachines/inkling-small": {
+    "chat:thinkingmachines/inkling-small": {
       "id": "thinkingmachines/inkling-small",
       "name": "Inkling Small",
       "api": "anthropic-messages",
@@ -6843,7 +7238,7 @@
         "allowEmptySignature": true
       },
       "cost": {
-        "input": 0.5,
+        "input": 0.45,
         "output": 1.2,
         "cacheRead": 0.1,
         "cacheWrite": 0.0
@@ -6859,9 +7254,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "xiaomi/mimo-v2.5": {
+    "chat:xiaomi/mimo-v2.5": {
       "id": "xiaomi/mimo-v2.5",
       "name": "MiMo M2.5",
       "api": "anthropic-messages",
@@ -6892,9 +7288,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "xiaomi/mimo-v2.5-pro": {
+    "chat:xiaomi/mimo-v2.5-pro": {
       "id": "xiaomi/mimo-v2.5-pro",
       "name": "MiMo V2.5 Pro",
       "api": "anthropic-messages",
@@ -6914,9 +7311,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1050000,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "type": "chat"
     },
-    "xiaomi/mimo-v2.6-flash": {
+    "chat:xiaomi/mimo-v2.6-flash": {
       "id": "xiaomi/mimo-v2.6-flash",
       "name": "MiMo V2.6 Flash",
       "api": "anthropic-messages",
@@ -6947,9 +7345,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "xiaomi/mimo-v2.6-pro": {
+    "chat:xiaomi/mimo-v2.6-pro": {
       "id": "xiaomi/mimo-v2.6-pro",
       "name": "MiMo V2.6 Pro",
       "api": "anthropic-messages",
@@ -6980,9 +7379,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "xiaomi/mimo-v2.6-pro-ultraspeed": {
+    "chat:xiaomi/mimo-v2.6-pro-ultraspeed": {
       "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
       "name": "MiMo V2.6 Pro UltraSpeed",
       "api": "anthropic-messages",
@@ -7013,9 +7413,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai/glm-4.5": {
+    "chat:zai/glm-4.5": {
       "id": "zai/glm-4.5",
       "name": "GLM 4.5",
       "api": "anthropic-messages",
@@ -7035,9 +7436,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 96000
+      "maxTokens": 96000,
+      "type": "chat"
     },
-    "zai/glm-4.5-air": {
+    "chat:zai/glm-4.5-air": {
       "id": "zai/glm-4.5-air",
       "name": "GLM 4.5 Air",
       "api": "anthropic-messages",
@@ -7057,9 +7459,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 128000,
-      "maxTokens": 96000
+      "maxTokens": 96000,
+      "type": "chat"
     },
-    "zai/glm-4.5v": {
+    "chat:zai/glm-4.5v": {
       "id": "zai/glm-4.5v",
       "name": "GLM 4.5V",
       "api": "anthropic-messages",
@@ -7090,9 +7493,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai/glm-4.6": {
+    "chat:zai/glm-4.6": {
       "id": "zai/glm-4.6",
       "name": "GLM 4.6",
       "api": "anthropic-messages",
@@ -7112,9 +7516,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 96000
+      "maxTokens": 96000,
+      "type": "chat"
     },
-    "zai/glm-4.7": {
+    "chat:zai/glm-4.7": {
       "id": "zai/glm-4.7",
       "name": "GLM 4.7",
       "api": "anthropic-messages",
@@ -7130,13 +7535,14 @@
       "cost": {
         "input": 0.6,
         "output": 2.2,
-        "cacheRead": 0.12,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 120000
+      "maxTokens": 120000,
+      "type": "chat"
     },
-    "zai/glm-4.7-flash": {
+    "chat:zai/glm-4.7-flash": {
       "id": "zai/glm-4.7-flash",
       "name": "GLM 4.7 Flash",
       "api": "anthropic-messages",
@@ -7156,9 +7562,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 131000
+      "maxTokens": 131000,
+      "type": "chat"
     },
-    "zai/glm-4.7-flashx": {
+    "chat:zai/glm-4.7-flashx": {
       "id": "zai/glm-4.7-flashx",
       "name": "GLM 4.7 FlashX",
       "api": "anthropic-messages",
@@ -7178,9 +7585,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 200000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "type": "chat"
     },
-    "zai/glm-5": {
+    "chat:zai/glm-5": {
       "id": "zai/glm-5",
       "name": "GLM 5",
       "api": "anthropic-messages",
@@ -7200,9 +7608,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 202800,
-      "maxTokens": 131100
+      "maxTokens": 131100,
+      "type": "chat"
     },
-    "zai/glm-5-turbo": {
+    "chat:zai/glm-5-turbo": {
       "id": "zai/glm-5-turbo",
       "name": "GLM 5 Turbo",
       "api": "anthropic-messages",
@@ -7222,9 +7631,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 202800,
-      "maxTokens": 131100
+      "maxTokens": 131100,
+      "type": "chat"
     },
-    "zai/glm-5.1": {
+    "chat:zai/glm-5.1": {
       "id": "zai/glm-5.1",
       "name": "GLM 5.1",
       "api": "anthropic-messages",
@@ -7244,9 +7654,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 202800,
-      "maxTokens": 64000
+      "maxTokens": 64000,
+      "type": "chat"
     },
-    "zai/glm-5.2": {
+    "chat:zai/glm-5.2": {
       "id": "zai/glm-5.2",
       "name": "GLM 5.2",
       "api": "anthropic-messages",
@@ -7266,9 +7677,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "type": "chat"
     },
-    "zai/glm-5.2-fast": {
+    "chat:zai/glm-5.2-fast": {
       "id": "zai/glm-5.2-fast",
       "name": "GLM 5.2 Fast",
       "api": "anthropic-messages",
@@ -7288,9 +7700,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 128000
+      "maxTokens": 128000,
+      "type": "chat"
     },
-    "zai/glm-5.3": {
+    "chat:zai/glm-5.3": {
       "id": "zai/glm-5.3",
       "name": "GLM 5.3",
       "api": "anthropic-messages",
@@ -7310,9 +7723,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1000000,
-      "maxTokens": 1000000
+      "maxTokens": 1000000,
+      "type": "chat"
     },
-    "zai/glm-5.3-fast": {
+    "chat:zai/glm-5.3-fast": {
       "id": "zai/glm-5.3-fast",
       "name": "GLM 5.3 Fast",
       "api": "anthropic-messages",
@@ -7332,9 +7746,10 @@
         "cacheWrite": 0.0
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "zai/glm-5.3-flash": {
+    "chat:zai/glm-5.3-flash": {
       "id": "zai/glm-5.3-flash",
       "name": "GLM 5.3 Flash",
       "api": "anthropic-messages",
@@ -7365,9 +7780,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai/glm-5.3-flashx": {
+    "chat:zai/glm-5.3-flashx": {
       "id": "zai/glm-5.3-flashx",
       "name": "GLM 5.3 FlashX",
       "api": "anthropic-messages",
@@ -7398,9 +7814,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai/glm-5v-turbo": {
+    "chat:zai/glm-5v-turbo": {
       "id": "zai/glm-5v-turbo",
       "name": "GLM 5V Turbo",
       "api": "anthropic-messages",
@@ -7431,7 +7848,46 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
+    }
+  },
+  "typesafe-system-one": {
+    "classifier:liquid/d1": {
+      "type": "classifier",
+      "id": "liquid/d1",
+      "name": "Liquid d1",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32000
+    },
+    "classifier:typesafe-ai/jev": {
+      "type": "classifier",
+      "id": "typesafe-ai/jev",
+      "name": "Jev",
+      "api": "typesafe-system-one",
+      "provider": "vercel-ai-gateway",
+      "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+      "input": [
+        "text"
+      ],
+      "cost": {
+        "input": 0.042,
+        "output": 0.0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 32000
     }
   }
 }

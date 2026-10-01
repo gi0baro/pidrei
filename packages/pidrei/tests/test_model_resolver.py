@@ -486,7 +486,7 @@ class TestCustomModelFallbackWithThinkingSuffix:
 class TestDefaultModelSelection:
     def test_openai_defaults_track_current_models(self):
         assert DEFAULT_MODEL_PER_PROVIDER["openai"] == "gpt-5.5"
-        assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-5.5"
+        assert DEFAULT_MODEL_PER_PROVIDER["openai-codex"] == "gpt-6.1-sol"
 
     def test_zai_minimax_cerebras_and_ant_ling_defaults_track_current_models(self):
         assert DEFAULT_MODEL_PER_PROVIDER["zai"] == "glm-5.3"
@@ -496,10 +496,14 @@ class TestDefaultModelSelection:
         assert DEFAULT_MODEL_PER_PROVIDER["cerebras"] == "gpt-oss-120b"
         assert DEFAULT_MODEL_PER_PROVIDER["ant-ling"] == "Ring-2.6-1T"
 
-    def test_builtin_defaults_exist_in_generated_provider_catalogs(self):
+    def test_builtin_chat_providers_have_defaults_in_their_generated_catalogs(self):
         for provider in get_builtin_providers():
-            default_id = DEFAULT_MODEL_PER_PROVIDER[provider]
-            assert any(model.id == default_id for model in get_builtin_models(provider)), (
+            chat_models = get_builtin_models(provider)
+            default_id = DEFAULT_MODEL_PER_PROVIDER.get(provider)
+            if not chat_models:
+                assert default_id is None, f"{provider} has no chat models and should have no chat default"
+                continue
+            assert any(model.id == default_id for model in chat_models), (
                 f"{provider} default {default_id} should exist in its generated catalog"
             )
 

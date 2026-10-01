@@ -1,10 +1,11 @@
-"""Built-in model catalog (pi: src/models.generated.ts + providers/data/*.json).
+"""Built-in model catalog (pi: src/models.generated.ts, model-catalog.ts + providers/data/*.json).
 
 Loads the vendored catalog JSON (produced by scripts/generate_models.py,
-pi-shaped: camelCase keys, grouped `{api: {modelId: Model}}`) into typed
-`Model` dataclasses. JSON `null` values in `thinkingLevelMap` are preserved as
-present-with-None entries — the null-vs-missing distinction drives
-`get_supported_thinking_levels`.
+pi-shaped: camelCase keys, grouped `{api: {"type:id": model}}`) into typed
+`Model`/`ImageModel`/`ClassifierModel` dataclasses, split by each entry's
+`type` (an entry without one is a chat model). JSON `null` values in
+`thinkingLevelMap` are preserved as present-with-None entries — the
+null-vs-missing distinction drives `get_supported_thinking_levels`.
 """
 
 import json
@@ -16,7 +17,10 @@ from typing import Any
 from pidrei_ai.types import (
     AnthropicAllowedFallbackModel,
     AnthropicMessagesCompat,
+    AnyModel,
     BedrockCompat,
+    ClassifierModel,
+    ImageModel,
     MistralConversationsCompat,
     Model,
     ModelCompat,
@@ -25,9 +29,11 @@ from pidrei_ai.types import (
     ModelImageInputLimits,
     ModelImageResizeOptions,
     ModelInputLimits,
+    ModelType,
     OpenAICompletionsCompat,
     OpenAIResponsesCompat,
 )
+from pidrei_ai.utils.model_operations import is_model_type
 
 
 _DATA_DIR = resources.files("pidrei_ai.providers") / "data"
@@ -162,16 +168,58 @@ def _parse_model(raw: dict[str, Any]) -> Model:
         thinking_level_map=dict(raw["thinkingLevelMap"]) if "thinkingLevelMap" in raw else None,
         headers=dict(raw["headers"]) if "headers" in raw else None,
         compat=_parse_compat(raw["api"], raw["compat"]) if "compat" in raw else None,
+        type="chat" if raw.get("type") == "chat" else None,
     )
 
 
+def _parse_image_model(raw: dict[str, Any]) -> ImageModel:
+    return ImageModel(
+        id=raw["id"],
+        name=raw["name"],
+        api=raw["api"],
+        provider=raw["provider"],
+        base_url=raw["baseUrl"],
+        input=list(raw["input"]),
+        output=list(raw["output"]),
+        cost=_parse_cost(raw["cost"]),
+        input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
+        headers=dict(raw["headers"]) if "headers" in raw else None,
+    )
+
+
+def _parse_classifier_model(raw: dict[str, Any]) -> ClassifierModel:
+    return ClassifierModel(
+        id=raw["id"],
+        name=raw["name"],
+        api=raw["api"],
+        provider=raw["provider"],
+        base_url=raw["baseUrl"],
+        input=list(raw["input"]),
+        cost=_parse_cost(raw["cost"]),
+        context_window=raw["contextWindow"],
+        input_limits=parse_input_limits(raw["inputLimits"]) if "inputLimits" in raw else None,
+        headers=dict(raw["headers"]) if "headers" in raw else None,
+    )
+
+
+_PARSERS_BY_TYPE = {"chat": _parse_model, "image": _parse_image_model, "classifier": _parse_classifier_model}
+
+
 def parse_model_dict(raw: dict[str, Any]) -> Model:
-    """Parse one pi-shaped camelCase model object (vendored data, pi.dev catalog)."""
+    """Parse one pi-shaped camelCase chat model object (vendored data, pi.dev catalog)."""
     return _parse_model(raw)
 
 
-def _load_catalog() -> dict[str, list[Model]]:
-    catalog: dict[str, list[Model]] = {}
+def parse_any_model_dict(raw: dict[str, Any]) -> AnyModel | None:
+    """Parse one pi-shaped camelCase model object of any type. An entry
+    without `type` is a chat model; one of a type this version does not know
+    yields None (pi drops those wherever stored or fetched catalogs are read)."""
+    parser = _PARSERS_BY_TYPE.get(raw.get("type", "chat"))
+    return parser(raw) if parser is not None else None
+
+
+def _load_catalog() -> dict[str, list[AnyModel]]:
+    catalog: dict[str, list[AnyModel]] = {}
     # Traversable has no glob(); iterdir() + an explicit key keeps the
     # filename ordering the generated catalogs rely on.
     for path in sorted(_json_files(_DATA_DIR), key=lambda entry: entry.name):
@@ -179,9 +227,22 @@ def _load_catalog() -> dict[str, list[Model]]:
             continue
         provider_id = path.stem
         by_api = json.loads(path.read_text())
-        catalog[provider_id] = [_parse_model(raw) for api_models in by_api.values() for raw in api_models.values()]
+        models = (parse_any_model_dict(raw) for api_models in by_api.values() for raw in api_models.values())
+        catalog[provider_id] = [model for model in models if model is not None]
     return catalog
 
 
-# Keyed by provider id, like pi's MODELS aggregate.
-MODELS: dict[str, list[Model]] = _load_catalog()
+def _of_type(catalog: dict[str, list[AnyModel]], type: ModelType) -> dict[str, list[Any]]:
+    """pi's `flatten*ModelCatalog`: one provider's catalog restricted to one type."""
+    return {
+        provider_id: [model for model in models if is_model_type(model, type)]
+        for provider_id, models in catalog.items()
+    }
+
+
+_CATALOG = _load_catalog()
+
+# Keyed by provider id, like pi's MODELS / IMAGE_MODELS / CLASSIFIER_MODELS aggregates.
+MODELS: dict[str, list[Model]] = _of_type(_CATALOG, "chat")
+IMAGE_MODELS: dict[str, list[ImageModel]] = _of_type(_CATALOG, "image")
+CLASSIFIER_MODELS: dict[str, list[ClassifierModel]] = _of_type(_CATALOG, "classifier")

@@ -18,23 +18,20 @@ from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-import tonio.colored as tonio
-
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.callback_server import (
-    CallbackRequest,
-    CallbackResponse,
-    CallbackServer,
-    OneShotValue,
-    start_callback_server,
+    OAuthCallbackServer,
+    keep_code,
+    start_oauth_callback_server,
+    wait_for_callback_or_manual_input,
 )
 from pidrei_ai.auth.oauth.device_code import OAuthDeviceCodePollResult, poll_oauth_device_code_flow
-from pidrei_ai.auth.oauth.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
     AuthPromptOption,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -337,50 +334,6 @@ def _create_authorization_flow(originator: str = ORIGINATOR) -> _AuthorizationFl
     return _AuthorizationFlow(verifier=pkce.verifier, state=state, url=url)
 
 
-class _LocalOAuthServer:
-    """pi's `OAuthServerInfo`. When the port is taken pi resolves a stub whose
-    `waitForCode` yields null immediately, so login falls through to the manual
-    paste prompt instead of failing."""
-
-    __slots__ = ("_code", "_server")
-
-    def __init__(self, server: CallbackServer | None, code: OneShotValue):
-        self._server = server
-        self._code = code
-
-    def close(self) -> None:
-        if self._server is not None:
-            self._server.close()
-
-    def cancel_wait(self) -> None:
-        self._code.settle(None)
-
-    async def wait_for_code(self) -> dict[str, str] | None:
-        return await self._code.wait()
-
-
-async def _start_local_oauth_server(state: str) -> _LocalOAuthServer:
-    code = OneShotValue()
-
-    async def handle(request: CallbackRequest) -> CallbackResponse:
-        if request.path != CALLBACK_PATH:
-            return CallbackResponse(404, oauth_error_html("Callback route not found."))
-        if request.get("state") != state:
-            return CallbackResponse(400, oauth_error_html("State mismatch."))
-        callback_code = request.get("code")
-        if not callback_code:
-            return CallbackResponse(400, oauth_error_html("Missing authorization code."))
-        code.settle({"code": callback_code})
-        return CallbackResponse(200, oauth_success_html("OpenAI authentication completed. You can close this window."))
-
-    try:
-        server = await start_callback_server(host=_get_callback_host(), port=CALLBACK_PORT, handle=handle)
-    except OSError:
-        code.settle(None)
-        return _LocalOAuthServer(None, code)
-    return _LocalOAuthServer(server, code)
-
-
 def _get_account_id(access_token: str) -> str | None:
     payload = _decode_jwt(access_token)
     auth = payload.get(JWT_CLAIM_PATH) if payload else None
@@ -426,11 +379,20 @@ async def _login_device_code(interaction: ProviderAuthInteraction) -> OAuthCrede
 
 async def _login_browser(interaction: ProviderAuthInteraction) -> OAuthCredential:
     flow = _create_authorization_flow()
-    server = await _start_local_oauth_server(flow.state)
-    manual_abort = CancelToken()
-    unsubscribe_abort = interaction.cancel.on_cancel(lambda _reason: server.cancel_wait())
-    manual: dict[str, Any] = {}
-    prompt_done = tonio.Event()
+    # Port 1455 is shared with the Codex CLI; when it is taken, fall back to the pasted redirect URL.
+    callback: OAuthCallbackServer[str] | None
+    try:
+        callback = await start_oauth_callback_server(
+            provider_name="OpenAI",
+            host=_get_callback_host(),
+            port=CALLBACK_PORT,
+            path=CALLBACK_PATH,
+            state=flow.state,
+            complete=keep_code,
+            cancel=interaction.cancel,
+        )
+    except Exception:
+        callback = None
 
     interaction.notify(
         AuthEvent(
@@ -440,56 +402,30 @@ async def _login_browser(interaction: ProviderAuthInteraction) -> OAuthCredentia
         )
     )
 
-    async def run_manual_prompt() -> None:
-        try:
-            manual["input"] = await interaction.prompt(
-                AuthPrompt(
-                    type="manual_code",
-                    message="Complete login in your browser, or paste the authorization code / redirect URL here:",
-                    placeholder=REDIRECT_URI,
-                    cancel=manual_abort,
-                )
-            )
-        except Exception as error:
-            manual["error"] = error
-        prompt_done.set()
-        server.cancel_wait()
-
-    def read_manual_input() -> str | None:
-        parsed_code, parsed_state = _parse_authorization_input(manual["input"])
-        if parsed_state and parsed_state != flow.state:
-            raise RuntimeError("State mismatch")
-        return parsed_code
-
-    code: str | None = None
     try:
-        tonio.spawn.without_tracking(run_manual_prompt())
-
-        result = await server.wait_for_code()
-        if manual.get("error") is not None:
-            raise manual["error"]
-        if result is not None and result.get("code"):
-            code = result["code"]
-        elif manual.get("input"):
-            code = read_manual_input()
-
-        if not code:
-            await prompt_done.wait()
-            if manual.get("error") is not None:
-                raise manual["error"]
-            if manual.get("input"):
-                code = read_manual_input()
+        result = await wait_for_callback_or_manual_input(
+            interaction,
+            callback,
+            message="Complete login in your browser, or paste the authorization code / redirect URL here:",
+            placeholder=REDIRECT_URI,
+        )
+        code: str | None
+        if result.type == "callback":
+            code = result.value
+        else:
+            code, parsed_state = _parse_authorization_input(result.input)
+            if parsed_state and parsed_state != flow.state:
+                raise RuntimeError("State mismatch")
 
         if not code:
             raise RuntimeError("Missing authorization code")
         return await _exchange_authorization_code_for_credentials(code, flow.verifier, REDIRECT_URI, interaction.cancel)
     finally:
-        unsubscribe_abort()
-        manual_abort.cancel()
-        server.close()
+        if callback is not None:
+            callback.close()
 
 
-async def _login(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
     method = await interaction.prompt(
         AuthPrompt(
             type="select",

@@ -11,7 +11,7 @@ from pidrei_ai.registry import Provider, create_provider
 def openai_codex_provider() -> Provider:
     return create_provider(
         id="openai-codex",
-        name="OpenAI Codex",
+        name="OpenAI Codex (legacy)",
         base_url="https://chatgpt.com/backend-api",
         auth=ProviderAuth(
             oauth=lazy_oauth(

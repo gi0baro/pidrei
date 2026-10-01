@@ -80,6 +80,20 @@ class TestProviderRetryClassification:
     def test_keeps_provider_limit_errors_non_retryable(self):
         assert is_retryable_assistant_error(error_message("429 quota exceeded")) is False
 
+    def test_keeps_the_chatgpt_subscription_usage_limit_non_retryable(self):
+        message = 'OpenAI API error (429): {"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached."}'
+        assert is_retryable_assistant_error(error_message(message)) is False
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "subscription_sharing_usage_unavailable: Usage cannot be checked.",
+            "subscription_sharing_user_unavailable: User cannot be loaded.",
+        ],
+    )
+    def test_retries_temporary_chatgpt_subscription_errors(self, text):
+        assert is_retryable_assistant_error(error_message(text)) is True
+
     def test_classifies_assistant_error_messages(self):
         assert is_retryable_assistant_error(error_message("overloaded_error")) is True
         # Regression for #9627.

@@ -298,6 +298,7 @@ def stream(
                 )
 
             async for item in response.stream:
+                await maybe_call(opts.on_provider_stream_event, item, model)
                 if "messageStart" in item:
                     if item["messageStart"].get("role") != CONVERSATION_ROLE_ASSISTANT:
                         raise RuntimeError("Unexpected assistant message start but got user message start instead")
@@ -334,6 +335,16 @@ def stream(
                         output.error_message = error_message
                 elif "metadata" in item:
                     _handle_metadata(item["metadata"], model, output)
+                elif "internalServerException" in item:
+                    raise item["internalServerException"]
+                elif "modelStreamErrorException" in item:
+                    raise item["modelStreamErrorException"]
+                elif "validationException" in item:
+                    raise item["validationException"]
+                elif "throttlingException" in item:
+                    raise item["throttlingException"]
+                elif "serviceUnavailableException" in item:
+                    raise item["serviceUnavailableException"]
 
             if opts.cancel is not None and opts.cancel.cancelled:
                 raise RuntimeError("Request was aborted")
@@ -415,8 +426,9 @@ def _extract_bedrock_error_code(error: Any) -> str | None:
     """Modeled Bedrock error codes all end in `Exception`, unlike transport
     names such as `TimeoutError`; the SDK's `Unknown`/`UnknownError` fallbacks
     are excluded the same way. pi additionally sees modeled mid-stream
-    exceptions as bare object literals (no code at all); pidrei's runtime raises
-    them as `BedrockRuntimeServiceException`, so their code is available here —
+    exceptions as bare object literals (no code at all); pidrei's runtime yields
+    them as `BedrockRuntimeServiceException` values that the stream loop raises,
+    so their code is available here —
     a deliberate, strictly-richer divergence of the hand-rolled runtime.
     """
     if not isinstance(error, Exception):

@@ -3,10 +3,6 @@
 The callback really is fetched over the loopback interface, as in pi; only the
 token exchange is stubbed. pi's `notify` starts that fetch without awaiting it,
 which here means spawning it from the (synchronous) notify callback.
-
-The two cases that also assert the *images* provider are ported for the text
-provider only: `openrouter-images` lands with the image models in Phase 5d
-(PLAN.md).
 """
 
 import base64
@@ -104,7 +100,7 @@ def authorize_params(authorize_url: str) -> dict[str, str]:
     return {name: values[0] for name, values in query.items()}
 
 
-def test_is_exposed_by_the_openrouter_provider_alongside_api_key_auth():
+def test_is_exposed_alongside_api_key_auth():
     provider = openrouter_provider()
     assert provider.auth.api_key is not None
     assert provider.auth.oauth is not None
@@ -112,7 +108,7 @@ def test_is_exposed_by_the_openrouter_provider_alongside_api_key_auth():
 
 
 @pytest.mark.tonio
-async def test_resolves_the_stored_oauth_key_for_the_text_provider():
+async def test_resolves_the_same_stored_oauth_key_for_chat_and_image_models():
     credentials = InMemoryCredentialStore()
     await credentials.modify(
         "openrouter",
@@ -121,9 +117,12 @@ async def test_resolves_the_stored_oauth_key_for_the_text_provider():
 
     models = create_models(credentials=credentials)
     models.set_provider(openrouter_provider())
+    chat_model = models.get_models("openrouter")[0]
+    image_models = models.get_models_of_type("image", "openrouter")
+    assert image_models
 
-    result = await models.get_auth("openrouter")
-    assert result is not None and result.auth.api_key == "sk-or-stored"
+    assert (await models.get_auth(chat_model)).auth.api_key == "sk-or-stored"
+    assert (await models.get_auth(image_models[0])).auth.api_key == "sk-or-stored"
 
 
 async def _stored(credential: OAuthCredential) -> OAuthCredential:

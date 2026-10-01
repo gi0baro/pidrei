@@ -287,6 +287,21 @@ class TestToolExecutionComponentParity:
         rendered = strip_ansi("\n".join(component.render(120)))
         assert len(re.findall(r"\bread\b", rendered)) == 1
 
+    # Issue #9996: strict tool schemas make models send null for omitted optional fields.
+    def test_renders_read_calls_with_null_offset_and_limit_as_full_file_reads(self):
+        component = ToolExecutionComponent(
+            "read",
+            "tool-read-null-range",
+            {"path": "src/example.ts", "offset": None, "limit": None},
+            {},
+            create_read_tool_definition(CWD),
+            create_fake_tui(),
+            CWD,
+        )
+        rendered = strip_ansi("\n".join(component.render(120)))
+        assert "read src/example.ts" in rendered
+        assert "src/example.ts:" not in rendered
+
     def test_inherits_missing_built_in_result_renderer_slot_from_the_built_in_tool(self):
         override_definition = replace(
             create_base_tool_definition("read"),
@@ -409,6 +424,33 @@ class TestToolExecutionComponentParity:
         component.update_result({"content": [{"type": "text", "text": "done"}], "details": {}, "isError": False}, False)
         rendered = strip_ansi("\n".join(component.render(120)))
         assert "arg:bar" in rendered
+
+    def test_shows_arguments_in_the_fallback_call_header(self):
+        import re
+
+        long_value = "x" * 200
+        component = ToolExecutionComponent(
+            "custom_tool",
+            "tool-args",
+            {"query": "pi", "long": long_value, "text": "line one\nline two"},
+            {},
+            create_base_tool_definition(),
+            create_fake_tui(),
+            CWD,
+        )
+
+        collapsed = strip_ansi("\n".join(component.render(300)))
+        assert 'custom_tool query="pi" long="xxx' in collapsed
+        assert "..." in collapsed
+        assert long_value not in collapsed
+
+        component.set_expanded(True)
+        expanded = strip_ansi("\n".join(component.render(300)))
+        assert "  query: pi" in expanded
+        assert long_value in expanded
+        expanded_lines = [line.rstrip() for line in expanded.split("\n")]
+        text_line = next(i for i, line in enumerate(expanded_lines) if line.endswith("  text: line one"))
+        assert re.fullmatch(r"\s+ {4}line two", expanded_lines[text_line + 1])
 
     def test_collapses_fallback_results_until_expanded(self):
         tool_definition = create_base_tool_definition()

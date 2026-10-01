@@ -36,13 +36,13 @@ def canonicalize_path_blocking(path: str) -> str:
 
 
 def is_local_path(value: str) -> bool:
-    """Returns True if the value is NOT a package source (npm:, git:, etc.)
-    or a remote URL protocol. Bare names, relative paths, and file: URLs
-    are considered local.
+    """Returns True if the value is NOT a package source (npm:, git:, etc.),
+    a built-in extension (builtin:), or a remote URL protocol. Bare names,
+    relative paths, and file: URLs are considered local.
     """
     trimmed = value.strip()
     # Known non-local prefixes. file: URLs are local paths and are intentionally resolved by resolve_path().
-    return not trimmed.startswith(("npm:", "git:", "github:", "http:", "https:", "ssh:"))
+    return not trimmed.startswith(("npm:", "git:", "github:", "http:", "https:", "ssh:", "builtin:"))
 
 
 def _decode_uri_component(value: str) -> str:

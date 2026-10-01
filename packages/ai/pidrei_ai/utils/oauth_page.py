@@ -1,4 +1,4 @@
-"""Port of pi's OAuth result pages (packages/ai/src/auth/oauth/oauth-page.ts).
+"""Port of pi's OAuth result pages (packages/ai/src/utils/oauth-page.ts).
 
 The markup is byte-identical to pi's, including the empty line the details slot
 leaves behind when there are no details. `html.escape` is not used: it emits

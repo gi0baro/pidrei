@@ -6,6 +6,7 @@ ported (POSIX-only); the POSIX fallback (nano) is covered.
 
 import json
 import os
+import re
 
 import pytest
 
@@ -93,6 +94,24 @@ class TestPreservesExternallyAddedSettings:
 
         saved_settings = read_json(settings_path)
         assert saved_settings["defaultThinkingLevel"] == "high"
+
+
+class TestDeviceId:
+    @pytest.mark.tonio
+    async def test_creates_one_global_device_id_and_reuses_it_in_later_processes(self, dirs):
+        agent_dir, project_dir = dirs
+        settings_path = agent_dir / "settings.json"
+        write_json(settings_path, {"theme": "dark"})
+        write_json(project_dir / ".pidrei" / "settings.json", {"deviceId": "project-device"})
+        first = await SettingsManager(str(project_dir), str(agent_dir))
+
+        device_id = first.get_or_create_device_id()
+        await first.flush()
+
+        assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", device_id)
+        assert first.get_or_create_device_id() == device_id
+        assert (await SettingsManager(str(project_dir), str(agent_dir))).get_or_create_device_id() == device_id
+        assert read_json(settings_path) == {"theme": "dark", "deviceId": device_id}
 
 
 class TestPackagesMigration:
@@ -417,6 +436,38 @@ class TestDefaultTools:
         assert SettingsManager.in_memory({"defaultTools": []}).get_default_tools() == []
         assert SettingsManager.in_memory().get_default_tools() is None
 
+    def test_applies_plus_name_and_minus_name_to_the_default_selection(self):
+        assert SettingsManager.in_memory({"defaultTools": ["+codemode", "-write"]}).get_default_tools() == [
+            "read",
+            "bash",
+            "edit",
+            "codemode",
+        ]
+        assert SettingsManager.in_memory({"defaultTools": ["read", "+grep", "+read"]}).get_default_tools() == [
+            "read",
+            "grep",
+        ]
+
+    @pytest.mark.tonio
+    async def test_layers_project_modifiers_on_top_of_the_global_selection(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"defaultTools": ["read", "bash", "+codemode"]})
+        write_json(project_dir / ".pidrei" / "settings.json", {"defaultTools": ["-codemode", "+tool_search"]})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_default_tools() == ["read", "bash", "tool_search"]
+
+        manager.apply_overrides({"defaultTools": ["+codemode"]})
+        assert manager.get_default_tools() == ["read", "bash", "tool_search", "codemode"]
+
+    @pytest.mark.tonio
+    async def test_applies_project_modifiers_to_the_built_in_defaults_without_a_global_setting(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(project_dir / ".pidrei" / "settings.json", {"defaultTools": ["+codemode"]})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_default_tools() == ["read", "bash", "edit", "write", "codemode"]
+
 
 class TestFullscreenScrollbar:
     @pytest.mark.tonio
@@ -441,6 +492,22 @@ class TestFullscreenScrollbar:
         assert reloaded.get_fullscreen_exit_output() == "transcript"
         assert reloaded.get_fullscreen_scrollbar() == "auto"
         assert reloaded.get_fullscreen_copy_on_select() is True
+
+    # #9758: wheel scrolling defaults to auto, persists line counts, and ignores invalid values.
+    @pytest.mark.tonio
+    async def test_persists_fullscreen_wheel_scroll_lines(self, dirs):
+        agent_dir, project_dir = dirs
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+        assert manager.get_fullscreen_wheel_scroll_lines() == "auto"
+
+        manager.set_fullscreen_wheel_scroll_lines(3)
+        await manager.flush()
+        assert read_json(agent_dir / "settings.json")["fullscreenWheelScrollLines"] == 3
+
+        for value, expected in [(7.9, 7), (0, 1), (1000, 100), ("fast", "auto"), (None, "auto")]:
+            write_json(agent_dir / "settings.json", {"fullscreenWheelScrollLines": value})
+            reloaded = await SettingsManager(str(project_dir), str(agent_dir))
+            assert reloaded.get_fullscreen_wheel_scroll_lines() == expected
 
 
 class TestTuiMode:

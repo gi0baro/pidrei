@@ -136,7 +136,11 @@ class _SwitchContext(_BareInteractiveMode):
         self._extension_terminal_input_subscriptions = set()
         self._extension_registry_guard = threading.Lock()
         self.runtime_host = SimpleNamespace(
-            session=SimpleNamespace(settings_manager=SimpleNamespace(get_fullscreen_copy_on_select=lambda: True))
+            session=SimpleNamespace(
+                settings_manager=SimpleNamespace(
+                    get_fullscreen_copy_on_select=lambda: True, get_fullscreen_wheel_scroll_lines=lambda: "auto"
+                )
+            )
         )
         self.ui = interactive_mode.create_interactive_tui_reference(lambda: self._renderer)
 

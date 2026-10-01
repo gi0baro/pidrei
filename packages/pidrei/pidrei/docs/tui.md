@@ -149,7 +149,20 @@ Do not hardcode colours. `ctx.ui.theme` resolves the active theme:
 theme.fg("accent", "text")  # semantic foreground
 theme.bold("text")
 theme.strikethrough("text")
+theme.style("Done!", {"fg": "success", "bg": "toolSuccessBg", "bold": True})
 ```
+
+`theme.style()` combines a foreground, a background and text attributes
+(`bold`, `dim`, `italic`, `underline`, `inverse`, `strikethrough`). A colour
+there is a role or a concrete colour: foreground roles go in `fg`, background
+roles in `bg`, and a role's colour in the other slot is passed concretely, as
+in `{"fg": theme.colors["userMessageBg"]}`. `theme.colors` maps every role to
+a concrete colour — for terminal-default roles, the colour the terminal
+reported, or a guess — for colour maths with `mix_colors()`, `parse_color()`
+and friends from `pidrei_tui`; `theme.appearance` (`"dark"` or `"light"`)
+tells you, say, whether to lighten or darken. Output follows the terminal's
+truecolour or 256-colour mode. Roles are converted once per theme; compute
+concrete colours outside the render path when you can.
 
 Roles come from [themes.md](themes.md), so a widget follows whatever theme the
 user has chosen. Use the theme handed to your factory or callback, and don't

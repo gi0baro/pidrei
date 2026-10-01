@@ -53,7 +53,7 @@ async def test_rejects_an_rpc_prompt_while_manual_compaction_is_in_progress(harn
     harness.session.agent.state.messages = harness.session_manager.build_session_context().messages
     harness.set_responses([faux_assistant_message("probe response")])
 
-    preflight_results: list[bool] = []
+    preflight_results: list[str] = []
     prompt_errors: list[Exception] = []
 
     async def probe() -> None:
@@ -76,7 +76,7 @@ async def test_rejects_an_rpc_prompt_while_manual_compaction_is_in_progress(harn
         if entry.get("type") == "message" and entry["message"].role == "user"
     ]
 
-    assert preflight_results == [False]
+    assert preflight_results == []
     assert len(prompt_errors) == 1
     assert "compaction is in progress" in str(prompt_errors[0])
     assert "PROBE-7150" not in get_user_texts(harness)

@@ -28,6 +28,8 @@ __all__ = ["CombinedAutocompleteProvider"]
 
 PATH_DELIMITERS = {" ", "\t", '"', "'", "="}
 _TOKEN_START_RE = re.compile(rf"{autocomplete_boundary_regex.pattern}$")
+# Opening wrappers that may precede a path in prose, mapped to their closing counterpart.
+PATH_WRAPPERS = {"(": ")", "[": "]", "{": "}", "<": ">", "`": "`"}
 
 _ESCAPE_REGEX_RE = re.compile(r"[.*+?^${}()|[\]\\]")
 
@@ -68,6 +70,18 @@ def _find_last_delimiter(text: str) -> int:
     return -1
 
 
+# Strip opening wrappers before a path, e.g. "(~/Dev" -> "~/Dev" or "`src/ma" -> "src/ma".
+# Keep a wrapper if the token also contains its closer, e.g. "app/[slug]/pa" or "(group)/pa".
+def _strip_leading_wrappers(token: str) -> str:
+    result = token
+    while result:
+        closer = PATH_WRAPPERS.get(result[0])
+        if not closer or result.find(closer, 1) != -1:
+            break
+        result = result[1:]
+    return result
+
+
 def _find_unclosed_quote_start(text: str) -> int | None:
     in_quotes = False
     quote_start = -1
@@ -82,7 +96,10 @@ def _find_unclosed_quote_start(text: str) -> int | None:
 
 
 def _is_token_start(text: str, index: int) -> bool:
-    return (index > 0 and text[index - 1] in PATH_DELIMITERS) or _TOKEN_START_RE.search(text[:index]) is not None
+    start = index
+    while start > 0 and text[start - 1] in PATH_WRAPPERS:
+        start -= 1
+    return (start > 0 and text[start - 1] in PATH_DELIMITERS) or _TOKEN_START_RE.search(text[:start]) is not None
 
 
 def _extract_quoted_prefix(text: str) -> str | None:
@@ -247,19 +264,26 @@ class CombinedAutocompleteProvider:
                     full_desc = ((f"{hint} — {desc}" if desc else hint) if hint else desc) or None
                     command_items.append({"name": name, "label": name, "description": full_desc})
 
+                bare_name_matches = fuzzy_filter(
+                    command_items, prefix, lambda item: item["name"].removeprefix("skill:")
+                )
+                bare_name_match_ids = {id(item) for item in bare_name_matches}
+                full_name_only_matches = fuzzy_filter(
+                    [
+                        item
+                        for item in command_items
+                        if item["name"].startswith("skill:") and id(item) not in bare_name_match_ids
+                    ],
+                    prefix,
+                    lambda item: item["name"],
+                )
                 filtered = [
                     {
                         "value": item["name"],
                         "label": item["label"],
                         **({"description": item["description"]} if item["description"] else {}),
                     }
-                    for item in fuzzy_filter(
-                        command_items,
-                        prefix,
-                        lambda item: (
-                            item["name"].removeprefix("skill:") if not prefix.startswith("skill:") else item["name"]
-                        ),
-                    )
+                    for item in [*bare_name_matches, *full_name_only_matches]
                 ]
 
                 if not filtered:
@@ -383,10 +407,10 @@ class CombinedAutocompleteProvider:
             return quoted_prefix
 
         last_delimiter_index = _find_last_delimiter(text)
-        token_start = 0 if last_delimiter_index == -1 else last_delimiter_index + 1
+        token = _strip_leading_wrappers(text if last_delimiter_index == -1 else text[last_delimiter_index + 1 :])
 
-        if token_start < len(text) and text[token_start] == "@":
-            return text[token_start:]
+        if token.startswith("@"):
+            return token
 
         return None
 
@@ -397,7 +421,7 @@ class CombinedAutocompleteProvider:
             return quoted_prefix
 
         last_delimiter_index = _find_last_delimiter(text)
-        path_prefix = text if last_delimiter_index == -1 else text[last_delimiter_index + 1 :]
+        path_prefix = _strip_leading_wrappers(text if last_delimiter_index == -1 else text[last_delimiter_index + 1 :])
 
         # For forced extraction (Tab key), always return something
         if force_extract:

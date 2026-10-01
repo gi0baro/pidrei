@@ -804,6 +804,12 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
                 )
                 for err in resource_loader.get_extensions().errors
             ),
+            *(
+                AgentSessionRuntimeDiagnostic(
+                    type="warning", message=f'Extension package "{warning.path}": {warning.warning}'
+                )
+                for warning in resource_loader.get_extensions().warnings
+            ),
         ]
 
         model_patterns = parsed.models if parsed.models is not None else settings_manager.get_enabled_models()

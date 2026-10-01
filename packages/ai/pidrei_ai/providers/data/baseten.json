@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+    "chat:deepseek-ai/DeepSeek-V4-Flash-0731": {
       "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
       "name": "DeepSeek V4 Flash 0731",
       "api": "openai-completions",
@@ -37,9 +37,10 @@
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 384000
+      "maxTokens": 384000,
+      "type": "chat"
     },
-    "deepseek-ai/DeepSeek-V4-Pro": {
+    "chat:deepseek-ai/DeepSeek-V4-Pro": {
       "id": "deepseek-ai/DeepSeek-V4-Pro",
       "name": "DeepSeek V4 Pro",
       "api": "openai-completions",
@@ -76,9 +77,10 @@
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "deepseek-ai/DeepSeek-V4-Pro-0813": {
+    "chat:deepseek-ai/DeepSeek-V4-Pro-0813": {
       "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
       "name": "DeepSeek V4 Pro 0813",
       "api": "openai-completions",
@@ -115,9 +117,10 @@
         "thinkingFormat": "openai"
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "deepseek-ai/DeepSeek-V4.1-Flash": {
+    "chat:deepseek-ai/DeepSeek-V4.1-Flash": {
       "id": "deepseek-ai/DeepSeek-V4.1-Flash",
       "name": "DeepSeek V4.1 Flash",
       "api": "openai-completions",
@@ -165,9 +168,61 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/Kimi-K2.5": {
+    "chat:deepseek-ai/DeepSeek-V4.1-Flash-Fast": {
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash-Fast",
+      "name": "deepseek-ai/DeepSeek-V4.1-Flash-Fast",
+      "api": "openai-completions",
+      "provider": "baseten",
+      "baseUrl": "https://inference.baseten.co/v1",
+      "reasoning": true,
+      "thinkingLevelMap": {
+        "off": "none",
+        "minimal": null,
+        "low": "low",
+        "medium": null,
+        "high": "high",
+        "xhigh": null,
+        "max": "max"
+      },
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "compat": {
+        "supportsStrictMode": true,
+        "supportsStore": false,
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "supportsUsageInStreaming": true,
+        "maxTokensField": "max_tokens",
+        "sendSessionAffinityHeaders": true,
+        "supportsLongCacheRetention": false,
+        "thinkingFormat": "openai"
+      },
+      "contextWindow": 1048576,
+      "maxTokens": 32768,
+      "inputLimits": {
+        "images": {
+          "resize": {
+            "maxWidth": 2000,
+            "maxHeight": 2000,
+            "maxBytes": 4718592,
+            "jpegQuality": 80
+          }
+        }
+      },
+      "type": "chat"
+    },
+    "chat:moonshotai/Kimi-K2.5": {
       "id": "moonshotai/Kimi-K2.5",
       "name": "Kimi K2.5",
       "api": "openai-completions",
@@ -220,9 +275,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/Kimi-K2.6": {
+    "chat:moonshotai/Kimi-K2.6": {
       "id": "moonshotai/Kimi-K2.6",
       "name": "Kimi K2.6",
       "api": "openai-completions",
@@ -275,9 +331,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/Kimi-K2.7-Code": {
+    "chat:moonshotai/Kimi-K2.7-Code": {
       "id": "moonshotai/Kimi-K2.7-Code",
       "name": "Kimi K2.7 Code",
       "api": "openai-completions",
@@ -330,9 +387,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "moonshotai/Kimi-K3": {
+    "chat:moonshotai/Kimi-K3": {
       "id": "moonshotai/Kimi-K3",
       "name": "Kimi K3",
       "api": "openai-completions",
@@ -380,9 +438,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": {
+    "chat:nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": {
       "id": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
       "name": "Nemotron Ultra",
       "api": "openai-completions",
@@ -424,9 +483,10 @@
         }
       },
       "contextWindow": 202800,
-      "maxTokens": 202800
+      "maxTokens": 202800,
+      "type": "chat"
     },
-    "nvidia/Nemotron-120B-A12B": {
+    "chat:nvidia/Nemotron-120B-A12B": {
       "id": "nvidia/Nemotron-120B-A12B",
       "name": "Nemotron Super",
       "api": "openai-completions",
@@ -468,9 +528,10 @@
         }
       },
       "contextWindow": 202800,
-      "maxTokens": 202800
+      "maxTokens": 202800,
+      "type": "chat"
     },
-    "openai/gpt-oss-120b": {
+    "chat:openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
       "name": "OpenAI GPT 120B",
       "api": "openai-completions",
@@ -507,9 +568,10 @@
         "thinkingFormat": "openai"
       },
       "contextWindow": 128072,
-      "maxTokens": 128072
+      "maxTokens": 128072,
+      "type": "chat"
     },
-    "thinkingmachines/inkling": {
+    "chat:thinkingmachines/inkling": {
       "id": "thinkingmachines/inkling",
       "name": "Inkling",
       "api": "openai-completions",
@@ -557,9 +619,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "thinkingmachines/inkling-small": {
+    "chat:thinkingmachines/inkling-small": {
       "id": "thinkingmachines/inkling-small",
       "name": "Inkling Small",
       "api": "openai-completions",
@@ -607,9 +670,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai-org/GLM-4.7": {
+    "chat:zai-org/GLM-4.7": {
       "id": "zai-org/GLM-4.7",
       "name": "GLM 4.7",
       "api": "openai-completions",
@@ -651,9 +715,10 @@
         }
       },
       "contextWindow": 200000,
-      "maxTokens": 200000
+      "maxTokens": 200000,
+      "type": "chat"
     },
-    "zai-org/GLM-5": {
+    "chat:zai-org/GLM-5": {
       "id": "zai-org/GLM-5",
       "name": "GLM 5",
       "api": "openai-completions",
@@ -695,9 +760,10 @@
         }
       },
       "contextWindow": 202800,
-      "maxTokens": 202800
+      "maxTokens": 202800,
+      "type": "chat"
     },
-    "zai-org/GLM-5.1": {
+    "chat:zai-org/GLM-5.1": {
       "id": "zai-org/GLM-5.1",
       "name": "GLM 5.1",
       "api": "openai-completions",
@@ -739,9 +805,10 @@
         }
       },
       "contextWindow": 202800,
-      "maxTokens": 202800
+      "maxTokens": 202800,
+      "type": "chat"
     },
-    "zai-org/GLM-5.2": {
+    "chat:zai-org/GLM-5.2": {
       "id": "zai-org/GLM-5.2",
       "name": "GLM 5.2",
       "api": "openai-completions",
@@ -783,9 +850,10 @@
         }
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "zai-org/GLM-5.2-Fast": {
+    "chat:zai-org/GLM-5.2-Fast": {
       "id": "zai-org/GLM-5.2-Fast",
       "name": "GLM 5.2 Fast",
       "api": "openai-completions",
@@ -827,9 +895,10 @@
         }
       },
       "contextWindow": 1048576,
-      "maxTokens": 262144
+      "maxTokens": 262144,
+      "type": "chat"
     },
-    "zai-org/GLM-5.3": {
+    "chat:zai-org/GLM-5.3": {
       "id": "zai-org/GLM-5.3",
       "name": "GLM 5.3",
       "api": "openai-completions",
@@ -877,9 +946,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai-org/GLM-5.3-Fast": {
+    "chat:zai-org/GLM-5.3-Fast": {
       "id": "zai-org/GLM-5.3-Fast",
       "name": "GLM 5.3 Fast",
       "api": "openai-completions",
@@ -927,9 +997,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "zai-org/GLM-5.3-Flash": {
+    "chat:zai-org/GLM-5.3-Flash": {
       "id": "zai-org/GLM-5.3-Flash",
       "name": "GLM 5.3 Flash",
       "api": "openai-completions",
@@ -977,7 +1048,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

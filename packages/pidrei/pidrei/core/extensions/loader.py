@@ -25,6 +25,7 @@ registration-writes-to-the-extension-object split, discovery order, and the
 one-level-deep no-recursion rule.
 """
 
+import copy
 import importlib.machinery
 import importlib.util
 import itertools
@@ -41,9 +42,11 @@ import tonio.colored as tonio
 from pidrei.config import CONFIG_DIR_NAME, get_agent_dir
 from pidrei.core.event_bus import EventBus
 from pidrei.core.exec import exec_command
+from pidrei.core.mcp_servers import McpServerConfig, RegisteredMcpServer, validate_mcp_server_config
 from pidrei.core.pidrei_manifest import read_pidrei_manifest_blocking
-from pidrei.core.source_info import create_synthetic_source_info
+from pidrei.core.source_info import create_synthetic_source_info, get_synthetic_path_source, is_synthetic_path
 from pidrei.core.timings import time as record_time
+from pidrei.core.virtual_models import VirtualModelDefinition
 from pidrei.utils.paths import resolve_path
 
 from .types import (
@@ -53,6 +56,7 @@ from .types import (
     ExtensionLoadError,
     ExtensionRuntime,
     ExtensionShortcut,
+    ExtensionVirtualModel,
     LoadExtensionsResult,
     RegisteredCommand,
     RegisteredTool,
@@ -366,10 +370,19 @@ class ExtensionAPI:
         return self._action("get_active_tools")()
 
     def get_all_tools(self) -> list[Any]:
+        """All configured tools with parameter schema, prompt guidelines, exposure, and source metadata."""
         self._assert_active()
         return self._action("get_all_tools")()
 
+    def get_settings(self) -> dict[str, Any]:
+        """A copy of the effective settings (global and project settings merged, with overrides)."""
+        self._assert_active()
+        return self._runtime.get_settings()
+
     def set_active_tools(self, tool_names: list[str]) -> None:
+        """Set the active tools by name. Unknown and "hidden" tools are ignored.
+        Tools with "codemode" or "deferred" exposure stay callable from other
+        tools whether active or not."""
         self._assert_active()
         self._action("set_active_tools")(tool_names)
 
@@ -407,6 +420,79 @@ class ExtensionAPI:
     def unregister_provider(self, name: str) -> None:
         self._assert_active()
         self._apply_runtime_change(lambda: self._runtime.unregister_provider(name, self._extension.path))
+
+    # -- MCP servers -------------------------------------------------------------
+
+    def register_mcp_server(self, name: str, config: McpServerConfig) -> None:
+        """Register an MCP server for this session, with the same config as an
+        `mcpServers` entry in `mcp.json`. The extension that connects MCP
+        servers reads it on `session_start` when registered during extension
+        load, and gets an `mcp_servers_change` event when registered later.
+        Registering a name again replaces the extension's earlier registration.
+
+        The registration is not saved; register again on every load. Raises for
+        invalid configs and for names another extension registered. When no
+        loaded extension handles MCP servers, the registration is reported as
+        an extension error.
+        """
+        self._assert_active()
+        validated = validate_mcp_server_config(name, config)
+        if isinstance(validated, str):
+            raise Exception(  # noqa: TRY004 - pi throws a plain Error
+                f'Invalid MCP server registered by extension "{self._extension.path}": {validated}'
+            )
+        registered = self._runtime.mcp_servers.get(name)
+        if registered is not None and registered.extension_path != self._extension.path:
+            raise Exception(f'MCP server "{name}" is already registered by extension "{registered.extension_path}"')
+        server = RegisteredMcpServer(name=name, config=copy.deepcopy(validated), extension_path=self._extension.path)
+        self._apply_runtime_change(lambda: self._runtime.mcp_servers.register(server))
+
+    def unregister_mcp_server(self, name: str) -> None:
+        """Remove an MCP server this extension registered and close its connection."""
+        self._assert_active()
+        self._apply_runtime_change(lambda: self._runtime.mcp_servers.unregister(name, self._extension.path))
+
+    def get_mcp_servers(self) -> list[RegisteredMcpServer]:
+        """Every MCP server registered by extensions. For extensions that connect MCP servers."""
+        self._assert_active()
+        return self._runtime.mcp_servers.list()
+
+    # -- virtual models ----------------------------------------------------------
+
+    def register_virtual_model(self, model: ExtensionVirtualModel) -> None:
+        """Register a virtual model: a selectable catalog entry that routes each
+        request to a physical model. The selection (`ctx.model`, `model_change`
+        entries) names the virtual model; assistant messages record the physical
+        model and thinking level the router picked.
+
+        `provider` may be any provider id, including one with physical models,
+        and may list several virtual models. Registering the same provider and
+        id again replaces the virtual model. See docs/virtual-models.md.
+        """
+        self._assert_active()
+        runtime = self._runtime
+
+        # Routing runs after the runner binds, so the context is created per
+        # request. The state comes from the session branch that this router wrote.
+        def route(request: Any) -> Any:
+            return model.route(request, runtime.create_context())
+
+        definition = VirtualModelDefinition(
+            provider=model.provider,
+            id=model.id,
+            name=model.name,
+            route=route,
+            thinking_levels=model.thinking_levels,
+            context_window=model.context_window,
+            max_tokens=model.max_tokens,
+            input=model.input,
+        )
+        self._apply_runtime_change(lambda: runtime.register_virtual_model(definition, self._extension.path))
+
+    def unregister_virtual_model(self, provider: str, model_id: str) -> None:
+        """Remove a virtual model registered with `register_virtual_model()`."""
+        self._assert_active()
+        self._apply_runtime_change(lambda: self._runtime.unregister_virtual_model(provider, model_id))
 
 
 # -- module loading --------------------------------------------------------------
@@ -487,11 +573,9 @@ def _load_extension_module(resolved_path: str, cache_token: ExtensionCacheToken 
 
 
 def _create_extension(extension_path: str, resolved_path: str) -> Extension:
-    if extension_path.startswith("<") and extension_path.endswith(">"):
-        source = extension_path[1:-1].split(":")[0] or "temporary"
-    else:
-        source = "local"
-    base_dir = None if extension_path.startswith("<") else os.path.dirname(resolved_path)
+    synthetic_source = get_synthetic_path_source(extension_path)
+    source = synthetic_source if synthetic_source is not None else "local"
+    base_dir = None if is_synthetic_path(extension_path) else os.path.dirname(resolved_path)
 
     return Extension(
         path=extension_path,

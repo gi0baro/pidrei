@@ -36,6 +36,7 @@ from pidrei_ai.auth.types import (
     AuthEvent,
     AuthPrompt,
     AuthResult,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -88,7 +89,7 @@ async def _post_token(body: dict, cancel: CancelToken) -> dict:
     return response.json()
 
 
-async def _login_oauth(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_oauth(interaction: ProviderAuthInteraction, options: LoginOptions | None = None) -> OAuthCredential:
     pkce = generate_pkce()
 
     auth_params = urlencode(

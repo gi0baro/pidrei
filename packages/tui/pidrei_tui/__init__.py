@@ -1,6 +1,26 @@
 """Mirror of pi tui src/index.ts (re-exports grow as modules are ported)."""
 
 from .autocomplete import CombinedAutocompleteProvider
+from .colors import (
+    Color,
+    IndexedColor,
+    OklchColorValue,
+    RgbColorValue,
+    background_ansi,
+    color_to_hex,
+    color_to_okhsl,
+    color_to_oklch,
+    color_to_rgb,
+    foreground_ansi,
+    indexed_color,
+    mix_colors,
+    okhsl_color,
+    oklch_color,
+    parse_color,
+    rgb_color,
+    style_text,
+    style_text_with_ansi,
+)
 from .components.box import Box
 from .components.cancellable_loader import CancellableLoader
 from .components.editor import Editor, word_wrap_line
@@ -37,6 +57,7 @@ from .keys import (
     set_kitty_protocol_active,
 )
 from .latex import render_latex
+from .oklab import oklab_to_okhsl_lightness
 from .stdin_buffer import StdinBuffer
 from .terminal import (
     ProcessTerminal,
@@ -45,10 +66,7 @@ from .terminal import (
     normalize_apple_terminal_input,
     parse_keyboard_protocol_negotiation_sequence,
 )
-from .terminal_colors import (
-    parse_osc11_background_color,
-    parse_terminal_color_scheme_report,
-)
+from .terminal_colors import parse_terminal_color_scheme_report
 from .terminal_image import (
     allocate_image_id,
     calculate_image_rows,
@@ -63,6 +81,7 @@ from .terminal_image import (
     get_image_dimensions,
     get_jpeg_dimensions,
     get_png_dimensions,
+    get_terminal_color_mode,
     get_webp_dimensions,
     hyperlink,
     image_fallback,
@@ -99,6 +118,7 @@ from .utils import (
     visible_width,
     wrap_text_with_ansi,
 )
+from .wheel_scroll import WheelScrollLines
 
 
 __all__ = [
@@ -107,6 +127,7 @@ __all__ = [
     "TUI_KEYBINDINGS",
     "Box",
     "CancellableLoader",
+    "Color",
     "CombinedAutocompleteProvider",
     "Component",
     "Container",
@@ -115,14 +136,17 @@ __all__ = [
     "Focusable",
     "HStack",
     "Image",
+    "IndexedColor",
     "Input",
     "Key",
     "KeybindingsManager",
     "Loader",
     "Markdown",
     "MouseRegion",
+    "OklchColorValue",
     "OverlayHandle",
     "ProcessTerminal",
+    "RgbColorValue",
     "ScrollView",
     "SelectList",
     "SettingsList",
@@ -137,8 +161,14 @@ __all__ = [
     "TuiMouseEvent",
     "TuiMouseEventResult",
     "VStack",
+    "WheelScrollLines",
     "allocate_image_id",
+    "background_ansi",
     "calculate_image_rows",
+    "color_to_hex",
+    "color_to_okhsl",
+    "color_to_oklch",
+    "color_to_rgb",
     "composite_tui_line",
     "decode_kitty_printable",
     "delete_all_kitty_images",
@@ -147,6 +177,7 @@ __all__ = [
     "dispatch_mouse_event",
     "encode_iterm2",
     "encode_kitty",
+    "foreground_ansi",
     "fuzzy_filter",
     "fuzzy_match",
     "get_capabilities",
@@ -157,9 +188,11 @@ __all__ = [
     "get_keybindings",
     "get_osc8_link_at_column",
     "get_png_dimensions",
+    "get_terminal_color_mode",
     "get_webp_dimensions",
     "hyperlink",
     "image_fallback",
+    "indexed_color",
     "is_apple_terminal_session",
     "is_focusable",
     "is_key_release",
@@ -168,16 +201,21 @@ __all__ = [
     "is_viewport_tui",
     "lex_markdown",
     "matches_key",
+    "mix_colors",
     "normalize_apple_terminal_input",
+    "okhsl_color",
+    "oklab_to_okhsl_lightness",
+    "oklch_color",
+    "parse_color",
     "parse_key",
     "parse_keyboard_protocol_negotiation_sequence",
-    "parse_osc11_background_color",
     "parse_terminal_color_scheme_report",
     "prime_capabilities",
     "render_image",
     "render_latex",
     "reset_capabilities_cache",
     "retarget_mouse_event",
+    "rgb_color",
     "set_capabilities",
     "set_capability_overrides",
     "set_cell_dimensions",
@@ -185,6 +223,8 @@ __all__ = [
     "set_kitty_protocol_active",
     "slice_by_column",
     "strip_terminal_sequences",
+    "style_text",
+    "style_text_with_ansi",
     "truncate_to_width",
     "visible_width",
     "word_wrap_line",

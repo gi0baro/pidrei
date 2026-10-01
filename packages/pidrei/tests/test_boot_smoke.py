@@ -36,6 +36,8 @@ from pidrei.config import APP_TITLE, ENV_AGENT_DIR
 
 
 COLS, ROWS = 100, 30
+# The startup header's onboarding line (its first lines are the logo).
+BANNER = "pidrei can explain its own features"
 BOOT_TIMEOUT = 40.0
 REPLY_TIMEOUT = 40.0
 EXIT_TIMEOUT = 15.0
@@ -255,7 +257,7 @@ async def test_interactive_mode_boots_and_completes_a_turn(tmp_path):
 
     try:
         # Boots: banner rendered, footer bound to the configured model.
-        await _wait_for(screen, "pidrei v", BOOT_TIMEOUT)
+        await _wait_for(screen, BANNER, BOOT_TIMEOUT)
         await _wait_for(screen, "demo-model", BOOT_TIMEOUT)
 
         # Completes a turn against the local provider.
@@ -343,7 +345,7 @@ async def test_extension_drives_ctx_ui_against_the_real_tui(tmp_path):
     screen = _Screen(master)
 
     try:
-        await _wait_for(screen, "pidrei v", BOOT_TIMEOUT)
+        await _wait_for(screen, BANNER, BOOT_TIMEOUT)
         # The probe ran: awaited theme accessors returned themes, the sync
         # setters landed in the footer status and the widget area.
         await _wait_for(screen, "EXT-STATUS-OK", BOOT_TIMEOUT)

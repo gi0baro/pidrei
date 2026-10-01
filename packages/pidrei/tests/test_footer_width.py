@@ -34,6 +34,7 @@ def create_session(
     compaction_usage: Usage | None = None,
     tool_usage: Usage | None = None,
     using_subscription: bool = False,
+    routed_model: SimpleNamespace | None = None,
 ):
     entries: list = []
 
@@ -49,20 +50,21 @@ def create_session(
     if tool_usage is not None:
         entries.append({"type": "message", "message": SimpleNamespace(role="toolResult", usage=tool_usage)})
 
+    model = SimpleNamespace(id=model_id, provider=provider, context_window=200_000, reasoning=reasoning)
     return SimpleNamespace(
-        state=SimpleNamespace(
-            model=SimpleNamespace(id=model_id, provider=provider, context_window=200_000, reasoning=reasoning),
-            thinking_level=thinking_level,
-        ),
+        state=SimpleNamespace(model=model, thinking_level=thinking_level),
+        model=model,
         session_manager=SimpleNamespace(
             get_entries=lambda: entries,
             get_entries_revision=lambda: len(entries),
+            get_leaf_id=lambda: None,
             get_session_name=lambda: session_name,
             get_cwd=lambda: "/tmp/project",
         ),
         # AgentSession.get_context_usage is a method (pi calls it too) — the
         # fake must be callable, not a data attribute.
         get_context_usage=lambda: SimpleNamespace(context_window=200_000, percent=12.3),
+        routed_model=routed_model,
         model_runtime=SimpleNamespace(is_using_subscription=lambda provider_id: using_subscription),
     )
 
@@ -115,6 +117,20 @@ class TestFooterComponentWidthHandling:
         for line in lines:
             assert visible_width(line) <= width
 
+    def test_shows_the_physical_model_a_virtual_model_routed_to(self):
+        session = create_session(
+            session_name="",
+            model_id="auto",
+            reasoning=True,
+            thinking_level="high",
+            routed_model=SimpleNamespace(model=SimpleNamespace(id="gpt-5.6-luna"), thinking_level="medium"),
+        )
+        footer = FooterComponent(session, create_footer_data(1))
+
+        stats_line = strip_ansi(footer.render(120)[1])
+
+        assert "auto • high → gpt-5.6-luna • medium" in stats_line
+
     def test_includes_summary_and_tool_result_usage_in_the_total_cost(self):
         session = create_session(
             session_name="",
@@ -127,6 +143,17 @@ class TestFooterComponentWidthHandling:
 
         stats_line = strip_ansi(footer.render(120)[1])
         assert "$1.250" in stats_line
+
+    def test_updates_cached_usage_totals_after_an_entry_is_appended(self):
+        usage = _usage(input=10, output=1, total=0.5)
+        session = create_session(session_name="", usage=usage)
+        footer = FooterComponent(session, create_footer_data(1))
+        assert "$0.500" in strip_ansi(footer.render(120)[1])
+
+        session.session_manager.get_entries().append(
+            {"type": "message", "message": SimpleNamespace(role="assistant", usage=usage)}
+        )
+        assert "$1.000" in strip_ansi(footer.render(120)[1])
 
     def test_shows_the_latest_cache_hit_rate_when_cache_usage_is_present(self):
         session = create_session(

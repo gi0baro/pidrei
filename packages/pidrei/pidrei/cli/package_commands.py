@@ -42,6 +42,7 @@ from ..config import APP_NAME, CONFIG_DIR_NAME, get_agent_dir, get_auth_path, ge
 from ..core.output_guard import write_stderr, write_stdout
 from ..core.package_manager import DefaultPackageManager
 from ..core.project_trust import ResolveProjectTrustedOptions, resolve_project_trusted
+from ..core.resource_loader import is_builtin_extension
 from ..core.settings_manager import SettingsManager
 from ..core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources_blocking
 from ..utils.colors import bold, dim, green, red
@@ -592,12 +593,15 @@ async def handle_config_command(args: list[str], *, extension_factories: list[An
         return 1
     _report_settings_errors(settings_manager, "config command")
 
+    builtin_extensions = [entry.name for entry in extension_factories or [] if is_builtin_extension(entry)]
     global_settings_manager = await SettingsManager(cwd, agent_dir, project_trusted=False)
     global_paths = await DefaultPackageManager(
-        cwd=cwd, agent_dir=agent_dir, settings_manager=global_settings_manager
+        cwd=cwd, agent_dir=agent_dir, settings_manager=global_settings_manager, builtin_extensions=builtin_extensions
     ).resolve()
     project_paths = (
-        await DefaultPackageManager(cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager).resolve()
+        await DefaultPackageManager(
+            cwd=cwd, agent_dir=agent_dir, settings_manager=settings_manager, builtin_extensions=builtin_extensions
+        ).resolve()
         if settings_manager.is_project_trusted()
         else global_paths
     )

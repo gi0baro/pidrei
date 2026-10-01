@@ -16,6 +16,7 @@ import pytest
 
 import pidrei.modes.interactive.theme as theme_module
 from pidrei.core import resource_loader
+from pidrei.core.extensions.types import InlineExtension
 from pidrei.core.resource_loader import DefaultResourceLoader, SourcedPath, load_project_context_files
 from pidrei.core.settings_manager import SettingsManager
 from pidrei.core.skills import LoadSkillsResult, Skill
@@ -335,6 +336,193 @@ class TestReload:
 
         assert loader.get_system_prompt() is None
         assert not any(skill.name == "project-skill" for skill in loader.get_skills().skills)
+
+
+def _command_factory(name: str, description: str, loaded: list[str] | None = None):
+    async def factory(pi) -> None:
+        if loaded is not None:
+            loaded.append(name)
+
+        async def handler(_args, _ctx):
+            return None
+
+        pi.register_command(name, handler=handler, description=description)
+
+    return factory
+
+
+def _recording_factory(name: str, loaded: list[str]):
+    async def factory(_pi) -> None:
+        loaded.append(name)
+
+    return factory
+
+
+def _paths(loader) -> list[str]:
+    return [extension.path for extension in loader.get_extensions().extensions]
+
+
+class TestExtensionReplacementAndBuiltins:
+    """The replaceable and built-in cases of pi's "extension conflict
+    detection" describe; its conflict-reporting cases are covered by the
+    runner mirror."""
+
+    @pytest.mark.tonio
+    async def test_leaves_out_replaceable_extensions_whose_names_another_extension_registers(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        # A third-party MCP extension registering /mcp replaces the built-in one instead of both running.
+        other = agent_dir / "extensions" / "other_mcp.py"
+        write(
+            other,
+            "async def extension(pi):\n"
+            "    async def handler(_args, _ctx):\n"
+            "        return None\n"
+            '    pi.register_command("mcp", handler=handler, description="other mcp")\n',
+        )
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            extension_factories=[
+                InlineExtension(name="mcp", replaceable=True, factory=_command_factory("mcp", "built-in mcp")),
+                InlineExtension(name="llama", replaceable=True, factory=_command_factory("llama", "built-in llama")),
+            ],
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        result = loader.get_extensions()
+        assert _paths(loader) == [str(other), "<inline:llama>"]
+        assert result.errors == []
+        assert result.extensions[0].commands["mcp"].description == "other mcp"
+        assert result.extensions[1].commands["llama"].description == "built-in llama"
+
+    @pytest.mark.tonio
+    async def test_skips_built_in_extensions_disabled_in_settings(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        write(agent_dir / "settings.json", json.dumps({"extensions": ["-builtin:mcp"]}))
+        loaded: list[str] = []
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            extension_factories=[
+                InlineExtension(name="mcp", builtin=True, factory=_recording_factory("mcp", loaded)),
+                InlineExtension(name="llama", builtin=True, factory=_recording_factory("llama", loaded)),
+            ],
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        [extension] = loader.get_extensions().extensions
+        assert extension.path == "builtin:llama"
+        assert (extension.source_info.path, extension.source_info.source) == ("builtin:llama", "builtin")
+        assert extension.hidden is True
+        assert loaded == ["llama"]
+
+    @pytest.mark.tonio
+    async def test_loads_built_in_extensions_after_file_extensions_with_and_without_trust_resolution(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        user_extension = agent_dir / "extensions" / "user.py"
+        write(user_extension, "async def extension(_pi):\n    pass\n")
+        # A project override gives the built-in project scope, which must not move it ahead.
+        write(cwd / ".pidrei" / "settings.json", json.dumps({"extensions": ["+builtin:mcp"]}))
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            extension_factories=[InlineExtension(name="mcp", builtin=True, factory=_recording_factory("mcp", []))],
+        )
+        expected = [str(user_extension), "builtin:mcp"]
+
+        async def trust(_extensions_result):
+            return True
+
+        with fake_home(home):
+            await loader.reload(resolve_project_trust=trust)
+            assert _paths(loader) == expected
+            await loader.reload()
+            assert _paths(loader) == expected
+
+    @pytest.mark.tonio
+    async def test_disables_built_in_extensions_with_no_extensions_unless_loaded_with_e_builtin(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        loaded: list[str] = []
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            no_extensions=True,
+            additional_extension_paths=["builtin:mcp", "builtin:missing"],
+            extension_factories=[
+                InlineExtension(name="mcp", builtin=True, factory=_recording_factory("mcp", loaded)),
+                InlineExtension(name="llama", builtin=True, factory=_recording_factory("llama", loaded)),
+            ],
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        assert _paths(loader) == ["builtin:mcp"]
+        assert [(error.path, error.error) for error in loader.get_extensions().errors] == [
+            ("builtin:missing", "Unknown built-in extension: builtin:missing")
+        ]
+        assert loaded == ["mcp"]
+
+    @pytest.mark.tonio
+    async def test_applies_project_built_in_extension_overrides_after_trust_resolves(self, dirs):
+        _tmp, agent_dir, cwd, home = dirs
+        write(agent_dir / "settings.json", json.dumps({"extensions": ["-builtin:mcp"]}))
+        write(cwd / ".pidrei" / "settings.json", json.dumps({"extensions": ["+builtin:mcp", "-builtin:llama"]}))
+        loaded: list[str] = []
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            extension_factories=[
+                InlineExtension(name="mcp", builtin=True, factory=_recording_factory("mcp", loaded)),
+                InlineExtension(name="plain", factory=_recording_factory("plain", loaded)),
+                InlineExtension(name="llama", builtin=True, factory=_recording_factory("llama", loaded)),
+            ],
+        )
+        pre_trust: list[list[str]] = []
+
+        async def trust(extensions_result):
+            # Built-in extensions wait until project settings are known.
+            pre_trust.append([extension.path for extension in extensions_result.extensions])
+            return True
+
+        with fake_home(home):
+            await loader.reload(resolve_project_trust=trust)
+
+        assert pre_trust == [["<inline:plain>"]]
+        assert _paths(loader) == ["builtin:mcp", "<inline:plain>"]
+        assert loaded == ["plain", "mcp"]
+
+    @pytest.mark.tonio
+    async def test_warns_when_another_extension_replaces_a_replaceable_built_in(self, dirs):
+        """pidrei-only: 9d1a6503 added the warning without a test."""
+        _tmp, agent_dir, cwd, home = dirs
+        other = agent_dir / "extensions" / "other_mcp.py"
+        write(
+            other,
+            "async def extension(pi):\n"
+            "    async def handler(_args, _ctx):\n"
+            "        return None\n"
+            '    pi.register_command("mcp", handler=handler, description="other mcp")\n',
+        )
+        loader = await DefaultResourceLoader(
+            cwd=str(cwd),
+            agent_dir=str(agent_dir),
+            extension_factories=[
+                InlineExtension(
+                    name="mcp", builtin=True, replaceable=True, factory=_command_factory("mcp", "built-in mcp")
+                ),
+            ],
+        )
+        with fake_home(home):
+            await loader.reload()
+
+        assert _paths(loader) == [str(other)]
+        [warning] = loader.get_extensions().warnings
+        assert warning.path == "builtin:mcp"
+        assert warning.warning.startswith(
+            f"Extension {other} registers command `/mcp`, so built-in extension `mcp` was not loaded."
+        )
 
 
 class TestExtendResources:

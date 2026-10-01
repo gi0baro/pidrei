@@ -222,6 +222,8 @@ ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20
 DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#"]
 # Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
 _UNQUOTED_AUTOCOMPLETE_SUFFIX = rf"(?:(?!{autocomplete_separator_regex.pattern}).)*"
+# Trigger tokens may be wrapped in prose, e.g. "(@src/foo" or "`@src/foo".
+_AUTOCOMPLETE_TOKEN_START = rf"{autocomplete_boundary_regex.pattern}[(\[{{<`]*"
 
 _CHARACTER_CLASS_ESCAPE_RE = re.compile(r"[\\^$.*+?()\[\]{}|-]")
 
@@ -237,13 +239,13 @@ def _unquoted_trigger_alternative(escaped: str) -> str:
 
 def _build_trigger_pattern(trigger_characters: list[str]):
     escaped = "".join(map(_escape_character_class, trigger_characters))
-    return re.compile(rf'{autocomplete_boundary_regex.pattern}(?:@"[^"]*{_unquoted_trigger_alternative(escaped)})$')
+    return re.compile(rf'{_AUTOCOMPLETE_TOKEN_START}(?:@"[^"]*{_unquoted_trigger_alternative(escaped)})$')
 
 
 def _build_debounce_pattern(trigger_characters: list[str]):
     escaped_without_at = "".join(_escape_character_class(c) for c in trigger_characters if c != "@")
     return re.compile(
-        rf'{autocomplete_boundary_regex.pattern}(?:@(?:"[^"]*|{_UNQUOTED_AUTOCOMPLETE_SUFFIX})'
+        rf'{_AUTOCOMPLETE_TOKEN_START}(?:@(?:"[^"]*|{_UNQUOTED_AUTOCOMPLETE_SUFFIX})'
         rf"{_unquoted_trigger_alternative(escaped_without_at)})$"
     )
 

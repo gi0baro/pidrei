@@ -5,6 +5,7 @@ vitest-spying on global fetch.
 """
 
 import json
+import urllib.parse
 from datetime import UTC, datetime
 from email.utils import format_datetime
 
@@ -12,12 +13,12 @@ import pytest
 
 from pidrei.config import VERSION
 from pidrei.core.model_wire import model_to_dict
-from pidrei.core.remote_catalog import CatalogResponse, with_remote_catalog
+from pidrei.core.remote_catalog import REMOTE_CATALOG_MODEL_TYPES, CatalogResponse, with_remote_catalog
 from pidrei_ai.auth.types import ApiKeyAuth, ApiKeyCredential, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.models_store import InMemoryModelsStore
-from pidrei_ai.registry import RefreshModelsContext, create_provider
+from pidrei_ai.registry import RefreshModelsContext, create_models, create_provider
 from pidrei_ai.utils.cancel import CancelToken
-from tests.model_runtime_helpers import make_model
+from tests.model_runtime_helpers import UnusedStreams, make_model
 
 
 def model_dict(id: str) -> dict:
@@ -32,7 +33,7 @@ def make_provider(local_generated_at=None, *, fetch):
         id="test-provider",
         auth=ProviderAuth(api_key=ApiKeyAuth(name="Test", resolve=resolve)),
         models=[make_model("test-provider", "static")],
-        api={},
+        api=UnusedStreams(),
     )
     return with_remote_catalog(provider, "https://pi.dev", local_generated_at, fetch=fetch)
 
@@ -81,6 +82,55 @@ async def test_parses_keyed_catalogs_sends_version_headers_observes_ttl_and_supp
     assert [entry.id for entry in stored.models] == ["dynamic"]
     assert len(calls) == 2
     assert f"pidrei/{VERSION}" in calls[0][1]["User-Agent"]
+    requested = urllib.parse.urlsplit(calls[0][0])
+    assert requested.path == "/api/models/providers/test-provider"
+    assert urllib.parse.parse_qs(requested.query)["types"] == [",".join(REMOTE_CATALOG_MODEL_TYPES)]
+
+
+@pytest.mark.tonio
+async def test_overlays_image_and_classifier_models_and_drops_unknown_model_types():
+    catalog = {
+        "chat": {**model_dict("chat"), "type": "chat"},
+        "flux": {
+            "type": "image",
+            "id": "flux",
+            "name": "FLUX",
+            "api": "openrouter-images",
+            "provider": "test-provider",
+            "baseUrl": "https://example.test/v1",
+            "input": ["text"],
+            "output": ["image"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        },
+        "jev": {
+            "type": "classifier",
+            "id": "jev",
+            "name": "Jev",
+            "api": "typesafe-system-one",
+            "provider": "test-provider",
+            "baseUrl": "https://example.test/v1",
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 64000,
+        },
+        "clip": {**model_dict("clip"), "type": "video"},
+    }
+
+    async def fetch(_url, _headers, _cancel):
+        return CatalogResponse(status=200, headers={"content-type": "application/json"}, body=json.dumps(catalog))
+
+    provider = make_provider(fetch=fetch)
+    store = InMemoryModelsStore()
+    await refresh_provider(provider, store)
+
+    models = create_models(models_store=store)
+    models.set_provider(provider)
+    assert [entry.id for entry in models.get_all_models("test-provider")] == ["static", "chat", "flux", "jev"]
+    assert models.get_model_of_type("image", "test-provider", "flux").type == "image"
+    assert models.get_model_of_type("classifier", "test-provider", "jev").type == "classifier"
+    assert models.get_model("test-provider", "flux") is None
+    stored = await store.read(provider.id)
+    assert [entry.id for entry in stored.models] == ["chat", "flux", "jev"]
 
 
 @pytest.mark.tonio

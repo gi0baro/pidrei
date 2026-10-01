@@ -693,3 +693,46 @@ async def test_keeps_tab_containing_overlays_on_one_physical_terminal_row():
     assert "\t" not in terminal.get_writes()
 
     await tui.stop()
+
+
+# hiding after stop — https://github.com/earendil-works/pi/issues/10026
+
+
+class CursorTrackingTerminal(VirtualTerminal):
+    def __init__(self, columns, rows):
+        super().__init__(columns, rows)
+        self.cursor_visible = True
+
+    def hide_cursor(self) -> None:
+        self.cursor_visible = False
+        super().hide_cursor()
+
+    def show_cursor(self) -> None:
+        self.cursor_visible = True
+        super().show_cursor()
+
+
+@pytest.mark.tonio
+async def test_hide_overlay_after_stop_leaves_the_cursor_visible():
+    terminal = CursorTrackingTerminal(80, 24)
+    tui = TuiMainScreen(terminal)
+    await tui.start()
+    tui.show_overlay(StaticOverlay(["OVERLAY"]), {"nonCapturing": True})
+
+    await tui.stop()
+    tui.hide_overlay()
+
+    assert terminal.cursor_visible is True
+
+
+@pytest.mark.tonio
+async def test_overlay_handle_hide_after_stop_leaves_the_cursor_visible():
+    terminal = CursorTrackingTerminal(80, 24)
+    tui = TuiMainScreen(terminal)
+    await tui.start()
+    handle = tui.show_overlay(StaticOverlay(["OVERLAY"]), {"nonCapturing": True})
+
+    await tui.stop()
+    handle.hide()
+
+    assert terminal.cursor_visible is True

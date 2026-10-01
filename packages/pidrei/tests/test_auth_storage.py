@@ -743,7 +743,7 @@ async def test_translates_a_credential_store_refresh_failure_and_allows_a_later_
         async def delete(self, id, options=None):
             await base.delete(id, options)
 
-    async def login(_interaction):
+    async def login(_interaction, _options=None):
         raise Exception("not used")
 
     async def refresh(credential, _cancel):

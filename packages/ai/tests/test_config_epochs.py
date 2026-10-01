@@ -14,7 +14,8 @@ from pidrei_ai.registry import create_models, create_provider
 
 
 def _provider(id: str):
-    return create_provider(id=id, auth=ProviderAuth(), models=[], api={})
+    # A provider needs one operation implementation; this one is never called.
+    return create_provider(id=id, auth=ProviderAuth(), models=[], api={"unused": object()})
 
 
 def test_the_provider_map_is_swapped_not_mutated():

@@ -38,6 +38,8 @@ from .truncate import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncationResult, fo
 
 
 MAX_TIMEOUT_MS = 2_147_483_647
+# Output limit of `structured_content["output"]`, which programmatic callers such as codemode scripts receive.
+STRUCTURED_OUTPUT_MAX_BYTES = 1024 * 1024
 MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000
 
 _EXIT_STDIO_GRACE_S = 0.1
@@ -49,6 +51,28 @@ BASH_SCHEMA = {
         "timeout": {"type": "number", "description": "Timeout in seconds (optional, no default timeout)"},
     },
     "required": ["command"],
+}
+
+# Result for programmatic callers such as codemode scripts. A non-zero exit code
+# is an error result for the model, but scripts still resolve to this value.
+# `output` is not limited like the model-facing output: callers decide how much
+# of it reaches the model.
+BASH_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "output": {
+            "type": "string",
+            "description": (
+                "Combined stdout and stderr, up to 1 MiB. Longer output keeps its first and last 512 KiB "
+                "around an omission marker."
+            ),
+        },
+        "truncated": {"type": "boolean", "description": "Whether `output` omits part of the command output"},
+        "full_output_path": {"type": "string", "description": "Temp file with the full output, when truncated"},
+        "exit_code": {"type": "number"},
+        "wall_time_seconds": {"type": "number"},
+    },
+    "required": ["output", "truncated", "exit_code", "wall_time_seconds"],
 }
 
 BASH_TOOL_SYSTEM_PROMPT_CONTRIBUTION: dict[str, Any] = {
@@ -430,6 +454,8 @@ def create_shell_tool_definition(
         def append_status(text: str, status: str) -> str:
             return f"{text}\n\n{status}" if text else status
 
+        started_at = clock.monotonic()
+
         try:
             try:
                 result = await ops.exec(
@@ -456,9 +482,24 @@ def create_shell_tool_definition(
             output_text, details = format_output(snapshot)
             if exit_code is None:
                 raise Exception(append_status(output_text, "Command terminated without an exit code"))
+            # pi: Math.round(ms / 100) / 10 — tenths of a second, halves rounded up.
+            wall_time_seconds = math.floor((clock.monotonic() - started_at) * 10 + 0.5) / 10
+            full_output = await output.read_full_output(STRUCTURED_OUTPUT_MAX_BYTES)
+            structured_content: dict[str, Any] = {"output": full_output.content, "truncated": full_output.truncated}
+            if full_output.truncated and snapshot.full_output_path:
+                structured_content["full_output_path"] = snapshot.full_output_path
+            structured_content["exit_code"] = exit_code
+            structured_content["wall_time_seconds"] = wall_time_seconds
             if exit_code != 0:
-                raise Exception(append_status(output_text, f"Command exited with code {exit_code}"))
-            return AgentToolResult(content=[TextContent(text=output_text)], details=details)
+                return AgentToolResult(
+                    content=[TextContent(text=append_status(output_text, f"Command exited with code {exit_code}"))],
+                    details=details,
+                    structured_content=structured_content,
+                    is_error=True,
+                )
+            return AgentToolResult(
+                content=[TextContent(text=output_text)], details=details, structured_content=structured_content
+            )
         finally:
             clear_update_timer()
 
@@ -480,6 +521,7 @@ def create_shell_tool_definition(
             else None
         ),
         parameters=BASH_SCHEMA,
+        output_schema=BASH_OUTPUT_SCHEMA,
         constrained_sampling=JsonSchemaConstrainedSampling(strict="prefer"),
         execute=execute,
         render_call=renderers.render_call,

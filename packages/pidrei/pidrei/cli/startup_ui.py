@@ -4,7 +4,7 @@ import contextlib
 import os
 
 import tonio.colored as tonio
-from tonio.colored import fs
+from tonio.colored import fs, sync
 
 from pidrei_tui import (
     TUI,
@@ -25,14 +25,16 @@ from ..modes.interactive.components.extension_input import ExtensionInputCompone
 from ..modes.interactive.components.extension_selector import ExtensionSelectorComponent
 from ..modes.interactive.components.first_time_setup import FirstTimeSetupComponent
 from ..modes.interactive.theme import (
+    SYSTEM_THEME_NAME,
     _load_theme_from_path_blocking,
-    detect_terminal_background_from_env,
-    detect_terminal_theme_for_auto,
+    get_terminal_theme,
     init_theme,
-    parse_auto_theme_setting,
+    mark_terminal_colors_pending,
     prime_theme_cache,
+    request_terminal_colors,
     resolve_theme_setting,
     set_registered_themes,
+    set_terminal_colors,
     set_theme,
 )
 from ..utils.process import probe_tmux_hyperlinks
@@ -88,8 +90,9 @@ async def create_startup_tui(settings_manager: SettingsManager) -> TUI:
     await prime_theme_cache()
     await prime_capabilities(probe_tmux_hyperlinks)
     set_registered_themes(await _load_startup_themes(settings_manager))
-    terminal_theme = detect_terminal_background_from_env()["theme"]
-    await init_theme(resolve_theme_setting(settings_manager.get_theme_setting(), terminal_theme) or terminal_theme)
+    # The system theme starts in grayscale until the terminal reports its colors.
+    mark_terminal_colors_pending()
+    await init_theme(_resolve_startup_theme(settings_manager.get_theme_setting()))
     set_keybindings(await KeybindingsManager())
     terminal = ProcessTerminal()
     ui: TUI = TuiMainScreen(terminal, settings_manager.get_show_hardware_cursor(), get_agent_dir())
@@ -106,20 +109,35 @@ async def close_startup_tui(ui: TUI) -> None:
     await ui.close()
 
 
+def _resolve_startup_theme(theme_setting: str | None) -> str:
+    theme_name = resolve_theme_setting(theme_setting, get_terminal_theme())
+    return theme_name if theme_name is not None else SYSTEM_THEME_NAME
+
+
 async def start_startup_tui(ui: TUI, settings_manager: SettingsManager) -> None:
     await ui.start()
-    tonio.spawn.without_tracking(_apply_detected_startup_theme(ui, settings_manager))
-
-
-async def _apply_detected_startup_theme(ui: TUI, settings_manager: SettingsManager) -> None:
     theme_setting = settings_manager.get_theme_setting()
-    if theme_setting and not parse_auto_theme_setting(theme_setting):
-        return
 
-    terminal_theme = await detect_terminal_theme_for_auto({"ui": ui, "timeoutMs": 100})
-    await set_theme(resolve_theme_setting(theme_setting, terminal_theme) or terminal_theme)
-    ui.invalidate()
-    ui.request_render()
+    async def on_colors() -> None:
+        await set_theme(_resolve_startup_theme(theme_setting))
+
+    _query_startup_terminal_colors(ui, on_colors)
+
+
+def _query_startup_terminal_colors(ui: TUI, on_colors) -> None:
+    """Query the terminal's colors without waiting for them. When they
+    arrive, including after the timeout, record them for the system theme and
+    "" (terminal default) tokens, run ``on_colors``, and re-render. The TUI's
+    terminal-event loop delivers them, one report at a time."""
+
+    async def apply(colors: dict) -> None:
+        set_terminal_colors(colors)
+        await on_colors()
+        ui.invalidate()
+        ui.request_render()
+
+    ui.on_terminal_colors(apply)
+    request_terminal_colors(ui)
 
 
 async def _clear_startup_tui(ui: TUI) -> None:
@@ -206,11 +224,17 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
         done.set()
 
     await ui.start()
-    detected_theme = await detect_terminal_theme_for_auto({"ui": ui, "timeoutMs": 100})
-    await set_theme(detected_theme)
+    preview_theme = SYSTEM_THEME_NAME
+    await set_theme(preview_theme)
+    # pi's theme changes are synchronous; a preview and the terminal's colors
+    # arriving must not interleave their loads.
+    theme_lock = sync.Lock()
 
     async def preview(theme_name: str) -> None:
-        await set_theme(theme_name)
+        nonlocal preview_theme
+        async with theme_lock:
+            preview_theme = theme_name
+            await set_theme(theme_name)
         ui.request_render()
 
     def on_theme_preview(theme_name: str) -> None:
@@ -219,7 +243,6 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
 
     component = FirstTimeSetupComponent(
         {
-            "detectedTheme": detected_theme,
             "onThemePreview": on_theme_preview,
             "onSubmit": lambda result: tonio.spawn.without_tracking(finish(result)),
             "onCancel": lambda: tonio.spawn.without_tracking(finish(None)),
@@ -228,6 +251,13 @@ async def show_first_time_setup(settings_manager: SettingsManager) -> None:
     ui.add_child(component)
     ui.set_focus(component)
     ui.request_render()
+
+    async def reapply_preview() -> None:
+        async with theme_lock:
+            await set_theme(preview_theme)
+
+    # The terminal's colors regenerate the system theme; re-rendering rebuilds the dialog with it.
+    _query_startup_terminal_colors(ui, reapply_preview)
     await done.wait(None)
 
 

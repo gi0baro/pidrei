@@ -207,14 +207,27 @@ class ApiKeyAuth:
 
 
 @dataclass(slots=True)
+class LoginOptions:
+    """App-supplied context for `Models.login`."""
+
+    # Returns the stable ID of this app installation, e.g. sent to OpenAI as its
+    # agent host ID. Called only by login flows that need it, so apps can create
+    # the ID on first use and must return the same ID on every later call.
+    get_device_id: Callable[[], str] | None = None
+
+
+@dataclass(slots=True)
 class OAuthAuth:
     """OAuth auth. The `refresh`/`to_auth` split lets Models own the locked
     refresh pattern: `refresh` produces a credential, `to_auth` derives request
     auth from whatever credential ends up stored.
+
+    `login` is called as `login(interaction, options)`; implementations declare
+    `options: LoginOptions | None = None`.
     """
 
     name: str
-    login: Callable[[ProviderAuthInteraction], Awaitable[OAuthCredential]]
+    login: Callable[[ProviderAuthInteraction, LoginOptions | None], Awaitable[OAuthCredential]]
     # Exchange the refresh token; network call, raises on failure. Runs under the store lock.
     refresh: Callable[[OAuthCredential, CancelToken], Awaitable[OAuthCredential]]
     # Side-effect-free derivation of request auth from a valid credential.

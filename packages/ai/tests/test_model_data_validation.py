@@ -29,6 +29,7 @@ model_data = _load_model_data()
 GENERATED_AT = "2026-07-23T10:00:00+00:00"
 
 MODEL_A = {
+    "type": "chat",
     "id": "model-a",
     "name": "Model A",
     "api": "openai-completions",
@@ -61,8 +62,8 @@ def write_fixture_data(
 def create_fixture(tmp_path: Path) -> tuple[Path, dict, dict]:
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True)
-    structure = {"test-provider": {"model-a": "openai-completions"}}
-    values = {"model-a": dict(MODEL_A)}
+    structure = {"test-provider": {"chat:model-a": "openai-completions"}}
+    values = {"chat:model-a": dict(MODEL_A)}
     write_fixture_data(data_dir, structure, values)
     return data_dir, structure, values
 
@@ -114,11 +115,85 @@ def test_rejects_a_missing_model_data_directory(tmp_path):
 )
 def test_rejects_a_wrong_model_field(tmp_path, field, value, expected_message):
     data_dir, structure, values = create_fixture(tmp_path)
-    values["model-a"][field] = value
+    values["chat:model-a"][field] = value
     write_fixture_data(data_dir, structure, values)
 
     with pytest.raises(ValueError, match=expected_message):
         model_data.validate_model_data_directory(structure, data_dir)
+
+
+def test_rejects_a_model_without_a_known_type(tmp_path):
+    data_dir, structure, values = create_fixture(tmp_path)
+    del values["chat:model-a"]["type"]
+    write_fixture_data(data_dir, structure, values)
+
+    with pytest.raises(ValueError, match='expected "chat", "image", or "classifier"'):
+        model_data.validate_model_data_directory(structure, data_dir)
+
+
+def test_validates_image_models_with_output_modalities_and_without_chat_limits(tmp_path):
+    data_dir, _, _ = create_fixture(tmp_path)
+    structure = {"test-provider": {"image:image-a": "test-images"}}
+    image = {
+        "type": "image",
+        "id": "image-a",
+        "name": "Image A",
+        "api": "test-images",
+        "provider": "test-provider",
+        "baseUrl": "https://example.test/v1",
+        "input": ["text"],
+        "output": ["image", "text"],
+        "cost": {"input": 1, "output": 2, "cacheRead": 0, "cacheWrite": 0},
+    }
+
+    def validate():
+        write_fixture_data(
+            data_dir, structure, {"image:image-a": image}, model_data.MODEL_DATA_SCHEMA_VERSION, "test-images"
+        )
+        model_data.validate_model_data_directory(structure, data_dir)
+
+    validate()
+
+    del image["output"]
+    with pytest.raises(ValueError, match="invalid output modalities"):
+        validate()
+    image["output"] = ["text"]
+    with pytest.raises(ValueError, match="invalid output modalities"):
+        validate()
+
+
+def test_rejects_output_modalities_on_chat_models(tmp_path):
+    data_dir, structure, values = create_fixture(tmp_path)
+    values["chat:model-a"]["output"] = ["text"]
+    write_fixture_data(data_dir, structure, values)
+
+    with pytest.raises(ValueError, match="unsupported output modalities"):
+        model_data.validate_model_data_directory(structure, data_dir)
+
+
+def test_validates_classifier_models_without_chat_output_limits(tmp_path):
+    data_dir, _, _ = create_fixture(tmp_path)
+    structure = {"test-provider": {"classifier:classifier-a": "test-classifier"}}
+    classifier = {
+        "type": "classifier",
+        "id": "classifier-a",
+        "name": "Classifier A",
+        "api": "test-classifier",
+        "provider": "test-provider",
+        "baseUrl": "https://example.test/v1",
+        "input": ["text"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "contextWindow": 1000,
+    }
+    write_fixture_data(
+        data_dir,
+        structure,
+        {"classifier:classifier-a": classifier},
+        model_data.MODEL_DATA_SCHEMA_VERSION,
+        "test-classifier",
+    )
+
+    model_data.validate_model_data_directory(structure, data_dir)
 
 
 def test_rejects_a_model_in_the_wrong_api_group(tmp_path):

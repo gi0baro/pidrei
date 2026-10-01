@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "llama-3.1-8b-instant": {
+    "chat:llama-3.1-8b-instant": {
       "id": "llama-3.1-8b-instant",
       "name": "Llama 3.1 8B",
       "api": "openai-completions",
@@ -20,9 +20,10 @@
       "maxTokens": 131072,
       "compat": {
         "supportsStrictMode": true
-      }
+      },
+      "type": "chat"
     },
-    "llama-3.3-70b-versatile": {
+    "chat:llama-3.3-70b-versatile": {
       "id": "llama-3.3-70b-versatile",
       "name": "Llama 3.3 70B",
       "api": "openai-completions",
@@ -42,9 +43,10 @@
       "maxTokens": 32768,
       "compat": {
         "supportsStrictMode": true
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-oss-120b": {
+    "chat:openai/gpt-oss-120b": {
       "id": "openai/gpt-oss-120b",
       "name": "GPT OSS 120B",
       "api": "openai-completions",
@@ -73,9 +75,10 @@
         "high": "high",
         "xhigh": null,
         "max": null
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-oss-20b": {
+    "chat:openai/gpt-oss-20b": {
       "id": "openai/gpt-oss-20b",
       "name": "GPT OSS 20B",
       "api": "openai-completions",
@@ -104,9 +107,10 @@
         "high": "high",
         "xhigh": null,
         "max": null
-      }
+      },
+      "type": "chat"
     },
-    "openai/gpt-oss-safeguard-20b": {
+    "chat:openai/gpt-oss-safeguard-20b": {
       "id": "openai/gpt-oss-safeguard-20b",
       "name": "Safety GPT OSS 20B",
       "api": "openai-completions",
@@ -135,9 +139,10 @@
         "high": "high",
         "xhigh": null,
         "max": null
-      }
+      },
+      "type": "chat"
     },
-    "qwen/qwen3.6-27b": {
+    "chat:qwen/qwen3.6-27b": {
       "id": "qwen/qwen3.6-27b",
       "name": "Qwen3.6 27B",
       "api": "openai-completions",
@@ -177,9 +182,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "qwen/qwen3.8-27b": {
+    "chat:qwen/qwen3.8-27b": {
       "id": "qwen/qwen3.8-27b",
       "name": "Qwen3.8 27B",
       "api": "openai-completions",
@@ -219,7 +225,8 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     }
   }
 }

@@ -2,6 +2,7 @@
 discovery, legacy-WSL stdin transport, and taskkill paths are not ported)."""
 
 import os
+import re
 import shutil
 import signal
 import threading
@@ -58,24 +59,18 @@ def get_shell_env() -> dict[str, str]:
     return env
 
 
+# Control characters except tab/newline/CR, and the Unicode interlinear annotation
+# characters U+FFF9..U+FFFB (they crash width measurement). pidrei also drops lone
+# surrogates, which lossy decoding can leave in a Python str (a JS string cannot hold
+# them after pi's decode, and they would fail on output encoding here).
+_BINARY_OUTPUT_UNSAFE_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￹-￻\ud800-\udfff]")
+
+
 def sanitize_binary_output(value: str) -> str:
     """Sanitize binary output for display/storage: drop control characters
-    (except tab/newline/CR), lone surrogates, and Unicode format characters
-    that crash width measurement."""
-    output: list[str] = []
-    for char in value:
-        code = ord(char)
-        if code in (0x09, 0x0A, 0x0D):
-            output.append(char)
-            continue
-        if code <= 0x1F:
-            continue
-        if 0xFFF9 <= code <= 0xFFFB:
-            continue
-        if 0xD800 <= code <= 0xDFFF:  # Lone surrogates from lossy decoding
-            continue
-        output.append(char)
-    return "".join(output)
+    (except tab/newline/CR), Unicode interlinear annotation characters that
+    crash width measurement, and lone surrogates."""
+    return _BINARY_OUTPUT_UNSAFE_RE.sub("", value)
 
 
 # Detached child processes must be tracked so they can be killed on parent

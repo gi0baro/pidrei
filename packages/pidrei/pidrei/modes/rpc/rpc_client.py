@@ -14,12 +14,16 @@ import signal as signal_module
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tonio.colored as tonio
 
 from ...core.output_guard import write_stderr
 from .jsonl import JsonlLineDecoder, serialize_json_line
+
+
+if TYPE_CHECKING:
+    from ...core.agent_session import PromptDisposition, QueuedInputDisposition
 
 
 _REQUEST_TIMEOUT_S = 30.0
@@ -200,20 +204,28 @@ class RpcClient:
     # Command Methods
     # =========================================================================
 
-    async def prompt(self, message: str, images: list[Any] | None = None) -> None:
+    async def prompt(
+        self, message: str, images: list[Any] | None = None, streaming_behavior: str | None = None
+    ) -> PromptDisposition:
         """Send a prompt to the agent.
 
-        Returns after the preflight response arrives; use on_event() to
-        receive streaming events and wait_for_idle() to wait for completion."""
-        await self._send({"type": "prompt", "message": message, "images": images})
+        Returns the prompt's disposition after acceptance; use on_event() to
+        receive streaming events. If the disposition is "handled", no run
+        started for this prompt, so don't wait for agent_settled."""
+        response = await self._send(
+            {"type": "prompt", "message": message, "images": images, "streamingBehavior": streaming_behavior}
+        )
+        return self._get_data(response)["disposition"]
 
-    async def steer(self, message: str, images: list[Any] | None = None) -> None:
+    async def steer(self, message: str, images: list[Any] | None = None) -> QueuedInputDisposition:
         """Queue a steering message to interrupt the agent mid-run."""
-        await self._send({"type": "steer", "message": message, "images": images})
+        response = await self._send({"type": "steer", "message": message, "images": images})
+        return self._get_data(response)["disposition"]
 
-    async def follow_up(self, message: str, images: list[Any] | None = None) -> None:
+    async def follow_up(self, message: str, images: list[Any] | None = None) -> QueuedInputDisposition:
         """Queue a follow-up message to be processed after the agent finishes."""
-        await self._send({"type": "follow_up", "message": message, "images": images})
+        response = await self._send({"type": "follow_up", "message": message, "images": images})
+        return self._get_data(response)["disposition"]
 
     async def abort(self) -> None:
         """Abort current operation."""
@@ -424,7 +436,8 @@ class RpcClient:
             pending.resolve(data)
             return
 
-        # Otherwise it's an event
+        # Otherwise it's an event. Iterate a snapshot so listeners that unsubscribe during dispatch
+        # do not cause later listeners to miss this event.
         for listener in list(self._event_listeners):
             listener(data)
 

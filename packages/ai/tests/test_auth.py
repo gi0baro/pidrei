@@ -60,7 +60,7 @@ class OAuthCalls:
 
 
 def make_oauth(calls: OAuthCalls, *, fail_refresh: bool = False, rotate_to: str = "rotated") -> OAuthAuth:
-    async def login(interaction):
+    async def login(_interaction, _options=None):
         raise NotImplementedError
 
     async def refresh(credential, cancel):

@@ -7,6 +7,7 @@ catalogs) plus adapter-level stream/params coverage.
 """
 
 import json
+import re
 import time
 
 import pytest
@@ -280,6 +281,63 @@ async def test_stream_without_terminal_event_raises():
         await process_responses_stream(
             events_from([{"type": "response.created", "response": {"id": "resp_1"}}]), output, stream, model
         )
+
+
+@pytest.mark.tonio
+async def test_rejects_completed_streams_whose_tool_call_never_received_output_item_done():
+    model = make_model()
+    events = [
+        {
+            "type": "response.output_item.added",
+            "sequence_number": 0,
+            "output_index": 0,
+            "item": {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "bash", "arguments": ""},
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "sequence_number": 1,
+            "output_index": 0,
+            "item_id": "fc_1",
+            "delta": '{"command":"rm -rf /tmp/build',
+        },
+        {
+            "type": "response.completed",
+            "sequence_number": 2,
+            "response": {"id": "resp_unfinished", "status": "completed"},
+        },
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match=re.escape("OpenAI Responses stream completed with an unfinished tool call: bash (call_1|fc_1)"),
+    ):
+        await process_responses_stream(events_from(events), make_output(model), AssistantMessageEventStream(), model)
+
+
+# https://github.com/earendil-works/pi/issues/9974
+@pytest.mark.tonio
+async def test_rejects_parallel_tool_calls_without_output_index_instead_of_running_mixed_up_calls():
+    # llama.cpp omits output_index from every event and sends both done events after all deltas.
+    model = make_model()
+
+    def call(n: str) -> dict:
+        return {"type": "function_call", "id": f"fc_{n}", "call_id": f"call_{n}", "name": "bash"}
+
+    events = [
+        {"type": "response.output_item.added", "item": {**call("a"), "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_a", "delta": '{"command":"echo a"}'},
+        {"type": "response.output_item.added", "item": {**call("b"), "arguments": ""}},
+        {"type": "response.function_call_arguments.delta", "item_id": "fc_b", "delta": '{"command":"echo b"}'},
+        {"type": "response.output_item.done", "item": {**call("a"), "arguments": '{"command":"echo a"}'}},
+        {"type": "response.output_item.done", "item": {**call("b"), "arguments": '{"command":"echo b"}'}},
+        {"type": "response.completed", "response": {"id": "resp_no_output_index", "status": "completed"}},
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match=re.escape("OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)"),
+    ):
+        await process_responses_stream(events_from(events), make_output(model), AssistantMessageEventStream(), model)
 
 
 def phased_message_events(phases: tuple[str, str], terminal_status: str = "completed") -> list[dict]:
@@ -577,6 +635,50 @@ async def test_rejects_streams_that_end_before_a_terminal_response_event():
     assert events[-1].type == "error"
     assert result.stop_reason == "error"
     assert result.error_message == "OpenAI Responses stream ended before a terminal response event"
+
+
+@pytest.mark.tonio
+async def test_forwards_parsed_provider_stream_events_in_order():
+    model = make_model()
+    client = FakeClient(
+        [
+            {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_wrapper_early_eof"}},
+            {
+                "type": "response.output_item.added",
+                "sequence_number": 1,
+                "output_index": 0,
+                "item": {"type": "reasoning", "id": "rs_wrapper_early_eof", "summary": []},
+            },
+            {
+                "type": "response.reasoning_text.delta",
+                "sequence_number": 2,
+                "output_index": 0,
+                "content_index": 0,
+                "item_id": "rs_wrapper_early_eof",
+                "delta": "partial reasoning before the wrapper stream ends",
+            },
+        ]
+    )
+    provider_events: list = []
+    event_models: list = []
+
+    async def on_provider_stream_event(event, event_model) -> None:
+        provider_events.append(event)
+        event_models.append(event_model)
+
+    await stream_responses(
+        model,
+        Context(messages=[UserMessage(content="hi", timestamp=0)]),
+        OpenAIResponsesOptions(api_key="test", client=client, on_provider_stream_event=on_provider_stream_event),
+    ).result()
+
+    assert len(provider_events) == 3
+    assert [event["type"] for event in provider_events] == [
+        "response.created",
+        "response.output_item.added",
+        "response.reasoning_text.delta",
+    ]
+    assert event_models == [model, model, model]
 
 
 def test_build_params_defaults_and_reasoning():

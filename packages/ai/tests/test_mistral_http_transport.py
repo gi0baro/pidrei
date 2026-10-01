@@ -298,6 +298,86 @@ async def test_parses_native_thinking_text_fragmented_tool_calls_and_cached_toke
     assert message.usage.total_tokens == 14
 
 
+# #9674: GLM models on Mistral send empty content deltas at the start, around tool calls,
+# and sometimes mid-thinking. They must not open blocks or split thinking.
+@pytest.mark.tonio
+async def test_ignores_empty_content_deltas():
+    model = get_builtin_model("mistral", "zai-glm-5-3")
+    context = normalize_context(Context(messages=[UserMessage(content="hello", timestamp=1)]))
+
+    def thinking(text: str) -> dict:
+        return {"type": "thinking", "thinking": [{"type": "text", "text": text}]}
+
+    def tool_call(args: str, first: bool) -> dict:
+        return {
+            "index": 0,
+            **({"id": "abc123456"} if first else {}),
+            "function": {"name": "read" if first else "", "arguments": args},
+        }
+
+    deltas = [
+        {"content": ""},
+        {"content": [thinking("first part,")]},
+        {"content": ""},
+        {"content": [{"type": "text", "text": ""}]},
+        {"content": [thinking(" second part."), {"type": "text", "text": "Reading."}]},
+        {"content": "", "tool_calls": [tool_call("", True)]},
+        {"content": "", "tool_calls": [tool_call('{"path":', False)]},
+        {"content": "", "tool_calls": [tool_call('"a.txt"}', False)]},
+        {"content": ""},
+    ]
+    events = [
+        {
+            "id": "response-1",
+            "model": model.id,
+            "choices": [{"index": 0, "finish_reason": "tool_calls" if i == len(deltas) - 1 else None, "delta": delta}],
+        }
+        for i, delta in enumerate(deltas)
+    ]
+
+    message = await stream_mistral(model, context, MistralOptions(api_key="test", client=sse_client(events))).result()
+
+    assert message.content == [
+        ThinkingContent(thinking="first part, second part."),
+        TextContent(text="Reading."),
+        ToolCall(id="abc123456", name="read", arguments={"path": "a.txt"}),
+    ]
+
+
+@pytest.mark.tonio
+async def test_forwards_each_parsed_sse_payload_before_normalizing_it():
+    context = normalize_context(Context(messages=[UserMessage(content="hello", timestamp=1)]))
+    events = [
+        {
+            "id": "response-1",
+            "provider_metadata": {"request": "test"},
+            "choices": [{"index": 0, "finish_reason": None, "delta": {"content": "hello"}}],
+        },
+        {
+            "id": "response-1",
+            "choices": [{"index": 0, "finish_reason": "stop", "delta": {}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        },
+    ]
+    received: list = []
+    event_models: list = []
+
+    async def on_provider_stream_event(event, event_model) -> None:
+        received.append(event)
+        event_models.append(event_model)
+
+    result = await stream_mistral(
+        MODEL,
+        context,
+        MistralOptions(api_key="test", client=sse_client(events), on_provider_stream_event=on_provider_stream_event),
+    ).result()
+
+    assert received == events
+    assert event_models == [MODEL, MODEL]
+    assert result.stop_reason == "stop"
+    assert result.content == [TextContent(text="hello")]
+
+
 @pytest.mark.tonio
 async def test_parses_sse_and_utf8_sequences_split_across_transport_chunks():
     context = Context(messages=[UserMessage(content="hello", timestamp=1)])

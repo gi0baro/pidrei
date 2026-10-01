@@ -22,7 +22,7 @@ them in `~/.pidrei/agent/keybindings.json` (see [Customizing](#customizing)).
 | `ctrl+l` | `app.model.select` | Open the model selector |
 | `ctrl+o` | `app.tools.expand` | Expand or collapse tool output |
 | `ctrl+g` | `app.editor.external` | Open the external editor (`externalEditor` setting, `$VISUAL`, `$EDITOR`, else `nano`) |
-| `ctrl+v` | `app.clipboard.pasteImage` | Paste an image, or text, from the clipboard |
+| `ctrl+v` | `app.clipboard.pasteImage` | Paste files on macOS, images, or text from the clipboard |
 | `ctrl+x` | `app.message.copy` | Copy the selected message in `/tree`; in fullscreen mode, copy the active selection when `fullscreenCopyOnSelect` is `false`; otherwise copy the last assistant message |
 | `alt+enter` | `app.message.followUp` | Queue a follow-up message |
 | `alt+up` | `app.message.dequeue` | Restore queued messages |

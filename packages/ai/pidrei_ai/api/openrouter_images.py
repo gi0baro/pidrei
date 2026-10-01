@@ -13,8 +13,8 @@ from typing import Any
 from pidrei_ai.types import (
     AssistantImages,
     ImageContent,
+    ImageModel,
     ImagesContext,
-    ImagesModel,
     ImagesOptions,
     ProviderHeaders,
     ProviderResponse,
@@ -76,8 +76,9 @@ class _OpenRouterImagesClient:
 
 
 async def generate_images(
-    model: ImagesModel, context: ImagesContext, options: ImagesOptions | None = None
+    model: ImageModel, context: ImagesContext, options: ImagesOptions | None = None
 ) -> AssistantImages:
+    """Image generation over OpenRouter's chat completions endpoint."""
     output = AssistantImages(
         api=model.api,
         provider=model.provider,
@@ -142,14 +143,14 @@ async def generate_images(
 
 
 def create_client(
-    model: ImagesModel, api_key: str, options_headers: ProviderHeaders | None = None, env=None
+    model: ImageModel, api_key: str, options_headers: ProviderHeaders | None = None, env=None
 ) -> _OpenRouterImagesClient:
     headers = provider_headers_to_record({**(model.headers or {}), **(options_headers or {})}) or {}
     headers["authorization"] = f"Bearer {api_key}"
     return _OpenRouterImagesClient(model.base_url, headers, env)
 
 
-def build_params(model: ImagesModel, context: ImagesContext) -> dict[str, Any]:
+def build_params(model: ImageModel, context: ImagesContext) -> dict[str, Any]:
     content: list[dict[str, Any]] = []
     for item in context.input:
         if item.type == "text":
@@ -165,7 +166,7 @@ def build_params(model: ImagesModel, context: ImagesContext) -> dict[str, Any]:
     }
 
 
-def parse_usage(raw_usage: dict[str, Any], model: ImagesModel) -> Usage:
+def parse_usage(raw_usage: dict[str, Any], model: ImageModel) -> Usage:
     prompt_tokens = raw_usage.get("prompt_tokens") or 0
     details = raw_usage.get("prompt_tokens_details") or {}
     reported_cached_tokens = details.get("cached_tokens") or 0

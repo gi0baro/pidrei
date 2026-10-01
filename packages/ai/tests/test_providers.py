@@ -12,6 +12,11 @@ from pidrei_ai.env_api_keys import AMBIENT_AUTH_MARKER, find_env_keys, get_env_a
 from pidrei_ai.providers.all import (
     builtin_models,
     builtin_providers,
+    get_all_builtin_models,
+    get_builtin_classifier_model,
+    get_builtin_classifier_models,
+    get_builtin_image_model,
+    get_builtin_image_models,
     get_builtin_model,
     get_builtin_model_data_generated_at,
     get_builtin_models,
@@ -94,9 +99,19 @@ def test_builtin_models_registers_every_builtin_provider_with_models():
     assert len(models.get_models()) > 500
 
     for provider in providers:
-        listed = models.get_models(provider.id)
+        listed = models.get_all_models(provider.id)
         assert listed, provider.id
         assert all(model.provider == provider.id for model in listed)
+
+
+def test_returns_empty_results_for_unknown_provider_ids():
+    assert get_builtin_model("not-a-provider", "x") is None
+    assert get_builtin_image_model("not-a-provider", "x") is None
+    assert get_builtin_classifier_model("not-a-provider", "x") is None
+    assert get_builtin_models("not-a-provider") == []
+    assert get_builtin_image_models("not-a-provider") == []
+    assert get_builtin_classifier_models("not-a-provider") == []
+    assert get_all_builtin_models("not-a-provider") == []
 
 
 def test_stores_native_constrained_sampling_capabilities_in_model_metadata():
@@ -206,7 +221,7 @@ def test_enables_mid_conversation_system_messages_only_for_verified_models():
         ("openrouter", "openai/gpt-5.6-terra"),
     ]
     unsupported = [
-        ("fireworks", "accounts/fireworks/models/kimi-k2p6"),
+        ("fireworks", "accounts/fireworks/models/nemotron-3-ultra-nvfp4"),
         ("openai", "gpt-4.1"),
         ("openai", "gpt-5.2"),
         ("anthropic", "claude-sonnet-4-5"),

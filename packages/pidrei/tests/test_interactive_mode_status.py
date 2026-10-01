@@ -526,6 +526,7 @@ def create_show_loaded_resources_fake(
                     for ext in (extensions or [])
                 ],
                 errors=[],
+                warnings=[],
             ),
             get_themes=lambda: {"themes": [], "diagnostics": []},
         ),

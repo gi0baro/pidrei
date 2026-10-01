@@ -2,7 +2,7 @@
 
 Claude Pro/Max login: PKCE against claude.ai, with a loopback callback server on
 a fixed port racing a manual paste prompt, so a browser on another machine still
-works.
+works. When the port is taken, only the paste prompt is used.
 
 pi's Node-only guard (`getNodeApis` refusing to run outside Node/Bun) has no
 counterpart: there is no browser build to protect here.
@@ -11,25 +11,20 @@ counterpart: there is no browser build to protect here.
 import base64
 import json
 import traceback
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
-import tonio.colored as tonio
-
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.callback_server import (
-    CallbackRequest,
-    CallbackResponse,
-    CallbackServer,
-    OneShotValue,
-    start_callback_server,
+    OAuthCallbackServer,
+    keep_code,
+    start_oauth_callback_server,
+    wait_for_callback_or_manual_input,
 )
-from pidrei_ai.auth.oauth.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
-    AuthPrompt,
+    LoginOptions,
     ModelAuth,
     OAuthAuth,
     OAuthCredential,
@@ -53,19 +48,6 @@ CALLBACK_PATH = "/callback"
 REDIRECT_URI = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
 SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 TOKEN_TIMEOUT_MS = 30_000
-
-
-@dataclass(slots=True)
-class _CallbackServerInfo:
-    server: CallbackServer
-    redirect_uri: str
-    code: OneShotValue
-
-    def cancel_wait(self) -> None:
-        self.code.settle(None)
-
-    async def wait_for_code(self) -> dict[str, str] | None:
-        return await self.code.wait()
 
 
 def _parse_authorization_input(value: str) -> tuple[str | None, str | None]:
@@ -106,36 +88,6 @@ def _format_error_details(error: BaseException | Any) -> str:
             details.append(f"stack={stack}")
         return "; ".join(details)
     return str(error)
-
-
-async def _start_callback_server(expected_state: str) -> _CallbackServerInfo:
-    code = OneShotValue()
-
-    async def handle(request: CallbackRequest) -> CallbackResponse:
-        if request.path != CALLBACK_PATH:
-            return CallbackResponse(404, oauth_error_html("Callback route not found."))
-
-        error = request.get("error")
-        if error:
-            return CallbackResponse(
-                400, oauth_error_html("Anthropic authentication did not complete.", f"Error: {error}")
-            )
-
-        callback_code = request.get("code")
-        state = request.get("state")
-        if not callback_code or not state:
-            return CallbackResponse(400, oauth_error_html("Missing code or state parameter."))
-
-        if state != expected_state:
-            return CallbackResponse(400, oauth_error_html("State mismatch."))
-
-        code.settle({"code": callback_code, "state": state})
-        return CallbackResponse(
-            200, oauth_success_html("Anthropic authentication completed. You can close this window.")
-        )
-
-    server = await start_callback_server(host=CALLBACK_HOST, port=CALLBACK_PORT, handle=handle)
-    return _CallbackServerInfo(server=server, redirect_uri=REDIRECT_URI, code=code)
 
 
 async def _post_json(url: str, body: dict[str, Any], cancel: CancelToken) -> str:
@@ -191,38 +143,25 @@ async def _exchange_authorization_code(
     )
 
 
-async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredential:
+async def _login_anthropic(
+    interaction: ProviderAuthInteraction, options: LoginOptions | None = None
+) -> OAuthCredential:
     pkce = generate_pkce()
     verifier, challenge = pkce.verifier, pkce.challenge
-    server = await _start_callback_server(verifier)
-    manual_abort = CancelToken()
-    unsubscribe_abort = interaction.cancel.on_cancel(lambda _reason: server.cancel_wait())
-    manual: dict[str, Any] = {}
-    prompt_done = tonio.Event()
+    callback: OAuthCallbackServer[str] | None
+    try:
+        callback = await start_oauth_callback_server(
+            provider_name="Anthropic",
+            host=CALLBACK_HOST,
+            port=CALLBACK_PORT,
+            path=CALLBACK_PATH,
+            state=verifier,
+            complete=keep_code,
+            cancel=interaction.cancel,
+        )
+    except Exception:
+        callback = None
 
-    async def run_manual_prompt() -> None:
-        try:
-            manual["input"] = await interaction.prompt(
-                AuthPrompt(
-                    type="manual_code",
-                    message="Complete login in your browser, or paste the authorization code / redirect URL here:",
-                    placeholder=REDIRECT_URI,
-                    cancel=manual_abort,
-                )
-            )
-        except Exception as error:
-            manual["error"] = error
-        prompt_done.set()
-        server.cancel_wait()
-
-    def read_manual_input() -> tuple[str | None, str | None]:
-        parsed_code, parsed_state = _parse_authorization_input(manual["input"])
-        if parsed_state and parsed_state != verifier:
-            raise RuntimeError("OAuth state mismatch")
-        return parsed_code, parsed_state or verifier
-
-    code: str | None = None
-    state: str | None = None
     try:
         auth_params = urlencode(
             {
@@ -247,33 +186,29 @@ async def _login_anthropic(interaction: ProviderAuthInteraction) -> OAuthCredent
             )
         )
 
-        tonio.spawn.without_tracking(run_manual_prompt())
-
-        result = await server.wait_for_code()
-        if manual.get("error") is not None:
-            raise manual["error"]
-        if result is not None and result.get("code"):
-            code, state = result["code"], result.get("state")
-        elif manual.get("input"):
-            code, state = read_manual_input()
-
-        if not code:
-            await prompt_done.wait()
-            if manual.get("error") is not None:
-                raise manual["error"]
-            if manual.get("input"):
-                code, state = read_manual_input()
+        result = await wait_for_callback_or_manual_input(
+            interaction,
+            callback,
+            message="Complete login in your browser, or paste the authorization code / redirect URL here:",
+            placeholder=REDIRECT_URI,
+        )
+        code: str | None
+        state = verifier
+        if result.type == "callback":
+            code = result.value
+        else:
+            code, parsed_state = _parse_authorization_input(result.input)
+            if parsed_state and parsed_state != verifier:
+                raise RuntimeError("OAuth state mismatch")
+            state = parsed_state or verifier
 
         if not code:
             raise RuntimeError("Missing authorization code")
-        if not state:
-            raise RuntimeError("Missing OAuth state")
         interaction.notify(AuthEvent(type="progress", message="Exchanging authorization code for tokens..."))
         return await _exchange_authorization_code(code, state, verifier, REDIRECT_URI, interaction.cancel)
     finally:
-        unsubscribe_abort()
-        manual_abort.cancel()
-        server.server.close()
+        if callback is not None:
+            callback.close()
 
 
 async def _refresh_anthropic_token(refresh_token: str, cancel: CancelToken) -> OAuthCredential:

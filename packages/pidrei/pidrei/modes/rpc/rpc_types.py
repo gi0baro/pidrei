@@ -24,7 +24,10 @@ Commands (stdin, camelCase keys, optional "id" for correlation):
   get_commands.
 
 Responses (stdout): {id?, type: "response", command, success: true, data?}
-or {id?, type: "response", command, success: false, error}.
+or {id?, type: "response", command, success: false, error}. Successful
+prompt, steer and follow_up responses carry data {disposition}: "handled"
+(no run started, so don't wait for agent_settled) or "queued", plus
+"started" for prompt.
 
 Extension UI requests (stdout): {type: "extension_ui_request", id, method,
 ...} with methods select/confirm/input/editor/notify/setStatus/setWidget/

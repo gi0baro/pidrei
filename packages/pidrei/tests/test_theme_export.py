@@ -7,6 +7,7 @@ import pytest
 
 from pidrei.config import ENV_AGENT_DIR, get_themes_dir
 from pidrei.modes.interactive.theme import get_theme_export_colors
+from pidrei_tui import color_to_hex, okhsl_color
 
 
 @pytest.fixture
@@ -62,6 +63,23 @@ class TestGetThemeExportColors:
             "pageBg": "#112233",
             "cardBg": "#223344",
             "infoBg": "#445566",
+        }
+
+    @pytest.mark.tonio
+    async def test_converts_okhsl_export_colors_to_hex_because_css_does_not_support_them(self, agent_dir):
+        dark_theme = _load_dark_theme()
+        custom_theme = {
+            **dark_theme,
+            "name": "custom-export-okhsl",
+            "vars": {"card": "okhsl(250 20% 20%)"},
+            "export": {"pageBg": "okhsl(250 20% 15%)", "cardBg": "card", "infoBg": "oklch(30% 0.05 80)"},
+        }
+        (agent_dir / "themes" / "custom-export-okhsl.json").write_text(json.dumps(custom_theme, indent=2))
+
+        assert await get_theme_export_colors("custom-export-okhsl") == {
+            "pageBg": color_to_hex(okhsl_color(250, 0.2, 0.15)),
+            "cardBg": color_to_hex(okhsl_color(250, 0.2, 0.2)),
+            "infoBg": "oklch(30% 0.05 80)",
         }
 
     @pytest.mark.tonio

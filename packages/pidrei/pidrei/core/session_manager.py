@@ -1186,29 +1186,35 @@ class SessionManager:
     def get_session_file(self) -> str | None:
         return self._session_file
 
+    def _has_conversation_locked(self) -> bool:
+        """A new session file is created only once the session contains a user or
+        assistant message. Setup entries alone (model, thinking level, system
+        prompt) stay in memory so opening and closing pidrei without chatting
+        leaves no file behind. Starting at the user message (not the first
+        assistant reply) keeps the prompt on disk if the first turn never
+        completes (#10000). Caller holds `_lock`.
+        """
+        return any(
+            e.get("type") == "message" and getattr(e.get("message"), "role", None) in ("user", "assistant")
+            for e in self._file_entries
+        )
+
     def _plan_persist(self, entry: dict[str, Any]) -> tuple[str, str, str] | None:
         """Decide what bytes go where, reading in-memory state under `_lock`.
 
         Returns `(path, mode, payload)`, or None when this entry writes nothing.
         Serializing here rather than inside the pool call keeps the whole
-        `_file_entries` read on the caller's side of the await.
+        `_file_entries` read on the caller's side of the await. The caller holds
+        `_io_lock` across the plan and its write, so two appends cannot both
+        plan the exclusive create.
         """
         with self._lock:
             if not self._persist or not self._session_file:
                 return None
 
-            has_assistant = any(
-                e.get("type") == "message" and getattr(e.get("message"), "role", None) == "assistant"
-                for e in self._file_entries
-            )
-            if not has_assistant:
-                if self._flushed:
-                    return self._session_file, "a", _dump_json(_entry_to_wire(entry)) + "\n"
-                # Mark as not flushed so when assistant arrives, all entries get written
-                self._flushed = False
-                return None
-
             if not self._flushed:
+                if not self._has_conversation_locked():
+                    return None
                 payload = "".join(_dump_json(_entry_to_wire(e)) + "\n" for e in self._file_entries)
                 return self._session_file, "x", payload
             return self._session_file, "a", _dump_json(_entry_to_wire(entry)) + "\n"
@@ -1351,8 +1357,9 @@ class SessionManager:
         """Get the current session name from the latest session_info entry, if any."""
         with self._lock:
             # Walk entries in reverse to find the latest session_info entry.
-            # Empty names explicitly clear the session title.
-            for entry in reversed(self.get_entries()):
+            # Empty names explicitly clear the session title. Reads _file_entries directly: the
+            # footer calls this on every frame, and get_entries() copies the whole session.
+            for entry in reversed(self._file_entries):
                 if entry.get("type") == "session_info":
                     raw_name = entry.get("name")
                     return (raw_name.strip() if isinstance(raw_name, str) else "") or None
@@ -1683,17 +1690,11 @@ class SessionManager:
                 # In-memory mode: replace current session with the path + labels
                 return None
 
-            # Only write the file now if it contains an assistant message.
-            # Otherwise defer to _persist_entry(), which creates the file on the
-            # first assistant response, matching the new_session() contract and
-            # avoiding the duplicate-header bug when the no-assistant guard later
-            # resets flushed to False.
-            has_assistant = any(
-                e.get("type") == "message" and getattr(e.get("message"), "role", None) == "assistant"
-                for e in self._file_entries
-            )
+            # Use the same rule as _plan_persist(): write now if the branched path
+            # already has a conversation, otherwise let _persist_entry() create the
+            # file later.
             self._flushed = False
-            if not has_assistant:
+            if not self._has_conversation_locked():
                 return new_session_file
             payload = "".join(_dump_json(_entry_to_wire(entry)) + "\n" for entry in self._file_entries)
 

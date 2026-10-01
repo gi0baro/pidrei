@@ -1,6 +1,6 @@
 {
   "openai-completions": {
-    "glm-4.6v": {
+    "chat:glm-4.6v": {
       "id": "glm-4.6v",
       "name": "GLM-4.6V",
       "api": "openai-completions",
@@ -37,9 +37,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "glm-5.3": {
+    "chat:glm-5.3": {
       "id": "glm-5.3",
       "name": "GLM-5.3",
       "api": "openai-completions",
@@ -74,9 +75,10 @@
         "zaiToolStream": true
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     },
-    "glm-5.3-flash": {
+    "chat:glm-5.3-flash": {
       "id": "glm-5.3-flash",
       "name": "GLM-5.3-Flash",
       "api": "openai-completions",
@@ -122,9 +124,10 @@
             "jpegQuality": 80
           }
         }
-      }
+      },
+      "type": "chat"
     },
-    "glm-5.3-highspeed": {
+    "chat:glm-5.3-highspeed": {
       "id": "glm-5.3-highspeed",
       "name": "GLM-5.3 Highspeed",
       "api": "openai-completions",
@@ -159,7 +162,8 @@
         "zaiToolStream": true
       },
       "contextWindow": 1000000,
-      "maxTokens": 131072
+      "maxTokens": 131072,
+      "type": "chat"
     }
   }
 }

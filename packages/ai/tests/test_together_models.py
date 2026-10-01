@@ -12,8 +12,8 @@ from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import ModelCost, OpenAICompletionsCompat
 
 
-def test_registers_default_kimi_k26_via_openai_completions():
-    model = get_builtin_model("together", "moonshotai/Kimi-K2.6")
+def test_registers_default_kimi_k3_via_openai_completions():
+    model = get_builtin_model("together", "moonshotai/Kimi-K3")
 
     assert model is not None
     assert model.api == "openai-completions"
@@ -22,9 +22,9 @@ def test_registers_default_kimi_k26_via_openai_completions():
     assert model.reasoning is True
     assert model.thinking_level_map == {"minimal": None, "low": None, "medium": None}
     assert model.input == ["text", "image"]
-    assert model.context_window == 262144
-    assert model.max_tokens == 131000
-    assert model.cost == ModelCost(input=1.2, output=4.5, cache_read=0.2, cache_write=0)
+    assert model.context_window == 1048576
+    assert model.max_tokens == 131072
+    assert model.cost == ModelCost(input=3, output=15, cache_read=0.3, cache_write=0)
     assert model.compat == OpenAICompletionsCompat(
         supports_store=False,
         supports_developer_role=False,

@@ -82,7 +82,7 @@ def test_supports_a_hole_between_high_and_max():
 
 
 @pytest.mark.tonio
-@pytest.mark.parametrize("model_id", ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])
+@pytest.mark.parametrize("model_id", ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])
 async def test_sends_max_to_the_codex_responses_api(model_id):
     model = get_builtin_model("openai-codex", model_id)
     assert model is not None
