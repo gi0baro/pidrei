@@ -96,6 +96,69 @@ class TestWithFileMutationQueue:
         assert order == ["target:start", "target:end", "alias:start", "alias:end"]
 
     @pytest.mark.tonio
+    async def test_a_queued_mutation_runs_in_turn_when_its_caller_is_cancelled(self, tmp_path):
+        """pidrei-only: pi's queued mutation cannot be cancelled; here the
+        scope of its caller can be. The mutation still runs in its turn, and
+        the ones behind it after it."""
+        order: list[str] = []
+        path = str(tmp_path / "file-mutation-queue-cancelled")
+        key = await resolve_mutation_queue_key(path)
+        first_started = tonio.Event()
+        finish_first = tonio.Event()
+        second_queued = tonio.Event()
+        third_started = tonio.Event()
+
+        async def first_op():
+            order.append("first:start")
+            first_started.set()
+            await finish_first.wait(5)
+            order.append("first:end")
+
+        async def second_op():
+            order.append("second:start")
+
+        async def third_op():
+            order.append("third:start")
+            third_started.set()
+
+        async def queue_second():
+            queued = with_file_mutation_queue(path, second_op, queue_key=key)
+            second_queued.set()
+            await queued
+
+        async with tonio.scope(cancel_on_exc=True) as mutations:
+            mutations.spawn(with_file_mutation_queue(path, first_op, queue_key=key))
+            await first_started.wait(5)
+            assert first_started.is_set()
+
+            async with tonio.scope() as cancelled:
+                cancelled.spawn(queue_second())
+                await second_queued.wait(5)
+                assert second_queued.is_set()
+                cancelled.cancel()
+
+            mutations.spawn(with_file_mutation_queue(path, third_op, queue_key=key))
+            # A window for the queued mutations to overlap the first, if they could.
+            await third_started.wait(0.05)
+            assert order == ["first:start"]
+            finish_first.set()
+            await third_started.wait(5)
+            assert third_started.is_set(), "the queue is stranded behind the cancelled caller"
+
+        assert order == ["first:start", "first:end", "second:start", "third:start"]
+
+    @pytest.mark.tonio
+    async def test_raises_the_operation_error_itself(self, tmp_path):
+        """pidrei-only: the mutation runs detached; its error reaches the caller unwrapped."""
+        path = str(tmp_path / "file-mutation-queue-error")
+
+        async def failing_op():
+            raise PermissionError("denied")
+
+        with pytest.raises(PermissionError, match="denied"):
+            await with_file_mutation_queue(path, failing_op, queue_key=await resolve_mutation_queue_key(path))
+
+    @pytest.mark.tonio
     async def test_serializes_concurrent_write_tool_calls_to_the_same_file(self, tmp_path):
         write_tool = create_write_tool(str(tmp_path))
         test_file = tmp_path / "concurrent.txt"

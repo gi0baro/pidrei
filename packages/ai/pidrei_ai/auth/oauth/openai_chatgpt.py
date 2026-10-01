@@ -120,17 +120,23 @@ async def _start_callback_server(expected_state: str, result: OneShotValue) -> C
 
             error = request.get("error")
             if error:
-                result.settle(("error", RuntimeError(f"ChatGPT authorization failed: {error}")))
-                return CallbackResponse(400, oauth_error_html("ChatGPT was not connected.", f"Error: {error}"))
+                failure = RuntimeError(f"ChatGPT authorization failed: {error}")
+                return CallbackResponse(
+                    400,
+                    oauth_error_html("ChatGPT was not connected.", f"Error: {error}"),
+                    after_sent=lambda: result.settle(("error", failure)),
+                )
 
             try:
                 authorization_result = _authorization_result_from_callback(request.query, expected_state)
             except Exception as failure:
                 return CallbackResponse(400, oauth_error_html(str(failure)))
 
-            result.settle(("ok", authorization_result))
+            # pi sends the page, then resolves: the login's cleanup drops this connection.
             return CallbackResponse(
-                200, oauth_success_html("ChatGPT authentication completed. You can close this window.")
+                200,
+                oauth_success_html("ChatGPT authentication completed. You can close this window."),
+                after_sent=lambda: result.settle(("ok", authorization_result)),
             )
         except Exception:
             return CallbackResponse(500, oauth_error_html("Internal error while processing the callback."))

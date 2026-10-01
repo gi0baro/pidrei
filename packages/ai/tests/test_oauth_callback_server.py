@@ -97,6 +97,26 @@ async def test_close_all_connections_drops_kept_alive_connections():
         server.close()
 
 
+@pytest.mark.tonio
+async def test_after_sent_runs_once_the_page_is_written():
+    """pidrei-only: the ChatGPT flow settles its result from `after_sent`, and
+    the login it wakes drops every connection. The browser still gets the page."""
+    servers = []
+
+    async def handle(_request):
+        return CallbackResponse(status=200, html="signed in", after_sent=servers[0].close_all_connections)
+
+    servers.append(await start_callback_server(host="127.0.0.1", port=0, handle=handle))
+    client = http.create_client(timeout=http.oneshot_timeout(5_000), trust_env=False)
+    try:
+        page = await client.get(f"http://127.0.0.1:{servers[0].port}/callback")
+        assert page.status_code == 200
+        assert await page.read() == b"signed in"
+    finally:
+        await client.close()
+        servers[0].close()
+
+
 # --- pi's oauth-callback-server.test.ts ---
 
 
@@ -241,14 +261,15 @@ async def test_completes_only_the_first_callback():
 
     async def blocking(_code: str) -> str:
         exchange_started.set()
-        await release.wait()
+        await release.wait(5)
         return "done"
 
     server = await start(complete=blocking)
     url = callback_url(server.redirect_uri, {"code": "c", "state": "expected-state"})
 
     async def second_request() -> int:
-        await exchange_started.wait()
+        await exchange_started.wait(5)
+        assert exchange_started.is_set()
         second = await fetch_page(url)
         # A claimed callback keeps completing even when the caller switches to manual input.
         server.cancel()

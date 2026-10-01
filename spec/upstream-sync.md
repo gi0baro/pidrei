@@ -571,9 +571,12 @@ producer/consumer channel and no shared mutable record
   close and observe's "open? then send" are one step under `events_guard`;
   an observe with no run, or after the close, is dropped. Never emit nested
   events from the nested call's coroutine directly.
-- **Exclusive queue**: Pi's `queueTail` promise chain is an Event-tail chain
-  (as in `harness/tools/file_mutation_queue.py`). `holds_queue` rides in the
-  scope, so a nested call inside an exclusive call never re-queues.
+- **Exclusive queue**: Pi's `queueTail` promise chain is a FIFO mutex, so it
+  is a TonIO `sync.Lock` held with `async with` around the tool call; a call
+  cancelled while it waits leaves the queue. (Not an Event-tail chain: the
+  place in line is taken after an await, and a chain strands on a cancelled
+  waiter.) `holds_queue` rides in the scope, so a nested call inside an
+  exclusive call never re-queues.
 - The runner exists from session construction; Pi creates it lazily, which
   would race between parallel tools.
 - **Unchanged from Pi**: ids, event payloads, caps, error truncation,

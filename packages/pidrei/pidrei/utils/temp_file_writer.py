@@ -31,8 +31,8 @@ import contextlib
 
 import tonio.colored as tonio
 from tonio.colored import fs
+from tonio.colored.exceptions import RuntimeNotInitializedError
 from tonio.colored.sync import channel
-from tonio.exceptions import RuntimeNotInitializedError
 
 
 async def discard_temp_file(path: fs.Path) -> None:

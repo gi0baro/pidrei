@@ -201,6 +201,21 @@ class McpServerRegistry:
         if listener is not None:
             listener()
 
+    def claim(self, server: RegisteredMcpServer) -> RegisteredMcpServer | None:
+        """Register a server, or replace the one its extension registered
+        earlier. A name another extension owns is left alone and that
+        registration returned: the ownership check and the registration are
+        one step, for extensions registering in parallel."""
+        with self._guard:
+            registered = self._servers.get(server.name)
+            if registered is not None and registered.extension_path != server.extension_path:
+                return registered
+            self._servers[server.name] = server
+            listener = self._change_listener
+        if listener is not None:
+            listener()
+        return None
+
     def unregister(self, name: str, extension_path: str) -> None:
         """Remove a server registered by `extension_path`. Servers of other extensions are left alone."""
         with self._guard:

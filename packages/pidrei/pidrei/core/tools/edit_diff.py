@@ -6,6 +6,7 @@ coding-agent-only preview helpers (compute_edits_diff / compute_edit_diff).
 """
 
 import errno
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
 from tonio.colored import fs
@@ -70,9 +71,9 @@ async def compute_edits_diff(path: str, edits: list[Edit], cwd: str) -> EditDiff
         return EditDiffError(error=str(error))
 
 
-async def compute_edit_diff(path: str, old_text: str, new_text: str, cwd: str) -> EditDiffResult | EditDiffError:
+def compute_edit_diff(path: str, old_text: str, new_text: str, cwd: str) -> Awaitable[EditDiffResult | EditDiffError]:
     """Compute the diff for a single edit operation without applying it."""
-    return await compute_edits_diff(path, [Edit(old_text=old_text, new_text=new_text)], cwd)
+    return compute_edits_diff(path, [Edit(old_text=old_text, new_text=new_text)], cwd)
 
 
 __all__ = [

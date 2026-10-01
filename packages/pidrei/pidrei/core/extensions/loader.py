@@ -33,7 +33,7 @@ import os
 import re
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -441,11 +441,15 @@ class ExtensionAPI:
             raise Exception(  # noqa: TRY004 - pi throws a plain Error
                 f'Invalid MCP server registered by extension "{self._extension.path}": {validated}'
             )
-        registered = self._runtime.mcp_servers.get(name)
+        server = RegisteredMcpServer(name=name, config=copy.deepcopy(validated), extension_path=self._extension.path)
+        # pi checks the owner now and, while the factory runs, registers when it
+        # returns. Once loaded, the check and the registration are one step.
+        loading = self._state == "loading"
+        registered = self._runtime.mcp_servers.get(name) if loading else self._runtime.mcp_servers.claim(server)
         if registered is not None and registered.extension_path != self._extension.path:
             raise Exception(f'MCP server "{name}" is already registered by extension "{registered.extension_path}"')
-        server = RegisteredMcpServer(name=name, config=copy.deepcopy(validated), extension_path=self._extension.path)
-        self._apply_runtime_change(lambda: self._runtime.mcp_servers.register(server))
+        if loading:
+            self._pending_runtime_changes.append(lambda: self._runtime.mcp_servers.register(server))
 
     def unregister_mcp_server(self, name: str) -> None:
         """Remove an MCP server this extension registered and close its connection."""
@@ -627,15 +631,15 @@ async def _load_extension(
         return None, f"Failed to load extension: {error}"
 
 
-async def load_extension_from_factory(
+def load_extension_from_factory(
     factory: Any,
     cwd: str,
     event_bus: EventBus,
     runtime: ExtensionRuntime,
     extension_path: str = "<inline>",
-) -> Extension:
+) -> Awaitable[Extension]:
     """Build an Extension from an in-process factory (pi's inline extensions)."""
-    return await _initialize_extension(factory, extension_path, extension_path, resolve_path(cwd), event_bus, runtime)
+    return _initialize_extension(factory, extension_path, extension_path, resolve_path(cwd), event_bus, runtime)
 
 
 async def _load_extensions_internal(
@@ -665,22 +669,22 @@ async def _load_extensions_internal(
     return LoadExtensionsResult(extensions=extensions, errors=errors, runtime=resolved_runtime)
 
 
-async def load_extensions(
+def load_extensions(
     paths: list[str],
     cwd: str,
     event_bus: EventBus | None = None,
     runtime: ExtensionRuntime | None = None,
-) -> LoadExtensionsResult:
-    return await _load_extensions_internal(paths, cwd, event_bus, runtime)
+) -> Awaitable[LoadExtensionsResult]:
+    return _load_extensions_internal(paths, cwd, event_bus, runtime)
 
 
-async def load_extensions_cached(
+def load_extensions_cached(
     paths: list[str],
     cwd: str,
     event_bus: EventBus | None = None,
     runtime: ExtensionRuntime | None = None,
-) -> LoadExtensionsResult:
-    return await _load_extensions_internal(paths, cwd, event_bus, runtime, use_cache=True)
+) -> Awaitable[LoadExtensionsResult]:
+    return _load_extensions_internal(paths, cwd, event_bus, runtime, use_cache=True)
 
 
 # -- discovery -------------------------------------------------------------------

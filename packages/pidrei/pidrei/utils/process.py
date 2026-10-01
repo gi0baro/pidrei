@@ -56,7 +56,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import tonio.colored as tonio
-from tonio.exceptions import ResourceBroken
+from tonio.colored.exceptions import ResourceBroken
 
 
 #: How long a signalled child gets before SIGKILL. Never observed by the caller:

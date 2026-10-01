@@ -5,6 +5,7 @@ nothing is stored. No silent env fallback after a failed refresh or for a
 credential type without a matching handler.
 """
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
 import tonio.colored as tonio
@@ -50,8 +51,8 @@ class _OverlayEnvAuthContext:
     async def env(self, name: str) -> str | None:
         return self._env.get(name) or await self._base.env(name)
 
-    async def file_exists(self, path: str) -> bool:
-        return await self._base.file_exists(path)
+    def file_exists(self, path: str) -> Awaitable[bool]:
+        return self._base.file_exists(path)
 
 
 async def resolve_provider_auth(

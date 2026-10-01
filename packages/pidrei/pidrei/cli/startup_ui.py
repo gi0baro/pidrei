@@ -118,8 +118,8 @@ async def start_startup_tui(ui: TUI, settings_manager: SettingsManager) -> None:
     await ui.start()
     theme_setting = settings_manager.get_theme_setting()
 
-    async def on_colors() -> None:
-        await set_theme(_resolve_startup_theme(theme_setting))
+    def on_colors():
+        return set_theme(_resolve_startup_theme(theme_setting))
 
     _query_startup_terminal_colors(ui, on_colors)
 

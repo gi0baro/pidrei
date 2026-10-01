@@ -319,8 +319,8 @@ class VirtualModelsProvider:
     def fetch_deferred(self, model: Model, handle: Any, options: Any = None) -> Any:
         return self._base.fetch_deferred(model, handle, options)
 
-    async def cancel_deferred(self, model: Model, handle: Any, options: Any = None) -> None:
-        await self._base.cancel_deferred(model, handle, options)
+    def cancel_deferred(self, model: Model, handle: Any, options: Any = None) -> Awaitable[None]:
+        return self._base.cancel_deferred(model, handle, options)
 
 
 def with_virtual_models(provider_id: str, provider: Provider | None, virtual_models: list[Model]) -> Provider:

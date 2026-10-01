@@ -416,8 +416,8 @@ class _NormalizedAuthInteraction:
         self._base = base
         self.cancel = cancel
 
-    async def prompt(self, prompt: AuthPrompt) -> str:
-        return await self._base.prompt(prompt)
+    def prompt(self, prompt: AuthPrompt) -> Awaitable[str]:
+        return self._base.prompt(prompt)
 
     def notify(self, event: AuthEvent) -> None:
         self._base.notify(event)

@@ -47,9 +47,9 @@ class ModelRegistry:
     def __init__(self, runtime: ModelRuntime):
         self._runtime = runtime
 
-    async def refresh(self, options=None):
+    def refresh(self, options=None):
         """Reload models.json asynchronously. Await before making synchronous registry reads."""
-        return await self._runtime.refresh(options)
+        return self._runtime.refresh(options)
 
     def get_error(self) -> str | None:
         return self._runtime.get_error()
@@ -134,8 +134,8 @@ class ModelRegistry:
         entry = self._runtime.get_provider(provider)
         return entry.name if entry is not None and entry.name is not None else provider
 
-    async def get_provider_auth(self, provider: str) -> AuthResult | None:
-        return await self._runtime.get_auth(provider)
+    def get_provider_auth(self, provider: str) -> Awaitable[AuthResult | None]:
+        return self._runtime.get_auth(provider)
 
     async def get_api_key_for_provider(self, provider: str) -> str | None:
         try:

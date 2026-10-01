@@ -68,25 +68,29 @@ async def extension(pi):
         state["active_events"] = [] if state["enabled"] else None
 
     async def on_provider_stream_event(event, _ctx) -> None:
-        if state["active_events"] is not None:
-            state["active_events"].append(copy.deepcopy(event["data"]))
+        # Handlers and the command run in parallel: read the state once.
+        events = state["active_events"]
+        if events is not None:
+            events.append(copy.deepcopy(event["data"]))
 
     async def on_message_end(event, _ctx) -> None:
         message = event["message"]
-        if message.role != "assistant" or state["active_events"] is None:
+        events = state["active_events"]
+        if message.role != "assistant" or events is None:
             return
         state["completed_entry"] = {
             "provider": message.provider,
             "api": message.api,
             "model": message.model,
-            "events": state["active_events"],
+            "events": events,
         }
         state["active_events"] = None
 
     async def on_turn_end(_event, _ctx) -> None:
-        if state["completed_entry"] is None:
+        entry = state["completed_entry"]
+        if entry is None:
             return
-        await pi.append_entry(ENTRY_TYPE, state["completed_entry"])
+        await pi.append_entry(ENTRY_TYPE, entry)
         state["completed_entry"] = None
 
     pi.on("turn_start", on_turn_start)

@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 import tonio.colored as tonio
-from tonio.exceptions import RuntimeNotInitializedError
+from tonio.colored.exceptions import RuntimeNotInitializedError
 
 
 def open_browser(target: str) -> None:

@@ -9,6 +9,7 @@ session does — with a root `NestedCallFeed` standing in for the model-issued
 call, whose drain is pi's `takeRecord`.
 """
 
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -183,28 +184,36 @@ class TestNestedToolCallRunner:
         never = tonio.Event()
         all_parallel = tonio.Event()
         parallel_arrivals = 0
+        # The parallel calls run on several threads.
+        guard = threading.Lock()
 
         def enter(name: str) -> None:
             nonlocal active
-            active += 1
-            max_active[name] = max(max_active[name], active)
+            with guard:
+                active += 1
+                max_active[name] = max(max_active[name], active)
+
+        def leave() -> None:
+            nonlocal active
+            with guard:
+                active -= 1
 
         async def sequential(*_args):
-            nonlocal active
             enter("sequential")
             # A window for another call to overlap, if the queue let it in.
             await never.wait(0.05)
-            active -= 1
+            leave()
             return AgentToolResult(content=[], details={})
 
         async def parallel(*_args):
-            nonlocal active, parallel_arrivals
+            nonlocal parallel_arrivals
             enter("parallel")
-            parallel_arrivals += 1
-            if parallel_arrivals == 3:
-                all_parallel.set()
+            with guard:
+                parallel_arrivals += 1
+                if parallel_arrivals == 3:
+                    all_parallel.set()
             await all_parallel.wait(5)
-            active -= 1
+            leave()
             return AgentToolResult(content=[], details={})
 
         fixture = create_runner(
@@ -216,6 +225,61 @@ class TestNestedToolCallRunner:
         await tonio.spawn(*(fixture.runner.execute(scope, "parallel", {}) for _ in range(3)))
 
         assert max_active == {"sequential": 1, "parallel": 3}
+
+    @pytest.mark.tonio
+    async def test_a_call_cancelled_while_queued_leaves_the_queue(self):
+        """pidrei-only: pi's queued call cannot be cancelled; here the scope
+        of the tool that made it can be. The calls behind it still run, and
+        only after the call that holds the queue."""
+        order: list[str] = []
+        first_running = tonio.Event()
+        release_first = tonio.Event()
+
+        third_running = tonio.Event()
+
+        async def sequential(_id, params, *_args):
+            order.append(f"start {params['n']}")
+            if params["n"] == 1:
+                first_running.set()
+                await release_first.wait(5)
+            if params["n"] == 3:
+                third_running.set()
+            order.append(f"end {params['n']}")
+            return AgentToolResult(content=[], details={})
+
+        fixture = create_runner([tool("sequential", sequential, execution_mode="sequential")])
+        scope = root()
+        host = fixture.runner._host
+        emit = host.emit
+        second_started = tonio.Event()
+
+        async def emit_and_report(event):
+            await emit(event)
+            if event.type == "tool_execution_start" and event.args == {"n": 2}:
+                second_started.set()
+
+        host.emit = emit_and_report
+
+        async with tonio.scope(cancel_on_exc=True) as calls:
+            calls.spawn(fixture.runner.execute(scope, "sequential", {"n": 1}))
+            await first_running.wait(5)
+            assert first_running.is_set()
+
+            async with tonio.scope() as cancelled:
+                cancelled.spawn(fixture.runner.execute(scope, "sequential", {"n": 2}))
+                await second_started.wait(5)
+                assert second_started.is_set()
+                cancelled.cancel()
+
+            calls.spawn(fixture.runner.execute(scope, "sequential", {"n": 3}))
+            # A window for the third call to overlap, if the cancelled one let it in.
+            await third_running.wait(0.05)
+            assert not third_running.is_set()
+            release_first.set()
+            await third_running.wait(5)
+            assert third_running.is_set(), "the queue is stranded behind the cancelled call"
+
+        assert order == ["start 1", "end 1", "start 3", "end 3"]
 
 
 def started(call_id: str, arguments) -> NestedCallStarted:

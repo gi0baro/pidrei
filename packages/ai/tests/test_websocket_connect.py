@@ -19,7 +19,7 @@ import re
 import pytest
 import tonio.colored as tonio
 from tonio.colored import net
-from tonio.exceptions import CancelledError
+from tonio.colored.exceptions import CancelledError
 from websockets.frames import OP_CLOSE, OP_TEXT
 from websockets.protocol import OPEN, SERVER, Protocol as FrameProtocol
 from websockets.utils import accept_key

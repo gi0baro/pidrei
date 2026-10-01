@@ -90,15 +90,25 @@ Pi gets "first come, first served" from promise chains. PiDrei uses:
 
 - **A TonIO `sync.Lock`** where callers must run one at a time in call order
   and the critical section suspends. Release in `finally` means a failed
-  predecessor never blocks its successors.
+  predecessor never blocks its successors, and with `async with` a caller
+  cancelled while it waits leaves the queue (the nested tool-call exclusive
+  queue).
 - **One long-lived consumer over a channel** where work has a natural queue
   and a flush point (stdio output, the agent mailbox, the TUI's
   terminal-event loop).
-- **An Event-tail chain** where each caller needs to wait for exactly its
-  predecessor: a newcomer reads the current tail and installs its own under
-  a short thread lock, waits for the old tail, and sets its own when done.
-  FIFO by construction (`harness/tools/file_mutation_queue.py`, the nested
-  tool-call exclusive queue).
+- **An Event-tail chain** where taking a place in line and waiting for the
+  turn are separate steps, which a lock cannot express: a newcomer reads the
+  current tail and installs its own under a short thread lock, waits for the
+  old tail later, and sets its own when done. FIFO by construction (the two
+  `file_mutation_queue.py`: the place is taken at call time, or under a
+  registration lock). Unlike Pi's promise wait, a coroutine waiting for the
+  old tail can be cancelled, and a tail that is never set strands the queue,
+  while one set at cancel time lets the successor overlap the predecessor.
+  So the wait must not die with the caller: from the moment the place is
+  taken, with no suspension in between, the work runs detached
+  (`spawn.without_tracking`) and stores its outcome, and the caller only
+  waits for that outcome. The work runs in its turn whatever happens to the
+  caller, as in Pi.
 - **Thread locks** (`threading.Lock`/`RLock`) for short synchronous critical
   sections only, never held across an `await`.
 

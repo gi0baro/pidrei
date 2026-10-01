@@ -30,14 +30,15 @@ import base64
 import os
 import ssl
 import threading
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 import tonio.colored as tonio
+from tonio.colored.exceptions import CancelledError
 from tonio.colored.net import open_tcp_stream, tls
 from tonio.colored.sync import channel
-from tonio.exceptions import CancelledError
 from websockets.frames import OP_BINARY, OP_CLOSE, OP_TEXT
 from websockets.protocol import CLIENT, OPEN, Protocol as FrameProtocol
 from websockets.utils import accept_key
@@ -229,8 +230,8 @@ class WebSocketConnection:
         except Exception:
             pass
 
-    async def receive_event(self) -> WebSocketEvent:
-        return await self._events_receiver.receive()
+    def receive_event(self) -> Awaitable[WebSocketEvent]:
+        return self._events_receiver.receive()
 
 
 def _resolve_target(url: str) -> tuple[str, int, bool, str, str]:

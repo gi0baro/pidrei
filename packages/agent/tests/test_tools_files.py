@@ -12,6 +12,7 @@ import tonio.colored as tonio
 
 from pidrei_agent.harness.env.local import LocalExecutionEnv
 from pidrei_agent.harness.tools.edit import create_edit_tool
+from pidrei_agent.harness.tools.file_mutation_queue import with_file_mutation_queue
 from pidrei_agent.harness.tools.image import detect_supported_image_mime_type
 from pidrei_agent.harness.tools.read import ReadImageProcessorResult, ReadToolOptions, create_read_tool
 from pidrei_agent.harness.tools.tool_context import ExecutionToolContext
@@ -322,6 +323,52 @@ async def test_write_keeps_the_mutation_queue_locked_until_an_aborted_write_sett
     await second_write
     assert env.second_write_started_after_first_settled is True
     assert get_or_throw(await env.read_text_file("file.txt")) == "second\n"
+
+
+@pytest.mark.tonio
+async def test_a_queued_mutation_runs_in_turn_when_its_caller_is_cancelled():
+    """pidrei-only: pi's queued mutation cannot be cancelled; here the scope of
+    its caller can be. The mutation still runs in its turn, and the ones
+    behind it after it."""
+    env = SecondMutationKeyedEnv(cwd=create_temp_dir())
+    order: list[str] = []
+    first_started = tonio.Event()
+    finish_first = tonio.Event()
+    third_started = tonio.Event()
+
+    async def first() -> None:
+        order.append("first:start")
+        first_started.set()
+        await finish_first.wait(5)
+        order.append("first:end")
+
+    async def second() -> None:
+        order.append("second:start")
+
+    async def third() -> None:
+        order.append("third:start")
+        third_started.set()
+
+    async with tonio.scope(cancel_on_exc=True) as mutations:
+        mutations.spawn(with_file_mutation_queue(env, "file.txt", first))
+        await first_started.wait(5)
+        assert first_started.is_set()
+
+        async with tonio.scope() as cancelled:
+            cancelled.spawn(with_file_mutation_queue(env, "file.txt", second))
+            await env.second_mutation_keyed.wait(5)
+            assert env.second_mutation_keyed.is_set()
+            cancelled.cancel()
+
+        mutations.spawn(with_file_mutation_queue(env, "file.txt", third))
+        # A window for the queued mutations to overlap the first, if they could.
+        await third_started.wait(0.05)
+        assert order == ["first:start"]
+        finish_first.set()
+        await third_started.wait(5)
+        assert third_started.is_set(), "the queue is stranded behind the cancelled caller"
+
+    assert order == ["first:start", "first:end", "second:start", "third:start"]
 
 
 # --- edit ---------------------------------------------------------------------

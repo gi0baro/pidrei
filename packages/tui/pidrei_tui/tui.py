@@ -104,6 +104,7 @@ import math
 import re
 import threading
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
@@ -1112,10 +1113,10 @@ class TuiBase(Container, ABC):
         self._render_active = True
         self.request_render()
 
-    async def close(self) -> None:
+    def close(self) -> Awaitable[None]:
         """App shutdown, once: ends what outlives stop/start, the terminal's
         output queue (putting out what it still holds) and input consumer."""
-        await self.terminal.close()
+        return self.terminal.close()
 
     def finish_before_next_input(self, task) -> None:
         """Hold the next input item until ``task`` (a ``tonio.spawn()``

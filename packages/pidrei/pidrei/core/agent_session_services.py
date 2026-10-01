@@ -1,6 +1,7 @@
 """Mirror of pi coding-agent src/core/agent-session-services.ts."""
 
 import os
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -184,13 +185,13 @@ async def create_agent_session_services(options: CreateAgentSessionServicesOptio
     )
 
 
-async def create_agent_session_from_services(
+def create_agent_session_from_services(
     options: CreateAgentSessionFromServicesOptions,
-) -> CreateAgentSessionResult:
+) -> Awaitable[CreateAgentSessionResult]:
     """Create an AgentSession from previously created services. Keeps session
     creation separate from service creation so callers can resolve model,
     thinking, tools, and other session inputs against the target cwd first."""
-    return await create_agent_session(
+    return create_agent_session(
         CreateAgentSessionOptions(
             cwd=options.services.cwd,
             agent_dir=options.services.agent_dir,

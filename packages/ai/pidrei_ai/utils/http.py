@@ -18,7 +18,7 @@ import tonio.colored as tonio
 from httpunk import Backend, H1Connection, H1Server
 from punkreq import Limits, Timeout, TimeoutException
 from punkreq.tonio import Client
-from tonio.exceptions import CancelledError
+from tonio.colored.exceptions import CancelledError
 
 from pidrei_ai.utils.http_proxy import resolve_http_proxy_url_for_target
 

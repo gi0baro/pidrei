@@ -7,7 +7,7 @@ section awaits `canonical_path`), and each queue tail is a tonio `Event` set
 when its mutation settles. A mutation only runs after the tail it observed at
 registration has fired, so mutations targeting the same environment and
 canonical path never interleave — including when one of them fails or is
-aborted.
+aborted, or its caller is cancelled.
 """
 
 import threading
@@ -55,8 +55,15 @@ async def _get_mutation_queue_key(env, path: str, cancel: CancelToken | None) ->
 async def with_file_mutation_queue[T](
     env, path: str, fn: Callable[[], Awaitable[T]], cancel: CancelToken | None = None
 ) -> T:
-    """Serialize file mutations targeting the same environment and canonical path."""
+    """Serialize file mutations targeting the same environment and canonical path.
+
+    Once registered, the mutation runs detached: as in pi, it waits its turn
+    and runs to the end whatever happens to the caller, so a place in line is
+    never left behind and a cancelled caller cannot tear a write. The caller
+    only waits for its outcome.
+    """
     state = _get_state(env)
+    outcome = tonio.Result()  # (failed, value or error), stored by `run`
     async with state.registration_lock:
         key = await _get_mutation_queue_key(env, path, cancel)
         with state.queues_guard:
@@ -64,12 +71,25 @@ async def with_file_mutation_queue[T](
             my_done = tonio.Event()
             state.queues[key] = my_done
 
-    if current_tail is not None:
-        await current_tail.wait(None)
-    try:
-        return await fn()
-    finally:
-        my_done.set()
-        with state.queues_guard:
-            if state.queues.get(key) is my_done:
-                del state.queues[key]
+        async def run() -> None:
+            if current_tail is not None:
+                await current_tail.wait(None)
+            try:
+                outcome.store((False, await fn()))
+            except Exception as error:
+                outcome.store((True, error))
+            finally:
+                my_done.set()
+                with state.queues_guard:
+                    if state.queues.get(key) is my_done:
+                        del state.queues[key]
+
+        # No suspension since registering: the place never exists without
+        # its owner running.
+        tonio.spawn.without_tracking(run())
+
+    await my_done.wait(None)
+    failed, value = outcome.fetch()
+    if failed:
+        raise value
+    return value

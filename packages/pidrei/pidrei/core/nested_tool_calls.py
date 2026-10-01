@@ -36,7 +36,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-import tonio.colored as tonio
+from tonio.colored import sync
 from tonio.colored.sync import channel
 
 from pidrei_agent.types import (
@@ -245,10 +245,10 @@ def _text_of(result: AgentToolResult[Any]) -> str:
 class NestedToolCallRunner:
     def __init__(self, host: NestedToolCallHost):
         self._host = host
-        # Serializes nested calls that must not run concurrently: the Event
-        # tail of the chain, like `file_mutation_queue` (pi: `queueTail`).
-        self._queue_tail: tonio.Event | None = None
-        self._queue_guard = threading.Lock()
+        # Serializes nested calls that must not run concurrently, first come
+        # first served (pi: the `queueTail` promise chain). A call cancelled
+        # while it waits leaves the queue.
+        self._queue_lock = sync.Lock()
 
     async def execute(
         self,
@@ -276,15 +276,6 @@ class NestedToolCallRunner:
         exclusive = not scope.holds_queue and (
             host.is_sequential() or (tool is not None and tool.execution_mode == "sequential")
         )
-        done: tonio.Event | None = None
-        previous: tonio.Event | None = None
-        if exclusive:
-            done = tonio.Event()
-            with self._queue_guard:
-                previous = self._queue_tail
-                self._queue_tail = done
-            if previous is not None:
-                await previous.wait()
         child_scope = NestedCallScope(
             parent_id=tool_call.id, feed=scope.feed, holds_queue=scope.holds_queue or exclusive
         )
@@ -302,14 +293,11 @@ class NestedToolCallRunner:
                 )
             )
 
-        try:
+        if exclusive:
+            async with self._queue_lock:
+                outcome = await host.run_tool_call(tool_call, parent_id, child_scope, options.cancel, on_update)
+        else:
             outcome = await host.run_tool_call(tool_call, parent_id, child_scope, options.cancel, on_update)
-        finally:
-            if done is not None:
-                with self._queue_guard:
-                    if self._queue_tail is done:
-                        self._queue_tail = None
-                done.set()
 
         # pi: Math.round(performance.now() - startedAt).
         duration_ms = int((clock.monotonic() - started_at) * 1000 + 0.5)

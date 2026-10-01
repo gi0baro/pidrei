@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import threading
+from collections.abc import Awaitable
 from dataclasses import dataclass
 
 from tonio.colored import sync as tonio_sync
@@ -183,8 +184,8 @@ async def _execute_with_default_shell(command: str) -> str | None:
     return result.stdout.decode("utf-8", "replace").strip() or None
 
 
-async def _execute_command_uncached(command_config: str) -> str | None:
-    return await _execute_with_default_shell(command_config[1:])
+def _execute_command_uncached(command_config: str) -> Awaitable[str | None]:
+    return _execute_with_default_shell(command_config[1:])
 
 
 async def _execute_command(command_config: str) -> str | None:

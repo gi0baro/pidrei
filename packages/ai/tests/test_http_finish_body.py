@@ -8,7 +8,7 @@ The close must therefore leave on its own task and still happen.
 
 import pytest
 import tonio.colored as tonio
-from tonio.exceptions import CancelledError
+from tonio.colored.exceptions import CancelledError
 
 from pidrei_ai.utils import http
 from pidrei_ai.utils.cancel import CancelToken

@@ -9,6 +9,7 @@ updates are event-loop-atomic, tonio tasks run on real threads.
 
 import threading
 import weakref
+from collections.abc import Awaitable
 from typing import Any
 
 import tonio.colored as tonio
@@ -84,7 +85,7 @@ class _ModelCatalogRefreshCoordinator:
 _model_catalog_refresh_coordinator = _ModelCatalogRefreshCoordinator()
 
 
-async def refresh_model_catalogs(model_runtime: Any, cancel: CancelToken) -> Any:
+def refresh_model_catalogs(model_runtime: Any, cancel: CancelToken) -> Awaitable[Any]:
     """Share concurrent interactive all-catalog refreshes while keeping each
     caller's cancellation independent."""
-    return await _model_catalog_refresh_coordinator.refresh(model_runtime, cancel)
+    return _model_catalog_refresh_coordinator.refresh(model_runtime, cancel)

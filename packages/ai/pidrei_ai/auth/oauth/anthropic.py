@@ -11,6 +11,7 @@ counterpart: there is no browser build to protect here.
 import base64
 import json
 import traceback
+from collections.abc import Awaitable
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -238,8 +239,8 @@ async def _refresh_anthropic_token(refresh_token: str, cancel: CancelToken) -> O
     )
 
 
-async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
-    return await _refresh_anthropic_token(credential.refresh, cancel)
+def _refresh(credential: OAuthCredential, cancel: CancelToken) -> Awaitable[OAuthCredential]:
+    return _refresh_anthropic_token(credential.refresh, cancel)
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:

@@ -46,13 +46,13 @@ class RuntimeCredentials(CredentialStore):
             entries[provider_id] = CredentialInfo(provider_id=provider_id, type="api_key")
         return list(entries.values())
 
-    async def modify(
+    def modify(
         self,
         provider_id: str,
         fn: Callable[[Credential | None], Awaitable[Credential | None]],
         options: AuthOperationOptions | None = None,
-    ) -> Credential | None:
-        return await self._store.modify(provider_id, fn, options)
+    ) -> Awaitable[Credential | None]:
+        return self._store.modify(provider_id, fn, options)
 
     async def delete(self, provider_id: str, options: AuthOperationOptions | None = None) -> None:
         if options is not None and options.cancel is not None:

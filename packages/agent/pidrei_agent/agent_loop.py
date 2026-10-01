@@ -948,8 +948,8 @@ def _create_error_tool_result(message: str) -> AgentToolResult[Any]:
     return AgentToolResult(content=[TextContent(text=message)], details={})
 
 
-async def _emit_tool_execution_end(finalized: _FinalizedToolCallOutcome, emit: AgentEventSink) -> None:
-    await emit(
+def _emit_tool_execution_end(finalized: _FinalizedToolCallOutcome, emit: AgentEventSink) -> Awaitable[None]:
+    return emit(
         ToolExecutionEndEvent(
             tool_call_id=finalized.tool_call.id,
             tool_name=finalized.tool_call.name,

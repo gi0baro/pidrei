@@ -156,7 +156,9 @@ class UnixListener:
 
     async def _close_internal(self) -> None:
         server = self._server
-        server_closed = driven(self._close_server_and_cleanup(server) if server is not None else self._cleanup_only())
+        server_closed = driven(
+            self._close_server_and_cleanup(server) if server is not None else self._cleanup_owned_socket()
+        )
         await gather([connection.close() for connection in list(self._connections)])
         await server_closed
         if self._owned_bind_path is not None:
@@ -164,9 +166,6 @@ class UnixListener:
         self._owned_bind_path = None
         self._connections.clear()
         self._server = None
-
-    async def _cleanup_only(self) -> None:
-        await self._cleanup_owned_socket()
 
     async def _close_server_and_cleanup(self, server: net.SocketListener) -> None:
         try:

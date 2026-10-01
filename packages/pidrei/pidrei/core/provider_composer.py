@@ -22,6 +22,7 @@ adapter-owned and must be treated as read-only. ``api`` is required alongside
 it.
 """
 
+from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -806,8 +807,8 @@ class ComposedProvider:
     def fetch_deferred(self, model: Model, handle: Any, options: Any = None) -> Any:
         return self._base.fetch_deferred(model, handle, options)
 
-    async def cancel_deferred(self, model: Model, handle: Any, options: Any = None) -> None:
-        await self._base.cancel_deferred(model, handle, options)
+    def cancel_deferred(self, model: Model, handle: Any, options: Any = None) -> Awaitable[None]:
+        return self._base.cancel_deferred(model, handle, options)
 
     # One-shot operations: an extension implementation for `model.api` wins,
     # else the base provider's, else an error result.
@@ -859,13 +860,13 @@ def compose_model_provider(
     return provider
 
 
-async def resolve_configured_model_headers(
+def resolve_configured_model_headers(
     model: AnyModel,
     config: dict[str, Any] | None,
     extension: ProviderConfigInput | None,
     env: dict[str, str] | None = None,
-) -> dict[str, str] | None:
-    return await resolve_headers_or_throw(
+) -> Awaitable[dict[str, str] | None]:
+    return resolve_headers_or_throw(
         _raw_model_headers(model, config, extension), f'model "{model.provider}/{model.id}"', env
     )
 

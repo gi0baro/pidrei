@@ -5,8 +5,8 @@ from pidrei_ai.types import ProviderImages
 
 
 class LazyOpenRouterImagesApi(ProviderImages):
-    async def generate_images(self, model, context, options=None):
-        return await generate_images_openrouter(model, context, options)
+    def generate_images(self, model, context, options=None):
+        return generate_images_openrouter(model, context, options)
 
 
 def openrouter_images_api() -> LazyOpenRouterImagesApi:

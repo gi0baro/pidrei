@@ -221,8 +221,8 @@ async def _refresh_xai_token(refresh_token: str, cancel: CancelToken) -> OAuthCr
     return _credentials_from_token_response(body, refresh_token)
 
 
-async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
-    return await _refresh_xai_token(credential.refresh, cancel)
+def _refresh(credential: OAuthCredential, cancel: CancelToken) -> Awaitable[OAuthCredential]:
+    return _refresh_xai_token(credential.refresh, cancel)
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:

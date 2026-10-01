@@ -19,6 +19,7 @@ import os
 import sys
 import traceback
 import warnings
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -541,8 +542,8 @@ def _build_session_options(
     )
 
 
-async def _prompt_for_missing_session_cwd(issue, settings_manager: SettingsManager) -> str | None:
-    return await show_startup_selector(
+def _prompt_for_missing_session_cwd(issue, settings_manager: SettingsManager) -> Awaitable[str | None]:
+    return show_startup_selector(
         settings_manager,
         format_missing_session_cwd_prompt(issue),
         [

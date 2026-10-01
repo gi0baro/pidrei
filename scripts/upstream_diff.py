@@ -763,7 +763,7 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             (
                 "NestedCallRecorder is fold_nested_calls over NestedCallFeed "
                 "messages; scopes/takeRecord/clear do not exist (NestedCallScope "
-                "rides in the tool context); queueTail is an Event-tail chain"
+                "rides in the tool context); queueTail is a TonIO sync.Lock"
             ),
         ),
     ),

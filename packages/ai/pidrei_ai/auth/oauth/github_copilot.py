@@ -539,8 +539,8 @@ def _enterprise_domain(credential: OAuthCredential) -> str | None:
     return _normalize_domain(enterprise_url)
 
 
-async def _refresh(credential: OAuthCredential, cancel: CancelToken) -> OAuthCredential:
-    return await _refresh_copilot_token(credential.refresh, _enterprise_domain(credential), cancel)
+def _refresh(credential: OAuthCredential, cancel: CancelToken) -> Awaitable[OAuthCredential]:
+    return _refresh_copilot_token(credential.refresh, _enterprise_domain(credential), cancel)
 
 
 async def _to_auth(credential: OAuthCredential) -> ModelAuth:

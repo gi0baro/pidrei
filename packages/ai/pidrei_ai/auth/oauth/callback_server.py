@@ -46,6 +46,10 @@ class CallbackRequest:
 class CallbackResponse:
     status: int
     html: str
+    # Runs once the response is written, or the write failed (pi's code after
+    # `res.end()`). A flow that settles its result from the handler does it
+    # here: the waiter wakes on another thread and may drop this connection.
+    after_sent: Callable[[], None] | None = None
 
 
 CallbackHandler = Callable[[CallbackRequest], Awaitable[CallbackResponse]]
@@ -147,11 +151,15 @@ async def _serve_connection(server: CallbackServer, stream: Any, handle: Callbac
             async for request in connection:
                 await request.read()  # an OAuth redirect carries no body; drain for keep-alive
                 response = await handle(_to_callback_request(request))
-                await request.respond(
-                    response.status,
-                    headers=_RESPONSE_HEADERS,
-                    body=response.html.encode("utf-8"),
-                )
+                try:
+                    await request.respond(
+                        response.status,
+                        headers=_RESPONSE_HEADERS,
+                        body=response.html.encode("utf-8"),
+                    )
+                finally:
+                    if response.after_sent is not None:
+                        response.after_sent()
     except Exception:
         # pi answers a handler crash with a 500 and keeps the server alive; a
         # dead socket is the other half of that, and neither can be reported to

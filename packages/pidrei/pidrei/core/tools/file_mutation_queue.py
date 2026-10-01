@@ -39,10 +39,14 @@ def with_file_mutation_queue(file_path: str, fn, *, queue_key: str):
     Operations for different files still run in parallel.
 
     Registration happens synchronously at call time (pi chains the promise in
-    call order); the returned coroutine waits its turn when awaited. That is
-    load-bearing — the ordering tests rely on both registrations completing
-    during argument evaluation, before the tasks are scheduled — so this must
-    not become a coroutine.
+    call order). That is load-bearing — the ordering tests rely on both
+    registrations completing during argument evaluation, before the tasks are
+    scheduled — so this must not become a coroutine.
+
+    The mutation starts at call time too, detached: as in pi, once it is in
+    line it waits its turn and runs to the end whatever happens to the caller,
+    so a place in line is never left behind and a cancelled caller cannot tear
+    a write. The returned coroutine only waits for its outcome.
 
     `queue_key` is `await resolve_mutation_queue_key(file_path)`: resolving it
     is filesystem I/O, which registration cannot await. pi's signature has no
@@ -50,19 +54,30 @@ def with_file_mutation_queue(file_path: str, fn, *, queue_key: str):
     """
     key = queue_key
     done = tonio.Event()
+    outcome = tonio.Result()  # (failed, value or error), stored by `run`
     with _guard:
         previous = _queues.get(key)
         _queues[key] = done
 
-    async def run():
+    async def run() -> None:
         if previous is not None:
             await previous.wait()
         try:
-            return await fn()
+            outcome.store((False, await fn()))
+        except Exception as error:
+            outcome.store((True, error))
         finally:
             with _guard:
                 if _queues.get(key) is done:
                     del _queues[key]
             done.set()
 
-    return run()
+    async def join():
+        await done.wait()
+        failed, value = outcome.fetch()
+        if failed:
+            raise value
+        return value
+
+    tonio.spawn.without_tracking(run())
+    return join()

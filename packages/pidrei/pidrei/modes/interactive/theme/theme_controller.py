@@ -133,13 +133,13 @@ class InteractiveThemeController:
         await self._apply_theme_name(theme_name, theme_setting is not None)
         self._query_terminal_colors()
 
-    async def wait_for_terminal_colors(self) -> None:
+    def wait_for_terminal_colors(self) -> Awaitable[None]:
         """Wait until the latest color query completed or timed out. Content
         that bakes theme colors into strings, such as the startup header,
         should be built after this. Terminals answer the DA1 request right
         after the color replies, so this only takes the full timeout when a
         terminal answers nothing."""
-        await self._terminal_color_query.wait(None)
+        return self._terminal_color_query.wait(None)
 
     def get_theme_selection(self) -> str | None:
         if self._current_theme_setting is not None:

@@ -851,7 +851,7 @@ class Agent:
         self._mailbox.release(run)
         run.done.set()
 
-    async def _process_events(self, event: AgentEvent) -> None:
+    def _process_events(self, event: AgentEvent) -> Awaitable[None]:
         """Hand a loop event to the run's dispatcher and wait until it is observed.
 
         Parallel work, serialized observation: tool bodies run as parallel
@@ -866,7 +866,7 @@ class Agent:
         is considered idle later, after all awaited listeners for `agent_end`
         finish and `_finish_run()` clears runtime-owned state.
         """
-        await self._enqueue_event(event)
+        return self._enqueue_event(event)
 
     async def observe(self, event: AgentEvent) -> None:
         """Deliver an event the loop did not emit to this run's listeners.

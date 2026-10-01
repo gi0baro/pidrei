@@ -181,8 +181,8 @@ class _CancelBoundInteraction:
         self._base = base
         self.cancel = cancel
 
-    async def prompt(self, prompt: Any) -> str:
-        return await self._base.prompt(prompt)
+    def prompt(self, prompt: Any) -> Awaitable[str]:
+        return self._base.prompt(prompt)
 
     def notify(self, event: Any) -> None:
         self._base.notify(event)
@@ -693,18 +693,18 @@ class ModelRuntime:
     def get_all_models(self, provider_id: str | None = None) -> list[AnyModel]:
         return self._models.get_all_models(provider_id)
 
-    async def get_available_of_type(
+    def get_available_of_type(
         self, type: ModelType, provider_id: str | None = None, options: AuthOperationOptions | None = None
-    ) -> list[AnyModel]:
-        return await self._models.get_available_of_type(type, provider_id, options)
+    ) -> Awaitable[list[AnyModel]]:
+        return self._models.get_available_of_type(type, provider_id, options)
 
-    async def get_all_available(
+    def get_all_available(
         self, provider_id: str | None = None, options: AuthOperationOptions | None = None
-    ) -> list[AnyModel]:
-        return await self._models.get_all_available(provider_id, options)
+    ) -> Awaitable[list[AnyModel]]:
+        return self._models.get_all_available(provider_id, options)
 
-    async def check_auth(self, provider_id: str, options: AuthOperationOptions | None = None) -> AuthCheck | None:
-        return await self._models.check_auth(provider_id, options)
+    def check_auth(self, provider_id: str, options: AuthOperationOptions | None = None) -> Awaitable[AuthCheck | None]:
+        return self._models.check_auth(provider_id, options)
 
     async def get_available(
         self, provider_id: str | None = None, options: AuthOperationOptions | None = None
@@ -934,8 +934,8 @@ class ModelRuntime:
 
         await self._enqueue_credential_operation(provider_id, cancel, task)
 
-    async def list_credentials(self, options: AuthOperationOptions | None = None) -> list[CredentialInfo]:
-        return await self._credentials.list(options)
+    def list_credentials(self, options: AuthOperationOptions | None = None) -> Awaitable[list[CredentialInfo]]:
+        return self._credentials.list(options)
 
     def get_provider_auth_status(self, provider_id: str) -> AuthStatus:
         # Pin both epochs once: the answer cannot mix an availability
