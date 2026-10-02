@@ -250,9 +250,9 @@
       "maxTokens": 384000,
       "type": "chat"
     },
-    "chat:deepseek-ai/DeepSeek-V4-Pro": {
-      "id": "deepseek-ai/DeepSeek-V4-Pro",
-      "name": "DeepSeek V4 Pro",
+    "chat:deepseek-ai/DeepSeek-V4-Pro-0813": {
+      "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
       "api": "openai-completions",
       "provider": "together",
       "baseUrl": "https://api.together.ai/v1",
@@ -268,40 +268,6 @@
         "text"
       ],
       "cost": {
-        "input": 1.74,
-        "output": 3.48,
-        "cacheRead": 0.2,
-        "cacheWrite": 0
-      },
-      "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": true,
-        "maxTokensField": "max_tokens",
-        "thinkingFormat": "together",
-        "supportsLongCacheRetention": false,
-        "supportsStrictMode": false
-      },
-      "contextWindow": 512000,
-      "maxTokens": 384000,
-      "type": "chat"
-    },
-    "chat:deepseek-ai/DeepSeek-V4-Pro-0813": {
-      "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
-      "name": "DeepSeek V4 Pro 0813",
-      "api": "openai-completions",
-      "provider": "together",
-      "baseUrl": "https://api.together.ai/v1",
-      "reasoning": true,
-      "thinkingLevelMap": {
-        "minimal": null,
-        "low": null,
-        "medium": null
-      },
-      "input": [
-        "text"
-      ],
-      "cost": {
         "input": 1.32,
         "output": 3.96,
         "cacheRead": 0.13,
@@ -310,7 +276,7 @@
       "compat": {
         "supportsStore": false,
         "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
+        "supportsReasoningEffort": true,
         "maxTokensField": "max_tokens",
         "thinkingFormat": "together",
         "supportsLongCacheRetention": false,
@@ -353,51 +319,6 @@
       },
       "contextWindow": 1048576,
       "maxTokens": 384000,
-      "inputLimits": {
-        "images": {
-          "resize": {
-            "maxWidth": 2000,
-            "maxHeight": 2000,
-            "maxBytes": 4718592,
-            "jpegQuality": 80
-          }
-        }
-      },
-      "type": "chat"
-    },
-    "chat:google/gemma-4-31B-it": {
-      "id": "google/gemma-4-31B-it",
-      "name": "Gemma 4 31B Instruct",
-      "api": "openai-completions",
-      "provider": "together",
-      "baseUrl": "https://api.together.ai/v1",
-      "reasoning": true,
-      "thinkingLevelMap": {
-        "minimal": null,
-        "low": null,
-        "medium": null
-      },
-      "input": [
-        "text",
-        "image"
-      ],
-      "cost": {
-        "input": 0.39,
-        "output": 0.97,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
-        "maxTokensField": "max_tokens",
-        "thinkingFormat": "together",
-        "supportsLongCacheRetention": false,
-        "supportsStrictMode": false
-      },
-      "contextWindow": 262144,
-      "maxTokens": 131072,
       "inputLimits": {
         "images": {
           "resize": {
@@ -540,44 +461,6 @@
       "cost": {
         "input": 0.15,
         "output": 0.6,
-        "cacheRead": 0,
-        "cacheWrite": 0
-      },
-      "compat": {
-        "supportsStore": false,
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": true,
-        "maxTokensField": "max_tokens",
-        "thinkingFormat": "openai",
-        "supportsLongCacheRetention": false,
-        "supportsStrictMode": false
-      },
-      "contextWindow": 131072,
-      "maxTokens": 131072,
-      "type": "chat"
-    },
-    "chat:openai/gpt-oss-20b": {
-      "id": "openai/gpt-oss-20b",
-      "name": "GPT OSS 20B",
-      "api": "openai-completions",
-      "provider": "together",
-      "baseUrl": "https://api.together.ai/v1",
-      "reasoning": true,
-      "thinkingLevelMap": {
-        "off": null,
-        "minimal": null,
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": null,
-        "max": null
-      },
-      "input": [
-        "text"
-      ],
-      "cost": {
-        "input": 0.05,
-        "output": 0.2,
         "cacheRead": 0,
         "cacheWrite": 0
       },

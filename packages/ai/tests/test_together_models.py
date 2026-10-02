@@ -51,7 +51,7 @@ def test_models_together_reasoning_controls_from_the_together_api_surface():
     assert gpt_oss.compat.supports_reasoning_effort is True
     assert gpt_oss.compat.thinking_format == "openai"
 
-    deepseek_v4 = get_builtin_model("together", "deepseek-ai/DeepSeek-V4-Pro")
+    deepseek_v4 = get_builtin_model("together", "deepseek-ai/DeepSeek-V4-Pro-0813")
     assert deepseek_v4 is not None
     assert deepseek_v4.thinking_level_map == {
         "minimal": None,

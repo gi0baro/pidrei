@@ -847,7 +847,17 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
             ),
         ),
     ),
-    "packages/ai/src/api/anthropic-messages.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
+    "packages/ai/src/api/anthropic-messages.ts": (
+        ("freeze-at-seam", _FREEZE_ADAPTER_NOTE),
+        (
+            "anthropic-federation",
+            (
+                "the SDK's workload identity federation (token exchange and cache) "
+                "is auth/anthropic_federation.py, applied per request by "
+                "_PunkreqAnthropicClient"
+            ),
+        ),
+    ),
     "packages/ai/src/api/openai-completions.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/openai-responses.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
     "packages/ai/src/api/openai-responses-shared.ts": (("freeze-at-seam", _FREEZE_ADAPTER_NOTE),),
