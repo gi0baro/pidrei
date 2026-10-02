@@ -128,6 +128,14 @@ Anthropic also accepts `ANTHROPIC_AUTH_TOKEN`, sent as an
 `Authorization: Bearer` header instead of an API key; it wins over the other two
 Anthropic variables. `pidrei --help` prints the authoritative list.
 
+With no key or token set, Anthropic uses workload identity federation when
+`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and
+`ANTHROPIC_IDENTITY_TOKEN_FILE` are set: PiDrei exchanges the identity token for
+a short-lived access token and refreshes it itself (re-reading the identity
+token file, so keep that file fresh for long sessions).
+`ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_WORKSPACE_ID` are passed through
+when set.
+
 ### Azure OpenAI
 
 Azure needs the endpoint as well as the key:

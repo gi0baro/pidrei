@@ -12,6 +12,7 @@ pi's `if (signal?.aborted)` branches do.
 """
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
@@ -63,16 +64,19 @@ async def request(
     form: dict[str, str] | None = None,
     timeout_ms: float | None = None,
     cancel: CancelToken | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> OAuthHttpResponse:
     """Perform one OAuth request and read the whole body.
 
     `form` is sent as `application/x-www-form-urlencoded`; the caller still sets
     its own `Content-Type` header so the mirrors can assert pi's exact casing.
+    `env` is the provider-scoped env of the request this exchange serves, so a
+    scoped proxy override applies to the exchange as it does to the request.
     """
     content = urlencode(form).encode("utf-8") if form is not None else None
 
     async def _send() -> OAuthHttpResponse:
-        client = http.shared_client()
+        client = http.client_for(url, env)
         response = await client.request(
             method,
             url,

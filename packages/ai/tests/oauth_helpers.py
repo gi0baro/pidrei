@@ -19,7 +19,7 @@ import contextlib
 import inspect
 import json
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -89,6 +89,7 @@ class OAuthRequest:
     form: dict[str, str] = field(default_factory=dict)
     timeout_ms: float | None = None
     cancel: CancelToken | None = None
+    env: Mapping[str, str] | None = None
 
 
 def json_response(body: Any, status: int = 200) -> oauth_http.OAuthHttpResponse:
@@ -125,6 +126,7 @@ def stub_oauth_http(handler: _Handler):
         form: dict[str, str] | None = None,
         timeout_ms: float | None = None,
         cancel: CancelToken | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> oauth_http.OAuthHttpResponse:
         recorded = OAuthRequest(
             url=url,
@@ -134,6 +136,7 @@ def stub_oauth_http(handler: _Handler):
             form=dict(form or {}),
             timeout_ms=timeout_ms,
             cancel=cancel,
+            env=env,
         )
         calls.append(recorded)
         result = handler(recorded)

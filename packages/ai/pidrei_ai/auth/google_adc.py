@@ -18,7 +18,8 @@ half-work; google-auth reaches out to further token exchanges for those.
 
 Access tokens are cached until shortly before expiry, keyed by the credential
 they came from: `getRequestHeaders()` caches too, and a token exchange per
-streaming request would be both slow and rate-limited.
+streaming request would be both slow and rate-limited. Fetches are serialized
+under one lock, so concurrent requests on a cold cache share one exchange.
 """
 
 import base64
@@ -28,7 +29,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from tonio.colored import fs
+from tonio.colored import fs, sync
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.types import ProviderEnv
@@ -53,12 +54,19 @@ class GoogleAdcError(Exception):
 
 _token_cache: dict[str, tuple[str, float]] = {}
 _token_cache_guard = threading.Lock()
+# Serializes token fetches so concurrent requests share one exchange, as
+# google-auth's in-flight refresh does.
+_token_fetch_lock = sync.Lock()
 
 
-def reset_google_adc_token_cache() -> None:
-    """Drop cached access tokens (tests; also useful after a credential change)."""
+def reset_google_adc_token_cache() -> bool:
+    """Drop cached access tokens (tests; also useful after a credential change).
+
+    Returns whether any token was cached."""
     with _token_cache_guard:
+        had_tokens = bool(_token_cache)
         _token_cache.clear()
+    return had_tokens
 
 
 async def _credentials_path(env: ProviderEnv | None) -> Path | None:
@@ -214,10 +222,15 @@ async def get_access_token(env: ProviderEnv | None = None, scope: str = CLOUD_PL
     if cached is not None:
         return cached
 
-    cache_key, token, expiry = await _fetch_token(env, scope)
-    with _token_cache_guard:
-        _token_cache[cache_key] = (token, expiry)
-    return token
+    async with _token_fetch_lock:
+        # The caller that held the lock may have fetched this very token.
+        cached = await _cached_token(env, scope)
+        if cached is not None:
+            return cached
+        cache_key, token, expiry = await _fetch_token(env, scope)
+        with _token_cache_guard:
+            _token_cache[cache_key] = (token, expiry)
+        return token
 
 
 async def _cached_token(env: ProviderEnv | None, scope: str) -> str | None:
