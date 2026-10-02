@@ -6,6 +6,24 @@ so `0.82.0.1` would be a PiDrei fix on top of the same Pi 0.82.0.
 
 ## [Unreleased]
 
+## [0.99.1.1] - 2026-10-02
+
+### Fixed
+
+- Sign in with ChatGPT: the browser tab always gets the result page. The
+  login could close the connection before the page was written, most easily
+  when the authorization was denied.
+- `pi.register_mcp_server()`: two extensions registering the same server name
+  at the same time can no longer both succeed; the second one gets the
+  "already registered" error.
+- Edits and writes to the same file, and sequential tools called with
+  `ctx.execute_tool()`, no longer hang behind a call whose caller was
+  cancelled while it waited its turn. A queued edit or write now runs in its
+  turn even when its caller is cancelled, so a cancellation cannot leave a
+  file half written.
+- The `debug_provider.py` example no longer fails when capture is turned off
+  while a response is streaming.
+
 ## [0.99.1.0] - 2026-10-01
 
 Tracks [Pi 0.99.1](https://github.com/earendil-works/pi/releases/tag/v0.99.1).
