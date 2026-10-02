@@ -57,7 +57,7 @@ pidrei --model sonnet:high
 
 | Option | Behavior |
 |--------|----------|
-| `--provider <name>` | Restrict `--model` lookup to one provider |
+| `--provider <name>` | Restrict `--model` lookup to one provider; requires `--model` |
 | `--model <pattern>` | Exact or fuzzy ID/name match; accepts `provider/id` and a `:<thinking>` suffix |
 | `--api-key <key>` | Non-persistent key for this run; needs a model from `--model` or `--models` |
 | `--thinking <level>` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; overrides a `:<thinking>` suffix and is clamped to the model |
@@ -108,6 +108,10 @@ tool you want; `defaultTools` also accepts `+name` and `-name` to change the
 defaults instead (for example `["-bash", "+grep"]`). A project list with only
 `+name` and `-name` entries changes the user's selection; a list with a plain
 name replaces it.
+
+`/reload` enables tools newly added to `defaultTools`. It does not disable
+tools removed from it or re-enable unchanged tools you turned off. `--tools`,
+`--no-tools`, and `--no-builtin-tools` override `defaultTools`, also on reload.
 
 | Built-in | Purpose |
 |----------|---------|

@@ -1124,8 +1124,8 @@ TEST_HOMES = {
     "packages/coding-agent/test/suite/agent-session-codemode.test.ts": (
         "partial mirror: test_agent_session_tool_orchestration.py holds the core cases (nested calls in "
         "parallel, hooks on nested calls, nested usage, structured content through the hooks, bash's "
-        "structured result) driven by a Python tool; the script cases port with codemode (0.99.1 delta "
-        "port)"
+        "structured result, hidden declarations left out of the system prompt) driven by a Python tool; "
+        "the script cases port with codemode (0.99.1 delta port)"
     ),
     "packages/coding-agent/test/sdk-skills.test.ts": "PARITY GAP: SDK-level skills flows unmirrored (skills.test.ts is mirrored as test_skills.py)",
     "packages/coding-agent/test/test-harness.ts": "pi test infra; pidrei equivalents are tests/harness.py + conftest.py — absorb deltas where ported tests need them",
@@ -1165,7 +1165,10 @@ TEST_HOMES = {
     ),
     "packages/coding-agent/test/sdk-session-manager.test.ts": "PARITY GAP: SDK session-manager flows unmirrored",
     "packages/coding-agent/test/model-runtime-auth-options.test.ts": "PARITY GAP: model-runtime auth options unmirrored",
-    "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": "PARITY GAP: modifyModels compat unmirrored",
+    "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": (
+        "partial mirror: test_model_runtime_modify_models_compat.py holds the 1.0.0 native-provider "
+        "registration case (#9962); the rest of the modifyModels compat suite is a PARITY GAP"
+    ),
     "packages/coding-agent/test/suite/agent-session-prompt.test.ts": (
         "partial mirror: test_agent_session_prompt.py holds the 0.87.0 image-normalization case; the rest of "
         "the prompt characterization suite is a PARITY GAP"

@@ -23,6 +23,7 @@ from pidrei.core.virtual_models import (
     ModelRoute,
     RoutedResponse,
     VirtualModelDefinition,
+    get_branch_selection,
 )
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.models_store import InMemoryModelsStore
@@ -77,6 +78,84 @@ def assistant_from(model, text: str):
 
 def user(text: str, timestamp: int):
     return UserMessage(content=text, timestamp=timestamp)
+
+
+# --- get_branch_selection -----------------------------------------------------
+
+
+async def select(build, runtime):
+    session_manager = SessionManager.in_memory()
+    await build(session_manager)
+    lookups: list[str] = []
+
+    def get_model(provider, model_id):
+        lookups.append(f"{provider}/{model_id}")
+        return runtime.get_model(provider, model_id)
+
+    return get_branch_selection(session_manager.get_branch(), get_model), lookups
+
+
+# #10198: the selection must not cost one catalog lookup per assistant message.
+@pytest.mark.tonio
+async def test_branch_selection_looks_up_only_the_last_model_change():
+    setup = await create_runtime()
+    runtime, virtual = setup.runtime, setup.virtual
+    small = runtime.get_model("faux", "small")
+    large = runtime.get_model("faux", "large")
+
+    async def physical_branch(session_manager):
+        await session_manager.append_model_change(small.provider, small.id)
+        for _ in range(100):
+            await session_manager.append_message(assistant_from(large, "ok"))
+
+    selection, lookups = await select(physical_branch, runtime)
+    assert selection == ("faux", "large")
+    assert lookups == ["faux/small"]
+
+    async def routed_branch(session_manager):
+        await session_manager.append_model_change(small.provider, small.id)
+        await session_manager.append_message(assistant_from(small, "ok"))
+        await session_manager.append_model_change(virtual.provider, virtual.id)
+        for _ in range(100):
+            await session_manager.append_message(assistant_from(large, "ok"))
+
+    selection, lookups = await select(routed_branch, runtime)
+    assert selection == ("router", "auto")
+    assert lookups == ["router/auto"]
+
+
+@pytest.mark.tonio
+async def test_branch_selection_uses_the_last_model_change_without_responses_after_it():
+    setup = await create_runtime()
+    runtime, virtual = setup.runtime, setup.virtual
+    small = runtime.get_model("faux", "small")
+
+    async def build(session_manager):
+        await session_manager.append_model_change(virtual.provider, virtual.id)
+        await session_manager.append_message(assistant_from(small, "ok"))
+        await session_manager.append_model_change(small.provider, small.id)
+
+    selection, lookups = await select(build, runtime)
+    assert selection == ("faux", "small")
+    assert lookups == []
+
+
+@pytest.mark.tonio
+async def test_branch_selection_uses_the_latest_physical_response_without_a_model_change():
+    setup = await create_runtime()
+    runtime, virtual = setup.runtime, setup.virtual
+    small = runtime.get_model("faux", "small")
+    large = runtime.get_model("faux", "large")
+
+    async def build(session_manager):
+        await session_manager.append_message(assistant_from(small, "ok"))
+        await session_manager.append_message(assistant_from(large, "ok"))
+        # Failed routing leaves the virtual model on its message.
+        await session_manager.append_message(replace(assistant_from(virtual, ""), stop_reason="error"))
+
+    selection, lookups = await select(build, runtime)
+    assert selection == ("faux", "large")
+    assert lookups == []
 
 
 @pytest.mark.tonio

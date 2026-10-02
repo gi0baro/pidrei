@@ -562,12 +562,13 @@ it; see [virtual-models.md](virtual-models.md).
 `register_mcp_server(name, config)` records an MCP server for the current
 session, with the shape of an `mcpServers` entry in `mcp.json` (`command`,
 `args`, `env` and `cwd` for stdio servers, `url`, `headers` and `oauth` for
-HTTP servers, plus `exposure`, `toolExposure`, `enabled` and `timeout`);
-`unregister_mcp_server(name)` removes the extension's registration and
-`get_mcp_servers()` lists every registered server. Registering a name again
-replaces the extension's earlier registration; names another extension
-registered, invalid names and invalid configs raise. Registrations are not
-saved: register again on every load.
+HTTP servers, plus `exposure`, `toolExposure`, `description`, `enabled` and
+`timeout`); `unregister_mcp_server(name)` removes the extension's
+registration and `get_mcp_servers()` lists every registered server.
+Registering a name again replaces the extension's earlier registration; names
+another extension registered, names that differ from a registered server's
+only in `-` and `_`, invalid names and invalid configs raise. Registrations
+are not saved: register again on every load.
 
 pidrei does not connect MCP servers yet (its MCP client ports with codemode).
 An extension that connects them reads `get_mcp_servers()` on `session_start`
@@ -691,7 +692,11 @@ Registering a `"direct"` or `"model-only"` tool activates it; the other
 exposures are not activated on registration, and neither is a tool with
 `default_active=False` — name it in `--tools` or the `defaultTools` setting
 (`"+name"` adds it to the defaults), or activate it with `set_active_tools()`.
-`namespace=ToolNamespace(name=..., description=...)` groups related tools.
+`namespace=ToolNamespace(name=..., description=..., instructions=...)` groups
+related tools, as MCP servers do. Tools that list other tools show a namespace
+under one heading with its `description`. `instructions` holds longer usage
+guidance; it is not listed, and tools that describe a namespace on request
+return it.
 
 `annotations=ToolAnnotations(...)` are hints about what a tool does, with the
 meaning of MCP tool annotations: `read_only_hint`, `destructive_hint`,

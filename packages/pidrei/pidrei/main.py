@@ -471,6 +471,13 @@ def _build_session_options(
     # Model from CLI
     # - supports --provider <name> --model <pattern>
     # - supports --model <provider>/<pattern>
+    if parsed.provider and not parsed.model:
+        diagnostics.append(
+            AgentSessionRuntimeDiagnostic(
+                type="error",
+                message=f"--provider requires --model (for example: --provider {parsed.provider} --model <pattern>)",
+            )
+        )
     if parsed.model:
         resolved = resolve_cli_model(
             cli_provider=parsed.provider,

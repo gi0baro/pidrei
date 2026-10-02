@@ -64,21 +64,10 @@ async def _default_fetch(url: str, headers: dict[str, str], cancel: Any) -> Cata
 
 
 def _merge_models(baseline: list[AnyModel], dynamic: list[AnyModel]) -> list[AnyModel]:
-    merged = list(baseline)
-    for model in dynamic:
-        index = next(
-            (
-                i
-                for i, entry in enumerate(merged)
-                if get_model_type(entry) == get_model_type(model) and entry.id == model.id
-            ),
-            -1,
-        )
-        if index >= 0:
-            merged[index] = model
-        else:
-            merged.append(model)
-    return merged
+    merged: dict[tuple[str, str], AnyModel] = {}
+    for model in [*baseline, *dynamic]:
+        merged[(get_model_type(model), model.id)] = model
+    return list(merged.values())
 
 
 def _parse_catalog(provider_id: str, value: Any) -> list[AnyModel]:

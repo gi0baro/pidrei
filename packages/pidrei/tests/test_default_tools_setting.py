@@ -1,5 +1,6 @@
 """Mirror of pi coding-agent test/default-tools-setting.test.ts."""
 
+import json
 import os
 import shutil
 import tempfile
@@ -156,6 +157,92 @@ async def test_preserves_explicit_tool_option_precedence(dirs):
         assert tool_less_session.get_active_tool_names() == []
     finally:
         tool_less_session.dispose()
+
+
+# --- reload ---------------------------------------------------------------------
+
+
+async def inactive_tool(pi) -> None:
+    tool = _tool("inactive_tool", "Inactive Tool", "Extension tool registered inactive")
+    tool.default_active = False
+    pi.register_tool(tool)
+
+
+def write_settings(dirs, settings: dict) -> None:
+    with open(os.path.join(dirs.agent_dir, "settings.json"), "w", encoding="utf-8") as file:
+        json.dump(settings, file)
+
+
+async def create_file_session(dirs, options=None):
+    settings_manager = await SettingsManager(dirs.root, dirs.agent_dir)
+    resource_loader = await DefaultResourceLoader(
+        cwd=dirs.root,
+        agent_dir=dirs.agent_dir,
+        settings_manager=settings_manager,
+        extension_factories=[inactive_tool],
+    )
+    await resource_loader.reload()
+    session_options = CreateAgentSessionOptions(
+        cwd=dirs.root,
+        agent_dir=dirs.agent_dir,
+        model=get_builtin_model("anthropic", "claude-sonnet-4-5"),
+        settings_manager=settings_manager,
+        session_manager=SessionManager.in_memory(dirs.root),
+        resource_loader=resource_loader,
+    )
+    for key, value in (options or {}).items():
+        setattr(session_options, key, value)
+    return (await create_agent_session(session_options)).session
+
+
+# #10245
+@pytest.mark.tonio
+async def test_reload_activates_only_tools_newly_added_to_default_tools(dirs):
+    session = await create_file_session(dirs)
+    try:
+        assert session.get_active_tool_names() == ["read", "bash", "edit", "write"]
+        session.set_active_tools_by_name(["read", "edit", "write"])
+
+        write_settings(dirs, {"defaultTools": ["+inactive_tool", "+grep"]})
+        await session.reload()
+        # bash was disabled during the session and is not newly added, so it stays off.
+        assert sorted(session.get_active_tool_names()) == ["edit", "grep", "inactive_tool", "read", "write"]
+
+        # Removing tools from the setting does not disable them.
+        write_settings(dirs, {"defaultTools": ["-read"]})
+        await session.reload()
+        assert sorted(session.get_active_tool_names()) == ["edit", "grep", "inactive_tool", "read", "write"]
+    finally:
+        session.dispose()
+
+
+@pytest.mark.tonio
+async def test_reload_keeps_explicit_tool_options(dirs):
+    allowlisted = await create_file_session(dirs, {"tools": ["read"]})
+    try:
+        write_settings(dirs, {"defaultTools": ["+grep"]})
+        await allowlisted.reload()
+        assert allowlisted.get_active_tool_names() == ["read"]
+    finally:
+        allowlisted.dispose()
+
+    write_settings(dirs, {})
+    builtinless = await create_file_session(dirs, {"no_tools": "builtin"})
+    try:
+        write_settings(dirs, {"defaultTools": ["+grep"]})
+        await builtinless.reload()
+        assert builtinless.get_active_tool_names() == []
+    finally:
+        builtinless.dispose()
+
+    write_settings(dirs, {})
+    excluded = await create_file_session(dirs, {"exclude_tools": ["grep"]})
+    try:
+        write_settings(dirs, {"defaultTools": ["+grep", "+inactive_tool"]})
+        await excluded.reload()
+        assert sorted(excluded.get_active_tool_names()) == ["bash", "edit", "inactive_tool", "read", "write"]
+    finally:
+        excluded.dispose()
 
 
 @pytest.mark.tonio

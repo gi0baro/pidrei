@@ -418,6 +418,7 @@ async def create_agent_session(options: CreateAgentSessionOptions | None = None)
             model_runtime=model_runtime,
             cache_warmer=cache_warmer,
             initial_active_tool_names=initial_active_tool_names,
+            uses_default_tools=options.tools is None and not options.no_tools,
             allowed_tool_names=allowed_tool_names,
             excluded_tool_names=excluded_tool_names,
             extension_runner_ref=extension_runner_ref,

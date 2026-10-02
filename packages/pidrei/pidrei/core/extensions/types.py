@@ -71,8 +71,12 @@ class ToolNamespace:
 
     # For example `mcp__docs`.
     name: str
-    # Shown once above the group's tools.
+    # Short summary shown once with the group in model-facing tool listings.
     description: str | None = None
+    # Longer usage guidance, such as MCP server instructions. Not part of tool
+    # listings; tools that describe the namespace on request (codemode's
+    # `describeNamespace()`) return it.
+    instructions: str | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)

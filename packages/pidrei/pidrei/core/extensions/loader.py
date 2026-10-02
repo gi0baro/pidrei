@@ -279,6 +279,15 @@ class ExtensionAPI:
         get_argument_completions: Any = None,
     ) -> None:
         self._assert_active()
+        if not isinstance(name, str) or len(name) == 0:
+            raise Exception(
+                f'Command registered by extension "{self._extension.path}" must have a non-empty string name. '
+                'Use pi.register_command("name", description=..., handler=...).'
+            )
+        if not callable(handler):
+            raise Exception(  # noqa: TRY004 - pi throws a plain Error
+                f'Command "/{name}" registered by extension "{self._extension.path}" must define handler().'
+            )
         self._extension.commands[name] = RegisteredCommand(
             name=name,
             handler=handler,
@@ -431,7 +440,8 @@ class ExtensionAPI:
         Registering a name again replaces the extension's earlier registration.
 
         The registration is not saved; register again on every load. Raises for
-        invalid configs and for names another extension registered. When no
+        invalid configs, for names another extension registered, and for names
+        that differ from a registered server's only in `-` and `_`. When no
         loaded extension handles MCP servers, the registration is reported as
         an extension error.
         """
@@ -442,12 +452,16 @@ class ExtensionAPI:
                 f'Invalid MCP server registered by extension "{self._extension.path}": {validated}'
             )
         server = RegisteredMcpServer(name=name, config=copy.deepcopy(validated), extension_path=self._extension.path)
-        # pi checks the owner now and, while the factory runs, registers when it
-        # returns. Once loaded, the check and the registration are one step.
+        # pi checks the owner and the namespace now and, while the factory runs,
+        # registers when it returns. Once loaded, the checks and the
+        # registration are one step.
         loading = self._state == "loading"
-        registered = self._runtime.mcp_servers.get(name) if loading else self._runtime.mcp_servers.claim(server)
-        if registered is not None and registered.extension_path != self._extension.path:
-            raise Exception(f'MCP server "{name}" is already registered by extension "{registered.extension_path}"')
+        conflict = self._runtime.mcp_servers.conflict_of(server) if loading else self._runtime.mcp_servers.claim(server)
+        if conflict is not None and conflict.name == name:
+            raise Exception(f'MCP server "{name}" is already registered by extension "{conflict.extension_path}"')
+        # Names that differ only in `-` and `_` would share a namespace.
+        if conflict is not None:
+            raise Exception(f'MCP server "{name}" conflicts with registered server "{conflict.name}"')
         if loading:
             self._pending_runtime_changes.append(lambda: self._runtime.mcp_servers.register(server))
 

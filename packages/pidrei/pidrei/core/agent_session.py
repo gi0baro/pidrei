@@ -19,7 +19,7 @@ import os
 import re
 import threading
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
 from typing import Any, Literal
@@ -107,7 +107,7 @@ from .model_runtime import ModelRuntimeAuthOverrides
 from .nested_tool_calls import ExecuteToolOptions, NestedCallScope, NestedToolCallRunner
 from .prompt_templates import expand_prompt_template
 from .session_manager import SessionManager, SessionProjection, get_latest_compaction_entry
-from .settings_manager import CacheWarmingMode
+from .settings_manager import DEFAULT_TOOL_NAMES, CacheWarmingMode
 from .source_info import BUILTIN_PATH_PREFIX, create_synthetic_source_info, is_synthetic_path
 from .system_prompt import (
     BuildSystemPromptOptions,
@@ -364,6 +364,9 @@ class AgentSessionConfig:
     cache_warmer: CacheWarmer | None = None
     # Initial active built-in tool names. Default: [read, bash, edit, write]
     initial_active_tool_names: list[str] | None = None
+    # Whether the initial tools come from the `defaultTools` setting. When true, reload activates
+    # tools newly added to the setting. Tools removed from it stay active.
+    uses_default_tools: bool = False
     # Optional allowlist of tool names.
     allowed_tool_names: list[str] | None = None
     # Optional denylist of tool names.
@@ -615,6 +618,7 @@ class AgentSession:
         self._cwd = config.cwd
         self._extension_runner_ref = config.extension_runner_ref
         self._initial_active_tool_names = config.initial_active_tool_names
+        self._uses_default_tools = config.uses_default_tools
         self._allowed_tool_names = set(config.allowed_tool_names) if config.allowed_tool_names is not None else None
         self._excluded_tool_names = set(config.excluded_tool_names) if config.excluded_tool_names is not None else None
         self._base_tools_override = config.base_tools_override
@@ -653,6 +657,13 @@ class AgentSession:
         # the start.
         self._nested_tool_calls = NestedToolCallRunner(_NestedToolCallHost(self))
         self._tool_definitions: dict[str, _ToolDefinitionEntry] = {}
+        # Tools of the restored or reloaded loadout that are not registered yet,
+        # such as tools of MCP servers that are still connecting. They are
+        # activated when they are registered, and dropped when
+        # `set_active_tools_by_name()` deactivates a tool or the next agent run
+        # starts. Under `_tool_loadout_guard`. A dict, for pi's insertion-ordered
+        # Set: the order is the order they are declared in.
+        self._pending_tool_names: dict[str, None] = {}
         self._tool_prompt_snippets: dict[str, str] = {}
         self._tool_prompt_guidelines: dict[str, list[str]] = {}
 
@@ -1723,8 +1734,25 @@ class AgentSession:
         """Set active tools by name. Unknown and "hidden" tool names are ignored.
         Also rebuilds the system prompt. Changes take effect on the next agent turn."""
         with self._tool_loadout_guard:
-            tools = self._apply_tool_loadout(tool_names)
-            self._rebuild_system_prompt([tool.name for tool in tools])
+            previous = self.get_active_tool_names()
+            self._set_active_tools(tool_names)
+            # A loadout that deactivates a tool replaces the restored one, whose pending tools are dropped.
+            # One that only adds tools, like activating tool_search, keeps them.
+            active = set(self.get_active_tool_names())
+            if any(name not in active for name in previous):
+                self._pending_tool_names.clear()
+
+    def _set_active_tools(self, tool_names: list[str]) -> None:
+        """Callers hold `_tool_loadout_guard`."""
+        tools = self._apply_tool_loadout(tool_names)
+        for tool in tools:
+            self._pending_tool_names.pop(tool.name, None)
+        self._rebuild_system_prompt([tool.name for tool in tools])
+
+    def _is_allowed_tool(self, name: str) -> bool:
+        return (self._allowed_tool_names is None or name in self._allowed_tool_names) and not (
+            self._excluded_tool_names is not None and name in self._excluded_tool_names
+        )
 
     def _get_tool_exposure(self, name: str) -> ToolExposure:
         entry = self._tool_definitions.get(name)
@@ -1862,11 +1890,14 @@ class AgentSession:
         return list(unique)
 
     def _rebuild_system_prompt(self, tool_names: list[str]) -> None:
+        """Callers hold `_tool_loadout_guard`."""
         valid_tool_names = [name for name in tool_names if name in self._tool_registry]
+        hidden = self._tool_loadout.hidden_declarations
         tool_snippets: dict[str, str] = {}
         for name in self._tool_registry:
             snippet = self._tool_prompt_snippets.get(name)
-            if snippet:
+            # Tools without a snippet are not listed. Hidden tools are only callable through another tool.
+            if snippet and name not in hidden:
                 tool_snippets[name] = snippet
 
         loader_system_prompt = self._resource_loader.get_system_prompt()
@@ -1920,6 +1951,9 @@ class AgentSession:
         """
         with self._tool_loadout_guard:
             options.selected_tools = [tool.name for tool in self._apply_tool_loadout(options.selected_tools or [])]
+            hidden = self._tool_loadout.hidden_declarations
+        # The tool list must match the declarations the request carries, so hidden tools are not listed.
+        options.tool_snippets = {name: snippet for name, snippet in options.tool_snippets.items() if name not in hidden}
         current = get_current_system_message(messages if messages is not None else self.agent.state.messages)
         sections = diff_system_prompt_sections(
             (current.sections if current is not None else None) or {}, build_system_prompt_sections(options)
@@ -1996,9 +2030,13 @@ class AgentSession:
         declared, but they do not depend on the active set, so the transcript's
         declarations are the whole loadout."""
         current = get_current_system_message(self.session_manager.build_session_context().messages)
-        if current is None:
-            return
-        self.set_active_tools_by_name([tool.name for tool in current.tools_added or []])
+        with self._tool_loadout_guard:
+            self._pending_tool_names.clear()
+            if current is None:
+                return
+            names = [tool.name for tool in current.tools_added or []]
+            self._pending_tool_names = dict.fromkeys(name for name in names if self._is_allowed_tool(name))
+            self._set_active_tools(names)
 
     # =========================================================================
     # Prompting
@@ -2011,6 +2049,10 @@ class AgentSession:
                 # Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
                 self._failed_response = None
             await self._record_selection()
+            # The run records the loadout in the transcript; restored tools that did not register by now
+            # are dropped, so a tool that never registers does not stay pending.
+            with self._tool_loadout_guard:
+                self._pending_tool_names.clear()
             with self._state_guard:
                 self._is_agent_run_active = True
         try:
@@ -3450,7 +3492,9 @@ class AgentSession:
         }
 
         await self._resource_loader.extend_resources(extension_paths)
-        self._rebuild_system_prompt(self.get_active_tool_names())
+        # The active names, the registry and the hidden set are read as one loadout.
+        with self._tool_loadout_guard:
+            self._rebuild_system_prompt(self.get_active_tool_names())
 
     def _build_extension_resource_paths(self, entries: list[dict[str, str]]) -> list[dict[str, Any]]:
         results = []
@@ -3689,12 +3733,7 @@ class AgentSession:
         }
         previous_active_tool_names = self.get_active_tool_names()
         allowed_tool_names = self._allowed_tool_names
-        excluded_tool_names = self._excluded_tool_names
-
-        def is_allowed_tool(name: str) -> bool:
-            return (allowed_tool_names is None or name in allowed_tool_names) and not (
-                excluded_tool_names is not None and name in excluded_tool_names
-            )
+        is_allowed_tool = self._is_allowed_tool
 
         # lazy: import cycle within core
         from .extensions.types import RegisteredTool
@@ -3777,8 +3816,10 @@ class AgentSession:
                     tool_name
                 ):
                     next_active_tool_names.append(tool_name)
+        # Pending tools that are registered now become active.
+        next_active_tool_names.extend(self._pending_tool_names)
 
-        self.set_active_tools_by_name(list(dict.fromkeys(next_active_tool_names)))
+        self._set_active_tools(list(dict.fromkeys(next_active_tool_names)))
 
     def _is_declarable(self, name: str) -> bool:
         """Whether activating the tool declares it to the model."""
@@ -3841,23 +3882,39 @@ class AgentSession:
             include_all_extension_tools=include_all_extension_tools,
         )
 
+    def _default_tool_names(self) -> Sequence[str]:
+        default_tools = self.settings_manager.get_default_tools()
+        return default_tools if default_tools is not None else DEFAULT_TOOL_NAMES
+
     async def reload(self, before_session_start: Callable[[], Awaitable[None]] | None = None) -> None:
 
         old_runner = self._extension_runner
         previous_flag_values = old_runner.get_flag_values()
         await emit_session_shutdown_event(old_runner, {"type": "session_shutdown", "reason": "reload"})
         old_runner.invalidate()
+        previous_default_tools = set(self._default_tool_names() if self._uses_default_tools else ())
         await self.settings_manager.reload()  # drains queued writes first, like pi
         self.sync_queue_modes_from_settings()
         # pi calls resetApiProviders() (the pi-ai compat registry); pidrei's
         # adapters are stateless modules composed per ModelRuntime, so there is
         # no global provider cache to reset.
         await self._resource_loader.reload()
-        self._build_runtime(
-            active_tool_names=self.get_active_tool_names(),
-            flag_values=previous_flag_values,
-            include_all_extension_tools=True,
+        # Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
+        # during the session stay disabled unless the setting newly adds them.
+        added_default_tools = (
+            [name for name in self._default_tool_names() if name not in previous_default_tools]
+            if self._uses_default_tools
+            else []
         )
+        with self._tool_loadout_guard:
+            active_tool_names = self.get_active_tool_names()
+            # Tools the new extensions register later, such as MCP tools, are pending until then.
+            self._pending_tool_names.update(dict.fromkeys(active_tool_names))
+            self._build_runtime(
+                active_tool_names=[*active_tool_names, *added_default_tools],
+                flag_values=previous_flag_values,
+                include_all_extension_tools=True,
+            )
 
         has_bindings = (
             self._extension_ui_context
