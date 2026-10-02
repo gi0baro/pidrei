@@ -7,7 +7,7 @@ CLI first — but they are usable, and extensions import them freely.
 | Package | Contains |
 |---------|----------|
 | `pidrei_ai` | Model types, the provider registry, wire adapters, auth |
-| `pidrei_agent` | The agent loop, tools, harness resources |
+| `pidrei_agent` | The agent and the agent loop |
 | `pidrei_tui` | Terminal UI ([tui.md](tui.md)) |
 | `pidrei` | CLI internals: sessions, modes, extensions, config |
 

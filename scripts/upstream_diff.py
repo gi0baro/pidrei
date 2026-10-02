@@ -295,11 +295,11 @@ DROPPED_PREFIXES += (
 
 #: pi's experimental stack — the durable harness runtime, Chord, the
 #: server/worker/client split and the Chord-era protocol/server/client — is
-#: not ported (2026-09-04 ruling; DROPPED prefixes per its §9). The stable
-#: harness helper layer (env/, tools/, utils/, messages, prompt-templates,
-#: skills, system-prompt, types) and the transport survivors (protocol cbor +
-#: framing, server unix listener + byte contracts, client unix transport)
-#: keep their mechanical mapping.
+#: not ported (2026-09-04 ruling; DROPPED prefixes per its §9). The transport
+#: survivors (protocol cbor + framing, server unix listener + byte contracts,
+#: client unix transport) keep their mechanical mapping. The stable harness
+#: helper layer went with pi 1.0.0 (`7fd478a2`); the modules the product used
+#: now live in pidrei (spec/upstream-sync.md).
 _EXPERIMENTAL_REASON = "experimental stack not ported (spec/upstream-sync.md, what is not ported)"
 DROPPED_PREFIXES += tuple(
     (path, _EXPERIMENTAL_REASON)
@@ -652,12 +652,11 @@ RENAMES = {
     "packages/coding-agent/test/package-command-paths.test.ts": "packages/pidrei/tests/test_package_commands.py",
     # 0.84.x additions (0.84.1 delta port).
     "packages/coding-agent/src/package-manager-cli.ts": "packages/pidrei/pidrei/cli/package_commands.py",
-    "packages/agent/src/harness/env/nodejs.ts": "packages/agent/pidrei_agent/harness/env/local.py",
     # 0.85.1 (0.85.1 delta port): pi split its process-title/env/undici prologue into
     # cli/setup.ts; pidrei's equivalent has always been the entry module's run().
     "packages/coding-agent/src/cli/setup.ts": "packages/pidrei/pidrei/__main__.py",
-    "packages/agent/test/harness/nodejs-env.test.ts": "packages/agent/tests/test_local_env.py",
-    "packages/agent/test/harness/session-test-utils.ts": "packages/agent/tests/session_helpers.py",
+    # 1.0.0: the calculate tool's only consumer is the e2e suite, which holds it.
+    "packages/agent/test/utils/calculate.ts": "packages/agent/tests/test_e2e.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",
     # pi's name refers to the Node `http` module it configures; nothing in
     # pidrei is Node (docstring of http_proxy.py).
@@ -1143,7 +1142,6 @@ TEST_HOMES = {
     "packages/tui/test/tui-cell-size-input.test.ts": "covered by packages/tui/tests/test_tui_queries.py",
     "packages/tui/test/tui-shrink.test.ts": "covered by packages/tui/tests/test_tui_render.py",
     "packages/tui/test/settings-list.test.ts": "PARITY GAP: components/settings_list.py ported, pre-existing cases unmirrored — new in-range cases port into a new test_settings_list.py",
-    "packages/agent/test/harness/tools.test.ts": "covered by packages/agent/tests/test_tools_bash.py + test_tools_files.py",
     "packages/coding-agent/test/model-runtime-cloudflare-compat.test.ts": "covered by packages/pidrei/tests/test_model_registry.py + test_model_runtime.py",
     "packages/coding-agent/test/sdk-openrouter-attribution.test.ts": "covered by packages/pidrei/tests/test_provider_attribution.py",
     "packages/coding-agent/test/model-runtime-test-utils.ts": "pi test infra; pidrei equivalent is packages/pidrei/tests/model_runtime_helpers.py — absorb deltas where ported tests need them",

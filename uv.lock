@@ -360,17 +360,13 @@ name = "pidrei-agent"
 version = "0.99.1.1"
 source = { editable = "packages/agent" }
 dependencies = [
-    { name = "pathspec" },
     { name = "pidrei-ai" },
-    { name = "pyyaml" },
     { name = "tonio" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "pathspec", specifier = "~=1.1" },
     { name = "pidrei-ai", editable = "packages/ai" },
-    { name = "pyyaml", specifier = "~=6.0" },
     { name = "tonio", specifier = "~=0.10.3" },
 ]
 

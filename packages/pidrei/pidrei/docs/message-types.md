@@ -23,8 +23,7 @@ Source definitions:
 
 - `pidrei_ai.types` — provider-facing messages and content blocks.
 - `pidrei_agent.types` — the open `AgentMessage` union.
-- `pidrei.core.messages` — the coding-agent roles (implemented in
-  `pidrei_agent.harness.messages`).
+- `pidrei.core.messages` — the coding-agent roles.
 
 ## Content blocks
 

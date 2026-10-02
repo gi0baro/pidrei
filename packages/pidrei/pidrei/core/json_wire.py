@@ -6,7 +6,7 @@ equivalents are snake_case dataclasses, so this module is the port's
 stand-in: it converts arbitrary event/payload values to pi's wire shape.
 
 Rules (matching JSON.stringify over pi's runtime values):
-- messages (anything with a `role`) and Usage ride the session serde codec,
+- messages (anything with a `role`) and Usage ride the session message codec,
   so their wire shape is byte-identical to pi's session files;
 - Model instances use the models.json wire shape;
 - other dataclasses become camelCase dicts with None fields dropped (None
@@ -19,8 +19,9 @@ Rules (matching JSON.stringify over pi's runtime values):
 import dataclasses
 from typing import Any
 
-from pidrei_agent.harness.session.serde import serialize_message, serialize_usage
 from pidrei_ai.types import Model, Usage
+
+from .message_wire import serialize_message, serialize_usage
 
 
 _SPECIAL_TO_CAMEL = {

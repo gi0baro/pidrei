@@ -31,7 +31,6 @@ from types import SimpleNamespace
 import tonio.colored as tonio
 from tonio.colored import fs, signals as tonio_signals
 
-from pidrei_agent.harness.session.serde import serialize_message
 from pidrei_ai.auth.types import AuthOperationOptions, LoginOptions
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.utils import clock
@@ -86,6 +85,7 @@ from ...core.extensions.types import ExtensionContext, ProjectTrustContext
 from ...core.footer_data_provider import FooterDataProvider
 from ...core.http_config import format_http_idle_timeout_ms
 from ...core.keybindings import KeybindingsManager
+from ...core.message_wire import serialize_message
 from ...core.messages import create_compaction_summary_message, create_custom_message
 from ...core.model_resolver import (
     DEFAULT_MODEL_PER_PROVIDER,

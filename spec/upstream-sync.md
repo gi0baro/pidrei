@@ -297,10 +297,12 @@ Each has entries in the classifier's dropped tables, with the reason.
   rewrite, session backends, benchmarks. It is an unfinished rewrite the
   product does not run on; porting it would track churn on a moving target.
   Not porting it is a deferral, not a saving.
-  - Still ported: the stable harness helper layer the product imports, and
-    the transport layer (CBOR codec, framing, unix socket listener and
-    transports, unix client connect) in the unpublished
-    `protocol`/`client`/`server` packages.
+  - Still ported: the transport layer (CBOR codec, framing, unix socket
+    listener and transports, unix client connect) in the unpublished
+    `protocol`/`client`/`server` packages. Pi 1.0.0 removed the harness
+    helper layer from `pi-agent-core`; the parts the product used live in
+    `pidrei` (`core/messages.py`, `core/message_wire.py`,
+    `core/tools/edit_diff.py`, `core/tools/truncate.py`, `utils/mime.py`).
   - **Reopen** when Pi's product (`AgentSession` or the default interactive
     mode) starts running on the harness, when upstream declares session
     format 4 stable, or when `pi server`/`pi client` leave the

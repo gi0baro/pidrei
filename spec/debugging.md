@@ -52,9 +52,7 @@ turned a latent race into a failure:
 - **Pipe reads are line-sized.** Linux returns ~64 KiB chunks from a child's
   stdout; macOS can deliver a shell loop as thousands of ~10-byte chunks, so
   any per-chunk cost is multiplied by a thousand. Reproduce on Linux by
-  narrowing `SPILL_CHANNEL_SIZE` or `EXIT_STDIO_GRACE_SECONDS` in the agent
-  harness's `local.py`, stalling the spill with a slow `create_temp_file`
-  override (`SlowSpillExecutionEnv` in `test_local_env.py`), or patching the
+  narrowing `_EXIT_STDIO_GRACE_S` in `core/tools/bash.py`, or patching the
   stream's `receive_some` to 16 bytes in a throwaway test.
 - **Paths are long.** `$TMPDIR` is 49 bytes and `sun_path` is 104, so socket
   paths overflow. Socket tests use the `sock_dir` fixture, which budgets for
