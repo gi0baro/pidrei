@@ -28,7 +28,7 @@ class TestOAuthSelectorComponent:
                 id="anthropic",
                 name="Anthropic",
                 auth=SimpleNamespace(
-                    oauth=SimpleNamespace(name="Anthropic (Claude Pro/Max)", login=login),
+                    oauth=SimpleNamespace(name="Anthropic (Claude Pro/Max)", login=login, is_subscription=True),
                     api_key=SimpleNamespace(name="Anthropic API key", login=login),
                 ),
             ),
@@ -63,7 +63,7 @@ class TestOAuthSelectorComponent:
             ("anthropic", "Anthropic", "oauth")
         ]
 
-    def test_renders_an_option_without_compiled_auth_status_as_unconfigured(self):
+    def test_renders_an_option_without_compiled_auth_status_as_not_configured(self):
         selector = OAuthSelectorComponent(
             "login",
             [{"id": "google", "name": "Google", "authType": "api_key", "status": None}],
@@ -72,7 +72,7 @@ class TestOAuthSelectorComponent:
         )
 
         output = strip_ansi("\n".join(selector.render(120)))
-        assert "unconfigured" in output
+        assert "not configured" in output
         assert "✓ configured" not in output
 
     def test_shows_oauth_auth_distinctly_in_the_api_key_selector(self):
@@ -110,7 +110,7 @@ class TestOAuthSelectorComponent:
 
         output = strip_ansi("\n".join(selector.render(120)))
         assert "✓ env: OPENAI_API_KEY" in output
-        assert "unconfigured" not in output
+        assert "not configured" not in output
 
     def test_shows_models_json_api_key_auth_as_configured(self):
         selector = OAuthSelectorComponent(

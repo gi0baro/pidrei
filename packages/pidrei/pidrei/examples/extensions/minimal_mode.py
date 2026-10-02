@@ -19,18 +19,17 @@ Then use ctrl+o to toggle between minimal (collapsed) and full (expanded)
 views.
 """
 
+import dataclasses
 import os
-import threading
 
-from pidrei.core.extensions.types import ToolDefinition
 from pidrei.core.tools import (
-    create_bash_tool,
-    create_edit_tool,
-    create_find_tool,
-    create_grep_tool,
-    create_ls_tool,
-    create_read_tool,
-    create_write_tool,
+    create_bash_tool_definition,
+    create_edit_tool_definition,
+    create_find_tool_definition,
+    create_grep_tool_definition,
+    create_ls_tool_definition,
+    create_read_tool_definition,
+    create_write_tool_definition,
 )
 from pidrei.core.tools.render_utils import shorten_path
 from pidrei_tui import Text
@@ -47,43 +46,18 @@ def _find_text_block(result):
 
 def _create_built_in_tools(cwd: str) -> dict:
     return {
-        "read": create_read_tool(cwd),
-        "bash": create_bash_tool(cwd),
-        "edit": create_edit_tool(cwd),
-        "write": create_write_tool(cwd),
-        "find": create_find_tool(cwd),
-        "grep": create_grep_tool(cwd),
-        "ls": create_ls_tool(cwd),
+        "read": create_read_tool_definition(cwd),
+        "bash": create_bash_tool_definition(cwd),
+        "edit": create_edit_tool_definition(cwd),
+        "write": create_write_tool_definition(cwd),
+        "find": create_find_tool_definition(cwd),
+        "grep": create_grep_tool_definition(cwd),
+        "ls": create_ls_tool_definition(cwd),
     }
 
 
 async def extension(pi):
-    # Cache for built-in tools by cwd (in the closure: module globals reset
-    # on /reload)
-    tool_cache: dict[str, dict] = {}
-    # The tools of one message execute in parallel: the check-and-create is
-    # one step, so each cwd gets one set.
-    tool_cache_guard = threading.Lock()
-
-    def get_built_in_tools(cwd: str) -> dict:
-        with tool_cache_guard:
-            tools = tool_cache.get(cwd)
-            if tools is None:
-                tools = _create_built_in_tools(cwd)
-                tool_cache[cwd] = tools
-            return tools
-
-    # The parameter schemas and descriptions are taken verbatim from the
-    # built-ins at registration time; execution re-resolves against the
-    # session cwd.
-    registration_tools = get_built_in_tools(os.getcwd())
-
-    def make_delegate(name: str):
-        async def execute(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-            tools = get_built_in_tools(ctx.cwd)
-            return await tools[name].execute(tool_call_id, params, cancel, on_update, ctx)
-
-        return execute
+    tools = _create_built_in_tools(os.getcwd())
 
     def path_display(args, theme) -> str:
         path = shorten_path(args.get("path") or "")
@@ -150,17 +124,7 @@ async def extension(pi):
 
         return Text(f"{theme.fg('toolTitle', theme.bold('read'))} {display}", 0, 0)
 
-    pi.register_tool(
-        ToolDefinition(
-            name="read",
-            label="read",
-            description=registration_tools["read"].description,
-            parameters=registration_tools["read"].parameters,
-            execute=make_delegate("read"),
-            render_call=render_read_call,
-            render_result=render_read_result,
-        )
-    )
+    pi.register_tool(dataclasses.replace(tools["read"], render_call=render_read_call, render_result=render_read_result))
 
     # =========================================================================
     # Bash Tool
@@ -173,15 +137,7 @@ async def extension(pi):
         return Text(theme.fg("toolTitle", theme.bold(f"$ {command}")) + timeout_suffix, 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="bash",
-            label="bash",
-            description=registration_tools["bash"].description,
-            parameters=registration_tools["bash"].parameters,
-            execute=make_delegate("bash"),
-            render_call=render_bash_call,
-            render_result=render_minimal_result,
-        )
+        dataclasses.replace(tools["bash"], render_call=render_bash_call, render_result=render_minimal_result)
     )
 
     # =========================================================================
@@ -205,15 +161,7 @@ async def extension(pi):
         return Text("", 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="write",
-            label="write",
-            description=registration_tools["write"].description,
-            parameters=registration_tools["write"].parameters,
-            execute=make_delegate("write"),
-            render_call=render_write_call,
-            render_result=render_write_result,
-        )
+        dataclasses.replace(tools["write"], render_call=render_write_call, render_result=render_write_result)
     )
 
     # =========================================================================
@@ -241,14 +189,8 @@ async def extension(pi):
         return Text(f"\n{theme.fg('toolOutput', text)}", 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="edit",
-            label="edit",
-            description=registration_tools["edit"].description,
-            parameters=registration_tools["edit"].parameters,
-            execute=make_delegate("edit"),
-            render_call=render_edit_call,
-            render_result=render_edit_result,
+        dataclasses.replace(
+            tools["edit"], render_shell="default", render_call=render_edit_call, render_result=render_edit_result
         )
     )
 
@@ -266,14 +208,8 @@ async def extension(pi):
         return Text(text, 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="find",
-            label="find",
-            description=registration_tools["find"].description,
-            parameters=registration_tools["find"].parameters,
-            execute=make_delegate("find"),
-            render_call=render_find_call,
-            render_result=make_count_result_renderer("files"),
+        dataclasses.replace(
+            tools["find"], render_call=render_find_call, render_result=make_count_result_renderer("files")
         )
     )
 
@@ -293,14 +229,8 @@ async def extension(pi):
         return Text(text, 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="grep",
-            label="grep",
-            description=registration_tools["grep"].description,
-            parameters=registration_tools["grep"].parameters,
-            execute=make_delegate("grep"),
-            render_call=render_grep_call,
-            render_result=make_count_result_renderer("matches"),
+        dataclasses.replace(
+            tools["grep"], render_call=render_grep_call, render_result=make_count_result_renderer("matches")
         )
     )
 
@@ -316,13 +246,7 @@ async def extension(pi):
         return Text(text, 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="ls",
-            label="ls",
-            description=registration_tools["ls"].description,
-            parameters=registration_tools["ls"].parameters,
-            execute=make_delegate("ls"),
-            render_call=render_ls_call,
-            render_result=make_count_result_renderer("entries"),
+        dataclasses.replace(
+            tools["ls"], render_call=render_ls_call, render_result=make_count_result_renderer("entries")
         )
     )

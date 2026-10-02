@@ -170,7 +170,7 @@ from .components import (
     load_earendil_image_base64,
     raw_key_hint,
 )
-from .components.pi_logo import pi_logo_lines
+from .components.pi_logo import pi_logo_lines, pi_wordmark, supports_pi_logo
 from .components.themed_text import ThemedText
 from .extension_tui import ExtensionTui, guard_overlay_handle
 from .external_editor import edit_in_external_editor
@@ -381,19 +381,23 @@ def _get_login_provider_completion_options(provider_options: list) -> list:
             "id": provider["id"],
             "name": provider["name"],
             "authTypes": [provider["authType"]],
+            "subscription": provider.get("subscription"),
         }
     return sorted(by_id.values(), key=lambda p: (p["name"].lower(), p["name"]))
 
 
 def _get_login_provider_search_text(provider: dict) -> str:
     auth_types = " ".join(
-        f"{auth_type} {format_auth_selector_provider_type(auth_type)}" for auth_type in provider["authTypes"]
+        f"{auth_type} {format_auth_selector_provider_type(auth_type, provider['subscription'])}"
+        for auth_type in provider["authTypes"]
     )
     return f"{provider['id']} {provider['name']} {auth_types}"
 
 
 def _format_login_provider_completion_description(provider: dict) -> str:
-    auth_types = "/".join(format_auth_selector_provider_type(auth_type) for auth_type in provider["authTypes"])
+    auth_types = "/".join(
+        format_auth_selector_provider_type(auth_type, provider["subscription"]) for auth_type in provider["authTypes"]
+    )
     return auth_types if provider["name"] == provider["id"] else f"{provider['name']} · {auth_types}"
 
 
@@ -1030,6 +1034,9 @@ class InteractiveMode:
                 while renderer.has_overlay_entries:
                     renderer.hide_overlay()
             await self._switch_tui_mode("regular", restore_progress=False, start_renderer=False)
+            # The fullscreen renderer released the terminal when it stopped. The transcript
+            # below and the regular screen's stop both write to it, and that stop releases it.
+            self._renderer.terminal.arm()
             await self._renderer.render_now()
         await self.ui.stop({"preserveScreen": self._renderer.mode == "fullscreen"})
 
@@ -1115,9 +1122,7 @@ class InteractiveMode:
         # Load changelog (only show new entries, skip for resumed sessions)
         self._changelog_markdown = await self._get_changelog_for_display()
 
-        if self.session.scoped_models and (
-            self._options.get("verbose") or not self.settings_manager.get_quiet_startup()
-        ):
+        if self.session.scoped_models and self._should_show_startup_details():
             model_parts = []
             for sm in self.session.scoped_models:
                 model = sm["model"] if isinstance(sm, dict) else sm.model
@@ -1189,11 +1194,17 @@ class InteractiveMode:
         await self._theme_controller.wait_for_terminal_colors()
 
         # Add header with keybindings from config (unless silenced)
-        if self._options.get("verbose") or not self.settings_manager.get_quiet_startup():
+        if self._should_show_startup_header():
+            show_details = self._should_show_startup_details()
             # Built on demand so the header follows theme changes. The logo's
             # first line carries the version, its second line the first line
-            # of key hints.
+            # of key hints. Terminals that cannot render the logo get a
+            # "PiDrei vX" line instead, with the key hints below it.
+            show_logo = supports_pi_logo()
+
             def with_logo(hints: str) -> str:
+                if not show_logo:
+                    return f"{pi_wordmark()} {theme.fg('dim', f'v{self._version}')}\n{hints}"
                 top, bottom = pi_logo_lines()
                 return f"{top} {theme.fg('dim', f'v{self._version}')}\n{bottom} {hints}"
 
@@ -1239,7 +1250,8 @@ class InteractiveMode:
             def compact_onboarding() -> str:
                 return theme.fg(
                     "dim",
-                    f"Press {key_text('app.tools.expand')} to show full startup help and loaded resources.",
+                    f"Press {key_text('app.tools.expand')} to show full startup help"
+                    f"{' and loaded resources' if show_details else ''}.",
                 )
 
             def onboarding() -> str:
@@ -1535,6 +1547,14 @@ class InteractiveMode:
 
     def _get_startup_expansion_state(self) -> bool:
         return bool(self._options.get("verbose")) or self._tool_output_expanded
+
+    def _should_show_startup_header(self) -> bool:
+        """Startup header (logo, version, key hints). Hidden only by quietStartup: true."""
+        return self._options.get("verbose") is True or self.settings_manager.get_quiet_startup() is not True
+
+    def _should_show_startup_details(self) -> bool:
+        """Startup details (model scope, loaded resources). Hidden by quietStartup: true or "header"."""
+        return self._options.get("verbose") is True or self.settings_manager.get_quiet_startup() is False
 
     def _get_short_path(self, full_path: str, source_info=None) -> str:
         """Get a short path relative to the package root for display."""
@@ -1842,9 +1862,7 @@ class InteractiveMode:
             # separate container.
             self._loaded_resources_container.clear()
 
-            show_listing = (
-                options.get("force") or self._options.get("verbose") or not self.settings_manager.get_quiet_startup()
-            )
+            show_listing = options.get("force") or self._should_show_startup_details()
             show_diagnostics = show_listing or options.get("showDiagnosticsWhenQuiet") is True
             if not show_listing and not show_diagnostics:
                 return
@@ -5072,7 +5090,7 @@ class InteractiveMode:
                     "onEnableProviderAttributionChange": lambda enabled: (
                         self.settings_manager.set_enable_provider_attribution(enabled)
                     ),
-                    "onQuietStartupChange": lambda enabled: self.settings_manager.set_quiet_startup(enabled),
+                    "onQuietStartupChange": lambda quiet: self.settings_manager.set_quiet_startup(quiet),
                     "onDefaultProjectTrustChange": lambda default_project_trust: (
                         self.settings_manager.set_default_project_trust(default_project_trust)
                     ),
@@ -5820,6 +5838,7 @@ class InteractiveMode:
                 if auth_status.configured
                 else None
             )
+            subscription = provider.auth.oauth is not None and provider.auth.oauth.is_subscription is True
             if (not auth_type or auth_type == "oauth") and provider.auth.oauth:
                 options.append(
                     {
@@ -5828,6 +5847,7 @@ class InteractiveMode:
                         "authType": "oauth",
                         "method": provider.auth.oauth,
                         "status": status,
+                        "subscription": subscription,
                     }
                 )
             if (not auth_type or auth_type == "api_key") and provider.auth.api_key:
@@ -5838,6 +5858,7 @@ class InteractiveMode:
                         "authType": "api_key",
                         "method": provider.auth.api_key,
                         "status": status,
+                        "subscription": subscription,
                     }
                 )
         return sorted(options, key=lambda option: (option["name"].lower(), option["name"]))
@@ -5854,6 +5875,11 @@ class InteractiveMode:
                     "name": provider.name if provider is not None else credential.provider_id,
                     "authType": credential.type,
                     "status": {"type": credential.type, "source": "stored credential"},
+                    "subscription": (
+                        provider is not None
+                        and provider.auth.oauth is not None
+                        and provider.auth.oauth.is_subscription is True
+                    ),
                 }
             )
         return sorted(options, key=lambda option: (option["name"].lower(), option["name"]))
@@ -5889,17 +5915,18 @@ class InteractiveMode:
 
         self._show_login_provider_selector(None, provider_ref)
 
-    def _start_provider_login(self, provider_option: dict) -> None:
+    def _start_provider_login(self, provider_option: dict, on_back: Callable[[], None] | None = None) -> None:
         """From the login selectors and /login: the dialog is mounted before
         this returns, as pi's is before its first await; the login flow is
-        spawned."""
+        spawned. `on_back` reopens the selector the login was started from
+        when the user cancels it."""
         if provider_option["authType"] == "oauth":
-            self._show_login_dialog(provider_option["id"], provider_option["name"])
+            self._show_login_dialog(provider_option["id"], provider_option["name"], on_back)
             return
         if getattr(provider_option.get("method"), "login", None):
-            self._show_api_key_login_dialog(provider_option["id"], provider_option["name"])
+            self._show_api_key_login_dialog(provider_option["id"], provider_option["name"], on_back)
             return
-        self._show_ambient_auth_dialog(provider_option)
+        self._show_ambient_auth_dialog(provider_option, on_back)
 
     def _show_login_auth_type_selector(self, provider_options: list | None = None) -> None:
         oauth_provider = (
@@ -5948,7 +5975,9 @@ class InteractiveMode:
                         (provider for provider in provider_options if provider["authType"] == auth_type), None
                     )
                     if provider_option:
-                        self._start_provider_login(provider_option)
+                        self._start_provider_login(
+                            provider_option, lambda: self._show_login_auth_type_selector(provider_options)
+                        )
                     return
                 self._show_login_provider_selector(auth_type)
 
@@ -5957,7 +5986,7 @@ class InteractiveMode:
                 self.ui.request_render()
 
             selector = ExtensionSelectorComponent(title, options, on_select, on_cancel)
-            return {"component": selector, "focus": selector}
+            return {"component": selector, "focus": selector, "dispose": selector.dispose}
 
         self._show_selector(create)
 
@@ -5967,7 +5996,7 @@ class InteractiveMode:
         provider_options = self.get_login_provider_options(auth_type)
         if not provider_options:
             if auth_type == "oauth":
-                message = "No subscription providers available."
+                message = "No account providers available."
             elif auth_type == "api_key":
                 message = "No API key providers available."
             else:
@@ -5990,7 +6019,9 @@ class InteractiveMode:
                     None,
                 )
                 if provider_option is not None:
-                    self._start_provider_login(provider_option)
+                    self._start_provider_login(
+                        provider_option, lambda: self._show_login_provider_selector(auth_type, initial_search_input)
+                    )
 
             def on_cancel() -> None:
                 done()
@@ -6228,13 +6259,19 @@ class InteractiveMode:
             self.ui.set_focus(self.editor)
             self.ui.request_render()
 
-    def _show_ambient_auth_dialog(self, provider_option: dict) -> None:
+    def _show_ambient_auth_dialog(self, provider_option: dict, on_back: Callable[[], None] | None = None) -> None:
         """Reached from `_start_provider_login`."""
+
+        # The dialog's only completion is its cancel key.
+        def on_complete(*_args) -> None:
+            self._restore_editor_slot()
+            if on_back is not None:
+                on_back()
+
         dialog = LoginDialogComponent(
             self.ui,
             provider_option["id"],
-            # The dialog's only completion is its cancel key.
-            lambda *_args: self._restore_editor_slot(),
+            on_complete,
             provider_option["name"],
             f"{provider_option['name']} setup",
         )
@@ -6247,7 +6284,9 @@ class InteractiveMode:
 
         self._show_in_editor_slot(dialog)
 
-    def _show_api_key_login_dialog(self, provider_id: str, provider_name: str) -> None:
+    def _show_api_key_login_dialog(
+        self, provider_id: str, provider_name: str, on_back: Callable[[], None] | None = None
+    ) -> None:
         """Reached from `_start_provider_login`: the dialog is set up and
         mounted here, as pi's is before its first await; the login flow is
         spawned."""
@@ -6270,9 +6309,11 @@ class InteractiveMode:
             )
 
         self._show_in_editor_slot(dialog)
-        self._spawn_flow(self._api_key_login(dialog, provider_id, provider_name, previous_model))
+        self._spawn_flow(self._api_key_login(dialog, provider_id, provider_name, previous_model, on_back))
 
-    async def _api_key_login(self, dialog, provider_id: str, provider_name: str, previous_model) -> None:
+    async def _api_key_login(
+        self, dialog, provider_id: str, provider_name: str, previous_model, on_back: Callable[[], None] | None
+    ) -> None:
         try:
             await self._login_provider(dialog, provider_id, "api_key")
             # pi restores the editor in the stretch that starts completing the
@@ -6288,7 +6329,10 @@ class InteractiveMode:
                     self.show_error(
                         f"Saved API key for {provider_name}, but local model state could not be synchronized: {error_msg}"
                     )
-                elif error_msg != "Login cancelled":
+                elif error_msg == "Login cancelled":
+                    if on_back is not None:
+                        on_back()
+                else:
                     self.show_error(f"Failed to save API key for {provider_name}: {error_msg}")
 
     async def _show_auth_select(self, dialog, prompt) -> str:
@@ -6387,15 +6431,19 @@ class InteractiveMode:
             LoginOptions(get_device_id=self.settings_manager.get_or_create_device_id),
         )
 
-    def _show_login_dialog(self, provider_id: str, provider_name: str) -> None:
+    def _show_login_dialog(
+        self, provider_id: str, provider_name: str, on_back: Callable[[], None] | None = None
+    ) -> None:
         """Reached from `_start_provider_login`: mounted here; the OAuth flow
         is spawned."""
         previous_model = self.session.model
         dialog = LoginDialogComponent(self.ui, provider_id, lambda *_args: None, provider_name)
         self._show_in_editor_slot(dialog)
-        self._spawn_flow(self._oauth_login(dialog, provider_id, provider_name, previous_model))
+        self._spawn_flow(self._oauth_login(dialog, provider_id, provider_name, previous_model, on_back))
 
-    async def _oauth_login(self, dialog, provider_id: str, provider_name: str, previous_model) -> None:
+    async def _oauth_login(
+        self, dialog, provider_id: str, provider_name: str, previous_model, on_back: Callable[[], None] | None
+    ) -> None:
         try:
             await self._login_provider(dialog, provider_id, "oauth")
             # pi restores the editor in the stretch that starts completing the
@@ -6411,7 +6459,10 @@ class InteractiveMode:
                     self.show_error(
                         f"Logged in to {provider_name}, but local model state could not be synchronized: {error_msg}"
                     )
-                elif error_msg != "Login cancelled":
+                elif error_msg == "Login cancelled":
+                    if on_back is not None:
+                        on_back()
+                else:
                     self.show_error(f"Failed to login to {provider_name}: {error_msg}")
 
     # =========================================================================

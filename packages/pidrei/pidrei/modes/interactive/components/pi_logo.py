@@ -1,6 +1,6 @@
 """Mirror of pi coding-agent src/modes/interactive/components/pi-logo.ts."""
 
-from pidrei_tui import background_ansi, foreground_ansi, rgb_color
+from pidrei_tui import background_ansi, foreground_ansi, is_apple_terminal_session, rgb_color
 
 from ..theme import theme
 
@@ -35,3 +35,20 @@ def pi_logo_lines() -> tuple[str, str]:
     bottom = f"{fg(_BLUE)}█▀{_RESET} {fg(_YELLOW)}█{_RESET}"
     three_top = f"{fg(_CORAL)}▀{background_ansi(_BLUE, mode)}▀{_RESET}{fg(_CORAL)}█{_RESET}"
     return f"{top} {three_top}", f"{bottom} {fg(_BLUE)}▄▄█{_RESET}"
+
+
+def supports_pi_logo() -> bool:
+    """Whether the terminal renders the half-block logo correctly. Apple
+    Terminal draws gaps between rows and misaligns the half blocks, so it gets
+    the text wordmark instead."""
+    return not is_apple_terminal_session()
+
+
+def pi_wordmark() -> str:
+    """Text fallback for the logo: "PiDrei" in the logo's colors, "Pi" coral
+    and yellow like pi's wordmark and "Drei" blue like the logo's 3."""
+    mode = theme.get_color_mode()
+    return (
+        f"{foreground_ansi(_CORAL, mode)}P{_RESET}{foreground_ansi(_YELLOW, mode)}i{_RESET}"
+        f"{foreground_ansi(_BLUE, mode)}Drei{_RESET}"
+    )

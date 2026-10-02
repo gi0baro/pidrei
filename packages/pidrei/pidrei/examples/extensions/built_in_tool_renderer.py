@@ -13,8 +13,8 @@ or just the exit code for bash).
 
 How it works:
 - register_tool() with the same name as a built-in replaces it entirely
-- We create instances of the original tools via create_read_tool(), etc.
-  and delegate execute() to them
+- We create the original definitions via create_read_tool_definition(), etc.
+  and override only their renderers
 - render_call() controls what's shown when the tool is invoked
 - render_result() controls what's shown after execution completes
 - render_shell="self" lets a tool render its own outer shell instead of
@@ -26,15 +26,15 @@ Start pidrei with this extension:
     pidrei -e ./examples/extensions/built_in_tool_renderer.py
 """
 
+import dataclasses
 import os
 import re
 
-from pidrei.core.extensions.types import ToolDefinition
 from pidrei.core.tools import (
-    create_bash_tool,
-    create_edit_tool,
-    create_read_tool,
-    create_write_tool,
+    create_bash_tool_definition,
+    create_edit_tool_definition,
+    create_read_tool_definition,
+    create_write_tool_definition,
 )
 from pidrei_tui import Text
 
@@ -77,10 +77,7 @@ async def extension(pi):
     cwd = os.getcwd()
 
     # --- Read tool: show path and line count ---
-    original_read = create_read_tool(cwd)
-
-    def execute_read(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return original_read.execute(tool_call_id, params, cancel, on_update, ctx)
+    original_read = create_read_tool_definition(cwd)
 
     def render_read_call(args, theme, _context):
         args = args or {}
@@ -120,23 +117,10 @@ async def extension(pi):
 
         return Text(text, 0, 0)
 
-    pi.register_tool(
-        ToolDefinition(
-            name="read",
-            label="read",
-            description=original_read.description,
-            parameters=original_read.parameters,
-            execute=execute_read,
-            render_call=render_read_call,
-            render_result=render_read_result,
-        )
-    )
+    pi.register_tool(dataclasses.replace(original_read, render_call=render_read_call, render_result=render_read_result))
 
     # --- Bash tool: show command and exit code ---
-    original_bash = create_bash_tool(cwd)
-
-    def execute_bash(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return original_bash.execute(tool_call_id, params, cancel, on_update, ctx)
+    original_bash = create_bash_tool_definition(cwd)
 
     def render_bash_call(args, theme, _context):
         args = args or {}
@@ -181,23 +165,10 @@ async def extension(pi):
 
         return Text(text, 0, 0)
 
-    pi.register_tool(
-        ToolDefinition(
-            name="bash",
-            label="bash",
-            description=original_bash.description,
-            parameters=original_bash.parameters,
-            execute=execute_bash,
-            render_call=render_bash_call,
-            render_result=render_bash_result,
-        )
-    )
+    pi.register_tool(dataclasses.replace(original_bash, render_call=render_bash_call, render_result=render_bash_result))
 
     # --- Edit tool: show path and diff stats ---
-    original_edit = create_edit_tool(cwd)
-
-    def execute_edit(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return original_edit.execute(tool_call_id, params, cancel, on_update, ctx)
+    original_edit = create_edit_tool_definition(cwd)
 
     def render_edit_call(args, theme, _context):
         args = args or {}
@@ -239,24 +210,10 @@ async def extension(pi):
 
         return Text(text, 0, 0)
 
-    pi.register_tool(
-        ToolDefinition(
-            name="edit",
-            label="edit",
-            description=original_edit.description,
-            parameters=original_edit.parameters,
-            render_shell="self",
-            execute=execute_edit,
-            render_call=render_edit_call,
-            render_result=render_edit_result,
-        )
-    )
+    pi.register_tool(dataclasses.replace(original_edit, render_call=render_edit_call, render_result=render_edit_result))
 
     # --- Write tool: show path and size ---
-    original_write = create_write_tool(cwd)
-
-    def execute_write(tool_call_id, params, cancel=None, on_update=None, ctx=None):
-        return original_write.execute(tool_call_id, params, cancel, on_update, ctx)
+    original_write = create_write_tool_definition(cwd)
 
     def render_write_call(args, theme, _context):
         args = args or {}
@@ -277,13 +234,5 @@ async def extension(pi):
         return Text(theme.fg("success", "Written"), 0, 0)
 
     pi.register_tool(
-        ToolDefinition(
-            name="write",
-            label="write",
-            description=original_write.description,
-            parameters=original_write.parameters,
-            execute=execute_write,
-            render_call=render_write_call,
-            render_result=render_write_result,
-        )
+        dataclasses.replace(original_write, render_call=render_write_call, render_result=render_write_result)
     )

@@ -272,6 +272,14 @@ class TuiAltScreen(TuiBase):
             return _resolved(False)
         return self._copy_text_to_clipboard(text)
 
+    def get_screen_lines(self) -> list[str]:
+        """The lines of the last rendered frame, one per terminal row, as written to the terminal.
+
+        The writer replaces the frame's list whole and never changes it after,
+        so one read of it is a consistent frame.
+        """
+        return list(self._previous_screen)
+
     @property
     def viewport_top(self) -> int:
         return self._get_primary_scroll_view().scroll_top

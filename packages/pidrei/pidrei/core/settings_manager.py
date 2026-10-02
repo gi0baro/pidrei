@@ -58,6 +58,8 @@ type SettingsScope = Literal["global", "project"]
 # Cache-warming profile. "idle" also warms between agent runs.
 CACHE_WARMING_MODES = ("off", "streaming", "idle")
 type CacheWarmingMode = Literal["off", "streaming", "idle"]
+# True hides all startup output, "header" keeps only the startup header.
+type QuietStartup = bool | Literal["header"]
 
 
 def _is_mergeable_object(value: Any) -> bool:
@@ -957,11 +959,11 @@ class SettingsManager:
     def set_shell_path(self, path: str | None) -> None:
         self._set_global("shellPath", path)
 
-    def get_quiet_startup(self) -> bool:
+    def get_quiet_startup(self) -> QuietStartup:
         quiet = self._settings.get("quietStartup")
-        return quiet if quiet is not None else False
+        return quiet if quiet is True or quiet == "header" else False
 
-    def set_quiet_startup(self, quiet: bool) -> None:
+    def set_quiet_startup(self, quiet: QuietStartup) -> None:
         self._set_global("quietStartup", quiet)
 
     def get_default_project_trust(self) -> str:
@@ -1206,7 +1208,7 @@ class SettingsManager:
         self._set_global("showHardwareCursor", enabled)
 
     def get_tui_mode(self) -> str:
-        return "fullscreen" if self._settings.get("tuiMode") == "fullscreen" else "regular"
+        return "regular" if self._settings.get("tuiMode") == "regular" else "fullscreen"
 
     def set_tui_mode(self, mode: str) -> None:
         self._set_global("tuiMode", mode)

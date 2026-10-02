@@ -152,7 +152,7 @@ directory. See [extensions.md](extensions.md), [skills.md](skills.md),
 |--------|----------|
 | `--system-prompt <text\|path>` | Replace the default system prompt with text or an existing file's contents |
 | `--append-system-prompt <text\|path>` | Append text or a file to the system prompt; repeatable |
-| `--tui-mode <mode>` | `regular` (default) or `fullscreen` |
+| `--tui-mode <mode>` | `fullscreen` (default) or `regular` |
 | `--verbose` | Verbose startup, overriding `quietStartup` |
 | `-a`, `--approve` | Trust project-local configuration and resources for this process |
 | `-na`, `--no-approve` | Ignore trust-gated project-local configuration and resources |

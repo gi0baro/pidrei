@@ -512,26 +512,35 @@ class TestFullscreenScrollbar:
 
 class TestTuiMode:
     @pytest.mark.tonio
-    async def test_defaults_to_regular_and_persists_fullscreen_mode(self, dirs):
+    async def test_defaults_to_fullscreen_and_persists_regular_mode(self, dirs):
         agent_dir, project_dir = dirs
         manager = await SettingsManager(str(project_dir), str(agent_dir))
 
-        assert manager.get_tui_mode() == "regular"
+        assert manager.get_tui_mode() == "fullscreen"
 
-        manager.set_tui_mode("fullscreen")
+        manager.set_tui_mode("regular")
         await manager.flush()
 
-        assert manager.get_tui_mode() == "fullscreen"
-        assert read_json(agent_dir / "settings.json")["tuiMode"] == "fullscreen"
+        assert manager.get_tui_mode() == "regular"
+        assert read_json(agent_dir / "settings.json")["tuiMode"] == "regular"
 
     @pytest.mark.tonio
-    async def test_falls_back_to_regular_for_unsupported_values(self, dirs):
+    async def test_falls_back_to_fullscreen_for_unsupported_values(self, dirs):
         agent_dir, project_dir = dirs
         write_json(agent_dir / "settings.json", {"tuiMode": "other"})
 
         manager = await SettingsManager(str(project_dir), str(agent_dir))
 
-        assert manager.get_tui_mode() == "regular"
+        assert manager.get_tui_mode() == "fullscreen"
+
+    @pytest.mark.tonio
+    async def test_does_not_recognize_the_old_ui_mode_setting(self, dirs):
+        agent_dir, project_dir = dirs
+        write_json(agent_dir / "settings.json", {"uiMode": "regular"})
+
+        manager = await SettingsManager(str(project_dir), str(agent_dir))
+
+        assert manager.get_tui_mode() == "fullscreen"
 
 
 class TestOutputPad:

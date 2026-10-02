@@ -251,11 +251,12 @@ class CombinedAutocompleteProvider:
 
             return {"items": suggestions, "prefix": at_prefix}
 
-        if not options.get("force") and text_before_cursor.startswith("/"):
-            space_index = text_before_cursor.find(" ")
+        command_text = text_before_cursor.lstrip()
+        if not options.get("force") and command_text.startswith("/"):
+            space_index = command_text.find(" ")
 
             if space_index == -1:
-                prefix = text_before_cursor[1:]
+                prefix = command_text[1:]
                 command_items = []
                 for cmd in self._commands:
                     name = cmd["name"] if "name" in cmd else cmd["value"]
@@ -289,10 +290,10 @@ class CombinedAutocompleteProvider:
                 if not filtered:
                     return None
 
-                return {"items": filtered, "prefix": text_before_cursor}
+                return {"items": filtered, "prefix": command_text}
 
-            command_name = text_before_cursor[1:space_index]
-            argument_text = text_before_cursor[space_index + 1 :]
+            command_name = command_text[1:space_index]
+            argument_text = command_text[space_index + 1 :]
 
             command = None
             for cmd in self._commands:

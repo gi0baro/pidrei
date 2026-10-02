@@ -551,9 +551,11 @@ class SettingsSelectorComponent(Container):
             {
                 "id": "quiet-startup",
                 "label": "Quiet startup",
-                "description": "Disable verbose printing at startup",
-                "currentValue": "true" if config["quietStartup"] else "false",
-                "values": ["true", "false"],
+                "description": "Disable verbose printing at startup (header: keep only the startup header)",
+                "currentValue": (
+                    "header" if config["quietStartup"] == "header" else "true" if config["quietStartup"] else "false"
+                ),
+                "values": ["true", "header", "false"],
             },
             {
                 "id": "provider-attribution",
@@ -602,7 +604,7 @@ class SettingsSelectorComponent(Container):
             {
                 "id": "tui-mode",
                 "label": "TUI mode",
-                "description": "Interface layout; fullscreen mode is experimental",
+                "description": "Interface layout; regular mode uses the terminal's normal scrollback",
                 "currentValue": config["tuiMode"],
                 "values": ["regular", "fullscreen"],
             },
@@ -826,7 +828,7 @@ class SettingsSelectorComponent(Container):
             elif item_id == "collapse-changelog":
                 callbacks["onCollapseChangelogChange"](new_value == "true")
             elif item_id == "quiet-startup":
-                callbacks["onQuietStartupChange"](new_value == "true")
+                callbacks["onQuietStartupChange"]("header" if new_value == "header" else new_value == "true")
             elif item_id == "provider-attribution":
                 callbacks["onEnableProviderAttributionChange"](new_value == "true")
             elif item_id == "default-project-trust":
