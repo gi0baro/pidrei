@@ -25,7 +25,8 @@ from dataclasses import dataclass
 import tonio.colored as tonio
 from tonio.colored import fs
 
-from . import clock
+from pidrei_utils import clock
+
 from .terminal_image import delete_kitty_image, is_image_line
 from .tui import TuiBase
 from .utils import visible_width

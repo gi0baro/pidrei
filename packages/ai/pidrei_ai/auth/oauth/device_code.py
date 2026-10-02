@@ -10,8 +10,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 CANCEL_MESSAGE = "Login cancelled"

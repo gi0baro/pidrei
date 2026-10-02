@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from pidrei_ai.types import AnyModel
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 @dataclass(slots=True)

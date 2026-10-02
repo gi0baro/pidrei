@@ -23,7 +23,7 @@ from tonio.colored.sync import channel
 
 from pidrei_ai.builders import AssistantMessageBuilder, ToolCallBuilder
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 _SENTINEL = object()

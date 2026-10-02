@@ -84,6 +84,7 @@ def extension_actions() -> dict:
         "get_all_tools": list,
         "get_settings": dict,
         "set_active_tools": lambda *args: None,
+        "update_active_tools": lambda *args: None,
         "refresh_tools": lambda: None,
         "get_commands": list,
         "set_model": _false,
@@ -464,7 +465,7 @@ async def test_reflects_the_get_scoped_models_context_action_on_ctx_scoped_model
 
 @pytest.mark.tonio
 async def test_exposes_the_current_cancel_token_on_extension_context(fx):
-    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_utils.cancel import CancelToken
 
     runner = await make_runner(fx)
     cancel = CancelToken()

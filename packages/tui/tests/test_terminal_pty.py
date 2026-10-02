@@ -16,11 +16,11 @@ import pytest
 import tonio.colored as tonio
 from tonio.colored.io import FdStream
 
-from pidrei_tui import clock as clock_module
 from pidrei_tui.components import Text
 from pidrei_tui.keys import matches_key, set_kitty_protocol_active
 from pidrei_tui.terminal import ProcessTerminal
 from pidrei_tui.tui_main_screen import TuiMainScreen
+from pidrei_utils import clock as clock_module
 
 
 KITTY_QUERY = b"\x1b[>7u\x1b[?u\x1b[c"

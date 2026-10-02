@@ -48,10 +48,10 @@ import tonio.colored as tonio
 from tonio.colored import fs, sync as tonio_sync
 
 from pidrei_ai.types import TextContent
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import get_current_system_message
 from pidrei_ai.utils.uuid import uuidv7
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from ..config import APP_NAME, get_agent_dir as get_default_agent_dir, get_sessions_dir
 from ..utils.paths import normalize_path, resolve_path

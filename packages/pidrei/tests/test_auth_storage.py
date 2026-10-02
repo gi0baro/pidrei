@@ -28,7 +28,7 @@ from pidrei_ai.auth.types import (
     ProviderAuth,
 )
 from pidrei_ai.registry import create_models, create_provider
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 from tests.auth_lock_helpers import ObservedLock, park_on_file_lock_retry
 
 

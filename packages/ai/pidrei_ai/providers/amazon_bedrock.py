@@ -16,7 +16,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.registry import Provider, create_provider
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 async def _login(interaction: ProviderAuthInteraction) -> ApiKeyCredential:

@@ -1,7 +1,7 @@
 """Mirror of pi coding-agent src/modes/interactive/components/bordered-loader.ts."""
 
 from pidrei_tui import CancellableLoader, Container, Loader, Spacer, Text
-from pidrei_tui.components.cancellable_loader import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 from .dynamic_border import DynamicBorder
 from .keybinding_hints import key_hint

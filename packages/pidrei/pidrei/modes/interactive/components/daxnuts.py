@@ -6,7 +6,7 @@ to dax (@thdxr) for providing free Kimi K2.5 access via OpenCode.
 
 import re
 
-from pidrei_tui._timers import Interval
+from pidrei_utils.timers import Interval
 
 from ..theme import theme
 

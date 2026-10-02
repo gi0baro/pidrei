@@ -19,7 +19,7 @@ from typing import Any
 
 import tonio.colored as tonio
 
-from pidrei_ai.utils.cancel import NEVER_CANCELLED, AbortError, CancelToken
+from pidrei_utils.cancel import NEVER_CANCELLED, AbortError, CancelToken
 
 
 def operation_cancel(cancel: CancelToken | None) -> CancelToken:

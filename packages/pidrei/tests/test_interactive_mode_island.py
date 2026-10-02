@@ -20,8 +20,8 @@ from pidrei.modes.interactive import interactive_mode
 from pidrei.modes.interactive.components.extension_selector import ExtensionSelectorComponent
 from pidrei.modes.interactive.interactive_mode import InteractiveMode
 from pidrei.modes.interactive.theme import init_theme
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, set_keybindings
+from pidrei_utils.cancel import CancelToken
 
 from .agent_session_helpers import create_assistant_message
 from .ui_timer_helpers import manual_ui_timers

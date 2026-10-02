@@ -58,9 +58,8 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock, http
+from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
 from pidrei_ai.utils.json_parse import parse_streaming_json
@@ -69,6 +68,8 @@ from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import get_current_tools, resolve_transcript
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 MISTRAL_TOOL_CALL_ID_LENGTH = 9

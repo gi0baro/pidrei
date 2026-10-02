@@ -44,7 +44,7 @@ from websockets.protocol import CLIENT, OPEN, Protocol as FrameProtocol
 from websockets.utils import accept_key
 
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 WEBSOCKET_GUID_ACCEPT_HEADER = "sec-websocket-accept"

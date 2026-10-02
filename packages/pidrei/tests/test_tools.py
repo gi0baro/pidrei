@@ -49,7 +49,7 @@ from pidrei.core.tools.truncate import truncate_middle
 from pidrei.core.tools.write import create_write_tool_definition
 from pidrei.modes.interactive.theme import init_theme
 from pidrei.utils.ansi import strip_ansi
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 HAS_RG = shutil.which("rg") is not None

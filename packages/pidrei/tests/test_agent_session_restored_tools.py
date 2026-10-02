@@ -3,9 +3,8 @@
 pi checks this in suite/agent-session-mcp.test.ts ("AgentSession MCP tools
 after resume and reload") with deferred MCP tools that `tool_search` loaded
 and an MCP server that connects after the session restored its tools. The MCP
-extension and `tool_search` port later with codemode; here an extension
-registers the tool when the test says so, which is what a server connecting
-late amounts to for the session.
+extension ports later; here an extension registers the tool when the test says
+so, which is what a server connecting late amounts to for the session.
 """
 
 import pytest

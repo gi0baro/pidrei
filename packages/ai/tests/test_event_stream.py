@@ -140,8 +140,8 @@ async def test_fail_does_not_override_a_settled_result():
 async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
     from pidrei_ai.builders import AssistantMessageBuilder, TextContentBuilder, UsageBuilder
     from pidrei_ai.types import AssistantMessage
-    from pidrei_ai.utils.cancel import CancelToken
     from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+    from pidrei_utils.cancel import CancelToken
 
     stream = AssistantMessageEventStream()
     cancel = CancelToken()
@@ -182,8 +182,8 @@ async def test_cancel_unwinds_a_parked_producer_and_terminates_the_stream():
 
 @pytest.mark.tonio
 async def test_cancel_before_the_producer_registers_a_partial_fails_the_result():
-    from pidrei_ai.utils.cancel import AbortError, CancelToken
     from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+    from pidrei_utils.cancel import AbortError, CancelToken
 
     stream = AssistantMessageEventStream()
     cancel = CancelToken()
@@ -297,8 +297,8 @@ async def test_abort_with_a_frozen_partial_publishes_an_aborted_copy():
     # A custom producer may register a constructed frozen message as `partial`;
     # the abort path must publish an aborted copy instead of mutating it.
     from pidrei_ai.types import AssistantMessage, TextContent, Usage
-    from pidrei_ai.utils.cancel import CancelToken
     from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+    from pidrei_utils.cancel import CancelToken
 
     frozen = AssistantMessage(
         content=[TextContent(text="so far")],
@@ -335,7 +335,7 @@ async def test_abort_with_a_frozen_partial_publishes_an_aborted_copy():
 @pytest.mark.tonio
 async def test_run_cancellable_unwinds_a_parked_operation():
     from pidrei_ai.utils.abort import run_cancellable
-    from pidrei_ai.utils.cancel import AbortError, CancelToken
+    from pidrei_utils.cancel import AbortError, CancelToken
 
     cancel = CancelToken()
     parked = tonio.Event()
@@ -359,7 +359,7 @@ async def test_run_cancellable_unwinds_a_parked_operation():
 @pytest.mark.tonio
 async def test_run_cancellable_returns_the_result_and_raises_its_errors():
     from pidrei_ai.utils.abort import run_cancellable
-    from pidrei_ai.utils.cancel import CancelToken
+    from pidrei_utils.cancel import CancelToken
 
     async def ok():
         return 7

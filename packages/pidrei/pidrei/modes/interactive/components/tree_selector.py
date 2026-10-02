@@ -9,7 +9,6 @@ import os
 import re
 from datetime import datetime
 
-from pidrei_ai.utils import clock
 from pidrei_tui import (
     Container,
     Input,
@@ -21,7 +20,8 @@ from pidrei_tui import (
     visible_width,
     wrap_text_with_ansi,
 )
-from pidrei_tui._timers import Timeout
+from pidrei_utils import clock
+from pidrei_utils.timers import Timeout
 
 from ..theme import theme
 from .dynamic_border import DynamicBorder

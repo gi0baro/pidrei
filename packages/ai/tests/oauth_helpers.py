@@ -27,8 +27,8 @@ from tonio.colored import time as tonio_time
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.types import AuthEvent, AuthPrompt
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 # An arbitrary fixed instant; pi picks one per suite with `vi.setSystemTime`.

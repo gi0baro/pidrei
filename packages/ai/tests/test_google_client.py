@@ -14,7 +14,7 @@ import pytest
 
 from pidrei_ai.api import google_client
 from pidrei_ai.api.google_client import GoogleApiError, GoogleGenAI, build_request_body
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 # --- URL construction ---------------------------------------------------------

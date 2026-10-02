@@ -85,7 +85,6 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.error_body import normalize_provider_error
@@ -101,6 +100,7 @@ from pidrei_ai.utils.transcript import (
     get_initial_system_message,
     without_initial_system_message,
 )
+from pidrei_utils import clock
 
 
 EMPTY_TEXT_PLACEHOLDER = "<empty>"

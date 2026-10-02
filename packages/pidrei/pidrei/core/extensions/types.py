@@ -377,6 +377,7 @@ class ExtensionRuntime:
         self.get_all_tools: Callable[[], list[Any]] = list
         self.get_settings: Callable[[], Any] = _not_initialized
         self.set_active_tools: Callable[..., None] | None = None
+        self.update_active_tools: Callable[..., None] | None = None
         self.get_commands: Callable[[], list[Any]] = list
         self.set_model: Callable[..., Any] | None = None
         self.get_thinking_level: Callable[[], Any] = lambda: "off"

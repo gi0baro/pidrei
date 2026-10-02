@@ -6,8 +6,8 @@ token as the *edge* object (pi's API shape, checked where pi checks it); the
 *mechanism* behind it is tonio's structured cancellation: work that must be
 interruptible runs as the child of a scope whose owner waits for either
 completion or the token (`EventStream.spawn_producer`,
-`utils.abort.run_cancellable`), and the token's `on_cancel` cancels that
-scope. A cancelled child is unwound at its current suspension point and may
+`pidrei_ai.utils.abort.run_cancellable`), and the token's `on_cancel`
+cancels that scope. A cancelled child is unwound at its current suspension point and may
 not await waiters afterwards, so async teardown belongs to the owner.
 """
 

@@ -41,10 +41,10 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.oauth_page import oauth_error_html, oauth_success_html
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 
 # every login registers a new client with this ID; OpenAI returns the issued client ID in the callback

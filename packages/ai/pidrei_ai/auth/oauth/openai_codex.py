@@ -37,10 +37,10 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
 from pidrei_ai.utils.user_agent import ORIGINATOR
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"

@@ -31,7 +31,7 @@ from urllib.parse import quote, urlparse
 import tonio.colored as tonio
 
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 # `StopReason` in the SDK; these are its wire values.

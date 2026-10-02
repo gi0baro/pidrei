@@ -26,11 +26,13 @@ dependencies = [
     "jieba~=0.42.1",
     "linkify-it-py~=2.1",
     "markdown-it-py~=4.2",
+    "pidrei-utils==1.0.0.0",
     "tonio~=0.10.4",
     "uniseg~=0.10.1",
 ]
 
 [tool.uv.sources]
+pidrei-utils = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["pidrei_tui"]

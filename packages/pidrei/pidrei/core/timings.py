@@ -3,7 +3,7 @@
 import os
 from typing import Any
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from .output_guard import write_stderr
 

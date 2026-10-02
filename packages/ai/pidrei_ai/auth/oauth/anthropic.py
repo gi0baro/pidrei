@@ -35,9 +35,9 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 def _decode(value: str) -> str:

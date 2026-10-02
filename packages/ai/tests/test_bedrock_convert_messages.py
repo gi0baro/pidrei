@@ -27,8 +27,8 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils.cancel import CancelToken
 
 
 BASE_MODEL = get_builtin_model("amazon-bedrock", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")

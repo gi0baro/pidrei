@@ -11,6 +11,7 @@ where this documentation says otherwise.
 - [How pidrei works](how-pi-works.md) — the agent loop, context, sessions, and where customization plugs in.
 - [Providers](providers.md) — subscription and API-key setup for the built-in providers.
 - [CLI reference](cli.md) — modes, options, and the package and auth commands.
+- [Codemode](codemode.md) — Python scripts that call tools and run classifier and image models.
 - [Slash commands](slash-commands.md) — the built-in interactive commands.
 - [Configuration](configuration.md) — user and project directories, settings files, context files, and project trust.
 - [Custom models](models.md) — add model entries in `models.json`.
@@ -43,6 +44,9 @@ sees. The deliberate exceptions:
 - **Free-threaded CPython 3.14+ is required**, not optional.
 - **Extensions are Python modules**, not TypeScript. The hook bus mirrors pi's;
   the extension artifacts cannot. See [extensions.md](extensions.md).
+- **Codemode scripts are Python**, not JavaScript, and are type-checked before
+  they run; the `codemode` tool's description and the errors scripts see are
+  pidrei's own. See [codemode.md](codemode.md).
 - **Packages install from git or a local path.** pi also supports `npm:`
   sources; pidrei refuses them with a clear error. See [packages.md](packages.md).
 - **pidrei never updates itself.** `pidrei update` covers packages and model

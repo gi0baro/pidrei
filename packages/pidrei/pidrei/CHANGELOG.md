@@ -12,6 +12,29 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
 
 ### Added
 
+- Codemode: the `codemode` tool lets the model write a script that calls the
+  other tools, for example several in parallel, and filters their output
+  before it reaches the model. Scripts can also run classifier and image
+  models through `models.classify()` and `models.generate_images()`, and keep
+  small values across calls with `store()` and `load()`. Unlike pi's, scripts
+  are Python, run in a sandboxed interpreter
+  ([Monty](https://github.com/pydantic/monty)), and are type-checked against
+  the tools' declarations before they run, so a script with a mistake fails
+  before any tool has run. The tool is off by default: enable it with
+  `"defaultTools": ["+codemode"]` or `--tools`. The `codemode.mode` and
+  `codemode.inlineBudget` settings work as in pi; `codemode.typeCheck: false`
+  turns the type check off. Scripts get at most 60 seconds of execution time,
+  not counting time spent waiting on tools. See the codemode page.
+- Tool search: the `tool_search` tool finds tools that are not declared to
+  the model (`codemode` and `deferred` exposure) and declares the matches for
+  the next call. Off by default: enable it with
+  `"defaultTools": ["+tool_search"]` or `--tools`.
+- Codemode and tool search load as the built-in extensions `builtin:codemode`
+  and `builtin:tool-search`. SDK sessions add them with
+  `create_codemode_extension()` and `create_tool_search_extension()`.
+- Extensions can change the active tools relative to the current ones with
+  `pi.update_active_tools(update)`, without losing a change another tool,
+  handler or tool registration makes at the same time.
 - Anthropic workload identity federation from the
   `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID` and
   `ANTHROPIC_IDENTITY_TOKEN_FILE` environment variables (plus the optional
@@ -53,6 +76,14 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
   only the agent, the agent loop and their types, and no longer depends on
   `pyyaml` and `pathspec`. The coding-agent message roles live in
   `pidrei.core.messages`, as before.
+- **Breaking:** the clock, cancel tokens and timers moved to a new package,
+  `pidrei-utils`, shared by all the others. Extensions import them from
+  `pidrei_utils.clock`, `pidrei_utils.cancel` (`CancelToken`, `AbortError`)
+  and `pidrei_utils.timers` (`Timeout`, `Interval`). The old modules are
+  gone: `pidrei_ai.utils.clock`, `pidrei_ai.utils.cancel`,
+  `pidrei_ai.utils.timers`, `pidrei_tui.clock` and `pidrei_tui._timers`, as
+  are the TUI's own `CancelToken` and `AbortError` in
+  `pidrei_tui.components.cancellable_loader`.
 
 ### Fixed
 
@@ -108,10 +139,9 @@ Tracks [Pi 1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0).
 
 ### Not ported
 
-- Codemode, tool search and the MCP client, still: with them the leaner
-  codemode prompts, image generation in codemode scripts, the MCP OAuth
-  hardening (`iss` checks, per-server credentials, step-up sign-in) and the
-  clickable `/mcp` sign-in URL.
+- The MCP client, still: with it the MCP OAuth hardening (`iss` checks,
+  per-server credentials, step-up sign-in) and the clickable `/mcp` sign-in
+  URL.
 - Sign in with Radius and its MCP server setup in `/login`.
 - The animated logo in the startup header.
 - Upstream's lightweight `pi-ai/models` npm entry point.

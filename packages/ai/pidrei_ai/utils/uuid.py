@@ -15,7 +15,7 @@ caller-supplied timestamp, which is why pi's algorithm is carried here.
 import os
 import threading
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 MAX_UUID_V7_TIMESTAMP = 0xFFFFFFFFFFFF

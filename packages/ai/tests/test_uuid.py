@@ -11,8 +11,9 @@ import re
 import pytest
 import tonio.colored as tonio
 
-from pidrei_ai.utils import clock as clock_module, uuid as uuid_module
+from pidrei_ai.utils import uuid as uuid_module
 from pidrei_ai.utils.uuid import uuidv7
+from pidrei_utils import clock as clock_module
 
 
 UUID_V7_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")

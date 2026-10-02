@@ -24,9 +24,9 @@ from pidrei_ai.api.lazy import _cancel_of, call_stream_into, lazy_stream
 from pidrei_ai.auth.types import ApiKeyAuth, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.registry import Provider, RefreshModelsContext
 from pidrei_ai.types import AnyModel, AssistantMessage, Message, Model, ModelCost, ModelThinkingLevel
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.model_operations import is_model_type
+from pidrei_utils.cancel import CancelToken
 
 
 # API id of virtual catalog entries. Requests for it fail unless routed first.

@@ -6,7 +6,6 @@ from typing import ClassVar
 import pytest
 
 import pidrei_tui.components.scroll_view as scroll_view_module
-from pidrei_tui import clock as clock_module
 from pidrei_tui.components.h_stack import HStack
 from pidrei_tui.components.scroll_view import ScrollView
 from pidrei_tui.components.text import Text
@@ -14,6 +13,7 @@ from pidrei_tui.components.v_stack import VStack
 from pidrei_tui.layout import render_layout_frame
 from pidrei_tui.terminal_image import encode_kitty, register_kitty_image_metadata
 from pidrei_tui.utils import strip_terminal_sequences
+from pidrei_utils import clock as clock_module
 
 
 class RenderComponent:

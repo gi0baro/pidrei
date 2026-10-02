@@ -32,9 +32,9 @@ from pidrei_ai.types import (
     TranscriptContext,
     UserMessage,
 )
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.estimate import _tool_json_shape
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils.cancel import CancelToken
 
 
 def now_ms() -> int:

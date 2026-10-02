@@ -16,8 +16,8 @@ from pidrei_ai.env_api_keys import ANTHROPIC_AUTH_TOKEN_ENV, ANTHROPIC_OAUTH_TOK
 from pidrei_ai.providers.anthropic import anthropic_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.types import Context, Model, ModelCost, SimpleStreamOptions, UserMessage
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.user_agent import get_user_agent
+from pidrei_utils.cancel import CancelToken
 from tests.anthropic_helpers import (
     PayloadCaptured,
     _recording_transport,

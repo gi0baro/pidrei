@@ -15,7 +15,7 @@ from pidrei.modes.interactive.model_catalog_refresh import (
     refresh_model_catalogs,
 )
 from pidrei_ai.registry import ModelsRefreshResult
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 def successful_refresh() -> ModelsRefreshResult:

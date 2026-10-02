@@ -16,7 +16,7 @@ from tonio.colored import time as tonio_time
 
 from pidrei_ai.types import AssistantMessage
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 def _build_provider_error_pattern(patterns: list[str]) -> re.Pattern[str]:

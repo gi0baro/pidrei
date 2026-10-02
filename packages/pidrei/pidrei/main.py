@@ -98,7 +98,7 @@ EXTENSION_LOAD_FAILURE_HINT = f'Hint: Start without extensions using "{APP_NAME}
 
 from pidrei_ai.auth.types import AuthOperationOptions
 from pidrei_ai.registry import ModelsRefreshOptions, models_are_equal
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 def _timeout_cancel(ms: float) -> CancelToken:

@@ -17,7 +17,7 @@ from typing import Any
 
 from pidrei_agent.types import AgentTool, AgentToolResult
 from pidrei_ai.types import TextContent
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 from ..extensions.types import ToolDefinition
 from ..nested_tool_calls import NestedCallFeed, NestedCallScope

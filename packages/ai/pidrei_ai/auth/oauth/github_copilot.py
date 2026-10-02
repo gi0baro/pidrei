@@ -29,9 +29,9 @@ from pidrei_ai.auth.types import (
     ProviderAuthInteraction,
 )
 from pidrei_ai.models_generated import MODELS
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.sleep import sleep
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 def _decode(value: str) -> str:

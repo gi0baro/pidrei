@@ -31,7 +31,7 @@ from pidrei.core.tools import with_file_mutation_queue
 from pidrei.core.tools.file_mutation_queue import resolve_mutation_queue_key
 from pidrei_agent.types import AgentToolResult
 from pidrei_ai.types import TextContent
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 LOG_FILE = os.path.join(get_agent_dir(), "read-access.log")

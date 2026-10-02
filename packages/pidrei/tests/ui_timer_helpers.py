@@ -3,7 +3,7 @@
 
 import contextlib
 
-from pidrei_tui import _timers as timers_module
+from pidrei_utils import timers as timers_module
 
 
 class ManualUiTimers:

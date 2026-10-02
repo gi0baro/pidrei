@@ -6,7 +6,7 @@ and reports changes as ``(event_type, filename)`` callbacks — the same
 listener shape pi consumers use (they debounce and re-read on their side,
 so poll granularity only affects reload latency).
 
-The poll is a TUI timer (`pidrei_tui._timers.Interval`): each tick spawns
+The poll is a timer (`pidrei_utils.timers.Interval`): each tick spawns
 the scan on the blocking pool, and the listener runs on the scan's task once
 it returns — so listeners take their own locks (theme reload, footer
 refresh). The watchers are reaped with the TUI's scope. A watcher needs a
@@ -22,7 +22,7 @@ import os
 
 import tonio.colored as tonio
 
-from pidrei_tui._timers import Interval
+from pidrei_utils.timers import Interval
 
 
 FS_WATCH_RETRY_DELAY_MS = 5000

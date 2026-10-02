@@ -65,7 +65,6 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -75,6 +74,7 @@ from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
 from pidrei_ai.utils.text import get_system_message_text
 from pidrei_ai.utils.transcript import collapse_system_messages, get_current_tools, get_initial_system_message
 from pidrei_ai.utils.user_agent import set_default_user_agent
+from pidrei_utils import clock
 
 
 API_VERSION = "v1"

@@ -23,10 +23,10 @@ from pidrei_ai.auth.types import (
     ProviderAuth,
 )
 from pidrei_ai.types import ProviderEnv
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
-from pidrei_ai.utils.cancel import AbortError, CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.models_error import ModelsError, ModelsErrorCode
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken, combine_cancel_tokens
 
 
 __all__ = ["AuthResolutionOverrides", "ModelsError", "ModelsErrorCode", "resolve_provider_auth"]

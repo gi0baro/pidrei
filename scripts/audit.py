@@ -64,17 +64,20 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGES = [
     "ai/pidrei_ai",
     "agent/pidrei_agent",
+    "codemode/pidrei_codemode",
     "pidrei/pidrei",
     "protocol/pidrei_protocol",
     "client/pidrei_client",
     "tui/pidrei_tui",
     "server/pidrei_server",
+    "utils/pidrei_utils",
 ]
 
 # Our package -> the pi package it ports, for the async/sync drift check.
 PACKAGE_UPSTREAM = {
     "ai/pidrei_ai": "ai",
     "agent/pidrei_agent": "agent",
+    "codemode/pidrei_codemode": "codemode",
     "pidrei/pidrei": "coding-agent",
     "protocol/pidrei_protocol": "protocol",
     "client/pidrei_client": "client",

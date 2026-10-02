@@ -28,8 +28,8 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 # Muse Code CLI client id.

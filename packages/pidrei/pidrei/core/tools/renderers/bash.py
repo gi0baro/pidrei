@@ -8,9 +8,9 @@ tool output does not load the execution path or its parameter schema.
 shape is unchanged.
 """
 
-from pidrei_ai.utils import clock
 from pidrei_tui import Container, Spacer, Text
-from pidrei_tui._timers import Interval
+from pidrei_utils import clock
+from pidrei_utils.timers import Interval
 
 from ....modes.interactive.components.keybinding_hints import key_hint
 from ....modes.interactive.components.visual_truncate import VisualLinePreview

@@ -19,8 +19,9 @@ scrollbar hidden too early.
 
 import math
 
-from .. import clock
-from .._timers import Timeout
+from pidrei_utils import clock
+from pidrei_utils.timers import Timeout
+
 from ..layout_node import LAYOUT_NODE
 from ..tui import Container
 

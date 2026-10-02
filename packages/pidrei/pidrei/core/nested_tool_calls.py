@@ -51,8 +51,8 @@ from pidrei_agent.types import (
     ToolExecutionUpdateEvent,
 )
 from pidrei_ai.types import NestedToolCallRecord, NestedToolCalls, ToolCall, Usage
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from .usage_totals import combine_usage
 

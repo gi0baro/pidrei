@@ -2,7 +2,7 @@
 
 Parallelism deltas vs single-threaded pi: watcher callbacks (from
 `fs_watch`'s polling coroutine) and the debounce / retry timers
-(`pidrei_tui._timers.Timeout`, each firing on its own coroutine) run in
+(`pidrei_utils.timers.Timeout`, each firing on its own coroutine) run in
 parallel with `set_cwd`/`dispose` callers; the RLock guards provider state
 against all of them. pi's async git refresh (execFile) becomes a subprocess call on
 the blocking pool; the sync/async split is kept as two module-level seams so
@@ -17,7 +17,7 @@ import threading
 
 import tonio.colored as tonio
 
-from pidrei_tui._timers import Timeout
+from pidrei_utils.timers import Timeout
 
 from ..utils import fs_watch
 from ..utils.fs_watch import close_watcher, unwatch_file, watch_file, watch_with_error_handler

@@ -1,7 +1,7 @@
 """Port of pi's utils/sleep.ts."""
 
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 async def sleep(ms: float, cancel: CancelToken) -> None:

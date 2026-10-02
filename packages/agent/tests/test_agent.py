@@ -35,9 +35,9 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.transcript import get_current_system_message, to_tool_declaration
+from pidrei_utils.cancel import CancelToken
 
 
 EMPTY_SCHEMA = {"type": "object", "properties": {}}

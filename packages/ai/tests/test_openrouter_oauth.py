@@ -19,7 +19,7 @@ from pidrei_ai.auth.types import AuthEvent, OAuthCredential
 from pidrei_ai.providers.openrouter import openrouter_provider
 from pidrei_ai.registry import create_models
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 from .oauth_helpers import OAuthRequest, RecordingInteraction, json_response, process_env, stub_oauth_http
 

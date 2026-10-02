@@ -16,7 +16,7 @@ import tonio.colored as tonio
 
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.types import TextContent, Usage, UsageCost, UserMessage
-from pidrei_ai.utils.cancel import AbortError
+from pidrei_utils.cancel import AbortError
 
 from .harness import create_harness
 

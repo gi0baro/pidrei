@@ -11,7 +11,7 @@ Then type these inside pidrei:
     time                    → current time (instant, no LLM)
 """
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 async def extension(pi):

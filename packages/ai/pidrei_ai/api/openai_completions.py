@@ -70,9 +70,8 @@ from pidrei_ai.types import (
     ToolCallStartEvent,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock, http
+from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.hash import short_hash
@@ -84,6 +83,8 @@ from pidrei_ai.utils.sse import iterate_sse_messages
 from pidrei_ai.utils.text import get_system_message_text, render_system_message_update
 from pidrei_ai.utils.transcript import get_declared_tools, resolve_transcript, resolve_transcript_tools
 from pidrei_ai.utils.user_agent import set_default_user_agent
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 @dataclass(slots=True)

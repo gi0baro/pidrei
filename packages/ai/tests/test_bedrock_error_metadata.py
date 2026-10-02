@@ -21,7 +21,7 @@ from pidrei_ai.api.bedrock_converse_stream import BedrockOptions, stream as stre
 from pidrei_ai.api.bedrock_runtime import BedrockRuntimeServiceException
 from pidrei_ai.providers.all import get_builtin_model
 from pidrei_ai.types import Context, UserMessage
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 DIAGNOSTIC_TYPE = "bedrock_response_failure"

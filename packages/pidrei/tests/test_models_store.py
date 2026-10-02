@@ -8,7 +8,7 @@ import tonio.colored as tonio
 from pidrei.core.models_store import FileModelsStore
 from pidrei.utils import lockfile
 from pidrei_ai.models_store import ModelsStoreEntry, ModelsStoreOperationOptions
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils.cancel import AbortError, CancelToken
 from tests.auth_lock_helpers import ObservedLock, park_on_file_lock_retry
 from tests.model_runtime_helpers import make_model
 

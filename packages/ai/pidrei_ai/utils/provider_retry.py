@@ -20,8 +20,8 @@ from typing import Any
 
 from tonio.colored import time as tonio_time
 
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import AbortError, CancelToken
 
 
 DEFAULT_MAX_RETRY_DELAY_MS = 60_000

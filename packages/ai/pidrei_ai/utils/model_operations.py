@@ -1,8 +1,8 @@
 """Port of pi's model operations (packages/ai/src/utils/model-operations.ts)."""
 
 from pidrei_ai.types import AnyModel, AssistantImages, ClassifierModel, ClassifierResult, ImageModel, ModelType
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.models_error import ModelsError
+from pidrei_utils import clock
 
 
 def get_model_type(model: AnyModel) -> ModelType:

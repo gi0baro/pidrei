@@ -49,7 +49,7 @@ from pidrei_tui import (
     rgb_color,
     style_text_with_ansi,
 )
-from pidrei_tui._timers import Timeout
+from pidrei_utils.timers import Timeout
 
 from ....config import get_custom_themes_dir, get_themes_dir
 from ....utils import colors as chalk

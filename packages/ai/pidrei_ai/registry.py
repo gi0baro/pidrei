@@ -70,9 +70,7 @@ from pidrei_ai.types import (
     StreamOptions,
     TranscriptContext,
 )
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.abort import operation_cancel, race_with_cancel
-from pidrei_ai.utils.cancel import CancelToken, combine_cancel_tokens
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.headers import merge_headers
 from pidrei_ai.utils.model_operations import (
@@ -85,6 +83,8 @@ from pidrei_ai.utils.model_operations import (
     is_model_type,
 )
 from pidrei_ai.utils.transcript import normalize_context
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken, combine_cancel_tokens
 
 
 _KNOWN_MODEL_TYPES: frozenset[ModelType] = frozenset(("chat", "image", "classifier"))

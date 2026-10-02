@@ -32,9 +32,7 @@ from pidrei_ai.types import (
     ToolResultMessage,
     Usage,
 )
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.callbacks import maybe_call
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import EventStream
 from pidrei_ai.utils.transcript import (
     ToolStateChanges,
@@ -45,6 +43,8 @@ from pidrei_ai.utils.transcript import (
 )
 from pidrei_ai.utils.usage import combine_usage
 from pidrei_ai.utils.validation import validate_tool_arguments
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from .stream_fn import get_default_stream_fn
 from .types import (

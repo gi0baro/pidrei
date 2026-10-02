@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from pidrei_ai.types import ProviderEnv, ProviderHeaders
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 @dataclass(slots=True)

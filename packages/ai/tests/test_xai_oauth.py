@@ -6,8 +6,8 @@ import pytest
 
 from pidrei_ai.auth.oauth.xai import xai_oauth
 from pidrei_ai.auth.types import AuthEvent, OAuthCredential
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from .oauth_helpers import (
     DEFAULT_START_MS,

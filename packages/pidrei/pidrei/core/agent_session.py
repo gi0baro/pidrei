@@ -60,13 +60,13 @@ from pidrei_ai.types import (
     Usage,
     UserMessage,
 )
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.overflow import is_context_overflow, is_recoverable_length
 from pidrei_ai.utils.retry import RetryCallbacks, RetryPolicy, is_retryable_assistant_error, retry_delay_ms
 from pidrei_ai.utils.session_resources import cleanup_session_resources
 from pidrei_ai.utils.text import content_text
 from pidrei_ai.utils.transcript import get_current_system_message
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 from ..utils.frontmatter import strip_frontmatter
 from ..utils.image_process import process_image
@@ -1741,6 +1741,17 @@ class AgentSession:
             active = set(self.get_active_tool_names())
             if any(name not in active for name in previous):
                 self._pending_tool_names.clear()
+
+    def update_active_tools(self, update: Callable[[list[str]], list[str] | None]) -> None:
+        """Set the active tools to what `update` returns for the current active
+        tool names, as one step: no other change to the active tools lands
+        between the read and the write. None sets nothing. `update` runs
+        synchronously under the loadout guard, so it must be quick and must
+        not block."""
+        with self._tool_loadout_guard:
+            tool_names = update(self.get_active_tool_names())
+            if tool_names is not None:
+                self.set_active_tools_by_name(tool_names)
 
     def _set_active_tools(self, tool_names: list[str]) -> None:
         """Callers hold `_tool_loadout_guard`."""
@@ -3668,6 +3679,7 @@ class AgentSession:
                 "get_all_tools": lambda: self.get_all_tools(),
                 "get_settings": lambda: self.settings_manager.get_settings(),
                 "set_active_tools": lambda tool_names: self.set_active_tools_by_name(tool_names),
+                "update_active_tools": lambda update: self.update_active_tools(update),
                 "refresh_tools": lambda: self._refresh_tool_registry(),
                 "get_commands": get_commands,
                 "set_model": set_model_action,

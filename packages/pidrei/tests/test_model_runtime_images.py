@@ -32,7 +32,7 @@ from pidrei_ai.types import (
     ModelCost,
     TextContent,
 )
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 def image_model(provider: str, id: str) -> ImageModel:

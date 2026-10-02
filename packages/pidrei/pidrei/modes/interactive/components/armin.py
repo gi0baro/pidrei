@@ -6,7 +6,7 @@ Armin says hi! A fun easter egg with animated XBM art.
 import math
 import random
 
-from pidrei_tui._timers import Interval
+from pidrei_utils.timers import Interval
 
 from ..theme import theme
 

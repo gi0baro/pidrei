@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import tonio.colored as tonio
 
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 
 class ObservedLock:

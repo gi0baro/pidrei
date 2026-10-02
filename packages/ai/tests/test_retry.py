@@ -5,7 +5,6 @@ import tonio.colored as tonio
 
 from pidrei_ai.providers.faux import faux_assistant_message
 from pidrei_ai.types import TextContent
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.retry import (
     RetryCallbacks,
     RetryPolicy,
@@ -13,6 +12,7 @@ from pidrei_ai.utils.retry import (
     retry_assistant_call,
     retry_delay_ms,
 )
+from pidrei_utils.cancel import CancelToken
 
 
 OPENAI_EXPLICIT_RETRY_MESSAGE = (

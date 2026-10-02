@@ -18,8 +18,8 @@ from pidrei_ai.types import (
     TranscriptContext,
     Usage,
 )
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils.cancel import CancelToken
 
 
 # Stream function used by the agent loop. Async-only (async-only callback

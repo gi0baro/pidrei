@@ -38,8 +38,8 @@ from pidrei_ai.types import (
     SimpleStreamOptions,
     TextContent,
 )
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils.cancel import CancelToken
 
 
 class _FakeAuthContext:

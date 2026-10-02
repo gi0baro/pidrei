@@ -134,6 +134,13 @@ Loaded in this order; later entries override earlier ones by filename:
 Package-provided extensions load with the scope of the package that declares
 them. `--no-extensions` skips all of them.
 
+pidrei also ships built-in extensions, named `builtin:codemode` and
+`builtin:tool-search` in the `extensions` setting. They load by default, after
+the others; `-builtin:<name>` disables one. A `+builtin:<name>` or
+`-builtin:<name>` entry in project settings overrides the user setting.
+`pidrei config` lists them under Built-in. `--no-extensions` disables them
+too, and `-e builtin:<name>` loads one explicitly.
+
 Project extensions are code, and loading them runs that code. pidrei asks
 before trusting a project the first time; see the `defaultProjectTrust`
 setting. Only user and `-e` extensions load early enough to handle the
@@ -521,6 +528,7 @@ context.
 | `await set_label(entry_id, label)` | Label a session entry |
 | `await exec(command, args, *, cwd=None, **options)` | Run a subprocess |
 | `get_active_tools()` / `set_active_tools(names)` | The active tool set: the tools declared to the model |
+| `update_active_tools(update)` | Change the active tool set based on its current value, in one step (see below) |
 | `get_all_tools()` | Every registered tool, with its `exposure`, `namespace` and `annotations` |
 | `get_settings()` | A copy of the effective settings (global and project merged, with overrides) |
 | `get_commands()` | Every registered command |
@@ -570,8 +578,7 @@ another extension registered, names that differ from a registered server's
 only in `-` and `_`, invalid names and invalid configs raise. Registrations
 are not saved: register again on every load.
 
-pidrei does not connect MCP servers yet (its MCP client ports with codemode).
-An extension that connects them reads `get_mcp_servers()` on `session_start`
+pidrei does not connect MCP servers yet. An extension that connects them reads `get_mcp_servers()` on `session_start`
 and handles the `mcp_servers_change` event (`{"servers": [...]}`) for later
 changes. When no loaded extension handles that event, each registration is
 reported as an extension error.
@@ -626,8 +633,9 @@ follow-up request; it takes effect only when every finished tool in the batch
 sets it.
 
 Declare `output_schema` and return a matching `structured_content` when the
-result is data. The model still receives `content`; programmatic callers (tools
-calling other tools) receive `structured_content`. The built-in `bash` tool
+result is data. The model still receives `content`; programmatic callers such
+as codemode scripts receive `structured_content` instead of the text. Tools
+without `output_schema` are passed to scripts as their text content. The built-in `bash` tool
 returns `{"output", "truncated", "full_output_path"?, "exit_code",
 "wall_time_seconds"}`, also for non-zero exit codes, with up to 1 MiB of output.
 `tool_result` handlers that redact `content` should also replace
@@ -669,6 +677,20 @@ next request; a model that cannot take system messages mid-conversation gets
 them folded into the leading one instead, which can invalidate the cached
 prefix.
 
+To add or remove tools relative to the current set, use
+`pi.update_active_tools(update)` rather than
+`pi.set_active_tools([*pi.get_active_tools(), ...])`. Tools, handlers and tool
+registrations run in parallel, so another change can land between
+`get_active_tools()` and `set_active_tools()`, and the write would undo it.
+`update` receives the active tool names and returns the new ones, or `None`
+to leave them as they are; no other change lands in between. It runs
+synchronously while the session's tool loadout is locked, so keep it quick and
+never block in it:
+
+```python
+pi.update_active_tools(lambda active: [*active, "docs_search"])
+```
+
 Extension tools respect the same filters as built-in ones: `--tools` restricts
 to a list, `--exclude-tools` removes some, and `--no-builtin-tools` drops
 pidrei's own tools while keeping extension tools.
@@ -676,15 +698,16 @@ pidrei's own tools while keeping extension tools.
 ### Tool exposure
 
 `exposure` controls how the model reaches a tool. "Callable" means callable
-from other tools through `ctx.execute_tool()`:
+from other tools through `ctx.execute_tool()` (`ctx.tools`), as the `codemode`
+tool's scripts do:
 
 - `"direct"` (default): declared to the model while active, and callable while active.
 - `"model-only"`: declared to the model while active, never callable. Use it
   for tools that orchestrate other tools or ask the user.
-- `"codemode"`: callable whenever registered. Not declared to the model unless
-  activated explicitly.
-- `"deferred"`: like `"codemode"`, but meant to be found by a search tool
-  rather than listed.
+- `"codemode"`: callable whenever registered, and listed by the `codemode`
+  tool. Not declared to the model unless activated explicitly.
+- `"deferred"`: like `"codemode"`, but the `codemode` tool does not list it;
+  `tool_search` can find and activate it.
 - `"hidden"`: registered but unreachable. Re-register a tool with
   `exposure="hidden"` to withdraw it, since tools cannot be unregistered.
 
@@ -693,10 +716,10 @@ exposures are not activated on registration, and neither is a tool with
 `default_active=False` — name it in `--tools` or the `defaultTools` setting
 (`"+name"` adds it to the defaults), or activate it with `set_active_tools()`.
 `namespace=ToolNamespace(name=..., description=..., instructions=...)` groups
-related tools, as MCP servers do. Tools that list other tools show a namespace
-under one heading with its `description`. `instructions` holds longer usage
-guidance; it is not listed, and tools that describe a namespace on request
-return it.
+related tools, as MCP servers do. The `codemode` tool lists a namespace under
+one heading with its `description`. `instructions` holds longer usage
+guidance; it is not listed, and codemode scripts read it with
+`describe_namespace(name)`.
 
 `annotations=ToolAnnotations(...)` are hints about what a tool does, with the
 meaning of MCP tool annotations: `read_only_hint`, `destructive_hint`,
@@ -709,7 +732,9 @@ change and receives a `ToolLoadout`: the declared tools, the callable tools,
 and every registered tool, with `get_exposure(name)` and `get_namespace(name)`.
 It returns a `ToolLoadoutChanges` with replacement `descriptions` for declared
 tools (including its own) and `hidden_declarations`: active tools whose
-declarations requests leave out while they stay active and callable. The
+declarations requests leave out while they stay active and callable.
+`codemode` uses only this hook, `exposure`, and `ctx.execute_tool()`, so
+another tool can implement the same behavior under a different name. The
 exposure types, `ToolLoadout` and `ToolLoadoutChanges` come from
 `pidrei.core.extensions.types`.
 

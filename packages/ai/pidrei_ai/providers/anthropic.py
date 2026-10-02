@@ -25,7 +25,7 @@ from pidrei_ai.env_api_keys import (
 )
 from pidrei_ai.models_generated import MODELS
 from pidrei_ai.registry import Provider, create_provider
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 def _anthropic_api_key_auth() -> ApiKeyAuth:

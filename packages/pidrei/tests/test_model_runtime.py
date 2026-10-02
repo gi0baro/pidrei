@@ -28,7 +28,7 @@ from pidrei_ai.auth.types import (
 )
 from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.registry import ModelsRefreshOptions, create_provider
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 from tests.model_runtime_helpers import UnusedStreams, make_model
 
 

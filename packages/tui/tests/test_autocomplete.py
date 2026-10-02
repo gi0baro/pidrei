@@ -6,7 +6,7 @@ import shutil
 import pytest
 
 from pidrei_tui.autocomplete import CombinedAutocompleteProvider
-from pidrei_tui.components.cancellable_loader import CancelToken
+from pidrei_utils.cancel import CancelToken
 
 
 def _resolve_fd_path():

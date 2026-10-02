@@ -28,7 +28,9 @@ import grapheme as grapheme_lib
 import tonio.colored as tonio
 from tonio.colored import sync
 
-from .._timers import Timeout
+from pidrei_utils.cancel import CancelToken
+from pidrei_utils.timers import Timeout
+
 from ..keybindings import get_keybindings
 from ..keys import decode_printable_key, matches_key
 from ..kill_ring import KillRing
@@ -44,7 +46,6 @@ from ..utils import (
     visible_width,
 )
 from ..word_navigation import find_word_backward, find_word_forward
-from .cancellable_loader import CancelToken
 from .select_list import SelectList
 
 

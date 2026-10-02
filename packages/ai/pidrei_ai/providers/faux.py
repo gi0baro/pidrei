@@ -57,10 +57,10 @@ from pidrei_ai.types import (
     TranscriptContext,
     Usage,
 )
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.estimate import _tool_json_shape
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
 from pidrei_ai.utils.text import get_system_message_text
+from pidrei_utils import clock
 
 
 DEFAULT_API = "faux"

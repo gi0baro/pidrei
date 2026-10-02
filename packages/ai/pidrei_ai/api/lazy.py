@@ -19,9 +19,9 @@ from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
 
 from pidrei_ai.types import AssistantMessage, AssistantMessageEvent, ErrorEvent, Model, Usage
-from pidrei_ai.utils import clock
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_utils import clock
+from pidrei_utils.cancel import CancelToken
 
 
 def _create_setup_error_message(model: Model, error: Any) -> AssistantMessage:

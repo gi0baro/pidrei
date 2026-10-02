@@ -21,8 +21,8 @@ from tonio.colored import net
 
 from pidrei_ai.auth.types import AuthPrompt, ProviderAuthInteraction
 from pidrei_ai.utils import http
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_ai.utils.oauth_page import oauth_error_html, oauth_success_html
+from pidrei_utils.cancel import CancelToken
 
 
 _RESPONSE_HEADERS = {

@@ -13,8 +13,8 @@ import sys
 
 import tonio.colored as tonio
 
-from pidrei_ai.utils.cancel import CancelToken
 from pidrei_tui import Container, Input, Spacer, Text, get_keybindings
+from pidrei_utils.cancel import CancelToken
 
 from ....utils.open_browser import open_browser
 from ..theme import theme

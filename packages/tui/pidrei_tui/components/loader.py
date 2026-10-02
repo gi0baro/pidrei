@@ -6,7 +6,8 @@ Port of pi tui ``components/loader.ts``. pi drives the animation with
 runs on the timer, so it goes through the UI's ``apply`` (the state lock).
 """
 
-from .._timers import Interval
+from pidrei_utils.timers import Interval
+
 from .text import Text
 
 

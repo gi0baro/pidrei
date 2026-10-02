@@ -1,11 +1,12 @@
-"""Wall clock and interruptible sleep behind a single seam.
+"""Wall clock, runtime clock and interruptible sleep behind a single seam, for
+every pidrei package.
 
 pi reads `Date.now()` and `setTimeout` directly and drives them from tests with
-vitest fake timers. tonio has no fake clock. `utils/retry.py` could get away
-with real delays because its backoffs are sub-100 ms, but the OAuth device-code
-flows wait 5 s between polls and up to 15 minutes for a deadline, and clamp the
-poll interval to a 1 s minimum — real delays there would be neither fast nor
-stable. So every time-dependent step in those flows goes through these two
+vitest fake timers. tonio has no fake clock. `pidrei_ai.utils.retry` could get
+away with real delays because its backoffs are sub-100 ms, but the OAuth
+device-code flows wait 5 s between polls and up to 15 minutes for a deadline,
+and clamp the poll interval to a 1 s minimum — real delays there would be
+neither fast nor stable. So every time-dependent step goes through these
 functions, and the tests replace them with a virtual clock: the same
 substitution vitest performs, at a seam pidrei owns.
 """
@@ -15,7 +16,7 @@ from datetime import UTC, datetime
 
 from tonio.colored import time as tonio_time
 
-from pidrei_ai.utils.cancel import AbortError, CancelToken
+from .cancel import AbortError, CancelToken
 
 
 # The one place pidrei reads the wall clock (ruff bans the stdlib reads

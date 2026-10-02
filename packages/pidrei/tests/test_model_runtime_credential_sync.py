@@ -14,7 +14,7 @@ from pidrei.core.model_runtime import CredentialSynchronizationError, ModelRunti
 from pidrei_ai.auth.types import ApiKeyCredential, AuthCheck, AuthResult, ModelAuth, ProviderAuth
 from pidrei_ai.registry import ModelsRefreshOptions
 from pidrei_ai.types import Model, ModelCost
-from pidrei_ai.utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken
 from tests.auth_lock_helpers import ObservedLock
 
 

@@ -42,7 +42,9 @@ monorepo:
 |---|---|---|
 | `packages/ai` (`pidrei-ai`) | `pidrei_ai` | `packages/ai` |
 | `packages/agent` (`pidrei-agent`) | `pidrei_agent` | `packages/agent` |
+| `packages/utils` (`pidrei-utils`) | `pidrei_utils` | none: what every package shares (the clock, cancel tokens, timers); must never import another pidrei package |
 | `packages/tui` (`pidrei-tui`) | `pidrei_tui` | `packages/tui` (must never import `pidrei_ai`) |
+| `packages/codemode` (`pidrei-codemode`) | `pidrei_codemode` | `packages/codemode` (the Monty sandbox; imports no pidrei package but `pidrei_utils`) |
 | `packages/pidrei` (`pidrei`) | `pidrei` | `packages/coding-agent` |
 | `packages/{protocol,client,server}` | `pidrei_protocol` etc. | transport remnants, unpublished workspace members |
 
@@ -78,7 +80,7 @@ Other places:
   35–45 s. Anything past 60 s is a hang: never rerun with a bigger budget.
 - Run the suite in slices:
   - `packages/ai/tests`
-  - `packages/{agent,tui,server,client,protocol}/tests`
+  - `packages/{agent,codemode,tui,utils,server,client,protocol}/tests`
   - `packages/pidrei/tests/test_[a-f]*.py`, `test_[g-r]*.py`,
     `test_[s-z]*.py`, `test_[0-9]*.py` (the numbered regression files are
     easy to forget).
@@ -89,7 +91,8 @@ Other places:
   last test name printed is the stuck one. In CI logs, where a line appears
   only once complete, it is the test after the last finished one.
   `-o faulthandler_timeout=N` (N well under 60) dumps stacks.
-- CI runs `make test PYTEST_ARGS=-s` on Linux and macOS, for 3.14t and 3.15t.
+- CI runs `make test PYTEST_ARGS=-s` on Linux and macOS, for 3.14t (3.15t
+  returns once `pydantic-monty` publishes cp315t wheels).
   Read failures with `gh run view <id> --log-failed`, and grep CI logs for
   `UNHANDLED`: a crashed detached coroutine never fails the run by itself,
   and its report goes to stdout, which capture swallows without `-s`.
@@ -183,9 +186,9 @@ from the runtime.
   the conftest of every package whose tests can reach its setter. The guard
   resets the state and warns, naming the polluting test (see
   `_capability_overrides_guard`).
-- **Clocks:** production code reads time only through `pidrei_ai.utils.clock`
-  and `pidrei_tui.clock` (ruff TID251 enforces this). Those are the test
-  seams.
+- **Clocks and timers:** production code reads time only through
+  `pidrei_utils.clock` (ruff TID251 enforces this) and arms timers only as
+  `pidrei_utils.timers.Timeout`/`Interval`. Those are the test seams.
 - Work still running after `main()` returns is a leak to fix where it leaks,
   not a lifecycle case to design or document around.
 
@@ -312,6 +315,11 @@ experiments.
 - Every native dependency must support free-threading (cp314t wheels,
   `gil_used=false`). One that re-enables the GIL on import makes TonIO refuse
   to start. Check before adding a dependency.
+- `pydantic-monty` (codemode's sandbox, only in `pidrei_codemode`) is used
+  through its synchronous API, as jobs on the blocking pool, never its
+  asyncio one. It runs its own tokio runtime, limited to one thread and
+  built when `pidrei_codemode` is imported, and spawns its worker processes
+  outside TonIO.
 - Streaming requests set a `read` timeout and leave `total=None`: a total
   timeout would kill a legitimately long stream.
 - A suspected TonIO/httpunk/punkreq bug gets a one-shot repro outside the
@@ -322,6 +330,12 @@ experiments.
 
 - Model-visible strings are byte-identical to Pi; PiDrei renames (app name,
   config dir, env vars) apply only to user-facing text.
+- Codemode is the exception: its scripts are Python, not JavaScript, so its
+  model-visible text (the `codemode` tool's description, prompt snippet and
+  guideline, the script declarations, the errors scripts see, and
+  `docs/codemode.md`) is PiDrei's own. It keeps Pi's wording wherever Pi's
+  does not name JavaScript, QuickJS or JS syntax, and upstream changes to it
+  are re-expressed in Python, not copied (recipe `codemode-python`).
 - The app name keeps Pi's casing in code: `pi` becomes `pidrei`, `Pi`
   becomes `PiDrei`. Docs, README and CHANGELOG are outside this rule.
 - Session files keep Pi's JSONL format and the Pi identifiers in it; wire
@@ -352,9 +366,11 @@ experiments.
   - The render loop and other loops write concurrently. Select by content,
     not position (`writes[-1]`).
 - Fake time instead of sleeping:
-  - Swap `clock.now_ms` (wall time) or `clock.monotonic` (deadlines); conftest
-    guards reset them.
-  - The agent package has `FakeTimers`.
+  - Swap `clock.now_ms` (wall time) or `clock.monotonic` (deadlines); the
+    root conftest's guard resets them, and `timers._start`.
+  - `FakeTimers` (`agent/tests/fake_timers.py`) drives the clock and queues
+    timers together; `manual_ui_timers()` (pidrei tests) records timers for
+    the test to fire.
   - Modules importing `Timeout` at top level can have it rebound to a fake
     that the test fires by hand.
   - Manual clocks seeded from real time must advance *past* thresholds with
@@ -381,8 +397,8 @@ experiments.
 
 ## Changelog, versions, releases
 
-- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The four
-  published packages (`ai`, `agent`, `tui`, `pidrei`) share the version and
+- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The six
+  published packages (`utils`, `ai`, `agent`, `tui`, `codemode`, `pidrei`) share the version and
   pin each other exactly; the transport packages are not bumped.
 - `UPSTREAM_VERSION`/`UPSTREAM_REF` in `upstream.py` and `.last_upstream_ref`
   move together (`make upstream-bump`), by convention to the commit right

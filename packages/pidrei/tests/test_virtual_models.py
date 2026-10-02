@@ -30,7 +30,7 @@ from pidrei_ai.models_store import InMemoryModelsStore
 from pidrei_ai.providers.faux import FauxModelDefinition, faux_assistant_message, faux_provider, faux_tool_call
 from pidrei_ai.registry import ModelsRefreshOptions, get_supported_thinking_levels
 from pidrei_ai.types import Context, SimpleStreamOptions, TextContent, UserMessage
-from pidrei_ai.utils import clock
+from pidrei_utils import clock
 
 from .agent_session_helpers import create_test_resource_loader
 from .harness import create_harness

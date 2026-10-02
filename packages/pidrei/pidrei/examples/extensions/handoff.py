@@ -18,8 +18,8 @@ from pidrei.core.compaction.utils import serialize_conversation
 from pidrei.core.messages import convert_to_llm, create_compaction_summary_message
 from pidrei.modes.interactive.components import BorderedLoader
 from pidrei_ai.types import Context, StreamOptions, TextContent, UserMessage
-from pidrei_ai.utils import clock
 from pidrei_ai.utils.uuid import uuidv7
+from pidrei_utils import clock
 
 
 SYSTEM_PROMPT = """You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
