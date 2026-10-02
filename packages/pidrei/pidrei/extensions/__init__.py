@@ -20,6 +20,7 @@ from typing import Any
 
 from ..core.extensions.types import InlineExtension
 from .codemode import extension as codemode_extension
+from .mcp import extension as mcp_extension
 from .tool_search import extension as tool_search_extension
 
 
@@ -31,10 +32,12 @@ def builtin_extensions() -> list[Any]:
     `<inline:name>` in the startup Extensions list.
     """
     return [
-        # Replaceable: an extension that registers `codemode` or `tool_search`
-        # takes over instead of running alongside the built-in one.
+        # Replaceable: an extension that registers `codemode`, `tool_search`,
+        # or `/mcp` (such as a third-party MCP extension) takes over instead
+        # of running alongside the built-in one.
         InlineExtension(name="codemode", factory=codemode_extension, replaceable=True, builtin=True),
         InlineExtension(name="tool-search", factory=tool_search_extension, replaceable=True, builtin=True),
+        InlineExtension(name="mcp", factory=mcp_extension, replaceable=True, builtin=True),
     ]
 
 

@@ -19,6 +19,15 @@ failure only shows up on CI, or the TUI freezes. The rules they serve are in
   fires. If the test itself is on the stack, the test awaits something that
   never happens; look for a fake with an outdated signature, or a child that
   raised while a sibling waits.
+- **A thread executing a TonIO readiness loop** (`_net/_socket.py` in
+  `accept`/`recv`, `_fd/_unix.py` in `receive_some`) with one core pegged
+  is not a parked read: a parked coroutine has no thread. Its registration
+  was shut down while the socket stayed open, which happens to anything
+  still parked on I/O when a `run_until_complete` returns (an async
+  fixture's teardown runs in the next one). Per-thread CPU from
+  `/proc/<pid>/task/*/stat` and `ss -tanp` (unread bytes on a connection
+  whose reader never runs) confirm it; the fix is in the test's fixtures
+  (`AGENTS.md`, Tests).
 - **Crashed coroutines are invisible by default.** TonIO reports an
   unretrieved coroutine exception as an `UNHANDLED ...` line on stdout, which
   pytest's capture swallows. Run with `-s` and grep for `UNHANDLED` when a

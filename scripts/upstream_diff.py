@@ -62,6 +62,8 @@ PREFIX_MAP = (
     ("packages/agent/test/", "packages/agent/tests/", "test"),
     ("packages/codemode/src/", "packages/codemode/pidrei_codemode/", "src"),
     ("packages/codemode/test/", "packages/codemode/tests/", "test"),
+    ("packages/mcp/src/", "packages/mcp/pidrei_mcp/", "src"),
+    ("packages/mcp/test/", "packages/mcp/tests/", "test"),
     ("packages/coding-agent/src/", "packages/pidrei/pidrei/", "src"),
     ("packages/coding-agent/test/", "packages/pidrei/tests/", "test"),
     ("packages/coding-agent/docs/", "packages/pidrei/pidrei/docs/", "doc"),
@@ -550,26 +552,20 @@ DROPPED_PREFIXES += tuple(
         "packages/coding-agent/test/crash-log.test.ts",
     )
 )
-#: MCP ports later, as one unit (0.99.1 delta port; codemode and tool search,
-#: deferred with it, landed in 1.0.0.0). core/mcp-servers.ts is not listed:
-#: its `McpServerRegistry` ported with the tool-orchestration core.
-_DEFERRED_MCP_REASON = "deferred, ports with MCP (0.99.1 delta port)"
-DROPPED_PREFIXES += tuple(
-    (path, _DEFERRED_MCP_REASON)
-    for path in (
-        "packages/mcp/",
-        "packages/agent/examples/mcp-codemode/",
-        "packages/coding-agent/src/extensions/mcp/",
-        "packages/coding-agent/docs/mcp.md",
-        "packages/coding-agent/test/mcp-command.test.ts",
+#: MCP (1.0.0.0): what stays out of the port.
+DROPPED_PREFIXES += (
+    (
         "packages/coding-agent/test/mcp-conformance/",
-        "packages/coding-agent/test/mcp-extension.test.ts",
-        "packages/coding-agent/test/mcp-oauth-refresh.test.ts",
-        "packages/coding-agent/test/mcp-oauth-store.test.ts",
-        "packages/coding-agent/test/suite/agent-session-mcp.test.ts",
-        "packages/coding-agent/test/suite/agent-session-mcp-oauth.test.ts",
-        "packages/coding-agent/test/suite/mcp-oauth-server.ts",
-    )
+        "MCP conformance suite not ported: pidrei's client mirrors pi's, which passes it (1.0.0.0)",
+    ),
+    (
+        "packages/agent/examples/mcp-codemode/",
+        "pi's MCP codemode example builds its own JavaScript codemode tool on sandbox internals (1.0.0.0)",
+    ),
+    # the lazy imports of the MCP runtime and CLI: pidrei imports them with
+    # the extension (extensions/mcp/runtime.py docstring)
+    ("packages/coding-agent/src/extensions/mcp/runtime.lazy.ts", "lazy-import shim; pidrei imports eagerly (1.0.0.0)"),
+    ("packages/coding-agent/src/extensions/mcp/cli.lazy.ts", "lazy-import shim; pidrei imports eagerly (1.0.0.0)"),
 )
 #: Codemode's JavaScript sandbox machinery (1.0.0.0, recipe `codemode-python`):
 #: pidrei's scripts run on Monty, driven by pidrei_codemode/runtime/host.py.
@@ -670,9 +666,13 @@ RENAMES = {
     "packages/agent/test/utils/calculate.ts": "packages/agent/tests/test_e2e.py",
     "packages/ai/src/models.ts": "packages/ai/pidrei_ai/registry.py",
     # pi's name refers to the Node `http` module it configures; nothing in
-    # pidrei is Node (docstring of http_proxy.py).
-    "packages/ai/src/utils/node-http-proxy.ts": "packages/ai/pidrei_ai/utils/http_proxy.py",
+    # pidrei is Node (docstring of http_proxy.py). The HTTP seam's modules live
+    # in pidrei-http (1.0.0.0), shared by pidrei-ai and pidrei-mcp; the test
+    # mirrors stay with pi-ai's. callback-server.ts maps mechanically to its
+    # provider half; the lower layer is pidrei_http/callback_server.py.
+    "packages/ai/src/utils/node-http-proxy.ts": "packages/http/pidrei_http/http_proxy.py",
     "packages/ai/test/node-http-proxy.test.ts": "packages/ai/tests/test_http_proxy.py",
+    "packages/ai/src/auth/oauth/pkce.ts": "packages/http/pidrei_http/pkce.py",
     # EXIF orientation is Pillow's `ImageOps.exif_transpose` inside the image
     # pipeline; pi's hand-rolled APP1 scanner has no separate mirror.
     "packages/coding-agent/src/utils/exif-orientation.ts": "packages/pidrei/pidrei/utils/image_process.py",
@@ -714,6 +714,16 @@ RENAMES = {
     # combineAbortSignals lives with the cancel token every package shares
     # (1.0.0.0, pidrei-utils).
     "packages/ai/src/utils/abort-signals.ts": "packages/utils/pidrei_utils/cancel.py",
+    # 1.0.0.0 MCP: the testing facade is one module; the node fixtures are
+    # Python scripts under tests/fixtures; the test helpers module is named so
+    # the other packages' tests can import it; the SDK license travels as is.
+    "packages/mcp/src/testing/index.ts": "packages/mcp/pidrei_mcp/testing.py",
+    "packages/mcp/test/fixtures/stdio-server.mjs": "packages/mcp/tests/fixtures/stdio_server.py",
+    "packages/mcp/test/fixtures/stubborn-server.mjs": "packages/mcp/tests/fixtures/stubborn_server.py",
+    "packages/mcp/test/helpers.ts": "packages/mcp/tests/mcp_helpers.py",
+    "packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt": (
+        "packages/mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt"
+    ),
 }
 
 #: pi's generated per-provider catalog stubs (`providers/<id>.models.ts`, one
@@ -1170,6 +1180,75 @@ DIVERGED: dict[str, tuple[tuple[str, str], ...]] = {
                 "ranking and the new list are computed inside the update"
             ),
         ),
+    ),
+    # MCP (1.0.0.0): the client package's runtime layer (recipe `mcp-client`)
+    # and the extension's (recipe `mcp-extension`).
+    "packages/mcp/src/transports/transport.ts": (
+        (
+            "mcp-client",
+            "delivery is one consumer per transport over a channel; send() returns a SendResult, taking its "
+            "place in the outgoing order when called",
+        ),
+    ),
+    "packages/mcp/src/transports/in-memory.ts": (
+        ("mcp-client", "messages go onto the peer's delivery channel; send() returns a SendResult"),
+    ),
+    "packages/mcp/src/transports/stdio.ts": (
+        ("mcp-client", "send() returns a SendResult; the close ladder runs on tonio's process API"),
+    ),
+    "packages/mcp/src/transports/streamable-http.ts": (
+        (
+            "mcp-client",
+            "no cancellation: requests are bounded by MCP_TIMEOUT, close spawns the session DELETE (1 s) and "
+            "joins it, closes held responses, and leaves a head-pending request to end on its own",
+        ),
+    ),
+    "packages/mcp/src/client.ts": (
+        (
+            "mcp-client",
+            "state under one lock with a published view; pending entries settled once; an abandoned request "
+            "is cleaned up synchronously; incoming requests run detached",
+        ),
+    ),
+    "packages/mcp/src/oauth/provider.ts": (
+        ("mcp-client", "state() reads and, when none is stored, writes in one locked step"),
+    ),
+    "packages/mcp/src/oauth/callback.ts": (
+        ("mcp-client", "close() is synchronous: waiters settled, server and connections closed"),
+    ),
+    "packages/coding-agent/src/extensions/mcp/index.ts": (
+        (
+            "mcp-extension",
+            "state behind one lock (server list a tuple); `ready` is an Event; background connects detached; "
+            "the manager changes its view through tui.apply",
+        ),
+        ("update-active-tools", "the read-then-set of the active tools is one update_active_tools(update)"),
+    ),
+    "packages/coding-agent/src/extensions/mcp/runtime.ts": (
+        (
+            "mcp-extension",
+            "one published connection snapshot; the shared open runs detached and is joined through an Event; "
+            "close() also ends a connect in flight; on_change is async; factories are async",
+        ),
+    ),
+    "packages/coding-agent/src/extensions/mcp/oauth.ts": (
+        (
+            "mcp-extension",
+            "the shared refresh runs detached and is joined through an Event; refresh requests are capped by "
+            "the fetch's timeout_ms; the refresh lock is a renewing FileLock; settings() is async",
+        ),
+    ),
+    "packages/coding-agent/src/extensions/mcp/config.ts": (
+        ("mcp-extension", "reads through tonio.colored.fs; every mcp.json edit runs under a FileLock on the file"),
+    ),
+    "packages/coding-agent/src/extensions/mcp/log.ts": (
+        ("mcp-extension", "one pool job per message, under a lock for the size bookkeeping and rotation"),
+    ),
+    "packages/coding-agent/src/extensions/mcp/ui.ts": (
+        ("mcp-extension", "the view changes through tui.apply; key handlers settle the answer manage() awaits"),
+    ),
+    "packages/coding-agent/src/extensions/mcp/cli.ts": (
+        ("mcp-extension", "the pasted redirect URL is read with FdReader under run_cancellable"),
     ),
 }
 

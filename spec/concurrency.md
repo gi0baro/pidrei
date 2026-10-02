@@ -72,7 +72,7 @@ mechanism is TonIO scope cancellation:
   suspension point. Nothing is polled per chunk or per iteration.
 - The two implementations of that shape are
   `EventStream.spawn_producer` (streams) and
-  `pidrei_ai.utils.abort.run_cancellable` (operations). Use them rather than
+  `pidrei_utils.cancel.run_cancellable` (operations). Use them rather than
   wiring a scope by hand.
 - `race_with_cancel` is the other shape: the caller stops waiting but the
   operation keeps running detached. It is for state mutations (credential

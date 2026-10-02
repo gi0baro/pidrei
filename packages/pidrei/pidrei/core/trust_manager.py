@@ -40,6 +40,7 @@ class ProjectTrustOption:
 
 TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES = (
     "settings.json",
+    "mcp.json",
     "extensions",
     "skills",
     "prompts",

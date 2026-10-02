@@ -57,7 +57,7 @@ extend-ignore = [
     'S110',   # silent best-effort catches mirror pi's error handling
     'TRY002', # plain Exceptions mirror pi's `throw new Error(...)`
 ]
-mccabe = { max-complexity = 44 }
+mccabe = { max-complexity = 45 }
 
 # Writing through them is a synchronous write on the runtime: every stdio write
 # goes through `pidrei.core.output_guard` instead.
@@ -88,7 +88,7 @@ mccabe = { max-complexity = 44 }
 [tool.ruff.lint.isort]
 combine-as-imports = true
 lines-after-imports = 2
-known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_client', 'pidrei_codemode', 'pidrei_protocol', 'pidrei_server', 'pidrei_tui', 'pidrei_utils', 'tests']
+known-first-party = ['pidrei', 'pidrei_agent', 'pidrei_ai', 'pidrei_client', 'pidrei_codemode', 'pidrei_http', 'pidrei_mcp', 'pidrei_protocol', 'pidrei_server', 'pidrei_tui', 'pidrei_utils', 'tests']
 
 [tool.ruff.lint.per-file-ignores]
 # S105/S106: the OAuth mirrors are full of token URLs and fixture tokens named

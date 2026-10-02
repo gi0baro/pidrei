@@ -25,7 +25,7 @@ from pidrei_ai.types import (
     UsageCost,
     UserMessage,
 )
-from pidrei_ai.utils import http
+from pidrei_http import http
 from tests.anthropic_helpers import PayloadCaptured
 
 

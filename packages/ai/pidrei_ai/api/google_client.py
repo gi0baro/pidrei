@@ -43,8 +43,8 @@ from urllib.parse import urlencode
 
 from pidrei_ai.auth.google_adc import get_access_token
 from pidrei_ai.types import ProviderEnv
-from pidrei_ai.utils import http
 from pidrei_ai.utils.sse import iterate_sse_messages
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 
 

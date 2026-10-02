@@ -134,9 +134,9 @@ Loaded in this order; later entries override earlier ones by filename:
 Package-provided extensions load with the scope of the package that declares
 them. `--no-extensions` skips all of them.
 
-pidrei also ships built-in extensions, named `builtin:codemode` and
-`builtin:tool-search` in the `extensions` setting. They load by default, after
-the others; `-builtin:<name>` disables one. A `+builtin:<name>` or
+pidrei also ships built-in extensions, named `builtin:mcp`,
+`builtin:codemode`, and `builtin:tool-search` in the `extensions` setting.
+They load by default, after the others; `-builtin:mcp` disables one. A `+builtin:<name>` or
 `-builtin:<name>` entry in project settings overrides the user setting.
 `pidrei config` lists them under Built-in. `--no-extensions` disables them
 too, and `-e builtin:<name>` loads one explicitly.
@@ -567,21 +567,29 @@ it; see [virtual-models.md](virtual-models.md).
 
 ### MCP servers
 
-`register_mcp_server(name, config)` records an MCP server for the current
-session, with the shape of an `mcpServers` entry in `mcp.json` (`command`,
+`register_mcp_server(name, config)` adds an MCP server for the current
+session, with the shape of an `mcpServers` entry in [`mcp.json`](mcp.md) (`command`,
 `args`, `env` and `cwd` for stdio servers, `url`, `headers` and `oauth` for
 HTTP servers, plus `exposure`, `toolExposure`, `description`, `enabled` and
 `timeout`); `unregister_mcp_server(name)` removes the extension's
 registration and `get_mcp_servers()` lists every registered server.
-Registering a name again replaces the extension's earlier registration; names
-another extension registered, names that differ from a registered server's
-only in `-` and `_`, invalid names and invalid configs raise. Registrations
-are not saved: register again on every load.
+Servers registered while the extension loads connect when the session
+starts, together with the `mcp.json` servers; servers registered later
+connect right away, and `unregister_mcp_server()` closes the connection and
+makes the server's tools unreachable. Registrations are not saved: register
+again on every load, for example based on the extension's own settings. A
+server in `mcp.json` with the same name takes precedence, and `/mcp` shows the
+override. Registering the same name again replaces the extension's earlier
+registration; names another extension registered, names that differ from a
+registered server's only in `-` and `_`, invalid names and invalid configs
+raise.
 
-pidrei does not connect MCP servers yet. An extension that connects them reads `get_mcp_servers()` on `session_start`
-and handles the `mcp_servers_change` event (`{"servers": [...]}`) for later
-changes. When no loaded extension handles that event, each registration is
-reported as an extension error.
+The built-in MCP support connects registered servers. When nothing does,
+because another extension replaced it (see
+[MCP](mcp.md#replace-the-built-in-mcp-support)), each registration is reported
+as an extension error. Other MCP extensions can connect registered servers
+too: read them with `get_mcp_servers()` on `session_start` and handle the
+`mcp_servers_change` event (`{"servers": [...]}`) for later changes.
 
 ## Custom tools
 

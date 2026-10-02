@@ -43,7 +43,7 @@ async def fetch_with_retry(
     single attempt instead, so a hung connection is abandoned and retried.
     """
     # lazy: resolved per call so the http seam stays swappable in tests
-    from pidrei_ai.utils.http import RequestTimeout, request_timeout, shared_client
+    from pidrei_http.http import RequestTimeout, request_timeout, shared_client
 
     max_retries = max(0, int(max_retries))
     deadline = None if timeout_ms is None or timeout_ms <= 0 else clock.monotonic() + timeout_ms / 1000

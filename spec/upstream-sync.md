@@ -210,7 +210,7 @@ In order:
 1. **Catalog regen**: `make models-data`, then rerun `packages/ai/tests`.
    The regen-dependent failures noted during the port must clear. One run
    covers chat, image and classifier models.
-2. **Versions**: the six published packages (`packages/{utils,ai,agent,tui,codemode,pidrei}/pyproject.toml`)
+2. **Versions**: the eight published packages (`packages/{utils,http,ai,agent,tui,codemode,mcp,pidrei}/pyproject.toml`)
    move to `<pi version>.0`: their `version` *and* their exact cross-pins.
    `protocol`/`client`/`server` are not bumped.
 3. **Upstream ref**: set `UPSTREAM_VERSION` in
@@ -268,14 +268,19 @@ TonIO, httpunk and punkreq releases are ported as their own small change,
 usually a `.N` PiDrei release:
 
 1. Bump the pins in every `pyproject.toml` that names the dependency
-   (TonIO: all eight packages), then `uv sync --all-packages`.
+   (TonIO: all ten packages; httpunk and punkreq: `pidrei-http` only),
+   then `uv sync --all-packages`.
 2. For httpunk/punkreq, diff the two tags for the names PiDrei uses. PiDrei
-   imports httpunk in exactly one place, `pidrei_ai/utils/http.py`
+   imports httpunk in exactly one place, `pidrei_http/http.py`
    (`Backend`, `H1Connection`, `H1Server`), and sees its exceptions only
    through punkreq's mapper (`map_httpunk_exception`) and the messages
    `pidrei_ai/utils/retry.py` matches. The flow tests stub the network; the
-   real coverage is `packages/ai/tests/test_oauth_callback_server.py` and
-   the loopback cases in `test_websocket_connect.py`. Run those first. When
+   real coverage is `packages/http/tests/test_callback_server.py`,
+   `packages/ai/tests/test_oauth_callback_server.py`, the loopback cases
+   in `test_websocket_connect.py`, and the MCP HTTP tests
+   (`packages/mcp/tests/test_streamable_http.py`, `test_oauth.py`, and
+   `packages/pidrei/tests/test_mcp_oauth_refresh.py`,
+   `test_agent_session_mcp_oauth.py`). Run those first. When
    in doubt, run them on the old pins too (`uv pip install httpunk==X
    punkreq==Y`, `uv run --no-sync pytest ...`, then
    `uv sync --all-packages`).
@@ -320,10 +325,8 @@ Each has entries in the classifier's dropped tables, with the reason.
   calls them gets a `None` answer.
 - Live-API tests, Pi's eval harness, storage backends, manual probe scripts,
   Pi's TypeScript SDK examples and npm/wasm example extensions.
-
-Deferred (ported later as one unit): MCP (client, extension, CLI). The core
-it builds on (tool exposure, nested tool calls, the MCP server registry,
-codemode and tool search) is ported.
+- **MCP's conformance suite** (`test/mcp-conformance/`) and pi's MCP
+  examples: pidrei's client mirrors pi's, which passes the suite.
 
 ## 7. Diverged regions
 
@@ -346,7 +349,7 @@ Pi-visible *surface*; scopes are the mechanism.
   wire the token at the edge (`cancel.on_cancel(...)` cancels the scope and
   settles the owner's wait condition). Reach for the existing
   implementations first: `EventStream.spawn_producer` and
-  `pidrei_ai.utils.abort.run_cancellable`.
+  `pidrei_utils.cancel.run_cancellable`.
 - Keep `.cancelled` / `raise_if_cancelled()` checks **only** at Pi-observable
   decision points, where Pi itself checks `signal.aborted` and behaviour
   branches on it. Never add polling checks inside scope-owned work: a
@@ -806,7 +809,7 @@ machinery and the text that shows JavaScript do not.
   strings. A JS-only case is dropped or re-specified, and the test module's
   docstring says which.
 
-### `update-active-tools` (`coding-agent/src/extensions/tool-search/tool.ts`)
+### `update-active-tools` (`coding-agent/src/extensions/tool-search/tool.ts`, `extensions/mcp/index.ts`)
 
 Pi changes the active tools relative to the current ones in two calls,
 `getActiveTools()` then `setActiveTools()`, which nothing interleaves on its
@@ -824,3 +827,94 @@ session's loadout guard and sets what it returns (`None` sets nothing).
   `update_active_tools`, not Pi's `getAllTools`/`getActiveTools`/
   `setActiveTools`. A new upstream read-then-set of the active tools, in any
   extension, gets the same treatment.
+- The MCP extension's three (`ensureDiscoveryActive`, `syncResourceTools`,
+  `setExposure`) compute what they need from the extension's state before the
+  call; the update itself only filters or extends `active`, and records what
+  `ensureDiscoveryActive`'s warning reads afterwards.
+
+### `mcp-client` (`mcp/src/transports/*.ts`, `client.ts`, `oauth/provider.ts`, `oauth/callback.ts`)
+
+Pi's MCP client leans on its single thread: listeners run inline, a `send()`
+is ordered by the call, and an `AbortController` stops a request at any
+point. PiDrei keeps the protocol and its observable ordering, and builds the
+runtime layer from TonIO, httpunk and punkreq.
+
+- **Delivery**: each transport has one consumer over an unbounded channel;
+  message, error and close listeners are awaited one at a time in arrival
+  order. Close is closing the channel: the consumer drains what is queued,
+  then runs the close listeners once; a message after the close is dropped.
+  A listener change upstream lands in `TransportEvents`, not per transport.
+- **`send()` returns a `SendResult`** (awaitable) and takes the message's
+  place in the outgoing order when called, as pi's synchronous prefix does.
+  A pi `await transport.send(...)` stays an await of the result.
+- **The client**: its state (transport, pending requests, incoming request
+  tokens) is under one thread lock, and what readers see (`connection_state`,
+  the session) is one published view. A pending request is settled exactly
+  once, by whichever comes first: response, timeout (a `Timeout` with a
+  generation check), its cancel token, a failed send, or the close. A caller
+  that stops waiting removes its entry synchronously in a `finally`. Incoming
+  requests run detached; their cancel token is registered before the next
+  message is handled.
+- **The HTTP transport cancels nothing**: every request is bounded by
+  `MCP_TIMEOUT` (connect 10 s, read 300 s, no pool or total limit, undici's
+  defaults), a whole-request `timeout_ms` where pi uses
+  `AbortSignal.timeout`, and a response is stopped by closing it. `close()`
+  marks the transport closed, spawns the session `DELETE` (1 s request
+  timeout), closes the responses it holds, wakes reconnect waits, joins the
+  `DELETE`, then emits close; a request still waiting for its head ends on
+  its own. Only the client's own logic cancels (request tokens, timeouts).
+  An upstream `signal` threaded into the transport is not ported; one at the
+  client level maps to the request's cancel token.
+- **OAuth**: `McpOAuthProvider.state()` reads and, when none is stored,
+  writes in one locked step. `OAuthCallbackServer.close()` is synchronous:
+  it settles the waiters and closes the server and its connections
+  (httpunk's `close()` and `close_all_connections()`), as the provider flows'
+  callback server does; no graceful shutdown.
+- **Tests**: loopback servers are httpunk's (`tests/mcp_helpers.py`) with a
+  shared client that keeps no idle connection, so teardown never waits on a
+  pooled connection; fixtures are Python scripts.
+
+### `mcp-extension` (`coding-agent/src/extensions/mcp/*.ts`)
+
+Pi's extension keeps its servers, tool-name assignments and connection state
+as fields that its handlers, connection callbacks and `/mcp` mutate between
+awaits. Here those run on parallel coroutines.
+
+- **Extension state** (server list, tool owners and definitions, sign-in
+  snapshots, flags) is behind one thread lock, held for synchronous stretches
+  only; the server list is a tuple rebound whole and readers pin it. Lock
+  order: this lock, then the session's loadout guard; `update_active_tools`
+  callbacks and the manager's menu builders never take it.
+- **A server's `ready`** is an Event set when the connection started for it
+  connected or failed. Background connects run detached (pi's `void`); the
+  first-prompt wait bounds each `ready` by one deadline; a tool call's wait
+  is `Waiter.any(ready, ctx.signal.event)`.
+- **A connection** publishes one frozen snapshot (state, error, tools,
+  resources, instructions) under its lock. Pi's shared `opening` promise is a
+  detached open that callers join through an Event; `close()` also closes the
+  client still connecting and wakes a retry delay (pi leaves the connect to
+  its request timeout, which here would outlive shutdown). `on_change` is
+  async and awaited where the state changes; the extension re-checks the
+  state before recording the stored-token snapshot.
+- **OAuth refresh**: one detached refresh per provider, joined through an
+  Event; each request capped by the fetch's `timeout_ms`; the cross-process
+  lock is `FileLock(stale=20, renew=True)` (proper-lockfile's renewal).
+  `on_unauthorized` starts the refresh at the call, as pi's runs up to its
+  first await there.
+- **I/O**: config loading and editing, the credential store's `tokens()`/
+  `remove()`, settings that resolve `!command`/`${VAR}`, transport factories
+  and the log are async. Every `mcp.json` edit runs under a `FileLock` on the
+  file (pi's synchronous edit cannot interleave in-process; an awaited one
+  can).
+- **The manager** (`ui.py`) changes its view only through `tui.apply`; key
+  handlers settle an Event the manage coroutine awaits.
+- **The CLI** reads a pasted redirect URL with `FdReader` under
+  `run_cancellable`, cancelled by the sign-in or `--timeout`.
+- **Imports are eager**: `runtime.lazy.ts`/`cli.lazy.ts` are dropped, and the
+  "MCP failed to load" reports they fed are not ported.
+- **Script API names in text** (`searchTools()`, `describeNamespace()`, the
+  `scriptNeedsServer` regex) follow recipe `codemode-python`; the regex also
+  matches `call_tool` and `has_tool`.
+- **Tests**: waits are Events (a wrapped `ExtensionAPI.register_tool`, a fake
+  server released by the test at the event under test), never polling; the
+  harness binds once with the UI context the case needs.

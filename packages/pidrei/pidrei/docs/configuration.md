@@ -20,6 +20,7 @@ The agent directory is shown as `<agent-dir>` below. Move it with the
 | Path | Responsibility |
 |---|---|
 | `<agent-dir>/settings.json` | User settings: preferences, defaults, resource paths, and [package](packages.md) declarations |
+| `<agent-dir>/mcp.json` | [MCP servers](mcp.md) available in every project |
 | `<agent-dir>/keybindings.json` | Custom [keybindings](keybindings.md), a flat map of action id to key(s) |
 | `<agent-dir>/models.json` | [Custom providers, models, and overrides](models.md) |
 | `<agent-dir>/auth.json` | Saved API keys and OAuth credentials ([providers.md](providers.md)) |
@@ -42,6 +43,7 @@ that order.
 | Path | Responsibility |
 |---|---|
 | `.pidrei/settings.json` | Project settings, resource paths, and package declarations |
+| `.pidrei/mcp.json` | Project [MCP servers](mcp.md) |
 | `.pidrei/SYSTEM.md` | Replaces the system prompt for this project |
 | `.pidrei/APPEND_SYSTEM.md` | Adds project-specific instructions to the system prompt |
 | `.pidrei/extensions/` | Project extensions |

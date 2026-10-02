@@ -1010,14 +1010,14 @@ class ExtensionRunner:
                 if server.name in self._reported_mcp_servers:
                     continue
                 self._reported_mcp_servers.add(server.name)
-            # pi adds "; another extension may have replaced the built-in MCP
-            # support". pidrei has no built-in MCP extension yet (it ports with
-            # codemode), so the clause would mislead.
             self.emit_error(
                 ExtensionError(
                     extension_path=server.extension_path,
                     event="register_mcp_server",
-                    error=f'MCP server "{server.name}" is registered, but no loaded extension connects MCP servers',
+                    error=(
+                        f'MCP server "{server.name}" is registered, but no loaded extension connects MCP servers; '
+                        "another extension may have replaced the built-in MCP support"
+                    ),
                 )
             )
 

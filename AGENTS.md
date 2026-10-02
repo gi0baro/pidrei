@@ -43,8 +43,10 @@ monorepo:
 | `packages/ai` (`pidrei-ai`) | `pidrei_ai` | `packages/ai` |
 | `packages/agent` (`pidrei-agent`) | `pidrei_agent` | `packages/agent` |
 | `packages/utils` (`pidrei-utils`) | `pidrei_utils` | none: what every package shares (the clock, cancel tokens, timers); must never import another pidrei package |
+| `packages/http` (`pidrei-http`) | `pidrei_http` | none: the HTTP seam (pooled clients, proxy env, PKCE, the loopback callback server); the only importer of punkreq and httpunk; must never import another pidrei package |
 | `packages/tui` (`pidrei-tui`) | `pidrei_tui` | `packages/tui` (must never import `pidrei_ai`) |
 | `packages/codemode` (`pidrei-codemode`) | `pidrei_codemode` | `packages/codemode` (the Monty sandbox; imports no pidrei package but `pidrei_utils`) |
+| `packages/mcp` (`pidrei-mcp`) | `pidrei_mcp` | `packages/mcp` (the MCP client; imports no pidrei package but `pidrei_utils` and `pidrei_http`) |
 | `packages/pidrei` (`pidrei`) | `pidrei` | `packages/coding-agent` |
 | `packages/{protocol,client,server}` | `pidrei_protocol` etc. | transport remnants, unpublished workspace members |
 
@@ -80,7 +82,7 @@ Other places:
   35–45 s. Anything past 60 s is a hang: never rerun with a bigger budget.
 - Run the suite in slices:
   - `packages/ai/tests`
-  - `packages/{agent,codemode,tui,utils,server,client,protocol}/tests`
+  - `packages/{agent,codemode,http,mcp,tui,utils,server,client,protocol}/tests`
   - `packages/pidrei/tests/test_[a-f]*.py`, `test_[g-r]*.py`,
     `test_[s-z]*.py`, `test_[0-9]*.py` (the numbered regression files are
     easy to forget).
@@ -271,7 +273,7 @@ experiments.
 - No `await` in a `finally`/`except` reachable by cancellation: on a
   cancelled chain it raises `CancelledError` again (see the TonIO contract).
   Branch on whether the `finally` is unwinding a `CancelledError` and do only
-  sync work there, as `pidrei_ai.utils.http.finish_body` does. The same holds
+  sync work there, as `pidrei_http.http.finish_body` does. The same holds
   for code that catches `CancelledError`: it cannot go on awaiting.
 - Errors never cross the `tonio.run` boundary: `main()` reports and returns
   an exit code.
@@ -293,7 +295,7 @@ experiments.
   instance.
 - **Prefer the ecosystem's primitives** (TonIO, httpunk, punkreq, stdlib)
   over hand-rolled protocol or runtime code. Enumerate what the stack provides
-  first. HTTP goes through the seam in `pidrei_ai/utils/http.py`.
+  first. HTTP goes through the seam in `pidrei_http/http.py`.
 - **Extend the existing mechanism first.** When X doesn't follow the rules Y
   already follows, route X through Y's mechanism. No new modules, package
   moves or unifications as part of the fix.
@@ -307,7 +309,7 @@ experiments.
 ## Dependencies
 
 - The stack is TonIO, httpunk and punkreq. HTTP goes through
-  `pidrei_ai/utils/http.py`; WebSockets are `websockets`' sans-io protocol
+  `pidrei_http/http.py`; WebSockets are `websockets`' sans-io protocol
   over httpunk's upgraded connection (`pidrei_ai/utils/websocket.py`). No
   asyncio/anyio-based libraries (httpx, vendor provider SDKs, pydantic-ai):
   PiDrei ports Pi's own adapters and SSE decoding, as Pi uses SDKs only as
@@ -352,6 +354,16 @@ experiments.
   on nested helpers. Yield fixtures (`tmp_path`, `monkeypatch`) and async
   fixtures work. `tonio.run()` inside a sync test is never a workaround: it
   fails once any earlier test has built a runtime.
+- **Nothing parked on I/O crosses a `run_until_complete` boundary.** An
+  async fixture's setup, the test body and the fixture's teardown are
+  separate runs of the one runtime, and the runtime shuts down every I/O
+  registration when a run ends. A coroutine still parked on a socket, pipe
+  or process stream at that point (a server's accept loop, a connection
+  reader, a client's idle watcher) resumes to spin on the dead registration
+  and stalls the suite. Open and close servers, connections, harnesses with
+  live connections and processes inside the test body, through an async
+  context manager the test enters itself (`mcp_helpers.loopback_servers`,
+  the OAuth suite's `_suite`), never through an async fixture's teardown.
 - **No sleep-polling.** Never `while ...: await sleep(x)` or a bare sleep to
   wait for something. Give the fake an Event it sets, and
   `await event.wait(timeout)`. Bound every wait so a failure fails fast.
@@ -397,8 +409,8 @@ experiments.
 
 ## Changelog, versions, releases
 
-- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The six
-  published packages (`utils`, `ai`, `agent`, `tui`, `codemode`, `pidrei`) share the version and
+- Versions are `<pi version>.<pidrei build>` (e.g. `0.99.1.0`). The eight
+  published packages (`utils`, `http`, `ai`, `agent`, `tui`, `codemode`, `mcp`, `pidrei`) share the version and
   pin each other exactly; the transport packages are not bumped.
 - `UPSTREAM_VERSION`/`UPSTREAM_REF` in `upstream.py` and `.last_upstream_ref`
   move together (`make upstream-bump`), by convention to the commit right

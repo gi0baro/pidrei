@@ -22,14 +22,12 @@ classifiers = [
 ]
 
 dependencies = [
+    "pidrei-http==1.0.0.0",
     "pidrei-utils==1.0.0.0",
     "tonio~=0.10.4",
-    "punkreq~=0.2.3",
-    # punkreq's own transport, declared directly because the OAuth callback
-    # servers use its server-side HTTP/1 connection (utils/http.py).
-    "httpunk~=0.4.5",
     # Sans-io WebSocket frame codec only (no client, no asyncio): the Codex
-    # responses transport drives it over httpunk's H1Upgraded (utils/websocket.py).
+    # responses transport drives it over httpunk's H1Upgraded, which the seam
+    # hands back (utils/websocket.py).
     "websockets~=16.1",
     # Sans-io only: AWS credential resolution, SigV4 signing and the
     # vnd.amazon.eventstream frame decoder for Bedrock (api/bedrock_runtime.py).
@@ -45,6 +43,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
+pidrei-http = { workspace = true }
 pidrei-utils = { workspace = true }
 
 [tool.hatch.build.targets.wheel]

@@ -9,6 +9,8 @@ members = [
     "pidrei-ai",
     "pidrei-client",
     "pidrei-codemode",
+    "pidrei-http",
+    "pidrei-mcp",
     "pidrei-protocol",
     "pidrei-server",
     "pidrei-tui",
@@ -338,6 +340,8 @@ dependencies = [
     { name = "pidrei-agent" },
     { name = "pidrei-ai" },
     { name = "pidrei-codemode" },
+    { name = "pidrei-http" },
+    { name = "pidrei-mcp" },
     { name = "pidrei-tui" },
     { name = "pidrei-utils" },
     { name = "pillow" },
@@ -353,6 +357,8 @@ requires-dist = [
     { name = "pidrei-agent", editable = "packages/agent" },
     { name = "pidrei-ai", editable = "packages/ai" },
     { name = "pidrei-codemode", editable = "packages/codemode" },
+    { name = "pidrei-http", editable = "packages/http" },
+    { name = "pidrei-mcp", editable = "packages/mcp" },
     { name = "pidrei-tui", editable = "packages/tui" },
     { name = "pidrei-utils", editable = "packages/utils" },
     { name = "pillow", specifier = "~=12.3" },
@@ -385,11 +391,10 @@ source = { editable = "packages/ai" }
 dependencies = [
     { name = "botocore" },
     { name = "cryptography" },
-    { name = "httpunk" },
     { name = "jsonschema" },
     { name = "partial-json-parser" },
+    { name = "pidrei-http" },
     { name = "pidrei-utils" },
-    { name = "punkreq" },
     { name = "tonio" },
     { name = "websockets" },
 ]
@@ -398,11 +403,10 @@ dependencies = [
 requires-dist = [
     { name = "botocore", specifier = "~=1.43" },
     { name = "cryptography", specifier = "~=49.0" },
-    { name = "httpunk", specifier = "~=0.4.5" },
     { name = "jsonschema", specifier = "~=4.26" },
     { name = "partial-json-parser", specifier = "~=0.2.1" },
+    { name = "pidrei-http", editable = "packages/http" },
     { name = "pidrei-utils", editable = "packages/utils" },
-    { name = "punkreq", specifier = "~=0.2.3" },
     { name = "tonio", specifier = "~=0.10.4" },
     { name = "websockets", specifier = "~=16.1" },
 ]
@@ -436,6 +440,40 @@ dependencies = [
 requires-dist = [
     { name = "pidrei-utils", editable = "packages/utils" },
     { name = "pydantic-monty", specifier = "==1.0.0" },
+    { name = "tonio", specifier = "~=0.10.4" },
+]
+
+[[package]]
+name = "pidrei-http"
+version = "1.0.0.0"
+source = { editable = "packages/http" }
+dependencies = [
+    { name = "httpunk" },
+    { name = "punkreq" },
+    { name = "tonio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpunk", specifier = "~=0.4.5" },
+    { name = "punkreq", specifier = "~=0.2.3" },
+    { name = "tonio", specifier = "~=0.10.4" },
+]
+
+[[package]]
+name = "pidrei-mcp"
+version = "1.0.0.0"
+source = { editable = "packages/mcp" }
+dependencies = [
+    { name = "pidrei-http" },
+    { name = "pidrei-utils" },
+    { name = "tonio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pidrei-http", editable = "packages/http" },
+    { name = "pidrei-utils", editable = "packages/utils" },
     { name = "tonio", specifier = "~=0.10.4" },
 ]
 

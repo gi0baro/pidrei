@@ -6,7 +6,11 @@ import pytest
 
 from pidrei.core import output_guard
 from pidrei_ai.auth import anthropic_federation, google_adc
+from pidrei_http import http
 from pidrei_tui import terminal_image, utils as tui_utils
+
+
+_HTTP_SEAM_FUNCTIONS = {"client_for": http.client_for, "shared_client": http.shared_client}
 
 
 @pytest.fixture(autouse=True)
@@ -14,6 +18,23 @@ def _tonio_runtime(tonio_runtime):
     """Every test pulls in the runtime, so async fixtures run for plain sync
     tests too (tonio's plugin only handles them where `tonio_runtime` is part
     of the test's fixture closure)."""
+
+
+@pytest.fixture(autouse=True)
+def _http_seam_guard():
+    """Fail-loud restore of the HTTP seam's client lookups.
+
+    Tests reach the seam through the management and catalog requests; one
+    that replaces `http.client_for` (or `shared_client`) and leaves it would
+    serve its fake client to every later request in the shared runtime. The
+    warning names the polluting test; the restore keeps the fake from
+    spreading.
+    """
+    yield
+    for name, original in _HTTP_SEAM_FUNCTIONS.items():
+        if getattr(http, name) is not original:
+            setattr(http, name, original)
+            warnings.warn(f"test left pidrei_http.http.{name} replaced; restored", stacklevel=1)
 
 
 @pytest.fixture(autouse=True, scope="session")

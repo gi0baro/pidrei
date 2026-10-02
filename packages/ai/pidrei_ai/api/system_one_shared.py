@@ -37,14 +37,13 @@ from pidrei_ai.types import (
     ProviderResponse,
     Usage,
 )
-from pidrei_ai.utils import http
-from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.provider_retry import retry_provider_request
+from pidrei_http import http
 from pidrei_utils import clock
-from pidrei_utils.cancel import AbortError, CancelToken, combine_cancel_tokens
+from pidrei_utils.cancel import AbortError, CancelToken, combine_cancel_tokens, run_cancellable
 
 
 @dataclass(slots=True, frozen=True)

@@ -91,8 +91,9 @@ class TestDefaultTools:
             "- When reading pidrei docs or examples, resolve docs/... under Additional docs and "
             "examples/... under Examples, not the current working directory"
         ) in prompt
+        assert "environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)" in prompt
         assert (
-            "environment variables (docs/environment-variables.md), codemode scripts and non-LLM models such as "
+            "MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as "
             "classifiers and image models (docs/codemode.md)"
         ) in prompt
 

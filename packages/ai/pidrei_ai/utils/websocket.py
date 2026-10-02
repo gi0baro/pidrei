@@ -4,7 +4,7 @@ pi calls the runtime's global `WebSocket` (packages/ai/src/api/
 openai-codex-responses.ts). There is no such thing here, and no tonio WebSocket
 client either, so this module is it — the transport the Codex responses adapter
 drives. It owns nothing protocol-shaped: httpunk performs the handshake through
-`utils/http.py` (`Response.is_upgrade` -> `H1Upgraded`, which drains the bytes
+`pidrei_http.http` (`Response.is_upgrade` -> `H1Upgraded`, which drains the bytes
 already buffered past the response head), and `websockets`' sans-io `Protocol`
 does the framing, masking, automatic pongs and close bookkeeping. What is left
 is this file: connect, a read task, a write task. The initial port chose that
@@ -43,7 +43,7 @@ from websockets.frames import OP_BINARY, OP_CLOSE, OP_TEXT
 from websockets.protocol import CLIENT, OPEN, Protocol as FrameProtocol
 from websockets.utils import accept_key
 
-from pidrei_ai.utils import http
+from pidrei_http import http
 from pidrei_utils.cancel import CancelToken
 
 

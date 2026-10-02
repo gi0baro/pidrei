@@ -13,7 +13,6 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from pidrei_ai.auth.oauth import http as oauth_http
 from pidrei_ai.auth.oauth.callback_server import start_oauth_callback_server, wait_for_callback_or_manual_input
-from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     AuthEvent,
     LoginOptions,
@@ -22,8 +21,9 @@ from pidrei_ai.auth.types import (
     OAuthCredential,
     ProviderAuthInteraction,
 )
-from pidrei_ai.utils import http
 from pidrei_ai.utils.provider_env import get_provider_env_value
+from pidrei_http import http
+from pidrei_http.pkce import generate_pkce
 from pidrei_utils.cancel import AbortError, CancelToken
 
 

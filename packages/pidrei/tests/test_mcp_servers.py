@@ -73,6 +73,28 @@ def test_rejects_an_empty_or_non_string_oauth_client_name(client_name):
     assert validate_mcp_server_config("docs", config) == 'server "docs": oauth.clientName must be a non-empty string'
 
 
+def test_rejects_a_null_oauth():
+    # pi skips only an absent `oauth` (`undefined`); null is not an object.
+    config = {"url": "https://mcp.example.com", "oauth": None}
+    assert validate_mcp_server_config("docs", config) == 'server "docs": oauth must be an object'
+
+
+@pytest.mark.parametrize(
+    ("callback_url", "valid"),
+    [
+        # Port 80 is http's default, so the URL names no port (`new URL().port` is "").
+        ("http://localhost:80/cb", True),
+        ("http://localhost/cb", True),
+        ("http://localhost:9000/cb", True),
+        ("http://localhost:8080/cb", False),
+    ],
+)
+def test_compares_the_callback_url_port_as_url_parsing_reports_it(callback_url, valid):
+    config = {"url": "https://mcp.example.com", "oauth": {"callbackUrl": callback_url, "callbackPort": 9000}}
+    expected = config if valid else 'server "docs": oauth.callbackUrl and oauth.callbackPort name different ports'
+    assert validate_mcp_server_config("docs", config) == expected
+
+
 def test_accepts_an_oauth_client_name():
     config = {"url": "https://mcp.example.com", "oauth": {"clientName": "Claude"}}
     assert validate_mcp_server_config("docs", config) == config

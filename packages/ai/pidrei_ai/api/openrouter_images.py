@@ -22,15 +22,14 @@ from pidrei_ai.types import (
     Usage,
     UsageCost,
 )
-from pidrei_ai.utils import http
-from pidrei_ai.utils.abort import run_cancellable
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.error_body import format_provider_error, normalize_provider_error
 from pidrei_ai.utils.headers import provider_headers_to_record
 from pidrei_ai.utils.provider_retry import retry_provider_request
 from pidrei_ai.utils.sanitize_unicode import sanitize_surrogates
+from pidrei_http import http
 from pidrei_utils import clock
-from pidrei_utils.cancel import CancelToken
+from pidrei_utils.cancel import CancelToken, run_cancellable
 
 
 _DATA_URL = re.compile(r"^data:([^;]+);base64,(.+)$", re.DOTALL)

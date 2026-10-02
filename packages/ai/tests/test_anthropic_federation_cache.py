@@ -23,7 +23,7 @@ from pidrei_ai.auth.anthropic_federation import (
     reset_federation_token_cache,
 )
 from pidrei_ai.types import Context, Model, ModelCost, UserMessage
-from pidrei_ai.utils import http
+from pidrei_http import http
 from tests.anthropic_helpers import now_ms
 from tests.oauth_helpers import OAuthRequest, json_response, stub_oauth_http, virtual_clock
 

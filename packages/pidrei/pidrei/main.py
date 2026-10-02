@@ -86,6 +86,7 @@ from .core.settings_manager import SettingsManager
 from .core.timings import print_timings, reset_timings, time
 from .core.trust_manager import ProjectTrustStore, has_trust_requiring_project_resources_blocking
 from .extensions import builtin_extensions
+from .extensions.mcp.cli import handle_mcp_command
 from .modes import run_print_mode, run_rpc_mode
 from .modes.interactive.theme import init_theme, set_theme_json_validator, stop_theme_watcher, validate_theme_json
 from .modes.print_mode import PrintModeOptions
@@ -604,11 +605,14 @@ async def _main(args: list[str], *, extension_factories: list[Any] | None = None
     if auth_exit_code is not None:
         raise SystemExit(auth_exit_code)
 
-    # The package subcommands run and exit here, before the normal argument
-    # parse, exactly as pi dispatches them (package-manager-cli.ts).
+    # The package, config and mcp subcommands run and exit here, before the
+    # normal argument parse, exactly as pi dispatches them
+    # (package-manager-cli.ts, main.ts).
     handled = await handle_package_command(args, extension_factories=extension_factories)
     if handled is False:
         handled = await handle_config_command(args, extension_factories=extension_factories)
+    if handled is False:
+        handled = await handle_mcp_command(args, cwd=cwd, agent_dir=agent_dir)
     if handled is not False:
         raise SystemExit(handled)
 

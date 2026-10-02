@@ -23,7 +23,6 @@ from pidrei_ai.api.anthropic_messages_lazy import anthropic_messages_api
 from pidrei_ai.api.lazy import call_stream_into, lazy_stream
 from pidrei_ai.api.openai_responses_lazy import openai_responses_api
 from pidrei_ai.auth.oauth import http as oauth_http
-from pidrei_ai.auth.oauth.pkce import generate_pkce
 from pidrei_ai.auth.types import (
     ApiKeyAuth,
     ApiKeyCredential,
@@ -48,6 +47,7 @@ from pidrei_ai.types import (
     TranscriptContext,
 )
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
+from pidrei_http.pkce import generate_pkce
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 

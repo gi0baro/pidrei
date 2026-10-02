@@ -70,7 +70,6 @@ from pidrei_ai.types import (
     ToolResultMessage,
     TranscriptContext,
 )
-from pidrei_ai.utils import http
 from pidrei_ai.utils.callbacks import maybe_call
 from pidrei_ai.utils.diagnostics import append_assistant_message_diagnostic
 from pidrei_ai.utils.event_stream import AssistantMessageEventStream
@@ -88,6 +87,7 @@ from pidrei_ai.utils.transcript import (
     resolve_transcript,
 )
 from pidrei_ai.utils.user_agent import set_default_user_agent
+from pidrei_http import http
 from pidrei_utils import clock
 from pidrei_utils.cancel import CancelToken
 
@@ -650,7 +650,7 @@ def _anthropic_options(options: StreamOptions | None) -> AnthropicOptions:
     return AnthropicOptions(**values)
 
 
-def stream(  # noqa: C901 (mirrors pi's stream event ladder)
+def stream(
     model: Model,
     context: TranscriptContext,
     options: StreamOptions | None = None,
